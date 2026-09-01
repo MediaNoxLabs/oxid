@@ -25,6 +25,7 @@ zeroize.workspace = true
 
 [dev-dependencies]
 hex.workspace = true
+oxid-adapter-storage-memory.workspace = true
 
 [lints]
 workspace = true

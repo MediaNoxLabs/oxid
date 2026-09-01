@@ -3191,6 +3191,8 @@ fn developer_profile_banner() -> Element {
 
 #[cfg(feature = "public-standalone-genesis")]
 const PUBLIC_STANDALONE_GENESIS_MARKER: &str = "OXID_PUBLIC_STANDALONE_GENESIS_WALLET";
+#[cfg(feature = "public-standalone-genesis")]
+const PUBLIC_STANDALONE_PROFILE_NAME: &str = "Oxid Demo Wallet";
 
 #[cfg(feature = "public-standalone-genesis")]
 fn public_standalone_genesis_banner() -> Element {
@@ -3199,8 +3201,8 @@ fn public_standalone_genesis_banner() -> Element {
             class: "developer-profile-banner",
             role: "alert",
             "data-wallet-authority": PUBLIC_STANDALONE_GENESIS_MARKER,
-            strong { "Shared public genesis wallet" }
-            span { "The first initialized profile uses publicly known, spendable test authority. No privacy or ownership is implied." }
+            strong { "Public genesis wallet capability" }
+            span { "Only the unique “Oxid Demo Wallet” profile can use shared, publicly spendable test authority; other profiles remain random. No privacy or ownership is implied." }
         }
     }
 }
@@ -4242,7 +4244,16 @@ fn ProfileManager(
     let create_wallet_profile = services.create_wallet_profile();
     let select_wallet_profile = services.select_wallet_profile();
     let mut profile_list = use_signal(|| profiles);
-    let mut display_name = use_signal(|| "My wallet".to_owned());
+    let mut display_name = use_signal(|| {
+        #[cfg(feature = "public-standalone-genesis")]
+        {
+            PUBLIC_STANDALONE_PROFILE_NAME.to_owned()
+        }
+        #[cfg(not(feature = "public-standalone-genesis"))]
+        {
+            "My wallet".to_owned()
+        }
+    });
     let mut state = use_signal(|| CreationState::Idle);
     let busy = matches!(*state.read(), CreationState::Working);
     let can_submit = !busy && !display_name.read().trim().is_empty();
@@ -5744,9 +5755,9 @@ fn AccountSyncCard(
                             span { class: "{dust_status_pill_class(&shielded.state)}", "{ui::sync_state(&shielded.state)}" }
                         }
                     }
-                    if shielded.balances.iter().any(|balance| balance.token_type_hex != NATIVE_SHIELDED_NIGHT_TOKEN_TYPE) {
+                    if non_native_shielded_balances(&shielded).next().is_some() {
                         div { class: "activity-list", aria_label: "Shielded token balances",
-                            for balance in shielded.balances.iter().filter(|balance| balance.token_type_hex != NATIVE_SHIELDED_NIGHT_TOKEN_TYPE) {
+                            for balance in non_native_shielded_balances(&shielded) {
                                 div { class: "activity-row", key: "{balance.token_type_hex}",
                                     span { class: "activity-row__mark", aria_hidden: "true", "◈" }
                                     div {
@@ -7941,7 +7952,16 @@ fn home_shielded_value(status: &WalletShieldedSyncView) -> String {
     if status.is_complete() {
         return ui::format_shielded_amount(NATIVE_SHIELDED_NIGHT_TOKEN_TYPE, "0");
     }
-    ui::sync_state(&status.state).to_owned()
+    "—".to_owned()
+}
+
+fn non_native_shielded_balances(
+    status: &WalletShieldedSyncView,
+) -> impl Iterator<Item = &oxid_wallet_application::WalletShieldedTokenBalanceView> {
+    status
+        .balances
+        .iter()
+        .filter(|balance| balance.token_type_hex != NATIVE_SHIELDED_NIGHT_TOKEN_TYPE)
 }
 
 fn home_shielded_detail(status: &WalletShieldedSyncView) -> String {
@@ -12293,15 +12313,31 @@ mod tests {
         assert_eq!(home_shielded_value(&funded), "1.5 NIGHT");
 
         let unavailable = shielded_status("unavailable", None, None);
-        assert_eq!(
-            home_shielded_value(&unavailable),
-            ui::sync_state("unavailable")
-        );
+        assert_eq!(home_shielded_value(&unavailable), "—");
 
         for incomplete in ["cached", "cancelled", "stalled"] {
             let status = shielded_status(incomplete, Some(2), Some(2));
-            assert_eq!(home_shielded_value(&status), ui::sync_state(incomplete));
+            assert_eq!(home_shielded_value(&status), "—");
         }
+    }
+
+    #[test]
+    fn shielded_token_rows_exclude_native_night_and_preserve_other_tokens() {
+        let mut status = shielded_status("synced", Some(2), Some(2));
+        status.balances = vec![
+            oxid_wallet_application::WalletShieldedTokenBalanceView {
+                token_type_hex: NATIVE_SHIELDED_NIGHT_TOKEN_TYPE.to_owned(),
+                atomic_units: "1".to_owned(),
+            },
+            oxid_wallet_application::WalletShieldedTokenBalanceView {
+                token_type_hex: "aa".repeat(32),
+                atomic_units: "2".to_owned(),
+            },
+        ];
+
+        let rows = non_native_shielded_balances(&status).collect::<Vec<_>>();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].token_type_hex, "aa".repeat(32));
     }
 
     #[test]

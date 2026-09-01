@@ -53,15 +53,9 @@ use super::passport_vault::with_simulated_passport_vault_calls;
 use super::passport_vault::{
     node_anchored_passport_vault_state_source, with_passport_vault_state_source,
 };
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    not(any(test, feature = "standalone-development"))
-))]
+#[cfg(not(target_arch = "wasm32"))]
 use super::profile_headless::compose_headless_standalone;
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    any(test, feature = "standalone-development")
-))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
 use super::profile_headless::compose_public_genesis_standalone;
 use super::services::ApplicationServices;
 #[cfg(all(
@@ -70,7 +64,7 @@ use super::services::ApplicationServices;
     feature = "mobile-portal",
     any(target_os = "ios", target_os = "android")
 ))]
-use super::standalone_genesis::development_security_for_network;
+use super::standalone_genesis::public_profile_protection;
 #[cfg(all(
     not(target_arch = "wasm32"),
     any(
@@ -100,6 +94,8 @@ use oxid_adapter_storage_mobile::MobileWalletSecurity;
     any(target_os = "ios", target_os = "android")
 ))]
 use oxid_adapter_vc_midnight::CompactPresentationRuntimeError;
+#[cfg(not(target_arch = "wasm32"))]
+use oxid_wallet_application::WalletProtectionPort;
 
 /// Verifies that the Android Portal conformance composition is executing under
 /// the repository's QEMU-only runtime boundary. iOS simulator authority is
@@ -223,14 +219,24 @@ pub fn compose_mobile_development_standalone_from_routes(
         node_websocket_url,
         proof_server_url,
     )?;
-    #[cfg(any(test, feature = "standalone-development"))]
-    {
-        Ok(compose_public_genesis_standalone(config))
-    }
-    #[cfg(not(any(test, feature = "standalone-development")))]
-    {
-        Ok(compose_headless_standalone(config))
-    }
+    Ok(compose_headless_standalone(config))
+}
+
+/// Wires the explicitly named public-genesis development profile to standalone routes.
+#[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
+pub fn compose_mobile_public_genesis_standalone_from_routes(
+    indexer_websocket_url: &str,
+    indexer_http_url: &str,
+    node_websocket_url: &str,
+    proof_server_url: &str,
+) -> Result<ApplicationServices, HeadlessCompositionError> {
+    let config = mobile_standalone_config_from_routes(
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+    )?;
+    Ok(compose_public_genesis_standalone(config))
 }
 
 /// Wires the exact manifest-authenticated Portal identity profile into the
@@ -241,7 +247,6 @@ pub fn compose_mobile_development_standalone_from_routes(
 /// native-custody, or WebAssembly composition calls this constructor.
 #[cfg(all(
     feature = "mobile-portal",
-    feature = "standalone-development",
     any(target_os = "ios", target_os = "android"),
     not(target_arch = "wasm32")
 ))]
@@ -262,7 +267,7 @@ pub fn compose_mobile_development_portal_standalone_from_routes(
     let portal =
         PortalIdentityConfiguration::from_bytes(deployment_manifest, deployment_manifest_sha256)
             .map_err(|_| HeadlessCompositionError::InvalidPortalConfiguration)?;
-    Ok(compose_mobile_development_portal_from_config(
+    Ok(compose_development_portal_from_config(
         config,
         portal,
         CredentialPresentationComposition::Standalone,
@@ -272,7 +277,6 @@ pub fn compose_mobile_development_portal_standalone_from_routes(
 /// Wires Portal issuance into the authenticated physical Android tailnet profile.
 #[cfg(all(
     feature = "mobile-portal-tailnet",
-    feature = "standalone-development",
     target_os = "android",
     not(target_arch = "wasm32")
 ))]
@@ -297,7 +301,73 @@ pub fn compose_mobile_development_portal_tailnet_from_routes(
         public_origin,
     )
     .map_err(|_| HeadlessCompositionError::InvalidPortalConfiguration)?;
-    Ok(compose_mobile_development_portal_from_config(
+    Ok(compose_development_portal_from_config(
+        config,
+        portal,
+        CredentialPresentationComposition::Standalone,
+    ))
+}
+
+/// Wires the explicitly named public-genesis profile to local Portal issuance.
+#[cfg(all(
+    feature = "mobile-portal",
+    feature = "standalone-development",
+    any(target_os = "ios", target_os = "android"),
+    not(target_arch = "wasm32")
+))]
+pub fn compose_mobile_public_genesis_portal_standalone_from_routes(
+    indexer_websocket_url: &str,
+    indexer_http_url: &str,
+    node_websocket_url: &str,
+    proof_server_url: &str,
+    deployment_manifest: &[u8],
+    deployment_manifest_sha256: &str,
+) -> Result<ApplicationServices, HeadlessCompositionError> {
+    let config = mobile_standalone_config_from_routes(
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+    )?;
+    let portal =
+        PortalIdentityConfiguration::from_bytes(deployment_manifest, deployment_manifest_sha256)
+            .map_err(|_| HeadlessCompositionError::InvalidPortalConfiguration)?;
+    Ok(compose_mobile_public_genesis_portal_from_config(
+        config,
+        portal,
+        CredentialPresentationComposition::Standalone,
+    ))
+}
+
+/// Wires the explicitly named public-genesis profile to Tailnet Portal issuance.
+#[cfg(all(
+    feature = "mobile-portal-tailnet",
+    feature = "standalone-development",
+    target_os = "android",
+    not(target_arch = "wasm32")
+))]
+pub fn compose_mobile_public_genesis_portal_tailnet_from_routes(
+    indexer_websocket_url: &str,
+    indexer_http_url: &str,
+    node_websocket_url: &str,
+    proof_server_url: &str,
+    deployment_manifest: &[u8],
+    deployment_manifest_sha256: &str,
+    public_origin: &str,
+) -> Result<ApplicationServices, HeadlessCompositionError> {
+    let config = mobile_standalone_config_from_routes(
+        indexer_websocket_url,
+        indexer_http_url,
+        node_websocket_url,
+        proof_server_url,
+    )?;
+    let portal = PortalIdentityConfiguration::from_tailnet_bytes(
+        deployment_manifest,
+        deployment_manifest_sha256,
+        public_origin,
+    )
+    .map_err(|_| HeadlessCompositionError::InvalidPortalConfiguration)?;
+    Ok(compose_mobile_public_genesis_portal_from_config(
         config,
         portal,
         CredentialPresentationComposition::Standalone,
@@ -324,12 +394,15 @@ pub(super) fn compose_development_portal_from_config(
         Arc::clone(&clock),
         Arc::new(OsRandom),
     ));
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
     compose_development_portal_with_security(
         config,
         portal,
         credential_presentation,
         clock,
         security,
+        profiles,
+        None,
     )
 }
 
@@ -339,23 +412,31 @@ pub(super) fn compose_development_portal_from_config(
     feature = "mobile-portal",
     any(target_os = "ios", target_os = "android")
 ))]
-fn compose_mobile_development_portal_from_config(
+fn compose_mobile_public_genesis_portal_from_config(
     config: MidnightStandaloneConfig,
     portal: PortalIdentityConfiguration,
     credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
-    let security = Arc::new(development_security_for_network(
-        config.indexer().network_id().as_str(),
+    let security = Arc::new(DevelopmentWalletSecurity::new(
         Arc::clone(&clock),
         Arc::new(OsRandom),
     ));
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let protection = public_profile_protection(
+        config.indexer().network_id().as_str(),
+        Arc::clone(&profiles),
+        Arc::clone(&security),
+    )
+    .map(|protection| Arc::new(protection) as Arc<dyn WalletProtectionPort>);
     compose_development_portal_with_security(
         config,
         portal,
         credential_presentation,
         clock,
         security,
+        profiles,
+        protection,
     )
 }
 
@@ -375,12 +456,13 @@ fn compose_development_portal_with_security<N>(
     credential_presentation: CredentialPresentationComposition,
     clock: Arc<SystemClock>,
     security: Arc<DevelopmentWalletSecurity<SystemClock, N>>,
+    profiles: Arc<JsonWalletProfileRepository>,
+    protection_override: Option<Arc<dyn WalletProtectionPort>>,
 ) -> ApplicationServices
 where
     N: oxid_platform_ports::RandomPort + 'static,
 {
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
     let midnight = Arc::new(
         protected_standalone_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))
             .with_profile_association_repository(profiles.clone()),
@@ -391,6 +473,7 @@ where
         midnight,
         credential_presentation,
         HeadlessCredentialProfile::Portal(Box::new(portal)),
+        protection_override,
     );
     with_passport_vault_state_source(services, passport_vault_state_source)
 }

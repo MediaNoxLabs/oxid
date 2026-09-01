@@ -33,6 +33,7 @@ fn production_facing_composition_fails_closed_without_native_custody() {
             portal_test_ingress: None,
         },
         PassportVaultRepositoryComposition::unavailable(),
+        None,
     );
     let status = services
         .get_wallet_security_status()

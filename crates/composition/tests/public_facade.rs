@@ -148,6 +148,7 @@ fn default_native_root_facade_remains_source_compatible() {
     let _ = compose_headless_standalone_with_dust_checkpoints;
     let _ = compose_headless_standalone_with_all_checkpoints;
     #[cfg(feature = "standalone-development")]
+    let _ = compose_mobile_public_genesis_standalone_from_routes;
     let _ = compose_mobile_development_standalone_from_routes;
     let _ = || compose_in_memory_with_compact_presentation_artifacts(std::path::PathBuf::new());
 
@@ -216,6 +217,7 @@ fn compact_mobile_root_entry_points_remain_available() {
 #[test]
 fn portal_mobile_root_entry_points_remain_available() {
     let _ = compose_mobile_development_portal_standalone_from_routes;
+    let _ = compose_mobile_public_genesis_portal_standalone_from_routes;
 }
 
 #[cfg(all(feature = "mobile-portal", target_os = "android"))]
@@ -232,6 +234,7 @@ fn android_portal_verification_root_entry_point_remains_available() {
 #[test]
 fn portal_tailnet_root_entry_point_remains_available() {
     let _ = compose_mobile_development_portal_tailnet_from_routes;
+    let _ = compose_mobile_public_genesis_portal_tailnet_from_routes;
 }
 
 #[cfg(all(feature = "android-jni-exception-recovery-test", target_os = "android"))]

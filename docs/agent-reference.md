@@ -2257,13 +2257,14 @@ to silence the shell probe.
   compatibility choice unless a pinned image/schema upgrade is made atomically.
   Development custody remains process-local: after process death, retain the
   public association but report uninitialized protection and withhold the
-  former addresses until initialization. A new process reconstructs the
-  one-shot fixture source; it is never refilled after consumption within the
-  same process. The live local/tailnet development
-  composition supplies the public scalar-one standalone genesis root through
-  development custody's typed one-shot profile-root constructor. Generic
-  randomness stays OS-backed for nonces, references, generated keys, and later
-  profiles. The root is shared public
+  former addresses until initialization. The live local/tailnet app calls
+  explicitly named `public_genesis` constructors; additive Cargo features must
+  never change the existing OS-random constructor behavior. Those constructors
+  supply the public scalar-one standalone genesis root through development
+  custody's typed profile-specific initializer only for the unique `Oxid Demo
+  Wallet` profile. Duplicate fixture names fail closed, initialization order is
+  irrelevant, and generic randomness stays OS-backed for ordinary profile
+  roots, nonces, references, and generated keys. The root is shared public
   test authority, never private wallet material, and must remain absent from
   normal/native-custody artifacts, UI DTOs, logs, and diagnostics. Every build
   that includes it must render the `OXID_PUBLIC_STANDALONE_GENESIS_WALLET`

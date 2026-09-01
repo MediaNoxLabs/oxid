@@ -285,6 +285,7 @@ where
         midnight,
         credential_presentation,
         HeadlessCredentialProfile::Standalone,
+        None,
     )
 }
 
@@ -294,6 +295,7 @@ pub(super) fn compose_with_adapters_and_credential_profile<R, S, M>(
     midnight: Arc<M>,
     credential_presentation: CredentialPresentationComposition,
     credential_profile: HeadlessCredentialProfile,
+    protection_override: Option<Arc<dyn WalletProtectionPort>>,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository
@@ -386,6 +388,7 @@ where
             portal_test_ingress,
         },
         headless_passport_vault_repository(),
+        protection_override,
     )
 }
 
@@ -395,6 +398,7 @@ pub(super) fn compose_with_identity_adapters<R, S, M>(
     midnight: Arc<M>,
     identity_adapters: IdentityAdapters,
     passport_vault_repository: PassportVaultRepositoryComposition,
+    protection_override: Option<Arc<dyn WalletProtectionPort>>,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository
@@ -537,7 +541,11 @@ where
         repository,
         Arc::clone(&clock),
     ));
-    let protection = Arc::new(WalletProtectionService::new(Arc::clone(&security)));
+    let protection_port = protection_override.unwrap_or_else(|| {
+        let protection: Arc<dyn WalletProtectionPort> = security.clone();
+        protection
+    });
+    let protection = Arc::new(WalletProtectionService::new(protection_port));
     let portable_backup = Arc::new(WalletPortableBackupService::new(Arc::clone(&security)));
     let keys = Arc::new(WalletKeyService::new(security));
     let midnight_public_call_context: Arc<dyn MidnightPublicCallContextSource> = midnight.clone();

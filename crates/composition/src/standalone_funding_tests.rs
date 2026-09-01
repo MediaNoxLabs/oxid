@@ -32,15 +32,17 @@ use oxid_wallet_application::{
     SubmitWalletDustRegistrationCommand, SubmitWalletTransferCommand, WalletAccountQuery,
     WalletDustRegistrationError, WalletDustRegistrationPortError,
     WalletDustRegistrationPreviewView, WalletDustSyncCommand, WalletDustSyncView,
-    WalletHdPathComponent, WalletProfileSecurityCommand, WalletShieldedSyncCommand,
-    WalletShieldedSyncView, WalletTransactionError, WalletTransactionPortError,
-    WalletTransferDraftQuery, WalletTransferSubmissionQuery,
+    WalletHdPathComponent, WalletProfileSecurityCommand, WalletProtectionPort,
+    WalletShieldedSyncCommand, WalletShieldedSyncView, WalletTransactionError,
+    WalletTransactionPortError, WalletTransferDraftQuery, WalletTransferSubmissionQuery,
 };
 use zeroize::Zeroizing;
 
 use super::{
-    ApplicationServices, standalone_genesis::development_security_for_network,
-    wiring::compose_with_adapters,
+    ApplicationServices,
+    identity::{CredentialPresentationComposition, HeadlessCredentialProfile},
+    standalone_genesis::{PUBLIC_STANDALONE_PROFILE_NAME, public_profile_protection},
+    wiring::{compose_with_adapters, compose_with_adapters_and_credential_profile},
 };
 
 const ENABLE_ENV: &str = "OXID_ENABLE_LIVE_STANDALONE_FUNDING";
@@ -673,6 +675,32 @@ fn compose_live<N>(
 where
     N: RandomPort + 'static,
 {
+    compose_live_with_protection(
+        config,
+        profiles,
+        security,
+        account_checkpoints,
+        dust_checkpoints,
+        shielded_checkpoints,
+        journal,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compose_live_with_protection<N>(
+    config: MidnightStandaloneConfig,
+    profiles: Arc<InMemoryWalletProfileRepository>,
+    security: Arc<DevelopmentWalletSecurity<SystemClock, N>>,
+    account_checkpoints: Option<MidnightAccountCheckpointConfig>,
+    dust_checkpoints: Option<MidnightDustCheckpointConfig>,
+    shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
+    journal: Option<MidnightSubmissionJournalConfig>,
+    protection_override: Option<Arc<dyn WalletProtectionPort>>,
+) -> ApplicationServices
+where
+    N: RandomPort + 'static,
+{
     let clock = Arc::new(SystemClock);
     let midnight = Arc::new(
         protected_standalone_midnight_wallet_with_checkpoint_options(
@@ -686,7 +714,14 @@ where
         )
         .with_profile_association_repository(profiles.clone()),
     );
-    compose_with_adapters(profiles, security, midnight)
+    compose_with_adapters_and_credential_profile(
+        profiles,
+        security,
+        midnight,
+        CredentialPresentationComposition::Standalone,
+        HeadlessCredentialProfile::Standalone,
+        protection_override,
+    )
 }
 
 fn initialize_account(
@@ -1134,6 +1169,21 @@ fn preprod_transfer_policy_is_positive_bounded_and_amount_observed() {
     );
 }
 
+#[test]
+fn public_balance_contract_tracks_the_exact_standalone_image_pins() {
+    let manifest = include_str!("../../../scripts/standalone-stack.yml");
+    for image in [
+        "midnightntwrk/indexer-standalone:4.0.0",
+        "midnightntwrk/midnight-node:0.22.3",
+        "midnightntwrk/proof-server:8.0.3",
+    ] {
+        assert!(
+            manifest.contains(image),
+            "standalone image pin changed without updating the exact public balance contract: {image}"
+        );
+    }
+}
+
 /// Synchronizes all three independent balance projections for the public
 /// undeployed genesis wallet without accepting or emitting private input.
 ///
@@ -1152,15 +1202,27 @@ fn public_standalone_genesis_balances_are_exact() {
     );
     let config = standalone_config();
     let profiles = Arc::new(InMemoryWalletProfileRepository::new());
-    let security = Arc::new(development_security_for_network(
-        "undeployed",
+    let security = Arc::new(DevelopmentWalletSecurity::new(
         Arc::new(SystemClock),
         Arc::new(OsRandom),
     ));
-    let application = compose_live(config, profiles, security, None, None, None, None);
+    let protection: Arc<dyn WalletProtectionPort> = Arc::new(
+        public_profile_protection("undeployed", Arc::clone(&profiles), Arc::clone(&security))
+            .expect("undeployed fixture protection"),
+    );
+    let application = compose_live_with_protection(
+        config,
+        profiles,
+        security,
+        None,
+        None,
+        None,
+        None,
+        Some(protection),
+    );
     let (profile_id, _, _) = initialize_account(
         &application,
-        "Public standalone balance proof",
+        PUBLIC_STANDALONE_PROFILE_NAME,
         "undeployed",
         0,
     );

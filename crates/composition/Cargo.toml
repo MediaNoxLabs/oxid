@@ -24,7 +24,6 @@ mobile-compact-artifacts = ["oxid-adapter-vc-midnight/mobile-compact-artifacts"]
 # fixed trigger remains runtime-inert until the app-owned standalone-portal path
 # calls the explicit Portal composition constructor.
 mobile-portal = [
-  "standalone-development",
   "dep:oxid-adapter-mobile-native",
   "oxid-adapter-openid4vci/portal-http-mobile",
   "oxid-adapter-identity-ingress/loopback-test-offer-trigger",
@@ -79,6 +78,7 @@ midnight-onchain-runtime.workspace = true
 midnight-serialize.workspace = true
 midnight-storage.workspace = true
 midnight-zswap.workspace = true
+oxid-wallet-domain.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 zeroize.workspace = true

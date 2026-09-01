@@ -109,10 +109,12 @@ TLS-terminated Tailscale Serve routes and the phone command embeds their current
 MagicDNS URLs only in the explicit `standalone-tailnet` development build. No
 personal IP, local password, or endpoint is committed. The profile is
 incompatible with native custody and is excluded from normal release artifacts.
-The first profile initialized in either live standalone build uses the chain's
-shared public genesis wallet. After deriving account `0/0`, choose **Sync now**
-to load NIGHT, shielded NIGHT, and DUST independently. Treat every asset on this
-public wallet as disposable test value: anyone can derive the same authority.
+Create the pre-filled, uniquely named **Oxid Demo Wallet** profile in either
+live standalone build. Only that profile uses the chain's shared public genesis
+wallet; duplicate fixture names fail closed and other profiles remain random.
+After deriving account `0/0`, choose **Sync now** to load NIGHT, shielded NIGHT,
+and DUST independently. Treat every asset on this public wallet as disposable
+test value: anyone can derive the same authority.
 With the local stack running, `just standalone-public-balances` proves the exact
 three genesis projections through the same live application ports. Restart the
 standalone stack first if an authorized funding test spent the shared fixture.

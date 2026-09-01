@@ -1,50 +1,65 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Typed development custody for the public standalone genesis wallet.
+//! Profile-bound development custody for the public standalone genesis wallet.
 //!
 //! The undeployed chain assigns its public genesis funding authority to the
 //! scalar-one root. This is not private wallet material: every byte is public
-//! and anyone can spend assets assigned to it. The root enters the explicitly
-//! insecure development adapter through its one-shot profile-root constructor;
-//! generic randomness remains responsible for nonces, references, generated
-//! keys, and every later profile.
+//! and anyone can spend assets assigned to it. The fixture is selected only
+//! for the uniquely named standalone demo profile; ordinary profiles continue
+//! to initialize from generic OS randomness.
 
 use std::sync::Arc;
 
-use oxid_adapter_storage_dev::DevelopmentWalletSecurity;
+use oxid_adapter_storage_dev::{DevelopmentWalletFixtureProtection, DevelopmentWalletSecurity};
+use oxid_wallet_application::WalletProfileRepository;
 
-const PUBLIC_STANDALONE_GENESIS_ROOT: [u8; 32] = {
+pub(super) const PUBLIC_STANDALONE_PROFILE_NAME: &str = "Oxid Demo Wallet";
+
+pub(super) const PUBLIC_STANDALONE_GENESIS_ROOT: [u8; 32] = {
     let mut root = [0_u8; 32];
     root[31] = 1;
     root
 };
 
-fn public_root_for_network(network_id: &str) -> Option<[u8; 32]> {
-    (network_id == "undeployed").then_some(PUBLIC_STANDALONE_GENESIS_ROOT)
-}
-
-pub(super) fn development_security_for_network<C, N>(
+pub(super) fn public_profile_protection<R, C, N>(
     network_id: &str,
-    clock: Arc<C>,
-    random: Arc<N>,
-) -> DevelopmentWalletSecurity<C, N> {
-    if let Some(root_seed) = public_root_for_network(network_id) {
-        DevelopmentWalletSecurity::with_initial_root_seed(clock, random, root_seed)
-    } else {
-        DevelopmentWalletSecurity::new(clock, random)
-    }
+    profiles: Arc<R>,
+    security: Arc<DevelopmentWalletSecurity<C, N>>,
+) -> Option<DevelopmentWalletFixtureProtection<R, C, N>>
+where
+    R: WalletProfileRepository + 'static,
+    C: oxid_platform_ports::ClockPort + 'static,
+    N: oxid_platform_ports::RandomPort + 'static,
+{
+    (network_id == "undeployed").then(|| {
+        DevelopmentWalletFixtureProtection::new(
+            profiles,
+            security,
+            PUBLIC_STANDALONE_PROFILE_NAME,
+            PUBLIC_STANDALONE_GENESIS_ROOT,
+        )
+    })
 }
 
 #[cfg(test)]
 mod tests {
+    use oxid_adapter_platform_system::{OsRandom, SystemClock};
+    use oxid_adapter_storage_memory::InMemoryWalletProfileRepository;
+
     use super::*;
 
     #[test]
-    fn public_genesis_root_is_scoped_to_the_undeployed_network() {
-        assert_eq!(
-            public_root_for_network("undeployed"),
-            Some(PUBLIC_STANDALONE_GENESIS_ROOT)
+    fn public_fixture_protection_is_scoped_to_the_undeployed_network() {
+        let profiles = Arc::new(InMemoryWalletProfileRepository::new());
+        let security = Arc::new(DevelopmentWalletSecurity::new(
+            Arc::new(SystemClock),
+            Arc::new(OsRandom),
+        ));
+
+        assert!(
+            public_profile_protection("undeployed", Arc::clone(&profiles), Arc::clone(&security))
+                .is_some()
         );
-        assert_eq!(public_root_for_network("preprod"), None);
+        assert!(public_profile_protection("preprod", profiles, security).is_none());
     }
 }

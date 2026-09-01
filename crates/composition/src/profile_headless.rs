@@ -24,11 +24,8 @@ use super::passport_vault::{
     with_simulated_passport_vault_calls,
 };
 use super::services::ApplicationServices;
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    any(test, feature = "standalone-development")
-))]
-use super::standalone_genesis::development_security_for_network;
+#[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
+use super::standalone_genesis::public_profile_protection;
 use super::wiring::{
     compose_with_adapters, compose_with_adapters_and_credential_profile,
     compose_with_adapters_and_presentation,
@@ -36,6 +33,11 @@ use super::wiring::{
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
 use oxid_adapter_storage_dev::DevelopmentWalletSecurity;
 use oxid_adapter_storage_json::JsonWalletProfileRepository;
+#[cfg(not(target_arch = "wasm32"))]
+use oxid_wallet_application::{
+    WalletBackupReceiptRepository, WalletProfileAssociationRepository, WalletProfileRepository,
+    WalletProtectionPort,
+};
 
 /// Wires persistent public profiles with an explicit process-local custody
 /// adapter for the standalone development harness.
@@ -95,6 +97,7 @@ pub(super) fn compose_headless_with_credential_profile(
         midnight,
         credential_presentation,
         credential_profile,
+        None,
     );
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -286,26 +289,39 @@ pub fn compose_headless_standalone(config: MidnightStandaloneConfig) -> Applicat
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    compose_headless_standalone_with_security(config, clock, security)
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    compose_headless_standalone_with_security(config, clock, security, profiles, None)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn compose_headless_standalone_with_security<N>(
+fn compose_headless_standalone_with_security<N, R>(
     config: MidnightStandaloneConfig,
     clock: Arc<SystemClock>,
     security: Arc<DevelopmentWalletSecurity<SystemClock, N>>,
+    profiles: Arc<R>,
+    protection_override: Option<Arc<dyn WalletProtectionPort>>,
 ) -> ApplicationServices
 where
     N: oxid_platform_ports::RandomPort + 'static,
+    R: WalletProfileRepository
+        + WalletProfileAssociationRepository
+        + WalletBackupReceiptRepository
+        + 'static,
 {
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
     let midnight = Arc::new(
         protected_standalone_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))
             .with_profile_association_repository(profiles.clone()),
     );
     with_passport_vault_state_source(
-        compose_with_adapters(profiles, security, midnight),
+        compose_with_adapters_and_credential_profile(
+            profiles,
+            security,
+            midnight,
+            CredentialPresentationComposition::Standalone,
+            HeadlessCredentialProfile::Standalone,
+            protection_override,
+        ),
         passport_vault_state_source,
     )
 }
@@ -313,20 +329,23 @@ where
 /// Wires the explicit compile-time mobile development profile to the public
 /// undeployed genesis wallet. Ordinary runtime-selected headless standalone
 /// composition continues to initialize an OS-random wallet root.
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    any(test, feature = "standalone-development")
-))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
 pub(super) fn compose_public_genesis_standalone(
     config: MidnightStandaloneConfig,
 ) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
-    let security = Arc::new(development_security_for_network(
-        config.indexer().network_id().as_str(),
+    let security = Arc::new(DevelopmentWalletSecurity::new(
         Arc::clone(&clock),
         Arc::new(OsRandom),
     ));
-    compose_headless_standalone_with_security(config, clock, security)
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let protection = public_profile_protection(
+        config.indexer().network_id().as_str(),
+        Arc::clone(&profiles),
+        Arc::clone(&security),
+    )
+    .map(|protection| Arc::new(protection) as Arc<dyn WalletProtectionPort>);
+    compose_headless_standalone_with_security(config, clock, security, profiles, protection)
 }
 
 /// Wires the complete standalone stack with durable public account checkpoints.

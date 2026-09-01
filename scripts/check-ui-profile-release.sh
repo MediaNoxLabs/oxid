@@ -10,9 +10,13 @@ trap 'rm -f "$failure_log" "$feature_graph_log"' EXIT
 assert_public_fixture_feature_absent() {
   local label="$1"
   local features="$2"
+  local target="${3:-}"
   local cargo_tree_args=(-e features -p oxid-app -i oxid-composition)
   if [[ -n "$features" ]]; then
     cargo_tree_args+=(--no-default-features --features "$features")
+  fi
+  if [[ -n "$target" ]]; then
+    cargo_tree_args+=(--target "$target")
   fi
   cargo tree "${cargo_tree_args[@]}" >"$feature_graph_log"
   if rg -q 'oxid-composition feature "standalone-development"' "$feature_graph_log"; then
@@ -23,9 +27,32 @@ assert_public_fixture_feature_absent() {
   if [[ -n "$features" ]]; then
     ui_tree_args+=(--no-default-features --features "$features")
   fi
+  if [[ -n "$target" ]]; then
+    ui_tree_args+=(--target "$target")
+  fi
   cargo tree "${ui_tree_args[@]}" >"$feature_graph_log"
   if rg -q 'oxid-ui-dioxus feature "public-standalone-genesis"' "$feature_graph_log"; then
     echo "$label oxid-app release profile enables the public-genesis warning UI" >&2
+    exit 1
+  fi
+}
+
+assert_public_fixture_feature_present() {
+  local label="$1"
+  local features="$2"
+  local target="${3:-}"
+  local cargo_tree_args=(-e features -p oxid-app --no-default-features --features "$features")
+  if [[ -n "$target" ]]; then
+    cargo_tree_args+=(--target "$target")
+  fi
+  cargo tree "${cargo_tree_args[@]}" -i oxid-composition >"$feature_graph_log"
+  if ! rg -q 'oxid-composition feature "standalone-development"' "$feature_graph_log"; then
+    echo "$label does not enable the bounded public-genesis composition capability" >&2
+    exit 1
+  fi
+  cargo tree "${cargo_tree_args[@]}" -i oxid-ui-dioxus >"$feature_graph_log"
+  if ! rg -q 'oxid-ui-dioxus feature "public-standalone-genesis"' "$feature_graph_log"; then
+    echo "$label does not enable the public-genesis warning UI" >&2
     exit 1
   fi
 }
@@ -44,27 +71,32 @@ esac
 if [[ "$mode" != "--artifact" ]]; then
 assert_public_fixture_feature_absent "default" ""
 assert_public_fixture_feature_absent "desktop" "desktop"
-assert_public_fixture_feature_absent "mobile" "mobile"
+assert_public_fixture_feature_absent "iOS mobile" "mobile" "aarch64-apple-ios"
+assert_public_fixture_feature_absent "Android mobile" "mobile" "aarch64-linux-android"
 assert_public_fixture_feature_absent "web" "web"
-assert_public_fixture_feature_absent "native mobile" "mobile,standalone-native-custody"
 assert_public_fixture_feature_absent \
-  "native proving" "mobile,standalone-native-proving-artifacts"
+  "iOS native mobile" "mobile,standalone-native-custody" "aarch64-apple-ios"
 assert_public_fixture_feature_absent \
-  "native mobile developer UI" "mobile,standalone-native-custody,ui-profile-dev"
+  "Android native mobile" "mobile,standalone-native-custody" "aarch64-linux-android"
 assert_public_fixture_feature_absent \
-  "native proving developer UI" "mobile,standalone-native-proving-artifacts,ui-profile-dev"
-cargo tree -e features -p oxid-app --no-default-features \
-  --features standalone-development -i oxid-composition >"$feature_graph_log"
-if ! rg -q 'oxid-composition feature "standalone-development"' "$feature_graph_log"; then
-  echo "oxid-app standalone-development does not enable the bounded composition feature" >&2
-  exit 1
-fi
-cargo tree -e features -p oxid-app --no-default-features \
-  --features standalone-development -i oxid-ui-dioxus >"$feature_graph_log"
-if ! rg -q 'oxid-ui-dioxus feature "public-standalone-genesis"' "$feature_graph_log"; then
-  echo "oxid-app standalone-development does not enable the public-genesis warning UI" >&2
-  exit 1
-fi
+  "iOS native proving" "mobile,standalone-native-proving-artifacts" "aarch64-apple-ios"
+assert_public_fixture_feature_absent \
+  "Android native proving" "mobile,standalone-native-proving-artifacts" "aarch64-linux-android"
+assert_public_fixture_feature_absent \
+  "iOS native mobile developer UI" \
+  "mobile,standalone-native-custody,ui-profile-dev" "aarch64-apple-ios"
+assert_public_fixture_feature_absent \
+  "Android native proving developer UI" \
+  "mobile,standalone-native-proving-artifacts,ui-profile-dev" "aarch64-linux-android"
+assert_public_fixture_feature_present \
+  "standalone development" "standalone-development"
+assert_public_fixture_feature_present \
+  "iOS standalone local" \
+  "mobile,standalone-development,standalone-local" "aarch64-apple-ios"
+assert_public_fixture_feature_present \
+  "iOS standalone Portal" "standalone-portal" "aarch64-apple-ios"
+assert_public_fixture_feature_present \
+  "Android standalone Portal Tailnet" "standalone-portal-tailnet" "aarch64-linux-android"
 if cargo check -p oxid-app --no-default-features \
   --features desktop,ui-profile-dev >"$failure_log" 2>&1; then
   echo "ui-profile-dev compiled without an explicit standalone composition" >&2
@@ -215,6 +247,23 @@ fi
 # app-owned standalone-portal branch calls the explicit Portal constructor; the
 # identity-ingress unit suite below proves the default constructor rejects the trigger.
 
+if ! rg -qxF 'standalone-development = []' crates/composition/Cargo.toml; then
+  echo "oxid-composition/standalone-development must remain an additive-edge-free capability flag" >&2
+  exit 1
+fi
+app_standalone_development_members="$(awk '
+  /^standalone-development = \[/ { capture=1; next }
+  capture && /^\]/ { exit }
+  capture { gsub(/[",[:space:]]/, ""); if (length) print }
+' apps/oxid/Cargo.toml | sort)"
+expected_app_standalone_development_members="$(printf '%s\n' \
+  oxid-composition/standalone-development \
+  oxid-ui-dioxus/public-standalone-genesis | sort)"
+if [ "$app_standalone_development_members" != "$expected_app_standalone_development_members" ]; then
+  echo "oxid-app/standalone-development feature wiring is not exact" >&2
+  exit 1
+fi
+
 composition_portal_members="$(awk '
   /^mobile-portal = \[/ { capture=1; next }
   capture && /^\]/ { exit }
@@ -223,8 +272,7 @@ composition_portal_members="$(awk '
 expected_composition_portal_members="$(printf '%s\n' \
   dep:oxid-adapter-mobile-native \
   oxid-adapter-identity-ingress/loopback-test-offer-trigger \
-  oxid-adapter-openid4vci/portal-http-mobile \
-  standalone-development | sort)"
+  oxid-adapter-openid4vci/portal-http-mobile | sort)"
 if [ "$composition_portal_members" != "$expected_composition_portal_members" ]; then
   echo "oxid-composition/mobile-portal feature wiring is not exact" >&2
   exit 1
@@ -431,7 +479,7 @@ if rg -a -q 'OXID_STANDALONE_PORTAL_PROFILE' "$release_binary"; then
   exit 1
 fi
 if rg -a -q \
-  'OXID_PUBLIC_STANDALONE_GENESIS_WALLET|Shared public genesis wallet|publicly known, spendable test authority' \
+  'OXID_PUBLIC_STANDALONE_GENESIS_WALLET|Public genesis wallet capability|publicly spendable test authority|Oxid Demo Wallet' \
   "$release_binary"; then
   echo "normal release binary contains the public standalone genesis warning or marker" >&2
   exit 1
