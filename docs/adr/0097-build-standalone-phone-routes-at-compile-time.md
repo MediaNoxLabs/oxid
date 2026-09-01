@@ -5,8 +5,8 @@
 - Source: Blueprint §§3–8, 12–13, 16–18, 21; reviewed prototype route profiles; issues #2/#32/#89
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`
 - Implementation state: Opt-in localhost simulator/desktop and Android
-  physical-device tailnet profiles implemented; production and native-custody
-  composition unchanged
+  physical-device tailnet profiles implemented with public standalone-genesis
+  development custody; production and native-custody composition unchanged
 
 ## Context
 
@@ -56,8 +56,17 @@ Keep network identity separate from transport. The profile still selects the
 single `undeployed` Midnight network. A public fixture address validates the
 transport at composition time only; after profile activation, the existing
 account derivation use case binds the profile's protected derived address and
-the live adapter discards any cached placeholder state. No fixture key, seed,
-or funded account is added.
+the live adapter discards any cached placeholder state.
+
+The explicit live development composition supplies the undeployed chain's
+public scalar-one genesis root exactly once when development custody initializes
+its first profile. This is intentionally public test authority, not protected
+wallet material: anyone can derive it and spend funds assigned to it. Every
+later nonce, key reference, and additional profile root uses OS randomness.
+The fixture is absent from normal and native-custody composition, never enters
+UI/application DTOs or logs, and carries a release-exclusion marker. This
+exception exists only so the live Wallet can synchronize the chain's known
+NIGHT, shielded, and DUST state through the ordinary protected ports.
 
 Package a repository-owned Docker Compose harness using the exact reviewed
 prototype image versions for node, indexer, and proof server. Containers bind
@@ -91,6 +100,9 @@ standard output before the actual `-list-avds` result.
 
 - A physical phone can use the same typed standalone adapters without a
   hard-coded personal address or a generic native/JavaScript command channel.
+- The first profile initialized by a live development profile is deliberately
+  the shared public genesis wallet. It is suitable only for local demos and
+  tests; it provides no privacy, ownership, or safe-funding guarantee.
 - iOS Simulator, Android emulator, and native desktop development can use the
   real loopback stack without conflating it with deterministic simulation. Only
   transport differs between localhost and tailnet; network identity, account
@@ -101,13 +113,15 @@ standard output before the actual `-list-avds` result.
   local/tailnet profile requires a rebuild; production discovery remains open
   work. This is deliberately stricter than the prototype's runtime network
   picker.
-- The initial public address is not evidence of ownership, funding, sync, or
-  settlement. Only the profile-derived binding can become wallet state.
+- The initial public address is not evidence of balance freshness or
+  settlement. Only profile-derived binding plus independent live NIGHT, DUST,
+  and shielded synchronization can become wallet display state.
 - Every persistent live/standalone constructor gives the Midnight adapter the
   exact same public profile repository used by the application services. The
   selected network and non-secret derivation coordinates therefore survive a
   process restart; process-local development custody still returns honestly as
-  uninitialized and withholds the former account addresses after that restart.
+  uninitialized and withholds the former account addresses until the public
+  development fixture is explicitly initialized again.
 - The prototype's reviewed
   `wallet-core/queries/midnight-indexer/unshielded_transactions.subscription.graphql`
   does not request transaction fees, so its working sync flow does not exercise

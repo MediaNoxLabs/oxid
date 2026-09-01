@@ -38,9 +38,13 @@ use oxid_wallet_application::{
 };
 use zeroize::Zeroizing;
 
-use super::{ApplicationServices, wiring::compose_with_adapters};
+use super::{
+    ApplicationServices, standalone_genesis::StandaloneDevelopmentRandom,
+    wiring::compose_with_adapters,
+};
 
 const ENABLE_ENV: &str = "OXID_ENABLE_LIVE_STANDALONE_FUNDING";
+const PUBLIC_BALANCE_ENABLE_ENV: &str = "OXID_ENABLE_LIVE_STANDALONE_BALANCES";
 const FUNDER_SEED_ENV: &str = "OXID_STANDALONE_FUNDER_SEED_HEX";
 const PREPROD_ENABLE_ENV: &str = "OXID_ENABLE_LIVE_PREPROD_E2E";
 const PREPROD_MASTER_SEED_ENV: &str = "OXID_PREPROD_MASTER_SEED_HEX";
@@ -78,6 +82,10 @@ const MAX_PREPROD_INSUFFICIENT_DUST_RETRIES: u8 = 8;
 const MAX_PREPROD_CASE_INDEX: u32 = (WalletHdPathComponent::MAX_INDEX - 1) / 2;
 const TRANSFER_ATOMIC_UNITS: u128 = 5_000_000;
 const SHIELDED_TRANSFER_ATOMIC_UNITS: u128 = 1_000_000;
+const PUBLIC_GENESIS_NIGHT_ATOMIC_UNITS: u128 = 250_000_000_000_000;
+const PUBLIC_GENESIS_DUST_ATOMIC_UNITS: u128 = 1_250_000_000_000_000_000_000_000;
+const PUBLIC_GENESIS_SHIELDED_NIGHT_ATOMIC_UNITS: u128 = 250_000_000_000_000;
+const PUBLIC_GENESIS_SHIELDED_NOTE_COUNT: u64 = 7;
 const NATIVE_SHIELDED_TOKEN_TYPE: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -1118,6 +1126,55 @@ fn preprod_transfer_policy_is_positive_bounded_and_amount_observed() {
     assert_eq!(
         preprod_shielded_transfer_amount(u128::MAX),
         Some(u128::MAX / 2)
+    );
+}
+
+/// Synchronizes all three independent balance projections for the public
+/// undeployed genesis wallet without accepting or emitting private input.
+///
+/// This is ignored because it requires the repository-owned standalone stack.
+/// Restart that stack before the check if another explicitly authorized test
+/// has spent the shared public fixture.
+#[test]
+#[ignore = "requires explicit live standalone stack"]
+fn public_standalone_genesis_balances_are_exact() {
+    assert_eq!(
+        std::env::var(PUBLIC_BALANCE_ENABLE_ENV).ok().as_deref(),
+        Some("1"),
+        "live standalone balance proof requires explicit opt-in"
+    );
+    let config = standalone_config();
+    let profiles = Arc::new(InMemoryWalletProfileRepository::new());
+    let security = Arc::new(DevelopmentWalletSecurity::new(
+        Arc::new(SystemClock),
+        Arc::new(StandaloneDevelopmentRandom::for_network("undeployed")),
+    ));
+    let application = compose_live(config, profiles, security, None, None, None, None);
+    let (profile_id, _, _) = initialize_account(
+        &application,
+        "Public standalone balance proof",
+        "undeployed",
+        0,
+    );
+
+    assert_eq!(
+        live_night_balance(&application, &profile_id),
+        PUBLIC_GENESIS_NIGHT_ATOMIC_UNITS
+    );
+    let dust = synchronize_dust(&application, &profile_id);
+    assert_eq!(dust.state, "synced");
+    assert_eq!(dust.failure, None);
+    assert_eq!(dust.current_cursor, dust.target_cursor);
+    assert_eq!(dust_balance(&dust), PUBLIC_GENESIS_DUST_ATOMIC_UNITS);
+    let shielded = synchronize_shielded(&application, &profile_id);
+    assert_complete_shielded_snapshot(&shielded);
+    assert_eq!(
+        shielded_balance(&shielded, NATIVE_SHIELDED_TOKEN_TYPE),
+        PUBLIC_GENESIS_SHIELDED_NIGHT_ATOMIC_UNITS
+    );
+    assert_eq!(
+        shielded.owned_note_count,
+        Some(PUBLIC_GENESIS_SHIELDED_NOTE_COUNT)
     );
 }
 

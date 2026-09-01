@@ -389,7 +389,7 @@ if rg -a -q \
   exit 1
 fi
 if rg -a -q \
-  'OXID_STANDALONE_LOCAL_PROFILE|ws://127\.0\.0\.1:8088/api/v4/graphql/ws|http://127\.0\.0\.1:8088/api/v4/graphql|ws://127\.0\.0\.1:9944|http://127\.0\.0\.1:6300' \
+  'OXID_STANDALONE_LOCAL_PROFILE|OXID_PUBLIC_STANDALONE_GENESIS_WALLET|ws://127\.0\.0\.1:8088/api/v4/graphql/ws|http://127\.0\.0\.1:8088/api/v4/graphql|ws://127\.0\.0\.1:9944|http://127\.0\.0\.1:6300' \
   "$release_binary"; then
   echo "normal release binary contains the standalone local profile or its routes" >&2
   exit 1

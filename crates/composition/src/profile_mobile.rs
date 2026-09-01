@@ -34,12 +34,20 @@ use super::passport_vault::{
     node_anchored_passport_vault_state_source, with_passport_vault_state_source,
 };
 #[cfg(not(target_arch = "wasm32"))]
-use super::profile_headless::compose_headless_standalone;
+use super::profile_headless::compose_public_genesis_standalone;
 use super::services::ApplicationServices;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "mobile-portal",
+    any(target_os = "ios", target_os = "android")
+))]
+use super::standalone_genesis::StandaloneDevelopmentRandom;
 use super::wiring::compose_with_adapters_and_credential_profile;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use super::wiring::compose_with_adapters_and_presentation;
-use oxid_adapter_platform_system::{OsRandom, SystemClock};
+#[cfg(not(target_arch = "wasm32"))]
+use oxid_adapter_platform_system::OsRandom;
+use oxid_adapter_platform_system::SystemClock;
 use oxid_adapter_storage_dev::DevelopmentWalletSecurity;
 use oxid_adapter_storage_json::JsonWalletProfileRepository;
 #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -172,7 +180,7 @@ pub fn compose_mobile_development_standalone_from_routes(
         node_websocket_url,
         proof_server_url,
     )?;
-    Ok(compose_headless_standalone(config))
+    Ok(compose_public_genesis_standalone(config))
 }
 
 /// Wires the exact manifest-authenticated Portal identity profile into the
@@ -203,7 +211,7 @@ pub fn compose_mobile_development_portal_standalone_from_routes(
     let portal =
         PortalIdentityConfiguration::from_bytes(deployment_manifest, deployment_manifest_sha256)
             .map_err(|_| HeadlessCompositionError::InvalidPortalConfiguration)?;
-    Ok(compose_development_portal_from_config(
+    Ok(compose_mobile_development_portal_from_config(
         config,
         portal,
         CredentialPresentationComposition::Standalone,
@@ -237,7 +245,7 @@ pub fn compose_mobile_development_portal_tailnet_from_routes(
         public_origin,
     )
     .map_err(|_| HeadlessCompositionError::InvalidPortalConfiguration)?;
-    Ok(compose_development_portal_from_config(
+    Ok(compose_mobile_development_portal_from_config(
         config,
         portal,
         CredentialPresentationComposition::Standalone,
@@ -259,9 +267,51 @@ pub(super) fn compose_development_portal_from_config(
     portal: PortalIdentityConfiguration,
     credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices {
+    compose_development_portal_with_random(
+        config,
+        portal,
+        credential_presentation,
+        Arc::new(OsRandom),
+    )
+}
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "mobile-portal",
+    any(target_os = "ios", target_os = "android")
+))]
+fn compose_mobile_development_portal_from_config(
+    config: MidnightStandaloneConfig,
+    portal: PortalIdentityConfiguration,
+    credential_presentation: CredentialPresentationComposition,
+) -> ApplicationServices {
+    let random = Arc::new(StandaloneDevelopmentRandom::for_network(
+        config.indexer().network_id().as_str(),
+    ));
+    compose_development_portal_with_random(config, portal, credential_presentation, random)
+}
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        all(not(target_os = "ios"), not(target_os = "android")),
+        all(
+            feature = "mobile-portal",
+            any(target_os = "ios", target_os = "android")
+        )
+    )
+))]
+fn compose_development_portal_with_random<N>(
+    config: MidnightStandaloneConfig,
+    portal: PortalIdentityConfiguration,
+    credential_presentation: CredentialPresentationComposition,
+    random: Arc<N>,
+) -> ApplicationServices
+where
+    N: oxid_platform_ports::RandomPort + 'static,
+{
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
-    let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
     let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
     let midnight = Arc::new(

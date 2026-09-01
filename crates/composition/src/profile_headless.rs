@@ -24,6 +24,8 @@ use super::passport_vault::{
     with_simulated_passport_vault_calls,
 };
 use super::services::ApplicationServices;
+#[cfg(not(target_arch = "wasm32"))]
+use super::standalone_genesis::StandaloneDevelopmentRandom;
 use super::wiring::{
     compose_with_adapters, compose_with_adapters_and_credential_profile,
     compose_with_adapters_and_presentation,
@@ -281,6 +283,30 @@ pub fn compose_headless_standalone(config: MidnightStandaloneConfig) -> Applicat
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
+    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let midnight = Arc::new(
+        protected_standalone_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))
+            .with_profile_association_repository(profiles.clone()),
+    );
+    with_passport_vault_state_source(
+        compose_with_adapters(profiles, security, midnight),
+        passport_vault_state_source,
+    )
+}
+
+/// Wires the explicit compile-time mobile development profile to the public
+/// undeployed genesis wallet. Ordinary runtime-selected headless standalone
+/// composition continues to initialize an OS-random wallet root.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn compose_public_genesis_standalone(
+    config: MidnightStandaloneConfig,
+) -> ApplicationServices {
+    let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
+    let clock = Arc::new(SystemClock);
+    let random = Arc::new(StandaloneDevelopmentRandom::for_network(
+        config.indexer().network_id().as_str(),
+    ));
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
     let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
     let midnight = Arc::new(

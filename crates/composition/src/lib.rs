@@ -32,6 +32,8 @@ mod profile_in_memory;
 mod profile_mobile;
 mod profile_production;
 mod services;
+#[cfg(not(target_arch = "wasm32"))]
+mod standalone_genesis;
 mod wiring;
 
 pub use environment::*;

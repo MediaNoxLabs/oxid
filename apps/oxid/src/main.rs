@@ -171,7 +171,9 @@ fn main() {
     ))]
     let application = {
         const OXID_STANDALONE_PORTAL_PROFILE: &str = "OXID_STANDALONE_PORTAL_PROFILE";
+        const OXID_PUBLIC_STANDALONE_GENESIS_WALLET: &str = "OXID_PUBLIC_STANDALONE_GENESIS_WALLET";
         let _ = OXID_STANDALONE_PORTAL_PROFILE;
+        let _ = OXID_PUBLIC_STANDALONE_GENESIS_WALLET;
         oxid_composition::compose_mobile_development_portal_standalone_from_routes(
             "ws://127.0.0.1:8088/api/v4/graphql/ws",
             "http://127.0.0.1:8088/api/v4/graphql",
@@ -193,16 +195,20 @@ fn main() {
         target_os = "android",
         not(target_arch = "wasm32")
     ))]
-    let application = oxid_composition::compose_mobile_development_portal_tailnet_from_routes(
-        env!("OXID_BUILD_MIDNIGHT_INDEXER_WS_URL"),
-        env!("OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL"),
-        env!("OXID_BUILD_MIDNIGHT_NODE_WS_URL"),
-        env!("OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL"),
-        include_bytes!(concat!(env!("OUT_DIR"), "/portal-deployment.json")),
-        env!("OXID_EMBEDDED_PORTAL_DEPLOYMENT_SHA256"),
-        env!("OXID_EMBEDDED_PORTAL_PUBLIC_ORIGIN"),
-    )
-    .unwrap_or_else(|error| startup_failure(error));
+    let application = {
+        const OXID_PUBLIC_STANDALONE_GENESIS_WALLET: &str = "OXID_PUBLIC_STANDALONE_GENESIS_WALLET";
+        let _ = OXID_PUBLIC_STANDALONE_GENESIS_WALLET;
+        oxid_composition::compose_mobile_development_portal_tailnet_from_routes(
+            env!("OXID_BUILD_MIDNIGHT_INDEXER_WS_URL"),
+            env!("OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL"),
+            env!("OXID_BUILD_MIDNIGHT_NODE_WS_URL"),
+            env!("OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL"),
+            include_bytes!(concat!(env!("OUT_DIR"), "/portal-deployment.json")),
+            env!("OXID_EMBEDDED_PORTAL_DEPLOYMENT_SHA256"),
+            env!("OXID_EMBEDDED_PORTAL_PUBLIC_ORIGIN"),
+        )
+        .unwrap_or_else(|error| startup_failure(error))
+    };
 
     #[cfg(feature = "standalone-native-proving-artifacts")]
     let application =
@@ -231,7 +237,9 @@ fn main() {
     ))]
     let application = {
         const OXID_STANDALONE_TAILNET_PROFILE: &str = "OXID_STANDALONE_TAILNET_PROFILE";
+        const OXID_PUBLIC_STANDALONE_GENESIS_WALLET: &str = "OXID_PUBLIC_STANDALONE_GENESIS_WALLET";
         let _ = OXID_STANDALONE_TAILNET_PROFILE;
+        let _ = OXID_PUBLIC_STANDALONE_GENESIS_WALLET;
         oxid_composition::compose_mobile_development_standalone_from_routes(
             env!("OXID_BUILD_MIDNIGHT_INDEXER_WS_URL"),
             env!("OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL"),
@@ -250,7 +258,9 @@ fn main() {
     ))]
     let application = {
         const OXID_STANDALONE_LOCAL_PROFILE: &str = "OXID_STANDALONE_LOCAL_PROFILE";
+        const OXID_PUBLIC_STANDALONE_GENESIS_WALLET: &str = "OXID_PUBLIC_STANDALONE_GENESIS_WALLET";
         let _ = OXID_STANDALONE_LOCAL_PROFILE;
+        let _ = OXID_PUBLIC_STANDALONE_GENESIS_WALLET;
         oxid_composition::compose_mobile_development_standalone_from_routes(
             "ws://127.0.0.1:8088/api/v4/graphql/ws",
             "http://127.0.0.1:8088/api/v4/graphql",

@@ -2257,7 +2257,13 @@ to silence the shell probe.
   compatibility choice unless a pinned image/schema upgrade is made atomically.
   Development custody remains process-local: after process death, retain the
   public association but report uninitialized protection and withhold the
-  former addresses. This private harness is not verified public App Link or
+  former addresses until initialization. The live local/tailnet development
+  composition then consumes the public scalar-one standalone genesis root once
+  and delegates every later random value to the OS. The root is shared public
+  test authority, never private wallet material, and must remain absent from
+  normal/native-custody artifacts, UI DTOs, logs, and diagnostics. Balance
+  display still requires independent live NIGHT, DUST, and shielded sync. This
+  private harness is not verified public App Link or
   production-discovery evidence. Both live profiles share one undeployed chain
   identity, the same typed adapters, and the same durable public
   profile/account binding; only transport differs. Deterministic

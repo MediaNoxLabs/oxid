@@ -130,6 +130,8 @@ const CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS: &str =
     "Credential issuance terminal error: protocol unavailable";
 const CREDENTIAL_ISSUANCE_PROTOCOL_ERROR_STATUS: &str =
     "Credential issuance protocol error: protocol unavailable";
+const NATIVE_SHIELDED_NIGHT_TOKEN_TYPE: &str =
+    "0000000000000000000000000000000000000000000000000000000000000000";
 #[cfg(not(target_arch = "wasm32"))]
 const UI_BLOCKING_TASK_STACK_BYTES: usize = 8 * 1024 * 1024;
 
@@ -5686,6 +5688,7 @@ fn AccountSyncCard(
             let owned_notes = shielded
                 .owned_note_count
                 .map_or_else(|| "—".to_owned(), |count| count.to_string());
+            let shielded_night = home_shielded_value(&shielded);
             let retained_dust = dust.clone();
             let retained_shielded = shielded.clone();
             let action_services = services.clone();
@@ -5711,15 +5714,16 @@ fn AccountSyncCard(
                         }
                         div { class: "account-sync-card__row",
                             div {
-                                strong { class: "privacy-value", "{owned_notes} shielded notes" }
+                                strong { class: "privacy-value", "{shielded_night}" }
+                                small { "Shielded NIGHT · {owned_notes} protected notes" }
                                 small { "{shielded_sync_note(&shielded)}" }
                             }
                             span { class: "{dust_status_pill_class(&shielded.state)}", "{ui::sync_state(&shielded.state)}" }
                         }
                     }
-                    if !shielded.balances.is_empty() {
+                    if shielded.balances.iter().any(|balance| balance.token_type_hex != NATIVE_SHIELDED_NIGHT_TOKEN_TYPE) {
                         div { class: "activity-list", aria_label: "Shielded token balances",
-                            for balance in shielded.balances.iter() {
+                            for balance in shielded.balances.iter().filter(|balance| balance.token_type_hex != NATIVE_SHIELDED_NIGHT_TOKEN_TYPE) {
                                 div { class: "activity-row", key: "{balance.token_type_hex}",
                                     span { class: "activity-row__mark", aria_hidden: "true", "◈" }
                                     div {
@@ -7904,12 +7908,21 @@ fn newest_credential(credentials: &[CredentialView]) -> Option<&CredentialView> 
 }
 
 fn home_shielded_value(status: &WalletShieldedSyncView) -> String {
-    status
+    if let Some(balance) = status
         .balances
         .iter()
-        .find(|balance| balance.token_type_hex == "0".repeat(64))
-        .map(|balance| ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units))
-        .unwrap_or_else(|| ui::sync_state(&status.state).to_owned())
+        .find(|balance| balance.token_type_hex == NATIVE_SHIELDED_NIGHT_TOKEN_TYPE)
+    {
+        return ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units);
+    }
+    if matches!(
+        status.state.as_str(),
+        "synced" | "cached" | "cancelled" | "stalled"
+    ) && status.owned_note_count.is_some()
+    {
+        return ui::format_shielded_amount(NATIVE_SHIELDED_NIGHT_TOKEN_TYPE, "0");
+    }
+    ui::sync_state(&status.state).to_owned()
 }
 
 fn home_shielded_detail(status: &WalletShieldedSyncView) -> String {
@@ -12245,6 +12258,25 @@ mod tests {
         assert!(
             shielded_sync_note(&shielded_status("stalled", Some(1), Some(2)))
                 .contains("last consistent checkpoint")
+        );
+    }
+
+    #[test]
+    fn shielded_night_balance_distinguishes_zero_from_unavailable() {
+        let synced_zero = shielded_status("synced", Some(2), Some(2));
+        assert_eq!(home_shielded_value(&synced_zero), "0 NIGHT");
+
+        let mut funded = shielded_status("synced", Some(2), Some(2));
+        funded.balances = vec![oxid_wallet_application::WalletShieldedTokenBalanceView {
+            token_type_hex: NATIVE_SHIELDED_NIGHT_TOKEN_TYPE.to_owned(),
+            atomic_units: "1500000".to_owned(),
+        }];
+        assert_eq!(home_shielded_value(&funded), "1.5 NIGHT");
+
+        let unavailable = shielded_status("unavailable", None, None);
+        assert_eq!(
+            home_shielded_value(&unavailable),
+            ui::sync_state("unavailable")
         );
     }
 
