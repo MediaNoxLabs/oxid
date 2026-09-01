@@ -56,6 +56,7 @@ run_repository() {
   node --test scripts/e2e/portal-tailnet-browser-e2e.test.mjs
   node --test tests/repository/docs-link-contract.test.mjs
   node --test tests/repository/target-plan-contract.test.mjs
+  node --test tests/repository/coverage-contract.test.mjs
   node --test tests/repository/worktree-lifecycle-contract.test.mjs
   node --test tests/repository/managed-child-process-contract.test.mjs
 }
@@ -160,14 +161,8 @@ run_headless_integration() {
 }
 
 run_coverage() {
-  require_command cargo-llvm-cov
-  cargo llvm-cov \
-    --workspace \
-    --exclude oxid-ui-dioxus \
-    --exclude oxid-app \
-    --exclude oxid-headless \
-    --summary-only \
-    --fail-under-lines 80
+  require_command node
+  node scripts/coverage/run.mjs --base "${OXID_COVERAGE_BASE:-}"
 }
 
 require_command() {
