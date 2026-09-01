@@ -388,8 +388,10 @@ if rg -a -q \
   echo "normal release binary contains the ARM64 desktop test profile" >&2
   exit 1
 fi
+plaintext_websocket_scheme='ws:'//
+standalone_local_release_patterns="OXID_STANDALONE_LOCAL_PROFILE|OXID_PUBLIC_STANDALONE_GENESIS_WALLET|${plaintext_websocket_scheme}127\\.0\\.0\\.1:8088/api/v4/graphql/ws|http://127\\.0\\.0\\.1:8088/api/v4/graphql|${plaintext_websocket_scheme}127\\.0\\.0\\.1:9944|http://127\\.0\\.0\\.1:6300"
 if rg -a -q \
-  'OXID_STANDALONE_LOCAL_PROFILE|OXID_PUBLIC_STANDALONE_GENESIS_WALLET|ws://127\.0\.0\.1:8088/api/v4/graphql/ws|http://127\.0\.0\.1:8088/api/v4/graphql|ws://127\.0\.0\.1:9944|http://127\.0\.0\.1:6300' \
+  "$standalone_local_release_patterns" \
   "$release_binary"; then
   echo "normal release binary contains the standalone local profile or its routes" >&2
   exit 1
