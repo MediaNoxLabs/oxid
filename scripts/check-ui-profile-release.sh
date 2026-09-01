@@ -238,7 +238,7 @@ for runtime_authority_marker in \
   'fun oxidVirtualDeviceProfileJson()' \
   'hardware == "ranchu"' \
   'hardware == "goldfish"'; do
-  rg -qF "$runtime_authority_marker" apps/oxid/src/main.rs crates/composition/src/lib.rs \
+  rg -qF "$runtime_authority_marker" apps/oxid/src/main.rs crates/composition/src \
     crates/adapters/mobile-native-plugin/src/lib.rs \
     apps/oxid/android/MainActivity.kt \
     crates/adapters/mobile-native-plugin/android/src/main/kotlin/io/medianox/oxid/mobile/OxidMobilePlugin.kt || {

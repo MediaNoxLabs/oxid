@@ -38,7 +38,7 @@ use oxid_wallet_application::{
 };
 use zeroize::Zeroizing;
 
-use super::{ApplicationServices, compose_with_adapters};
+use super::{ApplicationServices, wiring::compose_with_adapters};
 
 const ENABLE_ENV: &str = "OXID_ENABLE_LIVE_STANDALONE_FUNDING";
 const FUNDER_SEED_ENV: &str = "OXID_STANDALONE_FUNDER_SEED_HEX";
