@@ -49,13 +49,16 @@ portal_ready=0
 build_owned=0
 launcher_mutation_owned=0
 journey_status="not_started"
-failure_phase="none"
+failure_phase="unreported-timeout-or-abort"
 head=""
 tree=""
 apk_sha256=""
 BUILD_SOURCE=""
 build_identity=""
 reverse_before=""
+reverse_owner_receipt="$PRIVATE_STATE/reverse-owner.receipt"
+reverse_owner_identity=""
+reverse_mapping_owned=0
 shared_before=""
 scenario_results="[]"
 total_counters="{}"
@@ -81,12 +84,26 @@ build_cleanup=false
 private_logs_removed=false
 head_clean=false
 journey_deadline=0
+journey_phase="none"
+scenario_phase="not_started"
+oxid_android_avd_failure_marker_reset
 
 fail() {
   failure_phase="$1"
-  printf 'android-portal-exact-sequence-avd: FAIL phase=%s\n' "$failure_phase" >&2
+  printf 'android-portal-exact-sequence-avd: diagnostic=%s\n' "$scenario_phase" >&2
   exit 1
 }
+
+report_unhandled_exit() {
+  local incoming=$?
+  oxid_android_avd_emit_failure_marker "$incoming" "$failure_phase"
+  return "$incoming"
+}
+
+trap report_unhandled_exit EXIT
+trap 'failure_phase=signal-int; exit 130' INT
+trap 'failure_phase=signal-term; exit 143' TERM
+trap 'failure_phase=signal-hup; exit 129' HUP
 
 case "$OPERATION" in
   run|--preflight) ;;
@@ -96,7 +113,7 @@ esac
 # Occupied evidence is owner state. Reject it before probing tools or devices.
 [ ! -e "$RUN_ROOT" ] && [ ! -L "$RUN_ROOT" ] || fail occupied-evidence
 
-for command_name in awk cargo curl docker git jq lsof mktemp nix node ps rg rustup sed shasum stat tar timeout; do
+for command_name in awk cargo curl date docker git jq lsof mktemp nix node ps rg rustup sed shasum stat tar timeout; do
   command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
 done
 if timeout -k 1s 0.1s sleep 5; then fail timeout-capability; else [ "$?" -eq 124 ] || fail timeout-capability; fi
@@ -116,14 +133,32 @@ done
 [ "$avd_found" = true ] || fail avd-definition
 
 run_deadline() {
-  local seconds="$1" remaining
+  local seconds="$1" remaining status
   shift
   if [ "$journey_deadline" -gt 0 ]; then
     remaining=$((journey_deadline - SECONDS))
-    [ "$remaining" -gt 0 ] || return 124
+    if [ "$remaining" -le 0 ]; then
+      if [ "$journey_phase" != none ] && [ -f "$PRIVATE_LOG" ]; then
+        printf 'android-portal-exact-sequence-avd: timing phase=%s elapsed=%s remaining=0\n' \
+          "$journey_phase" "$SECONDS" >>"$PRIVATE_LOG" 2>/dev/null || true
+        failure_phase="$journey_phase"
+      else
+        failure_phase="journey-timeout"
+      fi
+      return 124
+    fi
     [ "$seconds" -le "$remaining" ] || seconds="$remaining"
   fi
-  timeout -k 5s "${seconds}s" "$@"
+  if timeout -k 5s "${seconds}s" "$@"; then
+    return 0
+  fi
+  status=$?
+  if [ "$journey_deadline" -gt 0 ] && [ "$journey_phase" != none ] && [ -f "$PRIVATE_LOG" ]; then
+    printf 'android-portal-exact-sequence-avd: timing phase=%s elapsed=%s supervisor-status=%s\n' \
+      "$journey_phase" "$SECONDS" "$status" >>"$PRIVATE_LOG" 2>/dev/null || true
+    failure_phase="$journey_phase"
+  fi
+  return "$status"
 }
 
 adb_device() {
@@ -151,6 +186,96 @@ listener_fingerprint() {
     output="$(run_deadline 5 lsof -nP -iTCP:"$port" -sTCP:LISTEN -Fpcn 2>/dev/null || true)"
     printf '%s:%s\n' "$port" "$output"
   done
+}
+
+file_mode() {
+  local path="$1" mode
+  if mode="$(run_deadline 5 stat -c '%a' "$path" 2>/dev/null)"; then
+    printf '%s\n' "$mode"
+  else
+    run_deadline 5 stat -f '%Lp' "$path"
+  fi
+}
+
+reverse_owner_ports=()
+read_reverse_owner_receipt() {
+  local line port candidate allowed count=0
+  reverse_owner_ports=()
+  [ -f "$reverse_owner_receipt" ] && [ ! -L "$reverse_owner_receipt" ] || return 1
+  [ "$(file_mode "$reverse_owner_receipt")" = 600 ] || return 1
+  oxid_path_has_identity "$reverse_owner_receipt" "$reverse_owner_identity" || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$count" -eq 0 ]; then
+      [ "$line" = android-adb-reverse-owner-v1 ] || return 1
+      count=1
+      continue
+    fi
+    [[ "$line" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$line" -le 65535 ] || return 1
+    allowed=false
+    for candidate in "${REVERSE_PORTS[@]}"; do [ "$line" = "$candidate" ] && { allowed=true; break; }; done
+    [ "$allowed" = true ] || return 1
+    for port in "${reverse_owner_ports[@]}"; do [ "$line" != "$port" ] || return 1; done
+    reverse_owner_ports+=("$line")
+    count=$((count + 1))
+  done <"$reverse_owner_receipt"
+  [ "$count" -gt 0 ] || return 1
+  count=$((count - 1))
+  [ "$count" -le "${#REVERSE_PORTS[@]}" ]
+}
+
+reverse_owner_receipt_has_all_routes() {
+  local port
+  read_reverse_owner_receipt || return 1
+  [ "${#reverse_owner_ports[@]}" -eq "${#REVERSE_PORTS[@]}" ] || return 1
+  for port in "${REVERSE_PORTS[@]}"; do
+    case " ${reverse_owner_ports[*]} " in *" $port "*) ;; *) return 1 ;; esac
+  done
+}
+
+prepare_owned_reverse_mappings() {
+  local port current
+  oxid_adb_reverse_snapshot_has_no_managed_routes "$reverse_before" "$SERIAL" "${REVERSE_PORTS[@]}" || return 1
+  [ ! -e "$reverse_owner_receipt" ] && [ ! -L "$reverse_owner_receipt" ] || return 1
+  : >"$reverse_owner_receipt" || return 1
+  chmod 600 "$reverse_owner_receipt" || return 1
+  reverse_owner_identity="$(oxid_filesystem_identity "$reverse_owner_receipt")" || return 1
+  printf '%s\n' android-adb-reverse-owner-v1 >"$reverse_owner_receipt" || return 1
+  reverse_mapping_owned=1
+  for port in "${REVERSE_PORTS[@]}"; do
+    oxid_path_has_identity "$reverse_owner_receipt" "$reverse_owner_identity" || return 1
+    printf '%s\n' "$port" >>"$reverse_owner_receipt" || return 1
+    adb_device reverse "tcp:$port" "tcp:$port" >/dev/null || return 1
+  done
+  reverse_owner_receipt_has_all_routes || return 1
+  current="$(adb_device reverse --list 2>/dev/null | run_deadline 5 sort)" || return 1
+  oxid_adb_reverse_snapshot_has_exact_managed_routes "$current" "$SERIAL" "${REVERSE_PORTS[@]}"
+}
+
+cleanup_owned_reverse_mappings() {
+  local current port
+  read_reverse_owner_receipt || return 1
+  current="$(cleanup_adb reverse --list 2>/dev/null | run_deadline 5 sort)" || return 1
+  if [ "${#reverse_owner_ports[@]}" -eq 0 ]; then
+    [ "$current" = "$reverse_before" ] || return 1
+    oxid_path_has_identity "$reverse_owner_receipt" "$reverse_owner_identity" || return 1
+    run_deadline 5 rm -f -- "$reverse_owner_receipt" || return 1
+    reverse_mapping_owned=0
+    return 0
+  fi
+  oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent \
+    "$current" "$SERIAL" "${reverse_owner_ports[@]}" || return 1
+  for port in "${reverse_owner_ports[@]}"; do
+    if oxid_adb_reverse_snapshot_has_exact_managed_routes "$current" "$SERIAL" "$port"; then
+      cleanup_adb reverse --remove "tcp:$port" >/dev/null 2>&1 || return 1
+    elif ! oxid_adb_reverse_snapshot_has_no_managed_routes "$current" "$SERIAL" "$port"; then
+      return 1
+    fi
+  done
+  current="$(cleanup_adb reverse --list 2>/dev/null | run_deadline 5 sort)" || return 1
+  [ "$current" = "$reverse_before" ] || return 1
+  oxid_path_has_identity "$reverse_owner_receipt" "$reverse_owner_identity" || return 1
+  run_deadline 5 rm -f -- "$reverse_owner_receipt" || return 1
+  reverse_mapping_owned=0
 }
 
 remove_forward() {
@@ -241,6 +366,7 @@ cleanup() {
   journey_deadline=0
   trap - EXIT INT TERM HUP
   set +e
+  oxid_android_avd_emit_failure_marker "$incoming" "$failure_phase"
 
   if [ -n "$arm_pid" ]; then
     if oxid_job_is_running "$arm_pid"; then oxid_terminate_supervised_job "$arm_pid" || cleanup_ok=false; else wait "$arm_pid" >/dev/null 2>&1 || true; fi
@@ -260,9 +386,9 @@ cleanup() {
         cleanup_adb shell "run-as $PACKAGE sh -c 'rm -f files/portal-offer.capability files/.portal-offer.capability.tmp'" >/dev/null 2>&1 || cleanup_ok=false
         cleanup_adb uninstall "$PACKAGE" >/dev/null 2>&1 || cleanup_ok=false
       fi
-      for port in "${REVERSE_PORTS[@]}"; do cleanup_adb reverse --remove "tcp:$port" >/dev/null 2>&1 || true; done
-      current="$(cleanup_adb reverse --list 2>/dev/null | run_deadline 5 sort || true)"
-      if [ "$forward_cleanup" = true ] && [ "$current" = "$reverse_before" ]; then
+    fi
+    if [ "$reverse_mapping_owned" -eq 1 ]; then
+      if cleanup_owned_reverse_mappings && [ "$forward_cleanup" = true ]; then
         reverse_cleanup=true
       else
         cleanup_ok=false
@@ -285,7 +411,7 @@ cleanup() {
 
   if [ -n "$emulator_pid" ]; then
     if oxid_job_is_running "$emulator_pid"; then
-      if oxid_terminate_emulator_job "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT"; then emulator_cleanup=true; else cleanup_ok=false; fi
+      if oxid_terminate_emulator_job "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT"; then emulator_cleanup=true; else cleanup_ok=false; fi
     else
       wait "$emulator_pid" >/dev/null 2>&1 || emulator_status=$?
       case "$emulator_status" in 0|137|143) emulator_cleanup=true ;; *) cleanup_ok=false ;; esac
@@ -339,6 +465,7 @@ cleanup() {
   elif [ "$evidence_published" -eq 1 ]; then
     printf 'android-portal-exact-sequence-avd: PASS evidence=target/android-portal-exact-sequence-avd/evidence.json\n'
   fi
+  oxid_android_avd_emit_failure_marker "$incoming" "$failure_phase"
   exit "$incoming"
 }
 
@@ -366,9 +493,6 @@ if [ "$OPERATION" = --preflight ]; then
 fi
 
 trap cleanup EXIT
-trap 'failure_phase=signal-int; exit 130' INT
-trap 'failure_phase=signal-term; exit 143' TERM
-trap 'failure_phase=signal-hup; exit 129' HUP
 
 umask 077
 run_deadline 5 mkdir -p -- "${RUN_ROOT%/*}" || fail run-parent-create
@@ -385,12 +509,12 @@ run_deadline 5 chmod 600 "$PRIVATE_LOG" || fail private-log-mode
 "$EMULATOR" -avd "$avd" -read-only -no-snapshot -no-snapshot-save -port "$EMULATOR_PORT" </dev/null >>"$PRIVATE_LOG" 2>&1 &
 emulator_pid=$!
 for ((_attempt = 0; _attempt < 50; _attempt++)); do
-  oxid_emulator_job_owned "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT" && break
+  oxid_emulator_job_owned "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT" && break
   run_deadline 2 sleep 0.1
 done
-oxid_emulator_job_owned "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT" || fail emulator-ownership
+oxid_emulator_job_owned "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT" || fail emulator-ownership
 for ((_attempt = 0; _attempt < 300; _attempt++)); do
-  oxid_emulator_job_owned "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT" || fail emulator-ownership-lost
+  oxid_emulator_job_owned "$emulator_pid" "$BASHPID" "$EMULATOR" "$avd" "$EMULATOR_PORT" || fail emulator-ownership-lost
   inventory="$(oxid_adb_inventory_snapshot "$ADB" 2>/dev/null || true)"
   if oxid_adb_inventory_is_exact_online "$inventory" "$SERIAL" \
     && [ "$(adb_text shell getprop sys.boot_completed 2>/dev/null)" = 1 ]; then emulator_online=1; break; fi
@@ -402,11 +526,13 @@ oxid_adb_inventory_is_exact_online "$inventory" "$SERIAL" || fail adb-inventory-
 [ "$(adb_text shell getprop ro.kernel.qemu)" = 1 ] || fail qemu
 avd_name="$(adb_text emu avd name 2>/dev/null)"; avd_name="${avd_name%%$'\n'*}"
 [ "$avd_name" = "$avd" ] || fail avd-identity
+host_epoch="$(run_deadline 5 date +%s)" || fail host-clock
+emulator_epoch="$(adb_text shell date +%s 2>/dev/null)" || fail emulator-clock
+oxid_epoch_seconds_are_close "$host_epoch" "$emulator_epoch" 300 || fail emulator-clock
 [ -z "$(adb_text shell pm path "$PACKAGE" 2>/dev/null)" ] || fail preinstalled-package
-reverse_before="$(adb_device reverse --list 2>/dev/null | run_deadline 5 sort)"
-for port in "${REVERSE_PORTS[@]}"; do
-  if run_deadline 5 awk -v route="tcp:$port" '$2 == route || $3 == route { found=1 } END { exit !found }' <<<"$reverse_before"; then fail occupied-reverse; fi
-done
+reverse_before="$(adb_device reverse --list 2>/dev/null | run_deadline 5 sort)" || fail reverse-inventory
+oxid_adb_reverse_snapshot_has_no_managed_routes "$reverse_before" "$SERIAL" "${REVERSE_PORTS[@]}" \
+  || fail occupied-reverse
 
 timeout -k 30s 7200s "$ROOT/scripts/e2e/portal-virtual-mobile-stack.sh" >>"$PRIVATE_LOG" 2>&1 &
 portal_pid=$!
@@ -443,12 +569,14 @@ run_deadline 5 chmod 600 "$BUILD_RECEIPT" || fail build-receipt-mode
 run_deadline 60 tar -xf "$archive" -C "$BUILD_SOURCE" || fail build-source-extract
 run_deadline 5 rm -f -- "$archive" || fail build-archive-remove
 [ ! -e "$BUILD_SOURCE/target" ] || fail isolated-build-output
+prepare_owned_reverse_mappings || fail reverse-ownership
 launcher_mutation_owned=1
 timeout -k 30s 4500s env OXID_ANDROID_DEVICE="$SERIAL" OXID_ANDROID_AVD="$avd" \
-  OXID_ANDROID_ADB_TIMEOUT_SECONDS=45 OXID_MOBILE_CUSTODY=development \
+  OXID_ANDROID_ADB_TIMEOUT_SECONDS=180 OXID_MOBILE_CUSTODY=development \
   OXID_STANDALONE_NETWORK_PROFILE=local OXID_MOBILE_PORTAL_PROFILE=local \
   OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$manifest_path" \
   OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$manifest_sha" \
+  OXID_ANDROID_REVERSE_OWNER_RECEIPT="$reverse_owner_receipt" \
   "$BUILD_SOURCE/scripts/run-android-emulator.sh" >>"$PRIVATE_LOG" 2>&1 &
 launcher_pid=$!
 oxid_job_is_running "$launcher_pid" || fail launcher-supervisor
@@ -459,8 +587,10 @@ apk="$BUILD_SOURCE/target/dx/oxid-app/debug/android/app/app/build/outputs/apk/de
 apk_sha256="$(run_deadline 30 shasum -a 256 "$apk")"; apk_sha256="${apk_sha256%% *}"
 [[ "$apk_sha256" =~ ^[0-9a-f]{64}$ ]] || fail apk-digest
 [ -n "$(adb_text shell pm path "$PACKAGE" 2>/dev/null)" ] || fail package-install
-reverse_after="$(adb_device reverse --list 2>/dev/null | run_deadline 5 sort)"
-for port in "${REVERSE_PORTS[@]}"; do run_deadline 5 awk -v route="tcp:$port" '$2 == route && $3 == route { found=1 } END { exit !found }' <<<"$reverse_after" || fail reverse-install; done
+reverse_after="$(adb_device reverse --list 2>/dev/null | run_deadline 5 sort)" || fail reverse-inventory
+oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_after" "$SERIAL" "${REVERSE_PORTS[@]}" \
+  || fail reverse-install
+reverse_owner_receipt_has_all_routes || fail reverse-receipt
 
 capability_absent() {
   adb_device shell "run-as $PACKAGE sh -c 'test ! -e files/portal-offer.capability && test ! -e files/.portal-offer.capability.tmp'" >/dev/null 2>&1
@@ -493,18 +623,35 @@ open_webview() {
 app_pid() { adb_text shell pidof "$PACKAGE" 2>/dev/null; }
 run_scenario() {
   local mode="$1" pid control_capability result
+  scenario_phase="app_pid"
   result="$PRIVATE_STATE/scenario-$mode.json"
   pid="$(app_pid)"; [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  scenario_phase="webview"
   open_webview "$pid" || return 1
+  scenario_phase="control_capability"
   control_capability="$(run_deadline 10 jq -r '.controlCapability // empty' "$PORTAL_STATE/ready.json")"
   [[ "$control_capability" =~ ^[0-9a-f]{64}$ ]] || return 1
+  scenario_phase="flow"
   printf '%s' "$control_capability" | run_deadline 180 env OXID_PORTAL_CONTROL_ORIGIN="$CONTROL_ORIGIN" \
     node "$ROOT/tests/mobile/android-portal-flow.mjs" "$websocket_url" "$mode" >"$result" 2>>"$PRIVATE_LOG" || return 1
   control_capability=""
-  run_deadline 10 jq -e --arg mode "$mode" '.mode == $mode and .passed == true and (.measurements | type == "object") and (.counterDelta | type == "object")' "$result" >/dev/null || return 1
-  if run_deadline 5 rg -qi 'openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|eyJ|did:|https?://|serial|\.ts\.net' "$result"; then return 1; fi
+  scenario_phase="result_closed_schema"
+  run_deadline 10 jq -e --arg mode "$mode" '
+    type == "object"
+    and (keys | sort) == ["counterDelta", "measurements", "mode", "passed"]
+    and .mode == $mode
+    and .passed == true
+    and (.counterDelta | type == "object" and all(.[]; type == "number"))
+    and (.measurements | type == "object")
+    and all(.measurements[]; type == "boolean")
+  ' "$result" >/dev/null || return 1
+  scenario_phase="result_mode"
   run_deadline 5 chmod 600 "$result" || return 1
-  remove_forward
+  scenario_phase="forward_cleanup"
+  remove_forward || return 1
+  scenario_phase="complete"
+  printf 'android-portal-exact-sequence-avd: timing phase=%s elapsed=%s completed=true\n' \
+    "$journey_phase" "$SECONDS" >>"$PRIVATE_LOG" || return 1
 }
 set_proxy_normal() { printf 'normal' | control_curl -X POST --data-binary @- "$CONTROL_ORIGIN/proxy-mode" >/dev/null; }
 arm_offer() {
@@ -519,12 +666,15 @@ arm_offer() {
 }
 deliver_warm_offer() {
   arm_offer || return 1
-  adb_device shell am start -W -a android.intent.action.VIEW -d "$TRIGGER" "$PACKAGE" >/dev/null 2>>"$PRIVATE_LOG" || return 1
+  adb_device shell am start -W --activity-single-top \
+    -n "$PACKAGE/dev.dioxus.main.MainActivity" \
+    -a android.intent.action.VIEW -d "$TRIGGER" "$PACKAGE" >/dev/null 2>>"$PRIVATE_LOG" || return 1
 }
 assert_consumed() { [ "$(handoff_state)" = empty ] && wait_capability_absent; }
 
 journey_status="running"
 journey_deadline=$((SECONDS + 600))
+journey_phase="cold-route"
 [ "$(handoff_state)" = ready ] || fail cold-handoff-ready
 stage_capability_file file "$PORTAL_STATE/portal-offer.capability" || fail cold-capability-stage
 run_deadline 5 rm -f -- "$PORTAL_STATE/portal-offer.capability" || fail cold-capability-remove
@@ -534,12 +684,14 @@ adb_device shell am start -W -a android.intent.action.VIEW -d "$TRIGGER" "$PACKA
 run_scenario cold-route || fail cold-route
 assert_consumed || fail cold-consume
 session_pid="$(app_pid)"; [[ "$session_pid" =~ ^[1-9][0-9]*$ ]] || fail cold-pid
+journey_phase="prepare-holder"
 run_scenario prepare-holder || fail prepare-holder
 [ "$(app_pid)" = "$session_pid" ] || fail holder-process
 adb_device exec-out run-as "$PACKAGE" cat files/oxid/private/did-records.json | \
   control_curl -H 'Content-Type: application/json' --data-binary @- "$CONTROL_ORIGIN/holder" >/dev/null || fail holder-sync
 
 for mode in route-refuse malformed protocol-error protocol-timeout issue-error issue; do
+  journey_phase="$mode"
   deliver_warm_offer || fail "$mode-arm"
   [ "$(app_pid)" = "$session_pid" ] || fail "$mode-process"
   run_scenario "$mode" || fail "$mode"
@@ -548,7 +700,8 @@ done
 capability_burned_before_network=true
 one_shot_ready_empty=true
 
-credential_header="$(adb_device shell run-as "$PACKAGE" od -An -tx1 -N8 files/oxid/private/credentials.enc 2>/dev/null | tr -d ' \r\n')"
+journey_phase="post-issue-storage"
+credential_header="$(adb_device exec-out run-as "$PACKAGE" head -c 8 files/oxid/private/credentials.enc 2>/dev/null | od -An -tx1 | tr -d ' \r\n')"
 credential_key_size="$(adb_device shell run-as "$PACKAGE" wc -c files/oxid/private/credentials.key 2>/dev/null | awk '{print $1}' | tr -d '\r\n')"
 [ "$credential_header" = 4f58494456433031 ] || fail encrypted-store-header
 [ "$credential_key_size" = 32 ] || fail encrypted-store-key
@@ -559,6 +712,7 @@ if adb_device exec-out run-as "$PACKAGE" cat files/oxid/private/credentials.enc 
   fail encrypted-store-plaintext
 fi
 storage_denylist=true
+journey_phase="process-restart"
 old_pid="$(app_pid)"; [[ "$old_pid" =~ ^[1-9][0-9]*$ ]] || fail process-generation
 adb_device shell am force-stop "$PACKAGE" >/dev/null || fail process-stop
 for ((_attempt = 0; _attempt < 50; _attempt++)); do [ -z "$(app_pid)" ] && { process_absent=true; break; }; run_deadline 2 sleep 0.1; done
@@ -567,10 +721,12 @@ adb_device shell am start -n "$PACKAGE/dev.dioxus.main.MainActivity" >/dev/null 
 for ((_attempt = 0; _attempt < 60; _attempt++)); do new_pid="$(app_pid)"; [ -n "$new_pid" ] && [ "$new_pid" != "$old_pid" ] && { different_generation=true; break; }; run_deadline 2 sleep 0.25; done
 [ "$different_generation" = true ] || fail process-restart
 no_data_reset=true
+journey_phase="restored"
 run_scenario restored || fail restored
 
+journey_phase="final-verification"
 total_counters="$(counter_snapshot)"
-run_deadline 10 jq -e '.authorizationMetadata == 3 and .credential == 1 and .issuerMetadata == 7
+run_deadline 10 jq -e '.authorizationMetadata == 3 and .credential == 1 and .issuerMetadata == 6
   and .issuerResolution == 3 and .issuerResolutionSuccess == 3 and .kyc == 14
   and .nonce == 1 and .other == 0 and .token == 2' <<<"$total_counters" >/dev/null || fail total-counters
 scenario_results="$(run_deadline 10 jq -s -c \

@@ -66,6 +66,10 @@ portal-virtual-mobile-stack:
 portal-virtual-mobile-stack-contract:
     ./scripts/e2e/portal-virtual-mobile-stack.sh --contract-test
 
+# Verify pinned Portal image tags agree with the checked-out image archives.
+portal-consumer-lifecycle-contract:
+    ./scripts/e2e/portal-consumer-lifecycle.test.sh
+
 # Serve one externally prepared offer to the isolated virtual-mobile loopback endpoint.
 portal-virtual-mobile-offer-harness:
     node ./scripts/e2e/portal-virtual-mobile-offer-harness.mjs
@@ -79,13 +83,37 @@ portal-tailnet-origin-contract:
     cargo test -p oxid-adapter-identity-ingress --features tailnet-test-offer-trigger tailnet_offer_profile_accepts_only_shared_contract_origins
     node --test ./scripts/e2e/tailnet-origin-policy.test.mjs
 
+# Prove the Tailnet KYC mount preserves the exact upstream Smocker request path.
+portal-tailnet-route-contract:
+    node --test ./scripts/e2e/tailnet-mock-route.test.mjs
+
+# Prove the pinned Portal browser journey stays on one temporary Tailnet HTTPS origin.
+portal-tailnet-browser-e2e:
+    ./scripts/e2e/portal-tailnet-browser-e2e.sh
+
 # Verify physical Portal evidence is derived from exact measured results.
 portal-android-evidence-contract:
     node --test ./scripts/e2e/portal-android-evidence.test.mjs
 
+# Verify Android issue-error waits for its post-failure review state before proxy restoration.
+portal-android-flow-contract:
+    node --test ./tests/mobile/android-portal-flow.test.mjs
+
 # Run strict Portal issuance, encrypted restart, and fresh reverification on a discovered physical Android device.
 android-portal-tailnet-physical-smoke:
     ./scripts/test-android-portal-tailnet-physical.sh
+
+# Start a fresh, owner-invoked physical Android Portal QR demo; it is not E2E evidence.
+portal-tailnet-manual-start:
+    ./scripts/test-android-portal-tailnet-physical.sh manual-start
+
+# Report only receipt-supervised manual-demo readiness; this never reveals payloads.
+portal-tailnet-manual-status:
+    ./scripts/test-android-portal-tailnet-physical.sh manual-status
+
+# Stop one receipt-supervised manual demo and restore its exact prior Serve baseline.
+portal-tailnet-manual-stop:
+    ./scripts/test-android-portal-tailnet-physical.sh manual-stop
 
 # Verify exact-sequence process ownership and bounded process-group cleanup without Android or Docker.
 android-portal-avd-safety-contract:
@@ -101,7 +129,7 @@ portal-virtual-mobile-evidence-contract:
 
 # Build and exercise the packaged Portal profile on one explicit owned Android QEMU AVD.
 android-portal-exact-sequence-avd:
-    @timeout -k 30s 7200s ./scripts/test-android-portal-exact-sequence-avd.sh
+    @timeout --preserve-status -k 180s 14400s ./scripts/test-android-portal-exact-sequence-avd.sh
 
 # Build and exercise the packaged Portal profile on one newly created disposable iOS Simulator.
 ios-portal-exact-sequence-simulator:
@@ -114,7 +142,7 @@ portal-mobile-simulators-e2e:
     @./scripts/test-android-portal-exact-sequence-avd.sh --preflight >tmp/issue-213/aggregate-android-preflight.log 2>&1 || { printf '%s\n' 'portal-mobile-simulators-e2e: FAIL phase=android-preflight' >&2; exit 1; }
     @timeout -k 30s 7200s just portal-macos-laptop-e2e >tmp/issue-213/aggregate-macos.log 2>&1 || { printf '%s\n' 'portal-mobile-simulators-e2e: FAIL phase=macos-prequalification' >&2; exit 1; }
     @timeout -k 30s 7200s ./scripts/test-ios-portal-exact-sequence-simulator.sh
-    @timeout -k 30s 7200s ./scripts/test-android-portal-exact-sequence-avd.sh
+    @timeout --preserve-status -k 180s 14400s ./scripts/test-android-portal-exact-sequence-avd.sh
     @jq -s -e --arg head "$(git rev-parse HEAD)" --arg tree "$(git rev-parse 'HEAD^{tree}')" 'length == 4 and all(.[]; .oxid == {head:$head,tree:$tree}) and (.[2].platform.kind == "ios_simulator") and (.[3].platform.kind == "android_emulator")' target/portal-headless-e2e/evidence.json target/portal-desktop-e2e/evidence.json target/ios-portal-exact-sequence-simulator/evidence.json target/android-portal-exact-sequence-avd/evidence.json >/dev/null
     @echo "portal-mobile-simulators-e2e: PASS evidence=target/ios-portal-exact-sequence-simulator/evidence.json,target/android-portal-exact-sequence-avd/evidence.json"
 

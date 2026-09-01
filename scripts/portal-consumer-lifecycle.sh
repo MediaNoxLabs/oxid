@@ -17,6 +17,8 @@ readonly STATE="${OXID_PORTAL_CONSUMER_STATE_DIR:-}"
 readonly ENV_FILE="$STATE/runtime.env"
 readonly RECEIPT="$STATE/owner-receipt.json"
 readonly PRIVATE_LOG="$STATE/private.log"
+readonly TAILNET_MOCK_STATE="${PORTAL_TAILNET_MOCK_STATE_DIR:-}"
+readonly TAILNET_MOCK_TRANSFORM="$REPOSITORY_ROOT/scripts/e2e/tailnet-mock-transform.mjs"
 
 fail() {
   printf 'portal-consumer-lifecycle: FAIL phase=%s\n' "$1" >&2
@@ -92,6 +94,15 @@ receipt_valid() {
     "$RECEIPT" >/dev/null
 }
 
+tailnet_mock_state_valid() {
+  [ -n "$TAILNET_MOCK_STATE" ] || return 0
+  [[ "$TAILNET_MOCK_STATE" = /* ]] || return 1
+  [ -f "$TAILNET_MOCK_TRANSFORM" ] || return 1
+  TAILNET_MOCK_FILE="$TAILNET_MOCK_STATE/didit-tailnet.yml"
+  TAILNET_MOCK_RECEIPT="$TAILNET_MOCK_STATE/didit-tailnet-receipt.json"
+  node "$TAILNET_MOCK_TRANSFORM" --validate "$TAILNET_MOCK_STATE" "$PORTAL_ISSUER_URL" >/dev/null
+}
+
 emit_status() {
   local state="$1"
   if [ "$state" = running ] && receipt_valid; then
@@ -108,9 +119,9 @@ build_image() {
   [ -f "$output" ] || return 1
   docker load <"$output" >>"$PRIVATE_LOG" 2>&1 || return 1
   case "$attribute" in
-    midnight-did-resolver-image) image_id="$(docker image inspect --format '{{.Id}}' midnight-did-resolver:local 2>/dev/null)" ;;
-    did-manager-image) image_id="$(docker image inspect --format '{{.Id}}' laceid-did-manager:local 2>/dev/null)" ;;
-    issuer-image) image_id="$(docker image inspect --format '{{.Id}}' laceid-issuer:local 2>/dev/null)" ;;
+    midnight-did-resolver-image) image_id="$(docker image inspect --format '{{.Id}}' midnight-did-resolver:0.1.0 2>/dev/null)" ;;
+    did-manager-image) image_id="$(docker image inspect --format '{{.Id}}' laceid-did-manager:0.1.0 2>/dev/null)" ;;
+    issuer-image) image_id="$(docker image inspect --format '{{.Id}}' laceid-issuer:0.1.0 2>/dev/null)" ;;
     *) return 1 ;;
   esac
   [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
@@ -128,7 +139,7 @@ run_up() {
   shared_midnight_ready || fail shared-midnight
   : >"$PRIVATE_LOG"
   chmod 600 "$PRIVATE_LOG"
-  local resolver_image did_manager_image issuer_image wallet_seed env_candidate receipt_candidate
+  local resolver_image did_manager_image issuer_image wallet_seed env_candidate receipt_candidate mock_state
   docker pull 'ghcr.io/smocker-dev/smocker@sha256:b4106c3aec1d58df09b6b94a89eba801298cbe5303f3c9236d105dbcaaaf4ab2' >>"$PRIVATE_LOG" 2>&1 || fail smocker
   build_image midnight-did-resolver-image resolver_image || fail resolver-image
   build_image did-manager-image did_manager_image || fail did-manager-image
@@ -137,6 +148,8 @@ run_up() {
   [[ "$wallet_seed" =~ ^[0-9a-f]{64}$ ]] || fail wallet-input
   [[ "${PORTAL_ISSUER_URL:-}" =~ ^https?:// ]] || fail issuer-origin
   [[ "${PORTAL_HOLDER_RESOLVER_URL:-}" =~ ^http://host\.docker\.internal:[0-9]+$ ]] || fail holder-resolver
+  tailnet_mock_state_valid || fail tailnet-mock
+  mock_state="${TAILNET_MOCK_FILE:-$SOURCE/mock/didit.yml}"
   env_candidate="$(mktemp "$STATE/.runtime-env.XXXXXX")"
   {
     printf 'PORTAL_RESOLVER_IMAGE=%s\n' "$resolver_image"
@@ -161,7 +174,7 @@ run_up() {
   trap cleanup_failed_up ERR INT TERM
   compose up -d --wait --wait-timeout 600 >>"$PRIVATE_LOG" 2>&1
   curl --fail --silent --show-error --max-time 30 -H 'Content-Type: application/x-yaml' \
-    --data-binary "@$SOURCE/mock/didit.yml" 'http://127.0.0.1:8081/mocks?reset=true' \
+    --data-binary "@$mock_state" 'http://127.0.0.1:8081/mocks?reset=true' \
     >>"$PRIVATE_LOG" 2>&1
   local ids running
   ids="$(project_ids)"; running="$(running_ids)"

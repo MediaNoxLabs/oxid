@@ -5,7 +5,8 @@ use oxid_credential_application::{
     CredentialVerificationError,
 };
 use oxid_identity_application::{
-    DidLifecyclePortError, DidOperationError, DidRecordRepositoryError, DidResolutionPortError,
+    DidLifecyclePortError, DidOperationError, DidPublicationPortError, DidRecordRepositoryError,
+    DidResolutionPortError,
 };
 use oxid_passport_vault_application::{
     PassportVaultCallError, PassportVaultCallPortError, PassportVaultContractStateError,
@@ -278,6 +279,15 @@ pub(super) fn did_error(id: Option<String>, error: DidOperationError) -> Respons
                 "confirmation_required",
                 "valid explicit confirmation is required",
             )
+        }
+        DidOperationError::Publication(error) => {
+            let code = match error {
+                DidPublicationPortError::Unavailable
+                | DidPublicationPortError::InvalidConfiguration
+                | DidPublicationPortError::InvalidCapability => "capability_unavailable",
+                DidPublicationPortError::Rejected => "publication_rejected",
+            };
+            Response::error(id, code, error.to_string())
         }
         DidOperationError::Lifecycle(error) => match error {
             DidLifecyclePortError::Unavailable | DidLifecyclePortError::ProtectionUnavailable => {

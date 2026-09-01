@@ -80,8 +80,9 @@ use oxid_diagnostics_application::{
 };
 use oxid_identity_application::{
     CreateDidUseCase, DeactivateDidUseCase, DidJubjubChallengeSigningPort, DidLifecyclePort,
-    DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase, ListDidRecordsUseCase,
-    ResolveDidUseCase, SignDidPayloadUseCase, UpdateDidUseCase,
+    DidPublicationService, DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase,
+    ListDidRecordsUseCase, PublishDidUseCase, ResolveDidUseCase, SignDidPayloadUseCase,
+    UpdateDidUseCase,
 };
 use oxid_passport_vault_application::{
     AuthorizePassportVaultCallUseCase, CancelPassportVaultCallSubmissionUseCase,
@@ -326,31 +327,38 @@ where
     let did_lifecycle_port: Arc<dyn DidLifecyclePort> = did_lifecycle.clone();
     let did_jubjub_challenge_signing: Arc<dyn DidJubjubChallengeSigningPort> = did_lifecycle;
     let did_resolver = headless_did_resolver();
-    let (compact_issuer_resolver, trust_anchor, credential_issuance, portal_test_ingress) =
-        match credential_profile {
-            HeadlessCredentialProfile::Standalone => (
-                Arc::new(StandaloneDidResolver) as Arc<dyn DidResolutionPort>,
-                standalone_digital_passport_issuer_trust_anchor(),
-                CredentialIssuanceComposition::Standalone,
-                None,
-            ),
-            #[cfg(all(
-                not(target_arch = "wasm32"),
-                any(
-                    all(not(target_os = "ios"), not(target_os = "android")),
-                    all(
-                        feature = "mobile-portal",
-                        any(target_os = "ios", target_os = "android")
-                    )
+    let (
+        compact_issuer_resolver,
+        trust_anchor,
+        credential_issuance,
+        portal_test_ingress,
+        did_publisher,
+    ) = match credential_profile {
+        HeadlessCredentialProfile::Standalone => (
+            Arc::new(StandaloneDidResolver) as Arc<dyn DidResolutionPort>,
+            standalone_digital_passport_issuer_trust_anchor(),
+            CredentialIssuanceComposition::Standalone,
+            None,
+            None,
+        ),
+        #[cfg(all(
+            not(target_arch = "wasm32"),
+            any(
+                all(not(target_os = "ios"), not(target_os = "android")),
+                all(
+                    feature = "mobile-portal",
+                    any(target_os = "ios", target_os = "android")
                 )
-            ))]
-            HeadlessCredentialProfile::Portal(portal) => (
-                portal.issuer_resolver,
-                portal.trust_anchor,
-                CredentialIssuanceComposition::Portal(Box::new(portal.client_factory)),
-                portal.test_ingress,
-            ),
-        };
+            )
+        ))]
+        HeadlessCredentialProfile::Portal(portal) => (
+            portal.issuer_resolver,
+            portal.trust_anchor,
+            CredentialIssuanceComposition::Portal(Box::new(portal.client_factory)),
+            portal.test_ingress,
+            portal.did_publisher,
+        ),
+    };
     let verifier: Arc<dyn CredentialVerificationPort> =
         Arc::new(MidnightCredentialVerifier::with_compact_policy(
             Arc::clone(&did_resolver),
@@ -367,6 +375,7 @@ where
             did_resolver,
             did_lifecycle: did_lifecycle_port,
             did_jubjub_challenge_signing,
+            did_publisher,
             credential_repository: headless_credential_repository(),
             credential_inbox: Arc::new(StandaloneCredentialInbox),
             credential_verifier: verifier,
@@ -421,6 +430,7 @@ where
         did_resolver,
         did_lifecycle,
         did_jubjub_challenge_signing,
+        did_publisher,
         credential_repository,
         credential_inbox,
         credential_verifier,
@@ -552,6 +562,12 @@ where
         Arc::clone(&clock),
     ));
     let transactions = Arc::new(WalletTransactionService::new(midnight, Arc::clone(&clock)));
+    let publish_did = did_publisher.map(|publisher| {
+        Arc::new(DidPublicationService::new(
+            Arc::clone(&did_repository),
+            publisher,
+        )) as Arc<dyn PublishDidUseCase>
+    });
     let identity = Arc::new(DidService::from_ports(
         did_repository,
         did_resolver,
@@ -993,6 +1009,7 @@ where
         create_did,
         resolve_did,
         list_did_records,
+        publish_did,
         get_did_record,
         update_did,
         deactivate_did,

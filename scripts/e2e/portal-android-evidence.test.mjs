@@ -25,7 +25,11 @@ const scenarios = [
   },
   { mode: "issue-error", passed: true, measurements: { issueErrorEscapedSafely: true, warmIngress: true } },
   { mode: "malformed", passed: true, measurements: { malformedRejected: true, warmIngress: true } },
-  { mode: "prepare-holder", passed: true, measurements: { managedDidPrepared: true } },
+  {
+    mode: "prepare-holder",
+    passed: true,
+    measurements: { holderDidBootstrapped: true, managedDidPrepared: true },
+  },
   { mode: "protocol-error", passed: true, measurements: { unavailableRejected: true, warmIngress: true } },
   { mode: "protocol-timeout", passed: true, measurements: { timeoutRejected: true, warmIngress: true } },
   {
@@ -43,9 +47,10 @@ const scenarios = [
 const counters = {
   authorizationMetadata: 3,
   credential: 1,
-  issuerMetadata: 7,
+  issuerMetadata: 6,
   issuerResolution: 3,
   issuerResolutionSuccess: 3,
+  holderPublications: 1,
   kyc: 14,
   nonce: 1,
   other: 0,
@@ -90,6 +95,7 @@ const booleanAcceptance = [
   "issueErrorEscapedSafely",
   "exactProtocolCounters",
   "strictFinalExchange",
+  "explicitHolderBootstrap",
   "explicitConsent",
   "managedAuthenticationProof",
   "separateJubjubAssertionBinding",

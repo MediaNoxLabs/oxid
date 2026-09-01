@@ -432,7 +432,8 @@ fn main() {
                 application.deactivate_did(),
                 application.sign_did_payload(),
                 application.forget_did(),
-            ),
+            )
+            .with_publisher(application.publish_did()),
             oxid_ui_dioxus::CredentialUiServices::new(
                 oxid_ui_dioxus::CredentialInventoryUiServices::new(
                     application.receive_credential(),

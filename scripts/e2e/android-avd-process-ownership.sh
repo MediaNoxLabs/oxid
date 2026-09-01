@@ -41,6 +41,96 @@ oxid_require_empty_adb_inventory() {
   oxid_adb_inventory_is_empty "$inventory"
 }
 
+# ADB reverse has no owner metadata. These parsers therefore make ownership
+# explicit: a managed route may be absent, or exactly one route on the expected
+# serial with equal local and remote TCP ports. Any other use of a managed port
+# is ambiguous and must be preserved rather than removed.
+oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent() {
+  local snapshot="$1" serial="$2" ports
+  shift 2
+  [[ "$serial" =~ ^emulator-[0-9]+$ ]] || return 1
+  [ "$#" -gt 0 ] || return 1
+  ports=""
+  for port in "$@"; do
+    [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$port" -le 65535 ] || return 1
+    case " $ports " in *" $port "*) return 1 ;; esac
+    ports+="${ports:+ }$port"
+  done
+  timeout -k 1s "${OXID_ADB_REVERSE_PARSE_TIMEOUT_SECONDS:-5}s" \
+    awk -v expected_serial="$serial" -v ports="$ports" '
+      BEGIN {
+        split(ports, values, " ")
+        for (i in values) managed["tcp:" values[i]] = 1
+      }
+      # ADB may delimit reverse-list records with CRLF; normalize only the
+      # record terminator before applying the exact three-field contract.
+      { sub(/\r$/, "") }
+      NF == 0 { next }
+      # A scoped `adb -s <serial> reverse --list` may omit the already-bound
+      # serial or report its private host transport label, while an unscoped
+      # listing includes the serial. The caller scopes every query to the
+      # expected serial, so accept only these exact shapes and one consistent
+      # host label per snapshot.
+      NF == 2 { serial = expected_serial; local = $1; remote = $2 }
+      NF == 3 { serial = $1; local = $2; remote = $3 }
+      NF != 2 && NF != 3 { invalid = 1; next }
+      (local in managed) || (remote in managed) {
+        if (serial != expected_serial) {
+          if (serial !~ /^host-[1-9][0-9]*$/ || (host_label && serial != host_label)) invalid = 1
+          host_label = serial
+        }
+        if (!(local in managed) || local != remote || ++seen[local] != 1) invalid = 1
+      }
+      END { exit invalid ? 1 : 0 }
+    ' <<<"$snapshot"
+}
+
+oxid_adb_reverse_snapshot_has_no_managed_routes() {
+  local snapshot="$1" serial="$2" ports
+  shift 2
+  oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent "$snapshot" "$serial" "$@" || return 1
+  ports="$*"
+  timeout -k 1s "${OXID_ADB_REVERSE_PARSE_TIMEOUT_SECONDS:-5}s" \
+    awk -v ports="$ports" '
+      BEGIN {
+        split(ports, values, " ")
+        for (i in values) managed["tcp:" values[i]] = 1
+      }
+      ($2 in managed) || ($3 in managed) { found = 1 }
+      END { exit found ? 1 : 0 }
+    ' <<<"$snapshot"
+}
+
+oxid_adb_reverse_snapshot_has_exact_managed_routes() {
+  local snapshot="$1" serial="$2" ports
+  shift 2
+  oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent "$snapshot" "$serial" "$@" || return 1
+  ports="$*"
+  timeout -k 1s "${OXID_ADB_REVERSE_PARSE_TIMEOUT_SECONDS:-5}s" \
+    awk -v ports="$ports" '
+      BEGIN {
+        split(ports, values, " ")
+        for (i in values) managed["tcp:" values[i]] = 1
+      }
+      $2 in managed { seen[$2]++ }
+      END {
+        for (route in managed) if (seen[route] != 1) exit 1
+      }
+    ' <<<"$snapshot"
+}
+
+oxid_epoch_seconds_are_close() {
+  local host_epoch="$1" emulator_epoch="$2" tolerance="$3" delta
+  [[ "$host_epoch" =~ ^[0-9]{10,11}$ && "$emulator_epoch" =~ ^[0-9]{10,11}$ \
+    && "$tolerance" =~ ^[0-9]{1,4}$ ]] || return 1
+  if [ "$host_epoch" -ge "$emulator_epoch" ]; then
+    delta=$((host_epoch - emulator_epoch))
+  else
+    delta=$((emulator_epoch - host_epoch))
+  fi
+  [ "$delta" -le "$tolerance" ]
+}
+
 oxid_job_is_running() {
   local expected="$1" job
   while IFS= read -r job; do
@@ -65,10 +155,15 @@ oxid_direct_child_owned() {
 
 oxid_emulator_command_matches() {
   local command_line="$1" executable="$2" avd="$3" port="$4"
+  local qemu_prefix="${executable%/*}/qemu/"
   timeout -k 1s "${OXID_PROCESS_PS_TIMEOUT_SECONDS:-5}s" \
-    awk -v executable="$executable" -v avd="$avd" -v port="$port" '
+    awk -v executable="$executable" -v qemu_prefix="$qemu_prefix" -v avd="$avd" -v port="$port" '
     {
-      if ($1 != executable) exit 1
+      if ($1 != executable) {
+        if (index($1, qemu_prefix) != 1) exit 1
+        qemu_relative = substr($1, length(qemu_prefix) + 1)
+        if (qemu_relative !~ /^[A-Za-z0-9._-]+\/qemu-system-[A-Za-z0-9._-]+$/) exit 1
+      }
       avd_count = port_count = readonly_count = snapshot_count = snapshot_save_count = 0
       for (i = 2; i <= NF; i++) {
         if ($i == "-avd" && $(i + 1) == avd) avd_count++
@@ -173,4 +268,17 @@ oxid_path_has_identity() {
   [ -n "$expected" ] && [ -e "$path" ] && [ ! -L "$path" ] || return 1
   actual="$(oxid_filesystem_identity "$path")" || return 1
   [ "$actual" = "$expected" ]
+}
+
+oxid_android_avd_failure_marker_reset() {
+  OXID_ANDROID_AVD_FAILURE_MARKER_EMITTED=0
+}
+
+oxid_android_avd_emit_failure_marker() {
+  local status="$1" phase="${2:-unreported-timeout-or-abort}"
+  [ "$status" -ne 0 ] || return 0
+  [ "${OXID_ANDROID_AVD_FAILURE_MARKER_EMITTED:-0}" -eq 0 ] || return 0
+  [[ "$phase" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || phase="unreported-timeout-or-abort"
+  OXID_ANDROID_AVD_FAILURE_MARKER_EMITTED=1
+  printf 'android-portal-exact-sequence-avd: FAIL phase=%s\n' "$phase" >&2
 }

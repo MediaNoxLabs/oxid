@@ -18,6 +18,7 @@ const zero = Object.freeze({
   issuerMetadata: 0,
   issuerResolution: 0,
   issuerResolutionSuccess: 0,
+  holderPublications: 0,
   kyc: 0,
   nonce: 0,
   other: 0,
@@ -60,7 +61,7 @@ function measurements(kind = "android_emulator") {
       {
         name: "protocol-error",
         passed: true,
-        counterDelta: delta({ issuerMetadata: ios ? 1 : 2 }),
+        counterDelta: delta({ issuerMetadata: 1 }),
       },
       { name: "protocol-timeout", passed: true, counterDelta: delta({ issuerMetadata: 1 }) },
       {
@@ -90,9 +91,10 @@ function measurements(kind = "android_emulator") {
     totalCounters: {
       authorizationMetadata: 3,
       credential: 1,
-      issuerMetadata: ios ? 6 : 7,
+      issuerMetadata: 6,
       issuerResolution: 3,
       issuerResolutionSuccess: 3,
+      holderPublications: 0,
       kyc: 14,
       nonce: 1,
       other: 0,
@@ -163,16 +165,13 @@ for (const kind of ["android_emulator", "ios_simulator"]) {
   });
 }
 
-test("unavailable preview counts stay bound to measured platform transport behavior", () => {
-  const ios = measurements("ios_simulator");
-  ios.scenarios[4].counterDelta.issuerMetadata = 2;
-  ios.totalCounters.issuerMetadata = 7;
-  assert.equal(buildEvidence(ios).acceptance.accepted, false);
-
-  const android = measurements("android_emulator");
-  android.scenarios[4].counterDelta.issuerMetadata = 1;
-  android.totalCounters.issuerMetadata = 6;
-  assert.equal(buildEvidence(android).acceptance.accepted, false);
+test("unavailable preview requires exactly one replay-free metadata request on both mobile transports", () => {
+  for (const kind of ["android_emulator", "ios_simulator"]) {
+    const replayed = measurements(kind);
+    replayed.scenarios[4].counterDelta.issuerMetadata = 2;
+    replayed.totalCounters.issuerMetadata = 7;
+    assert.equal(buildEvidence(replayed).acceptance.accepted, false, kind);
+  }
 });
 
 test("acceptance is derived from every required measured boolean and boundary count", () => {

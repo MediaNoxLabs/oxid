@@ -27,6 +27,7 @@ mobile-portal = [
 ]
 mobile-portal-tailnet = [
   "mobile-portal",
+  "oxid-adapter-did-midnight/tailnet-test-did-publication",
   "oxid-adapter-identity-ingress/tailnet-test-offer-trigger",
 ]
 android-jni-exception-recovery-test = [

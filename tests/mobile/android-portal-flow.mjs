@@ -44,6 +44,7 @@ let measuredCounterDelta = {
   issuerMetadata: 0,
   issuerResolution: 0,
   issuerResolutionSuccess: 0,
+  holderPublications: 0,
   kyc: 0,
   nonce: 0,
   other: 0,
@@ -150,6 +151,55 @@ function strictReviewBoundaryExpression() {
     noEditableOffer: !document.querySelector("#credential-offer"),
     noConsent: !document.querySelector("#credential-issuance-consent")
   }))()`;
+}
+
+function issuanceCompletionExpression() {
+  return `(() => {
+    if (document.body.innerText.includes("Credential issued, verified, and stored in the protected inventory.")) return true;
+    return Array.from(document.querySelectorAll(".credential-record")).some((record) =>
+      Array.from(record.querySelectorAll(".status-pill.success"))
+        .some((element) => element.textContent.trim() === "Valid")
+    );
+  })()`;
+}
+
+function issuanceEvidenceExpression() {
+  return `(() => {
+    const records = Array.from(document.querySelectorAll(".credential-record"));
+    return records.length === 1
+      && Array.from(records[0].querySelectorAll(".status-pill.success"))
+        .some((element) => element.textContent.trim() === "Valid")
+      && document.body.innerText.includes("Credential policy · issuer passed · time passed · trust passed · revocation not checked")
+      && !document.body.innerText.includes("John") && !document.body.innerText.includes("Doe");
+  })()`;
+}
+
+function issuanceDiagnosticExpression() {
+  return `(() => {
+    const statuses = Array.from(document.querySelectorAll('[role="status"]'))
+      .map((element) => element.textContent.trim());
+    const validRecord = Array.from(document.querySelectorAll(".credential-record")).some((record) =>
+      Array.from(record.querySelectorAll(".status-pill.success"))
+        .some((element) => element.textContent.trim() === "Valid")
+    );
+    const hasStatus = (value) => statuses.some((text) => text.includes(value));
+    return {
+      acceptReady: Boolean(${button("Accept and issue credential")}),
+      issuanceBusy: Boolean(${button("Issuing credential…")}),
+      reviewVisible: document.body.innerText.includes("Credential offer preview"),
+      successNotice: document.body.innerText.includes("Credential issued, verified, and stored in the protected inventory."),
+      validRecord,
+      failureStatus: statuses.some((text) => /credential|issuer|protocol|session|unavailable|failed|error/iu.test(text)),
+      invalidCredential: hasStatus("The credential is not valid"),
+      invalidCredentialResponse: hasStatus("The issuer returned an invalid credential"),
+      issuerRejected: hasStatus("The issuer rejected the request"),
+      credentialStoreUnavailable: hasStatus("Credential storage is unavailable"),
+      issuedCredentialVerificationFailed: hasStatus("issued credential verification failed"),
+      issuedCredentialPersistenceFailed: hasStatus("issued credential persistence failed"),
+      issuedCredentialStorageUnavailable: hasStatus("issued credential storage is unavailable"),
+      genericFailure: hasStatus("The operation could not be completed")
+    };
+  })()`;
 }
 
 async function click(label, timeoutMs = 20_000) {
@@ -268,7 +318,17 @@ try {
     if (await evaluate('Array.from(document.querySelectorAll(".field-error")).some((element) => element.textContent.trim() === "protected DID key operation is unavailable")')) {
       throw new Error("managed DID creation ran without activated development custody");
     }
-    Object.assign(measurements, { managedDidPrepared: true });
+    await click("Bootstrap active DID for test issuer");
+    await waitFor(
+      'document.body.innerText.includes("Public DID document is available to the current test issuer")',
+      "explicit holder DID bootstrap",
+      30_000,
+    );
+    const counts = await counters();
+    if (counts.holderPublications !== 1) {
+      throw new Error("explicit holder DID bootstrap was not observed exactly once");
+    }
+    Object.assign(measurements, { managedDidPrepared: true, holderDidBootstrapped: true });
   } else if (mode === "route-refuse") {
     const start = await counters();
     await assertRouted();
@@ -380,7 +440,7 @@ try {
     measuredCounterDelta = assertExactCounterDelta(
       start,
       after,
-      { issuerMetadata: mode === "protocol-error" ? 2 : 1 },
+      { issuerMetadata: 1 },
       mode,
     );
     await setProxyMode("normal");
@@ -401,8 +461,12 @@ try {
     await click("Accept and issue credential");
     await waitFor(
       `(() => {
+        const consent = document.querySelector("#credential-issuance-consent");
+        const issue = ${button("Accept and issue credential")};
         const leave = ${button("Leave credential review")};
-        return Boolean(leave && !leave.disabled)
+        return Boolean(consent) && !consent.checked
+          && Boolean(issue && issue.disabled)
+          && Boolean(leave && !leave.disabled)
           && Array.from(document.querySelectorAll('[role="status"]')).some((element) => {
             const text = element.textContent.trim();
             return text.length > 0 && text.length <= 512
@@ -452,15 +516,13 @@ try {
     await evaluate('document.querySelector("#credential-issuance-consent").click()');
     await click("Accept and issue credential");
     try {
-      await waitFor(
-        'document.body.innerText.includes("Credential issued, verified, and stored in the protected inventory.")',
-        "Portal issuance",
-        90_000,
-      );
+      await waitFor(issuanceCompletionExpression(), "Portal issuance", 90_000);
     } catch (error) {
       const diagnosticCounts = await counters();
-      throw new Error(`Portal issuance failed with payload-free counters ${JSON.stringify(diagnosticCounts)}: ${error.message}`);
+      const diagnosticState = await evaluate(issuanceDiagnosticExpression());
+      throw new Error(`Portal issuance failed with payload-free counters ${JSON.stringify(diagnosticCounts)} and state ${JSON.stringify(diagnosticState)}: ${error.message}`);
     }
+    await waitFor(issuanceEvidenceExpression(), "protected credential inventory", 30_000);
     const result = await evaluate(`({
       valid: Array.from(document.querySelectorAll(".credential-record")).length === 1
         && document.body.innerText.includes("Valid"),

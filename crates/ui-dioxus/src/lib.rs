@@ -6,12 +6,14 @@ mod brand;
 #[cfg(feature = "desktop-test-click-driver")]
 mod desktop_test_driver;
 mod diagnostics;
+mod dids;
 mod labels;
 mod passport_vault;
 mod profile_guard;
 
 pub use brand::{BrandProfile, SecurityCopySnapshot, security_copy_snapshot};
 pub use diagnostics::DiagnosticsUiServices;
+use dids::DidsPage;
 #[cfg(feature = "ui-profile-dev")]
 pub use oxid_capabilities_application::CapabilityManifestContext;
 pub use passport_vault::{
@@ -36,7 +38,8 @@ use oxid_diagnostics_application::{ClearDiagnosticsUseCase, GetDiagnosticSnapsho
 use oxid_identity_application::{
     CreateDidCommand, CreateDidUseCase, DeactivateDidCommand, DeactivateDidUseCase,
     DidKeyAlgorithm, DidOperationConfirmation, DidOperationError, DidRecordQuery, DidRecordView,
-    DidUpdate, ForgetDidUseCase, ListDidRecordsQuery, ListDidRecordsUseCase, ResolveDidCommand,
+    DidUpdate, ForgetDidUseCase, ListDidRecordsQuery, ListDidRecordsUseCase,
+    PUBLISH_DID_TO_TEST_ISSUER_INTENT, PublishDidCommand, PublishDidUseCase, ResolveDidCommand,
     ResolveDidUseCase, SignDidPayloadCommand, SignDidPayloadUseCase, UpdateDidCommand,
     UpdateDidUseCase,
 };
@@ -123,6 +126,10 @@ const DUST_REGISTRATION_AUTHORIZE_ACCESSIBLE_LABEL: &str = "Authorize DUST regis
 const DUST_REGISTRATION_SUBMIT_ACCESSIBLE_LABEL: &str = "Register on Midnight";
 const DUST_REGISTRATION_RECONCILE_ACCESSIBLE_LABEL: &str =
     "Reconcile DUST registration with Midnight";
+const CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS: &str =
+    "Credential issuance terminal error: protocol unavailable";
+const CREDENTIAL_ISSUANCE_PROTOCOL_ERROR_STATUS: &str =
+    "Credential issuance protocol error: protocol unavailable";
 #[cfg(not(target_arch = "wasm32"))]
 const UI_BLOCKING_TASK_STACK_BYTES: usize = 8 * 1024 * 1024;
 
@@ -256,6 +263,7 @@ pub struct WalletUiServices {
     create_did: Arc<dyn CreateDidUseCase>,
     resolve_did: Arc<dyn ResolveDidUseCase>,
     list_did_records: Arc<dyn ListDidRecordsUseCase>,
+    publish_did: Option<Arc<dyn PublishDidUseCase>>,
     update_did: Arc<dyn UpdateDidUseCase>,
     deactivate_did: Arc<dyn DeactivateDidUseCase>,
     sign_did_payload: Arc<dyn SignDidPayloadUseCase>,
@@ -326,6 +334,7 @@ pub struct DidUiServices {
     create_did: Arc<dyn CreateDidUseCase>,
     resolve_did: Arc<dyn ResolveDidUseCase>,
     list_did_records: Arc<dyn ListDidRecordsUseCase>,
+    publish_did: Option<Arc<dyn PublishDidUseCase>>,
     update_did: Arc<dyn UpdateDidUseCase>,
     deactivate_did: Arc<dyn DeactivateDidUseCase>,
     sign_did_payload: Arc<dyn SignDidPayloadUseCase>,
@@ -583,11 +592,18 @@ impl DidUiServices {
             create_did,
             resolve_did,
             list_did_records,
+            publish_did: None,
             update_did,
             deactivate_did,
             sign_did_payload,
             forget_did,
         }
+    }
+
+    #[must_use]
+    pub fn with_publisher(mut self, publish_did: Option<Arc<dyn PublishDidUseCase>>) -> Self {
+        self.publish_did = publish_did;
+        self
     }
 }
 
@@ -961,6 +977,7 @@ impl WalletUiServices {
             create_did: dids.create_did,
             resolve_did: dids.resolve_did,
             list_did_records: dids.list_did_records,
+            publish_did: dids.publish_did,
             update_did: dids.update_did,
             deactivate_did: dids.deactivate_did,
             sign_did_payload: dids.sign_did_payload,
@@ -1718,6 +1735,92 @@ enum CredentialPageState {
     Failed(String),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DidCreationState {
+    Ready,
+    Creating,
+    Created,
+    Failed,
+    AwaitingConfirmation,
+}
+
+fn begin_did_creation_value(state: &mut DidCreationState) -> bool {
+    if *state != DidCreationState::Ready {
+        return false;
+    }
+    *state = DidCreationState::Creating;
+    true
+}
+
+fn arm_another_did_creation_value(state: &mut DidCreationState) -> bool {
+    if !matches!(*state, DidCreationState::Created | DidCreationState::Failed) {
+        return false;
+    }
+    *state = DidCreationState::AwaitingConfirmation;
+    true
+}
+
+fn confirm_another_did_creation_value(state: &mut DidCreationState) -> bool {
+    if *state != DidCreationState::AwaitingConfirmation {
+        return false;
+    }
+    *state = DidCreationState::Ready;
+    true
+}
+
+fn did_record_management_label(source: &str, managed_method_ids: &[String]) -> &'static str {
+    if !managed_method_ids.is_empty() {
+        "Wallet-managed record"
+    } else if source == "standalone" {
+        "Standalone example / resolved external — not wallet-managed"
+    } else {
+        "Resolved external record — not wallet-managed"
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CredentialIssuanceAction {
+    Idle,
+    Previewing,
+    Accepting,
+    Refusing,
+    Cleaning,
+}
+
+fn begin_credential_issuance_action_value(
+    action: &mut CredentialIssuanceAction,
+    requested: CredentialIssuanceAction,
+) -> bool {
+    if *action != CredentialIssuanceAction::Idle || requested == CredentialIssuanceAction::Idle {
+        return false;
+    }
+    *action = requested;
+    true
+}
+
+fn credential_issuance_action_label(action: CredentialIssuanceAction) -> &'static str {
+    match action {
+        CredentialIssuanceAction::Idle => "",
+        CredentialIssuanceAction::Previewing => "Checking offer…",
+        CredentialIssuanceAction::Accepting => "Issuing credential…",
+        CredentialIssuanceAction::Refusing => "Refusing offer…",
+        CredentialIssuanceAction::Cleaning => "Discarding credential review…",
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CredentialIssuanceTerminalError {
+    ProtocolUnavailable,
+}
+
+impl CredentialIssuanceTerminalError {
+    const fn message(self) -> &'static str {
+        match self {
+            Self::ProtocolUnavailable => "This protocol is unavailable in the current build",
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 struct PendingIdentityRequest {
     kind: IdentityRequestKind,
@@ -1820,17 +1923,6 @@ fn reserve_manual_credential_review_admission_lock_value(
         return false;
     }
     *manual_review_lock = true;
-    true
-}
-
-/// Starts one synchronous Preview admission attempt. Dioxus event handlers run
-/// serially, and holding the signal write guard makes the busy check-and-set a
-/// single operation before any review reservation or async task can start.
-fn begin_credential_preview_single_flight_value(issuance_busy: &mut bool) -> bool {
-    if *issuance_busy {
-        return false;
-    }
-    *issuance_busy = true;
     true
 }
 
@@ -8248,525 +8340,6 @@ fn ManagedDidControls(
     }
 }
 
-#[component]
-fn DidsPage(
-    active_profile: WalletProfileView,
-    pending_identity_request: Signal<Option<PendingIdentityRequest>>,
-) -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let mut state = use_signal(|| DidPageState::Loading);
-    let mut did_input = use_signal(|| STANDALONE_DID_FIXTURE.to_owned());
-    let mut authentication_input = use_signal(String::new);
-    let mut prepared_authentication = use_signal(|| None::<SelfIssuedAuthenticationView>);
-    let mut authentication_consent = use_signal(|| false);
-    let mut authentication_busy = use_signal(|| false);
-    let mut authentication_notice = use_signal(|| None::<String>);
-    use_effect(move || {
-        let pending = pending_identity_request.read().clone();
-        if let Some(request) = pending
-            && request.kind == IdentityRequestKind::SelfIssuedAuthentication
-        {
-            authentication_input.set(request.request_uri);
-            prepared_authentication.set(None);
-            authentication_consent.set(false);
-            authentication_notice.set(Some(
-                "Imported login request loaded. Preview it before authenticating.".to_owned(),
-            ));
-        }
-    });
-    let profile_id = active_profile.id.clone();
-    let load_services = services.clone();
-    let load_profile = profile_id.clone();
-    use_effect(move || {
-        let services = load_services.clone();
-        let profile_id = load_profile.clone();
-        spawn(async move {
-            state.set(
-                run_ui_blocking(move || load_did_page(&services, &profile_id))
-                    .await
-                    .unwrap_or_else(|error| DidPageState::Failed(error.to_string())),
-            );
-        });
-    });
-
-    let state_snapshot = state.read().clone();
-    match state_snapshot {
-        DidPageState::Loading => rsx! {
-            section { class: "page-heading",
-                p { class: "eyebrow", "Decentralized identity" }
-                h1 { "Your DIDs" }
-                p { "Loading public DID records for this wallet profile…" }
-            }
-        },
-        DidPageState::Failed(message) => rsx! {
-            section { class: "page-heading",
-                p { class: "eyebrow", "Decentralized identity" }
-                h1 { "Your DIDs" }
-                p { "DID inventory is an independently composed identity capability." }
-            }
-            article { class: "empty-state surface-card", role: "alert",
-                span { class: "empty-state__mark", aria_hidden: "true", "◇" }
-                h2 { "DID capability unavailable" }
-                p { "{message}" }
-                button {
-                    class: "secondary-action", r#type: "button",
-                    onclick: move |_| {
-                        let services = services.clone();
-                        let profile_id = profile_id.clone();
-                        state.set(DidPageState::Loading);
-                        spawn(async move {
-                            state.set(
-                                run_ui_blocking(move || {
-                                    load_did_page(&services, &profile_id)
-                                })
-                                .await
-                                .unwrap_or_else(|error| {
-                                    DidPageState::Failed(error.to_string())
-                                }),
-                            );
-                        });
-                    },
-                    "Retry"
-                }
-            }
-        },
-        DidPageState::Ready {
-            records,
-            resolving,
-            operation_error,
-        } => {
-            let can_resolve = !resolving
-                && !did_input.read().trim().is_empty()
-                && did_input.read().len() <= 8_192;
-            let resolve_services = services.clone();
-            let resolve_profile = profile_id.clone();
-            let retained_records = records.clone();
-            let create_services = services.clone();
-            let create_profile = profile_id.clone();
-            let create_records = records.clone();
-            let issuance_did_ready = active_managed_issuance_methods(&records).is_some();
-            let standalone_authentication_request = services.standalone_self_issued_request();
-            rsx! {
-                section { class: "page-heading",
-                    p { class: "eyebrow", "Decentralized identity" }
-                    h1 { "Your DIDs" }
-                    p { "Create, resolve, update, sign with, and deactivate standards-shaped did:midnight documents under the active profile." }
-                }
-                article { class: "surface-card did-resolver-card",
-                    p { class: "card-eyebrow", "Managed identity" }
-                    h2 { "Create a standalone DID" }
-                    p { class: "form-hint", "Creates protected Ed25519 authentication, P-256 assertion, and Jubjub holder-binding keys. Only the public DID document is persisted." }
-                    button {
-                        class: "primary-action", r#type: "button", disabled: resolving,
-                        aria_busy: resolving,
-                        onclick: move |_| {
-                            state.set(DidPageState::Ready { records: create_records.clone(), resolving: true, operation_error: None });
-                            let service = create_services.create_did();
-                            let profile_id = create_profile.clone();
-                            let records = create_records.clone();
-                            spawn(async move {
-                                let result = run_ui_blocking(move || {
-                                    service.execute(CreateDidCommand {
-                                        profile_id,
-                                        network: "undeployed".to_owned(),
-                                    })
-                                })
-                                .await;
-                                match result {
-                                    Ok(Ok(record)) => {
-                                        let mut updated = records;
-                                        updated.retain(|existing| existing.document.id != record.document.id);
-                                        updated.push(record);
-                                        updated.sort_by(|left, right| left.document.id.cmp(&right.document.id));
-                                        state.set(DidPageState::Ready { records: updated, resolving: false, operation_error: None });
-                                    }
-                                    Ok(Err(error)) => state.set(DidPageState::Ready {
-                                        records, resolving: false,
-                                        operation_error: Some(did_operation_message(error)),
-                                    }),
-                                    Err(error) => state.set(DidPageState::Ready {
-                                        records, resolving: false,
-                                        operation_error: Some(error.to_string()),
-                                    }),
-                                }
-                            });
-                        },
-                        if resolving { "Creating DID…" } else { "Create standalone DID" }
-                    }
-                    if issuance_did_ready {
-                        p {
-                            class: "credential-reverification-success",
-                            role: "status",
-                            aria_live: "polite",
-                            "A protected managed DID is ready for credential issuance. You can create additional standalone DIDs; exact profile-and-DID duplicates replace the existing public record."
-                        }
-                    }
-                }
-                article { class: "surface-card did-resolver-card",
-                    p { class: "card-eyebrow", "SIOPv2 draft 13 · standalone" }
-                    h2 { "Authenticate with a DID" }
-                    p { class: "form-hint", "Preview the verifier and purpose before consent. This flow proves control of a managed DID; it does not disclose a credential. Nonce, state, and the signed ID token remain inside the protocol adapter." }
-                    label { r#for: "self-issued-authentication-request", "Authentication request URI" }
-                    textarea {
-                        id: "self-issued-authentication-request",
-                        maxlength: 32768,
-                        rows: 4,
-                        autocomplete: "off",
-                        spellcheck: false,
-                        value: "{authentication_input}",
-                        oninput: move |event| authentication_input.set(event.value()),
-                    }
-                    if let Some(request) = standalone_authentication_request {
-                        button {
-                            class: "secondary-action",
-                            r#type: "button",
-                            disabled: authentication_busy(),
-                            onclick: move |_| {
-                                authentication_input.set(request.clone());
-                                prepared_authentication.set(None);
-                                authentication_consent.set(false);
-                                authentication_notice.set(Some("Standalone login request loaded. Preview it before authenticating.".to_owned()));
-                            },
-                            "Use standalone login request"
-                        }
-                    }
-                    button {
-                        class: "primary-action",
-                        r#type: "button",
-                        disabled: authentication_busy() || authentication_input.read().trim().is_empty(),
-                        onclick: {
-                            let service = services.prepare_self_issued_authentication();
-                            let profile_id = profile_id.clone();
-                            move |_| {
-                                let service = service.clone();
-                                let profile_id = profile_id.clone();
-                                let request = authentication_input.read().trim().to_owned();
-                                authentication_busy.set(true);
-                                authentication_notice.set(None);
-                                spawn(async move {
-                                    match run_ui_future(async move {
-                                        service.execute(PrepareSelfIssuedAuthenticationCommand { profile_id, request }).await
-                                    })
-                                    .await
-                                    {
-                                        Ok(Ok(preview)) => {
-                                            prepared_authentication.set(Some(preview));
-                                            authentication_consent.set(false);
-                                            authentication_notice.set(Some("Login preview ready. Review the verifier and purpose before consenting.".to_owned()));
-                                        }
-                                        Ok(Err(error)) => {
-                                            prepared_authentication.set(None);
-                                            authentication_notice.set(Some(self_issued_authentication_message(error)));
-                                        }
-                                        Err(error) => {
-                                            prepared_authentication.set(None);
-                                            authentication_notice.set(Some(error.to_string()));
-                                        }
-                                    }
-                                    authentication_busy.set(false);
-                                });
-                            }
-                        },
-                        if authentication_busy() { "Checking request…" } else { "Preview login request" }
-                    }
-                    if let Some(preview) = prepared_authentication.read().clone() {
-                        div { class: "credential-offer-preview",
-                            div { class: "consent-preview__heading",
-                                h3 { "DID authentication preview" }
-                                span { class: "status-pill", "{ui::protocol_state(&preview.state)}" }
-                            }
-                            if preview.state == "awaiting_consent" {
-                                p { class: "privacy-consent-exemption", "Details shown for authorization." }
-                                ol { class: "consent-questions", aria_label: "DID authentication consent questions",
-                                    li { class: "consent-question",
-                                        p { class: "card-eyebrow", "Who" }
-                                        h4 { "Who is asking?" }
-                                        code { title: "{preview.verifier}", "{preview.verifier}" }
-                                        div { class: "consent-trust",
-                                            span { class: "status-pill warning", "Unverified endpoint" }
-                                            p { "Standalone mode has no production trust-registry or verified-domain signal." }
-                                        }
-                                    }
-                                    li { class: "consent-question",
-                                        p { class: "card-eyebrow", "What" }
-                                        h4 { "What will you prove?" }
-                                        p { "Control of the selected managed DID. No credential or document claims will be disclosed." }
-                                    }
-                                    li { class: "consent-question",
-                                        p { class: "card-eyebrow", "From" }
-                                        h4 { "Which identity?" }
-                                        if let Some((holder_did, _)) = active_managed_authentication_method(&records) {
-                                            code { title: "{holder_did}", "{holder_did}" }
-                                            p { class: "form-hint", "A protected authentication method stays inside wallet custody." }
-                                        } else {
-                                            p { class: "field-error", role: "alert", "Create an active managed DID before authenticating." }
-                                        }
-                                    }
-                                    li { class: "consent-question",
-                                        p { class: "card-eyebrow", "Why" }
-                                        h4 { "Why is it requested?" }
-                                        p { "{preview.purpose}" }
-                                    }
-                                }
-                                label { class: "confirmation-check",
-                                    input {
-                                        id: "self-issued-authentication-consent",
-                                        r#type: "checkbox",
-                                        aria_label: "Consent to DID authentication",
-                                        disabled: active_managed_authentication_method(&records).is_none(),
-                                        checked: authentication_consent(),
-                                        onchange: move |event| authentication_consent.set(event.checked()),
-                                    }
-                                    span { "I reviewed this verifier and consent to authenticate with my active managed DID." }
-                                }
-                                div { class: "action-row",
-                                    button {
-                                        class: "primary-action",
-                                        r#type: "button",
-                                        disabled: authentication_busy() || !authentication_consent(),
-                                        onclick: {
-                                            let service = services.accept_self_issued_authentication();
-                                            let profile_id = profile_id.clone();
-                                            let authentication_id = preview.id.clone();
-                                            let records = records.clone();
-                                            move |_| {
-                                                let Some((holder_did, method_id)) = active_managed_authentication_method(&records) else {
-                                                    authentication_notice.set(Some("Create an active managed DID before authenticating.".to_owned()));
-                                                    return;
-                                                };
-                                                let service = service.clone();
-                                                let profile_id = profile_id.clone();
-                                                let authentication_id = authentication_id.clone();
-                                                authentication_busy.set(true);
-                                                authentication_notice.set(None);
-                                                spawn(async move {
-                                                    match run_ui_future(async move {
-                                                        service.execute(AcceptSelfIssuedAuthenticationCommand {
-                                                            profile_id,
-                                                            authentication_id,
-                                                            holder_did,
-                                                            method_id,
-                                                            confirmed: true,
-                                                            intent: "ACCEPT_SELF_ISSUED_AUTHENTICATION".to_owned(),
-                                                        }).await
-                                                    })
-                                                    .await
-                                                    {
-                                                        Ok(Ok(result)) => {
-                                                            prepared_authentication.set(Some(result));
-                                                            authentication_notice.set(Some("DID authentication succeeded and the standalone verifier independently validated the proof.".to_owned()));
-                                                        }
-                                                        Ok(Err(error)) => authentication_notice.set(Some(self_issued_authentication_message(error))),
-                                                        Err(error) => authentication_notice.set(Some(error.to_string())),
-                                                    }
-                                                    authentication_busy.set(false);
-                                                });
-                                            }
-                                        },
-                                        if authentication_busy() { "Authenticating…" } else { "Authenticate with DID" }
-                                    }
-                                    button {
-                                        class: "secondary-action",
-                                        r#type: "button",
-                                        disabled: authentication_busy(),
-                                        onclick: {
-                                            let service = services.refuse_self_issued_authentication();
-                                            let profile_id = profile_id.clone();
-                                            let authentication_id = preview.id.clone();
-                                            move |_| {
-                                                let service = service.clone();
-                                                let profile_id = profile_id.clone();
-                                                let authentication_id = authentication_id.clone();
-                                                authentication_busy.set(true);
-                                                authentication_notice.set(None);
-                                                spawn(async move {
-                                                    let result = run_ui_blocking(move || {
-                                                        service.execute(RefuseSelfIssuedAuthenticationCommand {
-                                                            profile_id,
-                                                            authentication_id,
-                                                        })
-                                                    })
-                                                    .await;
-                                                    match result {
-                                                        Ok(Ok(result)) => {
-                                                            prepared_authentication.set(Some(result));
-                                                            authentication_consent.set(false);
-                                                            authentication_notice.set(Some("Login request refused; ephemeral protocol secrets were discarded.".to_owned()));
-                                                        }
-                                                        Ok(Err(error)) => authentication_notice.set(Some(self_issued_authentication_message(error))),
-                                                        Err(error) => authentication_notice.set(Some(error.to_string())),
-                                                    }
-                                                    authentication_busy.set(false);
-                                                });
-                                            }
-                                        },
-                                        "Refuse login"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if let Some(message) = authentication_notice.read().as_deref() {
-                        p { class: "form-hint", role: "status", "{message}" }
-                    }
-                }
-                article { class: "surface-card did-resolver-card",
-                    p { class: "card-eyebrow", "Resolve a DID" }
-                    label { r#for: "did-identifier", "Midnight DID" }
-                    input {
-                        id: "did-identifier", r#type: "text", maxlength: 8192,
-                        autocomplete: "off", spellcheck: false,
-                        value: "{did_input}",
-                        oninput: move |event| did_input.set(event.value()),
-                    }
-                    p { class: "form-hint", "Standalone mode recognizes the documented fixture shown by default. A live resolver is used only when its base URL is explicitly configured." }
-                    button {
-                        class: "primary-action", r#type: "button", disabled: !can_resolve,
-                        onclick: move |_| {
-                            state.set(DidPageState::Ready { records: retained_records.clone(), resolving: true, operation_error: None });
-                            let service = resolve_services.resolve_did();
-                            let profile_id = resolve_profile.clone();
-                            let did = did_input.read().trim().to_owned();
-                            let mut records = retained_records.clone();
-                            spawn(async move {
-                                match run_ui_future(async move {
-                                    service.execute(ResolveDidCommand { profile_id, did }).await
-                                })
-                                .await
-                                {
-                                    Ok(Ok(record)) => {
-                                        records.retain(|existing| existing.document.id != record.document.id);
-                                        records.push(record);
-                                        records.sort_by(|left, right| left.document.id.cmp(&right.document.id));
-                                        state.set(DidPageState::Ready { records, resolving: false, operation_error: None });
-                                    }
-                                    Ok(Err(error)) => state.set(DidPageState::Ready { records, resolving: false, operation_error: Some(did_operation_message(error)) }),
-                                    Err(error) => state.set(DidPageState::Ready { records, resolving: false, operation_error: Some(error.to_string()) }),
-                                }
-                            });
-                        },
-                        if resolving { "Resolving…" } else { "Resolve and save" }
-                    }
-                    if let Some(error) = operation_error {
-                        p { class: "field-error", role: "alert", "{error}" }
-                    }
-                }
-                if records.is_empty() {
-                    article { class: "empty-state surface-card",
-                        span { class: "empty-state__mark", aria_hidden: "true", "◇" }
-                        h2 { "No saved DIDs" }
-                        p { "Resolve a did:midnight identifier to add its public document to this profile." }
-                        span { class: "status-pill", "Profile scoped" }
-                    }
-                } else {
-                    section { class: "did-inventory", aria_label: "Saved decentralized identifiers",
-                        for record in records.clone() {
-                            {
-                                let did = record.document.id.clone();
-                                let forget_did = did.clone();
-                                let forget_profile = profile_id.clone();
-                                let forget_services = services.clone();
-                                let retained = records.clone();
-                                let source = ui::did_source(&record.source);
-                                let version = record.document_metadata.version_id.clone().unwrap_or_else(|| "Unversioned".to_owned());
-                                rsx! {
-                                    article { class: "surface-card did-record", key: "{did}",
-                                        div { class: "did-record__heading",
-                                            div {
-                                                p { class: "card-eyebrow", "{ui::midnight_network(&record.document.network)} · {source}" }
-                                                h2 { class: "privacy-value", "{truncate_middle(&did, 22, 12)}" }
-                                            }
-                                            span { class: if record.document_metadata.deactivated == Some(true) { "status-pill" } else { "status-pill success" },
-                                                if record.document_metadata.deactivated == Some(true) { "Deactivated" } else { "Resolved" }
-                                            }
-                                        }
-                                        dl { class: "did-record__facts",
-                                            div { dt { "Version" } dd { "{version}" } }
-                                            div { dt { "Public methods" } dd { "{record.document.verification_methods.len()}" } }
-                                            div { dt { "Services" } dd { "{record.document.services.len()}" } }
-                                        }
-                                        if !record.document.verification_methods.is_empty() {
-                                            ul { class: "did-method-list",
-                                                for method in record.document.verification_methods.clone() {
-                                                    li { key: "{method.id}",
-                                                        strong { "{ui::key_curve(&method.public_key_jwk.curve)}" }
-                                                        code { class: "privacy-value", "{truncate_middle(&method.id, 16, 8)}" }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        {
-                                            let managed_did = did.clone();
-                                            let retained = records.clone();
-                                            rsx! {
-                                                ManagedDidControls {
-                                                    profile_id: profile_id.clone(),
-                                                    record: record.clone(),
-                                                    on_record: move |result: Result<DidRecordView, String>| {
-                                                        match result {
-                                                            Ok(updated) => {
-                                                                let mut next = retained.clone();
-                                                                next.retain(|entry| entry.document.id != managed_did);
-                                                                next.push(updated);
-                                                                next.sort_by(|left, right| left.document.id.cmp(&right.document.id));
-                                                                state.set(DidPageState::Ready { records: next, resolving: false, operation_error: None });
-                                                            }
-                                                            Err(message) => state.set(DidPageState::Ready { records: retained.clone(), resolving: false, operation_error: Some(message) }),
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        button {
-                                            class: "secondary-action", r#type: "button",
-                                            aria_label: "Forget saved DID {did}",
-                                            onclick: move |_| {
-                                                let service = forget_services.forget_did();
-                                                let profile_id = forget_profile.clone();
-                                                let did = forget_did.clone();
-                                                let target = did.clone();
-                                                let records = retained.clone();
-                                                state.set(DidPageState::Ready { records: records.clone(), resolving: true, operation_error: None });
-                                                spawn(async move {
-                                                    let result = run_ui_blocking(move || {
-                                                        service.execute(DidRecordQuery {
-                                                            profile_id,
-                                                            did,
-                                                        })
-                                                    })
-                                                    .await;
-                                                    match result {
-                                                        Ok(Ok(())) => state.set(DidPageState::Ready {
-                                                            records: records.iter().filter(|record| record.document.id != target).cloned().collect(),
-                                                            resolving: false,
-                                                            operation_error: None,
-                                                        }),
-                                                        Ok(Err(error)) => state.set(DidPageState::Ready {
-                                                            records,
-                                                            resolving: false,
-                                                            operation_error: Some(did_operation_message(error)),
-                                                        }),
-                                                        Err(error) => state.set(DidPageState::Ready {
-                                                            records,
-                                                            resolving: false,
-                                                            operation_error: Some(error.to_string()),
-                                                        }),
-                                                    }
-                                                });
-                                            },
-                                            "Forget from profile"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 fn load_credential_page(services: &WalletUiServices, profile_id: &str) -> CredentialPageState {
     services
         .list_credentials()
@@ -8793,6 +8366,29 @@ fn credential_issuance_message(error: CredentialIssuanceError) -> String {
         CredentialIssuanceError::Protocol(error) => ui::protocol_failure(error.code()).to_owned(),
         other => other.to_string(),
     }
+}
+
+fn credential_issuance_terminal_error(
+    error: &CredentialIssuanceError,
+) -> Option<CredentialIssuanceTerminalError> {
+    matches!(error, CredentialIssuanceError::Protocol(error) if error.code() == "protocol_unavailable")
+        .then_some(CredentialIssuanceTerminalError::ProtocolUnavailable)
+}
+
+fn credential_issuance_terminal_error_for_message(
+    message: &str,
+) -> Option<CredentialIssuanceTerminalError> {
+    (message == CredentialIssuanceTerminalError::ProtocolUnavailable.message())
+        .then_some(CredentialIssuanceTerminalError::ProtocolUnavailable)
+}
+
+fn credential_issuance_protocol_error_for_message(message: &str) -> bool {
+    let unavailable = CredentialIssuanceTerminalError::ProtocolUnavailable.message();
+    message == unavailable
+        || message.strip_prefix(unavailable).is_some_and(|suffix| {
+            suffix
+                == ". Session cleanup is unavailable; use Leave credential review to retry secret disposal before navigating away."
+        })
 }
 
 fn credential_issuance_error_proves_no_retained_session(error: &CredentialIssuanceError) -> bool {
@@ -9850,7 +9446,7 @@ fn CredentialsPage(
     let mut offer_draft = use_signal(CredentialOfferDraft::default);
     let mut prepared_issuance = use_signal(|| None::<CredentialIssuanceView>);
     let mut issuance_consent = use_signal(|| false);
-    let mut issuance_busy = use_signal(|| false);
+    let mut issuance_action = use_signal(|| CredentialIssuanceAction::Idle);
     let mut issuance_notice = use_signal(|| None::<String>);
     use_effect(move || {
         let request_uri = pending_identity_request
@@ -9937,6 +9533,8 @@ fn CredentialsPage(
                 &pending_identity_request.read(),
                 manual_credential_review_lock(),
             );
+            let issuance_busy = issuance_action() != CredentialIssuanceAction::Idle;
+            let issuance_action_label = credential_issuance_action_label(issuance_action());
             rsx! {
                 section { class: "page-heading",
                     p { class: "eyebrow", "Identity centre" }
@@ -9981,7 +9579,7 @@ fn CredentialsPage(
                         button {
                             class: "secondary-action",
                             r#type: "button",
-                            disabled: issuance_busy(),
+                            disabled: issuance_busy,
                             onclick: move |_| {
                                 offer_draft.set(CredentialOfferDraft::default());
                                 prepared_issuance.set(None);
@@ -9995,7 +9593,7 @@ fn CredentialsPage(
                         button {
                             class: "secondary-action",
                             r#type: "button",
-                            disabled: issuance_busy()
+                            disabled: issuance_busy
                                 || credential_issuance_review_blocks_replacement(
                                     prepared_issuance.read().as_ref(),
                                 ),
@@ -10011,7 +9609,7 @@ fn CredentialsPage(
                     button {
                         class: "primary-action",
                         r#type: "button",
-                        disabled: issuance_busy()
+                        disabled: issuance_busy
                             || credential_issuance_review_blocks_replacement(
                                 prepared_issuance.read().as_ref(),
                             )
@@ -10021,23 +9619,26 @@ fn CredentialsPage(
                             let profile_id = profile_id.clone();
                             move |_| {
                                 // Preview admission is a synchronous single-flight
-                                // transaction. The busy write guard closes duplicate
-                                // clicks before any reservation or task can start.
+                                // transaction. The action write guard closes duplicate
+                                // events before any review reservation or task can start.
                                 {
-                                    let mut busy = issuance_busy.write();
-                                    if !begin_credential_preview_single_flight_value(&mut busy) {
+                                    let mut action = issuance_action.write();
+                                    if !begin_credential_issuance_action_value(
+                                        &mut action,
+                                        CredentialIssuanceAction::Previewing,
+                                    ) {
                                         return;
                                     }
                                 }
                                 if credential_issuance_review_blocks_replacement(
                                     prepared_issuance.read().as_ref(),
                                 ) {
-                                    issuance_busy.set(false);
+                                    issuance_action.set(CredentialIssuanceAction::Idle);
                                     return;
                                 }
                                 let offer = offer_draft.read().offer_for_prepare().trim().to_owned();
                                 if offer.is_empty() {
-                                    issuance_busy.set(false);
+                                    issuance_action.set(CredentialIssuanceAction::Idle);
                                     return;
                                 }
                                 let Some(manual_review_reserved) =
@@ -10046,7 +9647,7 @@ fn CredentialsPage(
                                         &mut manual_credential_review_lock,
                                     )
                                 else {
-                                    issuance_busy.set(false);
+                                    issuance_action.set(CredentialIssuanceAction::Idle);
                                     return;
                                 };
                                 let service = service.clone();
@@ -10086,7 +9687,11 @@ fn CredentialsPage(
                                             offer_draft.write().clear_imported();
                                             prepared_issuance.set(None);
                                             issuance_consent.set(false);
-                                            issuance_notice.set(Some(credential_issuance_message(error)));
+                                            let message = credential_issuance_terminal_error(&error)
+                                                .map(CredentialIssuanceTerminalError::message)
+                                                .map(str::to_owned)
+                                                .unwrap_or_else(|| credential_issuance_message(error));
+                                            issuance_notice.set(Some(message));
                                         }
                                         Err(error) => {
                                             offer_draft.write().clear_imported();
@@ -10097,33 +9702,55 @@ fn CredentialsPage(
                                             )));
                                         }
                                     }
-                                    issuance_busy.set(false);
+                                    issuance_action.set(CredentialIssuanceAction::Idle);
                                 });
                             }
                         },
-                        if issuance_busy() { "Checking offer…" } else { "Preview credential offer" }
+                        if issuance_action() == CredentialIssuanceAction::Previewing { "Checking offer…" } else { "Preview credential offer" }
                     }
-                    if issuance_busy() {
+                    if issuance_busy {
                         p {
                             class: "form-hint",
                             role: "status",
                             aria_live: "polite",
-                            "Credential operation in progress. Wait for a completed, refused, or error message before continuing."
+                            "{issuance_action_label} Wait for a stored, refused, or recovery message before continuing."
                         }
                     }
                     if let Some(message) = issuance_notice.read().as_deref() {
-                        p {
-                            class: if prepared_issuance.read().as_ref().is_some_and(|review| review.state == "succeeded") { "form-hint credential-reverification-success" } else { "form-hint" },
-                            role: "status",
-                            aria_live: "polite",
-                            "{message}"
+                        if let Some(error) = credential_issuance_terminal_error_for_message(message) {
+                            p {
+                                class: "form-hint",
+                                role: "status",
+                                aria_live: "polite",
+                                span {
+                                    aria_label: CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS,
+                                    "{error.message()}"
+                                }
+                            }
+                        } else if credential_issuance_protocol_error_for_message(message) {
+                            p {
+                                class: "form-hint",
+                                role: "status",
+                                aria_live: "polite",
+                                span {
+                                    aria_label: CREDENTIAL_ISSUANCE_PROTOCOL_ERROR_STATUS,
+                                    "{message}"
+                                }
+                            }
+                        } else {
+                            p {
+                                class: if prepared_issuance.read().as_ref().is_some_and(|review| review.state == "succeeded") { "form-hint credential-reverification-success" } else { "form-hint" },
+                                role: "status",
+                                aria_live: "polite",
+                                "{message}"
+                            }
                         }
                     }
                     if credential_review_escape_visible {
                         button {
                             class: "secondary-action",
                             r#type: "button",
-                            disabled: issuance_busy(),
+                            disabled: issuance_busy,
                             onclick: {
                                 let list_service = services.list_credential_issuances();
                                 let refuse_service = services.refuse_credential_issuance();
@@ -10132,7 +9759,15 @@ fn CredentialsPage(
                                     let list_service = list_service.clone();
                                     let refuse_service = refuse_service.clone();
                                     let profile_id = profile_id.clone();
-                                    issuance_busy.set(true);
+                                    {
+                                        let mut action = issuance_action.write();
+                                        if !begin_credential_issuance_action_value(
+                                            &mut action,
+                                            CredentialIssuanceAction::Cleaning,
+                                        ) {
+                                            return;
+                                        }
+                                    }
                                     issuance_notice.set(None);
                                     spawn(async move {
                                         let cleanup = run_ui_blocking(move || {
@@ -10160,7 +9795,7 @@ fn CredentialsPage(
                                             Ok(Err(message)) => issuance_notice.set(Some(message)),
                                             Err(error) => issuance_notice.set(Some(error.to_string())),
                                         }
-                                        issuance_busy.set(false);
+                                        issuance_action.set(CredentialIssuanceAction::Idle);
                                     });
                                 }
                             },
@@ -10213,11 +9848,19 @@ fn CredentialsPage(
                                         p { "Store this document in your protected wallet. You choose when it is used." }
                                     }
                                 }
+                                p {
+                                    id: "credential-issuance-consent-guidance",
+                                    class: "form-hint",
+                                    role: "status",
+                                    aria_live: "polite",
+                                    "Review the offer and check consent before issuing. Accept remains disabled until consent is checked; no issuer secret call is made first."
+                                }
                                 label { class: "confirmation-check",
                                     input {
                                         id: "credential-issuance-consent",
                                         r#type: "checkbox",
                                         aria_label: "Consent to credential issuance",
+                                        aria_describedby: "credential-issuance-consent-guidance",
                                         checked: issuance_consent(),
                                         onchange: move |event| issuance_consent.set(event.checked()),
                                     }
@@ -10227,7 +9870,8 @@ fn CredentialsPage(
                                     button {
                                         class: "primary-action",
                                         r#type: "button",
-                                        disabled: issuance_busy() || !issuance_consent(),
+                                        disabled: issuance_busy || !issuance_consent(),
+                                        aria_describedby: "credential-issuance-consent-guidance",
                                         onclick: {
                                             let services = services.clone();
                                             let profile_id = profile_id.clone();
@@ -10238,7 +9882,15 @@ fn CredentialsPage(
                                                 let refresh_profile = profile_id.clone();
                                                 let execute_profile = profile_id.clone();
                                                 let execute_issuance_id = issuance_id.clone();
-                                                issuance_busy.set(true);
+                                                {
+                                                    let mut action = issuance_action.write();
+                                                    if !begin_credential_issuance_action_value(
+                                                        &mut action,
+                                                        CredentialIssuanceAction::Accepting,
+                                                    ) {
+                                                        return;
+                                                    }
+                                                }
                                                 issuance_notice.set(None);
                                                 spawn(async move {
                                                     let list_service = services.list_did_records();
@@ -10253,18 +9905,18 @@ fn CredentialsPage(
                                                         Ok(Ok(records)) => records,
                                                         Ok(Err(error)) => {
                                                             issuance_notice.set(Some(did_operation_message(error)));
-                                                            issuance_busy.set(false);
+                                                            issuance_action.set(CredentialIssuanceAction::Idle);
                                                             return;
                                                         }
                                                         Err(error) => {
                                                             issuance_notice.set(Some(error.to_string()));
-                                                            issuance_busy.set(false);
+                                                            issuance_action.set(CredentialIssuanceAction::Idle);
                                                             return;
                                                         }
                                                     };
                                                     let Some((holder_did, method_id, holder_binding_method_id)) = active_managed_issuance_methods(&records) else {
                                                         issuance_notice.set(Some("Create an active managed DID with protected authentication and Jubjub assertion methods before accepting this credential offer.".to_owned()));
-                                                        issuance_busy.set(false);
+                                                        issuance_action.set(CredentialIssuanceAction::Idle);
                                                         return;
                                                     };
                                                     let service = services.accept_credential_issuance();
@@ -10302,9 +9954,12 @@ fn CredentialsPage(
                                                             }
                                                         }
                                                         failure => {
-                                                            let message = match failure {
-                                                                Ok(Err(error)) => credential_issuance_message(error),
-                                                                Err(error) => error.to_string(),
+                                                            let (message, terminal_error) = match failure {
+                                                                Ok(Err(error)) => (
+                                                                    credential_issuance_message(error.clone()),
+                                                                    credential_issuance_terminal_error(&error),
+                                                                ),
+                                                                Err(error) => (error.to_string(), None),
                                                                 Ok(Ok(_)) => unreachable!(),
                                                             };
                                                             let cleanup = run_ui_blocking(move || {
@@ -10327,6 +9982,10 @@ fn CredentialsPage(
                                                                 )
                                                             };
                                                             if cleanup_confirmed {
+                                                                let message = terminal_error
+                                                                    .map(CredentialIssuanceTerminalError::message)
+                                                                    .map(str::to_owned)
+                                                                    .unwrap_or(message);
                                                                 issuance_notice.set(Some(message));
                                                             } else {
                                                                 issuance_notice.set(Some(format!(
@@ -10335,16 +9994,16 @@ fn CredentialsPage(
                                                             }
                                                         }
                                                     }
-                                                    issuance_busy.set(false);
+                                                    issuance_action.set(CredentialIssuanceAction::Idle);
                                                 });
                                             }
                                         },
-                                        if issuance_busy() { "Issuing credential…" } else { "Accept and issue credential" }
+                                        if issuance_action() == CredentialIssuanceAction::Accepting { "Issuing credential…" } else { "Accept and issue credential" }
                                     }
                                     button {
                                         class: "secondary-action",
                                         r#type: "button",
-                                        disabled: issuance_busy(),
+                                        disabled: issuance_busy,
                                         onclick: {
                                             let service = services.refuse_credential_issuance();
                                             let profile_id = profile_id.clone();
@@ -10353,7 +10012,15 @@ fn CredentialsPage(
                                                 let service = service.clone();
                                                 let profile_id = profile_id.clone();
                                                 let issuance_id = issuance_id.clone();
-                                                issuance_busy.set(true);
+                                                {
+                                                    let mut action = issuance_action.write();
+                                                    if !begin_credential_issuance_action_value(
+                                                        &mut action,
+                                                        CredentialIssuanceAction::Refusing,
+                                                    ) {
+                                                        return;
+                                                    }
+                                                }
                                                 issuance_notice.set(None);
                                                 spawn(async move {
                                                     let result = run_ui_blocking(move || {
@@ -10376,11 +10043,11 @@ fn CredentialsPage(
                                                         Ok(Err(error)) => issuance_notice.set(Some(credential_issuance_message(error))),
                                                         Err(error) => issuance_notice.set(Some(error.to_string())),
                                                     }
-                                                    issuance_busy.set(false);
+                                                    issuance_action.set(CredentialIssuanceAction::Idle);
                                                 });
                                             }
                                         },
-                                        "Refuse offer"
+                                        if issuance_action() == CredentialIssuanceAction::Refusing { "Refusing offer…" } else { "Refuse offer" }
                                     }
                                 }
                             }
@@ -11617,20 +11284,22 @@ mod tests {
 
     #[test]
     fn credential_preview_duplicate_click_is_single_flight_and_cannot_release_the_winner() {
-        let mut issuance_busy = false;
+        let mut action = CredentialIssuanceAction::Idle;
         let pending = None;
         let mut manual_review_lock = false;
 
-        assert!(begin_credential_preview_single_flight_value(
-            &mut issuance_busy
+        assert!(begin_credential_issuance_action_value(
+            &mut action,
+            CredentialIssuanceAction::Previewing,
         ));
         let winning_reservation =
             reserve_credential_preview_review_admission_value(&pending, &mut manual_review_lock);
         assert_eq!(winning_reservation, Some(true));
         assert!(manual_review_lock);
 
-        assert!(!begin_credential_preview_single_flight_value(
-            &mut issuance_busy
+        assert!(!begin_credential_issuance_action_value(
+            &mut action,
+            CredentialIssuanceAction::Previewing,
         ));
         assert!(
             !reserve_manual_credential_review_admission_lock_value(&mut manual_review_lock, false,),
@@ -11656,15 +11325,16 @@ mod tests {
             IdentityRequestKind::SelfIssuedAuthentication,
             IdentityRequestKind::CredentialPresentation,
         ] {
-            let mut issuance_busy = false;
+            let mut action = CredentialIssuanceAction::Idle;
             let pending = Some(PendingIdentityRequest {
                 kind,
                 request_uri: "openid://pending-review".to_owned(),
             });
             let mut manual_review_lock = false;
 
-            assert!(begin_credential_preview_single_flight_value(
-                &mut issuance_busy
+            assert!(begin_credential_issuance_action_value(
+                &mut action,
+                CredentialIssuanceAction::Previewing,
             ));
             assert_eq!(
                 reserve_credential_preview_review_admission_value(
@@ -11673,8 +11343,8 @@ mod tests {
                 ),
                 None,
             );
-            issuance_busy = false;
-            assert!(!issuance_busy);
+            action = CredentialIssuanceAction::Idle;
+            assert_eq!(action, CredentialIssuanceAction::Idle);
             assert!(!manual_review_lock);
             assert_eq!(
                 pending.as_ref().map(|request| request.request_uri.as_str()),
@@ -12874,6 +12544,148 @@ mod tests {
             dust_registration_readiness_label("requires_synchronization"),
             "Waiting for spendable DUST — requires DUST synchronization"
         );
+    }
+
+    #[test]
+    fn did_creation_requires_explicit_rearming_and_confirmation() {
+        let mut creation = DidCreationState::Ready;
+        assert!(begin_did_creation_value(&mut creation));
+        assert!(!begin_did_creation_value(&mut creation));
+        assert_eq!(creation, DidCreationState::Creating);
+
+        creation = DidCreationState::Created;
+        assert!(arm_another_did_creation_value(&mut creation));
+        assert_eq!(creation, DidCreationState::AwaitingConfirmation);
+        assert!(confirm_another_did_creation_value(&mut creation));
+        assert_eq!(creation, DidCreationState::Ready);
+        assert!(begin_did_creation_value(&mut creation));
+    }
+
+    #[test]
+    fn did_records_never_imply_wallet_control_without_managed_metadata() {
+        assert_eq!(
+            did_record_management_label("standalone", &[]),
+            "Standalone example / resolved external — not wallet-managed"
+        );
+        assert_eq!(
+            did_record_management_label("live", &["method-1".to_owned()]),
+            "Wallet-managed record"
+        );
+    }
+
+    #[test]
+    fn rendered_identity_and_credential_action_contracts_remain_explicit() {
+        let source = include_str!("lib.rs");
+        for required in [
+            "Creating DID…",
+            "Create another DID",
+            "Confirm create another DID",
+            "Load standalone example DID",
+            "Wallet-managed record",
+            "resolved external — not wallet-managed",
+            "credential-issuance-consent-guidance",
+            "Accept remains disabled until consent is checked",
+            "Issuing credential…",
+            "Refusing offer…",
+        ] {
+            assert!(
+                source.contains(required),
+                "missing rendered contract: {required}"
+            );
+        }
+        assert!(source.contains("aria_busy: true"));
+        assert!(source.contains("aria_describedby: \"credential-issuance-consent-guidance\""));
+    }
+
+    #[test]
+    fn protocol_error_feedback_renders_a_durable_sanitized_terminal_status() {
+        let source = include_str!("lib.rs");
+        let rendered_source = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source precedes tests");
+        assert_eq!(
+            rendered_source
+                .matches("aria_label: CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS")
+                .count(),
+            1,
+            "the terminal error must have one stable accessibility identifier",
+        );
+        assert!(rendered_source.contains("CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS"));
+        assert!(rendered_source.contains("CREDENTIAL_ISSUANCE_PROTOCOL_ERROR_STATUS"));
+        assert!(rendered_source.contains("credential_issuance_protocol_error_for_message"));
+        assert!(rendered_source.contains("credential_issuance_terminal_error_for_message"));
+        assert!(rendered_source.contains("role: \"status\""));
+        assert!(rendered_source.contains("aria_live: \"polite\""));
+
+        let unavailable = CredentialIssuanceError::Protocol(
+            oxid_protocol_application::IssuanceProtocolError::Unavailable,
+        );
+        let terminal_error = credential_issuance_terminal_error(&unavailable);
+        assert_eq!(
+            terminal_error,
+            Some(CredentialIssuanceTerminalError::ProtocolUnavailable)
+        );
+        let terminal_error = terminal_error.expect("known terminal category");
+        assert_eq!(
+            CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS,
+            "Credential issuance terminal error: protocol unavailable"
+        );
+        assert_eq!(
+            terminal_error.message(),
+            "This protocol is unavailable in the current build"
+        );
+        assert_eq!(
+            credential_issuance_terminal_error_for_message(terminal_error.message()),
+            Some(CredentialIssuanceTerminalError::ProtocolUnavailable)
+        );
+        assert!(credential_issuance_protocol_error_for_message(
+            terminal_error.message()
+        ));
+        assert!(credential_issuance_protocol_error_for_message(
+            "This protocol is unavailable in the current build. Session cleanup is unavailable; use Leave credential review to retry secret disposal before navigating away."
+        ));
+
+        let mut action = CredentialIssuanceAction::Idle;
+        assert!(begin_credential_issuance_action_value(
+            &mut action,
+            CredentialIssuanceAction::Previewing,
+        ));
+        assert_eq!(action, CredentialIssuanceAction::Previewing);
+        action = CredentialIssuanceAction::Idle;
+        assert_eq!(action, CredentialIssuanceAction::Idle);
+
+        let mut pending = Some(PendingIdentityRequest {
+            kind: IdentityRequestKind::CredentialIssuance,
+            request_uri: String::new(),
+        });
+        let mut manual_review_lock = false;
+        clear_credential_issuance_review_admission_value(&mut pending, &mut manual_review_lock);
+        assert!(pending.is_none());
+        assert!(!manual_review_lock);
+    }
+
+    #[test]
+    fn credential_decision_admission_is_single_flight_and_has_distinct_busy_copy() {
+        let mut action = CredentialIssuanceAction::Idle;
+        assert!(begin_credential_issuance_action_value(
+            &mut action,
+            CredentialIssuanceAction::Accepting,
+        ));
+        assert!(!begin_credential_issuance_action_value(
+            &mut action,
+            CredentialIssuanceAction::Refusing,
+        ));
+        assert_eq!(
+            credential_issuance_action_label(action),
+            "Issuing credential…"
+        );
+        action = CredentialIssuanceAction::Idle;
+        assert!(begin_credential_issuance_action_value(
+            &mut action,
+            CredentialIssuanceAction::Refusing,
+        ));
+        assert_eq!(credential_issuance_action_label(action), "Refusing offer…");
     }
 
     #[test]

@@ -115,11 +115,108 @@ final class PortalFlowTests: XCTestCase {
         return assertExactPreview(in: application)
     }
 
+    private let credentialIssuanceTerminalStatus = "Credential issuance terminal error"
+    private let credentialIssuanceProtocolErrorStatus = "Credential issuance protocol error"
+    private let protocolUnavailableCategory = "protocol unavailable"
+
+    private enum ProtocolErrorDiagnosticValue: String {
+        case durable
+        case absent
+        case clearedEarly = "cleared_early"
+        case protocolUnavailable = "protocol_unavailable"
+        case idle
+        case busy
+        case cleared
+        case retained
+        case legacyStaticTextPresent = "legacy_static_text_present"
+        case legacyStaticTextAbsent = "legacy_static_text_absent"
+    }
+
+    private struct ProtocolErrorDiagnostic {
+        let status: ProtocolErrorDiagnosticValue
+        let category: ProtocolErrorDiagnosticValue
+        let action: ProtocolErrorDiagnosticValue
+        let importedOffer: ProtocolErrorDiagnosticValue
+        let reviewAdmission: ProtocolErrorDiagnosticValue
+        let legacyStaticText: ProtocolErrorDiagnosticValue
+    }
+
     @MainActor
-    private func unavailableStatus(in application: XCUIApplication) -> XCUIElement {
-        application.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS[c] %@", "protocol is unavailable")
+    private func protocolUnavailableTerminalStatus(in application: XCUIApplication) -> XCUIElement {
+        let identifier = "\(credentialIssuanceTerminalStatus): \(protocolUnavailableCategory)"
+        return application.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", identifier)
         ).firstMatch
+    }
+
+    @MainActor
+    private func protocolUnavailableErrorStatus(in application: XCUIApplication) -> XCUIElement {
+        let identifier = "\(credentialIssuanceProtocolErrorStatus): \(protocolUnavailableCategory)"
+        return application.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", identifier)
+        ).firstMatch
+    }
+
+    @MainActor
+    private func observeProtocolError(in application: XCUIApplication) -> ProtocolErrorDiagnostic {
+        let status = protocolUnavailableTerminalStatus(in: application)
+        let appeared = status.waitForExistence(timeout: 35)
+        let state: ProtocolErrorDiagnosticValue
+        if appeared {
+            Thread.sleep(forTimeInterval: 1)
+            state = status.exists ? .durable : .clearedEarly
+        } else {
+            state = .absent
+        }
+        let legacy = application.staticTexts[
+            "This protocol is unavailable in the current build"
+        ].exists
+        let actionIdle = application.buttons["Preview credential offer"].exists
+            && !application.buttons["Checking offer…"].exists
+        let importedOfferCleared = !application.descendants(matching: .any)[
+            "Imported credential offer retained privately"
+        ].exists && application.descendants(matching: .any)["Credential offer URI"].exists
+        let reviewAdmissionCleared = !application.buttons["Dismiss identity request"].exists
+        return ProtocolErrorDiagnostic(
+            status: state,
+            category: appeared || legacy ? .protocolUnavailable : .absent,
+            action: actionIdle ? .idle : .busy,
+            importedOffer: importedOfferCleared ? .cleared : .retained,
+            reviewAdmission: reviewAdmissionCleared ? .cleared : .retained,
+            legacyStaticText: legacy ? .legacyStaticTextPresent : .legacyStaticTextAbsent
+        )
+    }
+
+    private func recordProtocolErrorDiagnostic(_ diagnostic: ProtocolErrorDiagnostic) {
+        guard let path = ProcessInfo.processInfo.environment[
+            "OXID_PORTAL_PROTOCOL_ERROR_DIAGNOSTIC_PATH"
+        ] else {
+            return
+        }
+        let json = "{\"schema\":\"oxid-ios-protocol-error-diagnostic-v1\",\"status\":\"\(diagnostic.status.rawValue)\",\"category\":\"\(diagnostic.category.rawValue)\",\"action\":\"\(diagnostic.action.rawValue)\",\"importedOffer\":\"\(diagnostic.importedOffer.rawValue)\",\"reviewAdmission\":\"\(diagnostic.reviewAdmission.rawValue)\",\"legacyStaticText\":\"\(diagnostic.legacyStaticText.rawValue)\"}"
+        let destination = URL(fileURLWithPath: path)
+        do {
+            try Data(json.utf8).write(to: destination, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
+        } catch {
+            XCTFail("Closed protocol-error diagnostic could not be recorded")
+        }
+    }
+
+    @MainActor
+    private func assertProtocolUnavailableTerminalStatus(
+        in application: XCUIApplication,
+        recordDiagnostic: Bool
+    ) {
+        let diagnostic = observeProtocolError(in: application)
+        if recordDiagnostic {
+            recordProtocolErrorDiagnostic(diagnostic)
+        }
+        XCTAssertEqual(diagnostic.status, .durable)
+        XCTAssertEqual(diagnostic.category, .protocolUnavailable)
+        XCTAssertEqual(diagnostic.action, .idle)
+        XCTAssertEqual(diagnostic.importedOffer, .cleared)
+        XCTAssertEqual(diagnostic.reviewAdmission, .cleared)
     }
 
     private func signalIssueErrorBoundary() throws {
@@ -194,8 +291,7 @@ final class PortalFlowTests: XCTestCase {
         let application = application()
         assertRoutedOffer(in: application)
         preview(in: application)
-        XCTAssertTrue(unavailableStatus(in: application).waitForExistence(timeout: 35))
-        XCTAssertTrue(application.buttons["Dismiss identity request"].waitForNonExistence(timeout: 10))
+        assertProtocolUnavailableTerminalStatus(in: application, recordDiagnostic: true)
     }
 
     @MainActor
@@ -206,8 +302,7 @@ final class PortalFlowTests: XCTestCase {
         let checking = application.buttons["Checking offer…"]
         XCTAssertTrue(checking.waitForExistence(timeout: 5))
         XCTAssertFalse(checking.isEnabled)
-        XCTAssertTrue(unavailableStatus(in: application).waitForExistence(timeout: 40))
-        XCTAssertTrue(application.buttons["Dismiss identity request"].waitForNonExistence(timeout: 10))
+        assertProtocolUnavailableTerminalStatus(in: application, recordDiagnostic: false)
     }
 
     @MainActor
@@ -224,7 +319,7 @@ final class PortalFlowTests: XCTestCase {
         let leave = application.buttons["Leave credential review"]
         XCTAssertTrue(leave.waitForExistence(timeout: 40))
         XCTAssertTrue(leave.isEnabled)
-        XCTAssertTrue(unavailableStatus(in: application).exists)
+        XCTAssertTrue(protocolUnavailableErrorStatus(in: application).exists)
         XCTAssertEqual(consent.value as? String, "0")
         XCTAssertFalse(issue.isEnabled)
         XCTAssertTrue(application.staticTexts["Credential offer preview"].exists)

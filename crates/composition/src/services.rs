@@ -18,7 +18,8 @@ use oxid_diagnostics_application::{
 };
 use oxid_identity_application::{
     CreateDidUseCase, DeactivateDidUseCase, ForgetDidUseCase, GetDidRecordUseCase,
-    ListDidRecordsUseCase, ResolveDidUseCase, SignDidPayloadUseCase, UpdateDidUseCase,
+    ListDidRecordsUseCase, PublishDidUseCase, ResolveDidUseCase, SignDidPayloadUseCase,
+    UpdateDidUseCase,
 };
 use oxid_passport_vault_application::{
     AuthorizePassportVaultCallUseCase, CancelPassportVaultCallSubmissionUseCase,
@@ -142,6 +143,7 @@ pub struct ApplicationServices {
     pub(super) create_did: Arc<dyn CreateDidUseCase>,
     pub(super) resolve_did: Arc<dyn ResolveDidUseCase>,
     pub(super) list_did_records: Arc<dyn ListDidRecordsUseCase>,
+    pub(super) publish_did: Option<Arc<dyn PublishDidUseCase>>,
     pub(super) get_did_record: Arc<dyn GetDidRecordUseCase>,
     pub(super) update_did: Arc<dyn UpdateDidUseCase>,
     pub(super) deactivate_did: Arc<dyn DeactivateDidUseCase>,
@@ -507,6 +509,11 @@ impl ApplicationServices {
     #[must_use]
     pub fn list_did_records(&self) -> Arc<dyn ListDidRecordsUseCase> {
         Arc::clone(&self.list_did_records)
+    }
+
+    #[must_use]
+    pub fn publish_did(&self) -> Option<Arc<dyn PublishDidUseCase>> {
+        self.publish_did.clone()
     }
 
     #[must_use]

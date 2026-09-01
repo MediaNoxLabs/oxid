@@ -40,15 +40,17 @@ def measured($mode; $name):
     exactProtocolCounters:(
       $counters.authorizationMetadata == 3
       and $counters.credential == 1
-      and $counters.issuerMetadata == 7
+      and $counters.issuerMetadata == 6
       and $counters.issuerResolution == 3
       and $counters.issuerResolutionSuccess == 3
+      and $counters.holderPublications == 1
       and $counters.kyc == 14
       and $counters.nonce == 1
       and $counters.other == 0
       and $counters.token == 2
     ),
     strictFinalExchange:measured("issue"; "strictFinalExchange"),
+    explicitHolderBootstrap:measured("prepare-holder"; "holderDidBootstrapped"),
     explicitConsent:measured("issue"; "explicitConsent"),
     managedAuthenticationProof:measured("issue"; "managedAuthenticationProof"),
     separateJubjubAssertionBinding:measured("issue"; "separateJubjubAssertionBinding"),
