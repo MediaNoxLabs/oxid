@@ -144,6 +144,99 @@
       ],
       "exclusions": [],
       "temporaryExceptions": []
+    },
+    {
+      "name": "oxid-composition",
+      "sourceRoot": "crates/composition/src",
+      "facadeFiles": [
+        "crates/composition/src/lib.rs"
+      ],
+      "facadeMaximumPhysicalLines": 51,
+      "facadeMaximumPhysicalLinesByPath": {
+        "crates/composition/src/lib.rs": 51
+      },
+      "capabilityOwners": [
+        {
+          "name": "environment-policy",
+          "modulePathPrefixes": [
+            "crates/composition/src/environment"
+          ]
+        },
+        {
+          "name": "identity-composition",
+          "modulePathPrefixes": [
+            "crates/composition/src/identity"
+          ]
+        },
+        {
+          "name": "passport-vault-bridge",
+          "modulePathPrefixes": [
+            "crates/composition/src/passport_vault"
+          ]
+        },
+        {
+          "name": "headless-profiles",
+          "modulePathPrefixes": [
+            "crates/composition/src/profile_headless"
+          ]
+        },
+        {
+          "name": "environment-selected-profile",
+          "modulePathPrefixes": [
+            "crates/composition/src/profile_environment"
+          ]
+        },
+        {
+          "name": "in-memory-profile",
+          "modulePathPrefixes": [
+            "crates/composition/src/profile_in_memory"
+          ]
+        },
+        {
+          "name": "mobile-profiles",
+          "modulePathPrefixes": [
+            "crates/composition/src/profile_mobile"
+          ]
+        },
+        {
+          "name": "production-profile",
+          "modulePathPrefixes": [
+            "crates/composition/src/profile_production"
+          ]
+        },
+        {
+          "name": "application-services",
+          "modulePathPrefixes": [
+            "crates/composition/src/services"
+          ]
+        },
+        {
+          "name": "capability-wiring",
+          "modulePathPrefixes": [
+            "crates/composition/src/wiring"
+          ]
+        },
+        {
+          "name": "portal-profile",
+          "modulePathPrefixes": [
+            "crates/composition/src/portal"
+          ]
+        },
+        {
+          "name": "funded-finality-evidence",
+          "modulePathPrefixes": [
+            "crates/composition/src/standalone_funding_tests"
+          ]
+        },
+        {
+          "name": "composition-contract-tests",
+          "modulePathPrefixes": [
+            "crates/composition/src/verification"
+          ]
+        }
+      ],
+      "exclusions": [],
+      "temporaryExceptions": []
     }
   ]
 }
