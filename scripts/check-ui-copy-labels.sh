@@ -9,11 +9,23 @@ if ! command -v rg >/dev/null 2>&1; then
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ui_source="$repo_root/crates/ui-dioxus/src/lib.rs"
-labels="$repo_root/crates/ui-dioxus/src/labels.rs"
+ui_source_root="${OXID_UI_SOURCE_ROOT:-$repo_root/crates/ui-dioxus/src}"
+labels="${OXID_UI_LABELS:-$repo_root/crates/ui-dioxus/src/labels.rs}"
 
 if [[ ! -f "$labels" ]]; then
   echo "The central Dioxus labeling module is missing." >&2
+  exit 1
+fi
+
+ui_sources=()
+while IFS= read -r -d '' source; do
+  if [[ "$source" != "$labels" ]]; then
+    ui_sources+=("$source")
+  fi
+done < <(find "$ui_source_root" -type f -name '*.rs' -print0)
+
+if [[ ${#ui_sources[@]} -eq 0 ]]; then
+  echo "No Dioxus Rust sources found under $ui_source_root." >&2
   exit 1
 fi
 
@@ -21,7 +33,7 @@ reject() {
   local pattern="$1"
   local message="$2"
   local matches
-  matches="$({ rg --line-number --pcre2 "$pattern" "$ui_source" || true; })"
+  matches="$({ rg --line-number --pcre2 "$pattern" "${ui_sources[@]}" || true; })"
   if [[ -n "$matches" ]]; then
     echo "$message" >&2
     echo "$matches" >&2
