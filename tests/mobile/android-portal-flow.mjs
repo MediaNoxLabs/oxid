@@ -170,6 +170,13 @@ function issuanceEvidenceExpression() {
       && Array.from(records[0].querySelectorAll(".status-pill.success"))
         .some((element) => element.textContent.trim() === "Valid")
       && document.body.innerText.includes("Credential policy · issuer passed · time passed · trust passed · revocation not checked")
+      && document.body.innerText.includes("Credential attributes")
+      && ["First name", "Last name", "Date of birth", "Document number", "Issuing state"]
+        .every((label) => records[0].innerText.includes(label))
+      && document.body.innerText.includes("Saved to your wallet")
+      && !document.body.innerText.includes("Credential offer preview")
+      && !Array.from(document.querySelectorAll("button"))
+        .some((element) => element.textContent.trim() === "Receive standalone credential")
       && !document.body.innerText.includes("John") && !document.body.innerText.includes("Doe");
   })()`;
 }
@@ -337,7 +344,7 @@ try {
     if (await evaluate('Array.from(document.querySelectorAll(".field-error")).some((element) => element.textContent.trim() === "protected DID key operation is unavailable")')) {
       throw new Error("managed DID creation ran without activated development custody");
     }
-    await click("Bootstrap active DID for test issuer");
+    await click("Publish active holder DID to test issuer");
     await waitFor(
       'document.body.innerText.includes("Public DID document is available to the current test issuer")',
       "explicit holder DID bootstrap",
@@ -546,7 +553,13 @@ try {
       valid: Array.from(document.querySelectorAll(".credential-record")).length === 1
         && document.body.innerText.includes("Valid"),
       policy: document.body.innerText.includes("Credential policy · issuer passed · time passed · trust passed · revocation not checked"),
-      claimsHidden: !document.body.innerText.includes("John") && !document.body.innerText.includes("Doe")
+      claimsHidden: !document.body.innerText.includes("John") && !document.body.innerText.includes("Doe"),
+      offerReviewClosed: !document.body.innerText.includes("Credential offer preview")
+        && document.body.innerText.includes("Saved to your wallet"),
+      standaloneInboxAbsent: !Array.from(document.querySelectorAll("button"))
+        .some((element) => element.textContent.trim() === "Receive standalone credential"),
+      attributesListed: ["First name", "Last name", "Date of birth", "Document number", "Issuing state"]
+        .every((label) => document.querySelector(".credential-record")?.innerText.includes(label))
     })`);
     const counts = await counters();
     if (!Object.values(result).every(Boolean)) {
@@ -562,11 +575,14 @@ try {
       token: 1,
     }, "successful issuance");
     Object.assign(measurements, {
+      attributesListed: result.attributesListed,
       claimsHidden: result.claimsHidden,
       exactBundleImported: true,
       explicitConsent: true,
       managedAuthenticationProof: true,
+      offerReviewClosed: result.offerReviewClosed,
       separateJubjubAssertionBinding: true,
+      standaloneInboxAbsent: result.standaloneInboxAbsent,
       strictFinalExchange: true,
       warmIngress: true,
     });

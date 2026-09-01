@@ -57,6 +57,12 @@ test("issue accepts either the completion notice or the protected valid-record s
   assert.match(source, /textContent\.trim\(\) === "Valid"/u);
   assert.match(source, /function issuanceEvidenceExpression\(\)/u);
   assert.match(terminal, /await waitFor\(issuanceEvidenceExpression\(\), "protected credential inventory", 30_000\);/u);
+  assert.match(source, /offerReviewClosed/u);
+  assert.match(source, /standaloneInboxAbsent/u);
+  assert.match(source, /attributesListed/u);
+  assert.match(source, /"Saved to your wallet"/u);
+  assert.match(source, /"Document number"/u);
+  assert.match(source, /"Issuing state"/u);
   assert.match(source, /function issuanceDiagnosticExpression\(\)/u);
   assert.match(source, /invalidCredential/u);
   assert.match(source, /invalidCredentialResponse/u);

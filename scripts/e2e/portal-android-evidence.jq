@@ -50,6 +50,9 @@ def measured($mode; $name):
       and $counters.token == 2
     ),
     strictFinalExchange:measured("issue"; "strictFinalExchange"),
+    offerReviewClosed:measured("issue"; "offerReviewClosed"),
+    standaloneInboxAbsent:measured("issue"; "standaloneInboxAbsent"),
+    credentialAttributesListed:measured("issue"; "attributesListed"),
     explicitHolderBootstrap:measured("prepare-holder"; "holderDidBootstrapped"),
     explicitConsent:measured("issue"; "explicitConsent"),
     managedAuthenticationProof:measured("issue"; "managedAuthenticationProof"),
