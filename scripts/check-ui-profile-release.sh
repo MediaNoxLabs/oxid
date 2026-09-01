@@ -11,7 +11,7 @@ load_feature_graph() {
   local label="$1"
   local features="$2"
   local target="${3:-}"
-  local cargo_tree_args=(-p oxid-app --prefix none --format '{p}|{f}')
+  local cargo_tree_args=(-p oxid-app --edges normal --prefix none --format '{p}|{f}')
   if [[ -n "$features" ]]; then
     cargo_tree_args+=(--no-default-features --features "$features")
   fi
@@ -28,10 +28,17 @@ resolved_features() {
   local label="$1"
   local package="$2"
   local line
-  if ! line="$(rg -m1 "^${package} v[^|]*\\|" "$feature_graph_log")"; then
-    echo "$label feature graph does not contain $package" >&2
+  local matches
+  matches="$(rg "^${package} v[^|]*\\|" "$feature_graph_log" || true)"
+  if [[ -z "$matches" ]]; then
+    printf '\n'
+    return
+  fi
+  if [[ "$(printf '%s\n' "$matches" | wc -l | tr -d ' ')" != "1" ]]; then
+    echo "$label feature graph contains ambiguous versions of $package" >&2
     exit 1
   fi
+  line="$matches"
   printf '%s\n' "${line#*|}"
 }
 
@@ -107,7 +114,7 @@ assert_public_fixture_feature_absent "default" ""
 assert_public_fixture_feature_absent "desktop" "desktop"
 assert_public_fixture_feature_absent "iOS mobile" "mobile" "aarch64-apple-ios"
 assert_public_fixture_feature_absent "Android mobile" "mobile" "aarch64-linux-android"
-assert_public_fixture_feature_absent "web" "web"
+assert_public_fixture_feature_absent "web" "web" "wasm32-unknown-unknown"
 # Bare transport selectors are deliberately invalid: without explicit custody
 # they must neither enable the fixture nor compile. The negative cargo checks
 # below prove the expected diagnostic; these graph checks prove no authority was

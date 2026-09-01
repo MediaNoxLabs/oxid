@@ -1225,6 +1225,8 @@ fn public_standalone_genesis_balances_are_exact() {
         "live standalone balance proof requires explicit opt-in"
     );
     let config = standalone_config();
+    let network_id = config.indexer().network_id().as_str().to_owned();
+    let public_network = public_standalone_network(&network_id).expect("undeployed capability");
     let profiles = Arc::new(InMemoryWalletProfileRepository::new());
     let security = Arc::new(DevelopmentWalletSecurity::new(
         Arc::new(SystemClock),
@@ -1241,7 +1243,7 @@ fn public_standalone_genesis_balances_are_exact() {
         None,
         move |security| {
             Arc::new(public_profile_protection(
-                public_standalone_network("undeployed").expect("undeployed capability"),
+                public_network,
                 protection_profiles,
                 security,
             ))
