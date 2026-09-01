@@ -296,15 +296,37 @@ test("published evidence is private, checksummed, normalized, and path-redacted"
   await assert.rejects(stat(path.join(result.headRoot, "build")), { code: "ENOENT" });
 });
 
-test("malformed LLVM output and escaping paths are rejected without publication", () => {
+test("dependency sources are omitted while untrusted source paths fail closed", () => {
+  const filesystemRoot = path.parse(repoRoot).root;
+  const dependencySources = [
+    path.join(filesystemRoot, "home/runner/.cargo/registry/src/index.crates.io/hash/dependency.rs"),
+    path.join(filesystemRoot, "home/runner/.cargo/git/checkouts/dependency/hash/src/lib.rs"),
+    path.join(filesystemRoot, "home/runner/.rustup/toolchains/stable/lib/rustlib/src/rust/library/core/src/lib.rs"),
+  ];
+  const raw = llvmReport();
+  raw.data[0].files.push(...dependencySources.map((filename) => ({
+    filename,
+    summary: { lines: { count: 1, covered: 1, percent: 100 } },
+  })));
+  raw.data[0].functions = [{
+    filenames: dependencySources,
+    regions: dependencySources.map((_, index) => [1, 1, 1, 2, 1, index]),
+  }];
+
+  const normalized = normalizeLlvmReport(raw, { repoRoot, scopeId: "workspace-aggregate" });
+  assert.deepEqual(normalized.files.map(({ path: sourcePath }) => sourcePath), ["crates/foundation/src/lib.rs"]);
+  for (const sourcePath of dependencySources) assert.doesNotMatch(JSON.stringify(normalized), new RegExp(sourcePath, "u"));
+
   assert.throws(
     () => normalizeLlvmReport({}, { repoRoot, scopeId: "workspace-aggregate" }),
     /malformed LLVM coverage output/u,
   );
-  assert.throws(
-    () => normalizeLlvmReport(llvmReport("/private/secret/source.rs"), { repoRoot, scopeId: "workspace-aggregate" }),
-    /outside repository/u,
-  );
+  for (const sourcePath of ["../crates/foundation/src/lib.rs", path.join(filesystemRoot, "project/crates/foundation/src/lib.rs")]) {
+    assert.throws(
+      () => normalizeLlvmReport(llvmReport(sourcePath), { repoRoot, scopeId: "workspace-aggregate" }),
+      /outside repository/u,
+    );
+  }
 });
 
 test("scope failure removes only the run-owned head output and lock", async (t) => withTemp(t, async (stateRoot) => {

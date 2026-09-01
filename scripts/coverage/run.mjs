@@ -80,6 +80,15 @@ function slashPath(candidate) {
   return candidate.split(path.sep).join("/");
 }
 
+function isDependencySource(candidate) {
+  if (typeof candidate !== "string" || !path.isAbsolute(candidate) || candidate.includes("\0")) return false;
+  const sourcePath = slashPath(path.normalize(candidate));
+  return /\/\.cargo\/(?:registry\/src|git\/checkouts)\//u.test(sourcePath)
+    || /\/\.rustup\/toolchains\//u.test(sourcePath)
+    || /\/lib\/rustlib\/src\/rust\/library\//u.test(sourcePath)
+    || /\/rustc\/[0-9a-f]{40,}\//u.test(sourcePath);
+}
+
 function normalizeRepoPath(candidate, repoRoot) {
   if (typeof candidate !== "string" || candidate.length === 0 || candidate.includes("\0")) {
     throw new Error("malformed LLVM coverage output: invalid source filename");
@@ -387,7 +396,9 @@ function functionRegionsByPath(data, repoRoot) {
       if (!Number.isInteger(fileIndex) || fileIndex < 0 || fileIndex >= fn.filenames.length) {
         throw new Error("malformed LLVM coverage output: invalid function region file mapping");
       }
-      const sourcePath = normalizeRepoPath(fn.filenames[fileIndex], repoRoot);
+      const filename = fn.filenames[fileIndex];
+      if (isDependencySource(filename)) continue;
+      const sourcePath = normalizeRepoPath(filename, repoRoot);
       if (!result.has(sourcePath)) result.set(sourcePath, []);
       result.get(sourcePath).push(region);
     }
@@ -411,7 +422,7 @@ export function normalizeLlvmReport(raw, {
   }
   const totals = normalizeLines(data.totals?.lines, "total line counts");
   const functionRegions = functionRegionsByPath(data, repoRoot);
-  const files = data.files.map((file) => {
+  const files = data.files.filter((file) => !isDependencySource(file?.filename)).map((file) => {
     const sourcePath = normalizeRepoPath(file?.filename, repoRoot);
     const packageEntry = packageForPath(sourcePath, packageInventory);
     if (packageInventory.length > 0 && !packageEntry) {
