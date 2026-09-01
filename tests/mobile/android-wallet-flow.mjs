@@ -668,10 +668,15 @@ try {
       "document.body.innerText.includes('Credential issued, verified, and stored in the protected inventory.') && document.body.innerText.includes('Valid')",
       "issued and verified OID4VCI credential",
     );
+    await waitFor(
+      "document.body.innerText.includes('Saved to your wallet') && !document.body.innerText.includes('Credential offer preview')",
+      "closed credential review and saved receipt",
+    );
     // The holder-bound standalone credential ID commits to its issuance
     // second. Cross that boundary before issuing a second matching passport
     // so the chooser is exercised with two distinct stored credentials.
     await evaluate("new Promise((resolve) => setTimeout(resolve, 1200))");
+    await clickButton("Start another offer");
     await clickButton("Use standalone demo offer");
     await clickButton("Preview credential offer");
     await waitFor(

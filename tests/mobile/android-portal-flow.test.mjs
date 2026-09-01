@@ -57,6 +57,12 @@ test("issue accepts either the completion notice or the protected valid-record s
   assert.match(source, /textContent\.trim\(\) === "Valid"/u);
   assert.match(source, /function issuanceEvidenceExpression\(\)/u);
   assert.match(terminal, /await waitFor\(issuanceEvidenceExpression\(\), "protected credential inventory", 30_000\);/u);
+  assert.match(source, /offerReviewClosed/u);
+  assert.match(source, /standaloneInboxAbsent/u);
+  assert.match(source, /attributesListed/u);
+  assert.match(source, /"Saved to your wallet"/u);
+  assert.match(source, /"Document number"/u);
+  assert.match(source, /"Issuing state"/u);
   assert.match(source, /function issuanceDiagnosticExpression\(\)/u);
   assert.match(source, /invalidCredential/u);
   assert.match(source, /invalidCredentialResponse/u);
@@ -67,4 +73,17 @@ test("issue accepts either the completion notice or the protected valid-record s
   assert.match(source, /const hasStatus = \(value\) => statuses\.some\(\(text\) => text\.includes\(value\)\);/u);
   assert.match(terminal, /const diagnosticState = await evaluate\(issuanceDiagnosticExpression\(\)\);/u);
   assert.match(terminal, /payload-free counters \$\{JSON\.stringify\(diagnosticCounts\)\} and state \$\{JSON\.stringify\(diagnosticState\)\}/u);
+});
+
+test("Android issuance consent crosses a real touch boundary", () => {
+  assert.match(source, /async function touchCheckbox\(selector, description\)/u);
+  assert.match(source, /Input\.dispatchTouchEvent/u);
+  assert.equal(
+    source.match(/await touchCheckbox\("#credential-issuance-consent", "issuance consent"\);/gu)?.length,
+    2,
+  );
+  assert.doesNotMatch(
+    source,
+    /evaluate\('document\.querySelector\("#credential-issuance-consent"\)\.click\(\)'\)/u,
+  );
 });

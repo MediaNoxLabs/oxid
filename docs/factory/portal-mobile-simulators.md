@@ -9,8 +9,8 @@ it is not a hosted gate, physical-device, camera, Tailscale, native-custody,
 release, live-DIDIT, or performance evidence.
 
 The profile reuses Portal integration commit
-`22ae5369b6f939e6b20648f4b85dd993527748ef`, tree
-`74d8d1a5b87c160ea554006e47d5f3edc3cd3e10`, deployment schema v3, profile
+`25499870f84d77173c46e4af3021311decfb840b`, tree
+`2d845d2293603dfd8adce5362c8a9941e6ba78a9`, deployment schema v3, profile
 authority v2, and the existing one-shot loopback capability. The capability
 authenticates the app to the listener; plaintext loopback does not authenticate
 the listener to the app. Strict routing, explicit consent, issuer trust, proof,

@@ -48,13 +48,23 @@ On the phone, explicitly prepare the holder before accepting an offer:
 
 1. Open **Wallet** and activate the development wallet if it is not active.
 2. Open **Documents** → **Manage identities** and create a standalone DID.
-3. Tap **Bootstrap active DID for test issuer** and wait for the confirmation
+3. Tap **Publish active holder DID to test issuer** and wait for the confirmation
    that the public DID document is available. This shares only the public DID
    Resolution Result with this receipt-owned test issuer; it sends no private
    keys or credentials and is not a Midnight on-chain DID publication.
 4. Complete the Portal page, use Oxid's **Scan** action to scan its QR once,
    preview the offer, then choose **Accept and issue credential** or
    **Refuse offer**.
+
+After successful acceptance, the offer preview closes and a short **Saved to
+your wallet** receipt appears above the protected inventory. The same action
+already performed issuance, verification, and encrypted persistence; do not
+use a second receive action. Normal and demo profiles do not expose the
+standalone credential inbox because it bypasses OpenID4VCI and is reserved for
+the explicit developer profile. A Digital Passport card lists the validated
+first name, last name, date-of-birth predicate, optional document number, and
+issuing state capabilities. Selective attributes remain encrypted until the
+holder taps **Reveal locally**; the date of birth remains predicate-only.
 
 Do not retry or reuse a consumed QR. Stop before a fresh attempt:
 

@@ -258,7 +258,7 @@ pub(super) fn DidsPage(
                                         }
                                     });
                                 },
-                                if did_publication_busy() { "Bootstrapping…" } else { "Bootstrap active DID for test issuer" }
+                                if did_publication_busy() { "Publishing holder DID…" } else { "Publish active holder DID to test issuer" }
                             }
                             if let Some(message) = did_publication_notice.read().as_deref() {
                                 p { class: "form-hint", role: "status", aria_live: "polite", "{message}" }

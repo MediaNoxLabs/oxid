@@ -102,10 +102,12 @@ Ordinary mobile composition remains unable to name the Portal client.
 ## Amendment — 2026-08-26
 
 Portal subsequently landed the reviewed Final implementation at
-`22ae5369b6f939e6b20648f4b85dd993527748ef`, tree
-`74d8d1a5b87c160ea554006e47d5f3edc3cd3e10`. That later integration identity
-supersedes the runtime pin recorded above; this amendment preserves the
-original accepted record rather than rewriting its 2026-08-21 history.
+`25499870f84d77173c46e4af3021311decfb840b`, tree
+`2d845d2293603dfd8adce5362c8a9941e6ba78a9`. That later integration identity
+and its refreshed provenance SHA-256
+`63d2dd182f1a315d8fe7677ae6481aecebd2fd9cff709cc438b6c0261a3cf4c7`
+supersede the runtime pin recorded above. This amendment preserves the original
+accepted record rather than rewriting its 2026-08-21 history.
 
 The source lock moved from `oxid-portal-source-lock-v2` to
 `oxid-portal-source-lock-v3`. The v3 source lock still binds
@@ -137,8 +139,8 @@ remain behavioral/protocol references and are neither copied nor run by
 `just portal-headless-e2e`.
 
 The target fetches and authenticates Portal integration commit
-`22ae5369b6f939e6b20648f4b85dd993527748ef`, tree
-`74d8d1a5b87c160ea554006e47d5f3edc3cd3e10`, and the retained Final-profile
+`25499870f84d77173c46e4af3021311decfb840b`, tree
+`2d845d2293603dfd8adce5362c8a9941e6ba78a9`, and the retained Final-profile
 provenance. It builds the Lace resolver, did-manager, and default Rust issuer
 images. The Oxid-owned consumer compose preserves Lace's production Rust
 composition and supported local mock seam while omitting only the duplicate
