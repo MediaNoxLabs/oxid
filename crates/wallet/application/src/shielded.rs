@@ -84,17 +84,12 @@ pub struct WalletShieldedSyncView {
 }
 
 impl WalletShieldedSyncView {
-    /// Reports whether the projection is a complete live snapshot rather than
-    /// cached, partial, cancelled, stalled, or unavailable display state.
+    /// Reports whether the adapter identifies this as a fresh synchronized
+    /// snapshot rather than cached, partial, cancelled, stalled, or unavailable.
+    /// Optional progress and aggregate fields are evidence, not freshness gates.
     #[must_use]
     pub fn is_complete(&self) -> bool {
-        self.state == state_name(WalletShieldedSyncState::Synced)
-            && self.failure.is_none()
-            && self.current_cursor.is_some()
-            && self.current_cursor == self.target_cursor
-            && self.owned_note_count.is_some()
-            && self.commitment_count.is_some()
-            && self.updated_at_millis.is_some()
+        self.state == state_name(WalletShieldedSyncState::Synced) && self.failure.is_none()
     }
 }
 
@@ -354,8 +349,16 @@ mod tests {
         assert_eq!(cancelled.state, "cancelled");
         assert!(!cancelled.is_complete());
 
-        let complete =
+        let mut complete =
             WalletShieldedSyncView::from(&snapshot(WalletShieldedSyncState::Synced, 9, 9));
         assert!(complete.is_complete());
+        complete.current_cursor = None;
+        complete.target_cursor = None;
+        complete.owned_note_count = None;
+        complete.commitment_count = None;
+        complete.updated_at_millis = None;
+        assert!(complete.is_complete());
+        complete.failure = Some("transport_unavailable".to_owned());
+        assert!(!complete.is_complete());
     }
 }

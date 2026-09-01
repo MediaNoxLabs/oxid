@@ -1199,9 +1199,14 @@ fn public_balance_contract_tracks_the_exact_standalone_image_and_preset_pins() {
             "standalone stack pin changed without updating the exact public balance contract: {required_setting}"
         );
     }
-    assert!(include_str!("../../../Justfile").contains(
-        "cargo test -p oxid-composition --features standalone-development standalone_funding_tests::public_standalone_genesis_balances_are_exact -- --ignored --exact"
-    ));
+    let justfile = include_str!("../../../Justfile");
+    for recipe_contract in [
+        "standalone-public-balances:",
+        "--features standalone-development",
+        "standalone_funding_tests::public_standalone_genesis_balances_are_exact",
+    ] {
+        assert!(justfile.contains(recipe_contract));
+    }
 }
 
 /// Synchronizes all three independent balance projections for the public

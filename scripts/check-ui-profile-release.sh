@@ -30,9 +30,10 @@ resolved_features() {
   local line
   local matches
   matches="$(rg "^${package} v[^|]*\\|" "$feature_graph_log" || true)"
+  matches="$(printf '%s\n' "$matches" | sed -E 's/ \(\*\)$//' | LC_ALL=C sort -u)"
   if [[ -z "$matches" ]]; then
-    printf '\n'
-    return
+    echo "$label feature graph does not contain $package" >&2
+    exit 1
   fi
   if [[ "$(printf '%s\n' "$matches" | wc -l | tr -d ' ')" != "1" ]]; then
     echo "$label feature graph contains ambiguous versions of $package" >&2
