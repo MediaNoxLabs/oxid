@@ -96,6 +96,11 @@ or production readiness. The ordinary commands remain proof-disabled.
 
 ## Physical Android against the laptop standalone stack
 
+Repository launchers select development custody first, which adds
+`standalone-development`, and only then add the `standalone-local` or
+`standalone-tailnet` transport flag. Bare transport flags are intentionally
+non-compiling because a route must never choose custody implicitly.
+
 Connect the laptop and phone to the same tailnet, authorize USB debugging, and
 ensure no Android emulator or iOS simulator is running. Then use:
 

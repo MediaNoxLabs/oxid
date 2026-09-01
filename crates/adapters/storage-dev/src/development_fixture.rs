@@ -168,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    fn binds_the_root_to_one_unique_named_profile() {
+    fn binds_the_root_to_one_unique_named_profile_including_metadata_only_restore() {
         let profiles = Arc::new(InMemoryWalletProfileRepository::new());
         let ordinary = wallet_profile("profile_ordinary", "Ordinary wallet");
         let fixture = wallet_profile("profile_fixture", "Public fixture");

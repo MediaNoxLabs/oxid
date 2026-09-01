@@ -88,8 +88,10 @@ const MAX_PREPROD_INSUFFICIENT_DUST_RETRIES: u8 = 8;
 const MAX_PREPROD_CASE_INDEX: u32 = (WalletHdPathComponent::MAX_INDEX - 1) / 2;
 const TRANSFER_ATOMIC_UNITS: u128 = 5_000_000;
 const SHIELDED_TRANSFER_ATOMIC_UNITS: u128 = 1_000_000;
-// Exact public fixture values for the images pinned in
-// `scripts/standalone-stack.yml`; update the pins and this contract atomically.
+// Exact public fixture values observed from the `dev` genesis preset exposed by
+// the images pinned in `scripts/standalone-stack.yml`. The NIGHT/DUST cap and
+// seven shielded notes were baselined by the live application-port proof; update
+// the pins, these values, and ADR-0097's owner-run evidence atomically.
 #[cfg(feature = "standalone-development")]
 const PUBLIC_GENESIS_NIGHT_ATOMIC_UNITS: u128 = 250_000_000_000_000;
 #[cfg(feature = "standalone-development")]
