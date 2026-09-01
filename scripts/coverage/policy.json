@@ -1,6 +1,10 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "workspaceFloorPercent": 80,
+  "packageFloorsPercent": {
+    "core": 85,
+    "critical": 90
+  },
   "scopes": [
     {
       "id": "workspace-aggregate",
@@ -44,6 +48,43 @@
       ]
     }
   ],
+  "baselines": {
+    "mode": "placeholder",
+    "scopes": [
+      { "scope": "workspace-aggregate", "count": null, "covered": null },
+      { "scope": "headless-host", "count": null, "covered": null },
+      { "scope": "desktop-host", "count": null, "covered": null }
+    ]
+  },
+  "pathRules": {
+    "production": [
+      "apps/*/src/**/*.rs",
+      "crates/*/src/**/*.rs"
+    ],
+    "excludedDirectories": [
+      "tests",
+      "examples",
+      "benches"
+    ],
+    "generated": [
+      "**/generated/**"
+    ],
+    "siblingTestSuffix": "_tests.rs"
+  },
+  "changedLines": {
+    "floorPercent": 90,
+    "diffArguments": [
+      "--unified=0",
+      "--diff-filter=AMCR"
+    ],
+    "range": "BASE...HEAD",
+    "zeroDenominator": "not-applicable"
+  },
+  "comparisonBase": {
+    "resolveToCommit": true,
+    "requireAncestor": true,
+    "range": "BASE...HEAD"
+  },
   "classifications": {
     "core": [
       "oxid-foundation",
@@ -117,5 +158,6 @@
         "removalCondition": "Replace with an instrumented host-assembly scope after its feature and platform matrix is explicitly reviewed."
       }
     ]
-  }
+  },
+  "exceptions": []
 }

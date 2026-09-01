@@ -36,6 +36,9 @@ function fakeGit(overrides = {}) {
     isAncestor() {
       return true;
     },
+    diff() {
+      return "";
+    },
     ...overrides,
   };
 }
@@ -49,6 +52,29 @@ function llvmReport(filename = path.join(repoRoot, "crates/foundation/src/lib.rs
       }],
       totals: { lines: { count: 100, covered, percent: covered } },
     }],
+    type: "llvm.coverage.json.export",
+    version: "2.0.1",
+  };
+}
+
+function llvmScopeReport(scopeId, policy, packageInventory) {
+  const names = scopeId === "workspace-aggregate"
+    ? [
+      ...policy.classifications.core,
+      ...policy.classifications.critical,
+      ...policy.classifications.workspaceOnly,
+    ]
+    : policy.classifications.additionalScopes
+      .filter(({ scope }) => scope === scopeId)
+      .map(({ package: packageName }) => packageName);
+  const byName = new Map(packageInventory.map((entry) => [entry.name, entry]));
+  const files = names.map((name) => ({
+    filename: path.join(repoRoot, byName.get(name).root, "src/lib.rs"),
+    summary: { lines: { count: 100, covered: 100, percent: 100 } },
+  }));
+  const count = files.length * 100;
+  return {
+    data: [{ files, totals: { lines: { count, covered: count, percent: 100 } } }],
     type: "llvm.coverage.json.export",
     version: "2.0.1",
   };
@@ -90,7 +116,8 @@ async function runSynthetic(t, overrides = {}) {
         jobs: command.env.CARGO_BUILD_JOBS,
       });
       await new Promise((resolve) => setTimeout(resolve, 3));
-      await writeFile(command.rawReportPath, `${JSON.stringify(llvmReport())}\n`, { mode: 0o600 });
+      const raw = llvmScopeReport(command.scope.id, command.policy, command.packageInventory);
+      await writeFile(command.rawReportPath, `${JSON.stringify(raw)}\n`, { mode: 0o600 });
       active -= 1;
     });
     const result = await runCoverage({
@@ -243,8 +270,10 @@ test("published evidence is private, checksummed, normalized, and path-redacted"
   const files = await listFiles(result.reportRoot);
   const relative = files.map((file) => path.relative(result.reportRoot, file).replaceAll(path.sep, "/")).sort();
   assert.deepEqual(relative, [
+    "changed-lines.json",
     "checksums.json",
     "desktop-host-summary.json",
+    "evaluation.json",
     "headless-host-summary.json",
     "manifest.json",
     "workspace-aggregate-summary.json",
@@ -327,6 +356,7 @@ test("the CLI rejects missing, duplicate, malformed, and unknown arguments", () 
   assert.deepEqual(parseArguments(["--base", "origin/integration", "--dry-run"]), {
     base: "origin/integration",
     dryRun: true,
+    enforce: false,
     policyPath: undefined,
   });
 });
