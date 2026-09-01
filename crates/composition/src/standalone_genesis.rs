@@ -19,6 +19,15 @@ use oxid_wallet_application::WalletProfileRepository;
 pub(super) const PUBLIC_STANDALONE_PROFILE_NAME: &str = "Oxid Demo Wallet";
 
 #[cfg(feature = "standalone-development")]
+#[derive(Clone, Copy)]
+pub(super) struct PublicStandaloneNetwork(());
+
+#[cfg(feature = "standalone-development")]
+pub(super) fn public_standalone_network(network_id: &str) -> Option<PublicStandaloneNetwork> {
+    (network_id == "undeployed").then_some(PublicStandaloneNetwork(()))
+}
+
+#[cfg(feature = "standalone-development")]
 pub(super) const PUBLIC_STANDALONE_GENESIS_ROOT: [u8; 32] = {
     let mut root = [0_u8; 32];
     root[31] = 1;
@@ -27,23 +36,21 @@ pub(super) const PUBLIC_STANDALONE_GENESIS_ROOT: [u8; 32] = {
 
 #[cfg(feature = "standalone-development")]
 pub(super) fn public_profile_protection<R, C, N>(
-    network_id: &str,
+    _network: PublicStandaloneNetwork,
     profiles: Arc<R>,
     security: Arc<DevelopmentWalletSecurity<C, N>>,
-) -> Option<DevelopmentWalletFixtureProtection<R, C, N>>
+) -> DevelopmentWalletFixtureProtection<R, C, N>
 where
     R: WalletProfileRepository + 'static,
     C: oxid_platform_ports::ClockPort + 'static,
     N: oxid_platform_ports::RandomPort + 'static,
 {
-    (network_id == "undeployed").then(|| {
-        DevelopmentWalletFixtureProtection::new(
-            profiles,
-            security,
-            PUBLIC_STANDALONE_PROFILE_NAME,
-            PUBLIC_STANDALONE_GENESIS_ROOT,
-        )
-    })
+    DevelopmentWalletFixtureProtection::new(
+        profiles,
+        security,
+        PUBLIC_STANDALONE_PROFILE_NAME,
+        PUBLIC_STANDALONE_GENESIS_ROOT,
+    )
 }
 
 #[cfg(all(test, feature = "standalone-development"))]
@@ -61,10 +68,8 @@ mod tests {
             Arc::new(OsRandom),
         ));
 
-        assert!(
-            public_profile_protection("undeployed", Arc::clone(&profiles), Arc::clone(&security))
-                .is_some()
-        );
-        assert!(public_profile_protection("preprod", profiles, security).is_none());
+        let undeployed = public_standalone_network("undeployed").expect("undeployed capability");
+        let _protection = public_profile_protection(undeployed, profiles, security);
+        assert!(public_standalone_network("preprod").is_none());
     }
 }

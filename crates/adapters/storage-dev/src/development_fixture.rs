@@ -228,4 +228,28 @@ mod tests {
             .initialize(ordinary.id())
             .expect("duplicate fixture names do not block ordinary profiles");
     }
+
+    #[test]
+    fn never_replaces_already_initialized_or_recovered_custody() {
+        let profiles = Arc::new(InMemoryWalletProfileRepository::new());
+        let fixture = wallet_profile("profile_fixture", "Public fixture");
+        profiles.save(fixture.clone()).expect("save fixture");
+        let security = Arc::new(adapter());
+        security
+            .initialize(fixture.id())
+            .expect("existing custody initialization");
+        let existing_child = first_child(security.as_ref(), fixture.id());
+        let protection = DevelopmentWalletFixtureProtection::new(
+            profiles,
+            Arc::clone(&security),
+            "Public fixture",
+            [1_u8; 32],
+        );
+
+        assert_eq!(
+            protection.initialize(fixture.id()),
+            Err(WalletSecurityPortError::AlreadyInitialized)
+        );
+        assert_eq!(first_child(security.as_ref(), fixture.id()), existing_child);
+    }
 }

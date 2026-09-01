@@ -120,6 +120,10 @@ standard output before the actual `-list-avds` result.
 - Profile labels are immutable in the current model. Any future rename feature
   must preserve or explicitly migrate the typed fixture binding; it must not
   silently grant shared authority by renaming an ordinary profile.
+- Restored custody is never overwritten: initialization fails with
+  `AlreadyInitialized`. Restoring only public metadata with the reserved name
+  deliberately opts that otherwise-uninitialized development profile into the
+  public fixture; it grants no private authority because the root is public.
 - iOS Simulator, Android emulator, and native desktop development can use the
   real loopback stack without conflating it with deterministic simulation. Only
   transport differs between localhost and tailnet; network identity, account

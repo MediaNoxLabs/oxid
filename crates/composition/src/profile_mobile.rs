@@ -64,7 +64,7 @@ use super::services::ApplicationServices;
     feature = "mobile-portal",
     any(target_os = "ios", target_os = "android")
 ))]
-use super::standalone_genesis::public_profile_protection;
+use super::standalone_genesis::{public_profile_protection, public_standalone_network};
 #[cfg(all(
     not(target_arch = "wasm32"),
     any(
@@ -242,7 +242,8 @@ pub fn compose_mobile_public_genesis_standalone_from_routes(
         node_websocket_url,
         proof_server_url,
     )?;
-    Ok(compose_public_genesis_standalone(config))
+    compose_public_genesis_standalone(config)
+        .ok_or(HeadlessCompositionError::PublicStandaloneGenesisRequiresUndeployed)
 }
 
 /// Wires the exact manifest-authenticated Portal identity profile into the
@@ -338,11 +339,11 @@ pub fn compose_mobile_public_genesis_portal_standalone_from_routes(
     let portal =
         PortalIdentityConfiguration::from_bytes(deployment_manifest, deployment_manifest_sha256)
             .map_err(|_| HeadlessCompositionError::InvalidPortalConfiguration)?;
-    Ok(compose_mobile_public_genesis_portal_from_config(
+    compose_mobile_public_genesis_portal_from_config(
         config,
         portal,
         CredentialPresentationComposition::Standalone,
-    ))
+    )
 }
 
 /// Wires the explicitly named public-genesis profile to Tailnet Portal issuance.
@@ -373,11 +374,11 @@ pub fn compose_mobile_public_genesis_portal_tailnet_from_routes(
         public_origin,
     )
     .map_err(|_| HeadlessCompositionError::InvalidPortalConfiguration)?;
-    Ok(compose_mobile_public_genesis_portal_from_config(
+    compose_mobile_public_genesis_portal_from_config(
         config,
         portal,
         CredentialPresentationComposition::Standalone,
-    ))
+    )
 }
 
 #[cfg(all(
@@ -422,7 +423,7 @@ fn compose_mobile_public_genesis_portal_from_config(
     config: MidnightStandaloneConfig,
     portal: PortalIdentityConfiguration,
     credential_presentation: CredentialPresentationComposition,
-) -> ApplicationServices {
+) -> Result<ApplicationServices, HeadlessCompositionError> {
     let clock = Arc::new(SystemClock);
     let security = Arc::new(DevelopmentWalletSecurity::new(
         Arc::clone(&clock),
@@ -430,8 +431,10 @@ fn compose_mobile_public_genesis_portal_from_config(
     ));
     let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
     let network_id = config.indexer().network_id().as_str().to_owned();
+    let public_network = public_standalone_network(&network_id)
+        .ok_or(HeadlessCompositionError::PublicStandaloneGenesisRequiresUndeployed)?;
     let protection_profiles = Arc::clone(&profiles);
-    compose_development_portal_with_security(
+    Ok(compose_development_portal_with_security(
         config,
         portal,
         credential_presentation,
@@ -439,13 +442,13 @@ fn compose_mobile_public_genesis_portal_from_config(
         security,
         profiles,
         move |security| {
-            Arc::new(
-                public_profile_protection(&network_id, protection_profiles, security).expect(
-                    "public standalone genesis composition requires the undeployed network",
-                ),
-            ) as Arc<dyn WalletProtectionPort>
+            Arc::new(public_profile_protection(
+                public_network,
+                protection_profiles,
+                security,
+            )) as Arc<dyn WalletProtectionPort>
         },
-    )
+    ))
 }
 
 #[cfg(all(

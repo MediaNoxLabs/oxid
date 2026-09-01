@@ -153,7 +153,7 @@ standalone-up:
     ./scripts/standalone-up.sh local
 
 standalone-public-balances:
-    OXID_ENABLE_LIVE_STANDALONE_BALANCES=1 cargo test -p oxid-composition standalone_funding_tests::public_standalone_genesis_balances_are_exact -- --ignored --exact
+    OXID_ENABLE_LIVE_STANDALONE_BALANCES=1 cargo test -p oxid-composition --features standalone-development standalone_funding_tests::public_standalone_genesis_balances_are_exact -- --ignored --exact
 
 standalone-funded-finality:
     ./scripts/test-standalone-funded-finality.sh

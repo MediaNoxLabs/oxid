@@ -39,7 +39,9 @@ use oxid_wallet_application::{
 use zeroize::Zeroizing;
 
 #[cfg(feature = "standalone-development")]
-use super::standalone_genesis::{PUBLIC_STANDALONE_PROFILE_NAME, public_profile_protection};
+use super::standalone_genesis::{
+    PUBLIC_STANDALONE_PROFILE_NAME, public_profile_protection, public_standalone_network,
+};
 use super::{
     ApplicationServices,
     identity::{CredentialPresentationComposition, HeadlessCredentialProfile},
@@ -1194,6 +1196,9 @@ fn public_balance_contract_tracks_the_exact_standalone_image_and_preset_pins() {
             "standalone stack pin changed without updating the exact public balance contract: {required_setting}"
         );
     }
+    assert!(include_str!("../../../Justfile").contains(
+        "cargo test -p oxid-composition --features standalone-development standalone_funding_tests::public_standalone_genesis_balances_are_exact -- --ignored --exact"
+    ));
 }
 
 /// Synchronizes all three independent balance projections for the public
@@ -1232,10 +1237,11 @@ fn public_standalone_genesis_balances_are_exact() {
         None,
         None,
         move |security| {
-            Arc::new(
-                public_profile_protection("undeployed", protection_profiles, security)
-                    .expect("undeployed fixture protection"),
-            )
+            Arc::new(public_profile_protection(
+                public_standalone_network("undeployed").expect("undeployed capability"),
+                protection_profiles,
+                security,
+            ))
         },
     );
     let (profile_id, _, _) = initialize_account(

@@ -25,7 +25,7 @@ use super::passport_vault::{
 };
 use super::services::ApplicationServices;
 #[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
-use super::standalone_genesis::public_profile_protection;
+use super::standalone_genesis::{public_profile_protection, public_standalone_network};
 use super::wiring::{
     compose_with_adapters, compose_with_adapters_and_credential_profile,
     compose_with_adapters_and_presentation, compose_with_adapters_and_protection,
@@ -328,7 +328,7 @@ where
 #[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
 pub(super) fn compose_public_genesis_standalone(
     config: MidnightStandaloneConfig,
-) -> ApplicationServices {
+) -> Option<ApplicationServices> {
     let clock = Arc::new(SystemClock);
     let security = Arc::new(DevelopmentWalletSecurity::new(
         Arc::clone(&clock),
@@ -336,13 +336,21 @@ pub(super) fn compose_public_genesis_standalone(
     ));
     let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
     let network_id = config.indexer().network_id().as_str().to_owned();
+    let public_network = public_standalone_network(&network_id)?;
     let protection_profiles = Arc::clone(&profiles);
-    compose_headless_standalone_with_security(config, clock, security, profiles, move |security| {
-        Arc::new(
-            public_profile_protection(&network_id, protection_profiles, security)
-                .expect("public standalone genesis composition requires the undeployed network"),
-        ) as Arc<dyn WalletProtectionPort>
-    })
+    Some(compose_headless_standalone_with_security(
+        config,
+        clock,
+        security,
+        profiles,
+        move |security| {
+            Arc::new(public_profile_protection(
+                public_network,
+                protection_profiles,
+                security,
+            )) as Arc<dyn WalletProtectionPort>
+        },
+    ))
 }
 
 /// Wires the complete standalone stack with durable public account checkpoints.

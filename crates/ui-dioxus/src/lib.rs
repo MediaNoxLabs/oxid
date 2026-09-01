@@ -3219,6 +3219,7 @@ fn public_fixture_choice_label(fixture_exists: bool, fixture_selected: bool) -> 
 fn public_fixture_name_conflicts(profiles: &[WalletProfileView], candidate: &str) -> bool {
     #[cfg(feature = "public-standalone-genesis")]
     {
+        // `ProfileName::parse` applies the same trim before persistence.
         candidate.trim() == PUBLIC_STANDALONE_PROFILE_NAME
             && public_fixture_profile_exists(profiles)
     }
@@ -7993,15 +7994,20 @@ fn newest_credential(credentials: &[CredentialView]) -> Option<&CredentialView> 
 }
 
 fn home_shielded_value(status: &WalletShieldedSyncView) -> String {
-    if !status.is_complete() {
-        return "—".to_owned();
-    }
     if let Some(balance) = status
         .balances
         .iter()
         .find(|balance| balance.token_type_hex == NATIVE_SHIELDED_NIGHT_TOKEN_TYPE)
     {
-        return ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units);
+        let amount = ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units);
+        return if status.is_complete() {
+            amount
+        } else {
+            format!("{amount} · last known")
+        };
+    }
+    if !status.is_complete() {
+        return "—".to_owned();
     }
     ui::format_shielded_amount(NATIVE_SHIELDED_NIGHT_TOKEN_TYPE, "0")
 }
@@ -12083,6 +12089,10 @@ mod tests {
             &profiles,
             PUBLIC_STANDALONE_PROFILE_NAME
         ));
+        assert!(public_fixture_name_conflicts(
+            &profiles,
+            "  Oxid Demo Wallet  "
+        ));
         assert!(!public_fixture_name_conflicts(&profiles, "Another wallet"));
         assert_eq!(
             public_fixture_choice_label(false, false),
@@ -12400,7 +12410,7 @@ mod tests {
         for incomplete in ["cached", "cancelled", "stalled"] {
             let mut status = shielded_status(incomplete, Some(2), Some(2));
             status.balances = funded.balances.clone();
-            assert_eq!(home_shielded_value(&status), "—");
+            assert_eq!(home_shielded_value(&status), "1.5 NIGHT · last known");
             assert!(home_shielded_detail(&status).contains(ui::sync_state(incomplete)));
         }
     }
