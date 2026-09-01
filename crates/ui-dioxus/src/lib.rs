@@ -36,7 +36,8 @@ use oxid_diagnostics_application::{ClearDiagnosticsUseCase, GetDiagnosticSnapsho
 use oxid_identity_application::{
     CreateDidCommand, CreateDidUseCase, DeactivateDidCommand, DeactivateDidUseCase,
     DidKeyAlgorithm, DidOperationConfirmation, DidOperationError, DidRecordQuery, DidRecordView,
-    DidUpdate, ForgetDidUseCase, ListDidRecordsQuery, ListDidRecordsUseCase, ResolveDidCommand,
+    DidUpdate, ForgetDidUseCase, ListDidRecordsQuery, ListDidRecordsUseCase,
+    PUBLISH_DID_TO_TEST_ISSUER_INTENT, PublishDidCommand, PublishDidUseCase, ResolveDidCommand,
     ResolveDidUseCase, SignDidPayloadCommand, SignDidPayloadUseCase, UpdateDidCommand,
     UpdateDidUseCase,
 };
@@ -260,6 +261,7 @@ pub struct WalletUiServices {
     create_did: Arc<dyn CreateDidUseCase>,
     resolve_did: Arc<dyn ResolveDidUseCase>,
     list_did_records: Arc<dyn ListDidRecordsUseCase>,
+    publish_did: Option<Arc<dyn PublishDidUseCase>>,
     update_did: Arc<dyn UpdateDidUseCase>,
     deactivate_did: Arc<dyn DeactivateDidUseCase>,
     sign_did_payload: Arc<dyn SignDidPayloadUseCase>,
@@ -330,6 +332,7 @@ pub struct DidUiServices {
     create_did: Arc<dyn CreateDidUseCase>,
     resolve_did: Arc<dyn ResolveDidUseCase>,
     list_did_records: Arc<dyn ListDidRecordsUseCase>,
+    publish_did: Option<Arc<dyn PublishDidUseCase>>,
     update_did: Arc<dyn UpdateDidUseCase>,
     deactivate_did: Arc<dyn DeactivateDidUseCase>,
     sign_did_payload: Arc<dyn SignDidPayloadUseCase>,
@@ -587,11 +590,18 @@ impl DidUiServices {
             create_did,
             resolve_did,
             list_did_records,
+            publish_did: None,
             update_did,
             deactivate_did,
             sign_did_payload,
             forget_did,
         }
+    }
+
+    #[must_use]
+    pub fn with_publisher(mut self, publish_did: Option<Arc<dyn PublishDidUseCase>>) -> Self {
+        self.publish_did = publish_did;
+        self
     }
 }
 
@@ -965,6 +975,7 @@ impl WalletUiServices {
             create_did: dids.create_did,
             resolve_did: dids.resolve_did,
             list_did_records: dids.list_did_records,
+            publish_did: dids.publish_did,
             update_did: dids.update_did,
             deactivate_did: dids.deactivate_did,
             sign_did_payload: dids.sign_did_payload,
@@ -8337,6 +8348,8 @@ fn DidsPage(
     let mut did_input = use_signal(String::new);
     let mut did_creation = use_signal(|| DidCreationState::Ready);
     let mut did_creation_notice = use_signal(|| None::<String>);
+    let mut did_publication_busy = use_signal(|| false);
+    let mut did_publication_notice = use_signal(|| None::<String>);
     let mut authentication_input = use_signal(String::new);
     let mut prepared_authentication = use_signal(|| None::<SelfIssuedAuthenticationView>);
     let mut authentication_consent = use_signal(|| false);
@@ -8428,7 +8441,11 @@ fn DidsPage(
             let create_services = services.clone();
             let create_profile = profile_id.clone();
             let create_records = records.clone();
-            let issuance_did_ready = active_managed_issuance_methods(&records).is_some();
+            let active_managed_did =
+                active_managed_issuance_methods(&records).map(|(did, _, _)| did);
+            let issuance_did_ready = active_managed_did.is_some();
+            let publication_service = services.publish_did.clone();
+            let publication_profile = profile_id.clone();
             let standalone_authentication_request = services.standalone_self_issued_request();
             rsx! {
                 section { class: "page-heading",
@@ -8536,6 +8553,52 @@ fn DidsPage(
                             role: "status",
                             aria_live: "polite",
                             "A protected managed DID is ready for credential issuance. Its management metadata is available only in this running wallet process."
+                        }
+                    }
+                    if let (Some(service), Some(did)) = (publication_service, active_managed_did) {
+                        div { class: "consent-panel",
+                            h3 { "Tailnet demo bootstrap" }
+                            p { class: "form-hint", "Make this DID's public document available to the current test issuer so it can verify holder proofs. This sends no private keys or credentials and does not publish the DID on chain." }
+                            button {
+                                class: "secondary-action",
+                                r#type: "button",
+                                disabled: did_publication_busy(),
+                                onclick: move |_| {
+                                    if did_publication_busy() {
+                                        return;
+                                    }
+                                    did_publication_busy.set(true);
+                                    did_publication_notice.set(None);
+                                    let service = service.clone();
+                                    let profile_id = publication_profile.clone();
+                                    let did = did.clone();
+                                    spawn(async move {
+                                        let result = run_ui_future(async move {
+                                            service.execute(PublishDidCommand {
+                                                profile_id,
+                                                did,
+                                                confirmed: true,
+                                                intent: PUBLISH_DID_TO_TEST_ISSUER_INTENT.to_owned(),
+                                            }).await
+                                        })
+                                        .await;
+                                        did_publication_busy.set(false);
+                                        match result {
+                                            Ok(Ok(())) => did_publication_notice.set(Some(
+                                                "Public DID document is available to the current test issuer. You can accept its credential offer now.".to_owned(),
+                                            )),
+                                            Ok(Err(error)) => did_publication_notice
+                                                .set(Some(did_operation_message(error))),
+                                            Err(error) => did_publication_notice
+                                                .set(Some(error.to_string())),
+                                        }
+                                    });
+                                },
+                                if did_publication_busy() { "Bootstrapping…" } else { "Bootstrap active DID for test issuer" }
+                            }
+                            if let Some(message) = did_publication_notice.read().as_deref() {
+                                p { class: "form-hint", role: "status", aria_live: "polite", "{message}" }
+                            }
                         }
                     }
                 }

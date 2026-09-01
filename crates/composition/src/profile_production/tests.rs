@@ -22,6 +22,7 @@ fn production_facing_composition_fails_closed_without_native_custody() {
             did_resolver: Arc::new(UnavailableDidResolver),
             did_lifecycle: Arc::new(UnavailableDidLifecycle),
             did_jubjub_challenge_signing: Arc::new(UnavailableDidLifecycle),
+            did_publisher: None,
             credential_repository: Arc::new(UnavailableCredentialRepository),
             credential_inbox: Arc::new(UnavailableCredentialInbox),
             credential_verifier: Arc::new(UnavailableCredentialVerifier),

@@ -10,6 +10,12 @@ use oxid_identity_application::{
 
 mod lifecycle;
 
+#[cfg(all(
+    feature = "tailnet-test-did-publication",
+    any(test, target_os = "android")
+))]
+mod publication;
+
 pub use lifecycle::StandaloneDidLifecycle;
 use oxid_identity_domain::{
     DID_CONTEXT, DidDocument, DidDocumentMetadata, DidDocumentParts, DidResolution,
@@ -17,6 +23,11 @@ use oxid_identity_domain::{
     PublicJwk, Service, ServiceEndpointValue, VerificationMethod, VerificationRelationship,
     VerificationRelationshipEntry,
 };
+#[cfg(all(
+    feature = "tailnet-test-did-publication",
+    any(test, target_os = "android")
+))]
+pub use publication::PortalTailnetDidPublisher;
 use serde_json::{Map, Value, json};
 
 pub const STANDALONE_FIXTURE_DID: &str =

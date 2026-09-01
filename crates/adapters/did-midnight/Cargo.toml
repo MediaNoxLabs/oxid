@@ -8,6 +8,12 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = []
+# Explicit Android Tailnet-demo egress for one public holder DID document.
+# Normal resolver and lifecycle builds do not contain this capability.
+tailnet-test-did-publication = ["dep:rustls", "dep:zeroize"]
+
 [dependencies]
 futures.workspace = true
 midnight-serialize.workspace = true
@@ -18,11 +24,13 @@ oxid-wallet-application.workspace = true
 oxid-wallet-domain.workspace = true
 p256.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
+rustls = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 webpki-root-certs.workspace = true
+zeroize = { workspace = true, optional = true }
 
 [lints]
 workspace = true

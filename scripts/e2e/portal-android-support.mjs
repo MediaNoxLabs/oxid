@@ -63,10 +63,12 @@ const privateLog = fs.openSync(privateLogPath, "a", 0o600);
 const manifestPath = path.join(stateDirectory, "deployment.json");
 const consumerState = path.join(stateDirectory, "portal-consumer");
 let phase = "startup";
-let holderDocument = null;
+let holderResolution = null;
 let offer = null;
 let capability = null;
 const controlCapability = Buffer.from(randomBytes(32).toString("hex"), "utf8");
+const holderCapability = virtualProfile
+  ? null : Buffer.from(randomBytes(32).toString("hex"), "utf8");
 let handoffState = "empty";
 let proxyMode = "normal";
 let completionResolve;
@@ -80,6 +82,7 @@ const counters = {
   issuerMetadata: 0,
   issuerResolution: 0,
   issuerResolutionSuccess: 0,
+  holderPublications: 0,
   kyc: 0,
   nonce: 0,
   other: 0,
@@ -246,18 +249,66 @@ const issuerResolverProxy = http.createServer((request, response) => {
   request.pipe(upstream);
 });
 
+function validatePublishedDid(bytes) {
+  const resolution = JSON.parse(bytes.toString("utf8"));
+  const document = resolution?.didDocument;
+  if (!document || typeof document.id !== "string"
+      || !document.id.startsWith("did:midnight:")
+      || document.id.length > 512
+      || !Array.isArray(document.verificationMethod)
+      || document.verificationMethod.length === 0
+      || document.verificationMethod.length > 32) {
+    throw new Error("invalid public DID resolution");
+  }
+  const verificationMethod = document.verificationMethod.map((method) => {
+    const key = method?.publicKeyJwk;
+    if (typeof method?.id !== "string" || typeof method?.controller !== "string"
+        || method.controller !== document.id || method.type !== "JsonWebKey"
+        || typeof key?.kty !== "string" || typeof key?.crv !== "string"
+        || typeof key?.x !== "string" || method.id.length > 1024
+        || !method.id.startsWith(`${document.id}#`) || key.kty.length > 32
+        || key.crv.length > 32 || key.x.length > 256
+        || (key.y !== undefined && (typeof key.y !== "string" || key.y.length > 256))
+        || Object.hasOwn(key, "d")) {
+      throw new Error("invalid public DID method");
+    }
+    const publicKeyJwk = { kty: key.kty, crv: key.crv, x: key.x };
+    if (key.y !== undefined) publicKeyJwk.y = key.y;
+    return { id: method.id, type: "JsonWebKey", controller: document.id, publicKeyJwk };
+  });
+  const methodIds = new Set(verificationMethod.map((method) => method.id));
+  const relationships = ["authentication", "assertionMethod"];
+  if (!relationships.every((name) => Array.isArray(document[name])
+      && document[name].length > 0 && document[name].length <= 32
+      && document[name].every((method) => typeof method === "string"
+        && methodIds.has(method)))) {
+    throw new Error("invalid public DID relationships");
+  }
+  return {
+    didDocument: {
+      id: document.id,
+      verificationMethod,
+      authentication: [...document.authentication],
+      assertionMethod: [...document.assertionMethod],
+    },
+    didDocumentMetadata: { deactivated: false },
+    didResolutionMetadata: { contentType: "application/did+ld+json" },
+  };
+}
+
+// Virtual-device and desktop harnesses retain their private control-plane
+// bridge. The physical Tailnet flow must use the in-app explicit bootstrap.
 function transformStoredDid(bytes) {
   const stored = JSON.parse(bytes.toString("utf8"));
   if (stored?.schemaVersion !== 1 || !Array.isArray(stored.records) || stored.records.length === 0) {
     throw new Error("invalid public DID store");
   }
-  const sourceDocument = stored.records.at(-1)?.resolution?.document;
-  if (!sourceDocument || typeof sourceDocument.id !== "string"
-      || !Array.isArray(sourceDocument.verificationMethods)
-      || !Array.isArray(sourceDocument.relationships)) {
+  const source = stored.records.at(-1)?.resolution?.document;
+  if (!source || typeof source.id !== "string" || !Array.isArray(source.verificationMethods)
+      || !Array.isArray(source.relationships)) {
     throw new Error("invalid public DID record");
   }
-  const verificationMethod = sourceDocument.verificationMethods.map((method) => {
+  const verificationMethod = source.verificationMethods.map((method) => {
     const key = method.publicKeyJwk;
     if (!method.id || !method.controller || !key?.keyType || !key?.curve || !key?.x) {
       throw new Error("invalid public DID method");
@@ -266,14 +317,18 @@ function transformStoredDid(bytes) {
     if (key.y !== null && key.y !== undefined) publicKeyJwk.y = key.y;
     return { id: method.id, type: "JsonWebKey", controller: method.controller, publicKeyJwk };
   });
-  const document = { id: sourceDocument.id, verificationMethod };
-  for (const relationship of sourceDocument.relationships) {
+  const document = { id: source.id, verificationMethod };
+  for (const relationship of source.relationships) {
     if (typeof relationship.relationship !== "string" || !Array.isArray(relationship.methodIds)) {
       throw new Error("invalid public DID relationship");
     }
     document[relationship.relationship] = relationship.methodIds;
   }
-  return document;
+  return {
+    didDocument: document,
+    didDocumentMetadata: { deactivated: false },
+    didResolutionMetadata: { contentType: "application/did+ld+json" },
+  };
 }
 
 const holderResolver = http.createServer(async (request, response) => {
@@ -287,12 +342,8 @@ const holderResolver = http.createServer(async (request, response) => {
   }
   try {
     const requested = JSON.parse((await readBounded(request, 64 * 1024)).toString("utf8"));
-    if (holderDocument && requested?.did === holderDocument.id) {
-      sendJson(response, 200, {
-        didDocument: holderDocument,
-        didDocumentMetadata: { deactivated: false },
-        didResolutionMetadata: { contentType: "application/did+ld+json" },
-      });
+    if (holderResolution && requested?.did === holderResolution.didDocument.id) {
+      sendJson(response, 200, holderResolution);
     } else {
       sendJson(response, 404, {
         didDocument: null,
@@ -392,8 +443,39 @@ function controlAuthorized(request) {
   return authenticated;
 }
 
-const offerServer = http.createServer((request, response) => {
-  if (!handleOffer(request, response)) sendJson(response, 404, { error: "not_found" });
+function holderAuthorized(request) {
+  if (!holderCapability) return false;
+  const prefix = "Bearer ";
+  const header = request.headers.authorization;
+  const supplied = typeof header === "string" && header.startsWith(prefix)
+    ? Buffer.from(header.slice(prefix.length), "utf8") : Buffer.alloc(0);
+  const authenticated = supplied.length === holderCapability.length
+    && timingSafeEqual(supplied, holderCapability);
+  supplied.fill(0);
+  return authenticated;
+}
+
+const offerServer = http.createServer(async (request, response) => {
+  try {
+    if (handleOffer(request, response)) return;
+    if (request.method === "POST" && request.url === "/") {
+      if (!holderAuthorized(request)) {
+        sendJson(response, 401, { error: "unauthorized" });
+        return;
+      }
+      if (request.headers["content-type"] !== "application/json") {
+        sendJson(response, 415, { error: "unsupported_media_type" });
+        return;
+      }
+      holderResolution = validatePublishedDid(await readBounded(request, 512 * 1024));
+      counters.holderPublications += 1;
+      sendJson(response, 200, { accepted: true });
+      return;
+    }
+    sendJson(response, 404, { error: "not_found" });
+  } catch {
+    sendJson(response, 400, { error: "invalid_request" });
+  }
 });
 
 const controlServer = http.createServer(async (request, response) => {
@@ -410,8 +492,8 @@ const controlServer = http.createServer(async (request, response) => {
       sendJson(response, 200, counters);
     } else if (request.method === "GET" && request.url === "/handoff-status") {
       sendJson(response, 200, { state: handoffState });
-    } else if (request.method === "POST" && request.url === "/holder") {
-      holderDocument = transformStoredDid(await readBounded(request));
+    } else if (request.method === "POST" && request.url === "/holder" && virtualProfile) {
+      holderResolution = transformStoredDid(await readBounded(request));
       sendJson(response, 200, { accepted: true });
     } else if (request.method === "POST" && request.url === "/arm-android-offer") {
       await armOffer();
@@ -473,6 +555,7 @@ async function cleanup() {
   cleanupStarted = true;
   clearHandoff();
   controlCapability.fill(0);
+  holderCapability?.fill(0);
   for (const request of proxied) request.destroy();
   for (const [response, timer] of delayedResponses) {
     clearTimeout(timer);
@@ -538,6 +621,7 @@ try {
     manifestSha256: sha256(manifestBytes),
     schema: virtualProfile ? "oxid-portal-virtual-ready-v1" : "oxid-portal-android-ready-v2",
   };
+  if (holderCapability) ready.holderCapability = "h".repeat(holderCapability.length);
   const readyBytes = Buffer.from(JSON.stringify(ready));
   if (controlReceiptEnabled) {
     const placeholder = Buffer.from(`"${"0".repeat(controlCapability.length)}"`);
@@ -545,6 +629,13 @@ try {
     if (placeholderOffset < 0) throw new Error("control capability staging failed");
     controlCapability.copy(readyBytes, placeholderOffset + 1);
     placeholder.fill(0);
+  }
+  if (holderCapability) {
+    const holderPlaceholder = Buffer.from(`"${"h".repeat(holderCapability.length)}"`);
+    const holderPlaceholderOffset = readyBytes.indexOf(holderPlaceholder);
+    if (holderPlaceholderOffset < 0) throw new Error("holder capability staging failed");
+    holderCapability.copy(readyBytes, holderPlaceholderOffset + 1);
+    holderPlaceholder.fill(0);
   }
   fs.writeFileSync(path.join(stateDirectory, "ready.json"), readyBytes, { mode: 0o600 });
   readyBytes.fill(0);

@@ -22,6 +22,37 @@ pub trait DidResolutionPort: Send + Sync {
     fn resolve<'a>(&'a self, did: &'a MidnightDid) -> DidResolutionPortFuture<'a>;
 }
 
+pub type DidPublicationPortFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), DidPublicationPortError>> + Send + 'a>>;
+
+/// Explicit egress boundary for making one public DID resolution available to
+/// an external resolver. Composition must keep this capability absent unless a
+/// reviewed environment deliberately provides it.
+pub trait DidPublicationPort: Send + Sync {
+    fn publish<'a>(&'a self, resolution: DidResolution) -> DidPublicationPortFuture<'a>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DidPublicationPortError {
+    Unavailable,
+    InvalidConfiguration,
+    InvalidCapability,
+    Rejected,
+}
+
+impl fmt::Display for DidPublicationPortError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Unavailable => "DID publication capability is unavailable",
+            Self::InvalidConfiguration => "DID publication configuration is invalid",
+            Self::InvalidCapability => "DID publication authorization is invalid",
+            Self::Rejected => "DID publication was rejected",
+        })
+    }
+}
+
+impl Error for DidPublicationPortError {}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DidResolutionPortError {
     Unavailable,
@@ -104,6 +135,16 @@ pub struct ListDidRecordsQuery {
     pub profile_id: String,
 }
 
+pub const PUBLISH_DID_TO_TEST_ISSUER_INTENT: &str = "MAKE_DID_AVAILABLE_TO_TEST_ISSUER";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublishDidCommand {
+    pub profile_id: String,
+    pub did: String,
+    pub confirmed: bool,
+    pub intent: String,
+}
+
 pub trait ResolveDidUseCase: Send + Sync {
     fn execute<'a>(&'a self, command: ResolveDidCommand) -> DidRecordViewFuture<'a>;
 }
@@ -123,6 +164,13 @@ pub trait ForgetDidUseCase: Send + Sync {
     fn execute(&self, command: DidRecordQuery) -> Result<(), DidOperationError>;
 }
 
+pub trait PublishDidUseCase: Send + Sync {
+    fn execute<'a>(&'a self, command: PublishDidCommand) -> DidPublicationUseCaseFuture<'a>;
+}
+
+pub type DidPublicationUseCaseFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), DidOperationError>> + Send + 'a>>;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DidOperationError {
     InvalidProfileIdentifier(OpaqueIdError),
@@ -130,6 +178,7 @@ pub enum DidOperationError {
     Resolution(DidResolutionPortError),
     Persistence(DidRecordRepositoryError),
     Lifecycle(DidLifecyclePortError),
+    Publication(DidPublicationPortError),
     InvalidNetwork,
     EmptyPayload,
     PayloadTooLarge,
@@ -146,6 +195,7 @@ impl fmt::Display for DidOperationError {
             Self::Resolution(error) => error.fmt(formatter),
             Self::Persistence(error) => error.fmt(formatter),
             Self::Lifecycle(error) => error.fmt(formatter),
+            Self::Publication(error) => error.fmt(formatter),
             Self::InvalidNetwork => formatter.write_str("Midnight DID network is unsupported"),
             Self::EmptyPayload => formatter.write_str("DID signing payload must not be empty"),
             Self::PayloadTooLarge => {
@@ -310,6 +360,24 @@ pub struct DidService {
     lifecycle: Arc<dyn DidLifecyclePort>,
 }
 
+pub struct DidPublicationService {
+    repository: Arc<dyn DidRecordRepository>,
+    publisher: Arc<dyn DidPublicationPort>,
+}
+
+impl DidPublicationService {
+    #[must_use]
+    pub const fn new(
+        repository: Arc<dyn DidRecordRepository>,
+        publisher: Arc<dyn DidPublicationPort>,
+    ) -> Self {
+        Self {
+            repository,
+            publisher,
+        }
+    }
+}
+
 fn record_view(
     service: &DidService,
     profile_id: &IdentityProfileId,
@@ -419,6 +487,34 @@ impl ForgetDidUseCase for DidService {
         self.repository
             .remove(&profile_id, &did)
             .map_err(DidOperationError::Persistence)
+    }
+}
+
+impl PublishDidUseCase for DidPublicationService {
+    fn execute<'a>(&'a self, command: PublishDidCommand) -> DidPublicationUseCaseFuture<'a> {
+        Box::pin(async move {
+            if !command.confirmed {
+                return Err(DidOperationError::ConfirmationRequired);
+            }
+            if command.intent != PUBLISH_DID_TO_TEST_ISSUER_INTENT {
+                return Err(DidOperationError::InvalidConfirmation);
+            }
+            let profile_id = parse_profile(command.profile_id)?;
+            let did = parse_did(command.did)?;
+            let record = self
+                .repository
+                .get(&profile_id, &did)
+                .map_err(DidOperationError::Persistence)?;
+            if record.resolution().document_metadata().deactivated == Some(true) {
+                return Err(DidOperationError::Lifecycle(
+                    DidLifecyclePortError::Deactivated,
+                ));
+            }
+            self.publisher
+                .publish(record.resolution().clone())
+                .await
+                .map_err(DidOperationError::Publication)
+        })
     }
 }
 
@@ -549,6 +645,21 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct RecordingPublisher(Mutex<Vec<String>>);
+
+    impl DidPublicationPort for RecordingPublisher {
+        fn publish<'a>(&'a self, resolution: DidResolution) -> DidPublicationPortFuture<'a> {
+            Box::pin(async move {
+                self.0
+                    .lock()
+                    .expect("lock")
+                    .push(resolution.document().id().as_str().to_owned());
+                Ok(())
+            })
+        }
+    }
+
     struct FixedLifecycle;
     impl DidLifecyclePort for FixedLifecycle {
         fn create(
@@ -657,6 +768,43 @@ mod tests {
             },
         )
         .expect("forget");
+    }
+
+    #[test]
+    fn publication_requires_exact_explicit_intent_and_shares_the_stored_public_resolution() {
+        let repository = Arc::new(MemoryRepository::default());
+        repository
+            .upsert(DidRecord::new(
+                IdentityProfileId::parse("profile_test").expect("profile"),
+                resolution(),
+            ))
+            .expect("record");
+        let publisher = Arc::new(RecordingPublisher::default());
+        let service = DidPublicationService::new(repository, publisher.clone());
+
+        let denied = futures_for_test::block_on(PublishDidUseCase::execute(
+            &service,
+            PublishDidCommand {
+                profile_id: "profile_test".to_owned(),
+                did: DID.to_owned(),
+                confirmed: false,
+                intent: PUBLISH_DID_TO_TEST_ISSUER_INTENT.to_owned(),
+            },
+        ));
+        assert_eq!(denied, Err(DidOperationError::ConfirmationRequired));
+        assert!(publisher.0.lock().expect("lock").is_empty());
+
+        futures_for_test::block_on(PublishDidUseCase::execute(
+            &service,
+            PublishDidCommand {
+                profile_id: "profile_test".to_owned(),
+                did: DID.to_owned(),
+                confirmed: true,
+                intent: PUBLISH_DID_TO_TEST_ISSUER_INTENT.to_owned(),
+            },
+        ))
+        .expect("publication");
+        assert_eq!(publisher.0.lock().expect("lock").as_slice(), [DID]);
     }
 
     #[test]

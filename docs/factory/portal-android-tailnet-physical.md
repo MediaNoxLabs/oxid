@@ -42,9 +42,21 @@ Start creates and validates the same private mode-`0600` pinned mock transform
 used by the browser contract, then exposes its KYC page under the receipt-owned
 same-origin HTTPS `/kyc` mount. It opens the Portal page in the Mac browser and
 prints the one permitted public page URL; status intentionally reveals no
-payload. This owner demo remains non-evidence. Complete the Portal page and
-scan its QR once with the connected physical Oxid app. Do not retry or reuse a
-consumed QR. Stop before a fresh attempt:
+payload. This owner demo remains non-evidence.
+
+On the phone, explicitly prepare the holder before accepting an offer:
+
+1. Open **Wallet** and activate the development wallet if it is not active.
+2. Open **Documents** → **Manage identities** and create a standalone DID.
+3. Tap **Bootstrap active DID for test issuer** and wait for the confirmation
+   that the public DID document is available. This shares only the public DID
+   Resolution Result with this receipt-owned test issuer; it sends no private
+   keys or credentials and is not a Midnight on-chain DID publication.
+4. Complete the Portal page, use Oxid's **Scan** action to scan its QR once,
+   preview the offer, then choose **Accept and issue credential** or
+   **Refuse offer**.
+
+Do not retry or reuse a consumed QR. Stop before a fresh attempt:
 
 ```bash
 just portal-tailnet-manual-stop
@@ -56,10 +68,11 @@ it fails closed for owner review rather than deleting shared state.
 
 ## Safety, evidence, and cleanup
 
-Every retry uses a fresh offer, capability, app state, and runtime. Never reuse
-a consumed offer. Require refusal with zero secret endpoint calls before explicit
-consent, encrypted persistence, a real process restart, listing, and a fresh
-reverification.
+Every retry uses a fresh offer, capability, app state, and runtime. The holder
+bootstrap is an explicit app action; the physical lane must never scrape or
+publish the wallet DID store through ADB. Never reuse a consumed offer. Require
+refusal with zero secret endpoint calls before explicit consent, encrypted
+persistence, a real process restart, listing, and a fresh reverification.
 
 The command publishes only redacted mode-`0600` evidence after exact cleanup;
 evidence must name the current Oxid `HEAD` and tree. It excludes device and

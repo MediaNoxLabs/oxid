@@ -41,8 +41,8 @@ use oxid_credential_application::{
     CredentialVerificationPort, UnavailableCredentialRepository,
 };
 use oxid_identity_application::{
-    DidJubjubChallengeSigningPort, DidLifecyclePort, DidRecordRepository, DidResolutionPort,
-    UnavailableDidRecordRepository,
+    DidJubjubChallengeSigningPort, DidLifecyclePort, DidPublicationPort, DidRecordRepository,
+    DidResolutionPort, UnavailableDidRecordRepository,
 };
 use oxid_platform_ports::IdentityLinkIngressPort;
 
@@ -122,6 +122,7 @@ pub(super) struct IdentityAdapters {
     pub(super) did_resolver: Arc<dyn DidResolutionPort>,
     pub(super) did_lifecycle: Arc<dyn DidLifecyclePort>,
     pub(super) did_jubjub_challenge_signing: Arc<dyn DidJubjubChallengeSigningPort>,
+    pub(super) did_publisher: Option<Arc<dyn DidPublicationPort>>,
     pub(super) credential_repository: Arc<dyn CredentialRepository>,
     pub(super) credential_inbox: Arc<dyn CredentialInboxPort>,
     pub(super) credential_verifier: Arc<dyn CredentialVerificationPort>,

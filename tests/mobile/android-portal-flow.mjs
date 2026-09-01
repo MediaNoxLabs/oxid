@@ -44,6 +44,7 @@ let measuredCounterDelta = {
   issuerMetadata: 0,
   issuerResolution: 0,
   issuerResolutionSuccess: 0,
+  holderPublications: 0,
   kyc: 0,
   nonce: 0,
   other: 0,
@@ -317,7 +318,17 @@ try {
     if (await evaluate('Array.from(document.querySelectorAll(".field-error")).some((element) => element.textContent.trim() === "protected DID key operation is unavailable")')) {
       throw new Error("managed DID creation ran without activated development custody");
     }
-    Object.assign(measurements, { managedDidPrepared: true });
+    await click("Bootstrap active DID for test issuer");
+    await waitFor(
+      'document.body.innerText.includes("Public DID document is available to the current test issuer")',
+      "explicit holder DID bootstrap",
+      30_000,
+    );
+    const counts = await counters();
+    if (counts.holderPublications !== 1) {
+      throw new Error("explicit holder DID bootstrap was not observed exactly once");
+    }
+    Object.assign(measurements, { managedDidPrepared: true, holderDidBootstrapped: true });
   } else if (mode === "route-refuse") {
     const start = await counters();
     await assertRouted();

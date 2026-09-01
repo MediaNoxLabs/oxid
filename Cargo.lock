@@ -5608,11 +5608,13 @@ dependencies = [
  "oxid-wallet-domain",
  "p256",
  "reqwest 0.13.4",
+ "rustls",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tokio",
  "webpki-root-certs 1.0.9",
+ "zeroize",
 ]
 
 [[package]]

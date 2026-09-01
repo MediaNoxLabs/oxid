@@ -35,6 +35,9 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
   assert.match(lifecycle, /\$mock_route\.route/);
   assert.match(lifecycle, /manual-mock-page\.html/);
   assert.match(lifecycle, /mockRoute:true/);
+  assert.match(lifecycle, /holderBootstrap:true/);
+  assert.match(lifecycle, /path:"\/holder"/);
+  assert.match(lifecycle, /portal-holder\.capability/);
   assert.match(lifecycle, /chmod 600 \"\$MANUAL_PAGE_URL\"/);
   assert.match(lifecycle, /open \"\$public_page_url\"/);
   assert.match(lifecycle, /manual_control_receipt=none/);

@@ -83,6 +83,7 @@ pub(super) fn compose_in_memory_with_presentation(
             did_resolver: Arc::new(StandaloneDidResolver),
             did_lifecycle: did_lifecycle_port,
             did_jubjub_challenge_signing,
+            did_publisher: None,
             credential_repository: Arc::new(InMemoryCredentialRepository::new()),
             credential_inbox: Arc::new(StandaloneCredentialInbox),
             credential_verifier: Arc::new(MidnightCredentialVerifier::with_compact_policy(

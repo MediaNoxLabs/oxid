@@ -183,7 +183,7 @@ manual_cleanup() {
   manual_session_load && manual_page_url_valid && manual_mock_state_valid && manual_serve_receipt_valid || return 1
   manual_select_physical_device || return 1
   adb_device shell \
-    "run-as io.medianox.oxid sh -c 'rm -f files/portal-offer.capability files/.portal-offer.capability.tmp && test ! -e files/portal-offer.capability && test ! -e files/.portal-offer.capability.tmp'" \
+    "run-as io.medianox.oxid sh -c 'rm -f files/portal-offer.capability files/.portal-offer.capability.tmp files/portal-holder.capability files/.portal-holder.capability.tmp && test ! -e files/portal-offer.capability && test ! -e files/.portal-offer.capability.tmp && test ! -e files/portal-holder.capability && test ! -e files/.portal-holder.capability.tmp'" \
     >/dev/null 2>&1 || return 1
   XDG_CONFIG_HOME="$XDG_CONFIG" XDG_STATE_HOME="$XDG_STATE" \
     "$SOURCE/scripts/tailscale-https-profile.sh" cleanup >>"$PRIVATE_LOG" 2>&1 || return 1
@@ -281,7 +281,7 @@ cleanup() {
   fi
   if adb_device shell pm path io.medianox.oxid >/dev/null 2>&1 \
     && ! adb_device shell \
-      "run-as io.medianox.oxid sh -c 'rm -f files/portal-offer.capability files/.portal-offer.capability.tmp && test ! -e files/portal-offer.capability && test ! -e files/.portal-offer.capability.tmp'" \
+      "run-as io.medianox.oxid sh -c 'rm -f files/portal-offer.capability files/.portal-offer.capability.tmp files/portal-holder.capability files/.portal-holder.capability.tmp && test ! -e files/portal-offer.capability && test ! -e files/.portal-offer.capability.tmp && test ! -e files/portal-holder.capability && test ! -e files/.portal-holder.capability.tmp'" \
       >/dev/null 2>&1; then
     cleanup_status=1
   fi
@@ -444,10 +444,12 @@ ready="$STATE/ready.json"
 manifest_path="$(jq -r '.manifestPath // empty' "$ready")"
 manifest_sha="$(jq -r '.manifestSha256 // empty' "$ready")"
 control_capability="$(jq -r '.controlCapability // empty' "$ready")"
+holder_capability="$(jq -r '.holderCapability // empty' "$ready")"
 [ "$(jq -r '.schema // empty' "$ready")" = oxid-portal-android-ready-v2 ] \
   && [ "$(jq -r '.controlOrigin // empty' "$ready")" = "$CONTROL_ORIGIN" ] \
   && [ "$(jq -r '.offerPort // empty' "$ready")" = 18094 ] \
-  && [[ "$manifest_path" = /* && "$manifest_sha" =~ ^[0-9a-f]{64}$ ]] || fail manifest
+  && [[ "$manifest_path" = /* && "$manifest_sha" =~ ^[0-9a-f]{64}$ ]] \
+  && [[ "$holder_capability" =~ ^[0-9a-f]{64}$ ]] || fail manifest
 if [ "$OPERATION" = manual-start ]; then
   [ "$control_capability" = "$(printf '0%.0s' {1..64})" ] || fail manual-control-receipt
 else
@@ -465,6 +467,7 @@ if [ "$OPERATION" = manual-start ]; then
       {path:"/",httpsPort:$port,upstream:"http://127.0.0.1:18090"},
       {path:"/issuer-resolver",httpsPort:$port,upstream:"http://127.0.0.1:18093"},
       {path:"/offer",httpsPort:$port,upstream:"http://127.0.0.1:18094"},
+      {path:"/holder",httpsPort:$port,upstream:"http://127.0.0.1:18094"},
       $mock_route.route
     ]}' >"$XDG_CONFIG/lace-id-portal/tailscale-https.json"
 else
@@ -472,7 +475,8 @@ else
     {PORTAL_TAILSCALE_DNS_NAME:$dns,routes:[
       {path:"/",httpsPort:$port,upstream:"http://127.0.0.1:18090"},
       {path:"/issuer-resolver",httpsPort:$port,upstream:"http://127.0.0.1:18093"},
-      {path:"/offer",httpsPort:$port,upstream:"http://127.0.0.1:18094"}
+      {path:"/offer",httpsPort:$port,upstream:"http://127.0.0.1:18094"},
+      {path:"/holder",httpsPort:$port,upstream:"http://127.0.0.1:18094"}
     ]}' >"$XDG_CONFIG/lace-id-portal/tailscale-https.json"
 fi
 chmod 600 "$XDG_CONFIG/lace-id-portal/tailscale-https.json"
@@ -504,6 +508,11 @@ if ! OXID_MOBILE_CUSTODY=development \
   fail android-build
 fi
 
+holder_stage_command="run-as io.medianox.oxid sh -c 'umask 077; target=files/portal-holder.capability; candidate=files/.portal-holder.capability.tmp; rm -f \"\$candidate\" \"\$target\"; cat >\"\$candidate\"; test \"\$(wc -c <\"\$candidate\")\" -eq 64; mv \"\$candidate\" \"\$target\"'"
+printf '%s' "$holder_capability" | adb_device shell "$holder_stage_command" \
+  >/dev/null 2>>"$PRIVATE_LOG" || fail holder-capability-stage
+holder_capability=""
+
 if [ "$OPERATION" = manual-start ]; then
   command -v open >/dev/null 2>&1 || fail browser
   public_page_url="$public_origin/issue/index.html"
@@ -523,7 +532,7 @@ if [ "$OPERATION" = manual-start ]; then
     --argjson support_pid "$support_pid" --arg support_sha "$support_command_sha" \
     --arg baseline_sha "$baseline_sha" --arg active_sha "$active_serve_sha" \
     --arg mock_receipt_sha "$mock_receipt_sha" \
-    '{schema:"oxid-portal-tailnet-manual-session-v1",oxid:{head:$head,tree:$tree},portal:{commit:$commit,tree:$portal_tree},support:{pid:$support_pid,commandSha256:$support_sha},supervisor:{pid:0,commandSha256:("0" * 64)},serve:{baselineSha256:$baseline_sha,activeSha256:$active_sha},mock:{transformReceiptSha256:$mock_receipt_sha,externalPath:"/kyc/mock-verification",upstreamPath:"/mock-verification"},page:{html:true,mockRoute:true}}' \
+    '{schema:"oxid-portal-tailnet-manual-session-v1",oxid:{head:$head,tree:$tree},portal:{commit:$commit,tree:$portal_tree},support:{pid:$support_pid,commandSha256:$support_sha},supervisor:{pid:0,commandSha256:("0" * 64)},serve:{baselineSha256:$baseline_sha,activeSha256:$active_sha},mock:{transformReceiptSha256:$mock_receipt_sha,externalPath:"/kyc/mock-verification",upstreamPath:"/mock-verification"},page:{html:true,mockRoute:true,holderBootstrap:true}}' \
     >"$MANUAL_RECEIPT"
   chmod 600 "$MANUAL_RECEIPT"
   nohup bash "$REPOSITORY_ROOT/scripts/test-android-portal-tailnet-physical.sh" --manual-supervise \
@@ -615,10 +624,6 @@ SECONDS=0
 arm_and_route_offer cold
 run_scenario cold-route
 run_scenario prepare-holder
-adb_device exec-out run-as io.medianox.oxid cat files/oxid/private/did-records.json | \
-  control_curl --max-time 10 \
-    -H 'Content-Type: application/json' --data-binary @- "$CONTROL_ORIGIN/holder" \
-    >/dev/null || fail holder-sync
 
 for negative_mode in route-refuse malformed protocol-error protocol-timeout issue-error; do
   arm_and_route_offer warm
@@ -653,6 +658,7 @@ exact_protocol_counters="$(jq -r '
   and .issuerMetadata == 6
   and .issuerResolution == 3
   and .issuerResolutionSuccess == 3
+  and .holderPublications == 1
   and .kyc == 14
   and .nonce == 1
   and .other == 0

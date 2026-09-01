@@ -117,6 +117,14 @@ identity.
 
 ## Consequences
 
+Holder bootstrap is explicit and holder-controlled. Only the compile-gated
+physical Tailnet composition shows the app action that sends the active DID's
+public DID Resolution Result to the receipt-owned test issuer resolver. The
+harness stages a narrowly scoped owner-private authorization capability, but it
+does not read or publish the phone's DID store over ADB. No private key or
+credential material leaves the wallet. This resolver registration is not a
+live Midnight holder-DID write and must not be represented as one.
+
 This is standalone conformance evidence, not production discovery, production
 trust, native-custody persistence, real KYC, a live holder DID write, verified
 App Link delivery, or release readiness. The mock KYC decision remains clearly
