@@ -8,19 +8,24 @@
 //! for the uniquely named standalone demo profile; ordinary profiles continue
 //! to initialize from generic OS randomness.
 
+#[cfg(feature = "standalone-development")]
 use std::sync::Arc;
 
+#[cfg(feature = "standalone-development")]
 use oxid_adapter_storage_dev::{DevelopmentWalletFixtureProtection, DevelopmentWalletSecurity};
+#[cfg(feature = "standalone-development")]
 use oxid_wallet_application::WalletProfileRepository;
 
 pub(super) const PUBLIC_STANDALONE_PROFILE_NAME: &str = "Oxid Demo Wallet";
 
+#[cfg(feature = "standalone-development")]
 pub(super) const PUBLIC_STANDALONE_GENESIS_ROOT: [u8; 32] = {
     let mut root = [0_u8; 32];
     root[31] = 1;
     root
 };
 
+#[cfg(feature = "standalone-development")]
 pub(super) fn public_profile_protection<R, C, N>(
     network_id: &str,
     profiles: Arc<R>,
@@ -41,7 +46,7 @@ where
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "standalone-development"))]
 mod tests {
     use oxid_adapter_platform_system::{OsRandom, SystemClock};
     use oxid_adapter_storage_memory::InMemoryWalletProfileRepository;

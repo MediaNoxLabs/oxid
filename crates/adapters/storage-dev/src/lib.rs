@@ -32,9 +32,11 @@ use oxid_wallet_domain::{
 use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
 use zeroize::Zeroizing;
 
+#[cfg(feature = "development-fixture")]
 mod development_fixture;
 mod jubjub_schnorr;
 
+#[cfg(feature = "development-fixture")]
 pub use development_fixture::DevelopmentWalletFixtureProtection;
 
 const KEY_REFERENCE_ATTEMPTS: usize = 8;
@@ -68,6 +70,7 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
     /// randomness is still used for every key reference, nonce, generated key,
     /// and ordinary profile root; the supplied value can never satisfy those
     /// requests accidentally.
+    #[cfg(feature = "development-fixture")]
     pub(crate) fn initialize_with_root_seed(
         &self,
         profile_id: &WalletProfileId,
@@ -1019,6 +1022,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "development-fixture")]
     fn typed_root_seed_applies_only_to_the_explicit_profile() {
         let mut expected = [0_u8; 32];
         expected[31] = 1;

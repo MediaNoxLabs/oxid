@@ -47,8 +47,10 @@ assert_public_fixture_feature_absent() {
   local target="${3:-}"
   load_feature_graph "$label" "$features" "$target"
   local composition_features
+  local storage_dev_features
   local ui_features
   composition_features="$(resolved_features "$label" oxid-composition)"
+  storage_dev_features="$(resolved_features "$label" oxid-adapter-storage-dev)"
   ui_features="$(resolved_features "$label" oxid-ui-dioxus)"
   if has_feature "$composition_features" standalone-development; then
     echo "$label oxid-app release profile enables public standalone development custody" >&2
@@ -56,6 +58,10 @@ assert_public_fixture_feature_absent() {
   fi
   if has_feature "$ui_features" public-standalone-genesis; then
     echo "$label oxid-app release profile enables the public-genesis warning UI" >&2
+    exit 1
+  fi
+  if has_feature "$storage_dev_features" development-fixture; then
+    echo "$label oxid-app release profile enables arbitrary development fixture custody" >&2
     exit 1
   fi
 }
@@ -66,8 +72,10 @@ assert_public_fixture_feature_present() {
   local target="${3:-}"
   load_feature_graph "$label" "$features" "$target"
   local composition_features
+  local storage_dev_features
   local ui_features
   composition_features="$(resolved_features "$label" oxid-composition)"
+  storage_dev_features="$(resolved_features "$label" oxid-adapter-storage-dev)"
   ui_features="$(resolved_features "$label" oxid-ui-dioxus)"
   if ! has_feature "$composition_features" standalone-development; then
     echo "$label does not enable the bounded public-genesis composition capability" >&2
@@ -75,6 +83,10 @@ assert_public_fixture_feature_present() {
   fi
   if ! has_feature "$ui_features" public-standalone-genesis; then
     echo "$label does not enable the public-genesis warning UI" >&2
+    exit 1
+  fi
+  if ! has_feature "$storage_dev_features" development-fixture; then
+    echo "$label does not enable the bounded development fixture custody adapter" >&2
     exit 1
   fi
 }
@@ -276,8 +288,8 @@ fi
 # app-owned standalone-portal branch calls the explicit Portal constructor; the
 # identity-ingress unit suite below proves the default constructor rejects the trigger.
 
-if ! rg -qxF 'standalone-development = []' crates/composition/Cargo.toml; then
-  echo "oxid-composition/standalone-development must remain an additive-edge-free capability flag" >&2
+if ! rg -qxF 'standalone-development = ["oxid-adapter-storage-dev/development-fixture"]' crates/composition/Cargo.toml; then
+  echo "oxid-composition/standalone-development must enable only bounded fixture custody" >&2
   exit 1
 fi
 composition_fixture_name="$(sed -n 's/^pub(super) const PUBLIC_STANDALONE_PROFILE_NAME: &str = "\([^"]*\)";$/\1/p' crates/composition/src/standalone_genesis.rs)"

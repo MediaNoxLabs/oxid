@@ -94,7 +94,13 @@ use oxid_adapter_storage_mobile::MobileWalletSecurity;
     any(target_os = "ios", target_os = "android")
 ))]
 use oxid_adapter_vc_midnight::CompactPresentationRuntimeError;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        not(any(target_os = "ios", target_os = "android")),
+        feature = "mobile-portal"
+    )
+))]
 use oxid_wallet_application::WalletProtectionPort;
 
 /// Verifies that the Android Portal conformance composition is executing under
@@ -433,10 +439,11 @@ fn compose_mobile_public_genesis_portal_from_config(
         security,
         profiles,
         move |security| {
-            let ordinary: Arc<dyn WalletProtectionPort> = security.clone();
-            public_profile_protection(&network_id, protection_profiles, security)
-                .map(|protection| Arc::new(protection) as Arc<dyn WalletProtectionPort>)
-                .unwrap_or(ordinary)
+            Arc::new(
+                public_profile_protection(&network_id, protection_profiles, security).expect(
+                    "public standalone genesis composition requires the undeployed network",
+                ),
+            ) as Arc<dyn WalletProtectionPort>
         },
     )
 }

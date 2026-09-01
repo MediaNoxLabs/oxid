@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = []
+development-fixture = []
+
 [dependencies]
 bip32.workspace = true
 ed25519-dalek.workspace = true

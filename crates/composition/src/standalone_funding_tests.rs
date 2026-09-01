@@ -38,14 +38,16 @@ use oxid_wallet_application::{
 };
 use zeroize::Zeroizing;
 
+#[cfg(feature = "standalone-development")]
+use super::standalone_genesis::{PUBLIC_STANDALONE_PROFILE_NAME, public_profile_protection};
 use super::{
     ApplicationServices,
     identity::{CredentialPresentationComposition, HeadlessCredentialProfile},
-    standalone_genesis::{PUBLIC_STANDALONE_PROFILE_NAME, public_profile_protection},
     wiring::{compose_with_adapters, compose_with_adapters_and_credential_profile},
 };
 
 const ENABLE_ENV: &str = "OXID_ENABLE_LIVE_STANDALONE_FUNDING";
+#[cfg(feature = "standalone-development")]
 const PUBLIC_BALANCE_ENABLE_ENV: &str = "OXID_ENABLE_LIVE_STANDALONE_BALANCES";
 const FUNDER_SEED_ENV: &str = "OXID_STANDALONE_FUNDER_SEED_HEX";
 const PREPROD_ENABLE_ENV: &str = "OXID_ENABLE_LIVE_PREPROD_E2E";
@@ -86,15 +88,22 @@ const TRANSFER_ATOMIC_UNITS: u128 = 5_000_000;
 const SHIELDED_TRANSFER_ATOMIC_UNITS: u128 = 1_000_000;
 // Exact public fixture values for the images pinned in
 // `scripts/standalone-stack.yml`; update the pins and this contract atomically.
+#[cfg(feature = "standalone-development")]
 const PUBLIC_GENESIS_NIGHT_ATOMIC_UNITS: u128 = 250_000_000_000_000;
+#[cfg(feature = "standalone-development")]
 const NIGHT_ATOMIC_UNITS: u128 = 1_000_000;
+#[cfg(feature = "standalone-development")]
 const DUST_ATOMIC_UNITS: u128 = 1_000_000_000_000_000;
+#[cfg(feature = "standalone-development")]
 const DUST_PER_NIGHT_AT_CAP: u128 = 5;
+#[cfg(feature = "standalone-development")]
 const PUBLIC_GENESIS_DUST_CAP_ATOMIC_UNITS: u128 = PUBLIC_GENESIS_NIGHT_ATOMIC_UNITS
     / NIGHT_ATOMIC_UNITS
     * DUST_PER_NIGHT_AT_CAP
     * DUST_ATOMIC_UNITS;
+#[cfg(feature = "standalone-development")]
 const PUBLIC_GENESIS_SHIELDED_NIGHT_ATOMIC_UNITS: u128 = 250_000_000_000_000;
+#[cfg(feature = "standalone-development")]
 const PUBLIC_GENESIS_SHIELDED_NOTE_COUNT: u64 = 7;
 const NATIVE_SHIELDED_TOKEN_TYPE: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";
@@ -1199,6 +1208,7 @@ fn public_balance_contract_tracks_the_exact_standalone_image_and_preset_pins() {
 /// changed its notes.
 #[test]
 #[ignore = "requires explicit live standalone stack"]
+#[cfg(feature = "standalone-development")]
 fn public_standalone_genesis_balances_are_exact() {
     const SHARED_FIXTURE_DRIFT: &str = "shared public fixture differs from genesis; restart the standalone stack before treating this as a regression";
     assert_eq!(

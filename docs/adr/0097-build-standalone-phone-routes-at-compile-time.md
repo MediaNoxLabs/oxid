@@ -66,14 +66,17 @@ order. This is intentionally public test authority, not protected wallet
 material: anyone can derive it and spend funds assigned to it. A typed
 profile-specific initializer keeps the fixture out of the generic random port;
 every nonce, key reference, and generated key still uses OS randomness.
-The fixture is absent from normal and native-custody composition, never enters
-UI/application DTOs or logs, and is compiled only by the explicit composition
-feature selected from `oxid-app/standalone-development`. The release guard
-proves that feature edge is absent from the normal graph and present in the
+The fixture is absent from normal and native-custody composition and never
+enters UI/application DTOs or logs. The fixture adapter itself is compiled only
+by the explicit composition feature selected from
+`oxid-app/standalone-development`. The release guard proves both adapter and
+composition feature edges are absent from the normal graph and present in the
 development graph. Cargo feature unification cannot change the behavior of the
 existing OS-random constructors; the app calls the fixture constructors by
 their explicit names. Every such app build renders an always-visible warning
-about the exact fixture profile and pre-fills that public profile name.
+and requires the user to choose **Use public demo wallet** before creating the
+exact fixture profile. Ordinary profile creation still defaults to **My
+wallet**.
 This exception exists only so the live Wallet can
 synchronize the chain's known NIGHT, shielded, and DUST state through the
 ordinary protected ports.
@@ -114,6 +117,9 @@ standard output before the actual `-list-avds` result.
   is the shared public genesis wallet. It is suitable only for local demos and
   tests; it provides no privacy, ownership, or safe-funding guarantee. Duplicate
   fixture names fail closed; ordinary profiles remain OS-random.
+- Profile labels are immutable in the current model. Any future rename feature
+  must preserve or explicitly migrate the typed fixture binding; it must not
+  silently grant shared authority by renaming an ordinary profile.
 - iOS Simulator, Android emulator, and native desktop development can use the
   real loopback stack without conflating it with deterministic simulation. Only
   transport differs between localhost and tailnet; network identity, account

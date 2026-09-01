@@ -338,10 +338,10 @@ pub(super) fn compose_public_genesis_standalone(
     let network_id = config.indexer().network_id().as_str().to_owned();
     let protection_profiles = Arc::clone(&profiles);
     compose_headless_standalone_with_security(config, clock, security, profiles, move |security| {
-        let ordinary: Arc<dyn WalletProtectionPort> = security.clone();
-        public_profile_protection(&network_id, protection_profiles, security)
-            .map(|protection| Arc::new(protection) as Arc<dyn WalletProtectionPort>)
-            .unwrap_or(ordinary)
+        Arc::new(
+            public_profile_protection(&network_id, protection_profiles, security)
+                .expect("public standalone genesis composition requires the undeployed network"),
+        ) as Arc<dyn WalletProtectionPort>
     })
 }
 

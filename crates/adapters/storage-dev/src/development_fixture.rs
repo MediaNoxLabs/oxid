@@ -15,9 +15,11 @@ use super::DevelopmentWalletSecurity;
 ///
 /// The root remains inside development custody. Profiles with any other name
 /// continue to initialize from the adapter's random source, and an ambiguous
-/// fixture name fails closed before custody changes. Because display names are
-/// user-editable, assigning the fixture name is an explicit opt-in to the
-/// shared root when that profile is initialized.
+/// fixture name fails closed before custody changes. Profile labels are chosen
+/// at creation and immutable in the current profile model, so assigning the
+/// fixture name is an explicit opt-in to the shared root when that profile is
+/// initialized. A future rename capability must preserve this binding or expose
+/// the fixture authority as immutable typed profile metadata.
 pub struct DevelopmentWalletFixtureProtection<R, C, N> {
     profiles: Arc<R>,
     security: Arc<DevelopmentWalletSecurity<C, N>>,

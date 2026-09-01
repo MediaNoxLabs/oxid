@@ -3194,26 +3194,33 @@ const PUBLIC_STANDALONE_GENESIS_MARKER: &str = "OXID_PUBLIC_STANDALONE_GENESIS_W
 #[cfg(feature = "public-standalone-genesis")]
 const PUBLIC_STANDALONE_PROFILE_NAME: &str = "Oxid Demo Wallet";
 
-fn profile_creation_default_name(profiles: &[WalletProfileView]) -> String {
-    #[cfg(feature = "public-standalone-genesis")]
-    if !profiles
+fn profile_creation_default_name() -> String {
+    "My wallet".to_owned()
+}
+
+#[cfg(feature = "public-standalone-genesis")]
+fn public_fixture_profile_exists(profiles: &[WalletProfileView]) -> bool {
+    profiles
         .iter()
         .any(|profile| profile.display_name == PUBLIC_STANDALONE_PROFILE_NAME)
-    {
-        return PUBLIC_STANDALONE_PROFILE_NAME.to_owned();
+}
+
+#[cfg(feature = "public-standalone-genesis")]
+fn public_fixture_choice_label(fixture_exists: bool, fixture_selected: bool) -> &'static str {
+    if fixture_exists {
+        "Public demo wallet already exists"
+    } else if fixture_selected {
+        "Public demo wallet selected"
+    } else {
+        "Use public demo wallet"
     }
-    #[cfg(not(feature = "public-standalone-genesis"))]
-    let _ = profiles;
-    "My wallet".to_owned()
 }
 
 fn public_fixture_name_conflicts(profiles: &[WalletProfileView], candidate: &str) -> bool {
     #[cfg(feature = "public-standalone-genesis")]
     {
         candidate.trim() == PUBLIC_STANDALONE_PROFILE_NAME
-            && profiles
-                .iter()
-                .any(|profile| profile.display_name == PUBLIC_STANDALONE_PROFILE_NAME)
+            && public_fixture_profile_exists(profiles)
     }
     #[cfg(not(feature = "public-standalone-genesis"))]
     {
@@ -4271,7 +4278,7 @@ fn ProfileManager(
     let brand = consume_context::<BrandProfile>();
     let create_wallet_profile = services.create_wallet_profile();
     let select_wallet_profile = services.select_wallet_profile();
-    let default_display_name = profile_creation_default_name(&profiles);
+    let default_display_name = profile_creation_default_name();
     let mut profile_list = use_signal(|| profiles);
     let mut display_name = use_signal(|| default_display_name);
     let mut state = use_signal(|| CreationState::Idle);
@@ -4279,6 +4286,23 @@ fn ProfileManager(
     let fixture_name_conflict =
         public_fixture_name_conflicts(&profile_list.read(), display_name.read().trim());
     let can_submit = !busy && !display_name.read().trim().is_empty() && !fixture_name_conflict;
+    #[cfg(feature = "public-standalone-genesis")]
+    let public_fixture_choice = {
+        let fixture_exists = public_fixture_profile_exists(&profile_list.read());
+        let fixture_selected = display_name.read().trim() == PUBLIC_STANDALONE_PROFILE_NAME;
+        rsx! {
+            p { class: "form-hint", "For a disposable local demo, explicitly select the shared public wallet. Anyone can spend its funds." }
+            button {
+                class: "secondary-action",
+                r#type: "button",
+                disabled: busy || fixture_exists || fixture_selected,
+                onclick: move |_| display_name.set(PUBLIC_STANDALONE_PROFILE_NAME.to_owned()),
+                {public_fixture_choice_label(fixture_exists, fixture_selected)}
+            }
+        }
+    };
+    #[cfg(not(feature = "public-standalone-genesis"))]
+    let public_fixture_choice = rsx! {};
 
     let feedback = match state.read().clone() {
         CreationState::Idle => rsx! {
@@ -4380,6 +4404,7 @@ fn ProfileManager(
             if fixture_name_conflict {
                 p { class: "form-hint", role: "alert", "The public demo profile already exists. Choose a different profile name." }
             }
+            {public_fixture_choice}
             button {
                 class: "primary-action",
                 r#type: "button",
@@ -4407,9 +4432,7 @@ fn ProfileManager(
                         match result {
                             Ok(Ok((created, selected))) => {
                                 profile_list.write().push(created);
-                                let next_name =
-                                    profile_creation_default_name(&profile_list.read());
-                                display_name.set(next_name);
+                                display_name.set(profile_creation_default_name());
                                 state.set(CreationState::Created(selected.clone()));
                                 on_selected.call(selected);
                             }
@@ -7970,6 +7993,9 @@ fn newest_credential(credentials: &[CredentialView]) -> Option<&CredentialView> 
 }
 
 fn home_shielded_value(status: &WalletShieldedSyncView) -> String {
+    if !status.is_complete() {
+        return "—".to_owned();
+    }
     if let Some(balance) = status
         .balances
         .iter()
@@ -7977,10 +8003,7 @@ fn home_shielded_value(status: &WalletShieldedSyncView) -> String {
     {
         return ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units);
     }
-    if status.is_complete() {
-        return ui::format_shielded_amount(NATIVE_SHIELDED_NIGHT_TOKEN_TYPE, "0");
-    }
-    "—".to_owned()
+    ui::format_shielded_amount(NATIVE_SHIELDED_NIGHT_TOKEN_TYPE, "0")
 }
 
 fn non_native_shielded_balances(
@@ -12047,23 +12070,32 @@ mod tests {
 
     #[cfg(feature = "public-standalone-genesis")]
     #[test]
-    fn public_fixture_name_is_prefilled_once_and_duplicates_are_blocked() {
-        assert_eq!(
-            profile_creation_default_name(&[]),
-            PUBLIC_STANDALONE_PROFILE_NAME
-        );
+    fn public_fixture_requires_explicit_selection_and_duplicates_are_blocked() {
+        assert_eq!(profile_creation_default_name(), "My wallet");
         let profiles = vec![WalletProfileView {
             id: "profile_demo".to_owned(),
             display_name: PUBLIC_STANDALONE_PROFILE_NAME.to_owned(),
             created_at_millis: 1,
         }];
 
-        assert_eq!(profile_creation_default_name(&profiles), "My wallet");
+        assert!(public_fixture_profile_exists(&profiles));
         assert!(public_fixture_name_conflicts(
             &profiles,
             PUBLIC_STANDALONE_PROFILE_NAME
         ));
         assert!(!public_fixture_name_conflicts(&profiles, "Another wallet"));
+        assert_eq!(
+            public_fixture_choice_label(false, false),
+            "Use public demo wallet"
+        );
+        assert_eq!(
+            public_fixture_choice_label(false, true),
+            "Public demo wallet selected"
+        );
+        assert_eq!(
+            public_fixture_choice_label(true, false),
+            "Public demo wallet already exists"
+        );
     }
 
     #[test]
@@ -12366,7 +12398,8 @@ mod tests {
         assert!(home_shielded_detail(&unavailable).contains(ui::sync_state("unavailable")));
 
         for incomplete in ["cached", "cancelled", "stalled"] {
-            let status = shielded_status(incomplete, Some(2), Some(2));
+            let mut status = shielded_status(incomplete, Some(2), Some(2));
+            status.balances = funded.balances.clone();
             assert_eq!(home_shielded_value(&status), "—");
             assert!(home_shielded_detail(&status).contains(ui::sync_state(incomplete)));
         }
