@@ -61,8 +61,10 @@ the live adapter discards any cached placeholder state.
 The explicit live development composition supplies the undeployed chain's
 public scalar-one genesis root exactly once when development custody initializes
 its first profile. This is intentionally public test authority, not protected
-wallet material: anyone can derive it and spend funds assigned to it. Every
-later nonce, key reference, and additional profile root uses OS randomness.
+wallet material: anyone can derive it and spend funds assigned to it. A typed
+one-shot profile-root constructor keeps the fixture out of the generic random
+port; every nonce, key reference, generated key, and later profile root uses OS
+randomness.
 The fixture is absent from normal and native-custody composition, never enters
 UI/application DTOs or logs, and is compiled only by the explicit composition
 feature selected from `oxid-app/standalone-development`. The release guard

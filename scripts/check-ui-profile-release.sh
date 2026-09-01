@@ -4,7 +4,22 @@
 set -euo pipefail
 
 failure_log="$(mktemp)"
-trap 'rm -f "$failure_log"' EXIT
+feature_graph_log="$(mktemp)"
+trap 'rm -f "$failure_log" "$feature_graph_log"' EXIT
+
+assert_public_fixture_feature_absent() {
+  local label="$1"
+  local features="$2"
+  local cargo_tree_args=(-e features -p oxid-app -i oxid-composition)
+  if [[ -n "$features" ]]; then
+    cargo_tree_args+=(--no-default-features --features "$features")
+  fi
+  cargo tree "${cargo_tree_args[@]}" >"$feature_graph_log"
+  if rg -q 'oxid-composition feature "standalone-development"' "$feature_graph_log"; then
+    echo "$label oxid-app release profile enables public standalone development custody" >&2
+    exit 1
+  fi
+}
 
 mode="${1:-all}"
 case "$mode" in
@@ -18,14 +33,16 @@ esac
 # The incoming profile is presentation-only but still must never be selectable
 # against the fail-closed production composition.
 if [[ "$mode" != "--artifact" ]]; then
-cargo tree -e features -p oxid-app -i oxid-composition >"$failure_log"
-if rg -q 'oxid-composition feature "standalone-development"' "$failure_log"; then
-  echo "normal oxid-app enables public standalone development custody" >&2
-  exit 1
-fi
+assert_public_fixture_feature_absent "default" ""
+assert_public_fixture_feature_absent "desktop" "desktop"
+assert_public_fixture_feature_absent "mobile" "mobile"
+assert_public_fixture_feature_absent "web" "web"
+assert_public_fixture_feature_absent "native mobile" "mobile,standalone-native-custody"
+assert_public_fixture_feature_absent \
+  "native proving" "mobile,standalone-native-proving-artifacts"
 cargo tree -e features -p oxid-app --no-default-features \
-  --features standalone-development -i oxid-composition >"$failure_log"
-if ! rg -q 'oxid-composition feature "standalone-development"' "$failure_log"; then
+  --features standalone-development -i oxid-composition >"$feature_graph_log"
+if ! rg -q 'oxid-composition feature "standalone-development"' "$feature_graph_log"; then
   echo "oxid-app standalone-development does not enable the bounded composition feature" >&2
   exit 1
 fi
@@ -187,7 +204,8 @@ composition_portal_members="$(awk '
 expected_composition_portal_members="$(printf '%s\n' \
   dep:oxid-adapter-mobile-native \
   oxid-adapter-identity-ingress/loopback-test-offer-trigger \
-  oxid-adapter-openid4vci/portal-http-mobile | sort)"
+  oxid-adapter-openid4vci/portal-http-mobile \
+  standalone-development | sort)"
 if [ "$composition_portal_members" != "$expected_composition_portal_members" ]; then
   echo "oxid-composition/mobile-portal feature wiring is not exact" >&2
   exit 1
@@ -399,16 +417,19 @@ if rg -a -q \
   echo "normal release binary contains the ARM64 desktop test profile" >&2
   exit 1
 fi
-# Keep the plaintext scheme out of scanner-visible source while retaining the
-# exact negative assertion for loopback-only development routes.
-plaintext_websocket_scheme='ws:'//
-standalone_local_release_patterns="OXID_STANDALONE_LOCAL_PROFILE|${plaintext_websocket_scheme}127\\.0\\.0\\.1:8088/api/v4/graphql/ws|http://127\\.0\\.0\\.1:8088/api/v4/graphql|${plaintext_websocket_scheme}127\\.0\\.0\\.1:9944|http://127\\.0\\.0\\.1:6300"
-if rg -a -q \
-  "$standalone_local_release_patterns" \
-  "$release_binary"; then
-  echo "normal release binary contains the standalone local profile or its routes" >&2
-  exit 1
-fi
+standalone_local_release_values=(
+  'OXID_STANDALONE_LOCAL_PROFILE'
+  'ws://127.0.0.1:8088/api/v4/graphql/ws' # nosemgrep: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket
+  'http://127.0.0.1:8088/api/v4/graphql'
+  'ws://127.0.0.1:9944' # nosemgrep: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket
+  'http://127.0.0.1:6300'
+)
+for forbidden_value in "${standalone_local_release_values[@]}"; do
+  if rg -a -F -q -- "$forbidden_value" "$release_binary"; then
+    echo "normal release binary contains the standalone local profile or its routes" >&2
+    exit 1
+  fi
+done
 if rg -a -q \
   'OXID_STANDALONE_FUNDER_SEED_HEX|OXID_ENABLE_LIVE_STANDALONE_FUNDING|Ephemeral funded recipient|Standalone funding authority|Ephemeral shielded recipient|Standalone shielded funding authority' \
   "$release_binary"; then

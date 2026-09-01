@@ -193,18 +193,16 @@ fn main() {
         target_os = "android",
         not(target_arch = "wasm32")
     ))]
-    let application = {
-        oxid_composition::compose_mobile_development_portal_tailnet_from_routes(
-            env!("OXID_BUILD_MIDNIGHT_INDEXER_WS_URL"),
-            env!("OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL"),
-            env!("OXID_BUILD_MIDNIGHT_NODE_WS_URL"),
-            env!("OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL"),
-            include_bytes!(concat!(env!("OUT_DIR"), "/portal-deployment.json")),
-            env!("OXID_EMBEDDED_PORTAL_DEPLOYMENT_SHA256"),
-            env!("OXID_EMBEDDED_PORTAL_PUBLIC_ORIGIN"),
-        )
-        .unwrap_or_else(|error| startup_failure(error))
-    };
+    let application = oxid_composition::compose_mobile_development_portal_tailnet_from_routes(
+        env!("OXID_BUILD_MIDNIGHT_INDEXER_WS_URL"),
+        env!("OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL"),
+        env!("OXID_BUILD_MIDNIGHT_NODE_WS_URL"),
+        env!("OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL"),
+        include_bytes!(concat!(env!("OUT_DIR"), "/portal-deployment.json")),
+        env!("OXID_EMBEDDED_PORTAL_DEPLOYMENT_SHA256"),
+        env!("OXID_EMBEDDED_PORTAL_PUBLIC_ORIGIN"),
+    )
+    .unwrap_or_else(|error| startup_failure(error));
 
     #[cfg(feature = "standalone-native-proving-artifacts")]
     let application =

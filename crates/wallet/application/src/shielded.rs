@@ -83,6 +83,21 @@ pub struct WalletShieldedSyncView {
     pub failure: Option<String>,
 }
 
+impl WalletShieldedSyncView {
+    /// Reports whether the projection is a complete live snapshot rather than
+    /// cached, partial, cancelled, stalled, or unavailable display state.
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.state == state_name(WalletShieldedSyncState::Synced)
+            && self.failure.is_none()
+            && self.current_cursor.is_some()
+            && self.current_cursor == self.target_cursor
+            && self.owned_note_count.is_some()
+            && self.commitment_count.is_some()
+            && self.updated_at_millis.is_some()
+    }
+}
+
 impl From<&WalletShieldedSyncSnapshot> for WalletShieldedSyncView {
     fn from(snapshot: &WalletShieldedSyncSnapshot) -> Self {
         Self {
@@ -330,11 +345,17 @@ mod tests {
         assert_eq!(initial.state, "never_synced");
         let started = StartWalletShieldedSyncUseCase::execute(&service, command.clone())
             .expect("sync starts");
+        assert!(!started.is_complete());
         assert_eq!(started.current_cursor, Some(4));
         assert_eq!(started.owned_note_count, Some(1));
         assert_eq!(started.balances[0].atomic_units, u128::MAX.to_string());
         let cancelled =
             CancelWalletShieldedSyncUseCase::execute(&service, command).expect("sync cancels");
         assert_eq!(cancelled.state, "cancelled");
+        assert!(!cancelled.is_complete());
+
+        let complete =
+            WalletShieldedSyncView::from(&snapshot(WalletShieldedSyncState::Synced, 9, 9));
+        assert!(complete.is_complete());
     }
 }

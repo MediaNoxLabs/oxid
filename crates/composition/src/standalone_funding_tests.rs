@@ -39,7 +39,7 @@ use oxid_wallet_application::{
 use zeroize::Zeroizing;
 
 use super::{
-    ApplicationServices, standalone_genesis::StandaloneDevelopmentRandom,
+    ApplicationServices, standalone_genesis::development_security_for_network,
     wiring::compose_with_adapters,
 };
 
@@ -83,7 +83,13 @@ const MAX_PREPROD_CASE_INDEX: u32 = (WalletHdPathComponent::MAX_INDEX - 1) / 2;
 const TRANSFER_ATOMIC_UNITS: u128 = 5_000_000;
 const SHIELDED_TRANSFER_ATOMIC_UNITS: u128 = 1_000_000;
 const PUBLIC_GENESIS_NIGHT_ATOMIC_UNITS: u128 = 250_000_000_000_000;
-const PUBLIC_GENESIS_DUST_ATOMIC_UNITS: u128 = 1_250_000_000_000_000_000_000_000;
+const NIGHT_ATOMIC_UNITS: u128 = 1_000_000;
+const DUST_ATOMIC_UNITS: u128 = 1_000_000_000_000_000;
+const DUST_PER_NIGHT_AT_CAP: u128 = 5;
+const PUBLIC_GENESIS_DUST_CAP_ATOMIC_UNITS: u128 = PUBLIC_GENESIS_NIGHT_ATOMIC_UNITS
+    / NIGHT_ATOMIC_UNITS
+    * DUST_PER_NIGHT_AT_CAP
+    * DUST_ATOMIC_UNITS;
 const PUBLIC_GENESIS_SHIELDED_NIGHT_ATOMIC_UNITS: u128 = 250_000_000_000_000;
 const PUBLIC_GENESIS_SHIELDED_NOTE_COUNT: u64 = 7;
 const NATIVE_SHIELDED_TOKEN_TYPE: &str =
@@ -950,13 +956,7 @@ fn shielded_balance(status: &WalletShieldedSyncView, token_type: &str) -> u128 {
 }
 
 fn assert_complete_shielded_snapshot(status: &WalletShieldedSyncView) {
-    assert_eq!(status.state, "synced");
-    assert_eq!(status.failure, None);
-    assert!(status.current_cursor.is_some());
-    assert_eq!(status.current_cursor, status.target_cursor);
-    assert!(status.owned_note_count.is_some());
-    assert!(status.commitment_count.is_some());
-    assert!(status.updated_at_millis.is_some());
+    assert!(status.is_complete());
 }
 
 fn await_shielded_balance(
@@ -1133,8 +1133,10 @@ fn preprod_transfer_policy_is_positive_bounded_and_amount_observed() {
 /// undeployed genesis wallet without accepting or emitting private input.
 ///
 /// This is ignored because it requires the repository-owned standalone stack.
-/// Restart that stack before the check if another explicitly authorized test
-/// has spent the shared public fixture.
+/// The pinned standalone genesis time places its generating NIGHT at the
+/// protocol's five-DUST-per-NIGHT cap, so chain uptime cannot increase this
+/// projection further. Restart the stack before the check if another explicitly
+/// authorized test has spent the shared public fixture or changed its notes.
 #[test]
 #[ignore = "requires explicit live standalone stack"]
 fn public_standalone_genesis_balances_are_exact() {
@@ -1145,9 +1147,10 @@ fn public_standalone_genesis_balances_are_exact() {
     );
     let config = standalone_config();
     let profiles = Arc::new(InMemoryWalletProfileRepository::new());
-    let security = Arc::new(DevelopmentWalletSecurity::new(
+    let security = Arc::new(development_security_for_network(
+        "undeployed",
         Arc::new(SystemClock),
-        Arc::new(StandaloneDevelopmentRandom::for_network("undeployed")),
+        Arc::new(OsRandom),
     ));
     let application = compose_live(config, profiles, security, None, None, None, None);
     let (profile_id, _, _) = initialize_account(
@@ -1165,7 +1168,7 @@ fn public_standalone_genesis_balances_are_exact() {
     assert_eq!(dust.state, "synced");
     assert_eq!(dust.failure, None);
     assert_eq!(dust.current_cursor, dust.target_cursor);
-    assert_eq!(dust_balance(&dust), PUBLIC_GENESIS_DUST_ATOMIC_UNITS);
+    assert_eq!(dust_balance(&dust), PUBLIC_GENESIS_DUST_CAP_ATOMIC_UNITS);
     let shielded = synchronize_shielded(&application, &profile_id);
     assert_complete_shielded_snapshot(&shielded);
     assert_eq!(

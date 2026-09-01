@@ -28,7 +28,7 @@ use super::services::ApplicationServices;
     not(target_arch = "wasm32"),
     any(test, feature = "standalone-development")
 ))]
-use super::standalone_genesis::StandaloneDevelopmentRandom;
+use super::standalone_genesis::development_security_for_network;
 use super::wiring::{
     compose_with_adapters, compose_with_adapters_and_credential_profile,
     compose_with_adapters_and_presentation,
@@ -310,10 +310,11 @@ pub(super) fn compose_public_genesis_standalone(
 ) -> ApplicationServices {
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
-    let random = Arc::new(StandaloneDevelopmentRandom::for_network(
+    let security = Arc::new(development_security_for_network(
         config.indexer().network_id().as_str(),
+        Arc::clone(&clock),
+        Arc::new(OsRandom),
     ));
-    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
     let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
     let midnight = Arc::new(
         protected_standalone_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))

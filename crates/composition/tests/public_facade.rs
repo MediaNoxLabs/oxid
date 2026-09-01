@@ -147,6 +147,7 @@ fn default_native_root_facade_remains_source_compatible() {
     let _ = compose_headless_standalone_with_checkpoints;
     let _ = compose_headless_standalone_with_dust_checkpoints;
     let _ = compose_headless_standalone_with_all_checkpoints;
+    #[cfg(feature = "standalone-development")]
     let _ = compose_mobile_development_standalone_from_routes;
     let _ = || compose_in_memory_with_compact_presentation_artifacts(std::path::PathBuf::new());
 
@@ -209,6 +210,7 @@ fn compact_mobile_root_entry_points_remain_available() {
 
 #[cfg(all(
     feature = "mobile-portal",
+    feature = "standalone-development",
     any(target_os = "ios", target_os = "android")
 ))]
 #[test]
@@ -222,7 +224,11 @@ fn android_portal_verification_root_entry_point_remains_available() {
     let _: fn() -> Result<(), &'static str> = verify_android_portal_virtual_device_profile;
 }
 
-#[cfg(all(feature = "mobile-portal-tailnet", target_os = "android"))]
+#[cfg(all(
+    feature = "mobile-portal-tailnet",
+    feature = "standalone-development",
+    target_os = "android"
+))]
 #[test]
 fn portal_tailnet_root_entry_point_remains_available() {
     let _ = compose_mobile_development_portal_tailnet_from_routes;

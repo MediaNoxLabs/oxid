@@ -24,6 +24,7 @@ mobile-compact-artifacts = ["oxid-adapter-vc-midnight/mobile-compact-artifacts"]
 # fixed trigger remains runtime-inert until the app-owned standalone-portal path
 # calls the explicit Portal composition constructor.
 mobile-portal = [
+  "standalone-development",
   "dep:oxid-adapter-mobile-native",
   "oxid-adapter-openid4vci/portal-http-mobile",
   "oxid-adapter-identity-ingress/loopback-test-offer-trigger",

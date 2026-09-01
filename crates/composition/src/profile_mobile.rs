@@ -18,7 +18,14 @@ use super::portal::PortalIdentityConfiguration;
     any(test, feature = "standalone-development")
 ))]
 use oxid_adapter_midnight::{MidnightIndexerConfigError, MidnightStandaloneConfigError};
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        not(any(target_os = "ios", target_os = "android")),
+        test,
+        feature = "standalone-development"
+    )
+))]
 use oxid_adapter_midnight::{MidnightStandaloneConfig, protected_standalone_midnight_wallet};
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_midnight::{
@@ -31,10 +38,24 @@ use oxid_adapter_midnight::{
     any(test, feature = "standalone-development")
 ))]
 use super::environment::HeadlessCompositionError;
-use super::identity::{CredentialPresentationComposition, HeadlessCredentialProfile};
+use super::identity::CredentialPresentationComposition;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        not(any(target_os = "ios", target_os = "android")),
+        feature = "mobile-portal"
+    )
+))]
+use super::identity::HeadlessCredentialProfile;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use super::passport_vault::with_simulated_passport_vault_calls;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        not(any(target_os = "ios", target_os = "android")),
+        feature = "mobile-portal"
+    )
+))]
 use super::passport_vault::{
     node_anchored_passport_vault_state_source, with_passport_vault_state_source,
 };
@@ -50,13 +71,27 @@ use super::services::ApplicationServices;
     feature = "mobile-portal",
     any(target_os = "ios", target_os = "android")
 ))]
-use super::standalone_genesis::StandaloneDevelopmentRandom;
+use super::standalone_genesis::development_security_for_network;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        not(any(target_os = "ios", target_os = "android")),
+        feature = "mobile-portal"
+    )
+))]
 use super::wiring::compose_with_adapters_and_credential_profile;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use super::wiring::compose_with_adapters_and_presentation;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_platform_system::OsRandom;
 use oxid_adapter_platform_system::SystemClock;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        not(any(target_os = "ios", target_os = "android")),
+        feature = "mobile-portal"
+    )
+))]
 use oxid_adapter_storage_dev::DevelopmentWalletSecurity;
 use oxid_adapter_storage_json::JsonWalletProfileRepository;
 #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -281,11 +316,17 @@ pub(super) fn compose_development_portal_from_config(
     portal: PortalIdentityConfiguration,
     credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices {
-    compose_development_portal_with_random(
+    let clock = Arc::new(SystemClock);
+    let security = Arc::new(DevelopmentWalletSecurity::new(
+        Arc::clone(&clock),
+        Arc::new(OsRandom),
+    ));
+    compose_development_portal_with_security(
         config,
         portal,
         credential_presentation,
-        Arc::new(OsRandom),
+        clock,
+        security,
     )
 }
 
@@ -300,10 +341,19 @@ fn compose_mobile_development_portal_from_config(
     portal: PortalIdentityConfiguration,
     credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices {
-    let random = Arc::new(StandaloneDevelopmentRandom::for_network(
+    let clock = Arc::new(SystemClock);
+    let security = Arc::new(development_security_for_network(
         config.indexer().network_id().as_str(),
+        Arc::clone(&clock),
+        Arc::new(OsRandom),
     ));
-    compose_development_portal_with_random(config, portal, credential_presentation, random)
+    compose_development_portal_with_security(
+        config,
+        portal,
+        credential_presentation,
+        clock,
+        security,
+    )
 }
 
 #[cfg(all(
@@ -316,18 +366,17 @@ fn compose_mobile_development_portal_from_config(
         )
     )
 ))]
-fn compose_development_portal_with_random<N>(
+fn compose_development_portal_with_security<N>(
     config: MidnightStandaloneConfig,
     portal: PortalIdentityConfiguration,
     credential_presentation: CredentialPresentationComposition,
-    random: Arc<N>,
+    clock: Arc<SystemClock>,
+    security: Arc<DevelopmentWalletSecurity<SystemClock, N>>,
 ) -> ApplicationServices
 where
     N: oxid_platform_ports::RandomPort + 'static,
 {
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
-    let clock = Arc::new(SystemClock);
-    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
     let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
     let midnight = Arc::new(
         protected_standalone_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))

@@ -2258,8 +2258,10 @@ to silence the shell probe.
   Development custody remains process-local: after process death, retain the
   public association but report uninitialized protection and withhold the
   former addresses until initialization. The live local/tailnet development
-  composition then consumes the public scalar-one standalone genesis root once
-  and delegates every later random value to the OS. The root is shared public
+  composition supplies the public scalar-one standalone genesis root through
+  development custody's typed one-shot profile-root constructor. Generic
+  randomness stays OS-backed for nonces, references, generated keys, and later
+  profiles. The root is shared public
   test authority, never private wallet material, and must remain absent from
   normal/native-custody artifacts, UI DTOs, logs, and diagnostics. Balance
   display still requires independent live NIGHT, DUST, and shielded sync. This

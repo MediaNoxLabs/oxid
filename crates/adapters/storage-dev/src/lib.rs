@@ -46,6 +46,7 @@ const JUBJUB_SEED_ATTEMPTS: usize = 128;
 pub struct DevelopmentWalletSecurity<C, N> {
     clock: Arc<C>,
     random: Arc<N>,
+    initial_root_seed: Mutex<Option<Zeroizing<[u8; 32]>>>,
     profiles: Mutex<BTreeMap<String, DevelopmentProfile>>,
 }
 
@@ -55,8 +56,34 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
         Self {
             clock,
             random,
+            initial_root_seed: Mutex::new(None),
             profiles: Mutex::new(BTreeMap::new()),
         }
+    }
+
+    /// Supplies one typed root to the first initialized development profile.
+    ///
+    /// This adapter remains process-local and explicitly insecure. Generic
+    /// randomness is still used for every key reference, nonce, generated key,
+    /// and later profile root; the supplied value can never satisfy those
+    /// requests accidentally.
+    #[must_use]
+    pub fn with_initial_root_seed(clock: Arc<C>, random: Arc<N>, root_seed: [u8; 32]) -> Self {
+        Self {
+            clock,
+            random,
+            initial_root_seed: Mutex::new(Some(Zeroizing::new(root_seed))),
+            profiles: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    fn take_initial_root_seed(
+        &self,
+    ) -> Result<Option<Zeroizing<[u8; 32]>>, WalletSecurityPortError> {
+        self.initial_root_seed
+            .lock()
+            .map_err(|_| WalletSecurityPortError::Unavailable)
+            .map(|mut seed| seed.take())
     }
 
     fn profiles(
@@ -356,10 +383,15 @@ where
         if profiles.contains_key(profile_id.as_str()) {
             return Err(WalletSecurityPortError::AlreadyInitialized);
         }
-        let mut root_seed = Zeroizing::new([0_u8; 32]);
-        self.random
-            .fill_bytes(root_seed.as_mut())
-            .map_err(|_| WalletSecurityPortError::Unavailable)?;
+        let root_seed = if let Some(root_seed) = self.take_initial_root_seed()? {
+            root_seed
+        } else {
+            let mut root_seed = Zeroizing::new([0_u8; 32]);
+            self.random
+                .fill_bytes(root_seed.as_mut())
+                .map_err(|_| WalletSecurityPortError::Unavailable)?;
+            root_seed
+        };
         profiles.insert(
             profile_id.as_str().to_owned(),
             DevelopmentProfile {
@@ -980,6 +1012,26 @@ mod tests {
 
     fn profile_id() -> WalletProfileId {
         WalletProfileId::parse("profile_test").expect("profile reference is valid")
+    }
+
+    #[test]
+    fn typed_initial_root_seed_applies_only_to_the_first_profile() {
+        let mut expected = [0_u8; 32];
+        expected[31] = 1;
+        let adapter = DevelopmentWalletSecurity::with_initial_root_seed(
+            Arc::new(FixedClock),
+            Arc::new(IncrementingRandom::new()),
+            expected,
+        );
+        let first = profile_id();
+        let second = WalletProfileId::parse("profile_second").expect("second profile");
+
+        adapter.initialize(&first).expect("initialize first");
+        adapter.initialize(&second).expect("initialize second");
+
+        let profiles = adapter.profiles().expect("profile state");
+        assert_eq!(*profiles[first.as_str()].root_seed, expected);
+        assert_eq!(*profiles[second.as_str()].root_seed, [17_u8; 32]);
     }
 
     fn generate(

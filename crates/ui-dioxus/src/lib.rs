@@ -7915,7 +7915,7 @@ fn home_shielded_value(status: &WalletShieldedSyncView) -> String {
     {
         return ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units);
     }
-    if status.state == "synced" && status.owned_note_count.is_some() {
+    if status.is_complete() {
         return ui::format_shielded_amount(NATIVE_SHIELDED_NIGHT_TOKEN_TYPE, "0");
     }
     ui::sync_state(&status.state).to_owned()
