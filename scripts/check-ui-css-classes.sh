@@ -9,12 +9,22 @@ if ! command -v rg >/dev/null 2>&1; then
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ui_source="$repo_root/crates/ui-dioxus/src/lib.rs"
-stylesheet="$repo_root/crates/ui-dioxus/assets/styles.css"
+ui_source_root="${OXID_UI_SOURCE_ROOT:-$repo_root/crates/ui-dioxus/src}"
+stylesheet="${OXID_UI_STYLESHEET:-$repo_root/crates/ui-dioxus/assets/styles.css}"
 scratch="$(mktemp -d)"
 trap 'rm -r "$scratch"' EXIT
 
-rg --no-filename -o 'class: "[^"]+"' "$ui_source" |
+ui_sources=()
+while IFS= read -r -d '' source; do
+  ui_sources+=("$source")
+done < <(find "$ui_source_root" -type f -name '*.rs' -print0)
+
+if [[ ${#ui_sources[@]} -eq 0 ]]; then
+  echo "No Dioxus Rust sources found under $ui_source_root." >&2
+  exit 1
+fi
+
+rg --no-filename -o 'class: "[^"]+"' "${ui_sources[@]}" |
   sed -E 's/^class: "([^"]+)"$/\1/' |
   tr ' ' '\n' |
   sed '/^$/d' |
