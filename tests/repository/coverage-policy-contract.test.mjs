@@ -213,6 +213,19 @@ test("changed-line scorer handles changes, new files, renames, comments, tests, 
   assert.equal(score.files.find(({ path: name }) => name.endsWith("renamed.rs")).change, "renamed");
 });
 
+test("changed-line scorer parses an added line beginning with two plus signs", async () => {
+  const policy = await loadPolicy();
+  const inventory = await discoverWorkspacePackageInventory(repoRoot);
+  const foundation = inventory.find(({ name }) => name === "oxid-foundation");
+  const diff = "diff --git a/crates/foundation/src/lib.rs b/crates/foundation/src/lib.rs\n--- a/crates/foundation/src/lib.rs\n+++ b/crates/foundation/src/lib.rs\n@@ -0,0 +1 @@\n+++\n";
+  const reports = [{ files: [{
+    ...lineFile(foundation, { count: 1, covered: 1 }),
+    executableLines: [{ line: 1, covered: true }],
+  }] }];
+  assert.deepEqual(scoreChangedLines(diff, reports, { policy, packageInventory: inventory }).lines,
+    { count: 1, covered: 1, requiredCovered: 1 });
+});
+
 test("changed-line exact boundary passes and zero executable denominator is visibly not-applicable", async () => {
   const policy = await loadPolicy();
   const inventory = await discoverWorkspacePackageInventory(repoRoot);

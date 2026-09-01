@@ -607,7 +607,7 @@ function parseChangedDiff(diff) {
       continue;
     }
     if (!hunk) continue;
-    if (line.startsWith("+") && !line.startsWith("+++")) {
+    if (line.startsWith("+")) {
       current.addedLines.add(hunk.nextLine);
       hunk.nextLine += 1;
       hunk.observed += 1;
