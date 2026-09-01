@@ -128,6 +128,7 @@ ADR status and delivery state answer different questions:
 | [0102](0102-admit-pinned-portal-final-in-headless-development.md) Admit pinned Portal Final issuance in headless development | Accepted | ADR-0039/0101; issue #124; Portal `integration@22ae536` | Strict authenticated native-headless Portal HTTP issuance, exact three-part verification/import, encrypted persistence, and new-process restore |
 | [0103](0103-compose-portal-final-for-physical-android.md) Compose Portal Final for physical Android | Accepted | ADR-0039/0097/0102; issue #124; Portal `integration@22ae536` | Compile-gated physical Android issuance, encrypted restart/reverification, runtime-discovered device and tailnet identity, and receipt-exact temporary HTTPS cleanup |
 | [0104](0104-regrow-incoming-adapters-behind-capability-facades.md) Regrow oversized adapters behind capability façades | Accepted | §§3, 6, 13–14, 18–19; issue #145 | Headless, desktop Dioxus, and composition are decomposed behind checked façades; Midnight remains the final ordered root, and no crate extraction is authorized |
+| [0105](0105-recover-owner-midnight-roots-for-preprod-observation.md) Recover owner Midnight roots for PreProd observation | Accepted | §§3–8, 12–13, 16–18, 21; ADR-0071/0074/0090/0098; issue #244 | Opt-in mobile recovery installs one owner-entered root into empty native custody, binds it to signed/genesis-authenticated PreProd, derives account 0/address 0, and exposes balance sync without write controls |
 
 ## Current boundaries
 
@@ -523,3 +524,11 @@ Headless, desktop Dioxus, and composition now retain stable crate-root
 re-exports over capability-owned source modules; Midnight remains the final
 ordered root. Source modules must establish cohesion before a separately
 approved, measured crate boundary can be proposed.
+
+ADR-0105 admits one owner-entered 32-byte Midnight root only through an
+explicit empty-profile, native-authorized, zeroizing recovery port. The opt-in
+mobile build verifies one signed PreProd deployment and its live node genesis,
+fixes account derivation to account 0/address 0, and reuses the existing
+NIGHT/shielded/DUST sync projection while omitting every write control. Normal
+artifacts, runtime environments, logs, diagnostics, URLs, and public profile
+metadata remain unable to carry the root or select this deployment.

@@ -135,14 +135,26 @@
             "crates/ui-dioxus/src/labels"
           ]
         },
-        {
-          "name": "passport-vault",
-          "modulePathPrefixes": [
-            "crates/ui-dioxus/src/passport_vault"
-          ]
-        },
-        {
-          "name": "profile-guard",
+      {
+        "name": "passport-vault",
+        "modulePathPrefixes": [
+          "crates/ui-dioxus/src/passport_vault"
+        ]
+      },
+      {
+        "name": "wallet-assets",
+        "modulePathPrefixes": [
+          "crates/ui-dioxus/src/assets_page"
+        ]
+      },
+      {
+        "name": "wallet-root-recovery",
+        "modulePathPrefixes": [
+          "crates/ui-dioxus/src/wallet_root_recovery"
+        ]
+      },
+      {
+        "name": "profile-guard",
           "modulePathPrefixes": [
             "crates/ui-dioxus/src/profile_guard"
           ]
@@ -204,13 +216,19 @@
             "crates/composition/src/profile_mobile"
           ]
         },
-        {
-          "name": "production-profile",
-          "modulePathPrefixes": [
-            "crates/composition/src/profile_production"
-          ]
-        },
-        {
+      {
+        "name": "production-profile",
+        "modulePathPrefixes": [
+          "crates/composition/src/profile_production"
+        ]
+      },
+      {
+        "name": "preprod-observation-profile",
+        "modulePathPrefixes": [
+          "crates/composition/src/profile_preprod"
+        ]
+      },
+      {
           "name": "application-services",
           "modulePathPrefixes": [
             "crates/composition/src/services"

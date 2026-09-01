@@ -23,6 +23,8 @@ mod profile_environment;
 mod profile_headless;
 mod profile_in_memory;
 mod profile_mobile;
+#[cfg(all(feature = "preprod-observation", not(target_arch = "wasm32")))]
+mod profile_preprod;
 mod profile_production;
 mod services;
 #[cfg(not(target_arch = "wasm32"))]
@@ -36,8 +38,10 @@ pub use profile_environment::*;
 pub use profile_headless::*;
 pub use profile_in_memory::*;
 pub use profile_mobile::*;
+#[cfg(all(feature = "preprod-observation", not(target_arch = "wasm32")))]
+pub use profile_preprod::*;
 pub use profile_production::*;
-pub use services::ApplicationServices;
+pub use services::{ApplicationServices, WalletRootRecoveryCapability};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod standalone_funding_tests;

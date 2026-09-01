@@ -20,6 +20,10 @@ headless-portal-local = []
 # caller; normal composition remains unchanged.
 desktop-portal-test = ["oxid-adapter-identity-ingress/desktop-test-qr-scanner"]
 mobile-compact-artifacts = ["oxid-adapter-vc-midnight/mobile-compact-artifacts"]
+# Explicit owner-invoked read-only PreProd mobile composition. Public signed
+# deployment material is compiled only into this profile; seed custody remains
+# owner-entered and platform-backed.
+preprod-observation = []
 # Native-mobile Portal identity/HTTP capability. It is target-gated, and its
 # fixed trigger remains runtime-inert until the app-owned standalone-portal path
 # calls the explicit Portal composition constructor.
@@ -68,6 +72,7 @@ oxid-passport-vault-application.workspace = true
 oxid-platform-ports.workspace = true
 oxid-protocol-application.workspace = true
 oxid-wallet-application.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 futures.workspace = true

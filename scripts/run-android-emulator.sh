@@ -22,13 +22,30 @@ cleanup_portal_profile_authority() {
 }
 trap cleanup_portal_profile_authority EXIT
 
+preprod_observation="${OXID_PREPROD_OBSERVATION:-0}"
+case "$preprod_observation" in
+  0|1) ;;
+  *)
+    echo "OXID_PREPROD_OBSERVATION must be '0' or '1'." >&2
+    exit 1
+    ;;
+esac
+
 mobile_custody="${OXID_MOBILE_CUSTODY:-development}"
 case "$mobile_custody" in
   development)
+    if [ "$preprod_observation" = "1" ]; then
+      echo "PreProd observation requires native custody." >&2
+      exit 1
+    fi
     mobile_features="mobile,standalone-development"
     ;;
   native)
-    mobile_features="mobile,standalone-native-custody"
+    if [ "$preprod_observation" = "1" ]; then
+      mobile_features="mobile,preprod-observation"
+    else
+      mobile_features="mobile,standalone-native-custody"
+    fi
     ;;
   *)
     echo "OXID_MOBILE_CUSTODY must be 'development' or 'native'." >&2
@@ -55,6 +72,10 @@ case "$ui_profile" in
     exit 1
     ;;
 esac
+if [ "$preprod_observation" = "1" ] && [ "$ui_profile" != "user" ]; then
+  echo "PreProd observation requires the user UI profile." >&2
+  exit 1
+fi
 
 standalone_network_profile="${OXID_STANDALONE_NETWORK_PROFILE:-simulated}"
 requested_portal_profile="${OXID_MOBILE_PORTAL_PROFILE:-unavailable}"
@@ -92,6 +113,10 @@ case "$standalone_network_profile" in
     exit 1
     ;;
 esac
+if [ "$preprod_observation" = "1" ] && [ "$standalone_network_profile" != "simulated" ]; then
+  echo "PreProd observation cannot select standalone local or Tailnet routes." >&2
+  exit 1
+fi
 
 if [ "$ui_profile" = "demo" ] && [ "$standalone_network_profile" != "simulated" ]; then
   echo "OXID_UI_PROFILE=demo requires the simulated development composition." >&2
@@ -174,6 +199,10 @@ case "$portal_profile" in
     exit 1
     ;;
 esac
+if [ "$preprod_observation" = "1" ] && [ "$portal_profile" != "unavailable" ]; then
+  echo "PreProd observation does not enable a Portal profile." >&2
+  exit 1
+fi
 
 android_jni_recovery_test="${OXID_ANDROID_JNI_RECOVERY_TEST:-0}"
 case "$android_jni_recovery_test" in
@@ -208,6 +237,10 @@ case "$mobile_presentation_proving" in
     exit 1
     ;;
 esac
+if [ "$preprod_observation" = "1" ] && [ "$mobile_presentation_proving" != "unavailable" ]; then
+  echo "PreProd observation does not package proving artifacts." >&2
+  exit 1
+fi
 
 android_sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 if [ -z "$android_sdk" ] && [ "$(uname -s)" = "Darwin" ]; then
@@ -491,4 +524,9 @@ if [ -z "$(adb_device shell pidof io.medianox.oxid | tr -d '\r')" ]; then
   exit 1
 fi
 
-echo "Launched io.medianox.oxid ($ui_profile profile, $mobile_custody custody, $standalone_network_profile network, $portal_profile Portal) on Android."
+if [ "$preprod_observation" = "1" ]; then
+  launched_network_profile="authenticated PreProd observation"
+else
+  launched_network_profile="$standalone_network_profile network"
+fi
+echo "Launched io.medianox.oxid ($ui_profile profile, $mobile_custody custody, $launched_network_profile, $portal_profile Portal) on Android."

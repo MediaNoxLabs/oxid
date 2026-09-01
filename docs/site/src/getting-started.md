@@ -43,6 +43,7 @@ just check             # the light strict gate: fmt, architecture, clippy, tests
 | `just ios-standalone-local-smoke` / `just android-standalone-local-smoke` | Protected live-account sync through the laptop loopback stack |
 | `just standalone-phone-up` / `just standalone-down` | Start/stop the loopback stack and Oxid-owned tailnet TLS routes |
 | `just android-phone` | Build and launch the compile-time standalone tailnet profile on one physical Android device |
+| `just android-preprod-observe` | Build and launch owner-entered, read-only PreProd recovery on one Android target |
 | `just nix-check` | Every hermetic flake check (slow, sandboxed) |
 
 Run the gate from inside `nix develop` — coverage needs `cargo-llvm-cov`
@@ -93,6 +94,37 @@ OXID_MOBILE_CUSTODY=native OXID_MOBILE_PRESENTATION_PROVING=artifacts just andro
 
 This large build is simulator/emulator conformance evidence, not physical-device
 or production readiness. The ordinary commands remain proof-disabled.
+
+## Observe an existing PreProd wallet on Android
+
+`just android-preprod-observe` is the explicit native-custody path for an owner
+who already has a Midnight PreProd wallet root. The launcher embeds only the
+reviewed signed deployment profile and public verification key. Never pass the
+root through an environment variable, shell argument, file, QR code, or log.
+
+Connect and unlock the selected Android device, then run:
+
+```bash
+just android-preprod-observe
+```
+
+In the app, choose **Recover existing PreProd wallet**, name the new empty
+profile, and enter the 64-character lowercase hexadecimal wallet root in the
+password field. Check the explicit recovery confirmation, choose **Authorize
+and recover**, and approve the native device-protection prompt. The app derives
+only canonical account `0` / address `0`. Open **Wallet** and choose **Sync now**
+to observe NIGHT, shielded token, and DUST balances from the authenticated
+PreProd endpoints.
+
+The build is deliberately observation-only: it offers no send, DUST
+registration, proving, or submission controls. Cancelling or backgrounding the
+app clears the input. Failed native authorization leaves the empty profile
+retryable; successful recovery is one-shot and duplicate import is rejected.
+If account metadata could not be persisted after that one-shot installation,
+Wallet offers **Authorize and finish account**; it never asks for the root a
+second time.
+If the signed deployment profile or live node genesis cannot be authenticated,
+startup fails closed before the recovery screen is available.
 
 ## Physical Android against the laptop standalone stack
 

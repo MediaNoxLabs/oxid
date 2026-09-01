@@ -19,6 +19,11 @@ use super::identity::{
 };
 use super::passport_vault::PassportVaultRepositoryComposition;
 use super::services::ApplicationServices;
+#[cfg(all(
+    feature = "preprod-observation",
+    any(target_os = "ios", target_os = "android")
+))]
+use super::services::WalletRootRecoveryCapability;
 use super::wiring::compose_with_identity_adapters;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_platform_system::OsRandom;
@@ -35,6 +40,11 @@ use oxid_credential_application::{
 use oxid_identity_application::{
     UnavailableDidLifecycle, UnavailableDidRecordRepository, UnavailableDidResolver,
 };
+#[cfg(all(
+    feature = "preprod-observation",
+    any(target_os = "ios", target_os = "android")
+))]
+use oxid_wallet_application::{RecoverWalletRootUseCase, WalletRootRecoveryService};
 
 /// A signed deployment profile after the configured node has also proven the
 /// exact genesis hash bound by that profile.
@@ -142,6 +152,18 @@ pub async fn authenticate_production_deployment(
 pub fn compose_authenticated_production(
     deployment: AuthenticatedProductionDeployment,
 ) -> Result<ApplicationServices, ProductionDeploymentCompositionError> {
+    #[cfg(all(
+        feature = "preprod-observation",
+        any(target_os = "ios", target_os = "android")
+    ))]
+    let authenticated_network_id = deployment.profile.midnight().network_id().to_owned();
+    #[cfg(all(
+        feature = "preprod-observation",
+        any(target_os = "ios", target_os = "android")
+    ))]
+    if authenticated_network_id != "preprod" {
+        return Err(ProductionDeploymentCompositionError::InvalidMidnightProfile);
+    }
     let did_resolver = HttpDidResolverConfig::new(deployment.profile.ssi().did_resolver_url())
         .map(HttpDidResolver::new)
         .map_err(|_| ProductionDeploymentCompositionError::InvalidSsiProfile)?;
@@ -163,10 +185,10 @@ pub fn compose_authenticated_production(
         )
         .with_profile_association_repository(profiles.clone()),
     );
-    Ok(compose_with_identity_adapters(
-        profiles,
-        security,
-        midnight,
+    let services = compose_with_identity_adapters(
+        Arc::clone(&profiles),
+        Arc::clone(&security),
+        Arc::clone(&midnight),
         IdentityAdapters {
             did_repository: Arc::new(UnavailableDidRecordRepository),
             did_resolver: Arc::new(did_resolver),
@@ -184,7 +206,35 @@ pub fn compose_authenticated_production(
         },
         PassportVaultRepositoryComposition::unavailable(),
         |security| security,
-    ))
+    );
+    #[cfg(all(
+        feature = "preprod-observation",
+        any(target_os = "ios", target_os = "android")
+    ))]
+    {
+        let recovery: Arc<dyn RecoverWalletRootUseCase> = Arc::new(
+            WalletRootRecoveryService::new(
+                Arc::clone(&profiles),
+                Arc::clone(&security),
+                Arc::clone(&midnight),
+                authenticated_network_id.clone(),
+            )
+            .map_err(|_| ProductionDeploymentCompositionError::InvalidMidnightProfile)?,
+        );
+        Ok(
+            services.with_wallet_root_recovery(WalletRootRecoveryCapability::new(
+                authenticated_network_id,
+                recovery,
+            )),
+        )
+    }
+    #[cfg(not(all(
+        feature = "preprod-observation",
+        any(target_os = "ios", target_os = "android")
+    )))]
+    {
+        Ok(services)
+    }
 }
 
 /// Wires the application with persistent public-profile metadata storage.

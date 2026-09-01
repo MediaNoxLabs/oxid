@@ -13,14 +13,23 @@ use std::sync::Arc;
     )
 ))]
 use super::portal::PortalIdentityConfiguration;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        not(any(target_os = "ios", target_os = "android")),
+        test,
+        feature = "standalone-development",
+        feature = "mobile-portal"
+    )
+))]
 use oxid_adapter_midnight::{MidnightIndexerConfigError, MidnightStandaloneConfigError};
 #[cfg(all(
     not(target_arch = "wasm32"),
     any(
         not(any(target_os = "ios", target_os = "android")),
         test,
-        feature = "standalone-development"
+        feature = "standalone-development",
+        feature = "mobile-portal"
     )
 ))]
 use oxid_adapter_midnight::{MidnightStandaloneConfig, protected_standalone_midnight_wallet};
@@ -30,7 +39,15 @@ use oxid_adapter_midnight::{
     protected_simulated_midnight_wallet_with_submission_journal,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        not(any(target_os = "ios", target_os = "android")),
+        test,
+        feature = "standalone-development",
+        feature = "mobile-portal"
+    )
+))]
 use super::environment::HeadlessCompositionError;
 use super::identity::CredentialPresentationComposition;
 #[cfg(all(
@@ -53,7 +70,14 @@ use super::passport_vault::with_simulated_passport_vault_calls;
 use super::passport_vault::{
     node_anchored_passport_vault_state_source, with_passport_vault_state_source,
 };
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        not(any(target_os = "ios", target_os = "android")),
+        test,
+        feature = "standalone-development"
+    )
+))]
 use super::profile_headless::compose_headless_standalone;
 #[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
 use super::profile_headless::compose_public_genesis_standalone;
@@ -212,7 +236,14 @@ pub fn authenticate_embedded_mobile_compact_presentation_artifacts()
 /// The app crate exposes this constructor only behind its opt-in local or
 /// tailnet live-stack route profile. Normal and native-custody mobile
 /// composition never call it.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        not(any(target_os = "ios", target_os = "android")),
+        test,
+        feature = "standalone-development"
+    )
+))]
 pub fn compose_mobile_development_standalone_from_routes(
     indexer_websocket_url: &str,
     indexer_http_url: &str,
@@ -490,7 +521,15 @@ where
     with_passport_vault_state_source(services, passport_vault_state_source)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        not(any(target_os = "ios", target_os = "android")),
+        test,
+        feature = "standalone-development",
+        feature = "mobile-portal"
+    )
+))]
 fn mobile_standalone_config_from_routes(
     indexer_websocket_url: &str,
     indexer_http_url: &str,
