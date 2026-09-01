@@ -683,12 +683,12 @@ where
         dust_checkpoints,
         shielded_checkpoints,
         journal,
-        None,
+        |security| security,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn compose_live_with_protection<N>(
+fn compose_live_with_protection<N, F>(
     config: MidnightStandaloneConfig,
     profiles: Arc<InMemoryWalletProfileRepository>,
     security: Arc<DevelopmentWalletSecurity<SystemClock, N>>,
@@ -696,10 +696,11 @@ fn compose_live_with_protection<N>(
     dust_checkpoints: Option<MidnightDustCheckpointConfig>,
     shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
     journal: Option<MidnightSubmissionJournalConfig>,
-    protection_for_security: Option<Arc<dyn WalletProtectionPort>>,
+    protection_for_security: F,
 ) -> ApplicationServices
 where
     N: RandomPort + 'static,
+    F: FnOnce(Arc<DevelopmentWalletSecurity<SystemClock, N>>) -> Arc<dyn WalletProtectionPort>,
 {
     let clock = Arc::new(SystemClock);
     let midnight = Arc::new(
@@ -1199,6 +1200,7 @@ fn public_balance_contract_tracks_the_exact_standalone_image_and_preset_pins() {
 #[test]
 #[ignore = "requires explicit live standalone stack"]
 fn public_standalone_genesis_balances_are_exact() {
+    const SHARED_FIXTURE_DRIFT: &str = "shared public fixture differs from genesis; restart the standalone stack before treating this as a regression";
     assert_eq!(
         std::env::var(PUBLIC_BALANCE_ENABLE_ENV).ok().as_deref(),
         Some("1"),
@@ -1210,10 +1212,7 @@ fn public_standalone_genesis_balances_are_exact() {
         Arc::new(SystemClock),
         Arc::new(OsRandom),
     ));
-    let protection: Arc<dyn WalletProtectionPort> = Arc::new(
-        public_profile_protection("undeployed", Arc::clone(&profiles), Arc::clone(&security))
-            .expect("undeployed fixture protection"),
-    );
+    let protection_profiles = Arc::clone(&profiles);
     let application = compose_live_with_protection(
         config,
         profiles,
@@ -1222,7 +1221,12 @@ fn public_standalone_genesis_balances_are_exact() {
         None,
         None,
         None,
-        Some(protection),
+        move |security| {
+            Arc::new(
+                public_profile_protection("undeployed", protection_profiles, security)
+                    .expect("undeployed fixture protection"),
+            )
+        },
     );
     let (profile_id, _, _) = initialize_account(
         &application,
@@ -1231,24 +1235,31 @@ fn public_standalone_genesis_balances_are_exact() {
         0,
     );
 
+    let shielded = synchronize_shielded(&application, &profile_id);
+    assert_complete_shielded_snapshot(&shielded);
+    assert_eq!(
+        shielded.owned_note_count,
+        Some(PUBLIC_GENESIS_SHIELDED_NOTE_COUNT),
+        "{SHARED_FIXTURE_DRIFT}"
+    );
     assert_eq!(
         live_night_balance(&application, &profile_id),
-        PUBLIC_GENESIS_NIGHT_ATOMIC_UNITS
+        PUBLIC_GENESIS_NIGHT_ATOMIC_UNITS,
+        "{SHARED_FIXTURE_DRIFT}"
     );
     let dust = synchronize_dust(&application, &profile_id);
     assert_eq!(dust.state, "synced");
     assert_eq!(dust.failure, None);
     assert_eq!(dust.current_cursor, dust.target_cursor);
-    assert_eq!(dust_balance(&dust), PUBLIC_GENESIS_DUST_CAP_ATOMIC_UNITS);
-    let shielded = synchronize_shielded(&application, &profile_id);
-    assert_complete_shielded_snapshot(&shielded);
     assert_eq!(
-        shielded_balance(&shielded, NATIVE_SHIELDED_TOKEN_TYPE),
-        PUBLIC_GENESIS_SHIELDED_NIGHT_ATOMIC_UNITS
+        dust_balance(&dust),
+        PUBLIC_GENESIS_DUST_CAP_ATOMIC_UNITS,
+        "{SHARED_FIXTURE_DRIFT}"
     );
     assert_eq!(
-        shielded.owned_note_count,
-        Some(PUBLIC_GENESIS_SHIELDED_NOTE_COUNT)
+        shielded_balance(&shielded, NATIVE_SHIELDED_TOKEN_TYPE),
+        PUBLIC_GENESIS_SHIELDED_NIGHT_ATOMIC_UNITS,
+        "{SHARED_FIXTURE_DRIFT}"
     );
 }
 

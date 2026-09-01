@@ -72,7 +72,7 @@ fn ordinary_standalone_composition_keeps_os_random_profile_custody() {
         clock,
         Arc::clone(&security),
         profiles,
-        None,
+        |security| security,
     );
     let profile = application
         .create_wallet_profile()
@@ -90,16 +90,13 @@ fn ordinary_standalone_composition_keeps_os_random_profile_custody() {
 
     let expected = DevelopmentWalletSecurity::new(
         Arc::new(SystemClock),
-        Arc::new(FixedRandom(Mutex::new(99))),
+        Arc::new(FixedRandom(Mutex::new(17))),
     );
     expected
-        .initialize_with_root_seed(
-            &profile_id,
-            crate::standalone_genesis::PUBLIC_STANDALONE_GENESIS_ROOT,
-        )
-        .expect("expected fixture initialization");
+        .initialize(&profile_id)
+        .expect("expected random initialization");
 
-    assert_ne!(
+    assert_eq!(
         first_child(security.as_ref(), &profile_id),
         first_child(&expected, &profile_id)
     );

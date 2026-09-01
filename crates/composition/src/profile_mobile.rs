@@ -402,7 +402,7 @@ pub(super) fn compose_development_portal_from_config(
         clock,
         security,
         profiles,
-        None,
+        |security| security,
     )
 }
 
@@ -423,12 +423,8 @@ fn compose_mobile_public_genesis_portal_from_config(
         Arc::new(OsRandom),
     ));
     let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
-    let protection = public_profile_protection(
-        config.indexer().network_id().as_str(),
-        Arc::clone(&profiles),
-        Arc::clone(&security),
-    )
-    .map(|protection| Arc::new(protection) as Arc<dyn WalletProtectionPort>);
+    let network_id = config.indexer().network_id().as_str().to_owned();
+    let protection_profiles = Arc::clone(&profiles);
     compose_development_portal_with_security(
         config,
         portal,
@@ -436,7 +432,12 @@ fn compose_mobile_public_genesis_portal_from_config(
         clock,
         security,
         profiles,
-        protection,
+        move |security| {
+            let ordinary: Arc<dyn WalletProtectionPort> = security.clone();
+            public_profile_protection(&network_id, protection_profiles, security)
+                .map(|protection| Arc::new(protection) as Arc<dyn WalletProtectionPort>)
+                .unwrap_or(ordinary)
+        },
     )
 }
 
@@ -450,17 +451,18 @@ fn compose_mobile_public_genesis_portal_from_config(
         )
     )
 ))]
-fn compose_development_portal_with_security<N>(
+fn compose_development_portal_with_security<N, F>(
     config: MidnightStandaloneConfig,
     portal: PortalIdentityConfiguration,
     credential_presentation: CredentialPresentationComposition,
     clock: Arc<SystemClock>,
     security: Arc<DevelopmentWalletSecurity<SystemClock, N>>,
     profiles: Arc<JsonWalletProfileRepository>,
-    protection_for_security: Option<Arc<dyn WalletProtectionPort>>,
+    protection_for_security: F,
 ) -> ApplicationServices
 where
     N: oxid_platform_ports::RandomPort + 'static,
+    F: FnOnce(Arc<DevelopmentWalletSecurity<SystemClock, N>>) -> Arc<dyn WalletProtectionPort>,
 {
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let midnight = Arc::new(

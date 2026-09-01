@@ -7,31 +7,54 @@ failure_log="$(mktemp)"
 feature_graph_log="$(mktemp)"
 trap 'rm -f "$failure_log" "$feature_graph_log"' EXIT
 
-assert_public_fixture_feature_absent() {
+load_feature_graph() {
   local label="$1"
   local features="$2"
   local target="${3:-}"
-  local cargo_tree_args=(-e features -p oxid-app -i oxid-composition)
+  local cargo_tree_args=(-p oxid-app --prefix none --format '{p}|{f}')
   if [[ -n "$features" ]]; then
     cargo_tree_args+=(--no-default-features --features "$features")
   fi
   if [[ -n "$target" ]]; then
     cargo_tree_args+=(--target "$target")
   fi
-  cargo tree "${cargo_tree_args[@]}" >"$feature_graph_log"
-  if rg -q 'oxid-composition feature "standalone-development"' "$feature_graph_log"; then
+  if ! cargo tree "${cargo_tree_args[@]}" >"$feature_graph_log"; then
+    echo "$label feature graph could not be resolved" >&2
+    exit 1
+  fi
+}
+
+resolved_features() {
+  local label="$1"
+  local package="$2"
+  local line
+  if ! line="$(rg -m1 "^${package} v[^|]*\\|" "$feature_graph_log")"; then
+    echo "$label feature graph does not contain $package" >&2
+    exit 1
+  fi
+  printf '%s\n' "${line#*|}"
+}
+
+has_feature() {
+  local features="$1"
+  local feature="$2"
+  [[ ",$features," == *",$feature,"* ]]
+}
+
+assert_public_fixture_feature_absent() {
+  local label="$1"
+  local features="$2"
+  local target="${3:-}"
+  load_feature_graph "$label" "$features" "$target"
+  local composition_features
+  local ui_features
+  composition_features="$(resolved_features "$label" oxid-composition)"
+  ui_features="$(resolved_features "$label" oxid-ui-dioxus)"
+  if has_feature "$composition_features" standalone-development; then
     echo "$label oxid-app release profile enables public standalone development custody" >&2
     exit 1
   fi
-  local ui_tree_args=(-e features -p oxid-app -i oxid-ui-dioxus)
-  if [[ -n "$features" ]]; then
-    ui_tree_args+=(--no-default-features --features "$features")
-  fi
-  if [[ -n "$target" ]]; then
-    ui_tree_args+=(--target "$target")
-  fi
-  cargo tree "${ui_tree_args[@]}" >"$feature_graph_log"
-  if rg -q 'oxid-ui-dioxus feature "public-standalone-genesis"' "$feature_graph_log"; then
+  if has_feature "$ui_features" public-standalone-genesis; then
     echo "$label oxid-app release profile enables the public-genesis warning UI" >&2
     exit 1
   fi
@@ -41,17 +64,16 @@ assert_public_fixture_feature_present() {
   local label="$1"
   local features="$2"
   local target="${3:-}"
-  local cargo_tree_args=(-e features -p oxid-app --no-default-features --features "$features")
-  if [[ -n "$target" ]]; then
-    cargo_tree_args+=(--target "$target")
-  fi
-  cargo tree "${cargo_tree_args[@]}" -i oxid-composition >"$feature_graph_log"
-  if ! rg -q 'oxid-composition feature "standalone-development"' "$feature_graph_log"; then
+  load_feature_graph "$label" "$features" "$target"
+  local composition_features
+  local ui_features
+  composition_features="$(resolved_features "$label" oxid-composition)"
+  ui_features="$(resolved_features "$label" oxid-ui-dioxus)"
+  if ! has_feature "$composition_features" standalone-development; then
     echo "$label does not enable the bounded public-genesis composition capability" >&2
     exit 1
   fi
-  cargo tree "${cargo_tree_args[@]}" -i oxid-ui-dioxus >"$feature_graph_log"
-  if ! rg -q 'oxid-ui-dioxus feature "public-standalone-genesis"' "$feature_graph_log"; then
+  if ! has_feature "$ui_features" public-standalone-genesis; then
     echo "$label does not enable the public-genesis warning UI" >&2
     exit 1
   fi
@@ -75,6 +97,10 @@ assert_public_fixture_feature_absent "iOS mobile" "mobile" "aarch64-apple-ios"
 assert_public_fixture_feature_absent "Android mobile" "mobile" "aarch64-linux-android"
 assert_public_fixture_feature_absent "web" "web"
 assert_public_fixture_feature_absent \
+  "bare iOS standalone local route" "mobile,standalone-local" "aarch64-apple-ios"
+assert_public_fixture_feature_absent \
+  "bare Android standalone Tailnet route" "mobile,standalone-tailnet" "aarch64-linux-android"
+assert_public_fixture_feature_absent \
   "iOS native mobile" "mobile,standalone-native-custody" "aarch64-apple-ios"
 assert_public_fixture_feature_absent \
   "Android native mobile" "mobile,standalone-native-custody" "aarch64-linux-android"
@@ -93,6 +119,9 @@ assert_public_fixture_feature_present \
 assert_public_fixture_feature_present \
   "iOS standalone local" \
   "mobile,standalone-development,standalone-local" "aarch64-apple-ios"
+assert_public_fixture_feature_present \
+  "Android standalone Tailnet" \
+  "mobile,standalone-development,standalone-tailnet" "aarch64-linux-android"
 assert_public_fixture_feature_present \
   "iOS standalone Portal" "standalone-portal" "aarch64-apple-ios"
 assert_public_fixture_feature_present \

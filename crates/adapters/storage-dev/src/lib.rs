@@ -68,7 +68,7 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
     /// randomness is still used for every key reference, nonce, generated key,
     /// and ordinary profile root; the supplied value can never satisfy those
     /// requests accidentally.
-    pub fn initialize_with_root_seed(
+    pub(crate) fn initialize_with_root_seed(
         &self,
         profile_id: &WalletProfileId,
         root_seed: [u8; 32],

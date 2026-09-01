@@ -3194,6 +3194,34 @@ const PUBLIC_STANDALONE_GENESIS_MARKER: &str = "OXID_PUBLIC_STANDALONE_GENESIS_W
 #[cfg(feature = "public-standalone-genesis")]
 const PUBLIC_STANDALONE_PROFILE_NAME: &str = "Oxid Demo Wallet";
 
+fn profile_creation_default_name(profiles: &[WalletProfileView]) -> String {
+    #[cfg(feature = "public-standalone-genesis")]
+    if !profiles
+        .iter()
+        .any(|profile| profile.display_name == PUBLIC_STANDALONE_PROFILE_NAME)
+    {
+        return PUBLIC_STANDALONE_PROFILE_NAME.to_owned();
+    }
+    #[cfg(not(feature = "public-standalone-genesis"))]
+    let _ = profiles;
+    "My wallet".to_owned()
+}
+
+fn public_fixture_name_conflicts(profiles: &[WalletProfileView], candidate: &str) -> bool {
+    #[cfg(feature = "public-standalone-genesis")]
+    {
+        candidate.trim() == PUBLIC_STANDALONE_PROFILE_NAME
+            && profiles
+                .iter()
+                .any(|profile| profile.display_name == PUBLIC_STANDALONE_PROFILE_NAME)
+    }
+    #[cfg(not(feature = "public-standalone-genesis"))]
+    {
+        let _ = (profiles, candidate);
+        false
+    }
+}
+
 #[cfg(feature = "public-standalone-genesis")]
 fn public_standalone_genesis_banner() -> Element {
     rsx! {
@@ -4243,20 +4271,14 @@ fn ProfileManager(
     let brand = consume_context::<BrandProfile>();
     let create_wallet_profile = services.create_wallet_profile();
     let select_wallet_profile = services.select_wallet_profile();
+    let default_display_name = profile_creation_default_name(&profiles);
     let mut profile_list = use_signal(|| profiles);
-    let mut display_name = use_signal(|| {
-        #[cfg(feature = "public-standalone-genesis")]
-        {
-            PUBLIC_STANDALONE_PROFILE_NAME.to_owned()
-        }
-        #[cfg(not(feature = "public-standalone-genesis"))]
-        {
-            "My wallet".to_owned()
-        }
-    });
+    let mut display_name = use_signal(|| default_display_name);
     let mut state = use_signal(|| CreationState::Idle);
     let busy = matches!(*state.read(), CreationState::Working);
-    let can_submit = !busy && !display_name.read().trim().is_empty();
+    let fixture_name_conflict =
+        public_fixture_name_conflicts(&profile_list.read(), display_name.read().trim());
+    let can_submit = !busy && !display_name.read().trim().is_empty() && !fixture_name_conflict;
 
     let feedback = match state.read().clone() {
         CreationState::Idle => rsx! {
@@ -4355,6 +4377,9 @@ fn ProfileManager(
                 value: "{display_name}",
                 oninput: move |event| display_name.set(event.value()),
             }
+            if fixture_name_conflict {
+                p { class: "form-hint", role: "alert", "The public demo profile already exists. Choose a different profile name." }
+            }
             button {
                 class: "primary-action",
                 r#type: "button",
@@ -4382,6 +4407,9 @@ fn ProfileManager(
                         match result {
                             Ok(Ok((created, selected))) => {
                                 profile_list.write().push(created);
+                                let next_name =
+                                    profile_creation_default_name(&profile_list.read());
+                                display_name.set(next_name);
                                 state.set(CreationState::Created(selected.clone()));
                                 on_selected.call(selected);
                             }
@@ -12015,6 +12043,27 @@ mod tests {
     fn profile_monogram_uses_the_first_visible_character() {
         assert_eq!(profile_monogram("  primary", "oxid"), "P");
         assert_eq!(profile_monogram("---", "oxid"), "O");
+    }
+
+    #[cfg(feature = "public-standalone-genesis")]
+    #[test]
+    fn public_fixture_name_is_prefilled_once_and_duplicates_are_blocked() {
+        assert_eq!(
+            profile_creation_default_name(&[]),
+            PUBLIC_STANDALONE_PROFILE_NAME
+        );
+        let profiles = vec![WalletProfileView {
+            id: "profile_demo".to_owned(),
+            display_name: PUBLIC_STANDALONE_PROFILE_NAME.to_owned(),
+            created_at_millis: 1,
+        }];
+
+        assert_eq!(profile_creation_default_name(&profiles), "My wallet");
+        assert!(public_fixture_name_conflicts(
+            &profiles,
+            PUBLIC_STANDALONE_PROFILE_NAME
+        ));
+        assert!(!public_fixture_name_conflicts(&profiles, "Another wallet"));
     }
 
     #[test]

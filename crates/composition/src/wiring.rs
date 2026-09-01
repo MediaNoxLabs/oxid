@@ -242,11 +242,46 @@ where
         + NativeMidnightCompositionCapability
         + 'static,
 {
-    compose_with_adapters_and_presentation(
+    compose_with_adapters_and_protection(repository, security, midnight, |security| security)
+}
+
+pub(super) fn compose_with_adapters_and_protection<R, S, M, F>(
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    protection_for_security: F,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository
+        + WalletProfileAssociationRepository
+        + WalletBackupReceiptRepository
+        + 'static,
+    S: WalletProtectionPort
+        + WalletKeyOperationPort
+        + WalletJubjubChallengeSigningPort
+        + WalletPortableBackupPort
+        + PortableCustodyVaultPort
+        + 'static,
+    M: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletAccountDerivationPort
+        + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
+        + WalletShieldedSyncPort
+        + WalletTransactionPort
+        + MidnightPublicCallContextSource
+        + MidnightDiagnosticAttachPort
+        + NativeMidnightCompositionCapability
+        + 'static,
+    F: FnOnce(Arc<S>) -> Arc<dyn WalletProtectionPort>,
+{
+    compose_with_adapters_and_credential_profile(
         repository,
         security,
         midnight,
         CredentialPresentationComposition::Standalone,
+        HeadlessCredentialProfile::Standalone,
+        protection_for_security,
     )
 }
 
@@ -285,19 +320,17 @@ where
         midnight,
         credential_presentation,
         HeadlessCredentialProfile::Standalone,
-        None,
+        |security| security,
     )
 }
 
-pub(super) fn compose_with_adapters_and_credential_profile<R, S, M>(
+pub(super) fn compose_with_adapters_and_credential_profile<R, S, M, F>(
     repository: Arc<R>,
     security: Arc<S>,
     midnight: Arc<M>,
     credential_presentation: CredentialPresentationComposition,
     credential_profile: HeadlessCredentialProfile,
-    // When supplied, this lifecycle view must delegate to the same `security`
-    // instance used below for key derivation and portable backup.
-    protection_for_security: Option<Arc<dyn WalletProtectionPort>>,
+    protection_for_security: F,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository
@@ -321,6 +354,7 @@ where
         + MidnightDiagnosticAttachPort
         + NativeMidnightCompositionCapability
         + 'static,
+    F: FnOnce(Arc<S>) -> Arc<dyn WalletProtectionPort>,
 {
     let key_operations: Arc<dyn WalletKeyOperationPort> = security.clone();
     let challenge_signing: Arc<dyn WalletJubjubChallengeSigningPort> = security.clone();
@@ -394,15 +428,13 @@ where
     )
 }
 
-pub(super) fn compose_with_identity_adapters<R, S, M>(
+pub(super) fn compose_with_identity_adapters<R, S, M, F>(
     repository: Arc<R>,
     security: Arc<S>,
     midnight: Arc<M>,
     identity_adapters: IdentityAdapters,
     passport_vault_repository: PassportVaultRepositoryComposition,
-    // This may narrow initialization policy, but must wrap the same `security`
-    // instance so lifecycle, derivation, and backup cannot diverge.
-    protection_for_security: Option<Arc<dyn WalletProtectionPort>>,
+    protection_for_security: F,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository
@@ -426,6 +458,7 @@ where
         + MidnightDiagnosticAttachPort
         + NativeMidnightCompositionCapability
         + 'static,
+    F: FnOnce(Arc<S>) -> Arc<dyn WalletProtectionPort>,
 {
     let diagnostic_repository = Arc::new(InMemoryDiagnosticStore::default());
     let diagnostic_events: Arc<dyn DiagnosticEventSinkPort> = diagnostic_repository.clone();
@@ -545,10 +578,7 @@ where
         repository,
         Arc::clone(&clock),
     ));
-    let protection_port = protection_for_security.unwrap_or_else(|| {
-        let protection: Arc<dyn WalletProtectionPort> = security.clone();
-        protection
-    });
+    let protection_port = protection_for_security(Arc::clone(&security));
     let protection = Arc::new(WalletProtectionService::new(protection_port));
     let portable_backup = Arc::new(WalletPortableBackupService::new(Arc::clone(&security)));
     let keys = Arc::new(WalletKeyService::new(security));
