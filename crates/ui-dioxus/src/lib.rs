@@ -3189,6 +3189,27 @@ fn developer_profile_banner() -> Element {
     rsx! {}
 }
 
+#[cfg(feature = "public-standalone-genesis")]
+const PUBLIC_STANDALONE_GENESIS_MARKER: &str = "OXID_PUBLIC_STANDALONE_GENESIS_WALLET";
+
+#[cfg(feature = "public-standalone-genesis")]
+fn public_standalone_genesis_banner() -> Element {
+    rsx! {
+        aside {
+            class: "developer-profile-banner",
+            role: "alert",
+            "data-wallet-authority": PUBLIC_STANDALONE_GENESIS_MARKER,
+            strong { "Shared public genesis wallet" }
+            span { "The first initialized profile uses publicly known, spendable test authority. No privacy or ownership is implied." }
+        }
+    }
+}
+
+#[cfg(not(feature = "public-standalone-genesis"))]
+fn public_standalone_genesis_banner() -> Element {
+    rsx! {}
+}
+
 /// Brand-agnostic Dioxus incoming adapter and mobile-first application shell.
 #[component]
 pub fn App() -> Element {
@@ -3341,6 +3362,7 @@ pub fn App() -> Element {
                 aria_hidden: if demo_gateway_hidden { "true" } else { "false" },
                 inert: html_boolean_attribute(demo_gateway_inert),
                 {developer_profile_banner()}
+                {public_standalone_genesis_banner()}
                 {demo_gateway_banner}
                 ProfileGateway {
                     state: session,
@@ -3448,6 +3470,7 @@ pub fn App() -> Element {
             aria_hidden: if demo_shell_hidden { "true" } else { "false" },
             inert: html_boolean_attribute(demo_shell_inert),
             {developer_profile_banner()}
+            {public_standalone_genesis_banner()}
             {demo_shell_banner}
             header { class: "app-header",
                 button {

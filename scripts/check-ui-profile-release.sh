@@ -19,6 +19,15 @@ assert_public_fixture_feature_absent() {
     echo "$label oxid-app release profile enables public standalone development custody" >&2
     exit 1
   fi
+  local ui_tree_args=(-e features -p oxid-app -i oxid-ui-dioxus)
+  if [[ -n "$features" ]]; then
+    ui_tree_args+=(--no-default-features --features "$features")
+  fi
+  cargo tree "${ui_tree_args[@]}" >"$feature_graph_log"
+  if rg -q 'oxid-ui-dioxus feature "public-standalone-genesis"' "$feature_graph_log"; then
+    echo "$label oxid-app release profile enables the public-genesis warning UI" >&2
+    exit 1
+  fi
 }
 
 mode="${1:-all}"
@@ -40,10 +49,20 @@ assert_public_fixture_feature_absent "web" "web"
 assert_public_fixture_feature_absent "native mobile" "mobile,standalone-native-custody"
 assert_public_fixture_feature_absent \
   "native proving" "mobile,standalone-native-proving-artifacts"
+assert_public_fixture_feature_absent \
+  "native mobile developer UI" "mobile,standalone-native-custody,ui-profile-dev"
+assert_public_fixture_feature_absent \
+  "native proving developer UI" "mobile,standalone-native-proving-artifacts,ui-profile-dev"
 cargo tree -e features -p oxid-app --no-default-features \
   --features standalone-development -i oxid-composition >"$feature_graph_log"
 if ! rg -q 'oxid-composition feature "standalone-development"' "$feature_graph_log"; then
   echo "oxid-app standalone-development does not enable the bounded composition feature" >&2
+  exit 1
+fi
+cargo tree -e features -p oxid-app --no-default-features \
+  --features standalone-development -i oxid-ui-dioxus >"$feature_graph_log"
+if ! rg -q 'oxid-ui-dioxus feature "public-standalone-genesis"' "$feature_graph_log"; then
+  echo "oxid-app standalone-development does not enable the public-genesis warning UI" >&2
   exit 1
 fi
 if cargo check -p oxid-app --no-default-features \
@@ -409,6 +428,12 @@ if rg -a -q 'OXID_STANDALONE_TAILNET_PROFILE' "$release_binary"; then
 fi
 if rg -a -q 'OXID_STANDALONE_PORTAL_PROFILE' "$release_binary"; then
   echo "normal release binary contains the standalone Portal profile" >&2
+  exit 1
+fi
+if rg -a -q \
+  'OXID_PUBLIC_STANDALONE_GENESIS_WALLET|Shared public genesis wallet|publicly known, spendable test authority' \
+  "$release_binary"; then
+  echo "normal release binary contains the public standalone genesis warning or marker" >&2
   exit 1
 fi
 if rg -a -q \

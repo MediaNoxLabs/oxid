@@ -82,6 +82,8 @@ const MAX_PREPROD_INSUFFICIENT_DUST_RETRIES: u8 = 8;
 const MAX_PREPROD_CASE_INDEX: u32 = (WalletHdPathComponent::MAX_INDEX - 1) / 2;
 const TRANSFER_ATOMIC_UNITS: u128 = 5_000_000;
 const SHIELDED_TRANSFER_ATOMIC_UNITS: u128 = 1_000_000;
+// Exact public fixture values for the images pinned in
+// `scripts/standalone-stack.yml`; update the pins and this contract atomically.
 const PUBLIC_GENESIS_NIGHT_ATOMIC_UNITS: u128 = 250_000_000_000_000;
 const NIGHT_ATOMIC_UNITS: u128 = 1_000_000;
 const DUST_ATOMIC_UNITS: u128 = 1_000_000_000_000_000;
@@ -956,7 +958,10 @@ fn shielded_balance(status: &WalletShieldedSyncView, token_type: &str) -> u128 {
 }
 
 fn assert_complete_shielded_snapshot(status: &WalletShieldedSyncView) {
-    assert!(status.is_complete());
+    assert!(
+        status.is_complete(),
+        "incomplete shielded synchronization snapshot: {status:?}"
+    );
 }
 
 fn await_shielded_balance(

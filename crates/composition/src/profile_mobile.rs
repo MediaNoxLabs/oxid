@@ -13,10 +13,7 @@ use std::sync::Arc;
     )
 ))]
 use super::portal::PortalIdentityConfiguration;
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    any(test, feature = "standalone-development")
-))]
+#[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_midnight::{MidnightIndexerConfigError, MidnightStandaloneConfigError};
 #[cfg(all(
     not(target_arch = "wasm32"),
@@ -33,10 +30,7 @@ use oxid_adapter_midnight::{
     protected_simulated_midnight_wallet_with_submission_journal,
 };
 
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    any(test, feature = "standalone-development")
-))]
+#[cfg(not(target_arch = "wasm32"))]
 use super::environment::HeadlessCompositionError;
 use super::identity::CredentialPresentationComposition;
 #[cfg(all(
@@ -59,6 +53,11 @@ use super::passport_vault::with_simulated_passport_vault_calls;
 use super::passport_vault::{
     node_anchored_passport_vault_state_source, with_passport_vault_state_source,
 };
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(any(test, feature = "standalone-development"))
+))]
+use super::profile_headless::compose_headless_standalone;
 #[cfg(all(
     not(target_arch = "wasm32"),
     any(test, feature = "standalone-development")
@@ -211,10 +210,7 @@ pub fn authenticate_embedded_mobile_compact_presentation_artifacts()
 /// The app crate exposes this constructor only behind its opt-in local or
 /// tailnet live-stack route profile. Normal and native-custody mobile
 /// composition never call it.
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    any(test, feature = "standalone-development")
-))]
+#[cfg(not(target_arch = "wasm32"))]
 pub fn compose_mobile_development_standalone_from_routes(
     indexer_websocket_url: &str,
     indexer_http_url: &str,
@@ -227,7 +223,14 @@ pub fn compose_mobile_development_standalone_from_routes(
         node_websocket_url,
         proof_server_url,
     )?;
-    Ok(compose_public_genesis_standalone(config))
+    #[cfg(any(test, feature = "standalone-development"))]
+    {
+        Ok(compose_public_genesis_standalone(config))
+    }
+    #[cfg(not(any(test, feature = "standalone-development")))]
+    {
+        Ok(compose_headless_standalone(config))
+    }
 }
 
 /// Wires the exact manifest-authenticated Portal identity profile into the
@@ -392,10 +395,7 @@ where
     with_passport_vault_state_source(services, passport_vault_state_source)
 }
 
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    any(test, feature = "standalone-development")
-))]
+#[cfg(not(target_arch = "wasm32"))]
 fn mobile_standalone_config_from_routes(
     indexer_websocket_url: &str,
     indexer_http_url: &str,

@@ -283,10 +283,22 @@ pub fn compose_headless_live_with_checkpoints(
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn compose_headless_standalone(config: MidnightStandaloneConfig) -> ApplicationServices {
-    let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
+    compose_headless_standalone_with_security(config, clock, security)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn compose_headless_standalone_with_security<N>(
+    config: MidnightStandaloneConfig,
+    clock: Arc<SystemClock>,
+    security: Arc<DevelopmentWalletSecurity<SystemClock, N>>,
+) -> ApplicationServices
+where
+    N: oxid_platform_ports::RandomPort + 'static,
+{
+    let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
     let midnight = Arc::new(
         protected_standalone_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))
@@ -308,22 +320,13 @@ pub fn compose_headless_standalone(config: MidnightStandaloneConfig) -> Applicat
 pub(super) fn compose_public_genesis_standalone(
     config: MidnightStandaloneConfig,
 ) -> ApplicationServices {
-    let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
     let security = Arc::new(development_security_for_network(
         config.indexer().network_id().as_str(),
         Arc::clone(&clock),
         Arc::new(OsRandom),
     ));
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
-    let midnight = Arc::new(
-        protected_standalone_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))
-            .with_profile_association_repository(profiles.clone()),
-    );
-    with_passport_vault_state_source(
-        compose_with_adapters(profiles, security, midnight),
-        passport_vault_state_source,
-    )
+    compose_headless_standalone_with_security(config, clock, security)
 }
 
 /// Wires the complete standalone stack with durable public account checkpoints.

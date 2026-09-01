@@ -69,7 +69,9 @@ The fixture is absent from normal and native-custody composition, never enters
 UI/application DTOs or logs, and is compiled only by the explicit composition
 feature selected from `oxid-app/standalone-development`. The release guard
 proves that feature edge is absent from the normal graph and present in the
-development graph. This exception exists only so the live Wallet can
+development graph. Every such app build renders an always-visible warning that
+the first initialized profile uses shared, publicly spendable test authority.
+This exception exists only so the live Wallet can
 synchronize the chain's known NIGHT, shielded, and DUST state through the
 ordinary protected ports.
 
@@ -125,8 +127,10 @@ standard output before the actual `-list-avds` result.
   exact same public profile repository used by the application services. The
   selected network and non-secret derivation coordinates therefore survive a
   process restart; process-local development custody still returns honestly as
-  uninitialized and withholds the former account addresses until the public
-  development fixture is explicitly initialized again.
+  uninitialized and withholds the former account addresses. A new process
+  reconstructs the one-shot public fixture source; within one process, a
+  consumed fixture is not refilled and later profile initialization uses OS
+  randomness.
 - The prototype's reviewed
   `wallet-core/queries/midnight-indexer/unshielded_transactions.subscription.graphql`
   does not request transaction fees, so its working sync flow does not exercise

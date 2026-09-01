@@ -35,12 +35,6 @@ pub use passport_vault::simulated_passport_vault_contract_address_hex;
 pub use profile_environment::*;
 pub use profile_headless::*;
 pub use profile_in_memory::*;
-#[cfg(any(
-    test,
-    feature = "standalone-development",
-    target_os = "ios",
-    target_os = "android"
-))]
 pub use profile_mobile::*;
 pub use profile_production::*;
 pub use services::ApplicationServices;

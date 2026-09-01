@@ -2257,13 +2257,17 @@ to silence the shell probe.
   compatibility choice unless a pinned image/schema upgrade is made atomically.
   Development custody remains process-local: after process death, retain the
   public association but report uninitialized protection and withhold the
-  former addresses until initialization. The live local/tailnet development
+  former addresses until initialization. A new process reconstructs the
+  one-shot fixture source; it is never refilled after consumption within the
+  same process. The live local/tailnet development
   composition supplies the public scalar-one standalone genesis root through
   development custody's typed one-shot profile-root constructor. Generic
   randomness stays OS-backed for nonces, references, generated keys, and later
   profiles. The root is shared public
   test authority, never private wallet material, and must remain absent from
-  normal/native-custody artifacts, UI DTOs, logs, and diagnostics. Balance
+  normal/native-custody artifacts, UI DTOs, logs, and diagnostics. Every build
+  that includes it must render the `OXID_PUBLIC_STANDALONE_GENESIS_WALLET`
+  warning before and after profile selection. Balance
   display still requires independent live NIGHT, DUST, and shielded sync. This
   private harness is not verified public App Link or
   production-discovery evidence. Both live profiles share one undeployed chain

@@ -22,7 +22,10 @@ ui-profile-dev = ["oxid-ui-dioxus/ui-profile-dev", "oxid-ui-dioxus/app-profile-a
 ui-profile-demo = ["oxid-ui-dioxus/ui-profile-demo", "oxid-ui-dioxus/app-profile-authority"]
 # Explicit simulator/emulator composition. This never changes the default
 # production-facing composition selected by a normal application build.
-standalone-development = ["oxid-composition/standalone-development"]
+standalone-development = [
+  "oxid-composition/standalone-development",
+  "oxid-ui-dioxus/public-standalone-genesis",
+]
 # Owner-invoked ARM64-Darwin Dioxus test profile. It reuses the exact native
 # Portal/local-standalone policy and is absent from normal release/primary
 # targets and hosted target planning.
