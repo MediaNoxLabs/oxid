@@ -77,7 +77,7 @@ where
         }
         if requested_fixture_profile {
             self.security
-                .initialize_with_root_seed(profile_id, *self.root_seed)
+                .initialize_with_root_seed(profile_id, self.root_seed.clone())
         } else {
             self.security.initialize(profile_id)
         }
@@ -191,7 +191,7 @@ mod tests {
 
         let expected = adapter();
         expected
-            .initialize_with_root_seed(fixture.id(), [1_u8; 32])
+            .initialize_with_root_seed(fixture.id(), Zeroizing::new([1_u8; 32]))
             .expect("expected fixture root");
         assert_eq!(
             first_child(security.as_ref(), fixture.id()),

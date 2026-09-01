@@ -74,12 +74,12 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
     pub(crate) fn initialize_with_root_seed(
         &self,
         profile_id: &WalletProfileId,
-        root_seed: [u8; 32],
+        root_seed: Zeroizing<[u8; 32]>,
     ) -> Result<WalletSecurityStatus, WalletSecurityPortError>
     where
         N: RandomPort,
     {
-        self.initialize_profile(profile_id, Some(Zeroizing::new(root_seed)))
+        self.initialize_profile(profile_id, Some(root_seed))
     }
 
     fn profiles(
@@ -1035,7 +1035,7 @@ mod tests {
 
         adapter.initialize(&first).expect("initialize first");
         adapter
-            .initialize_with_root_seed(&second, expected)
+            .initialize_with_root_seed(&second, Zeroizing::new(expected))
             .expect("initialize explicit fixture profile");
 
         let profiles = adapter.profiles().expect("profile state");

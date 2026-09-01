@@ -1005,10 +1005,13 @@ fn shielded_balance(status: &WalletShieldedSyncView, token_type: &str) -> u128 {
 }
 
 fn assert_complete_shielded_snapshot(status: &WalletShieldedSyncView) {
-    assert!(
-        status.is_complete(),
-        "incomplete shielded synchronization snapshot: {status:?}"
-    );
+    assert_eq!(status.state, "synced");
+    assert_eq!(status.failure, None);
+    assert!(status.current_cursor.is_some());
+    assert_eq!(status.current_cursor, status.target_cursor);
+    assert!(status.owned_note_count.is_some());
+    assert!(status.commitment_count.is_some());
+    assert!(status.updated_at_millis.is_some());
 }
 
 fn await_shielded_balance(

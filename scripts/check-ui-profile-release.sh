@@ -108,6 +108,10 @@ assert_public_fixture_feature_absent "desktop" "desktop"
 assert_public_fixture_feature_absent "iOS mobile" "mobile" "aarch64-apple-ios"
 assert_public_fixture_feature_absent "Android mobile" "mobile" "aarch64-linux-android"
 assert_public_fixture_feature_absent "web" "web"
+# Bare transport selectors are deliberately invalid: without explicit custody
+# they must neither enable the fixture nor compile. The negative cargo checks
+# below prove the expected diagnostic; these graph checks prove no authority was
+# granted before compilation rejects the incomplete profile.
 assert_public_fixture_feature_absent \
   "bare iOS standalone local route" "mobile,standalone-local" "aarch64-apple-ios"
 assert_public_fixture_feature_absent \

@@ -76,10 +76,9 @@ existing OS-random constructors; the app calls the fixture constructors by
 their explicit names. Every such app build renders an always-visible warning
 and requires the user to choose **Use public demo wallet** before creating the
 exact fixture profile. Ordinary profile creation still defaults to **My
-wallet**.
-This exception exists only so the live Wallet can
-synchronize the chain's known NIGHT, shielded, and DUST state through the
-ordinary protected ports.
+wallet**. This exception exists only so the live Wallet can synchronize the
+chain's known NIGHT, shielded, and DUST state through the ordinary protected
+ports.
 
 Package a repository-owned Docker Compose harness using the exact reviewed
 prototype image versions for node, indexer, and proof server. Containers bind
@@ -124,6 +123,15 @@ standard output before the actual `-list-avds` result.
   `AlreadyInitialized`. Restoring only public metadata with the reserved name
   deliberately opts that otherwise-uninitialized development profile into the
   public fixture; it grants no private authority because the root is public.
+- The normalized reserved name is the development composition protocol, not a
+  UI authorization boundary. The UI button is a safe convenience; headless and
+  test callers may opt in with the same exact name because the scalar-one root
+  is already public. Compile-time feature and network capabilities remain the
+  authority boundary.
+- Exact genesis balances are an owner-run, live-stack acceptance check before a
+  demo or pinned image/preset change. Routine CI keeps this ignored to avoid a
+  heavyweight mutable stack; its always-on contract pins the recipe and stack
+  inputs, while `just standalone-public-balances` proves the numeric values.
 - iOS Simulator, Android emulator, and native desktop development can use the
   real loopback stack without conflating it with deterministic simulation. Only
   transport differs between localhost and tailnet; network identity, account
