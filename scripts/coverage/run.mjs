@@ -28,6 +28,7 @@ const EXPECTED_COMMANDS = Object.freeze([
     "--exclude", "oxid-ui-dioxus",
     "--exclude", "oxid-app",
     "--exclude", "oxid-headless",
+    "--features", "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication",
     "--json", "--fail-under-lines", "80",
   ],
   ["cargo", "llvm-cov", "-p", "oxid-headless", "--all-targets", "--json"],
@@ -119,7 +120,16 @@ function normalizedRelativePath(candidate, repoRoot) {
 }
 
 function scopeMetadata(scope) {
-  if (scope.id === "workspace-aggregate") return { packages: ["workspace"], features: [], profile: "test" };
+  if (scope.id === "workspace-aggregate") {
+    return {
+      packages: ["workspace"],
+      features: [
+        "oxid-adapter-deployment-profile/readiness",
+        "oxid-adapter-did-midnight/tailnet-test-did-publication",
+      ],
+      profile: "test",
+    };
+  }
   if (scope.id === "headless-host") return { packages: ["oxid-headless"], features: [], profile: "all-targets" };
   return {
     packages: ["oxid-ui-dioxus"],

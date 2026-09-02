@@ -124,6 +124,7 @@ const ACCEPTANCE_KEYS = Object.freeze([
   "accepted",
 ]);
 const SECRET_VALUE = /(?:openid-credential-offer|pre-authorized|access[_-]?token|c_nonce|did:|https?:\/\/|(?:^|[\\/])(?:Users|tmp|private|var)(?:[\\/])|[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}|(?:^|\b)(?:grant|seed|serial|udid|avd|pid|capability)\s*[:=])/iu;
+const LOWER_HEX = /^[0-9a-f]+$/u;
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -148,7 +149,7 @@ function assertBooleanObject(value, keys, label) {
 }
 
 function assertHex(value, length, label) {
-  if (typeof value !== "string" || !new RegExp(`^[0-9a-f]{${length}}$`, "u").test(value)) {
+  if (typeof value !== "string" || value.length !== length || !LOWER_HEX.test(value)) {
     throw new Error(`${label} is invalid`);
   }
 }

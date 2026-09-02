@@ -183,9 +183,16 @@ test("trusted policy workflows publish required contexts on exact PR head SHAs",
   assert.equal(eventBranches(dco, "pull_request_target"), null);
   const prCheck = await read(".github/workflows/contribution-metadata.yml");
   assert.equal(eventBranches(prCheck, "pull_request_target"), null);
-  for (const workflow of [dco, prCheck]) {
+  for (const [workflow, job] of [[dco, "signoff"], [prCheck, "validate"]]) {
+    const jobStart = workflow.indexOf(`  ${job}:\n`);
+    assert.notEqual(jobStart, -1, `${job} job is present`);
+    const jobBlock = workflow.slice(jobStart);
+    const topPermissions = workflow.match(/^permissions:\n((?:  [^\n]+\n)+)/m)?.[1] ?? "";
+    assert.match(topPermissions, /contents: read/);
+    assert.match(topPermissions, /pull-requests: read/);
+    assert.doesNotMatch(topPermissions, /write/);
+    assert.match(jobBlock, /^    permissions:\n(?:      [^\n]+\n)*      statuses: write$/m);
     assert.match(workflow, /ref: \$\{\{ github\.workflow_sha \}\}/);
-    assert.match(workflow, /statuses: write/);
     assert.match(workflow, /createCommitStatus/);
     assert.match(workflow, /sha: context\.payload\.pull_request\.head\.sha/);
     assert.doesNotMatch(workflow, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);

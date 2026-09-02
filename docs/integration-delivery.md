@@ -22,9 +22,13 @@ change and remain based on `develop`. They are stale delivery artifacts: close
 them after this configuration lands and let the bot recreate any
 still-applicable updates against `integration`; do not merge or treat them as
 current evidence.
-Any future promotion requires a separate tracked issue, reviewed repository
-policy change, and owner ruleset change before a promotion pull request is
-opened; labels and caller prompts cannot bypass the active ruleset.
+Any promotion merge requires a separate tracked issue, reviewed repository
+policy change, and owner ruleset change; labels and caller prompts cannot
+bypass the active ruleset. An owner-requested review-only
+`integration -> develop` pull request may collect exact-head evidence while the
+ruleset remains closed. Its promotion-specific OpenPGP evidence profile is
+defined in [the contribution policy](factory/contribution-policy.md) and is not
+merge authority.
 
 ## One base through the complete loop
 

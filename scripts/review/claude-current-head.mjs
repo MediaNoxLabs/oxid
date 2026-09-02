@@ -36,8 +36,18 @@ const REQUIRED_CLAUDE_FLAGS = [
   "--permission-mode",
   "--system-prompt",
 ];
-const HELP_FLAG_POLICIES = Object.freeze({
-  "--effort": Object.freeze({ allowAlias: true }),
+const HELP_FLAG_PATTERNS = Object.freeze({
+  "--print": /(?:^|\r?\n)[^\S\r\n]*--print(?=\s|=|<|\[|$)/m,
+  "--output-format": /(?:^|\r?\n)[^\S\r\n]*--output-format(?=\s|=|<|\[|$)/m,
+  "--json": /(?:^|\r?\n)[^\S\r\n]*--json(?=\s|=|<|\[|$)/m,
+  "--json-schema": /(?:^|\r?\n)[^\S\r\n]*--json-schema(?=\s|=|<|\[|$)/m,
+  "--max-budget-usd": /(?:^|\r?\n)[^\S\r\n]*--max-budget-usd(?=\s|=|<|\[|$)/m,
+  "--effort": /(?:^|\r?\n)[^\S\r\n]*(?:-[a-zA-Z0-9]+,[^\S\r\n]*)?--effort(?=\s|=|<|\[|$)/m,
+  "--safe-mode": /(?:^|\r?\n)[^\S\r\n]*--safe-mode(?=\s|=|<|\[|$)/m,
+  "--tools": /(?:^|\r?\n)[^\S\r\n]*--tools(?=\s|=|<|\[|$)/m,
+  "--no-session-persistence": /(?:^|\r?\n)[^\S\r\n]*--no-session-persistence(?=\s|=|<|\[|$)/m,
+  "--permission-mode": /(?:^|\r?\n)[^\S\r\n]*--permission-mode(?=\s|=|<|\[|$)/m,
+  "--system-prompt": /(?:^|\r?\n)[^\S\r\n]*--system-prompt(?=\s|=|<|\[|$)/m,
 });
 
 export const CLAUDE_REVIEW_SCHEMA = {
@@ -171,27 +181,23 @@ export function assertMinimumClaudeVersion(
   return version;
 }
 
-function helpFlagPattern(flag, { allowAlias = false } = {}) {
-  const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  // Effort alone tolerates a short alias because this new, non-safety option
-  // needs layout compatibility. Existing safety flags remain exact and
-  // case-sensitive so their capability proof cannot be weakened by aliases.
-  const horizontalWhitespace = "[^\\S\\r\\n]*";
-  const alias = allowAlias ? `(?:-[a-zA-Z0-9]+,${horizontalWhitespace})?` : "";
-  return new RegExp(`(?:^|\\r?\\n)${horizontalWhitespace}${alias}${escaped}(?=\\s|=|<|\\[|$)`, "m");
+function helpFlagPattern(flag) {
+  const pattern = HELP_FLAG_PATTERNS[flag];
+  if (!pattern) throw new Error(`unsupported Claude CLI help flag: ${flag}`);
+  return pattern;
 }
 
 function exactHelpFlag(help, flag) {
-  return helpFlagPattern(flag, HELP_FLAG_POLICIES[flag]).test(help);
+  return helpFlagPattern(flag).test(help);
 }
 
 function helpWindow(help, flag, length = 600) {
-  const line = helpFlagPattern(flag, HELP_FLAG_POLICIES[flag]).exec(help);
+  const line = helpFlagPattern(flag).exec(help);
   return line ? help.slice(line.index, line.index + length) : "";
 }
 
 function helpEntry(help, flag) {
-  const option = helpFlagPattern(flag, HELP_FLAG_POLICIES[flag]);
+  const option = helpFlagPattern(flag);
   const lines = help.split(/\r?\n/);
   const matches = lines.flatMap((line, index) => (option.test(line) ? [index] : []));
   if (matches.length === 0) return "";
