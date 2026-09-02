@@ -230,13 +230,14 @@ export function validatePolicy(policy, workspacePackages, { now = new Date() } =
 
   assertClosedObject(
     policy.pathRules,
-    ["production", "excludedDirectories", "generated", "siblingTestSuffix"],
+    ["production", "excludedDirectories", "generated", "testModuleFilename", "siblingTestSuffix"],
     "pathRules",
   );
   if (JSON.stringify(policy.pathRules.production) !== JSON.stringify([
     "apps/*/src/**/*.rs", "crates/*/src/**/*.rs",
   ]) || JSON.stringify(policy.pathRules.excludedDirectories) !== JSON.stringify(["tests", "examples", "benches"])
       || JSON.stringify(policy.pathRules.generated) !== JSON.stringify(["**/generated/**"])
+      || policy.pathRules.testModuleFilename !== "tests.rs"
       || policy.pathRules.siblingTestSuffix !== "_tests.rs") {
     throw new Error("production, test, generated, or sibling path rules differ from the reviewed contract");
   }
@@ -342,6 +343,7 @@ function pathRule(sourcePath, packageInventory) {
     return { packageEntry, production: false, reason: "test-directory" };
   }
   if (parts.includes("generated")) return { packageEntry, production: false, reason: "generated" };
+  if (parts.at(-1) === "tests.rs") return { packageEntry, production: false, reason: "test-module" };
   if (sourcePath.endsWith("_tests.rs")) return { packageEntry, production: false, reason: "sibling-test" };
   const production = relative.startsWith("src/") && sourcePath.endsWith(".rs")
     && (packageEntry.root.startsWith("apps/") || packageEntry.root.startsWith("crates/"));

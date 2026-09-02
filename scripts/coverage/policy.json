@@ -71,6 +71,7 @@
     "generated": [
       "**/generated/**"
     ],
+    "testModuleFilename": "tests.rs",
     "siblingTestSuffix": "_tests.rs"
   },
   "changedLines": {

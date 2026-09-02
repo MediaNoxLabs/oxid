@@ -110,6 +110,7 @@ test("policy pins reviewed 85/90 floors, baseline placeholders, paths, diff sema
   assert.ok(policy.baselines.scopes.every(({ count, covered }) => count === null && covered === null));
   assert.deepEqual(policy.pathRules.production, ["apps/*/src/**/*.rs", "crates/*/src/**/*.rs"]);
   assert.deepEqual(policy.pathRules.excludedDirectories, ["tests", "examples", "benches"]);
+  assert.equal(policy.pathRules.testModuleFilename, "tests.rs");
   assert.deepEqual(policy.changedLines, {
     floorPercent: 90,
     diffArguments: ["--unified=0", "--diff-filter=AMCR"],
@@ -224,6 +225,21 @@ test("changed-line scorer parses an added line beginning with two plus signs", a
   }] }];
   assert.deepEqual(scoreChangedLines(diff, reports, { policy, packageInventory: inventory }).lines,
     { count: 1, covered: 1, requiredCovered: 1 });
+});
+
+test("conventional Rust tests.rs modules are excluded from production changed lines", async () => {
+  const policy = await loadPolicy();
+  const inventory = await discoverWorkspacePackageInventory(repoRoot);
+  const sourcePath = "crates/composition/src/environment/tests.rs";
+  const diff = `diff --git a/${sourcePath} b/${sourcePath}\n--- /dev/null\n+++ b/${sourcePath}\n@@ -0,0 +1 @@\n+fn test_only() {}\n`;
+  const score = scoreChangedLines(diff, [], { policy, packageInventory: inventory });
+  assert.deepEqual(score.files, [{
+    path: sourcePath,
+    change: "modified",
+    status: "excluded",
+    reason: "test-module",
+  }]);
+  assert.equal(score.status, "not-applicable");
 });
 
 test("changed-line exact boundary passes and zero executable denominator is visibly not-applicable", async () => {
