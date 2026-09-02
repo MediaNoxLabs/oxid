@@ -32,15 +32,25 @@ use oxid_wallet_application::{
     SubmitWalletDustRegistrationCommand, SubmitWalletTransferCommand, WalletAccountQuery,
     WalletDustRegistrationError, WalletDustRegistrationPortError,
     WalletDustRegistrationPreviewView, WalletDustSyncCommand, WalletDustSyncView,
-    WalletHdPathComponent, WalletProfileSecurityCommand, WalletShieldedSyncCommand,
-    WalletShieldedSyncView, WalletTransactionError, WalletTransactionPortError,
-    WalletTransferDraftQuery, WalletTransferSubmissionQuery,
+    WalletHdPathComponent, WalletProfileSecurityCommand, WalletProtectionPort,
+    WalletShieldedSyncCommand, WalletShieldedSyncView, WalletTransactionError,
+    WalletTransactionPortError, WalletTransferDraftQuery, WalletTransferSubmissionQuery,
 };
 use zeroize::Zeroizing;
 
-use super::{ApplicationServices, wiring::compose_with_adapters};
+#[cfg(feature = "standalone-development")]
+use super::standalone_genesis::{
+    PUBLIC_STANDALONE_PROFILE_NAME, public_profile_protection, public_standalone_network,
+};
+use super::{
+    ApplicationServices,
+    identity::{CredentialPresentationComposition, HeadlessCredentialProfile},
+    wiring::{compose_with_adapters, compose_with_adapters_and_credential_profile},
+};
 
 const ENABLE_ENV: &str = "OXID_ENABLE_LIVE_STANDALONE_FUNDING";
+#[cfg(feature = "standalone-development")]
+const PUBLIC_BALANCE_ENABLE_ENV: &str = "OXID_ENABLE_LIVE_STANDALONE_BALANCES";
 const FUNDER_SEED_ENV: &str = "OXID_STANDALONE_FUNDER_SEED_HEX";
 const PREPROD_ENABLE_ENV: &str = "OXID_ENABLE_LIVE_PREPROD_E2E";
 const PREPROD_MASTER_SEED_ENV: &str = "OXID_PREPROD_MASTER_SEED_HEX";
@@ -78,6 +88,27 @@ const MAX_PREPROD_INSUFFICIENT_DUST_RETRIES: u8 = 8;
 const MAX_PREPROD_CASE_INDEX: u32 = (WalletHdPathComponent::MAX_INDEX - 1) / 2;
 const TRANSFER_ATOMIC_UNITS: u128 = 5_000_000;
 const SHIELDED_TRANSFER_ATOMIC_UNITS: u128 = 1_000_000;
+// Exact public fixture values observed from the `dev` genesis preset exposed by
+// the images pinned in `scripts/standalone-stack.yml`. The NIGHT/DUST cap and
+// seven shielded notes were baselined by the live application-port proof; update
+// the pins, these values, and ADR-0097's owner-run evidence atomically.
+#[cfg(feature = "standalone-development")]
+const PUBLIC_GENESIS_NIGHT_ATOMIC_UNITS: u128 = 250_000_000_000_000;
+#[cfg(feature = "standalone-development")]
+const NIGHT_ATOMIC_UNITS: u128 = 1_000_000;
+#[cfg(feature = "standalone-development")]
+const DUST_ATOMIC_UNITS: u128 = 1_000_000_000_000_000;
+#[cfg(feature = "standalone-development")]
+const DUST_PER_NIGHT_AT_CAP: u128 = 5;
+#[cfg(feature = "standalone-development")]
+const PUBLIC_GENESIS_DUST_CAP_ATOMIC_UNITS: u128 = PUBLIC_GENESIS_NIGHT_ATOMIC_UNITS
+    / NIGHT_ATOMIC_UNITS
+    * DUST_PER_NIGHT_AT_CAP
+    * DUST_ATOMIC_UNITS;
+#[cfg(feature = "standalone-development")]
+const PUBLIC_GENESIS_SHIELDED_NIGHT_ATOMIC_UNITS: u128 = 250_000_000_000_000;
+#[cfg(feature = "standalone-development")]
+const PUBLIC_GENESIS_SHIELDED_NOTE_COUNT: u64 = 7;
 const NATIVE_SHIELDED_TOKEN_TYPE: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -657,6 +688,33 @@ fn compose_live<N>(
 where
     N: RandomPort + 'static,
 {
+    compose_live_with_protection(
+        config,
+        profiles,
+        security,
+        account_checkpoints,
+        dust_checkpoints,
+        shielded_checkpoints,
+        journal,
+        |security| security,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compose_live_with_protection<N, F>(
+    config: MidnightStandaloneConfig,
+    profiles: Arc<InMemoryWalletProfileRepository>,
+    security: Arc<DevelopmentWalletSecurity<SystemClock, N>>,
+    account_checkpoints: Option<MidnightAccountCheckpointConfig>,
+    dust_checkpoints: Option<MidnightDustCheckpointConfig>,
+    shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
+    journal: Option<MidnightSubmissionJournalConfig>,
+    protection_for_security: F,
+) -> ApplicationServices
+where
+    N: RandomPort + 'static,
+    F: FnOnce(Arc<DevelopmentWalletSecurity<SystemClock, N>>) -> Arc<dyn WalletProtectionPort>,
+{
     let clock = Arc::new(SystemClock);
     let midnight = Arc::new(
         protected_standalone_midnight_wallet_with_checkpoint_options(
@@ -670,7 +728,14 @@ where
         )
         .with_profile_association_repository(profiles.clone()),
     );
-    compose_with_adapters(profiles, security, midnight)
+    compose_with_adapters_and_credential_profile(
+        profiles,
+        security,
+        midnight,
+        CredentialPresentationComposition::Standalone,
+        HeadlessCredentialProfile::Standalone,
+        protection_for_security,
+    )
 }
 
 fn initialize_account(
@@ -1118,6 +1183,111 @@ fn preprod_transfer_policy_is_positive_bounded_and_amount_observed() {
     assert_eq!(
         preprod_shielded_transfer_amount(u128::MAX),
         Some(u128::MAX / 2)
+    );
+}
+
+#[test]
+fn public_balance_contract_tracks_the_exact_standalone_image_and_preset_pins() {
+    let manifest = include_str!("../../../scripts/standalone-stack.yml");
+    for required_setting in [
+        "midnightntwrk/indexer-standalone:4.0.0",
+        "midnightntwrk/midnight-node:0.22.3",
+        "midnightntwrk/proof-server:8.0.3",
+        "APP__APPLICATION__NETWORK_ID: \"undeployed\"",
+        "CFG_PRESET: \"dev\"",
+    ] {
+        assert!(
+            manifest.contains(required_setting),
+            "standalone stack pin changed without updating the exact public balance contract: {required_setting}"
+        );
+    }
+    let justfile = include_str!("../../../Justfile");
+    for recipe_contract in [
+        "standalone-public-balances:",
+        "--features standalone-development",
+        "standalone_funding_tests::public_standalone_genesis_balances_are_exact",
+    ] {
+        assert!(justfile.contains(recipe_contract));
+    }
+}
+
+/// Synchronizes all three independent balance projections for the public
+/// undeployed genesis wallet without accepting or emitting private input.
+///
+/// This is ignored because it requires the repository-owned standalone stack.
+/// The image pins plus the node's pinned `dev` preset define the exact genesis
+/// allocations and note count. The pinned genesis time places its generating
+/// NIGHT at the protocol's five-DUST-per-NIGHT cap, so chain uptime cannot
+/// increase this projection further. Restart the stack before the check if
+/// another explicitly authorized test has spent the shared public fixture or
+/// changed its notes.
+#[test]
+#[ignore = "requires explicit live standalone stack"]
+#[cfg(feature = "standalone-development")]
+fn public_standalone_genesis_balances_are_exact() {
+    const SHARED_FIXTURE_DRIFT: &str = "shared public fixture differs from genesis; restart the standalone stack before treating this as a regression";
+    assert_eq!(
+        std::env::var(PUBLIC_BALANCE_ENABLE_ENV).ok().as_deref(),
+        Some("1"),
+        "live standalone balance proof requires explicit opt-in"
+    );
+    let config = standalone_config();
+    let network_id = config.indexer().network_id().as_str().to_owned();
+    let public_network = public_standalone_network(&network_id).expect("undeployed capability");
+    let profiles = Arc::new(InMemoryWalletProfileRepository::new());
+    let security = Arc::new(DevelopmentWalletSecurity::new(
+        Arc::new(SystemClock),
+        Arc::new(OsRandom),
+    ));
+    let protection_profiles = Arc::clone(&profiles);
+    let application = compose_live_with_protection(
+        config,
+        profiles,
+        security,
+        None,
+        None,
+        None,
+        None,
+        move |security| {
+            Arc::new(public_profile_protection(
+                public_network,
+                protection_profiles,
+                security,
+            ))
+        },
+    );
+    let (profile_id, _, _) = initialize_account(
+        &application,
+        PUBLIC_STANDALONE_PROFILE_NAME,
+        "undeployed",
+        0,
+    );
+
+    let shielded = synchronize_shielded(&application, &profile_id);
+    assert_complete_shielded_snapshot(&shielded);
+    assert_eq!(
+        shielded.owned_note_count,
+        Some(PUBLIC_GENESIS_SHIELDED_NOTE_COUNT),
+        "{SHARED_FIXTURE_DRIFT}"
+    );
+    assert_eq!(
+        live_night_balance(&application, &profile_id),
+        PUBLIC_GENESIS_NIGHT_ATOMIC_UNITS,
+        "{SHARED_FIXTURE_DRIFT}"
+    );
+    let dust = synchronize_dust(&application, &profile_id);
+    assert_eq!(dust.state, "synced");
+    assert_eq!(dust.failure, None);
+    assert_eq!(dust.current_cursor, dust.target_cursor);
+    assert_eq!(
+        dust_balance(&dust),
+        PUBLIC_GENESIS_DUST_CAP_ATOMIC_UNITS,
+        "{SHARED_FIXTURE_DRIFT}"
+    );
+    assert_eq!(
+        shielded_balance(&shielded, NATIVE_SHIELDED_TOKEN_TYPE),
+        PUBLIC_GENESIS_SHIELDED_NIGHT_ATOMIC_UNITS,
+        "{SHARED_FIXTURE_DRIFT}"
     );
 }
 

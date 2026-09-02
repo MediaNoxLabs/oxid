@@ -32,7 +32,7 @@ use oxid_wallet_application::{
     WalletJubjubChallengeDeriver, WalletJubjubChallengeSignature, WalletJubjubChallengeSigningPort,
     WalletKeyDerivationPort, WalletKeyOperationPort, WalletPortableBackupPort,
     WalletPortableBackupPortError, WalletPortableRecoverySummary, WalletProtectionPort,
-    WalletRecoverySecret, WalletSecurityPortError,
+    WalletRecoverySecret, WalletRootRecoveryPort, WalletRootSeed, WalletSecurityPortError,
 };
 use oxid_wallet_domain::{
     WalletKeyAlgorithm, WalletKeyDescriptor, WalletKeyLabel, WalletKeyPurpose, WalletKeyReference,
@@ -113,7 +113,7 @@ impl SealedVaultPort for NativeMobileSealedVault {
         {
             let response = oxid_adapter_mobile_native::inspect_custody_json(profile_id.as_str())
                 .map_err(map_bridge_error)?;
-            return parse_state_response(response);
+            parse_state_response(response)
         }
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
@@ -134,7 +134,7 @@ impl SealedVaultPort for NativeMobileSealedVault {
             let response =
                 oxid_adapter_mobile_native::initialize_custody_json(profile_id.as_str(), &payload)
                     .map_err(map_bridge_error)?;
-            return parse_success_response(response).map(|response| response.protection);
+            parse_success_response(response).map(|response| response.protection)
         }
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
@@ -153,7 +153,7 @@ impl SealedVaultPort for NativeMobileSealedVault {
             let response =
                 oxid_adapter_mobile_native::unlock_custody_json(profile_id.as_str(), reason)
                     .map_err(map_bridge_error)?;
-            return decode_success_payload(response);
+            decode_success_payload(response)
         }
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
@@ -167,7 +167,7 @@ impl SealedVaultPort for NativeMobileSealedVault {
         {
             let response = oxid_adapter_mobile_native::load_custody_json(profile_id.as_str())
                 .map_err(map_bridge_error)?;
-            return decode_success_payload(response);
+            decode_success_payload(response)
         }
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
@@ -402,6 +402,45 @@ where
             }
             _ => Err(WalletSecurityPortError::InvalidOperation),
         }
+    }
+}
+
+impl<C, N, B> WalletRootRecoveryPort for MobileWalletSecurity<C, N, B>
+where
+    C: ClockPort,
+    N: RandomPort,
+    B: SealedVaultPort,
+{
+    fn recover_root(
+        &self,
+        profile_id: &WalletProfileId,
+        root: WalletRootSeed,
+    ) -> Result<(), WalletSecurityPortError> {
+        let _gate = self.gate()?;
+        match self.backend.inspect(profile_id).map_err(map_vault_error)? {
+            SealedVaultState::Uninitialized => {}
+            SealedVaultState::Locked(_) | SealedVaultState::Unlocked(_) => {
+                return Err(WalletSecurityPortError::AlreadyInitialized);
+            }
+            SealedVaultState::Unavailable => {
+                return Err(WalletSecurityPortError::Unavailable);
+            }
+        }
+
+        let root_seed = Zeroizing::new(root.copy_for_protected_import());
+        let vault = MobileVault {
+            version: VAULT_VERSION,
+            profile_id: profile_id.as_str().to_owned(),
+            root_seed: *root_seed,
+            keys: Vec::new(),
+        };
+        let plaintext = encode_vault(&vault)?;
+        // Native initialization is the one-shot user-presence boundary and
+        // atomically refuses every existing destination.
+        self.backend
+            .initialize(profile_id, &plaintext)
+            .map_err(map_vault_error)?;
+        Ok(())
     }
 }
 
@@ -1368,6 +1407,68 @@ mod tests {
             Arc::new(IncrementingRandom::new()),
             backend,
         )
+    }
+
+    fn recovery_root(byte: u8) -> WalletRootSeed {
+        WalletRootSeed::parse_hex(&format!("{byte:02x}").repeat(32)).expect("canonical root")
+    }
+
+    fn night_external_path() -> WalletHdPath {
+        WalletHdPath::new(vec![
+            WalletHdPathComponent::new(44, true).expect("purpose"),
+            WalletHdPathComponent::new(2400, true).expect("coin"),
+            WalletHdPathComponent::new(0, true).expect("account"),
+            WalletHdPathComponent::new(0, false).expect("role"),
+            WalletHdPathComponent::new(0, false).expect("index"),
+        ])
+        .expect("path")
+    }
+
+    #[test]
+    fn owner_root_recovery_is_one_shot_authorized_and_survives_restart() {
+        let backend = Arc::new(TestSealedVault::default());
+        let profile = WalletProfileId::parse("profile_recovered").expect("profile");
+        let first = adapter(Arc::clone(&backend));
+
+        backend.deny_initialize.store(true, Ordering::Relaxed);
+        assert_eq!(
+            first.recover_root(&profile, recovery_root(0x31)),
+            Err(WalletSecurityPortError::AuthorizationDenied)
+        );
+        assert_eq!(
+            first.status(&profile).expect("status").state(),
+            WalletProtectionState::Uninitialized
+        );
+
+        backend.deny_initialize.store(false, Ordering::Relaxed);
+        first
+            .recover_root(&profile, recovery_root(0x31))
+            .expect("authorized recovery");
+        first.lock(&profile).expect("lock");
+
+        let restarted = adapter(Arc::clone(&backend));
+        let path = night_external_path();
+        let derived = restarted
+            .derive(
+                &profile,
+                DeriveProtectedKeyRequest {
+                    label: WalletKeyLabel::parse("Recovered NIGHT external").expect("label"),
+                    algorithm: WalletKeyAlgorithm::Secp256k1Schnorr,
+                    purpose: WalletKeyPurpose::Transaction,
+                    path: path.clone(),
+                },
+            )
+            .expect("derive after restart");
+        let expected_secret = derive_bip32_secret(&[0x31; 32], &path).expect("expected secret");
+        let expected_public =
+            public_key_from_secret(WalletKeyAlgorithm::Secp256k1Schnorr, &expected_secret)
+                .expect("expected public key");
+        assert_eq!(derived.public_key(), &expected_public);
+
+        assert_eq!(
+            restarted.recover_root(&profile, recovery_root(0x42)),
+            Err(WalletSecurityPortError::AlreadyInitialized)
+        );
     }
 
     #[test]

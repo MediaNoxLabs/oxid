@@ -8,6 +8,7 @@ use oxid_adapter_midnight::{MidnightContractCallFundingPort, MidnightContractCal
 
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_vc_midnight::ProtectedDigitalPassportPresentationSource;
+use oxid_capabilities_application::GetDeploymentProfileUseCase;
 use oxid_credential_application::{
     DeleteCredentialUseCase, GetCredentialDisclosureUseCase, GetCredentialUseCase,
     ListCredentialsUseCase, PreviewCredentialDisclosureUseCase, ReceiveCredentialUseCase,
@@ -65,8 +66,8 @@ use oxid_wallet_application::{
     PrepareWalletTransferUseCase, ReconcileWalletDustRegistrationSubmissionUseCase,
     ReconcileWalletTransferSubmissionUseCase, RecordWalletBackupReceiptUseCase,
     RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupUseCase,
-    SelectWalletNetworkUseCase, SelectWalletProfileUseCase, SignWalletDataUseCase,
-    StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
+    RecoverWalletRootUseCase, SelectWalletNetworkUseCase, SelectWalletProfileUseCase,
+    SignWalletDataUseCase, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
     SubmitWalletDustRegistrationUseCase, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
     UnlockWalletUseCase,
 };
@@ -74,6 +75,7 @@ use oxid_wallet_application::{
 /// Application capabilities shared by every incoming adapter.
 #[derive(Clone)]
 pub struct ApplicationServices {
+    pub(super) deployment_profile: Option<Arc<dyn GetDeploymentProfileUseCase>>,
     pub(super) diagnostic_events: Arc<dyn DiagnosticEventSinkPort>,
     pub(super) get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase>,
     pub(super) clear_diagnostics: Arc<dyn ClearDiagnosticsUseCase>,
@@ -101,6 +103,7 @@ pub struct ApplicationServices {
     pub(super) initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase>,
     pub(super) unlock_wallet: Arc<dyn UnlockWalletUseCase>,
     pub(super) lock_wallet: Arc<dyn LockWalletUseCase>,
+    pub(super) wallet_root_recovery: Option<WalletRootRecoveryCapability>,
     pub(super) export_portable_wallet_backup: Arc<dyn ExportPortableWalletBackupUseCase>,
     pub(super) recover_portable_wallet_backup: Arc<dyn RecoverPortableWalletBackupUseCase>,
     pub(super) export_complete_wallet_backup: Arc<dyn ExportCompleteWalletBackupUseCase>,
@@ -201,11 +204,60 @@ pub struct ApplicationServices {
     pub(super) compact_presentation_proof_available: bool,
 }
 
+/// Owner-root recovery is present only when composition authenticated one
+/// immutable deployment profile and its node genesis.
+#[derive(Clone)]
+pub struct WalletRootRecoveryCapability {
+    network_id: String,
+    recover: Arc<dyn RecoverWalletRootUseCase>,
+}
+
+impl WalletRootRecoveryCapability {
+    #[cfg(all(
+        feature = "preprod-observation",
+        any(target_os = "ios", target_os = "android")
+    ))]
+    #[must_use]
+    pub(super) fn new(network_id: String, recover: Arc<dyn RecoverWalletRootUseCase>) -> Self {
+        Self {
+            network_id,
+            recover,
+        }
+    }
+
+    #[must_use]
+    pub fn network_id(&self) -> &str {
+        &self.network_id
+    }
+
+    #[must_use]
+    pub fn recover(&self) -> Arc<dyn RecoverWalletRootUseCase> {
+        Arc::clone(&self.recover)
+    }
+}
+
 #[cfg(test)]
 #[path = "services/tests.rs"]
 mod tests;
 
 impl ApplicationServices {
+    /// Returns the bounded standalone deployment projection only when an
+    /// explicit local or Tailnet development profile composed it.
+    #[must_use]
+    pub fn deployment_profile(&self) -> Option<Arc<dyn GetDeploymentProfileUseCase>> {
+        self.deployment_profile.as_ref().map(Arc::clone)
+    }
+
+    #[cfg(feature = "standalone-readiness")]
+    #[must_use]
+    pub(super) fn with_deployment_profile(
+        mut self,
+        deployment_profile: Arc<dyn GetDeploymentProfileUseCase>,
+    ) -> Self {
+        self.deployment_profile = Some(deployment_profile);
+        self
+    }
+
     #[must_use]
     pub fn diagnostic_events(&self) -> Arc<dyn DiagnosticEventSinkPort> {
         Arc::clone(&self.diagnostic_events)
@@ -299,6 +351,23 @@ impl ApplicationServices {
     #[must_use]
     pub fn lock_wallet(&self) -> Arc<dyn LockWalletUseCase> {
         Arc::clone(&self.lock_wallet)
+    }
+
+    #[must_use]
+    pub fn wallet_root_recovery(&self) -> Option<WalletRootRecoveryCapability> {
+        self.wallet_root_recovery.clone()
+    }
+
+    #[cfg(all(
+        feature = "preprod-observation",
+        any(target_os = "ios", target_os = "android")
+    ))]
+    pub(super) fn with_wallet_root_recovery(
+        mut self,
+        capability: WalletRootRecoveryCapability,
+    ) -> Self {
+        self.wallet_root_recovery = Some(capability);
+        self
     }
 
     #[must_use]

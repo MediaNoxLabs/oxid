@@ -2,7 +2,10 @@
 
 #![forbid(unsafe_code)]
 
+mod assets_page;
 mod brand;
+#[cfg(feature = "standalone-deployment-profile")]
+mod deployment_profile;
 #[cfg(feature = "desktop-test-click-driver")]
 mod desktop_test_driver;
 mod diagnostics;
@@ -10,8 +13,15 @@ mod dids;
 mod labels;
 mod passport_vault;
 mod profile_guard;
+#[cfg(feature = "preprod-observation")]
+mod wallet_root_recovery;
 
+use assets_page::AssetsPage;
+#[cfg(test)]
+use assets_page::{wallet_account_activation_available, wallet_write_actions_available};
 pub use brand::{BrandProfile, SecurityCopySnapshot, security_copy_snapshot};
+#[cfg(feature = "standalone-deployment-profile")]
+use deployment_profile::DeploymentProfileCard;
 pub use diagnostics::DiagnosticsUiServices;
 use dids::DidsPage;
 #[cfg(feature = "ui-profile-dev")]
@@ -20,6 +30,8 @@ pub use passport_vault::{
     PassportVaultContractCallRecoveryUiServices, PassportVaultContractCallUiServices,
     PassportVaultUiServices,
 };
+#[cfg(feature = "preprod-observation")]
+use wallet_root_recovery::WalletRootRecoveryForm;
 
 use std::{collections::BTreeMap, fmt, future::Future, sync::Arc, time::Duration};
 
@@ -114,6 +126,11 @@ use oxid_wallet_application::{
     WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
     WalletTransferSubmissionView,
 };
+#[cfg(feature = "preprod-observation")]
+use oxid_wallet_application::{
+    RECOVER_WALLET_ROOT_SUMMARY, RECOVER_WALLET_ROOT_TITLE, RecoverWalletRootCommand,
+    RecoverWalletRootUseCase, WalletRootSeed,
+};
 use zeroize::{Zeroize, Zeroizing};
 
 use diagnostics::DiagnosticsPage;
@@ -130,6 +147,8 @@ const CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS: &str =
     "Credential issuance terminal error: protocol unavailable";
 const CREDENTIAL_ISSUANCE_PROTOCOL_ERROR_STATUS: &str =
     "Credential issuance protocol error: protocol unavailable";
+const NATIVE_SHIELDED_NIGHT_TOKEN_TYPE: &str =
+    "0000000000000000000000000000000000000000000000000000000000000000";
 #[cfg(not(target_arch = "wasm32"))]
 const UI_BLOCKING_TASK_STACK_BYTES: usize = 8 * 1024 * 1024;
 
@@ -208,6 +227,8 @@ where
 /// Incoming capabilities made available to Dioxus by the composition root.
 #[derive(Clone)]
 pub struct WalletUiServices {
+    #[cfg(feature = "standalone-deployment-profile")]
+    deployment_profile: Option<Arc<dyn oxid_capabilities_application::GetDeploymentProfileUseCase>>,
     #[cfg(feature = "ui-profile-dev")]
     developer_capabilities: Vec<CapabilityView>,
     get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase>,
@@ -231,6 +252,8 @@ pub struct WalletUiServices {
     recover_portable_wallet_backup: Arc<dyn RecoverPortableWalletBackupUseCase>,
     export_complete_wallet_backup: Arc<dyn ExportCompleteWalletBackupUseCase>,
     recover_complete_wallet_backup: Arc<dyn RecoverCompleteWalletBackupUseCase>,
+    #[cfg(feature = "preprod-observation")]
+    wallet_root_recovery: Option<WalletRootRecoveryUiServices>,
     list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
     select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
     derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
@@ -639,6 +662,28 @@ pub struct WalletSecurityUiServices {
     unlock_wallet: Arc<dyn UnlockWalletUseCase>,
     lock_wallet: Arc<dyn LockWalletUseCase>,
     backup: WalletBackupUiServices,
+    #[cfg(feature = "preprod-observation")]
+    root_recovery: Option<WalletRootRecoveryUiServices>,
+}
+
+/// Explicit owner-root recovery capability supplied only by an authenticated,
+/// observation-only production deployment composition.
+#[cfg(feature = "preprod-observation")]
+#[derive(Clone)]
+pub struct WalletRootRecoveryUiServices {
+    network_id: String,
+    recover: Arc<dyn RecoverWalletRootUseCase>,
+}
+
+#[cfg(feature = "preprod-observation")]
+impl WalletRootRecoveryUiServices {
+    #[must_use]
+    pub fn new(network_id: String, recover: Arc<dyn RecoverWalletRootUseCase>) -> Self {
+        Self {
+            network_id,
+            recover,
+        }
+    }
 }
 
 /// Complete and legacy custody-only backup use cases plus native document transport.
@@ -687,7 +732,16 @@ impl WalletSecurityUiServices {
             unlock_wallet,
             lock_wallet,
             backup,
+            #[cfg(feature = "preprod-observation")]
+            root_recovery: None,
         }
+    }
+
+    #[cfg(feature = "preprod-observation")]
+    #[must_use]
+    pub fn with_root_recovery(mut self, recovery: WalletRootRecoveryUiServices) -> Self {
+        self.root_recovery = Some(recovery);
+        self
     }
 }
 
@@ -923,6 +977,8 @@ impl WalletUiServices {
         let authentication = identity.authentication;
         let ingress = identity.ingress;
         Self {
+            #[cfg(feature = "standalone-deployment-profile")]
+            deployment_profile: None,
             #[cfg(feature = "ui-profile-dev")]
             developer_capabilities: Vec::new(),
             get_diagnostic_snapshot: diagnostics.get,
@@ -946,6 +1002,8 @@ impl WalletUiServices {
             recover_portable_wallet_backup: security.backup.recover_custody,
             export_complete_wallet_backup: security.backup.export_complete,
             recover_complete_wallet_backup: security.backup.recover_complete,
+            #[cfg(feature = "preprod-observation")]
+            wallet_root_recovery: security.root_recovery,
             list_wallet_networks: account.list_wallet_networks,
             select_wallet_network: account.select_wallet_network,
             derive_wallet_account: account.derive_wallet_account,
@@ -1013,6 +1071,25 @@ impl WalletUiServices {
             passport_vault_state_persistence: vault.state_persistence,
             passport_vault_contract_calls: vault.contract_calls,
         }
+    }
+
+    /// Attaches the read-only profile selected by the application build.
+    #[cfg(feature = "standalone-deployment-profile")]
+    #[must_use]
+    pub fn with_deployment_profile(
+        mut self,
+        deployment_profile: Arc<dyn oxid_capabilities_application::GetDeploymentProfileUseCase>,
+    ) -> Self {
+        self.deployment_profile = Some(deployment_profile);
+        self
+    }
+
+    #[cfg(feature = "standalone-deployment-profile")]
+    #[must_use]
+    pub fn deployment_profile(
+        &self,
+    ) -> Option<Arc<dyn oxid_capabilities_application::GetDeploymentProfileUseCase>> {
+        self.deployment_profile.as_ref().map(Arc::clone)
     }
 
     /// Adds the public, shared capability manifest to a developer-profile UI.
@@ -1679,6 +1756,10 @@ enum OnboardingStep {
     Create,
     Protect(WalletProfileView),
     Restore,
+    #[cfg(feature = "preprod-observation")]
+    RecoverRootProfile,
+    #[cfg(feature = "preprod-observation")]
+    RecoverRoot(WalletProfileView),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1686,6 +1767,49 @@ enum OnboardingProtectionState {
     Idle,
     Working,
     Failed(String),
+}
+
+#[cfg(feature = "preprod-observation")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum WalletRootRecoveryUiState {
+    Idle,
+    Working,
+    Failed(String),
+}
+
+#[cfg(feature = "preprod-observation")]
+#[derive(Default)]
+struct WalletRootInput(Zeroizing<String>);
+
+#[cfg(feature = "preprod-observation")]
+impl WalletRootInput {
+    fn new(value: String) -> Self {
+        Self(Zeroizing::new(value))
+    }
+
+    fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn take(&mut self) -> Zeroizing<String> {
+        std::mem::replace(&mut self.0, Zeroizing::new(String::new()))
+    }
+
+    fn clear(&mut self) {
+        self.0.zeroize();
+        self.0.clear();
+    }
+}
+
+#[cfg(feature = "preprod-observation")]
+impl fmt::Debug for WalletRootInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("WalletRootInput([REDACTED])")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3187,6 +3311,65 @@ fn developer_profile_banner() -> Element {
     rsx! {}
 }
 
+#[cfg(feature = "public-standalone-genesis")]
+const PUBLIC_STANDALONE_GENESIS_MARKER: &str = "OXID_PUBLIC_STANDALONE_GENESIS_WALLET";
+#[cfg(feature = "public-standalone-genesis")]
+const PUBLIC_STANDALONE_PROFILE_NAME: &str = "Oxid Demo Wallet";
+
+fn profile_creation_default_name() -> String {
+    "My wallet".to_owned()
+}
+
+#[cfg(feature = "public-standalone-genesis")]
+fn public_fixture_profile_exists(profiles: &[WalletProfileView]) -> bool {
+    profiles
+        .iter()
+        .any(|profile| profile.display_name == PUBLIC_STANDALONE_PROFILE_NAME)
+}
+
+#[cfg(feature = "public-standalone-genesis")]
+fn public_fixture_choice_label(fixture_exists: bool, fixture_selected: bool) -> &'static str {
+    if fixture_exists {
+        "Public demo wallet already exists"
+    } else if fixture_selected {
+        "Public demo wallet selected"
+    } else {
+        "Use public demo wallet"
+    }
+}
+
+fn public_fixture_name_conflicts(profiles: &[WalletProfileView], candidate: &str) -> bool {
+    #[cfg(feature = "public-standalone-genesis")]
+    {
+        // `ProfileName::parse` applies the same trim before persistence.
+        candidate.trim() == PUBLIC_STANDALONE_PROFILE_NAME
+            && public_fixture_profile_exists(profiles)
+    }
+    #[cfg(not(feature = "public-standalone-genesis"))]
+    {
+        let _ = (profiles, candidate);
+        false
+    }
+}
+
+#[cfg(feature = "public-standalone-genesis")]
+fn public_standalone_genesis_banner() -> Element {
+    rsx! {
+        aside {
+            class: "developer-profile-banner",
+            role: "alert",
+            "data-wallet-authority": PUBLIC_STANDALONE_GENESIS_MARKER,
+            strong { "Public genesis wallet capability" }
+            span { "Only the unique “Oxid Demo Wallet” profile can use shared, publicly spendable test authority; other profiles remain random. No privacy or ownership is implied." }
+        }
+    }
+}
+
+#[cfg(not(feature = "public-standalone-genesis"))]
+fn public_standalone_genesis_banner() -> Element {
+    rsx! {}
+}
+
 /// Brand-agnostic Dioxus incoming adapter and mobile-first application shell.
 #[component]
 pub fn App() -> Element {
@@ -3339,12 +3522,18 @@ pub fn App() -> Element {
                 aria_hidden: if demo_gateway_hidden { "true" } else { "false" },
                 inert: html_boolean_attribute(demo_gateway_inert),
                 {developer_profile_banner()}
+                {public_standalone_genesis_banner()}
                 {demo_gateway_banner}
                 ProfileGateway {
                     state: session,
+                    lifecycle_wake: identity_link_wake,
                     on_selected: move |profile| {
                         profile_session.set(ProfileSessionState::Active(profile));
                         navigation.write().select_primary(PrimaryDestination::Home);
+                    },
+                    on_root_recovered: move |profile| {
+                        profile_session.set(ProfileSessionState::Active(profile));
+                        navigation.write().select_primary(PrimaryDestination::Wallet);
                     },
                     on_retry: move |_| {
                         let services = services.clone();
@@ -3446,6 +3635,7 @@ pub fn App() -> Element {
             aria_hidden: if demo_shell_hidden { "true" } else { "false" },
             inert: html_boolean_attribute(demo_shell_inert),
             {developer_profile_banner()}
+            {public_standalone_genesis_banner()}
             {demo_shell_banner}
             header { class: "app-header",
                 button {
@@ -3628,6 +3818,9 @@ pub fn App() -> Element {
                             active_profile: active_profile.clone(),
                             lifecycle_wake: identity_link_wake,
                             secret_mode,
+                            on_root_recovered: move |_| {
+                                navigation.write().select_primary(PrimaryDestination::Wallet);
+                            },
                             on_open_profile: move |_| navigation.write().push(Route::Profile),
                             on_open_diagnostics: move |_| navigation.write().push(Route::Diagnostics),
                         }
@@ -3837,7 +4030,9 @@ fn profile_monogram(display_name: &str, fallback: &str) -> String {
 #[component]
 fn ProfileGateway(
     state: ProfileSessionState,
+    lifecycle_wake: Signal<u64>,
     on_selected: EventHandler<WalletProfileView>,
+    on_root_recovered: EventHandler<WalletProfileView>,
     on_retry: EventHandler<MouseEvent>,
 ) -> Element {
     let brand = consume_context::<BrandProfile>();
@@ -3854,7 +4049,7 @@ fn ProfileGateway(
             }
         },
         ProfileSessionState::Onboarding => rsx! {
-            OnboardingFlow { on_selected }
+            OnboardingFlow { lifecycle_wake, on_selected, on_root_recovered }
         },
         ProfileSessionState::Choosing(profiles) => rsx! {
             section { class: "page-heading onboarding-heading",
@@ -3906,9 +4101,33 @@ fn ProfileGateway(
 }
 
 #[component]
-fn OnboardingFlow(on_selected: EventHandler<WalletProfileView>) -> Element {
+fn OnboardingFlow(
+    lifecycle_wake: Signal<u64>,
+    on_selected: EventHandler<WalletProfileView>,
+    on_root_recovered: EventHandler<WalletProfileView>,
+) -> Element {
+    #[cfg(feature = "preprod-observation")]
+    let services = consume_context::<WalletUiServices>();
     let brand = consume_context::<BrandProfile>();
     let mut step = use_signal(|| OnboardingStep::Welcome);
+    #[cfg(feature = "preprod-observation")]
+    let root_recovery_choice = if services.wallet_root_recovery.is_some() {
+        rsx! {
+            button {
+                class: "secondary-action",
+                r#type: "button",
+                onclick: move |_| step.set(OnboardingStep::RecoverRootProfile),
+                "Recover existing PreProd wallet"
+            }
+        }
+    } else {
+        rsx! {}
+    };
+    #[cfg(not(feature = "preprod-observation"))]
+    let root_recovery_choice = {
+        let _ = (lifecycle_wake, on_root_recovered);
+        rsx! {}
+    };
 
     match step.read().clone() {
         OnboardingStep::Welcome => rsx! {
@@ -3930,6 +4149,7 @@ fn OnboardingFlow(on_selected: EventHandler<WalletProfileView>) -> Element {
                     onclick: move |_| step.set(OnboardingStep::Restore),
                     "Restore from backup"
                 }
+                {root_recovery_choice}
             }
         },
         OnboardingStep::Create => rsx! {
@@ -3975,6 +4195,40 @@ fn OnboardingFlow(on_selected: EventHandler<WalletProfileView>) -> Element {
                 on_recovered: move |profile| on_selected.call(profile),
             }
         },
+        #[cfg(feature = "preprod-observation")]
+        OnboardingStep::RecoverRootProfile => rsx! {
+            section { class: "page-heading onboarding-heading",
+                button {
+                    class: "text-action",
+                    r#type: "button",
+                    aria_label: "Back to onboarding choices",
+                    onclick: move |_| step.set(OnboardingStep::Welcome),
+                    "← Back"
+                }
+                p { class: "eyebrow", "PreProd recovery" }
+                h1 { "Name this recovered wallet" }
+                p { "Create an empty public profile before installing the owner root behind device protection." }
+            }
+            ProfileManager {
+                profiles: Vec::new(),
+                active_profile_id: None,
+                onboarding: true,
+                on_selected: move |profile| step.set(OnboardingStep::RecoverRoot(profile)),
+            }
+        },
+        #[cfg(feature = "preprod-observation")]
+        OnboardingStep::RecoverRoot(profile) => {
+            let recovered_profile = profile.clone();
+            let cancelled_profile = profile.clone();
+            rsx! {
+                WalletRootRecoveryForm {
+                    profile,
+                    lifecycle_wake,
+                    on_recovered: move |_| on_root_recovered.call(recovered_profile.clone()),
+                    on_cancel: move |_| on_selected.call(cancelled_profile.clone()),
+                }
+            }
+        }
     }
 }
 
@@ -4216,11 +4470,31 @@ fn ProfileManager(
     let brand = consume_context::<BrandProfile>();
     let create_wallet_profile = services.create_wallet_profile();
     let select_wallet_profile = services.select_wallet_profile();
+    let default_display_name = profile_creation_default_name();
     let mut profile_list = use_signal(|| profiles);
-    let mut display_name = use_signal(|| "My wallet".to_owned());
+    let mut display_name = use_signal(|| default_display_name);
     let mut state = use_signal(|| CreationState::Idle);
     let busy = matches!(*state.read(), CreationState::Working);
-    let can_submit = !busy && !display_name.read().trim().is_empty();
+    let fixture_name_conflict =
+        public_fixture_name_conflicts(&profile_list.read(), display_name.read().trim());
+    let can_submit = !busy && !display_name.read().trim().is_empty() && !fixture_name_conflict;
+    #[cfg(feature = "public-standalone-genesis")]
+    let public_fixture_choice = {
+        let fixture_exists = public_fixture_profile_exists(&profile_list.read());
+        let fixture_selected = display_name.read().trim() == PUBLIC_STANDALONE_PROFILE_NAME;
+        rsx! {
+            p { class: "form-hint", "For a disposable local demo, explicitly select the shared public wallet. Anyone can spend its funds." }
+            button {
+                class: "secondary-action",
+                r#type: "button",
+                disabled: busy || fixture_exists || fixture_selected,
+                onclick: move |_| display_name.set(PUBLIC_STANDALONE_PROFILE_NAME.to_owned()),
+                {public_fixture_choice_label(fixture_exists, fixture_selected)}
+            }
+        }
+    };
+    #[cfg(not(feature = "public-standalone-genesis"))]
+    let public_fixture_choice = rsx! {};
 
     let feedback = match state.read().clone() {
         CreationState::Idle => rsx! {
@@ -4319,6 +4593,10 @@ fn ProfileManager(
                 value: "{display_name}",
                 oninput: move |event| display_name.set(event.value()),
             }
+            if fixture_name_conflict {
+                p { class: "form-hint", role: "alert", "The public demo profile already exists. Choose a different profile name." }
+            }
+            {public_fixture_choice}
             button {
                 class: "primary-action",
                 r#type: "button",
@@ -4346,6 +4624,7 @@ fn ProfileManager(
                         match result {
                             Ok(Ok((created, selected))) => {
                                 profile_list.write().push(created);
+                                display_name.set(profile_creation_default_name());
                                 state.set(CreationState::Created(selected.clone()));
                                 on_selected.call(selected);
                             }
@@ -5116,324 +5395,6 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
 }
 
 #[component]
-fn AssetsPage(active_profile: WalletProfileView, secret_mode: SecretModeController) -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let mut state = use_signal(|| AccountPageState::Loading);
-    let profile_id = active_profile.id.clone();
-    let services_for_load = services.clone();
-    use_effect(move || {
-        let services = services_for_load.clone();
-        let profile_id = profile_id.clone();
-        spawn(async move {
-            state.set(
-                run_ui_blocking(move || load_account_page(&services, &profile_id))
-                    .await
-                    .unwrap_or_else(|error| AccountPageState::Failed(error.to_string())),
-            );
-        });
-    });
-
-    match state.read().clone() {
-        AccountPageState::Loading => rsx! {
-            section { class: "wallet-hero",
-                p { class: "eyebrow", "Wallet overview" }
-                div { class: "wallet-hero__number-row",
-                    h1 { "…" }
-                    span { "NIGHT" }
-                }
-                p { class: "wallet-hero__hint", "Loading the selected Midnight account boundary…" }
-            }
-        },
-        AccountPageState::Failed(error) => rsx! {
-            section { class: "wallet-hero",
-                p { class: "eyebrow", "Wallet overview" }
-                div { class: "wallet-hero__number-row",
-                    h1 { "—" }
-                    span { "NIGHT" }
-                }
-                p { class: "wallet-hero__hint", "Account state could not be loaded safely." }
-            }
-            article { class: "empty-state surface-card", role: "alert",
-                h2 { "Midnight account unavailable" }
-                p { "{error}" }
-                button {
-                    class: "secondary-action",
-                    r#type: "button",
-                    onclick: move |_| {
-                        let services = services.clone();
-                        let profile_id = active_profile.id.clone();
-                        state.set(AccountPageState::Loading);
-                        spawn(async move {
-                            state.set(
-                                run_ui_blocking(move || {
-                                    load_account_page(&services, &profile_id)
-                                })
-                                .await
-                                .unwrap_or_else(|error| {
-                                    AccountPageState::Failed(error.to_string())
-                                }),
-                            );
-                        });
-                    },
-                    "Retry"
-                }
-            }
-        },
-        AccountPageState::Ready {
-            networks,
-            account,
-            security,
-            busy,
-        } => {
-            let night = balance_for(&account, "NIGHT")
-                .map(|balance| ui::format_atomic_units(&balance.atomic_units, balance.decimals))
-                .unwrap_or_else(|| "—".to_owned());
-            let dust = balance_for(&account, "DUST")
-                .map(|balance| ui::format_atomic_units(&balance.atomic_units, balance.decimals))
-                .unwrap_or_else(|| "—".to_owned());
-            let unavailable = account.source == "unavailable";
-            let is_busy = busy.is_some();
-            let account_hint = account_hint(&account, busy);
-            let source_label = ui::account_source(&account.source);
-            let protected_account = has_protected_account(&account);
-            let protection_available = security.is_available();
-            let protection_unlocked = security.state_name() == "Unlocked";
-            let selected_network_id = networks.selected_network_id.clone();
-            let select_services = services.clone();
-            let select_profile_id = active_profile.id.clone();
-            let mut select_state = state;
-            let activate_services = services.clone();
-            let activate_profile_id = active_profile.id.clone();
-            let activate_networks = networks.clone();
-            let activate_account = account.clone();
-            let mut activate_state = state;
-
-            rsx! {
-                section { class: "wallet-hero",
-                    div { class: "wallet-hero__heading-row",
-                        p { class: "eyebrow", "Wallet overview" }
-                        span { class: if account.source == "simulated" { "status-pill warning" } else { "status-pill" },
-                            "{source_label}"
-                        }
-                    }
-                    div { class: "wallet-hero__number-row",
-                        h1 { class: "privacy-value", "{night}" }
-                        span { "NIGHT" }
-                    }
-                    div { class: "dust-pill",
-                        strong { class: "privacy-value", "{dust}" }
-                        span { "DUST" }
-                    }
-                    p { class: "wallet-hero__hint", "{account_hint}" }
-                }
-
-                section { class: "trust-line", role: "status",
-                    span { class: "trust-line__icon", aria_hidden: "true", if unavailable { "○" } else { "◇" } }
-                    div {
-                        strong { "{active_profile.display_name} · {account.network_name}" }
-                        p {
-                            if let Some(height) = account.sync.chain_tip_height {
-                                "{ui::sync_state(&account.sync.state)} · block {height} · {source_label} source"
-                            } else {
-                                "{ui::sync_state(&account.sync.state)} · {source_label} source"
-                            }
-                        }
-                    }
-                }
-
-                label { class: "network-field",
-                    span { "Midnight network" }
-                    select {
-                        value: "{selected_network_id}",
-                        disabled: is_busy,
-                        onchange: move |event| {
-                            let network_id = event.value();
-                            let services = select_services.clone();
-                            let profile_id = select_profile_id.clone();
-                            select_state.set(AccountPageState::Loading);
-                            spawn(async move {
-                                let result = run_ui_blocking(move || {
-                                    services
-                                        .select_wallet_network()
-                                        .execute(SelectWalletNetworkCommand {
-                                            profile_id: profile_id.clone(),
-                                            network_id,
-                                        })
-                                        .and_then(|selected| {
-                                            services
-                                                .get_wallet_account()
-                                                .execute(WalletAccountQuery { profile_id })
-                                                .map(|account| (selected, account))
-                                        })
-                                })
-                                .await;
-                                match result {
-                                    Ok(Ok((networks, account))) => {
-                                        select_state.set(AccountPageState::Ready {
-                                            networks,
-                                            account: Box::new(account),
-                                            security,
-                                            busy: None,
-                                        });
-                                    }
-                                    Ok(Err(error)) => select_state
-                                        .set(AccountPageState::Failed(error.to_string())),
-                                    Err(error) => select_state
-                                        .set(AccountPageState::Failed(error.to_string())),
-                                }
-                            });
-                        },
-                        for network in networks.networks.iter() {
-                            option {
-                                key: "{network.network_id}",
-                                value: "{network.network_id}",
-                                selected: network.selected,
-                                "{network.display_name}"
-                            }
-                        }
-                    }
-                }
-
-                if protection_available && (!protection_unlocked || !protected_account) {
-                    article { class: "surface-card development-card",
-                        p { class: "card-eyebrow", "Standalone development" }
-                        h2 {
-                            if security.state_name() == "Uninitialized" {
-                                "Activate protected test account"
-                            } else if security.state_name() == "Locked" {
-                                "Unlock protected test account"
-                            } else {
-                                "Derive protected NIGHT account"
-                            }
-                        }
-                        p { "This opt-in simulator/emulator mode uses process-local development custody. It is not durable production key protection." }
-                        button {
-                            class: "primary-action",
-                            r#type: "button",
-                            disabled: is_busy,
-                            aria_label: "Activate protected Midnight account",
-                            onclick: move |_| {
-                                activate_state.set(AccountPageState::Ready {
-                                    networks: activate_networks.clone(),
-                                    account: activate_account.clone(),
-                                    security,
-                                    busy: Some(account_activation_operation(security)),
-                                });
-                                let services = activate_services.clone();
-                                let profile_id = activate_profile_id.clone();
-                                let networks = activate_networks.clone();
-                                let account = activate_account.clone();
-                                spawn(async move {
-                                    match activate_protected_account(
-                                        services.clone(),
-                                        profile_id.clone(),
-                                        security,
-                                    )
-                                    .await
-                                    {
-                                        Ok(updated_security) => {
-                                            if matches!(
-                                                security.state_name(),
-                                                "Uninitialized" | "Locked"
-                                            ) {
-                                                secret_mode.rearm();
-                                            }
-                                            let service = services.sync_wallet_account();
-                                            activate_state.set(AccountPageState::Ready {
-                                                networks: networks.clone(),
-                                                account: account.clone(),
-                                                security: updated_security,
-                                                busy: Some(AccountOperation::Syncing),
-                                            });
-                                            match run_ui_future(async move {
-                                                service.execute(WalletAccountQuery { profile_id }).await
-                                            })
-                                            .await
-                                            {
-                                                Ok(Ok(account)) => activate_state.set(AccountPageState::Ready {
-                                                    networks,
-                                                    account: Box::new(account),
-                                                    security: updated_security,
-                                                    busy: None,
-                                                }),
-                                                Ok(Err(error)) => activate_state.set(AccountPageState::Failed(error.to_string())),
-                                                Err(error) => activate_state.set(AccountPageState::Failed(error.to_string())),
-                                            }
-                                        }
-                                        Err(error) => activate_state.set(AccountPageState::Failed(error)),
-                                    }
-                                });
-                            },
-                            if is_busy { "Activating…" } else { "Activate development wallet" }
-                        }
-                    }
-                }
-
-                AccountSyncCard {
-                    profile_id: active_profile.id.clone(),
-                    can_sync: protection_unlocked,
-                    account_unavailable: unavailable,
-                    on_account_updated: move |updated_account| {
-                        state.set(AccountPageState::Ready {
-                            networks: networks.clone(),
-                            account: Box::new(updated_account),
-                            security,
-                            busy: None,
-                        });
-                    },
-                }
-
-                DustRegistrationPanel {
-                    profile_id: active_profile.id.clone(),
-                    availability: dust_registration_availability(
-                        protection_unlocked,
-                        protected_account,
-                        account.sync.state == "synced",
-                        unavailable,
-                    ),
-                }
-
-                div { class: "dashboard-grid",
-                    article { class: "surface-card",
-                        p { class: "card-eyebrow", "Receive" }
-                        if !protected_account || account.addresses.is_empty() {
-                            h2 { "Address unavailable" }
-                            p { "Activate and derive this profile's protected Midnight account before sharing a holder-controlled address." }
-                        } else {
-                            for address in account.addresses.iter() {
-                                ReceiveAddress {
-                                    key: "{address.kind}",
-                                    kind: address.kind.clone(),
-                                    value: address.value.clone(),
-                                }
-                            }
-                            p { "Each QR, clipboard copy, and share sheet contains exactly the public receive address shown." }
-                        }
-                    }
-                    AccountActivityCard { account: (*account).clone(), unavailable }
-                }
-
-                SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
-
-                if protected_account && protection_unlocked && account.sync.state == "synced" {
-                    if let (Some(unshielded), Some(shielded)) = (
-                        account.addresses.iter().find(|address| address.kind == "unshielded"),
-                        account.addresses.iter().find(|address| address.kind == "shielded"),
-                    ) {
-                        SendTransferPanel {
-                            profile_id: active_profile.id.clone(),
-                            unshielded_receive_address: unshielded.value.clone(),
-                            shielded_receive_address: shielded.value.clone(),
-                            night_balance: balance_for(&account, "NIGHT").cloned(),
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[component]
 fn AccountActivityCard(account: WalletAccountView, unavailable: bool) -> Element {
     rsx! {
         article { class: "surface-card",
@@ -5686,6 +5647,7 @@ fn AccountSyncCard(
             let owned_notes = shielded
                 .owned_note_count
                 .map_or_else(|| "—".to_owned(), |count| count.to_string());
+            let shielded_night = home_shielded_value(&shielded);
             let retained_dust = dust.clone();
             let retained_shielded = shielded.clone();
             let action_services = services.clone();
@@ -5711,15 +5673,16 @@ fn AccountSyncCard(
                         }
                         div { class: "account-sync-card__row",
                             div {
-                                strong { class: "privacy-value", "{owned_notes} shielded notes" }
+                                strong { class: "privacy-value", "{shielded_night}" }
+                                small { "Shielded NIGHT · {owned_notes} protected notes" }
                                 small { "{shielded_sync_note(&shielded)}" }
                             }
                             span { class: "{dust_status_pill_class(&shielded.state)}", "{ui::sync_state(&shielded.state)}" }
                         }
                     }
-                    if !shielded.balances.is_empty() {
+                    if non_native_shielded_balances(&shielded).next().is_some() {
                         div { class: "activity-list", aria_label: "Shielded token balances",
-                            for balance in shielded.balances.iter() {
+                            for balance in non_native_shielded_balances(&shielded) {
                                 div { class: "activity-row", key: "{balance.token_type_hex}",
                                     span { class: "activity-row__mark", aria_hidden: "true", "◈" }
                                     div {
@@ -7904,12 +7867,31 @@ fn newest_credential(credentials: &[CredentialView]) -> Option<&CredentialView> 
 }
 
 fn home_shielded_value(status: &WalletShieldedSyncView) -> String {
+    if let Some(balance) = status
+        .balances
+        .iter()
+        .find(|balance| balance.token_type_hex == NATIVE_SHIELDED_NIGHT_TOKEN_TYPE)
+    {
+        let amount = ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units);
+        return if status.is_complete() {
+            amount
+        } else {
+            format!("{amount} · last known")
+        };
+    }
+    if !status.is_complete() {
+        return "—".to_owned();
+    }
+    ui::format_shielded_amount(NATIVE_SHIELDED_NIGHT_TOKEN_TYPE, "0")
+}
+
+fn non_native_shielded_balances(
+    status: &WalletShieldedSyncView,
+) -> impl Iterator<Item = &oxid_wallet_application::WalletShieldedTokenBalanceView> {
     status
         .balances
         .iter()
-        .find(|balance| balance.token_type_hex == "0".repeat(64))
-        .map(|balance| ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units))
-        .unwrap_or_else(|| ui::sync_state(&status.state).to_owned())
+        .filter(|balance| balance.token_type_hex != NATIVE_SHIELDED_NIGHT_TOKEN_TYPE)
 }
 
 fn home_shielded_detail(status: &WalletShieldedSyncView) -> String {
@@ -10194,6 +10176,7 @@ fn SettingsPage(
     active_profile: WalletProfileView,
     lifecycle_wake: Signal<u64>,
     secret_mode: SecretModeController,
+    on_root_recovered: EventHandler<WalletProfileView>,
     on_open_profile: EventHandler<MouseEvent>,
     on_open_diagnostics: EventHandler<MouseEvent>,
 ) -> Element {
@@ -10694,6 +10677,37 @@ fn SettingsPage(
         }
         SecurityCapabilityState::Loading | SecurityCapabilityState::Failed(_) => rsx! {},
     };
+    #[cfg(feature = "preprod-observation")]
+    let root_recovery_card = match security.read().clone() {
+        SecurityCapabilityState::Ready(status)
+            if status.state_name() == "Uninitialized"
+                && services.wallet_root_recovery.is_some() =>
+        {
+            let profile = active_profile.clone();
+            rsx! {
+                WalletRootRecoveryForm {
+                    profile,
+                    lifecycle_wake,
+                    on_recovered: move |profile| {
+                        secret_mode.rearm();
+                        on_root_recovered.call(profile);
+                    },
+                }
+            }
+        }
+        SecurityCapabilityState::Loading
+        | SecurityCapabilityState::Ready(_)
+        | SecurityCapabilityState::Failed(_) => rsx! {},
+    };
+    #[cfg(not(feature = "preprod-observation"))]
+    let root_recovery_card = {
+        let _ = on_root_recovered;
+        rsx! {}
+    };
+    #[cfg(feature = "standalone-deployment-profile")]
+    let deployment_profile_card = rsx! { DeploymentProfileCard {} };
+    #[cfg(not(feature = "standalone-deployment-profile"))]
+    let deployment_profile_card = rsx! {};
 
     rsx! {
         section { class: "page-heading",
@@ -10715,7 +10729,9 @@ fn SettingsPage(
             }
         }
         {security_card}
+        {root_recovery_card}
         {backup_card}
+        {deployment_profile_card}
         article { class: "settings-card surface-card",
             div {
                 p { class: "card-eyebrow", "Privacy" }
@@ -10817,6 +10833,53 @@ const LUCIDE_EYE_OFF: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="2
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "preprod-observation")]
+    #[test]
+    fn owner_root_input_is_redacted_and_cleared_by_cancel_or_take() {
+        let secret = "31".repeat(32);
+        let mut input = WalletRootInput::new(secret.clone());
+        assert_eq!(format!("{input:?}"), "WalletRootInput([REDACTED])");
+        assert!(!format!("{input:?}").contains(&secret));
+        input.clear();
+        assert!(input.is_empty());
+
+        let mut input = WalletRootInput::new(secret);
+        let taken = input.take();
+        assert_eq!(taken.len(), 64);
+        assert!(input.is_empty());
+    }
+
+    #[test]
+    fn observation_profile_never_admits_wallet_write_actions() {
+        assert!(!wallet_write_actions_available(true));
+        assert!(wallet_write_actions_available(false));
+    }
+
+    #[test]
+    fn observation_profile_finishes_only_an_installed_recovered_account() {
+        assert!(!wallet_account_activation_available(
+            true,
+            true,
+            "Uninitialized",
+            false,
+        ));
+        assert!(wallet_account_activation_available(
+            true, true, "Locked", false,
+        ));
+        assert!(wallet_account_activation_available(
+            true, true, "Unlocked", false,
+        ));
+        assert!(!wallet_account_activation_available(
+            true, true, "Unlocked", true,
+        ));
+        assert!(wallet_account_activation_available(
+            false,
+            true,
+            "Uninitialized",
+            false,
+        ));
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
@@ -11965,6 +12028,40 @@ mod tests {
         assert_eq!(profile_monogram("---", "oxid"), "O");
     }
 
+    #[cfg(feature = "public-standalone-genesis")]
+    #[test]
+    fn public_fixture_requires_explicit_selection_and_duplicates_are_blocked() {
+        assert_eq!(profile_creation_default_name(), "My wallet");
+        let profiles = vec![WalletProfileView {
+            id: "profile_demo".to_owned(),
+            display_name: PUBLIC_STANDALONE_PROFILE_NAME.to_owned(),
+            created_at_millis: 1,
+        }];
+
+        assert!(public_fixture_profile_exists(&profiles));
+        assert!(public_fixture_name_conflicts(
+            &profiles,
+            PUBLIC_STANDALONE_PROFILE_NAME
+        ));
+        assert!(public_fixture_name_conflicts(
+            &profiles,
+            "  Oxid Demo Wallet  "
+        ));
+        assert!(!public_fixture_name_conflicts(&profiles, "Another wallet"));
+        assert_eq!(
+            public_fixture_choice_label(false, false),
+            "Use public demo wallet"
+        );
+        assert_eq!(
+            public_fixture_choice_label(false, true),
+            "Public demo wallet selected"
+        );
+        assert_eq!(
+            public_fixture_choice_label(true, false),
+            "Public demo wallet already exists"
+        );
+    }
+
     #[test]
     fn compact_policy_summary_keeps_revocation_truthful() {
         let credential = CredentialView {
@@ -12246,6 +12343,49 @@ mod tests {
             shielded_sync_note(&shielded_status("stalled", Some(1), Some(2)))
                 .contains("last consistent checkpoint")
         );
+    }
+
+    #[test]
+    fn shielded_night_balance_distinguishes_zero_from_unavailable() {
+        let synced_zero = shielded_status("synced", Some(2), Some(2));
+        assert_eq!(home_shielded_value(&synced_zero), "0 NIGHT");
+
+        let mut funded = shielded_status("synced", Some(2), Some(2));
+        funded.balances = vec![oxid_wallet_application::WalletShieldedTokenBalanceView {
+            token_type_hex: NATIVE_SHIELDED_NIGHT_TOKEN_TYPE.to_owned(),
+            atomic_units: "1500000".to_owned(),
+        }];
+        assert_eq!(home_shielded_value(&funded), "1.5 NIGHT");
+
+        let unavailable = shielded_status("unavailable", None, None);
+        assert_eq!(home_shielded_value(&unavailable), "—");
+        assert!(home_shielded_detail(&unavailable).contains(ui::sync_state("unavailable")));
+
+        for incomplete in ["cached", "cancelled", "stalled"] {
+            let mut status = shielded_status(incomplete, Some(2), Some(2));
+            status.balances = funded.balances.clone();
+            assert_eq!(home_shielded_value(&status), "1.5 NIGHT · last known");
+            assert!(home_shielded_detail(&status).contains(ui::sync_state(incomplete)));
+        }
+    }
+
+    #[test]
+    fn shielded_token_rows_exclude_native_night_and_preserve_other_tokens() {
+        let mut status = shielded_status("synced", Some(2), Some(2));
+        status.balances = vec![
+            oxid_wallet_application::WalletShieldedTokenBalanceView {
+                token_type_hex: NATIVE_SHIELDED_NIGHT_TOKEN_TYPE.to_owned(),
+                atomic_units: "1".to_owned(),
+            },
+            oxid_wallet_application::WalletShieldedTokenBalanceView {
+                token_type_hex: "aa".repeat(32),
+                atomic_units: "2".to_owned(),
+            },
+        ];
+
+        let rows = non_native_shielded_balances(&status).collect::<Vec<_>>();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].token_type_hex, "aa".repeat(32));
     }
 
     #[test]
@@ -12604,7 +12744,7 @@ mod tests {
     fn protocol_error_feedback_renders_a_durable_sanitized_terminal_status() {
         let source = include_str!("lib.rs");
         let rendered_source = source
-            .split("#[cfg(test)]")
+            .split("\n#[cfg(test)]\nmod tests {")
             .next()
             .expect("production source precedes tests");
         assert_eq!(

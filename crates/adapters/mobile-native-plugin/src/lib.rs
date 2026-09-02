@@ -291,11 +291,11 @@ fn call_android_custody(
 
 #[cfg(target_os = "android")]
 fn call_android_activity(method: &str) -> Result<String, NativeBridgeError> {
-    manganis::android::with_activity(|mut environment, activity| {
+    manganis::android::with_activity(|environment, activity| {
         let result = (|| {
             let value = environment.call_method(activity, method, "()Ljava/lang/String;", &[]);
-            let value = android_jni_result(&mut environment, value)?;
-            android_string(&mut environment, value)
+            let value = android_jni_result(environment, value)?;
+            android_string(environment, value)
         })();
         Some(result)
     })
@@ -307,10 +307,10 @@ fn call_android_activity_with_string(
     method: &str,
     value: &str,
 ) -> Result<String, NativeBridgeError> {
-    manganis::android::with_activity(|mut environment, activity| {
+    manganis::android::with_activity(|environment, activity| {
         let result = (|| {
             let value = environment.new_string(value);
-            let value = android_jni_result(&mut environment, value)?;
+            let value = android_jni_result(environment, value)?;
             let argument = manganis::jni::objects::JValue::Object(value.as_ref());
             let result = environment.call_method(
                 activity,
@@ -318,8 +318,8 @@ fn call_android_activity_with_string(
                 "(Ljava/lang/String;)Ljava/lang/String;",
                 &[argument],
             );
-            let result = android_jni_result(&mut environment, result)?;
-            android_string(&mut environment, result)
+            let result = android_jni_result(environment, result)?;
+            android_string(environment, result)
         })();
         Some(result)
     })
@@ -328,15 +328,15 @@ fn call_android_activity_with_string(
 
 #[cfg(target_os = "android")]
 fn call_android_activity_with_bool(method: &str, value: bool) -> Result<String, NativeBridgeError> {
-    manganis::android::with_activity(|mut environment, activity| {
+    manganis::android::with_activity(|environment, activity| {
         let result = environment.call_method(
             activity,
             method,
             "(Z)Ljava/lang/String;",
             &[manganis::jni::objects::JValue::Bool(u8::from(value))],
         );
-        let result = android_jni_result(&mut environment, result)
-            .and_then(|value| android_string(&mut environment, value));
+        let result = android_jni_result(environment, result)
+            .and_then(|value| android_string(environment, value));
         Some(result)
     })
     .ok_or(NativeBridgeError::Unavailable)?

@@ -91,8 +91,15 @@ run_unit() {
   cargo test --workspace \
     --exclude oxid-ui-dioxus \
     --exclude oxid-app \
+    --exclude oxid-adapter-storage-dev \
+    --exclude oxid-composition \
     --lib \
     --bins
+  # Exercise the opt-in fixture code in ordinary non-live CI without running
+  # either crate twice. Default graphs remain covered by workspace Clippy and
+  # the release feature/artifact guards.
+  cargo test -p oxid-adapter-storage-dev --features development-fixture --lib
+  cargo test -p oxid-composition --features standalone-development
 }
 
 run_core() {

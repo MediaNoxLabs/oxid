@@ -43,6 +43,7 @@ just check             # the light strict gate: fmt, architecture, clippy, tests
 | `just ios-standalone-local-smoke` / `just android-standalone-local-smoke` | Protected live-account sync through the laptop loopback stack |
 | `just standalone-phone-up` / `just standalone-down` | Start/stop the loopback stack and Oxid-owned tailnet TLS routes |
 | `just android-phone` | Build and launch the compile-time standalone tailnet profile on one physical Android device |
+| `just android-preprod-observe` | Build and launch owner-entered, read-only PreProd recovery on one Android target |
 | `just nix-check` | Every hermetic flake check (slow, sandboxed) |
 
 Run the gate from inside `nix develop` — coverage needs `cargo-llvm-cov`
@@ -94,7 +95,43 @@ OXID_MOBILE_CUSTODY=native OXID_MOBILE_PRESENTATION_PROVING=artifacts just andro
 This large build is simulator/emulator conformance evidence, not physical-device
 or production readiness. The ordinary commands remain proof-disabled.
 
+## Observe an existing PreProd wallet on Android
+
+`just android-preprod-observe` is the explicit native-custody path for an owner
+who already has a Midnight PreProd wallet root. The launcher embeds only the
+reviewed signed deployment profile and public verification key. Never pass the
+root through an environment variable, shell argument, file, QR code, or log.
+
+Connect and unlock the selected Android device, then run:
+
+```bash
+just android-preprod-observe
+```
+
+In the app, choose **Recover existing PreProd wallet**, name the new empty
+profile, and enter the 64-character lowercase hexadecimal wallet root in the
+password field. Check the explicit recovery confirmation, choose **Authorize
+and recover**, and approve the native device-protection prompt. The app derives
+only canonical account `0` / address `0`. Open **Wallet** and choose **Sync now**
+to observe NIGHT, shielded token, and DUST balances from the authenticated
+PreProd endpoints.
+
+The build is deliberately observation-only: it offers no send, DUST
+registration, proving, or submission controls. Cancelling or backgrounding the
+app clears the input. Failed native authorization leaves the empty profile
+retryable; successful recovery is one-shot and duplicate import is rejected.
+If account metadata could not be persisted after that one-shot installation,
+Wallet offers **Authorize and finish account**; it never asks for the root a
+second time.
+If the signed deployment profile or live node genesis cannot be authenticated,
+startup fails closed before the recovery screen is available.
+
 ## Physical Android against the laptop standalone stack
+
+Repository launchers select development custody first, which adds
+`standalone-development`, and only then add the `standalone-local` or
+`standalone-tailnet` transport flag. Bare transport flags are intentionally
+non-compiling because a route must never choose custody implicitly.
 
 Connect the laptop and phone to the same tailnet, authorize USB debugging, and
 ensure no Android emulator or iOS simulator is running. Then use:
@@ -109,7 +146,35 @@ TLS-terminated Tailscale Serve routes and the phone command embeds their current
 MagicDNS URLs only in the explicit `standalone-tailnet` development build. No
 personal IP, local password, or endpoint is committed. The profile is
 incompatible with native custody and is excluded from normal release artifacts.
+Choose **Use public demo wallet**, then create the uniquely named **Oxid Demo
+Wallet** profile in either live standalone build. This explicit action opts in
+to the chain's shared public genesis wallet; the ordinary form still defaults
+to **My wallet** with random custody. Duplicate fixture names fail closed and
+other profiles remain random.
+After deriving account `0/0`, choose **Sync now** to load NIGHT, shielded NIGHT,
+and DUST independently. Treat every asset on this public wallet as disposable
+test value: anyone can derive the same authority.
+Open **Settings & backup** and review **Standalone deployment** to confirm the
+build selected `standalone-tailnet` and to refresh indexer, node, prover, and
+SSI independently. The card intentionally shows no hostname or endpoint. An
+unavailable row means the already-selected MagicDNS/TLS route did not pass its
+bounded check; confirm Tailscale is connected on the phone, ACL access is
+granted, and `just standalone-phone-up` is still running, then choose **Check
+again**. The wallet never enumerates Tailnet peers or changes routes at runtime.
+For the owner-run physical check, verify indexer, node, and prover are ready;
+SSI is ready for a Portal build and `not_configured` for the wallet-only build.
+Briefly disconnect Tailscale on the phone and confirm a refresh fails closed
+without changing the `standalone-tailnet` label, then reconnect and refresh.
+With the local stack running, `just standalone-public-balances` proves the exact
+three genesis projections through the same live application ports. Restart the
+standalone stack first if an authorized funding test spent the shared fixture.
 Stop the owned containers and Serve routes with `just standalone-down`.
+
+Optional future deployments may use
+[Tailscale Services](https://tailscale.com/kb/1552/tailscale-services) for a
+stable service name. That administrator-managed setup is intentionally not
+required for this laptop development loop and is tracked in
+[issue #251](https://github.com/MediaNoxLabs/oxid/issues/251).
 
 Physical identity-ingress evidence is intentionally interactive and never
 clears application data. Generate the deterministic public offer with

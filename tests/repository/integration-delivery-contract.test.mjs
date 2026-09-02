@@ -349,7 +349,7 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(ci, /^  repository_gate:$/m);
   assert.match(ci, /^  locked_nix_gate:$/m);
   assert.match(ci, /name: Basic gate \(policy, lint, compile\)[\s\S]*?timeout-minutes: 5/);
-  assert.match(ci, /name: Unit tests \(Linux host\)[\s\S]*?timeout-minutes: 10/);
+  assert.match(ci, /name: Unit tests \(Linux host\)[\s\S]*?timeout-minutes: 12/);
   assert.match(ci, /name: Headless integration tests \(Linux host\)[\s\S]*?timeout-minutes: 10/);
   assert.match(ci, /name: Optimized UI release artifact \(Linux host\)[\s\S]*?timeout-minutes: 25/);
   assert.match(ci, /nix develop \.#ci-rust --command \.\/scripts\/ci\/run-with-sccache-stats\.sh \.\/run\.sh basic --strict/);

@@ -2245,6 +2245,14 @@ to silence the shell probe.
   unrelated mappings with `reverse --remove-all`. The prototype exposes its
   localhost/Tailscale entries through a runtime network picker; Oxid's
   compile-time split is intentional hardening, not copied behavior. The public
+  Settings projection may report only the closed profile identity and
+  independent indexer/node/prover/SSI readiness values. Keep raw URLs, DNS and
+  TLS errors, peer data, and response bodies below the adapter boundary. Mobile
+  readiness resolves and probes the routes selected by the host launcher; it
+  must never call the Tailscale control plane, enumerate peers, fall back to a
+  different host, or become a runtime endpoint picker. Tailscale Services are
+  an optional administrator-managed follow-up, not a local harness dependency.
+  The public
   undeployed placeholder validates composition only and must be replaced by
   profile-derived account binding before sync. Every persistent live/standalone
   composition must attach the same `JsonWalletProfileRepository` instance to
@@ -2257,7 +2265,20 @@ to silence the shell probe.
   compatibility choice unless a pinned image/schema upgrade is made atomically.
   Development custody remains process-local: after process death, retain the
   public association but report uninitialized protection and withhold the
-  former addresses. This private harness is not verified public App Link or
+  former addresses until initialization. The live local/tailnet app calls
+  explicitly named `public_genesis` constructors; additive Cargo features must
+  never change the existing OS-random constructor behavior. Those constructors
+  supply the public scalar-one standalone genesis root through development
+  custody's typed profile-specific initializer only for the unique `Oxid Demo
+  Wallet` profile. Duplicate fixture names fail closed, initialization order is
+  irrelevant, and generic randomness stays OS-backed for ordinary profile
+  roots, nonces, references, and generated keys. The root is shared public
+  test authority, never private wallet material, and must remain absent from
+  normal/native-custody artifacts, UI DTOs, logs, and diagnostics. Every build
+  that includes it must render the `OXID_PUBLIC_STANDALONE_GENESIS_WALLET`
+  warning before and after profile selection. Balance
+  display still requires independent live NIGHT, DUST, and shielded sync. This
+  private harness is not verified public App Link or
   production-discovery evidence. Both live profiles share one undeployed chain
   identity, the same typed adapters, and the same durable public
   profile/account binding; only transport differs. Deterministic

@@ -152,6 +152,9 @@ standalone-recovery-smoke:
 standalone-up:
     ./scripts/standalone-up.sh local
 
+standalone-public-balances:
+    OXID_ENABLE_LIVE_STANDALONE_BALANCES=1 cargo test -p oxid-composition --features standalone-development standalone_funding_tests::public_standalone_genesis_balances_are_exact -- --ignored --exact
+
 standalone-funded-finality:
     ./scripts/test-standalone-funded-finality.sh
 
@@ -220,6 +223,11 @@ android-demo:
 
 android-phone:
     ./scripts/run-android-tailnet.sh
+
+# Owner-invoked physical/mobile read-only PreProd recovery. Seed material is
+# entered only in the native application and never crosses this launcher.
+android-preprod-observe:
+    OXID_MOBILE_CUSTODY=native OXID_PREPROD_OBSERVATION=1 ./scripts/run-android-emulator.sh
 
 android-phone-ingress mode:
     ./scripts/test-android-identity-ingress-physical.sh {{quote(mode)}}

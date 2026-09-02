@@ -6,6 +6,7 @@ use crate::compose_in_memory;
 fn composition_exposes_every_application_capability() {
     let services = compose_in_memory();
 
+    assert!(services.deployment_profile().is_none());
     drop(services.create_wallet_profile());
     drop(services.list_wallet_profiles());
     drop(services.select_wallet_profile());
@@ -14,6 +15,7 @@ fn composition_exposes_every_application_capability() {
     drop(services.initialize_wallet_security());
     drop(services.unlock_wallet());
     drop(services.lock_wallet());
+    assert!(services.wallet_root_recovery().is_none());
     drop(services.export_portable_wallet_backup());
     drop(services.recover_portable_wallet_backup());
     drop(services.export_complete_wallet_backup());

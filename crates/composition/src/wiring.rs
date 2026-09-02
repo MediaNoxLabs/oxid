@@ -242,11 +242,46 @@ where
         + NativeMidnightCompositionCapability
         + 'static,
 {
-    compose_with_adapters_and_presentation(
+    compose_with_adapters_and_protection(repository, security, midnight, |security| security)
+}
+
+pub(super) fn compose_with_adapters_and_protection<R, S, M, F>(
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    protection_for_security: F,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository
+        + WalletProfileAssociationRepository
+        + WalletBackupReceiptRepository
+        + 'static,
+    S: WalletProtectionPort
+        + WalletKeyOperationPort
+        + WalletJubjubChallengeSigningPort
+        + WalletPortableBackupPort
+        + PortableCustodyVaultPort
+        + 'static,
+    M: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletAccountDerivationPort
+        + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
+        + WalletShieldedSyncPort
+        + WalletTransactionPort
+        + MidnightPublicCallContextSource
+        + MidnightDiagnosticAttachPort
+        + NativeMidnightCompositionCapability
+        + 'static,
+    F: FnOnce(Arc<S>) -> Arc<dyn WalletProtectionPort>,
+{
+    compose_with_adapters_and_credential_profile(
         repository,
         security,
         midnight,
         CredentialPresentationComposition::Standalone,
+        HeadlessCredentialProfile::Standalone,
+        protection_for_security,
     )
 }
 
@@ -285,15 +320,17 @@ where
         midnight,
         credential_presentation,
         HeadlessCredentialProfile::Standalone,
+        |security| security,
     )
 }
 
-pub(super) fn compose_with_adapters_and_credential_profile<R, S, M>(
+pub(super) fn compose_with_adapters_and_credential_profile<R, S, M, F>(
     repository: Arc<R>,
     security: Arc<S>,
     midnight: Arc<M>,
     credential_presentation: CredentialPresentationComposition,
     credential_profile: HeadlessCredentialProfile,
+    protection_for_security: F,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository
@@ -317,6 +354,7 @@ where
         + MidnightDiagnosticAttachPort
         + NativeMidnightCompositionCapability
         + 'static,
+    F: FnOnce(Arc<S>) -> Arc<dyn WalletProtectionPort>,
 {
     let key_operations: Arc<dyn WalletKeyOperationPort> = security.clone();
     let challenge_signing: Arc<dyn WalletJubjubChallengeSigningPort> = security.clone();
@@ -386,15 +424,17 @@ where
             portal_test_ingress,
         },
         headless_passport_vault_repository(),
+        protection_for_security,
     )
 }
 
-pub(super) fn compose_with_identity_adapters<R, S, M>(
+pub(super) fn compose_with_identity_adapters<R, S, M, F>(
     repository: Arc<R>,
     security: Arc<S>,
     midnight: Arc<M>,
     identity_adapters: IdentityAdapters,
     passport_vault_repository: PassportVaultRepositoryComposition,
+    protection_for_security: F,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository
@@ -418,6 +458,7 @@ where
         + MidnightDiagnosticAttachPort
         + NativeMidnightCompositionCapability
         + 'static,
+    F: FnOnce(Arc<S>) -> Arc<dyn WalletProtectionPort>,
 {
     let diagnostic_repository = Arc::new(InMemoryDiagnosticStore::default());
     let diagnostic_events: Arc<dyn DiagnosticEventSinkPort> = diagnostic_repository.clone();
@@ -537,7 +578,8 @@ where
         repository,
         Arc::clone(&clock),
     ));
-    let protection = Arc::new(WalletProtectionService::new(Arc::clone(&security)));
+    let protection_port = protection_for_security(Arc::clone(&security));
+    let protection = Arc::new(WalletProtectionService::new(protection_port));
     let portable_backup = Arc::new(WalletPortableBackupService::new(Arc::clone(&security)));
     let keys = Arc::new(WalletKeyService::new(security));
     let midnight_public_call_context: Arc<dyn MidnightPublicCallContextSource> = midnight.clone();
@@ -945,6 +987,7 @@ where
     > = passport_vault_contract_calls;
 
     ApplicationServices {
+        deployment_profile: None,
         diagnostic_events,
         get_diagnostic_snapshot,
         clear_diagnostics,
@@ -971,6 +1014,7 @@ where
         initialize_wallet_security,
         unlock_wallet,
         lock_wallet,
+        wallet_root_recovery: None,
         export_portable_wallet_backup,
         recover_portable_wallet_backup,
         export_complete_wallet_backup,
