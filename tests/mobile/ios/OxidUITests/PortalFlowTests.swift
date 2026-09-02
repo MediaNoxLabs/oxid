@@ -249,15 +249,18 @@ final class PortalFlowTests: XCTestCase {
         application.buttons["Wallet"].tap()
         let activate = application.buttons["Activate protected Midnight account"]
         if activate.waitForExistence(timeout: 5) {
+            scrollTo(activate, in: application)
             activate.tap()
             XCTAssertTrue(application.buttons["Use my receive address"].waitForExistence(timeout: 45))
         }
         application.buttons["Documents"].tap()
         let manage = application.buttons["Manage identities"]
         XCTAssertTrue(manage.waitForExistence(timeout: 10))
+        scrollTo(manage, in: application)
         manage.tap()
         let createDid = application.buttons["Create standalone DID"]
         XCTAssertTrue(createDid.waitForExistence(timeout: 10))
+        scrollTo(createDid, in: application)
         createDid.tap()
         XCTAssertTrue(application.descendants(matching: .any)["Manage this DID"].waitForExistence(timeout: 30))
     }
@@ -343,6 +346,11 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertTrue(application.staticTexts[
             "Credential issued, verified, and stored in the protected inventory."
         ].waitForExistence(timeout: 100))
+        XCTAssertTrue(application.staticTexts["Saved to your wallet"].waitForExistence(timeout: 20))
+        XCTAssertTrue(
+            application.staticTexts["Credential offer preview"].waitForNonExistence(timeout: 20)
+        )
+        XCTAssertFalse(application.buttons["Accept and issue credential"].exists)
         XCTAssertTrue(application.staticTexts[
             "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
         ].waitForExistence(timeout: 20))
@@ -360,6 +368,7 @@ final class PortalFlowTests: XCTestCase {
         application.buttons["Wallet"].tap()
         let reactivate = application.buttons["Activate protected Midnight account"]
         XCTAssertTrue(reactivate.waitForExistence(timeout: 15))
+        scrollTo(reactivate, in: application)
         reactivate.tap()
         XCTAssertTrue(application.buttons["Use my receive address"].waitForExistence(timeout: 45))
         application.buttons["Documents"].tap()

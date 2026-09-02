@@ -50,7 +50,7 @@ case "$mode" in
     ;;
   signal|timeout)
     trap 'failure_phase=signal-term; exit 143' TERM
-    if [ "$mode" = signal ]; then kill -TERM "$BASHPID"; fi
+    if [ "$mode" = signal ]; then kill -TERM "$$"; fi
     while :; do :; done
     ;;
   *) exit 64 ;;
@@ -162,13 +162,13 @@ fi
 cat >"$temporary/grandchild.sh" <<'EOF'
 #!/usr/bin/env bash
 trap 'printf "TERM\n" >"$2"' TERM
-printf '%s\n' "$BASHPID" >"$1"
+printf '%s\n' "$$" >"$1"
 while :; do sleep 1; done
 EOF
 chmod 700 "$temporary/grandchild.sh"
 cat >"$temporary/owner.sh" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "$BASHPID" >"$1"
+printf '%s\n' "$$" >"$1"
 bash "$2" "$3" "$4"
 status=$?
 printf '%s\n' "$status" >/dev/null
@@ -198,7 +198,7 @@ fi
 
 sleep 30 &
 direct_pid=$!
-oxid_direct_child_owned "$direct_pid" "$BASHPID" || fail direct-child-owned
+oxid_direct_child_owned "$direct_pid" "$$" || fail direct-child-owned
 kill -TERM "$direct_pid"
 wait "$direct_pid" 2>/dev/null || true
 
@@ -210,7 +210,7 @@ for ((_attempt = 0; _attempt < 50; _attempt++)); do
   timeout -k 1s 1s sleep 0.05
 done
 changed_parent_pid="$(<"$temporary/changed-parent.pid")"
-if oxid_direct_child_owned "$changed_parent_pid" "$BASHPID"; then
+if oxid_direct_child_owned "$changed_parent_pid" "$$"; then
   fail changed-parent-refused
 fi
 oxid_terminate_supervised_job "$intermediary_pid" || fail changed-parent-cleanup
@@ -247,12 +247,12 @@ OXID_FAKE_EMULATOR_TERM="$temporary/emulator-term.seen" \
 fake_emulator_pid=$!
 fake_emulator_executable=node
 for ((_attempt = 0; _attempt < 50; _attempt++)); do
-  oxid_emulator_job_owned "$fake_emulator_pid" "$BASHPID" "$fake_emulator_executable" exact_avd 5562 && break
+  oxid_emulator_job_owned "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 && break
   timeout -k 1s 1s sleep 0.05
 done
-oxid_emulator_job_owned "$fake_emulator_pid" "$BASHPID" "$fake_emulator_executable" exact_avd 5562 \
+oxid_emulator_job_owned "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 \
   || fail direct-emulator-owned
-oxid_terminate_emulator_job "$fake_emulator_pid" "$BASHPID" "$fake_emulator_executable" exact_avd 5562 \
+oxid_terminate_emulator_job "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 \
   || fail direct-emulator-cleanup
 [ -f "$temporary/emulator-term.seen" ] || fail direct-emulator-term
 process_is_live "$fake_emulator_pid" && fail direct-emulator-survivor

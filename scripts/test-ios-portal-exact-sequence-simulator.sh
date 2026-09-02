@@ -329,7 +329,10 @@ run_deadline 5 chmod 700 "$PRIVATE_STATE" || fail private-state-mode
 : >"$PRIVATE_LOG"
 run_deadline 5 chmod 600 "$PRIVATE_LOG" || fail private-log-mode
 
-simulator_name="oxid-issue-213-$BASHPID-$RANDOM"
+# The owner command must also run with macOS' system Bash 3.2, where BASHPID is
+# unavailable. This is the top-level harness process, so `$$` is the exact
+# stable owner PID required for the unique disposable simulator name.
+simulator_name="oxid-issue-213-$$-$RANDOM"
 simulator_mutation_started=1
 udid="$(oxid_ios_create_owned "$DEVELOPER_DIR_SELECTED" "$RUNTIME_ID" "$DEVICE_TYPE_ID" "$simulator_name" "$RECEIPT")" || fail simulator-create
 simulator_owned=1
@@ -475,7 +478,7 @@ cold_after="$(counter_snapshot)"
 write_scenario cold-route "$(counter_delta "$cold_before" "$cold_after")" '{"coldIngress":true,"oneItemIngress":true}' || fail cold-result
 assert_consumed || fail cold-consume
 run_ios_test testPrepareHolder || fail prepare-holder
-write_scenario prepare-holder '{"authorizationMetadata":0,"credential":0,"issuerMetadata":0,"issuerResolution":0,"issuerResolutionSuccess":0,"kyc":0,"nonce":0,"other":0,"token":0}' '{"managedDidPrepared":true}' || fail holder-result
+write_scenario prepare-holder '{"authorizationMetadata":0,"credential":0,"issuerMetadata":0,"issuerResolution":0,"issuerResolutionSuccess":0,"holderPublications":0,"kyc":0,"nonce":0,"other":0,"token":0}' '{"managedDidPrepared":true}' || fail holder-result
 did_store="$app_support/private/did-records.json"
 [ -f "$did_store" ] && [ ! -L "$did_store" ] || fail holder-store
 run_deadline 10 cat "$did_store" | control_curl -H 'Content-Type: application/json' --data-binary @- "$CONTROL_ORIGIN/holder" >/dev/null || fail holder-sync
@@ -524,7 +527,7 @@ write_scenario restored "$(counter_delta "$restored_before" "$restored_after")" 
 
 total_counters="$(counter_snapshot)"
 run_deadline 10 jq -e '.authorizationMetadata == 3 and .credential == 1 and .issuerMetadata == 6
-  and .issuerResolution == 3 and .issuerResolutionSuccess == 3 and .kyc == 14
+  and .issuerResolution == 3 and .issuerResolutionSuccess == 3 and .holderPublications == 0 and .kyc == 14
   and .nonce == 1 and .other == 0 and .token == 2' <<<"$total_counters" >/dev/null || fail total-counters
 scenario_results="$(run_deadline 10 jq -s -c '.' \
   "$PRIVATE_STATE/scenario-cold-route.json" "$PRIVATE_STATE/scenario-prepare-holder.json" \

@@ -15,7 +15,7 @@ const supportSource = fs.readFileSync(
 
 function issueErrorTerminalWait() {
   const start = source.indexOf('} else if (mode === "issue-error")');
-  const acceptance = source.indexOf('await click("Accept and issue credential");', start);
+  const acceptance = source.indexOf('await touchButton("Accept and issue credential");', start);
   const restoreProxy = source.indexOf('await setProxyMode("normal");', acceptance);
   assert.ok(start >= 0 && acceptance >= start && restoreProxy > acceptance);
   return source.slice(acceptance, restoreProxy);
@@ -77,9 +77,14 @@ test("issue accepts either the completion notice or the protected valid-record s
 
 test("Android issuance consent crosses a real touch boundary", () => {
   assert.match(source, /async function touchCheckbox\(selector, description\)/u);
+  assert.match(source, /async function touchButton\(label, timeoutMs = 20_000\)/u);
   assert.match(source, /Input\.dispatchTouchEvent/u);
   assert.equal(
     source.match(/await touchCheckbox\("#credential-issuance-consent", "issuance consent"\);/gu)?.length,
+    2,
+  );
+  assert.equal(
+    source.match(/await touchButton\("Accept and issue credential"\);/gu)?.length,
     2,
   );
   assert.doesNotMatch(
