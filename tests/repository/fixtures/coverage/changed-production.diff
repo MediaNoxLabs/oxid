@@ -1,0 +1,46 @@
+diff --git a/crates/foundation/src/lib.rs b/crates/foundation/src/lib.rs
+index 1111111..2222222 100644
+--- a/crates/foundation/src/lib.rs
++++ b/crates/foundation/src/lib.rs
+@@ -9,0 +10,3 @@
++pub fn covered_change() {}
++// comment-only addition
++pub fn missed_change() {}
+diff --git a/crates/identity/domain/src/new.rs b/crates/identity/domain/src/new.rs
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/crates/identity/domain/src/new.rs
+@@ -0,0 +1,2 @@
++pub fn new_covered() {}
++pub fn new_missed() {}
+diff --git a/crates/wallet/domain/src/old.rs b/crates/wallet/domain/src/renamed.rs
+similarity index 80%
+rename from crates/wallet/domain/src/old.rs
+rename to crates/wallet/domain/src/renamed.rs
+index 4444444..5555555 100644
+--- a/crates/wallet/domain/src/old.rs
++++ b/crates/wallet/domain/src/renamed.rs
+@@ -20,0 +21 @@
++pub fn renamed_change() {}
+diff --git a/apps/oxid-headless/tests/ignored.rs b/apps/oxid-headless/tests/ignored.rs
+new file mode 100644
+index 0000000..6666666
+--- /dev/null
++++ b/apps/oxid-headless/tests/ignored.rs
+@@ -0,0 +1 @@
++fn test_only() {}
+diff --git a/crates/foundation/src/generated/schema.rs b/crates/foundation/src/generated/schema.rs
+new file mode 100644
+index 0000000..7777777
+--- /dev/null
++++ b/crates/foundation/src/generated/schema.rs
+@@ -0,0 +1 @@
++pub fn generated() {}
+diff --git a/crates/foundation/src/issue_157_tests.rs b/crates/foundation/src/issue_157_tests.rs
+new file mode 100644
+index 0000000..8888888
+--- /dev/null
++++ b/crates/foundation/src/issue_157_tests.rs
+@@ -0,0 +1 @@
++fn sibling_test() {}

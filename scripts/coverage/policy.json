@@ -1,0 +1,163 @@
+{
+  "schemaVersion": 2,
+  "workspaceFloorPercent": 80,
+  "packageFloorsPercent": {
+    "core": 85,
+    "critical": 90
+  },
+  "scopes": [
+    {
+      "id": "workspace-aggregate",
+      "command": [
+        "cargo",
+        "llvm-cov",
+        "--workspace",
+        "--exclude",
+        "oxid-ui-dioxus",
+        "--exclude",
+        "oxid-app",
+        "--exclude",
+        "oxid-headless",
+        "--json",
+        "--fail-under-lines",
+        "80"
+      ]
+    },
+    {
+      "id": "headless-host",
+      "command": [
+        "cargo",
+        "llvm-cov",
+        "-p",
+        "oxid-headless",
+        "--all-targets",
+        "--json"
+      ]
+    },
+    {
+      "id": "desktop-host",
+      "command": [
+        "cargo",
+        "llvm-cov",
+        "-p",
+        "oxid-ui-dioxus",
+        "--all-targets",
+        "--features",
+        "ui-profile-demo,app-profile-authority",
+        "--json"
+      ]
+    }
+  ],
+  "baselines": {
+    "mode": "placeholder",
+    "scopes": [
+      { "scope": "workspace-aggregate", "count": null, "covered": null },
+      { "scope": "headless-host", "count": null, "covered": null },
+      { "scope": "desktop-host", "count": null, "covered": null }
+    ]
+  },
+  "pathRules": {
+    "production": [
+      "apps/*/src/**/*.rs",
+      "crates/*/src/**/*.rs"
+    ],
+    "excludedDirectories": [
+      "tests",
+      "examples",
+      "benches"
+    ],
+    "generated": [
+      "**/generated/**"
+    ],
+    "siblingTestSuffix": "_tests.rs"
+  },
+  "changedLines": {
+    "floorPercent": 90,
+    "diffArguments": [
+      "--unified=0",
+      "--diff-filter=AMCR"
+    ],
+    "range": "BASE...HEAD",
+    "zeroDenominator": "not-applicable"
+  },
+  "comparisonBase": {
+    "resolveToCommit": true,
+    "requireAncestor": true,
+    "range": "BASE...HEAD"
+  },
+  "classifications": {
+    "core": [
+      "oxid-foundation",
+      "oxid-platform-ports",
+      "oxid-wallet-domain",
+      "oxid-identity-domain",
+      "oxid-credential-domain",
+      "oxid-presentation-domain",
+      "oxid-protocol-domain",
+      "oxid-passport-vault-domain"
+    ],
+    "critical": [
+      "oxid-wallet-application",
+      "oxid-identity-application",
+      "oxid-credential-application",
+      "oxid-presentation-application",
+      "oxid-protocol-application",
+      "oxid-passport-vault-application",
+      "oxid-adapter-custody-software",
+      "oxid-adapter-did-midnight",
+      "oxid-adapter-vc-midnight",
+      "oxid-adapter-openid4vci",
+      "oxid-adapter-openid4vp",
+      "oxid-adapter-siopv2",
+      "oxid-adapter-midnight",
+      "oxid-adapter-passport-vault",
+      "oxid-adapter-store-atomic",
+      "oxid-adapter-storage-json",
+      "oxid-adapter-storage-credential-json",
+      "oxid-adapter-storage-identity-json",
+      "oxid-adapter-backup-portable",
+      "oxid-adapter-backup-complete",
+      "oxid-composition"
+    ],
+    "workspaceOnly": [
+      "oxid-mcp",
+      "oxid-brand-build",
+      "oxid-adapter-platform-system",
+      "oxid-adapter-diagnostics-memory",
+      "oxid-adapter-deployment-profile",
+      "oxid-adapter-identity-ingress",
+      "oxid-adapter-backup-document-mobile",
+      "oxid-adapter-mobile-native",
+      "oxid-adapter-storage-memory",
+      "oxid-adapter-storage-mobile",
+      "oxid-adapter-storage-dev",
+      "oxid-capabilities-application",
+      "oxid-diagnostics-application"
+    ],
+    "additionalScopes": [
+      {
+        "package": "oxid-headless",
+        "scope": "headless-host"
+      },
+      {
+        "package": "oxid-ui-dioxus",
+        "scope": "desktop-host"
+      }
+    ],
+    "plainTestExclusions": [
+      {
+        "package": "oxid-app",
+        "owner": "issue-157",
+        "reason": "The host assembly matrix remains plain-test-only until a source-bound application harness is reviewed; this does not exclude headless or desktop host evidence.",
+        "command": [
+          "cargo",
+          "test",
+          "-p",
+          "oxid-app"
+        ],
+        "removalCondition": "Replace with an instrumented host-assembly scope after its feature and platform matrix is explicitly reviewed."
+      }
+    ]
+  },
+  "exceptions": []
+}
