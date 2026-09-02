@@ -71,6 +71,9 @@
     "generated": [
       "**/generated/**"
     ],
+    "nonExecutableSources": [
+      "crates/composition/src/lib.rs"
+    ],
     "testModuleFilename": "tests.rs",
     "siblingTestSuffix": "_tests.rs"
   },

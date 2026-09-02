@@ -230,16 +230,17 @@ export function validatePolicy(policy, workspacePackages, { now = new Date() } =
 
   assertClosedObject(
     policy.pathRules,
-    ["production", "excludedDirectories", "generated", "testModuleFilename", "siblingTestSuffix"],
+    ["production", "excludedDirectories", "generated", "nonExecutableSources", "testModuleFilename", "siblingTestSuffix"],
     "pathRules",
   );
   if (JSON.stringify(policy.pathRules.production) !== JSON.stringify([
     "apps/*/src/**/*.rs", "crates/*/src/**/*.rs",
   ]) || JSON.stringify(policy.pathRules.excludedDirectories) !== JSON.stringify(["tests", "examples", "benches"])
       || JSON.stringify(policy.pathRules.generated) !== JSON.stringify(["**/generated/**"])
+      || JSON.stringify(policy.pathRules.nonExecutableSources) !== JSON.stringify(["crates/composition/src/lib.rs"])
       || policy.pathRules.testModuleFilename !== "tests.rs"
       || policy.pathRules.siblingTestSuffix !== "_tests.rs") {
-    throw new Error("production, test, generated, or sibling path rules differ from the reviewed contract");
+    throw new Error("production, test, generated, non-executable, or sibling path rules differ from the reviewed contract");
   }
   assertClosedObject(policy.changedLines, ["floorPercent", "diffArguments", "range", "zeroDenominator"], "changedLines");
   if (policy.changedLines.floorPercent !== 90
@@ -334,9 +335,12 @@ function packageForPath(sourcePath, packageInventory) {
   return matches[0] ?? null;
 }
 
-function pathRule(sourcePath, packageInventory) {
+function pathRule(sourcePath, packageInventory, pathRules) {
   const packageEntry = packageForPath(sourcePath, packageInventory);
   if (!packageEntry) return { packageEntry: null, production: false, reason: "outside-production" };
+  if (pathRules?.nonExecutableSources.includes(sourcePath)) {
+    return { packageEntry, production: false, reason: "non-executable-source" };
+  }
   const relative = sourcePath.slice(packageEntry.root.length + 1);
   const parts = relative.split("/");
   if (parts.some((part) => ["tests", "examples", "benches"].includes(part))) {
@@ -660,8 +664,9 @@ export function scoreChangedLines(diff, reports, {
     }
   }
   const files = [];
+  const missingMappings = [];
   for (const changed of changedFiles) {
-    const rule = pathRule(changed.path, packageInventory);
+    const rule = pathRule(changed.path, packageInventory, policy.pathRules);
     if (!rule.packageEntry && /^(apps|crates)\/.*\/src\/.*\.rs$/u.test(changed.path)) {
       throw new Error(`unmapped package mapping for changed production source '${changed.path}'`);
     }
@@ -691,7 +696,10 @@ export function scoreChangedLines(diff, reports, {
       });
       continue;
     }
-    if (!evidence) throw new Error(`missing coverage mapping for changed production source '${changed.path}'`);
+    if (!evidence) {
+      missingMappings.push(changed.path);
+      continue;
+    }
     if (!Array.isArray(evidence.executableLines)) {
       throw new Error(`malformed coverage mapping for changed production source '${changed.path}'`);
     }
@@ -714,6 +722,9 @@ export function scoreChangedLines(diff, reports, {
       status: count === 0 ? "not-applicable" : covered * 100 >= count * policy.changedLines.floorPercent ? "pass" : "fail",
       lines: { count, covered, requiredCovered },
     });
+  }
+  if (missingMappings.length > 0) {
+    throw new Error(`missing coverage mappings for changed production sources: ${missingMappings.map((sourcePath) => `'${sourcePath}'`).join(", ")}`);
   }
   files.sort((left, right) => left.path.localeCompare(right.path));
   const included = files.filter((file) => file.lines);

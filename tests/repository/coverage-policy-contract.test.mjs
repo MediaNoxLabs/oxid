@@ -110,6 +110,7 @@ test("policy pins reviewed 85/90 floors, baseline placeholders, paths, diff sema
   assert.ok(policy.baselines.scopes.every(({ count, covered }) => count === null && covered === null));
   assert.deepEqual(policy.pathRules.production, ["apps/*/src/**/*.rs", "crates/*/src/**/*.rs"]);
   assert.deepEqual(policy.pathRules.excludedDirectories, ["tests", "examples", "benches"]);
+  assert.deepEqual(policy.pathRules.nonExecutableSources, ["crates/composition/src/lib.rs"]);
   assert.equal(policy.pathRules.testModuleFilename, "tests.rs");
   assert.deepEqual(policy.changedLines, {
     floorPercent: 90,
@@ -242,6 +243,21 @@ test("conventional Rust tests.rs modules are excluded from production changed li
   assert.equal(score.status, "not-applicable");
 });
 
+test("reviewed declaration-only Rust facades are excluded from executable changed lines", async () => {
+  const policy = await loadPolicy();
+  const inventory = await discoverWorkspacePackageInventory(repoRoot);
+  const sourcePath = "crates/composition/src/lib.rs";
+  const diff = `diff --git a/${sourcePath} b/${sourcePath}\n--- a/${sourcePath}\n+++ b/${sourcePath}\n@@ -0,0 +1 @@\n+pub use environment::AppEnvironment;\n`;
+  const score = scoreChangedLines(diff, [], { policy, packageInventory: inventory });
+  assert.deepEqual(score.files, [{
+    path: sourcePath,
+    change: "modified",
+    status: "excluded",
+    reason: "non-executable-source",
+  }]);
+  assert.equal(score.status, "not-applicable");
+});
+
 test("changed-line exact boundary passes and zero executable denominator is visibly not-applicable", async () => {
   const policy = await loadPolicy();
   const inventory = await discoverWorkspacePackageInventory(repoRoot);
@@ -300,6 +316,11 @@ test("changed-line scorer fails closed for malformed diffs and missing or ambigu
   assert.throws(() => scoreChangedLines("@@ -0,0 +1 @@\n+x\n", [], { policy, packageInventory: inventory }), /malformed git diff/iu);
   const missing = "diff --git a/crates/foundation/src/missing.rs b/crates/foundation/src/missing.rs\n--- /dev/null\n+++ b/crates/foundation/src/missing.rs\n@@ -0,0 +1 @@\n+x\n";
   assert.throws(() => scoreChangedLines(missing, changedReport(inventory), { policy, packageInventory: inventory }), /missing coverage mapping/iu);
+  const secondMissing = "diff --git a/crates/foundation/src/also-missing.rs b/crates/foundation/src/also-missing.rs\n--- /dev/null\n+++ b/crates/foundation/src/also-missing.rs\n@@ -0,0 +1 @@\n+y\n";
+  assert.throws(
+    () => scoreChangedLines(`${missing}${secondMissing}`, changedReport(inventory), { policy, packageInventory: inventory }),
+    /missing.*also-missing\.rs.*missing\.rs|missing.*missing\.rs.*also-missing\.rs/iu,
+  );
   const ambiguous = [...inventory, { name: "duplicate-foundation", root: "crates/foundation" }];
   assert.throws(() => scoreChangedLines(missing, changedReport(inventory), { policy, packageInventory: ambiguous }), /ambiguous package mapping/iu);
 });
