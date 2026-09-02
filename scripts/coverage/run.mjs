@@ -28,13 +28,13 @@ const EXPECTED_COMMANDS = Object.freeze([
     "--exclude", "oxid-ui-dioxus",
     "--exclude", "oxid-app",
     "--exclude", "oxid-headless",
-    "--features", "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication",
+    "--features", "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication,oxid-adapter-storage-dev/development-fixture,oxid-composition/preprod-observation,oxid-composition/standalone-development",
     "--json", "--fail-under-lines", "80",
   ],
   ["cargo", "llvm-cov", "-p", "oxid-headless", "--all-targets", "--json"],
   [
     "cargo", "llvm-cov", "-p", "oxid-ui-dioxus", "--all-targets",
-    "--features", "ui-profile-demo,app-profile-authority", "--json",
+    "--features", "ui-profile-demo,app-profile-authority,standalone-deployment-profile,preprod-observation", "--json",
   ],
 ]);
 const CLASSIFICATION_KEYS = Object.freeze([
@@ -126,6 +126,9 @@ function scopeMetadata(scope) {
       features: [
         "oxid-adapter-deployment-profile/readiness",
         "oxid-adapter-did-midnight/tailnet-test-did-publication",
+        "oxid-adapter-storage-dev/development-fixture",
+        "oxid-composition/preprod-observation",
+        "oxid-composition/standalone-development",
       ],
       profile: "test",
     };
@@ -133,7 +136,12 @@ function scopeMetadata(scope) {
   if (scope.id === "headless-host") return { packages: ["oxid-headless"], features: [], profile: "all-targets" };
   return {
     packages: ["oxid-ui-dioxus"],
-    features: ["ui-profile-demo", "app-profile-authority"],
+    features: [
+      "ui-profile-demo",
+      "app-profile-authority",
+      "standalone-deployment-profile",
+      "preprod-observation",
+    ],
     profile: "all-targets",
   };
 }
@@ -229,15 +237,18 @@ export function validatePolicy(policy, workspacePackages, { now = new Date() } =
 
   assertClosedObject(
     policy.pathRules,
-    ["production", "excludedDirectories", "generated", "siblingTestSuffix"],
+    ["production", "excludedDirectories", "generated", "nonExecutableSources", "testOnlySources", "testModuleFilename", "siblingTestSuffix"],
     "pathRules",
   );
   if (JSON.stringify(policy.pathRules.production) !== JSON.stringify([
     "apps/*/src/**/*.rs", "crates/*/src/**/*.rs",
   ]) || JSON.stringify(policy.pathRules.excludedDirectories) !== JSON.stringify(["tests", "examples", "benches"])
       || JSON.stringify(policy.pathRules.generated) !== JSON.stringify(["**/generated/**"])
+      || JSON.stringify(policy.pathRules.nonExecutableSources) !== JSON.stringify(["crates/composition/src/lib.rs"])
+      || JSON.stringify(policy.pathRules.testOnlySources) !== JSON.stringify(["crates/ui-dioxus/src/desktop_test_driver.rs"])
+      || policy.pathRules.testModuleFilename !== "tests.rs"
       || policy.pathRules.siblingTestSuffix !== "_tests.rs") {
-    throw new Error("production, test, generated, or sibling path rules differ from the reviewed contract");
+    throw new Error("production, test, generated, non-executable, or sibling path rules differ from the reviewed contract");
   }
   assertClosedObject(policy.changedLines, ["floorPercent", "diffArguments", "range", "zeroDenominator"], "changedLines");
   if (policy.changedLines.floorPercent !== 90
@@ -332,15 +343,22 @@ function packageForPath(sourcePath, packageInventory) {
   return matches[0] ?? null;
 }
 
-function pathRule(sourcePath, packageInventory) {
+function pathRule(sourcePath, packageInventory, pathRules) {
   const packageEntry = packageForPath(sourcePath, packageInventory);
   if (!packageEntry) return { packageEntry: null, production: false, reason: "outside-production" };
+  if (pathRules?.testOnlySources.includes(sourcePath)) {
+    return { packageEntry, production: false, reason: "test-only-source" };
+  }
+  if (pathRules?.nonExecutableSources.includes(sourcePath)) {
+    return { packageEntry, production: false, reason: "non-executable-source" };
+  }
   const relative = sourcePath.slice(packageEntry.root.length + 1);
   const parts = relative.split("/");
   if (parts.some((part) => ["tests", "examples", "benches"].includes(part))) {
     return { packageEntry, production: false, reason: "test-directory" };
   }
   if (parts.includes("generated")) return { packageEntry, production: false, reason: "generated" };
+  if (parts.at(-1) === "tests.rs") return { packageEntry, production: false, reason: "test-module" };
   if (sourcePath.endsWith("_tests.rs")) return { packageEntry, production: false, reason: "sibling-test" };
   const production = relative.startsWith("src/") && sourcePath.endsWith(".rs")
     && (packageEntry.root.startsWith("apps/") || packageEntry.root.startsWith("crates/"));
@@ -657,8 +675,9 @@ export function scoreChangedLines(diff, reports, {
     }
   }
   const files = [];
+  const missingMappings = [];
   for (const changed of changedFiles) {
-    const rule = pathRule(changed.path, packageInventory);
+    const rule = pathRule(changed.path, packageInventory, policy.pathRules);
     if (!rule.packageEntry && /^(apps|crates)\/.*\/src\/.*\.rs$/u.test(changed.path)) {
       throw new Error(`unmapped package mapping for changed production source '${changed.path}'`);
     }
@@ -688,7 +707,10 @@ export function scoreChangedLines(diff, reports, {
       });
       continue;
     }
-    if (!evidence) throw new Error(`missing coverage mapping for changed production source '${changed.path}'`);
+    if (!evidence) {
+      missingMappings.push(changed.path);
+      continue;
+    }
     if (!Array.isArray(evidence.executableLines)) {
       throw new Error(`malformed coverage mapping for changed production source '${changed.path}'`);
     }
@@ -711,6 +733,9 @@ export function scoreChangedLines(diff, reports, {
       status: count === 0 ? "not-applicable" : covered * 100 >= count * policy.changedLines.floorPercent ? "pass" : "fail",
       lines: { count, covered, requiredCovered },
     });
+  }
+  if (missingMappings.length > 0) {
+    throw new Error(`missing coverage mappings for changed production sources: ${missingMappings.map((sourcePath) => `'${sourcePath}'`).join(", ")}`);
   }
   files.sort((left, right) => left.path.localeCompare(right.path));
   const included = files.filter((file) => file.lines);
