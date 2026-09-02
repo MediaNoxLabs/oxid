@@ -111,6 +111,7 @@ test("policy pins reviewed 85/90 floors, baseline placeholders, paths, diff sema
   assert.deepEqual(policy.pathRules.production, ["apps/*/src/**/*.rs", "crates/*/src/**/*.rs"]);
   assert.deepEqual(policy.pathRules.excludedDirectories, ["tests", "examples", "benches"]);
   assert.deepEqual(policy.pathRules.nonExecutableSources, ["crates/composition/src/lib.rs"]);
+  assert.deepEqual(policy.pathRules.testOnlySources, ["crates/ui-dioxus/src/desktop_test_driver.rs"]);
   assert.equal(policy.pathRules.testModuleFilename, "tests.rs");
   assert.deepEqual(policy.changedLines, {
     floorPercent: 90,
@@ -254,6 +255,21 @@ test("reviewed declaration-only Rust facades are excluded from executable change
     change: "modified",
     status: "excluded",
     reason: "non-executable-source",
+  }]);
+  assert.equal(score.status, "not-applicable");
+});
+
+test("reviewed runtime test drivers are excluded from production changed lines", async () => {
+  const policy = await loadPolicy();
+  const inventory = await discoverWorkspacePackageInventory(repoRoot);
+  const sourcePath = "crates/ui-dioxus/src/desktop_test_driver.rs";
+  const diff = `diff --git a/${sourcePath} b/${sourcePath}\n--- /dev/null\n+++ b/${sourcePath}\n@@ -0,0 +1 @@\n+fn drive_test() {}\n`;
+  const score = scoreChangedLines(diff, [], { policy, packageInventory: inventory });
+  assert.deepEqual(score.files, [{
+    path: sourcePath,
+    change: "modified",
+    status: "excluded",
+    reason: "test-only-source",
   }]);
   assert.equal(score.status, "not-applicable");
 });

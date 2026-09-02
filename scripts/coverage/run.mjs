@@ -28,13 +28,13 @@ const EXPECTED_COMMANDS = Object.freeze([
     "--exclude", "oxid-ui-dioxus",
     "--exclude", "oxid-app",
     "--exclude", "oxid-headless",
-    "--features", "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication,oxid-adapter-storage-dev/development-fixture",
+    "--features", "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication,oxid-adapter-storage-dev/development-fixture,oxid-composition/preprod-observation,oxid-composition/standalone-development",
     "--json", "--fail-under-lines", "80",
   ],
   ["cargo", "llvm-cov", "-p", "oxid-headless", "--all-targets", "--json"],
   [
     "cargo", "llvm-cov", "-p", "oxid-ui-dioxus", "--all-targets",
-    "--features", "ui-profile-demo,app-profile-authority", "--json",
+    "--features", "ui-profile-demo,app-profile-authority,standalone-deployment-profile,preprod-observation", "--json",
   ],
 ]);
 const CLASSIFICATION_KEYS = Object.freeze([
@@ -127,6 +127,8 @@ function scopeMetadata(scope) {
         "oxid-adapter-deployment-profile/readiness",
         "oxid-adapter-did-midnight/tailnet-test-did-publication",
         "oxid-adapter-storage-dev/development-fixture",
+        "oxid-composition/preprod-observation",
+        "oxid-composition/standalone-development",
       ],
       profile: "test",
     };
@@ -134,7 +136,12 @@ function scopeMetadata(scope) {
   if (scope.id === "headless-host") return { packages: ["oxid-headless"], features: [], profile: "all-targets" };
   return {
     packages: ["oxid-ui-dioxus"],
-    features: ["ui-profile-demo", "app-profile-authority"],
+    features: [
+      "ui-profile-demo",
+      "app-profile-authority",
+      "standalone-deployment-profile",
+      "preprod-observation",
+    ],
     profile: "all-targets",
   };
 }
@@ -230,7 +237,7 @@ export function validatePolicy(policy, workspacePackages, { now = new Date() } =
 
   assertClosedObject(
     policy.pathRules,
-    ["production", "excludedDirectories", "generated", "nonExecutableSources", "testModuleFilename", "siblingTestSuffix"],
+    ["production", "excludedDirectories", "generated", "nonExecutableSources", "testOnlySources", "testModuleFilename", "siblingTestSuffix"],
     "pathRules",
   );
   if (JSON.stringify(policy.pathRules.production) !== JSON.stringify([
@@ -238,6 +245,7 @@ export function validatePolicy(policy, workspacePackages, { now = new Date() } =
   ]) || JSON.stringify(policy.pathRules.excludedDirectories) !== JSON.stringify(["tests", "examples", "benches"])
       || JSON.stringify(policy.pathRules.generated) !== JSON.stringify(["**/generated/**"])
       || JSON.stringify(policy.pathRules.nonExecutableSources) !== JSON.stringify(["crates/composition/src/lib.rs"])
+      || JSON.stringify(policy.pathRules.testOnlySources) !== JSON.stringify(["crates/ui-dioxus/src/desktop_test_driver.rs"])
       || policy.pathRules.testModuleFilename !== "tests.rs"
       || policy.pathRules.siblingTestSuffix !== "_tests.rs") {
     throw new Error("production, test, generated, non-executable, or sibling path rules differ from the reviewed contract");
@@ -338,6 +346,9 @@ function packageForPath(sourcePath, packageInventory) {
 function pathRule(sourcePath, packageInventory, pathRules) {
   const packageEntry = packageForPath(sourcePath, packageInventory);
   if (!packageEntry) return { packageEntry: null, production: false, reason: "outside-production" };
+  if (pathRules?.testOnlySources.includes(sourcePath)) {
+    return { packageEntry, production: false, reason: "test-only-source" };
+  }
   if (pathRules?.nonExecutableSources.includes(sourcePath)) {
     return { packageEntry, production: false, reason: "non-executable-source" };
   }

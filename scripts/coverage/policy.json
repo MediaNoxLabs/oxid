@@ -19,7 +19,7 @@
         "--exclude",
         "oxid-headless",
         "--features",
-        "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication,oxid-adapter-storage-dev/development-fixture",
+        "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication,oxid-adapter-storage-dev/development-fixture,oxid-composition/preprod-observation,oxid-composition/standalone-development",
         "--json",
         "--fail-under-lines",
         "80"
@@ -45,7 +45,7 @@
         "oxid-ui-dioxus",
         "--all-targets",
         "--features",
-        "ui-profile-demo,app-profile-authority",
+        "ui-profile-demo,app-profile-authority,standalone-deployment-profile,preprod-observation",
         "--json"
       ]
     }
@@ -73,6 +73,9 @@
     ],
     "nonExecutableSources": [
       "crates/composition/src/lib.rs"
+    ],
+    "testOnlySources": [
+      "crates/ui-dioxus/src/desktop_test_driver.rs"
     ],
     "testModuleFilename": "tests.rs",
     "siblingTestSuffix": "_tests.rs"
