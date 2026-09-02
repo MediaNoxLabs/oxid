@@ -18,5 +18,10 @@ serde.workspace = true
 serde_json.workspace = true
 zeroize.workspace = true
 
+[target.'cfg(target_os = "android")'.dependencies]
+jni-022.workspace = true
+rustls-platform-verifier-05.workspace = true
+rustls-platform-verifier-07.workspace = true
+
 [lints]
 workspace = true

@@ -232,11 +232,12 @@ while IFS= read -r member; do
   fi
 done < <(jq -r '.packages[].name' "$metadata_file" | sort -u)
 
-# Unsafe Rust allowlist: an empty match set is success (the last unsafe block
-# was removed); anything beyond the reviewed boundary is a failure.
-unsafe_sources="$(rg -l '\bunsafe\b' apps crates --glob '*.rs' || true)"
-if [ -n "$unsafe_sources" ] && [ "$unsafe_sources" != "crates/adapters/storage-json/src/lib.rs" ]; then
-  echo "Unsafe Rust is permitted only in the reviewed Android profile-path boundary." >&2
+# Unsafe Rust is confined to the two exact Android JNI ownership boundaries:
+# durable app-path discovery and the cross-jni-version TLS initializer.
+unsafe_sources="$(rg -l '\bunsafe\b' apps crates --glob '*.rs' | sort || true)"
+expected_unsafe_sources=$'crates/adapters/mobile-native-plugin/src/lib.rs\ncrates/adapters/storage-json/src/lib.rs'
+if [ "$unsafe_sources" != "$expected_unsafe_sources" ]; then
+  echo "Unsafe Rust is permitted only in the reviewed Android JNI boundary files." >&2
   echo "$unsafe_sources" >&2
   exit 1
 fi

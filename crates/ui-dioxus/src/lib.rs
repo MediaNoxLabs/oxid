@@ -2,6 +2,8 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(target_os = "android")]
+mod android_platform;
 mod assets_page;
 mod brand;
 #[cfg(feature = "standalone-deployment-profile")]
@@ -16,6 +18,8 @@ mod profile_guard;
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
 
+#[cfg(target_os = "android")]
+pub use android_platform::{AndroidPlatformInitialization, App};
 use assets_page::AssetsPage;
 #[cfg(test)]
 use assets_page::{wallet_account_activation_available, wallet_write_actions_available};
@@ -209,7 +213,14 @@ where
     Output: Send + 'static,
     Operation: Future<Output = Output> + Send + 'static,
 {
-    run_ui_blocking(move || futures::executor::block_on(operation)).await
+    run_ui_blocking(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| UiBlockingTaskError::WorkerUnavailable)?;
+        Ok(runtime.block_on(operation))
+    })
+    .await?
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -227,6 +238,9 @@ where
 /// Incoming capabilities made available to Dioxus by the composition root.
 #[derive(Clone)]
 pub struct WalletUiServices {
+    #[cfg(target_os = "android")]
+    android_platform_initializer:
+        Option<Arc<dyn Fn() -> AndroidPlatformInitialization + Send + Sync + 'static>>,
     #[cfg(feature = "standalone-deployment-profile")]
     deployment_profile: Option<Arc<dyn oxid_capabilities_application::GetDeploymentProfileUseCase>>,
     #[cfg(feature = "ui-profile-dev")]
@@ -977,6 +991,8 @@ impl WalletUiServices {
         let authentication = identity.authentication;
         let ingress = identity.ingress;
         Self {
+            #[cfg(target_os = "android")]
+            android_platform_initializer: None,
             #[cfg(feature = "standalone-deployment-profile")]
             deployment_profile: None,
             #[cfg(feature = "ui-profile-dev")]
@@ -1071,6 +1087,19 @@ impl WalletUiServices {
             passport_vault_state_persistence: vault.state_persistence,
             passport_vault_contract_calls: vault.contract_calls,
         }
+    }
+
+    /// Delays the Android UI tree until platform TLS is ready. The incoming
+    /// adapter supplies a payload-free capability so this UI crate remains
+    /// independent of JNI and certificate-verifier implementations.
+    #[cfg(target_os = "android")]
+    #[must_use]
+    pub fn with_android_platform_initializer(
+        mut self,
+        initializer: Arc<dyn Fn() -> AndroidPlatformInitialization + Send + Sync + 'static>,
+    ) -> Self {
+        self.android_platform_initializer = Some(initializer);
+        self
     }
 
     /// Attaches the read-only profile selected by the application build.
@@ -3371,8 +3400,14 @@ fn public_standalone_genesis_banner() -> Element {
 }
 
 /// Brand-agnostic Dioxus incoming adapter and mobile-first application shell.
+#[cfg(not(target_os = "android"))]
 #[component]
 pub fn App() -> Element {
+    rsx! { WalletApp {} }
+}
+
+#[component]
+fn WalletApp() -> Element {
     let services = consume_context::<WalletUiServices>();
     let brand = consume_context::<BrandProfile>();
     #[cfg(feature = "desktop-test-click-driver")]
@@ -10904,11 +10939,17 @@ mod tests {
     fn asynchronous_wallet_operations_are_polled_off_the_caller_thread() {
         let caller = std::thread::current().id();
 
-        let worker =
-            futures::executor::block_on(run_ui_future(async move { std::thread::current().id() }))
-                .expect("worker future");
+        let (worker, reactor_available) = futures::executor::block_on(run_ui_future(async move {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            (
+                std::thread::current().id(),
+                tokio::runtime::Handle::try_current().is_ok(),
+            )
+        }))
+        .expect("worker future");
 
         assert_ne!(worker, caller);
+        assert!(reactor_available);
     }
 
     #[test]

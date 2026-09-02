@@ -566,6 +566,13 @@ profile account, synchronizes it through the laptop-hosted
 `indexer-standalone:4.0.0`, and persists only its public network/derivation
 coordinates through the same profile repository. A process restart truthfully
 withholds the address because development custody is process-local. The
+Android host also carries forward the prototype's dual-version TLS invariant:
+the repository-owned plugin packages the pinned platform-verifier AAR and the
+app startup gate initializes the independent reqwest and Subxt verifier slots
+before any wallet or identity effect mounts. Network-capable UI futures run on
+the worker's bounded Tokio runtime so Android transports always have an active
+reactor. OID4VCI acceptance additionally restores an interrupted worker attempt
+to a discardable failed state instead of retaining an unfinishable review. The
 prototype's exact unshielded subscription requests neither fee field and
 therefore avoids the schema discrepancy. Oxid's richer history needs the value;
 the live image rejected the singular `fee` selection despite the reviewed

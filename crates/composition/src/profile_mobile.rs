@@ -159,6 +159,32 @@ use oxid_adapter_vc_midnight::CompactPresentationRuntimeError;
 ))]
 use oxid_wallet_application::WalletProtectionPort;
 
+/// Payload-free Android TLS startup state exposed to the app composition
+/// boundary without leaking JNI or native-adapter types.
+#[cfg(all(feature = "android-platform-tls", target_os = "android"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AndroidTlsInitialization {
+    Ready,
+    Retry,
+    Failed,
+}
+
+/// Initializes every Android certificate verifier selected by the composed
+/// transport graph before the incoming UI is allowed to mount network effects.
+#[cfg(all(feature = "android-platform-tls", target_os = "android"))]
+#[must_use]
+pub fn initialize_android_tls() -> AndroidTlsInitialization {
+    match oxid_adapter_mobile_native::initialize_android_tls() {
+        Ok(()) => AndroidTlsInitialization::Ready,
+        Err(oxid_adapter_mobile_native::NativeBridgeError::Unavailable) => {
+            AndroidTlsInitialization::Retry
+        }
+        Err(oxid_adapter_mobile_native::NativeBridgeError::Failed) => {
+            AndroidTlsInitialization::Failed
+        }
+    }
+}
+
 /// Verifies that the Android Portal conformance composition is executing under
 /// the repository's QEMU-only runtime boundary. iOS simulator authority is
 /// already encoded by its distinct Rust target; non-mobile builds never reach

@@ -12,7 +12,11 @@ build = "build.rs"
 [features]
 default = ["desktop"]
 desktop = ["dioxus/desktop"]
-mobile = ["dioxus/mobile", "oxid-ui-dioxus/mobile"]
+mobile = [
+  "dioxus/mobile",
+  "oxid-composition/android-platform-tls",
+  "oxid-ui-dioxus/mobile",
+]
 web = ["dioxus/web"]
 # Opt-in developer presentation profile. Composition authority remains with a
 # standalone feature and is compile-time guarded in main.rs.
