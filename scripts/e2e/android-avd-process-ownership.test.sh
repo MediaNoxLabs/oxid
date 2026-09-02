@@ -49,9 +49,14 @@ case "$mode" in
     false
     ;;
   signal|timeout)
-    trap 'failure_phase=signal-term; exit 143' TERM
+    wait_pid=""
+    trap 'failure_phase=signal-term; if [ -n "${wait_pid:-}" ]; then kill -TERM "$wait_pid" 2>/dev/null || true; wait "$wait_pid" 2>/dev/null || true; fi; exit 143' TERM
     if [ "$mode" = signal ]; then kill -TERM "$$"; fi
-    while :; do :; done
+    # A background child plus an explicit wait gives Bash an interruptible
+    # boundary without emitting platform-specific foreground-job diagnostics.
+    sleep 30 &
+    wait_pid=$!
+    wait "$wait_pid" 2>/dev/null || true
     ;;
   *) exit 64 ;;
 esac
@@ -75,7 +80,10 @@ assert_android_failure_marker() {
 assert_android_failure_marker nonzero 1 nonzero "$temporary/android-failure-marker-fixture.sh"
 assert_android_failure_marker unreported 1 unreported-timeout-or-abort "$temporary/android-failure-marker-fixture.sh"
 assert_android_failure_marker signal 143 signal-term "$temporary/android-failure-marker-fixture.sh"
-assert_android_failure_marker timeout 143 signal-term "$timeout_command" --preserve-status -s TERM -k 2s 0.1s \
+# Give macOS' system Bash enough time to start and install the fixture's traps.
+# A 100 ms deadline raced process startup and could kill the fixture before the
+# cleanup contract existed, testing scheduler latency instead of timeout cleanup.
+assert_android_failure_marker timeout 143 signal-term "$timeout_command" --preserve-status -s TERM -k 2s 2s \
   "$temporary/android-failure-marker-fixture.sh"
 grep -qF 'oxid_android_avd_emit_failure_marker "$incoming" "$failure_phase"' \
   "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-runner-marker-wiring
