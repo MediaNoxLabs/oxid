@@ -3,12 +3,25 @@
 
 set -euo pipefail
 
+operation="${1:-${OXID_TARGET_OPERATION:-run}}"
+case "$operation" in
+  build|deploy|run) ;;
+  *)
+    echo "Usage: $0 [build|deploy|run]" >&2
+    exit 1
+    ;;
+esac
+
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "The iOS simulator requires macOS and Xcode." >&2
   exit 1
 fi
 
-for command_name in nix rustup jq; do
+required_commands=(jq node)
+if [ "$operation" != "deploy" ]; then
+  required_commands+=(nix rustup)
+fi
+for command_name in "${required_commands[@]}"; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Required command '$command_name' is missing." >&2
     exit 1
@@ -145,9 +158,11 @@ case "$mobile_presentation_proving" in
       exit 1
     fi
     mobile_features="$mobile_features,standalone-native-proving-artifacts"
-    presentation_artifacts_dir="$(
-      nix build .#presentation-compact-artifacts --no-link --print-out-paths
-    )"
+    if [ "$operation" != "deploy" ]; then
+      presentation_artifacts_dir="$(
+        nix build .#presentation-compact-artifacts --no-link --print-out-paths
+      )"
+    fi
     ;;
   *)
     echo "OXID_MOBILE_PRESENTATION_PROVING must be 'unavailable' or 'artifacts'." >&2
@@ -168,40 +183,43 @@ case "$(uname -m)" in
     ;;
 esac
 
-device="${OXID_IOS_DEVICE:-}"
-if [ -z "$device" ]; then
-  device="$(
-    ios_xcrun simctl list devices booted -j \
-      | jq -r 'first(.devices[][] | select(.isAvailable and (.name | startswith("iPhone"))) | .udid) // empty'
+device=""
+if [ "$operation" != "build" ]; then
+  device="${OXID_IOS_DEVICE:-}"
+  if [ -z "$device" ]; then
+    device="$(
+      ios_xcrun simctl list devices booted -j \
+        | jq -r 'first(.devices[][] | select(.isAvailable and (.name | startswith("iPhone"))) | .udid) // empty'
+    )"
+  fi
+  if [ -z "$device" ]; then
+    device="$(
+      ios_xcrun simctl list devices available -j \
+        | jq -r 'first(.devices[][] | select(.isAvailable and (.name | startswith("iPhone"))) | .udid) // empty'
+    )"
+  fi
+  if [ -z "$device" ]; then
+    echo "No available iPhone simulator was found." >&2
+    exit 1
+  fi
+
+  device_state="$(
+    ios_xcrun simctl list devices -j \
+      | jq -r --arg device "$device" 'first(.devices[][] | select(.udid == $device) | .state) // empty'
   )"
-fi
-if [ -z "$device" ]; then
-  device="$(
-    ios_xcrun simctl list devices available -j \
-      | jq -r 'first(.devices[][] | select(.isAvailable and (.name | startswith("iPhone"))) | .udid) // empty'
-  )"
-fi
-if [ -z "$device" ]; then
-  echo "No available iPhone simulator was found." >&2
-  exit 1
+  if [ -z "$device_state" ]; then
+    echo "OXID_IOS_DEVICE does not identify an installed simulator: $device" >&2
+    exit 1
+  fi
+  if [ "$device_state" != "Booted" ]; then
+    ios_xcrun simctl boot "$device"
+  fi
+
+  /usr/bin/open -a Simulator --args -CurrentDeviceUDID "$device"
+  ios_xcrun simctl bootstatus "$device" -b
 fi
 
-device_state="$(
-  ios_xcrun simctl list devices -j \
-    | jq -r --arg device "$device" 'first(.devices[][] | select(.udid == $device) | .state) // empty'
-)"
-if [ -z "$device_state" ]; then
-  echo "OXID_IOS_DEVICE does not identify an installed simulator: $device" >&2
-  exit 1
-fi
-if [ "$device_state" != "Booted" ]; then
-  ios_xcrun simctl boot "$device"
-fi
-
-/usr/bin/open -a Simulator --args -CurrentDeviceUDID "$device"
-ios_xcrun simctl bootstatus "$device" -b
-
-if [ "$portal_profile" = "local" ]; then
+if [ "$portal_profile" = "local" ] && [ "$operation" != "deploy" ]; then
   portal_profile_authority_directory="$(mktemp -d "${TMPDIR:-/tmp}/oxid-portal-profile-ios.XXXXXX")"
   chmod 700 "$portal_profile_authority_directory"
   portal_profile_authority_path="$portal_profile_authority_directory/authority.json"
@@ -210,40 +228,68 @@ if [ "$portal_profile" = "local" ]; then
   portal_profile_authority_sha256="$(shasum -a 256 "$portal_profile_authority_path" | awk '{print $1}')"
 fi
 
-rustup target add "$rust_target"
-rust_toolchain_bin="$(dirname -- "$(rustup which cargo)")"
-dioxus_output="$(nix build .#dioxus-cli --no-link --print-out-paths)"
-dioxus_cli="$dioxus_output/bin/dx"
-PATH="$rust_toolchain_bin:/usr/bin:$PATH" \
-  DEVELOPER_DIR="$xcode_developer_dir" \
-  OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$portal_manifest_path" \
-  OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$portal_manifest_sha256" \
-  OXID_BUILD_PORTAL_PROFILE_AUTHORITY_PATH="$portal_profile_authority_path" \
-  OXID_BUILD_PORTAL_PROFILE_AUTHORITY_SHA256="$portal_profile_authority_sha256" \
-  OXID_PRESENTATION_ARTIFACTS_DIR="$presentation_artifacts_dir" \
-  env -u SDKROOT \
-  "$dioxus_cli" build \
-    --ios \
-    --package oxid-app \
-    --no-default-features \
-    --features "$mobile_features" \
-    --target "$rust_target" \
-    --locked
-
 app_bundle="$repository_root/target/dx/oxid-app/debug/ios/OxidApp.app"
-if [ ! -d "$app_bundle" ]; then
-  echo "Dioxus did not create the expected app bundle: $app_bundle" >&2
-  exit 1
+artifact_receipt="$repository_root/target/dx/oxid-app/debug/ios/oxid-app-artifact-receipt.json"
+artifact_configuration="$mobile_features|ui=$ui_profile|custody=$mobile_custody|network=$standalone_network_profile|portal=$portal_profile|proving=$mobile_presentation_proving"
+
+if [ "$operation" != "deploy" ]; then
+  rustup target add "$rust_target"
+  rust_toolchain_bin="$(dirname -- "$(rustup which cargo)")"
+  dioxus_output="$(nix build .#dioxus-cli --no-link --print-out-paths)"
+  dioxus_cli="$dioxus_output/bin/dx"
+  PATH="$rust_toolchain_bin:/usr/bin:$PATH" \
+    DEVELOPER_DIR="$xcode_developer_dir" \
+    OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$portal_manifest_path" \
+    OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$portal_manifest_sha256" \
+    OXID_BUILD_PORTAL_PROFILE_AUTHORITY_PATH="$portal_profile_authority_path" \
+    OXID_BUILD_PORTAL_PROFILE_AUTHORITY_SHA256="$portal_profile_authority_sha256" \
+    OXID_PRESENTATION_ARTIFACTS_DIR="$presentation_artifacts_dir" \
+    env -u SDKROOT \
+    "$dioxus_cli" build \
+      --ios \
+      --package oxid-app \
+      --no-default-features \
+      --features "$mobile_features" \
+      --target "$rust_target" \
+      --locked
+
+  if [ ! -d "$app_bundle" ]; then
+    echo "Dioxus did not create the expected app bundle: $app_bundle" >&2
+    exit 1
+  fi
+  if [ "$mobile_presentation_proving" = "artifacts" ]; then
+    packaged_bytes="$(find "$app_bundle" -type f -exec /usr/bin/stat -f '%z' {} + | awk '{ total += $1 } END { print total + 0 }')"
+    echo "Authenticated Compact artifact measurement bundle: $packaged_bytes uncompressed bytes."
+  fi
+  node "$repository_root/scripts/app-artifact-receipt.mjs" write \
+    --platform ios-simulator \
+    --artifact "$app_bundle" \
+    --target "$rust_target" \
+    --configuration "$artifact_configuration" \
+    --receipt "$artifact_receipt"
+else
+  node "$repository_root/scripts/app-artifact-receipt.mjs" verify \
+    --platform ios-simulator \
+    --artifact "$app_bundle" \
+    --target "$rust_target" \
+    --configuration "$artifact_configuration" \
+    --receipt "$artifact_receipt"
 fi
-if [ "$mobile_presentation_proving" = "artifacts" ]; then
-  packaged_bytes="$(find "$app_bundle" -type f -exec /usr/bin/stat -f '%z' {} + | awk '{ total += $1 } END { print total + 0 }')"
-  echo "Authenticated Compact artifact measurement bundle: $packaged_bytes uncompressed bytes."
+
+if [ "$operation" = "build" ]; then
+  echo "Built iOS Simulator bundle: $app_bundle"
+  exit 0
 fi
 
 if [ "${OXID_IOS_RESET_DATA:-0}" = "1" ]; then
   ios_xcrun simctl uninstall "$device" io.medianox.oxid >/dev/null 2>&1 || true
 fi
 ios_xcrun simctl install "$device" "$app_bundle"
+
+if [ "$operation" = "deploy" ]; then
+  echo "Deployed io.medianox.oxid to iOS Simulator $device without launching it."
+  exit 0
+fi
 
 bundle_identifier="$(/usr/bin/plutil -extract CFBundleIdentifier raw "$app_bundle/Info.plist")"
 ios_xcrun simctl terminate "$device" "$bundle_identifier" >/dev/null 2>&1 || true

@@ -122,8 +122,23 @@ directly.
 Launch the desktop shell:
 
 ```bash
-cargo run -p oxid-app
+just desktop-build
+just desktop-run
 ```
+
+Mobile targets also expose separate build and deploy operations for shorter
+device loops. Deploy verifies a private exact-source artifact receipt and does
+not rebuild or launch the application:
+
+```bash
+just android-build
+just android-deploy
+just ios-build
+just ios-deploy
+```
+
+See [application target commands](docs/factory/application-targets.md) for
+profile matching and the supported Android/iOS destinations.
 
 The default thin app validates and embeds `brands/oxid` at build time. Check
 every pack, or inspect the default generated semantic CSS, with:

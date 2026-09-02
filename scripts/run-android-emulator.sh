@@ -3,7 +3,20 @@
 
 set -euo pipefail
 
-for command_name in nix rustup java node; do
+operation="${1:-${OXID_TARGET_OPERATION:-run}}"
+case "$operation" in
+  build|deploy|run) ;;
+  *)
+    echo "Usage: $0 [build|deploy|run]" >&2
+    exit 1
+    ;;
+esac
+
+required_commands=(node)
+if [ "$operation" != "deploy" ]; then
+  required_commands+=(nix rustup java)
+fi
+for command_name in "${required_commands[@]}"; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Required command '$command_name' is missing." >&2
     exit 1
@@ -228,9 +241,11 @@ case "$mobile_presentation_proving" in
       exit 1
     fi
     mobile_features="$mobile_features,standalone-native-proving-artifacts"
-    presentation_artifacts_dir="$(
-      nix build .#presentation-compact-artifacts --no-link --print-out-paths
-    )"
+    if [ "$operation" != "deploy" ]; then
+      presentation_artifacts_dir="$(
+        nix build .#presentation-compact-artifacts --no-link --print-out-paths
+      )"
+    fi
     ;;
   *)
     echo "OXID_MOBILE_PRESENTATION_PROVING must be 'unavailable' or 'artifacts'." >&2
@@ -386,7 +401,7 @@ if [ "$portal_profile" = "tailnet-android" ] && \
   exit 1
 fi
 
-if [ "$standalone_network_profile" = "local" ]; then
+if [ "$standalone_network_profile" = "local" ] && [ "$operation" != "build" ]; then
   if [[ "$device" != emulator-* ]] || \
     [ "$(adb_device shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r')" != "1" ]; then
     echo "The local standalone profile requires an Android emulator; use the tailnet profile for a physical phone." >&2
@@ -457,64 +472,91 @@ case "$(adb_device shell getprop ro.product.cpu.abi | tr -d '\r')" in
     ;;
 esac
 
-android_ndk="${ANDROID_NDK_HOME:-}"
-if [ -z "$android_ndk" ] && [ -d "$android_sdk/ndk" ]; then
-  android_ndk="$(find "$android_sdk/ndk" -mindepth 1 -maxdepth 1 -type d | sort | tail -1)"
-fi
-if [ -z "$android_ndk" ] && [ -d "$android_sdk/ndk-bundle" ]; then
-  android_ndk="$android_sdk/ndk-bundle"
-fi
-if [ -z "$android_ndk" ] || [ ! -d "$android_ndk" ]; then
-  echo "Install an Android NDK or set ANDROID_NDK_HOME." >&2
-  exit 1
-fi
-
-rustup target add "$rust_target"
-if [ "$portal_profile" != "unavailable" ]; then
-  portal_profile_authority_directory="$(mktemp -d "${TMPDIR:-/tmp}/oxid-portal-profile-android.XXXXXX")"
-  chmod 700 "$portal_profile_authority_directory"
-  portal_profile_authority_path="$portal_profile_authority_directory/authority.json"
-  authority_platform="android_qemu"
-  if [ "$portal_profile" = "tailnet-android" ]; then
-    authority_platform="android_physical"
-  fi
-  "$repository_root/scripts/e2e/write-portal-profile-authority.sh" \
-    "$authority_platform" "$rust_target" "$portal_profile_authority_path" "$portal_authority_profile"
-  portal_profile_authority_sha256="$(shasum -a 256 "$portal_profile_authority_path" | awk '{print $1}')"
-fi
-rust_toolchain_bin="$(dirname -- "$(rustup which cargo)")"
-dioxus_output="$(nix build .#dioxus-cli --no-link --print-out-paths)"
-dioxus_cli="$dioxus_output/bin/dx"
-
-ANDROID_HOME="$android_sdk" \
-ANDROID_SDK_ROOT="$android_sdk" \
-ANDROID_NDK_HOME="$android_ndk" \
-OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$portal_manifest_path" \
-OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$portal_manifest_sha256" \
-OXID_BUILD_PORTAL_PROFILE_AUTHORITY_PATH="$portal_profile_authority_path" \
-OXID_BUILD_PORTAL_PROFILE_AUTHORITY_SHA256="$portal_profile_authority_sha256" \
-OXID_BUILD_PORTAL_PUBLIC_ORIGIN="$portal_public_origin" \
-OXID_PRESENTATION_ARTIFACTS_DIR="$presentation_artifacts_dir" \
-PATH="$rust_toolchain_bin:$android_sdk/platform-tools:/usr/bin:$PATH" \
-  "$dioxus_cli" build \
-    --android \
-    --package oxid-app \
-    --no-default-features \
-    --features "$mobile_features" \
-    --target "$rust_target" \
-    --locked
-
+artifact_configuration="$mobile_features|ui=$ui_profile|custody=$mobile_custody|network=$standalone_network_profile|portal=$portal_profile|preprod=$preprod_observation|proving=$mobile_presentation_proving"
 apk="$repository_root/target/dx/oxid-app/debug/android/app/app/build/outputs/apk/debug/app-debug.apk"
-if [ ! -f "$apk" ]; then
-  echo "Dioxus did not create the expected APK: $apk" >&2
-  exit 1
+artifact_receipt="$repository_root/target/dx/oxid-app/debug/android/oxid-app-artifact-receipt.json"
+
+if [ "$operation" != "deploy" ]; then
+  android_ndk="${ANDROID_NDK_HOME:-}"
+  if [ -z "$android_ndk" ] && [ -d "$android_sdk/ndk" ]; then
+    android_ndk="$(find "$android_sdk/ndk" -mindepth 1 -maxdepth 1 -type d | sort | tail -1)"
+  fi
+  if [ -z "$android_ndk" ] && [ -d "$android_sdk/ndk-bundle" ]; then
+    android_ndk="$android_sdk/ndk-bundle"
+  fi
+  if [ -z "$android_ndk" ] || [ ! -d "$android_ndk" ]; then
+    echo "Install an Android NDK or set ANDROID_NDK_HOME." >&2
+    exit 1
+  fi
+
+  rustup target add "$rust_target"
+  if [ "$portal_profile" != "unavailable" ]; then
+    portal_profile_authority_directory="$(mktemp -d "${TMPDIR:-/tmp}/oxid-portal-profile-android.XXXXXX")"
+    chmod 700 "$portal_profile_authority_directory"
+    portal_profile_authority_path="$portal_profile_authority_directory/authority.json"
+    authority_platform="android_qemu"
+    if [ "$portal_profile" = "tailnet-android" ]; then
+      authority_platform="android_physical"
+    fi
+    "$repository_root/scripts/e2e/write-portal-profile-authority.sh" \
+      "$authority_platform" "$rust_target" "$portal_profile_authority_path" "$portal_authority_profile"
+    portal_profile_authority_sha256="$(shasum -a 256 "$portal_profile_authority_path" | awk '{print $1}')"
+  fi
+  rust_toolchain_bin="$(dirname -- "$(rustup which cargo)")"
+  dioxus_output="$(nix build .#dioxus-cli --no-link --print-out-paths)"
+  dioxus_cli="$dioxus_output/bin/dx"
+
+  ANDROID_HOME="$android_sdk" \
+  ANDROID_SDK_ROOT="$android_sdk" \
+  ANDROID_NDK_HOME="$android_ndk" \
+  OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$portal_manifest_path" \
+  OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$portal_manifest_sha256" \
+  OXID_BUILD_PORTAL_PROFILE_AUTHORITY_PATH="$portal_profile_authority_path" \
+  OXID_BUILD_PORTAL_PROFILE_AUTHORITY_SHA256="$portal_profile_authority_sha256" \
+  OXID_BUILD_PORTAL_PUBLIC_ORIGIN="$portal_public_origin" \
+  OXID_PRESENTATION_ARTIFACTS_DIR="$presentation_artifacts_dir" \
+  PATH="$rust_toolchain_bin:$android_sdk/platform-tools:/usr/bin:$PATH" \
+    "$dioxus_cli" build \
+      --android \
+      --package oxid-app \
+      --no-default-features \
+      --features "$mobile_features" \
+      --target "$rust_target" \
+      --locked
+
+  if [ ! -f "$apk" ]; then
+    echo "Dioxus did not create the expected APK: $apk" >&2
+    exit 1
+  fi
+  if [ "$mobile_presentation_proving" = "artifacts" ]; then
+    packaged_bytes="$(wc -c < "$apk" | tr -d ' ')"
+    echo "Authenticated Compact artifact measurement APK: $packaged_bytes bytes."
+  fi
+  node "$repository_root/scripts/app-artifact-receipt.mjs" write \
+    --platform android \
+    --artifact "$apk" \
+    --target "$rust_target" \
+    --configuration "$artifact_configuration" \
+    --receipt "$artifact_receipt"
+else
+  node "$repository_root/scripts/app-artifact-receipt.mjs" verify \
+    --platform android \
+    --artifact "$apk" \
+    --target "$rust_target" \
+    --configuration "$artifact_configuration" \
+    --receipt "$artifact_receipt"
 fi
-if [ "$mobile_presentation_proving" = "artifacts" ]; then
-  packaged_bytes="$(wc -c < "$apk" | tr -d ' ')"
-  echo "Authenticated Compact artifact measurement APK: $packaged_bytes bytes."
+
+if [ "$operation" = "build" ]; then
+  echo "Built Android APK: $apk"
+  exit 0
 fi
 
 adb_device install -r "$apk"
+if [ "$operation" = "deploy" ]; then
+  echo "Deployed io.medianox.oxid to Android device $device without launching it."
+  exit 0
+fi
 adb_device shell am force-stop io.medianox.oxid
 adb_device shell am start \
   -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null

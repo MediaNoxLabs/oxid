@@ -32,7 +32,10 @@ just check             # the light strict gate: fmt, architecture, clippy, tests
 | `just lint` | Clippy with warnings denied |
 | `just architecture` | The dependency-rules gate on its own |
 | `just run` | Launch the Dioxus desktop shell |
+| `just desktop-build` / `just desktop-run` | Build or build-and-run the desktop application |
 | `just headless` | Launch the NDJSON headless adapter |
+| `just ios-build` / `just android-build` | Build and receipt a mobile artifact without installing it |
+| `just ios-deploy` / `just android-deploy` | Verify and install the exact artifact without rebuilding or launching it |
 | `just ios-run` / `just android-run` | Standalone development app in a simulator/emulator |
 | `just ios-standalone-local` / `just android-standalone-local` | Compile-time localhost live-stack app for a simulator/emulator |
 | `just ios-dev` / `just android-dev` | Same standalone composition with the persistent developer capability profile |
