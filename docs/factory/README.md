@@ -22,6 +22,7 @@ current-head review evidence are the delivery gates.
 | [portal-macos-laptop.md](portal-macos-laptop.md) | Owner-invoked local Portal macOS prequalification. |
 | [portal-mobile-simulators.md](portal-mobile-simulators.md) | Owner-invoked packaged iOS Simulator and Android QEMU Portal evidence. |
 | [portal-android-tailnet-physical.md](portal-android-tailnet-physical.md) | Owner-invoked physical Android Tailnet Portal conformance evidence. |
+| [../../demo/README.md](../../demo/README.md) | Provider-neutral physical Android demo for Tailnet Midnight services and standalone OpenID4VC protocols. |
 
 Read-only status tooling lives in
 [`.pi/extensions/factory.ts`](../../.pi/extensions/factory.ts). GitHub mutation
