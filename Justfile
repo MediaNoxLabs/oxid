@@ -36,6 +36,12 @@ factory-smoke:
 run:
     cargo run -p oxid-app
 
+desktop-build:
+    cargo build -p oxid-app
+
+desktop-run:
+    cargo run -p oxid-app
+
 headless:
     cargo run -p oxid-headless
 
@@ -182,6 +188,12 @@ standalone-down:
 ios-run:
     ./scripts/run-ios-simulator.sh
 
+ios-build:
+    ./scripts/run-ios-simulator.sh build
+
+ios-deploy:
+    ./scripts/run-ios-simulator.sh deploy
+
 ios-standalone-local:
     OXID_STANDALONE_NETWORK_PROFILE=local ./scripts/run-ios-simulator.sh
 
@@ -214,6 +226,12 @@ ios-native-custody-smoke:
 
 android-run:
     ./scripts/run-android-emulator.sh
+
+android-build:
+    ./scripts/run-android-emulator.sh build
+
+android-deploy:
+    ./scripts/run-android-emulator.sh deploy
 
 android-standalone-local:
     OXID_STANDALONE_NETWORK_PROFILE=local ./scripts/run-android-emulator.sh

@@ -19,6 +19,7 @@ current-head review evidence are the delivery gates.
 | [productive-loop.md](productive-loop.md) | Time-to-main SLOs, target routing, review limits, and worktree/disk lifecycle. |
 | [pi-runtime-audit.md](pi-runtime-audit.md) | Effective Pi/model/package budgets, measured disk state, package canaries, and operator setup. |
 | [worker-topology.md](worker-topology.md) | Multiple local sessions, cloud workers, independent engineer setup, and concurrency ownership. |
+| [application-targets.md](application-targets.md) | Build, exact-artifact receipt, deploy, and run commands for desktop, Android, and iOS Simulator. |
 | [portal-macos-laptop.md](portal-macos-laptop.md) | Owner-invoked local Portal macOS prequalification. |
 | [portal-mobile-simulators.md](portal-mobile-simulators.md) | Owner-invoked packaged iOS Simulator and Android QEMU Portal evidence. |
 | [portal-android-tailnet-physical.md](portal-android-tailnet-physical.md) | Owner-invoked physical Android Tailnet Portal conformance evidence. |
