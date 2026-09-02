@@ -390,3 +390,14 @@ test("run.sh wires the repository contract once and delegates coverage to the ha
   assert.match(coverageBlock, /node scripts\/coverage\/run\.mjs/u);
   assert.doesNotMatch(coverageBlock, /cargo llvm-cov/u);
 });
+
+test("hosted coverage supplies a fetched, non-empty source comparison base", async () => {
+  const workflow = await readFile(path.join(repoRoot, ".github/workflows/ci.yml"), "utf8");
+  const coverageJob = workflow.slice(workflow.indexOf("\n  coverage_linux:\n"), workflow.indexOf("\n  repository_gate:"));
+  assert.match(coverageJob, /fetch-depth: 0/u);
+  assert.match(
+    coverageJob,
+    /OXID_COVERAGE_BASE: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.before \|\| 'origin\/integration' \}\}/u,
+  );
+  assert.match(coverageJob, /\.\/run\.sh coverage --strict/u);
+});

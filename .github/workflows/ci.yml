@@ -262,6 +262,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
@@ -283,6 +284,8 @@ jobs:
             core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
             core.exportVariable('SCCACHE_GHA_RW_MODE', 'READ_ONLY');
       - name: Measure the non-UI workspace once
+        env:
+          OXID_COVERAGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/integration' }}
         run: nix develop .#ci-coverage --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh coverage --strict
 
   repository_gate:
