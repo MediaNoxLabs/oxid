@@ -2,7 +2,7 @@
 
 #![forbid(unsafe_code)]
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 mod android_platform;
 mod assets_page;
 mod brand;
