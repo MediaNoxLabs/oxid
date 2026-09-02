@@ -19,7 +19,7 @@
         "--exclude",
         "oxid-headless",
         "--features",
-        "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication",
+        "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication,oxid-adapter-storage-dev/development-fixture",
         "--json",
         "--fail-under-lines",
         "80"

@@ -28,7 +28,7 @@ const EXPECTED_COMMANDS = Object.freeze([
     "--exclude", "oxid-ui-dioxus",
     "--exclude", "oxid-app",
     "--exclude", "oxid-headless",
-    "--features", "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication",
+    "--features", "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication,oxid-adapter-storage-dev/development-fixture",
     "--json", "--fail-under-lines", "80",
   ],
   ["cargo", "llvm-cov", "-p", "oxid-headless", "--all-targets", "--json"],
@@ -126,6 +126,7 @@ function scopeMetadata(scope) {
       features: [
         "oxid-adapter-deployment-profile/readiness",
         "oxid-adapter-did-midnight/tailnet-test-did-publication",
+        "oxid-adapter-storage-dev/development-fixture",
       ],
       profile: "test",
     };
