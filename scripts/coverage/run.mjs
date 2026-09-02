@@ -636,6 +636,9 @@ export function scoreChangedLines(diff, reports, {
   now = new Date(),
 } = {}) {
   const changedFiles = parseChangedDiff(diff);
+  const plainTestOnlyPackages = new Set(
+    policy.classifications.plainTestExclusions.map(({ package: name }) => name),
+  );
   const coverageByPath = new Map();
   for (const report of reports) {
     for (const file of report.files ?? []) {
@@ -665,6 +668,16 @@ export function scoreChangedLines(diff, reports, {
       continue;
     }
     const evidence = coverageByPath.get(changed.path);
+    if (!evidence && plainTestOnlyPackages.has(rule.packageEntry.name)) {
+      files.push({
+        path: changed.path,
+        package: rule.packageEntry.name,
+        change: changed.change,
+        status: "excluded",
+        reason: "plain-test-only",
+      });
+      continue;
+    }
     if (!evidence) throw new Error(`missing coverage mapping for changed production source '${changed.path}'`);
     if (!Array.isArray(evidence.executableLines)) {
       throw new Error(`malformed coverage mapping for changed production source '${changed.path}'`);
