@@ -18,6 +18,8 @@
         "oxid-app",
         "--exclude",
         "oxid-headless",
+        "--features",
+        "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication",
         "--json",
         "--fail-under-lines",
         "80"

@@ -114,6 +114,16 @@ exact PR head SHA. It never checks out or
 executes candidate files. The PR-title and body contexts use the same pattern,
 so a PR cannot approve a weakened workflow or checker included in its own diff.
 
+An owner-requested, same-repository `integration` to `develop` promotion is a
+different evidence boundary. Its commit range contains GitHub-generated squash
+merge artifacts rather than the issue-branch commits already judged on their
+original pull requests. The trusted workflow therefore requires a
+GitHub-verified OpenPGP signature on every promoted artifact and exact-head
+binding, but does not reapply contributor subject or exact-DCO rules to those
+artifacts. The workflow recognizes only that exact head/base/repository tuple.
+This evidence profile does not authorize a merge or override the owner-managed
+ruleset that keeps `develop` read-only.
+
 ### Completed rollout
 
 GitHub discovers `pull_request` workflow definitions from the candidate merge

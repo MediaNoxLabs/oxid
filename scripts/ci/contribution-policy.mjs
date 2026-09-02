@@ -13,6 +13,7 @@ export const contributionPolicy = Object.freeze(JSON.parse(readFileSync(policyPa
 const TYPE_SET = new Set(contributionPolicy.types);
 const SCOPE_SET = new Set(contributionPolicy.scopes);
 const PGP_HEADER = "gpgsig -----BEGIN PGP SIGNATURE-----";
+const HOSTED_COMMIT_MODES = new Set(["contributor", "integration-promotion"]);
 
 function error(message) {
   return { ok: false, errors: [message] };
@@ -114,6 +115,12 @@ function dcoExempt(authorName, actor) {
 export function validateCommitEvidence({ message, authorName, authorEmail, rawCommit = null, verification = null, actor = "" }) {
   const messageResult = validateCommitMessage({ message, authorName, authorEmail, actor });
   const errors = [...messageResult.errors];
+  errors.push(...openPgpErrors({ rawCommit, verification }));
+  return { ok: errors.length === 0, errors, subject: messageResult.subject };
+}
+
+function openPgpErrors({ rawCommit = null, verification = null }) {
+  const errors = [];
   if (contributionPolicy.commit.requireOpenPgp) {
     if (verification) {
       const isOpenPgp = verification.signature?.startsWith("-----BEGIN PGP SIGNATURE-----");
@@ -124,7 +131,12 @@ export function validateCommitEvidence({ message, authorName, authorEmail, rawCo
       errors.push("commit does not contain an OpenPGP signature envelope");
     }
   }
-  return { ok: errors.length === 0, errors, subject: messageResult.subject };
+  return errors;
+}
+
+export function validateIntegrationPromotionEvidence({ rawCommit = null, verification = null }) {
+  const errors = openPgpErrors({ rawCommit, verification });
+  return { ok: errors.length === 0, errors, subject: null };
 }
 
 export function validateCommitMessage({ message, authorName, authorEmail, actor = "" }) {
@@ -180,9 +192,10 @@ export function validateCommitRange({
   return { ok: results.every((result) => result.ok), commits: results, errors: [] };
 }
 
-export function validateHostedCommits(records, { actor = "", expectedHead = null } = {}) {
+export function validateHostedCommits(records, { actor = "", expectedHead = null, mode = "contributor" } = {}) {
   if (!Array.isArray(records) || records.length === 0) return { ok: false, commits: [], errors: ["pull request has no commits"] };
   if (records.length > 250) return { ok: false, commits: [], errors: ["pull request exceeds the 250-commit policy bound"] };
+  if (!HOSTED_COMMIT_MODES.has(mode)) return { ok: false, commits: [], errors: [`unsupported hosted commit policy mode '${mode}'`] };
   const errors = [];
   const seen = new Set();
   const results = [];
@@ -200,13 +213,15 @@ export function validateHostedCommits(records, { actor = "", expectedHead = null
       errors.push(`${record.sha} has incomplete author or message metadata`);
       continue;
     }
-    const evidence = validateCommitEvidence({
-      message: record.message,
-      authorName: record.authorName,
-      authorEmail: record.authorEmail,
-      verification: record.verification,
-      actor,
-    });
+    const evidence = mode === "integration-promotion"
+      ? validateIntegrationPromotionEvidence({ verification: record.verification })
+      : validateCommitEvidence({
+        message: record.message,
+        authorName: record.authorName,
+        authorEmail: record.authorEmail,
+        verification: record.verification,
+        actor,
+      });
     results.push({ commit: record.sha, ok: evidence.ok, errors: evidence.errors });
   }
   if (expectedHead && records.at(-1)?.sha !== expectedHead) {
@@ -288,6 +303,7 @@ function run() {
     const result = validateHostedCommits(JSON.parse(readFileSync(commitsFile, "utf8")), {
       actor: process.env.PR_ACTOR ?? "",
       expectedHead: requiredEnvironment("HEAD_SHA"),
+      mode: process.env.COMMIT_POLICY_MODE ?? "contributor",
     });
     for (const problem of result.errors) process.stderr.write(`[contribution-policy] ${problem}\n`);
     for (const candidate of result.commits) {

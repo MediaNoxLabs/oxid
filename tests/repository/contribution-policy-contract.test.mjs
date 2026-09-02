@@ -12,6 +12,7 @@ import {
   validateCommitMessage,
   validateCommitEvidence,
   validateHostedCommits,
+  validateIntegrationPromotionEvidence,
   validatePullRequest,
   validatePullRequestBody,
 } from "../../scripts/ci/contribution-policy.mjs";
@@ -143,6 +144,40 @@ test("hosted commit evidence is exact-head, unique, and GitHub-verified OpenPGP"
   assert.equal(validateHostedCommits([{ ...valid[0], verification: { verified: true, reason: "valid", signature: "-----BEGIN SSH SIGNATURE-----" } }], { expectedHead: sha }).ok, false);
 });
 
+test("integration promotion evidence accepts only verified OpenPGP merge artifacts", () => {
+  const sha = "a".repeat(40);
+  const mergeArtifact = {
+    sha,
+    message: "feat: historical squash subject without current scope",
+    authorName: "GitHub",
+    authorEmail: "noreply@github.com",
+    verification: {
+      verified: true,
+      reason: "valid",
+      signature: "-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----",
+    },
+  };
+  assert.equal(validateHostedCommits([mergeArtifact], { expectedHead: sha }).ok, false);
+  assert.equal(validateHostedCommits([mergeArtifact], {
+    expectedHead: sha,
+    mode: "integration-promotion",
+  }).ok, true);
+  assert.equal(validateHostedCommits([{
+    ...mergeArtifact,
+    verification: { verified: true, reason: "valid", signature: "-----BEGIN SSH SIGNATURE-----" },
+  }], {
+    expectedHead: sha,
+    mode: "integration-promotion",
+  }).ok, false);
+  assert.equal(validateHostedCommits([mergeArtifact], {
+    expectedHead: sha,
+    mode: "unknown",
+  }).ok, false);
+  assert.equal(validateIntegrationPromotionEvidence({
+    verification: mergeArtifact.verification,
+  }).ok, true);
+});
+
 test("labels are a complete projection of canonical types and scopes", () => {
   assert.deepEqual(labelsForSubject("feat(factory): enforce contribution provenance").labels, ["type:feat", "scope:factory"]);
   const labels = desiredContributionLabels();
@@ -159,6 +194,11 @@ test("hosted policy evaluates trusted base code and verifies OpenPGP through Git
   assert.match(dco, /github\.rest\.pulls\.listCommits/);
   assert.match(dco, /candidate\.commit\.verification/);
   assert.match(dco, /policy\/scripts\/ci\/contribution-policy\.mjs hosted-commits/);
+  assert.match(dco, /COMMIT_POLICY_MODE:/);
+  assert.match(dco, /head\.ref == 'integration'/);
+  assert.match(dco, /base\.ref == 'develop'/);
+  assert.equal((dco.match(/repo\.full_name == github\.repository/g) || []).length, 4);
+  assert.match(dco, /'integration-promotion' \|\| 'contributor'/);
   assert.match(dco, /createCommitStatus/);
   assert.match(dco, /state: 'pending'/);
   assert.match(dco, /state: passed \? 'success' : 'failure'/);
