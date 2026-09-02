@@ -538,6 +538,20 @@ fn main() {
         application.passport_vault_call_mode(),
         application.passport_vault_state_persistence(),
     ));
+    #[cfg(target_os = "android")]
+    let ui = ui.with_android_platform_initializer(std::sync::Arc::new(|| {
+        match oxid_composition::initialize_android_tls() {
+            oxid_composition::AndroidTlsInitialization::Ready => {
+                oxid_ui_dioxus::AndroidPlatformInitialization::Ready
+            }
+            oxid_composition::AndroidTlsInitialization::Retry => {
+                oxid_ui_dioxus::AndroidPlatformInitialization::Retry
+            }
+            oxid_composition::AndroidTlsInitialization::Failed => {
+                oxid_ui_dioxus::AndroidPlatformInitialization::Failed
+            }
+        }
+    }));
 
     let launcher = dioxus::LaunchBuilder::new()
         .with_context(ui)

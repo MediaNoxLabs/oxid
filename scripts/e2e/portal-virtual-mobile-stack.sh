@@ -247,7 +247,11 @@ printf 'header = "Authorization: Bearer %s"\n' "$control_capability" >"$CONTROL_
 run_deadline 5 chmod 600 "$CONTROL_CONFIG" || fail control-mode
 control_capability=""
 control_curl -X POST "$CONTROL_ORIGIN/arm-android-offer" >/dev/null || fail offer-arm
-if ! IFS= read -r -N 64 -t 30 -u 8 capability; then fail capability; fi
+# macOS still ships Bash 3.2, which has neither `read -N` nor a way to apply a
+# timeout to an exact-length read. Reading one byte per block keeps the FIFO
+# boundary exact on both the macOS owner lane and hosted Linux runners, while
+# `run_deadline` retains the existing bounded-wait contract.
+if ! capability="$(run_deadline 30 dd bs=1 count=64 <&8 2>/dev/null)"; then fail capability; fi
 [[ "$capability" =~ ^[0-9a-f]{64}$ ]] || fail capability
 printf '%s' "$capability" >"$CAPABILITY_FILE"
 run_deadline 5 chmod 600 "$CAPABILITY_FILE" || fail capability-mode

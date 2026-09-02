@@ -106,6 +106,12 @@
       },
       "capabilityOwners": [
         {
+          "name": "android-platform",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/android_platform"
+          ]
+        },
+        {
           "name": "brand-profile",
           "modulePathPrefixes": [
             "crates/ui-dioxus/src/brand"

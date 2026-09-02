@@ -5678,7 +5678,10 @@ dependencies = [
 name = "oxid-adapter-mobile-native"
 version = "0.1.0"
 dependencies = [
+ "jni 0.22.4",
  "manganis",
+ "rustls-platform-verifier 0.5.3",
+ "rustls-platform-verifier 0.7.0",
  "serde",
  "serde_json",
  "zeroize",

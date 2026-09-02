@@ -1968,9 +1968,10 @@ the initialized `ndk-context` plus JNI to resolve `Context.getFilesDir()` on
 Android. Path-resolution failure makes the repository unavailable; it never
 falls back to temporary or cache storage. Keep that audited unsafe boundary
 isolated and do not replace it with cache storage or a package-name-derived
-filesystem path. Workspace linting denies unsafe code, every other crate
-explicitly forbids it, and the architecture checker rejects unsafe source
-outside that reviewed adapter file.
+filesystem path. The only other unsafe source is the native plugin's localized
+JNI 0.21-to-0.22 bridge for dual-version Android TLS initialization. Workspace
+linting denies unsafe code, every other crate explicitly forbids it, and the
+architecture checker requires exactly those two reviewed adapter files.
 
 Run repository commands from `nix develop` unless CI performs the equivalent
 setup. Keep `Cargo.lock` committed and use workspace dependencies rather than
@@ -2469,6 +2470,19 @@ to silence the shell probe.
   The exact full Android smoke may clear only `io.medianox.oxid` after explicit
   approval and must parse numeric `FLAG_SECURE` bit `0x2000` because current
   Samsung/API 36 `dumpsys` omits the symbolic label.
+- Every Android app host that composes HTTPS transports must package the pinned
+  `rustls-platform-verifier-android` AAR through the repository-owned Manganis
+  plugin and initialize every resolved `rustls-platform-verifier` major/minor
+  runtime before mounting wallet or identity effects. The reqwest and Subxt
+  graphs currently resolve 0.7 and 0.5 respectively; initializing only one
+  leaves the other process-global slot unavailable. Keep this at the native
+  adapter/app composition boundary. Native UI futures that can reach Reqwest or
+  another Tokio-backed transport must be polled on the UI worker's bounded
+  Tokio runtime, never directly through `futures::executor`; otherwise Android
+  DNS/TLS panics because no reactor is active. A dropped or panicking OID4VCI
+  acceptance future must transition its admitted session from `issuing` to the
+  recoverable `failed` state so explicit discard/retry remains possible (issue
+  #253).
 - Use opaque key references. Key-generation and signing ports must not return
   raw private keys to application or UI layers.
 - Record every significant dependency using the review template in the

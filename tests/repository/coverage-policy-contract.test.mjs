@@ -247,6 +247,37 @@ test("changed-line exact boundary passes and zero executable denominator is visi
   assert.notEqual(score.percent, 100);
 });
 
+test("changed-line scorer honors only the reviewed plain-test package exclusion", async () => {
+  const policy = await loadPolicy();
+  const inventory = await discoverWorkspacePackageInventory(repoRoot);
+  const app = inventory.find(({ name }) => name === "oxid-app");
+  const appPath = `${app.root}/src/main.rs`;
+  const diff = `diff --git a/${appPath} b/${appPath}\n--- a/${appPath}\n+++ b/${appPath}\n@@ -0,0 +1 @@\n+fn main() {}\n`;
+
+  const excluded = scoreChangedLines(diff, changedReport(inventory), {
+    policy,
+    packageInventory: inventory,
+  });
+  assert.equal(excluded.status, "not-applicable");
+  assert.deepEqual(excluded.files, [{
+    path: appPath,
+    package: "oxid-app",
+    change: "modified",
+    status: "excluded",
+    reason: "plain-test-only",
+  }]);
+
+  const mapped = [{ files: [{
+    ...lineFile(app, { count: 1, covered: 1 }),
+    path: appPath,
+    executableLines: [{ line: 1, covered: true }],
+  }] }];
+  assert.equal(scoreChangedLines(diff, mapped, {
+    policy,
+    packageInventory: inventory,
+  }).status, "pass");
+});
+
 test("changed-line scorer fails closed for malformed diffs and missing or ambiguous mappings", async () => {
   const policy = await loadPolicy();
   const inventory = await discoverWorkspacePackageInventory(repoRoot);

@@ -239,6 +239,25 @@ async function touchCheckbox(selector, description) {
   );
 }
 
+async function touchButton(label, timeoutMs = 20_000) {
+  await waitFor(
+    `(() => { const element = ${button(label)}; return Boolean(element && !element.disabled && !element.closest("[inert]")); })()`,
+    `enabled ${label}`,
+    timeoutMs,
+  );
+  const point = await evaluate(`(() => {
+    const element = ${button(label)};
+    element.scrollIntoView({ block: "center", inline: "center" });
+    const rect = element.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  })()`);
+  await command("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x: point.x, y: point.y }],
+  });
+  await command("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+}
+
 async function ensureProfile() {
   await waitFor("Boolean(document.body)", "document body", 60_000);
   await waitFor(
@@ -484,7 +503,7 @@ try {
     await waitFor('Boolean(document.querySelector("#credential-issuance-consent"))', "issuance consent");
     await touchCheckbox("#credential-issuance-consent", "issuance consent");
     await setProxyMode("unavailable");
-    await click("Accept and issue credential");
+    await touchButton("Accept and issue credential");
     await waitFor(
       `(() => {
         const consent = document.querySelector("#credential-issuance-consent");
@@ -540,7 +559,7 @@ try {
     await waitFor('document.body.innerText.includes("Credential offer preview")', "Portal preview", 30_000);
     await waitFor('Boolean(document.querySelector("#credential-issuance-consent"))', "issuance consent");
     await touchCheckbox("#credential-issuance-consent", "issuance consent");
-    await click("Accept and issue credential");
+    await touchButton("Accept and issue credential");
     try {
       await waitFor(issuanceCompletionExpression(), "Portal issuance", 90_000);
     } catch (error) {

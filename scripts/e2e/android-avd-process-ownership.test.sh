@@ -49,9 +49,14 @@ case "$mode" in
     false
     ;;
   signal|timeout)
-    trap 'failure_phase=signal-term; exit 143' TERM
-    if [ "$mode" = signal ]; then kill -TERM "$BASHPID"; fi
-    while :; do :; done
+    wait_pid=""
+    trap 'failure_phase=signal-term; if [ -n "${wait_pid:-}" ]; then kill -TERM "$wait_pid" 2>/dev/null || true; wait "$wait_pid" 2>/dev/null || true; fi; exit 143' TERM
+    if [ "$mode" = signal ]; then kill -TERM "$$"; fi
+    # A background child plus an explicit wait gives Bash an interruptible
+    # boundary without emitting platform-specific foreground-job diagnostics.
+    sleep 30 &
+    wait_pid=$!
+    wait "$wait_pid" 2>/dev/null || true
     ;;
   *) exit 64 ;;
 esac
@@ -75,7 +80,10 @@ assert_android_failure_marker() {
 assert_android_failure_marker nonzero 1 nonzero "$temporary/android-failure-marker-fixture.sh"
 assert_android_failure_marker unreported 1 unreported-timeout-or-abort "$temporary/android-failure-marker-fixture.sh"
 assert_android_failure_marker signal 143 signal-term "$temporary/android-failure-marker-fixture.sh"
-assert_android_failure_marker timeout 143 signal-term "$timeout_command" --preserve-status -s TERM -k 2s 0.1s \
+# Give macOS' system Bash enough time to start and install the fixture's traps.
+# A 100 ms deadline raced process startup and could kill the fixture before the
+# cleanup contract existed, testing scheduler latency instead of timeout cleanup.
+assert_android_failure_marker timeout 143 signal-term "$timeout_command" --preserve-status -s TERM -k 2s 2s \
   "$temporary/android-failure-marker-fixture.sh"
 grep -qF 'oxid_android_avd_emit_failure_marker "$incoming" "$failure_phase"' \
   "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-runner-marker-wiring
@@ -162,13 +170,13 @@ fi
 cat >"$temporary/grandchild.sh" <<'EOF'
 #!/usr/bin/env bash
 trap 'printf "TERM\n" >"$2"' TERM
-printf '%s\n' "$BASHPID" >"$1"
+printf '%s\n' "$$" >"$1"
 while :; do sleep 1; done
 EOF
 chmod 700 "$temporary/grandchild.sh"
 cat >"$temporary/owner.sh" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "$BASHPID" >"$1"
+printf '%s\n' "$$" >"$1"
 bash "$2" "$3" "$4"
 status=$?
 printf '%s\n' "$status" >/dev/null
@@ -198,7 +206,7 @@ fi
 
 sleep 30 &
 direct_pid=$!
-oxid_direct_child_owned "$direct_pid" "$BASHPID" || fail direct-child-owned
+oxid_direct_child_owned "$direct_pid" "$$" || fail direct-child-owned
 kill -TERM "$direct_pid"
 wait "$direct_pid" 2>/dev/null || true
 
@@ -210,7 +218,7 @@ for ((_attempt = 0; _attempt < 50; _attempt++)); do
   timeout -k 1s 1s sleep 0.05
 done
 changed_parent_pid="$(<"$temporary/changed-parent.pid")"
-if oxid_direct_child_owned "$changed_parent_pid" "$BASHPID"; then
+if oxid_direct_child_owned "$changed_parent_pid" "$$"; then
   fail changed-parent-refused
 fi
 oxid_terminate_supervised_job "$intermediary_pid" || fail changed-parent-cleanup
@@ -247,12 +255,12 @@ OXID_FAKE_EMULATOR_TERM="$temporary/emulator-term.seen" \
 fake_emulator_pid=$!
 fake_emulator_executable=node
 for ((_attempt = 0; _attempt < 50; _attempt++)); do
-  oxid_emulator_job_owned "$fake_emulator_pid" "$BASHPID" "$fake_emulator_executable" exact_avd 5562 && break
+  oxid_emulator_job_owned "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 && break
   timeout -k 1s 1s sleep 0.05
 done
-oxid_emulator_job_owned "$fake_emulator_pid" "$BASHPID" "$fake_emulator_executable" exact_avd 5562 \
+oxid_emulator_job_owned "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 \
   || fail direct-emulator-owned
-oxid_terminate_emulator_job "$fake_emulator_pid" "$BASHPID" "$fake_emulator_executable" exact_avd 5562 \
+oxid_terminate_emulator_job "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 \
   || fail direct-emulator-cleanup
 [ -f "$temporary/emulator-term.seen" ] || fail direct-emulator-term
 process_is_live "$fake_emulator_pid" && fail direct-emulator-survivor
