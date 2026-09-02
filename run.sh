@@ -50,6 +50,7 @@ run_repository() {
   node --test tests/repository/dev-loop-stability-contract.test.mjs
   node --test tests/repository/desktop-test-profile-contract.test.mjs
   node --test scripts/app-artifact-receipt.test.mjs
+  node --test tests/repository/tailnet-identity-demo-kit-contract.test.mjs
   node --test scripts/e2e/portal-tailnet-manual-lifecycle.test.mjs
   node --test scripts/e2e/tailnet-mock-route.test.mjs
   node --test scripts/e2e/tailnet-mock-transform.test.mjs
