@@ -213,8 +213,9 @@ simulator/emulator harness, not physical-device or production readiness. The
 ordinary `just ios-run` and `just android-run` paths remain unchanged and
 proof-disabled.
 
-For the complete Lace ID Portal issuance demonstration on one physical Android
-phone over Tailscale, use the receipt-supervised [operator demo kit](demo/README.md):
+For a provider-neutral OpenID4VC and Midnight demonstration on one physical
+Android phone over Tailscale, use the receipt-supervised
+[operator demo kit](demo/README.md):
 
 ```bash
 demo/start.sh
@@ -222,9 +223,10 @@ demo/status.sh
 demo/stop.sh
 ```
 
-The kit starts or safely reuses the standalone Midnight stack, installs the
-pinned Portal-capable app, opens a fresh one-shot offer, and removes only state
-proven to be owned by its exact-head receipts.
+The kit starts or safely reuses the standalone Midnight stack, exposes its
+node, indexer, and prover through protected Tailscale routes, installs the
+pinned app, and documents the truthful standalone boundaries for OpenID4VCI,
+OpenID4VP, and SIOPv2.
 
 `just ios-native-custody-smoke` accepts either a supported passcode-bound
 Keychain capability or a truthful fail-closed simulator result. The Android

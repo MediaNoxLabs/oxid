@@ -33,10 +33,6 @@ This optional lifecycle is a live owner demo, not physical-lane evidence and
 never a replacement for the automated physical or simulator lanes. From the
 same clean, healthy preconditions, start one fresh session:
 
-For the complete checkout-to-cleanup operator path, use the root
-[demo kit](../../demo/README.md). The lower-level commands below remain the
-canonical Portal-session lifecycle used by that kit.
-
 ```bash
 just portal-tailnet-manual-start
 just portal-tailnet-manual-status

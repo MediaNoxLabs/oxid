@@ -4,9 +4,8 @@
 set -euo pipefail
 
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-state_directory="$repository_root/target/demo/portal-tailnet"
+state_directory="$repository_root/target/demo/tailnet-identity"
 receipt="$state_directory/receipt.json"
-manual_runtime="$repository_root/target/portal-tailnet-manual/runtime"
 operation="${1:-}"
 
 case "$operation" in
@@ -37,7 +36,7 @@ load_receipt() {
   head="$(git -C "$repository_root" rev-parse HEAD)"
   tree="$(git -C "$repository_root" rev-parse 'HEAD^{tree}')"
   jq -e --arg head "$head" --arg tree "$tree" '
-    .schema == "oxid-portal-tailnet-demo-v1"
+    .schema == "oxid-tailnet-identity-demo-v1"
     and .oxid == {head:$head, tree:$tree}
     and (.standaloneOwned | type == "boolean")
   ' "$receipt" >/dev/null
@@ -53,7 +52,7 @@ write_receipt() {
     --arg head "$(git -C "$repository_root" rev-parse HEAD)" \
     --arg tree "$(git -C "$repository_root" rev-parse 'HEAD^{tree}')" \
     --argjson owned "$standalone_owned" '
-      {schema:"oxid-portal-tailnet-demo-v1", oxid:{head:$head, tree:$tree}, standaloneOwned:$owned}
+      {schema:"oxid-tailnet-identity-demo-v1", oxid:{head:$head, tree:$tree}, standaloneOwned:$owned}
     ' >"$candidate"
   chmod 600 "$candidate"
   mv "$candidate" "$receipt"
@@ -67,12 +66,12 @@ query_standalone_containers() {
 
 start_demo() {
   local existing standalone_owned=false cleanup_needed=true
+  if [ -n "$(git -C "$repository_root" status --porcelain)" ]; then
+    echo "The demo requires a clean exact-head checkout." >&2
+    exit 1
+  fi
   [ ! -e "$state_directory" ] && [ ! -L "$state_directory" ] || {
     echo "A demo receipt already exists; run demo/status.sh or demo/stop.sh." >&2
-    exit 1
-  }
-  [ ! -e "$manual_runtime" ] && [ ! -L "$manual_runtime" ] || {
-    echo "An untracked manual Portal session already exists; preserving it for owner review." >&2
     exit 1
   }
   if ! existing="$(query_standalone_containers)"; then
@@ -82,7 +81,6 @@ start_demo() {
   cleanup_start_failure() {
     local incoming=$?
     if [ "$cleanup_needed" = true ]; then
-      just -f "$repository_root/Justfile" portal-tailnet-manual-stop >/dev/null 2>&1 || true
       if [ "$standalone_owned" = true ]; then
         just -f "$repository_root/Justfile" standalone-down >/dev/null 2>&1 || true
       fi
@@ -96,11 +94,11 @@ start_demo() {
     standalone_owned=true
   fi
   "$repository_root/scripts/standalone-status.sh" phone
-  just -f "$repository_root/Justfile" portal-tailnet-manual-start
+  just -f "$repository_root/Justfile" android-phone
   write_receipt "$standalone_owned"
   cleanup_needed=false
   trap - EXIT
-  echo "Oxid Portal Tailnet demo: READY"
+  echo "Oxid Tailnet identity demo: READY"
   echo "Use demo/status.sh to check it and demo/stop.sh for receipt-scoped cleanup."
 }
 
@@ -110,8 +108,7 @@ status_demo() {
     exit 1
   }
   "$repository_root/scripts/standalone-status.sh" phone
-  just -f "$repository_root/Justfile" portal-tailnet-manual-status
-  echo "Oxid Portal Tailnet demo: READY"
+  echo "Oxid Tailnet identity demo: READY"
 }
 
 stop_demo() {
@@ -121,13 +118,12 @@ stop_demo() {
     exit 1
   }
   standalone_owned="$(jq -r '.standaloneOwned' "$receipt")"
-  just -f "$repository_root/Justfile" portal-tailnet-manual-stop
   if [ "$standalone_owned" = true ]; then
     just -f "$repository_root/Justfile" standalone-down
   fi
   rm -f -- "$receipt"
   rmdir "$state_directory"
-  echo "Oxid Portal Tailnet demo: STOPPED"
+  echo "Oxid Tailnet identity demo: STOPPED"
   if [ "$standalone_owned" = false ]; then
     echo "The pre-existing standalone stack and its routes were left running."
   fi

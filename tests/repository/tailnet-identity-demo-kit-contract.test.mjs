@@ -17,19 +17,20 @@ test("root demo entrypoints are strict thin wrappers over one canonical lifecycl
   }
 });
 
-test("demo lifecycle records exact-head standalone ownership and delegates trust boundaries", async () => {
+test("demo lifecycle records exact-head ownership and delegates existing boundaries", async () => {
   const lifecycle = await text("scripts/demo-stack.sh");
   const query = lifecycle.indexOf("existing=\"$(query_standalone_containers)\"");
   const start = lifecycle.indexOf("standalone-phone-up");
   assert.ok(query >= 0 && query < start, "ownership query must precede standalone startup");
-  assert.match(lifecycle, /oxid-portal-tailnet-demo-v1/);
+  assert.match(lifecycle, /oxid-tailnet-identity-demo-v1/);
   assert.match(lifecycle, /git -C "\$repository_root" rev-parse HEAD/);
   assert.match(lifecycle, /git -C "\$repository_root" rev-parse 'HEAD\^\{tree\}'/);
   assert.match(lifecycle, /chmod 600 "\$candidate"/);
   assert.match(lifecycle, /standaloneOwned/);
-  assert.match(lifecycle, /portal-tailnet-manual-start/);
-  assert.match(lifecycle, /portal-tailnet-manual-status/);
-  assert.match(lifecycle, /portal-tailnet-manual-stop/);
+  assert.match(lifecycle, /git -C "\$repository_root" status --porcelain/);
+  assert.match(lifecycle, /standalone-phone-up/);
+  assert.match(lifecycle, /standalone-status\.sh" phone/);
+  assert.match(lifecycle, /android-phone/);
   assert.match(lifecycle, /if \[ "\$standalone_owned" = true \]; then\s+just -f "\$repository_root\/Justfile" standalone-down/);
   assert.doesNotMatch(lifecycle, /tailscale serve|adb |docker compose|https:\/\//);
 });
@@ -46,7 +47,7 @@ test("standalone status is read-only and checks local plus Tailnet readiness", a
   assert.doesNotMatch(status, /\b(up|down|start|stop|reset|rm)\b/);
 });
 
-test("operator runbook covers one-shot issuance and ownership-safe cleanup", async () => {
+test("operator runbook separates abstract OpenID roles from Midnight transport", async () => {
   const [runbook, runner, mainReadme, factoryIndex] = await Promise.all([
     text("demo/README.md"),
     text("run.sh"),
@@ -57,13 +58,15 @@ test("operator runbook covers one-shot issuance and ownership-safe cleanup", asy
     "demo/start.sh",
     "demo/status.sh",
     "demo/stop.sh",
-    "Accept and issue credential",
-    "Reveal locally",
-    "do not reuse the QR",
-    "physical Android\\s+only",
+    "OpenID4VCI 1.0 Final",
+    "OpenID4VP 1.0 Final",
+    "SIOPv2 draft 13",
+    "in-process issuer",
+    "proof_unavailable",
+    "physical Android only",
   ]) assert.match(runbook, new RegExp(phrase, "i"));
   assert.match(mainReadme, /demo\/README\.md/);
   assert.match(factoryIndex, /demo\/README\.md/);
-  const registration = "node --test tests/repository/portal-tailnet-demo-kit-contract.test.mjs";
+  const registration = "node --test tests/repository/tailnet-identity-demo-kit-contract.test.mjs";
   assert.equal(runner.split(registration).length - 1, 1);
 });
