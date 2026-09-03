@@ -1496,6 +1496,8 @@ fn executable_rebuilds_resumes_and_refreshes_a_live_shielded_checkpoint() {
     {
         use std::os::unix::fs::PermissionsExt as _;
 
+        fs::set_permissions(&store.root, fs::Permissions::from_mode(0o700))
+            .expect("public fixture directory permissions are restricted");
         fs::set_permissions(&private_directory, fs::Permissions::from_mode(0o700))
             .expect("private fixture directory permissions are restricted");
     }
