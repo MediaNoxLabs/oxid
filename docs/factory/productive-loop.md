@@ -21,7 +21,7 @@ not.
   hosts. One mutating parent owns each issue worktree; repository merges remain
   serialized.
 - A clean gate is evidence, not permission to mutate the delivery branch. An
-  agent may merge only an issue-backed `integration` PR when the active owner
+  agent may merge only an issue-backed `develop` PR when the active owner
   request explicitly authorizes it and the guarded merge audit passes.
 
 An SLO miss is a process finding. Do not answer it by adding retries, reviewers,
@@ -56,7 +56,7 @@ the result as provisional.
 
 A prototype closes with its hypothesis, result, changed paths, checks run,
 known gaps, resource use, and promotion plan. Promotion is a deliberate new
-`production-ready` invocation: fetch and refresh from `origin/integration`,
+`production-ready` invocation: fetch and refresh from `origin/develop`,
 audit every shortcut and known gap, discard provisional gate claims, rebuild
 the handoff envelope, recompute the affected targets, and execute the normal
 production gates. Do not turn a prototype into a PR by merely pushing its head.
@@ -68,7 +68,7 @@ disk limits. The machine-readable contract is
 
 ## One candidate, two checkpoints
 
-1. Start from fetched `origin/integration` in a dedicated worktree. Run
+1. Start from fetched `origin/develop` in a dedicated worktree. Run
    `node scripts/worktree-lifecycle.mjs audit` before creating another.
 2. Make a bounded change and run the narrowest meaningful local test.
 3. Run the draft gate for scope and correctness. It does not wait for hosted
@@ -77,7 +77,7 @@ disk limits. The machine-readable contract is
 
    ```bash
    node scripts/ci/target-plan.mjs \
-     --base "$(git merge-base HEAD origin/integration)" \
+     --base "$(git merge-base HEAD origin/develop)" \
      --head HEAD \
      --event pull_request \
      --delivery-profile production-ready
@@ -91,7 +91,7 @@ disk limits. The machine-readable contract is
 7. For a release-profile/high-risk change, an owner request, or a disputed finding, run
    the manually invoked current-head Claude review once after the last edit.
 8. Recheck current-head freshness. Hand off to the human operator, or use the
-   guarded integration-only merge wrapper when the active owner request
+   guarded develop-only merge wrapper when the active owner request
    explicitly authorizes automated merge. Return any failed audit to
    remediation.
 
@@ -139,15 +139,15 @@ node scripts/worktree-lifecycle.mjs audit --json
 
 Mutation is intentionally awkward and single-target. It requires an exact
 registered path, the expected head, and `--execute`. Worktree removal also
-requires a clean head already integrated into `origin/integration` and at least
+requires a clean head already integrated into `origin/develop` and at least
 seven days old. The audit accepts direct Git ancestry first. For a squash merge,
 it uses one exact merged GitHub PR head/base/merge-commit match and verifies that
-merge commit against a remotely observed, current `origin/integration`. Stale,
+merge commit against a remotely observed, current `origin/develop`. Stale,
 unavailable, malformed, or ambiguous hosted evidence fails closed and is shown
 in the `mergeProof` field. `audit` remains mutation-free but is no longer purely
 local: non-ancestor heads make bounded read-only `git ls-remote` and authenticated
 `gh api graphql` calls. Without network access, a logged-in `gh`, or a current
-local integration ref, those heads report `unavailable`; direct ancestry and the
+local develop ref, those heads report `unavailable`; direct ancestry and the
 rest of the inventory remain usable. The human table appends `proof` as its last
 column so the pre-existing column positions remain stable; prefer `--json` for
 automation:

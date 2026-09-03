@@ -32,7 +32,7 @@ The envelope is the primary handoff artifact — it is derived from resolver out
 
 **Construction sequence:**
 <!-- pi-only -->
-**Repository wrapper mandate:** resolve the checkout with `git rev-parse --show-toplevel`, then invoke dev-loops only through `node <git-root>/scripts/dev-loops.mjs <verb...>`. The wrapper validates the exact repository-local `dev-loops` pin from the Git root or its bounded common checkout, and it forces public PR creation to `integration`. Managed worktrees use `node <git-root>/scripts/loop/ensure-worktree.mjs ...`, which forces `origin/integration`.
+**Repository wrapper mandate:** resolve the checkout with `git rev-parse --show-toplevel`, then invoke dev-loops only through `node <git-root>/scripts/dev-loops.mjs <verb...>`. The wrapper validates the exact repository-local `dev-loops` pin from the Git root or its bounded common checkout, and it forces public PR creation to `develop`. Managed worktrees use `node <git-root>/scripts/loop/ensure-worktree.mjs ...`, which forces `origin/develop`.
 
 Do not invoke a package `cli/index.mjs` directly. Do not use user-home, global npm, Node module-search, package-relative, arbitrary-ancestor, or filesystem-search fallbacks. If the tracked wrapper cannot resolve the exact project pin, stop at its diagnostic. Pi 0.84 extension hooks are advisory and cannot cancel provider execution.
 <!-- /pi-only -->
@@ -64,7 +64,7 @@ An omitted profile means `production-ready`. Reject an unknown or conflicting pr
 
 `prototype` is an explicit request for the local implementation strategy. Keep the issue-backed worktree and all contribution, security, process, and disk invariants, but do not create/update a PR, push, wait for hosted CI, claim merge readiness, or merge. The hosted target plan is `basic` plus only a focused `unit-linux` or `headless-linux` target that the task explicitly needs. When a real stack, platform, device, or Tailnet path is itself the hypothesis, run at most that one focused qualification rather than inferring the whole platform chain. Use at most one bounded scope/correctness reviewer, and stop a focused iteration at ten minutes with a concrete result or blocker. Close with the hypothesis, result, changed paths, checks run, known gaps, resource use, and promotion plan. All prototype evidence is provisional.
 
-`production-ready` retains the normal routed workflow, affected-target planning, draft and pre-approval gates, current-head evidence, and authority controls below. Promotion from `prototype` must be explicit: refresh `origin/integration`, audit prototype shortcuts and known gaps, invalidate provisional evidence, rebuild the handoff envelope, recompute targets, and run the production-ready gates from the refreshed state.
+`production-ready` retains the normal routed workflow, affected-target planning, draft and pre-approval gates, current-head evidence, and authority controls below. Promotion from `prototype` must be explicit: refresh `origin/develop`, audit prototype shortcuts and known gaps, invalidate provisional evidence, rebuild the handoff envelope, recompute targets, and run the production-ready gates from the refreshed state.
 
 When that skill is not available beneath the exact repository pin, stop at the tracked wrapper/preflight diagnostic; do not search other installation layouts.
 
@@ -78,7 +78,7 @@ Respect repository contract routing posture:
 - prefer the GitHub-first routed path when work should move through GitHub branches, pull requests, CI, and review
 - route to the local implementation strategy only when the user explicitly requests a local phase-based path
 - keep any specialized Copilot behavior behind `dev-loop` as internal routed logic, helper modules, or non-user-facing implementation details
-- honor `.devloops` `maxCopilotRounds: 0`, the two-reviewer cap, and low-signal stop; merge only an issue-backed `integration` PR when the active owner request explicitly authorizes it and the repository merge wrapper passes; `main` and `develop` remain human-only; invoke the tracked external current-head review only for high-risk work, an owner request, or a disputed finding; for a draft PR, gate coordination is authoritative for gate progression, so proceed with `run_draft_gate` and keep the PR draft when it is explicitly allowed under `requireCi: false`, even if aggregate loop-info reports failed CI; stop on every other contradiction rather than shadowing a pinned route locally
+- honor `.devloops` `maxCopilotRounds: 0`, the two-reviewer cap, and low-signal stop; merge only an issue-backed `develop` PR when the active owner request explicitly authorizes it and the repository merge wrapper passes; `main` promotion remains human-only; invoke the tracked external current-head review only for high-risk work, an owner request, or a disputed finding; for a draft PR, gate coordination is authoritative for gate progression, so proceed with `run_draft_gate` and keep the PR draft when it is explicitly allowed under `requireCi: false`, even if aggregate loop-info reports failed CI; stop on every other contradiction rather than shadowing a pinned route locally
 
 If the current issue/PR/local state is materially unclear, contradictory, off-trail, or not cleanly covered by deterministic guidance, stop and ask for human direction rather than guessing.
 

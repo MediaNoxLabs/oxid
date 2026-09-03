@@ -6,7 +6,7 @@ This repository is the public, standalone home of the Oxid identity wallet. The
 root `OXID_IDENTITY_WALLET_BLUEPRINT.md` is the product and architecture north
 star. `RUST_MONOREPO_QUALITY.md` is the owner-authored non-functional north
 star, and `docs/site/src/quality-constitution.md` maps it to immediate rules and
-staged targets. `docs/integration-delivery.md` is the authoritative base, CI,
+staged targets. `docs/issue-branch-delivery.md` is the authoritative base, CI,
 and merge contract for issue-backed work. When this guide and the blueprint
 differ, preserve the blueprint's dependency and security rules and update this
 file in the same change.
@@ -1979,11 +1979,11 @@ duplicating versions across manifests.
 
 ## Development cycle
 
-1. Fetch `origin/integration` and start issue-backed product, refactor, quality,
+1. Fetch `origin/develop` and start issue-backed product, refactor, quality,
    or tooling work from that exact ref. Pull requests target `integration`, the
    only writable delivery and Pages publishing branch. Historical `main` and
    migration-era `develop` are read-only under repository ruleset `21481544`.
-   Follow `docs/integration-delivery.md`.
+   Follow `docs/issue-branch-delivery.md`.
 2. Use a dedicated worktree. Do not implement in a dirty primary checkout.
 3. Read this file and the blueprint before changing code.
 4. Change tests and public documentation with behavior.

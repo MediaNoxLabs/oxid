@@ -2,8 +2,8 @@ name: Documentation site
 
 on:
   push:
-    # integration is the sole writable delivery and Pages publishing branch.
-    branches: [integration]
+    # Stable documentation is published only from the release branch.
+    branches: [main]
     paths:
       - "docs/**"
       - ".github/workflows/pages.yml"
@@ -42,7 +42,7 @@ jobs:
 
   deploy:
     name: Deploy to GitHub Pages
-    if: github.ref == 'refs/heads/integration'
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 10

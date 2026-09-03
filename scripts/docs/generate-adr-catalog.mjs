@@ -7,16 +7,16 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-export const INTEGRATION_ADR_BLOB_BASE = "https://github.com/MediaNoxLabs/oxid/blob/integration/docs/adr";
+export const DEVELOP_ADR_BLOB_BASE = "https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr";
 
 export function renderAdrCatalog(index) {
   const body = index
     .replace(/^# /gm, "## ")
-    .replace(/\]\((([0-9]{4})[A-Za-z0-9./_-]*\.md)\)/g, `](${INTEGRATION_ADR_BLOB_BASE}/$1)`);
+    .replace(/\]\((([0-9]{4})[A-Za-z0-9./_-]*\.md)\)/g, `](${DEVELOP_ADR_BLOB_BASE}/$1)`);
   return [
     "# Decision records",
     "",
-    `> Regenerated at build time from [\`docs/adr/README.md\`](${INTEGRATION_ADR_BLOB_BASE}/README.md).`,
+    `> Regenerated at build time from [\`docs/adr/README.md\`](${DEVELOP_ADR_BLOB_BASE}/README.md).`,
     "",
     body,
   ].join("\n");

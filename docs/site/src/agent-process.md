@@ -21,10 +21,10 @@ This page documents the process as it actually operates.
    every push. A conservative path classifier escalates sensitive changes to
    the full suite, coverage floor, dependency audits, Nix builds, and scanners;
    nightly validation runs the full hermetic closure. A bounded review policy
-   ([`.devloops`](https://github.com/MediaNoxLabs/oxid/blob/integration/.devloops))
+   ([`.devloops`](https://github.com/MediaNoxLabs/oxid/blob/develop/.devloops))
    uses scope/correctness at draft and correctness/security at pre-approval.
 4. **An independent steward audits the stream.** A second agent reviews
-   `integration` deltas on a schedule, measures build/CI budgets, verifies
+   `develop` deltas on a schedule, measures build/CI budgets, verifies
    security claims against the code, and files findings as issues the build
    agent can pick up. The baseline audit — 11 dimensions, adversarially
    verified findings — is public:
@@ -39,7 +39,7 @@ This page documents the process as it actually operates.
 
 - **Provenance over trust.** Migrated behavior cites the exact upstream
   commit it was reviewed from
-  ([`docs/migration/`](https://github.com/MediaNoxLabs/oxid/tree/integration/docs/migration));
+  ([`docs/migration/`](https://github.com/MediaNoxLabs/oxid/tree/develop/docs/migration));
   pinned digests make "the same bytes" a checkable claim.
 - **Honesty as a gate.** Capability labels (`deterministic_simulation`,
   `indexer_supplied_not_proven`, `proof_unavailable`) are part of the

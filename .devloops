@@ -60,9 +60,8 @@ personas:
     defaultModel: null
 
 # The active owner may authorize an automated merge only for an issue-backed
-# integration PR after the repository merge wrapper passes. Historical main and
-# develop remain human-only; releases, settings, tags, and ADR acceptance remain
-# human actions.
+# develop PR after the repository merge wrapper passes. Promotion to main,
+# releases, settings, tags, and ADR acceptance remain human actions.
 autonomy:
   stopAt: []
   humanMergeOnly: false

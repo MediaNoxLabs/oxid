@@ -51,7 +51,7 @@ test("delivery profiles keep prototype evidence local and promotion explicit", a
 
   assert.deepEqual(profiles.promotion, {
     explicit: true,
-    refreshBase: "origin/integration",
+    refreshBase: "origin/develop",
     auditPrototypeGaps: true,
     invalidateProvisionalEvidence: true,
     recomputeTargets: true,
@@ -185,7 +185,7 @@ test("preflight rewrites split and late generic main guidance to integration", a
   ));
   await rewritten.flush();
   assert.equal(output, [
-    "  (creates+provisions tmp/worktrees/dev-loops/<kind>-<n> from origin/integration)",
+    "  (creates+provisions tmp/worktrees/dev-loops/<kind>-<n> from origin/develop)",
     "legitimate origin/main and origin/main-release diagnostic",
     "",
   ].join("\n"));
@@ -224,7 +224,7 @@ test("preflight rewrite sink honors destination backpressure", async () => {
   await new Promise((resolve) => setImmediate(resolve));
   release();
   await flush;
-  assert.match(output, /origin\/integration/u);
+  assert.match(output, /origin\/develop/u);
   assert.doesNotMatch(output, /origin\/main/u);
 });
 

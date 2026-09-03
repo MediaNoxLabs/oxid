@@ -2,7 +2,7 @@
 
 Oxid's security posture is defined by what the code *refuses* to do, and the
 refusals are tested. This page describes the model at a working level; the
-repository [`SECURITY.md`](https://github.com/MediaNoxLabs/oxid/blob/integration/SECURITY.md)
+repository [`SECURITY.md`](https://github.com/MediaNoxLabs/oxid/blob/develop/SECURITY.md)
 carries the disclosure policy, and the [ADRs](adr-catalog.md) carry the
 binding decisions.
 
@@ -77,4 +77,4 @@ publication. A dated, per-advisory exception register lives under
 - Development custody and simulations are clearly labeled but present in
   development builds; never point them at real value.
 - Reporting a vulnerability: see
-  [`SECURITY.md`](https://github.com/MediaNoxLabs/oxid/blob/integration/SECURITY.md).
+  [`SECURITY.md`](https://github.com/MediaNoxLabs/oxid/blob/develop/SECURITY.md).

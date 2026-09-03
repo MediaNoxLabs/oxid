@@ -195,8 +195,8 @@ test("hosted policy evaluates trusted base code and verifies OpenPGP through Git
   assert.match(dco, /candidate\.commit\.verification/);
   assert.match(dco, /policy\/scripts\/ci\/contribution-policy\.mjs hosted-commits/);
   assert.match(dco, /COMMIT_POLICY_MODE:/);
-  assert.match(dco, /head\.ref == 'integration'/);
-  assert.match(dco, /base\.ref == 'develop'/);
+  assert.match(dco, /head\.ref == 'develop'/);
+  assert.match(dco, /base\.ref == 'main'/);
   assert.equal((dco.match(/repo\.full_name == github\.repository/g) || []).length, 4);
   assert.match(dco, /'integration-promotion' \|\| 'contributor'/);
   assert.match(dco, /createCommitStatus/);

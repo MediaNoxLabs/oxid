@@ -368,11 +368,11 @@ test("reviewed exceptions are closed, expire fail-closed, and never bypass absol
 });
 
 test("CLI defaults to measurement and accepts --enforce exactly once", () => {
-  assert.deepEqual(parseArguments(["--base", "origin/integration"]), {
-    base: "origin/integration", dryRun: false, enforce: false, policyPath: undefined,
+  assert.deepEqual(parseArguments(["--base", "origin/develop"]), {
+    base: "origin/develop", dryRun: false, enforce: false, policyPath: undefined,
   });
-  assert.deepEqual(parseArguments(["--base", "origin/integration", "--enforce"]), {
-    base: "origin/integration", dryRun: false, enforce: true, policyPath: undefined,
+  assert.deepEqual(parseArguments(["--base", "origin/develop", "--enforce"]), {
+    base: "origin/develop", dryRun: false, enforce: true, policyPath: undefined,
   });
   assert.throws(() => parseArguments(["--base", "HEAD", "--enforce", "--enforce"]), /more than once/iu);
 });

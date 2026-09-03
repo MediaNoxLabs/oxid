@@ -123,7 +123,7 @@ async function runSynthetic(t, overrides = {}) {
     const result = await runCoverage({
       repoRoot,
       stateRoot,
-      base: "origin/integration",
+      base: "origin/develop",
       policy: await loadPolicy(),
       git,
       executeScope,
@@ -183,7 +183,7 @@ test("dirty source and unavailable or non-ancestor bases fail closed", async (t)
     await assert.rejects(runCoverage({
       repoRoot,
       stateRoot,
-      base: "origin/integration",
+      base: "origin/develop",
       policy: await loadPolicy(),
       git: dirty,
       executeScope: async () => assert.fail("dirty source launched a scope"),
@@ -228,7 +228,7 @@ test("HEAD, base, and cleanliness drift are detected between serial scopes", asy
       await assert.rejects(runCoverage({
         repoRoot,
         stateRoot,
-        base: "origin/integration",
+        base: "origin/develop",
         policy: await loadPolicy(),
         git,
         executeScope: async ({ rawReportPath }) => {
@@ -338,7 +338,7 @@ test("scope failure removes only the run-owned head output and lock", async (t) 
   await assert.rejects(runCoverage({
     repoRoot,
     stateRoot,
-    base: "origin/integration",
+    base: "origin/develop",
     policy: await loadPolicy(),
     git: fakeGit(),
     executeScope: async ({ rawReportPath }) => {
@@ -358,7 +358,7 @@ test("the explicit dry-run seam emits non-coverage evidence without an executor"
     const result = await runCoverage({
       repoRoot,
       stateRoot,
-      base: "origin/integration",
+      base: "origin/develop",
       policy: await loadPolicy(),
       git: fakeGit(),
       dryRun: true,
@@ -379,8 +379,8 @@ test("the CLI rejects missing, duplicate, malformed, and unknown arguments", () 
   assert.throws(() => parseArguments(["--base"]), /requires a value/u);
   assert.throws(() => parseArguments(["--base", "one", "--base", "two"]), /specified more than once/u);
   assert.throws(() => parseArguments(["--base", "HEAD", "--wat"]), /unknown argument/u);
-  assert.deepEqual(parseArguments(["--base", "origin/integration", "--dry-run"]), {
-    base: "origin/integration",
+  assert.deepEqual(parseArguments(["--base", "origin/develop", "--dry-run"]), {
+    base: "origin/develop",
     dryRun: true,
     enforce: false,
     policyPath: undefined,
@@ -401,7 +401,7 @@ test("hosted coverage supplies a fetched, non-empty source comparison base", asy
   assert.match(coverageJob, /fetch-depth: 0/u);
   assert.match(
     coverageJob,
-    /OXID_COVERAGE_BASE: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.before \|\| 'origin\/integration' \}\}/u,
+    /OXID_COVERAGE_BASE: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.before \|\| 'origin\/develop' \}\}/u,
   );
   assert.match(coverageJob, /\.\/run\.sh coverage --strict/u);
 });

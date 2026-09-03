@@ -18,7 +18,7 @@ and must have the exact package identity and version. There is no home, global,
 personal-path, arbitrary-ancestor, or filesystem-search fallback.
 
 ```bash
-# Managed issue worktree; origin/integration is added and any other base fails.
+# Managed issue worktree; origin/develop is added and any other base fails.
 node scripts/loop/ensure-worktree.mjs \
   --repo-root "$PWD" --issue <number>
 
@@ -166,7 +166,7 @@ no-network contract.
 
 The ordinary draft and pre-approval gates do not invoke an external model.
 For a high-risk `full` change, an explicit owner request, or a disputed
-finding, commit all intended changes, fetch `origin/integration`, and manually
+finding, commit all intended changes, fetch `origin/develop`, and manually
 invoke the reviewer once from a clean worktree. `maxCopilotRounds` remains
 zero. By
 default it writes beneath `${XDG_STATE_HOME:-$HOME/.local/state}/oxid/claude-reviews`.
@@ -193,7 +193,7 @@ node scripts/review/claude-current-head.mjs \
   --verify-evidence <evidence.json>
 ```
 
-The runner independently derives HEAD and the `origin/integration` merge base,
+The runner independently derives HEAD and the `origin/develop` merge base,
 rejects any binary path before review, and creates a `git diff --binary` UTF-8
 text artifact whose exact bytes are both hashed and sent to the reviewer. It
 supports the deliberately bounded Claude CLI range `>= 2.1.228,< 2.2.0`, parses

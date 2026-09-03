@@ -10,11 +10,11 @@ import { runManagedChild } from "../lib/managed-child-process.mjs";
 import { enforceSingleBase, readLongOptionValues } from "../lib/pinned-dev-loops-args.mjs";
 import { auditWorktreeAdmission } from "../factory/audit-pi.mjs";
 
-const INTEGRATION_BASE = "origin/integration";
+const DELIVERY_BASE = "origin/develop";
 
-/** Force all managed worktrees to start from the integration remote ref. */
+/** Force all managed worktrees to start from the durable development ref. */
 export function normalizeWorktreeArgs(argv) {
-  return enforceSingleBase(argv, INTEGRATION_BASE, {
+  return enforceSingleBase(argv, DELIVERY_BASE, {
     addWhenMissing: true,
     label: "repository worktrees",
   });

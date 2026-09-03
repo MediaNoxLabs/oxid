@@ -443,7 +443,7 @@ test("every hosted target has one explicit budget matching the authoritative mat
 test("committed schema advertises the same closed v1 contract", async () => {
   const schema = JSON.parse(await readFile(new URL("../../docs/factory/work-item-metrics-v1.schema.json", import.meta.url), "utf8"));
   assert.equal(schema.properties.schemaVersion.const, 1);
-  assert.match(schema.$id, /^https:\/\/raw\.githubusercontent\.com\/MediaNoxLabs\/oxid\/integration\//);
+  assert.match(schema.$id, /^https:\/\/raw\.githubusercontent\.com\/MediaNoxLabs\/oxid\/develop\//);
   assert.equal(schema.additionalProperties, false);
   assert.deepEqual(schema.properties.tokens.oneOf[0], { type: "null" });
   for (const key of ["sessions", "turns", "toolCalls"]) {

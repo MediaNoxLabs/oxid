@@ -3,7 +3,7 @@ name: Documentation links
 on:
   pull_request:
   push:
-    branches: [integration, develop, main]
+    branches: [develop, main]
   workflow_dispatch: {}
 
 permissions:

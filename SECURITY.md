@@ -93,6 +93,6 @@ finalized history only.
 
 ## Supported versions
 
-Until the first release, only the latest commit on `integration` receives
+Until the first release, only the latest commit on `develop` receives
 security fixes. Release support policy will be published before a stable
 version.

@@ -66,11 +66,11 @@ function commandText(run, command, args, options = {}) {
   }
 }
 
-function remoteIntegrationHead(root, run) {
-  const output = commandText(run, "git", ["-C", root, "ls-remote", "--exit-code", "origin", "refs/heads/integration"]);
+function remoteDevelopHead(root, run) {
+  const output = commandText(run, "git", ["-C", root, "ls-remote", "--exit-code", "origin", "refs/heads/develop"]);
   if (output === null) return null;
   const [head, ref, ...extra] = output.split(/\s+/);
-  if (extra.length > 0 || ref !== "refs/heads/integration" || !SHA_PATTERN.test(head ?? "")) return null;
+  if (extra.length > 0 || ref !== "refs/heads/develop" || !SHA_PATTERN.test(head ?? "")) return null;
   return head;
 }
 
@@ -82,7 +82,7 @@ export function indexGithubMergeProofs(pulls, mergeCommitIsIntegrated, requested
     const mergeCommit = pull?.mergeCommit?.oid;
     if (!Number.isSafeInteger(pull?.number) || pull.number < 1
       || pull?.state !== "MERGED"
-      || pull?.baseRefName !== "integration"
+      || pull?.baseRefName !== "develop"
       || typeof pull?.mergedAt !== "string" || pull.mergedAt.length === 0
       || !SHA_PATTERN.test(head ?? "") || !SHA_PATTERN.test(mergeCommit ?? "")
       || (requestedHeads !== null && !requestedHeads.has(head))
@@ -136,16 +136,16 @@ export function parseGithubMergeResponse(output, heads) {
 
 export function loadGithubMergeEvidence(root, heads, { run = spawnSync } = {}) {
   const uniqueHeads = [...new Set(heads)].filter((head) => SHA_PATTERN.test(head));
-  const ancestry = new Set(uniqueHeads.filter((head) => isAncestor(root, head, "origin/integration", run)));
+  const ancestry = new Set(uniqueHeads.filter((head) => isAncestor(root, head, "origin/develop", run)));
   const requested = uniqueHeads.filter((head) => !ancestry.has(head));
   if (requested.length === 0) {
     return { status: "available", ancestry, proofs: new Map(), ambiguous: new Set(), unavailableHeads: new Set() };
   }
-  const trackedHead = commandText(run, "git", ["-C", root, "rev-parse", "origin/integration"]);
+  const trackedHead = commandText(run, "git", ["-C", root, "rev-parse", "origin/develop"]);
   const remote = commandText(run, "git", ["-C", root, "remote", "get-url", "origin"]);
   const repository = remote === null ? null : githubRepositoryFromRemote(remote);
   if (!SHA_PATTERN.test(trackedHead ?? "") || repository === null) return unavailableEvidence(ancestry);
-  const before = remoteIntegrationHead(root, run);
+  const before = remoteDevelopHead(root, run);
   if (before === null || before !== trackedHead) return unavailableEvidence(ancestry);
   const [owner, name] = repository.split("/");
   const output = commandText(run, "gh", [
@@ -154,13 +154,13 @@ export function loadGithubMergeEvidence(root, heads, { run = spawnSync } = {}) {
     "-f", `owner=${owner}`,
     "-f", `name=${name}`,
   ], { cwd: root });
-  const after = remoteIntegrationHead(root, run);
+  const after = remoteDevelopHead(root, run);
   if (output === null || after === null || after !== before) return unavailableEvidence(ancestry);
   try {
     const response = parseGithubMergeResponse(output, requested);
     const availableHeads = new Set(requested.filter((head) => !response.unavailableHeads.has(head)));
     const indexed = indexGithubMergeProofs(response.pulls, (mergeCommit) => (
-      isAncestor(root, mergeCommit, "origin/integration", run)
+      isAncestor(root, mergeCommit, "origin/develop", run)
     ), availableHeads);
     return { status: "available", ancestry, ...indexed, unavailableHeads: response.unavailableHeads };
   } catch {
@@ -203,7 +203,7 @@ function describe(root, entry, now = Date.now(), githubEvidence = unavailableEvi
 export function removalEligibility(item, { primary, olderThanDays = 7 }) {
   if (item.worktree === primary) return "primary checkout";
   if (!item.clean) return "worktree is dirty";
-  if (!item.merged) return `head is not integrated into origin/integration (merge proof: ${item.mergeProof ?? "none"})`;
+  if (!item.merged) return `head is not integrated into origin/develop (merge proof: ${item.mergeProof ?? "none"})`;
   if (item.ageDays < olderThanDays) return `last commit is newer than ${olderThanDays} days`;
   return null;
 }
