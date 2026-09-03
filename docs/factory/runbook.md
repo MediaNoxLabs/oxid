@@ -99,14 +99,13 @@ This is the part most likely to be misread, because all three look like
 
 | | What fans out | Configured in | Who decides |
 | --- | --- | --- | --- |
-| **Gate fan-out** | Review **angles** over one diff — draft `scope`/`correctness`, final `correctness`/`security` | `.devloops` → `refinement.fanOut: 2`, `mode: parallel`, `roles` | dev-loops, automatically at a gate |
+| **Gate review** | One routine review angle per checkpoint — draft `correctness`, final `security`; extra angles only on explicit high-risk/dispute paths | `.devloops` → `refinement.fanOut: 1`, `roles` | dev-loops, automatically at a gate |
 | **Sub-agent delegation** | Child **pi sessions** with their own jobs | `.pi/subagent-policy.json`, installed to the package's user-level config | the agent, when asked |
 | **Panel review** | Multiple **requested reviewers** on a PR | GitHub review requests + the `ai-review` label | a human, by requesting review |
 
-**Gate fan-out** is the one that runs without being asked. `refinement.fanOut`
-is how many angle reviews run concurrently; `roles` is the pool they are drawn
-from. Both refinement and gate concurrency are capped at two. Low-signal
-refinement stops after two quiet rounds instead of spending a third round to
+**Gate review** is the one that runs without being asked. `refinement.fanOut`
+is one for routine work; `roles` is the pool it is drawn from. Low-signal
+refinement stops after one quiet round instead of spending another round to
 rediscover the same result.
 
 **Sub-agent delegation** is foreground by default, caps concurrency at two,
@@ -212,11 +211,15 @@ undetectable later. The check that matters is `gates` parsing.
   Omit `--follow-up` when there are none. The receipt contains counts and issue
   numbers only; never copy review text, prompts, credentials, or product data
   into it.
+- **Advisory failures remain visible but do not acquire veto power.** GitHub's
+  `UNSTABLE` merge state may be considered only by the guarded milestone audit.
+  The wrapper still requires a non-empty, fully passing exact-head critical
+  check set, including GPG/DCO, before merge.
 - **Fan-out is on demand, not a milestone merge prerequisite.**
   `gates.requireFanoutEvidence: false` and `requireFanoutProvenance: false`
   keep the ordinary local-only path compatible with
   `refinement.maxCopilotRounds: 0`. High-risk work may still fan out to the
-  configured two-reviewer pool, and any resulting findings remain visible, but
+  an explicitly requested second opinion, and any resulting findings remain visible, but
   an unavailable panel cannot deadlock an issue-backed, exact-head green PR.
 - **Foreign angles are rejected.** `gates.rejectForeignAngles: true`, so an
   angle name not in the configured set cannot smuggle itself into evidence.

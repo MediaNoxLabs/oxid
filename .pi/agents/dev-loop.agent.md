@@ -9,7 +9,7 @@ inheritSkills: true
 user-invocable: true
 maxSubagentDepth: 2
 timeoutMs: 3600000
-turnBudget: {"maxTurns":32,"graceTurns":2}
+turnBudget: {"maxTurns":24,"graceTurns":1}
 ---
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Derived from dev-loops@0.9.0 agents/dev-loop.agent.md (Copyright (c) 2026 mfittko). -->
@@ -78,7 +78,8 @@ Respect repository contract routing posture:
 - prefer the GitHub-first routed path when work should move through GitHub branches, pull requests, CI, and review
 - route to the local implementation strategy only when the user explicitly requests a local phase-based path
 - keep any specialized Copilot behavior behind `dev-loop` as internal routed logic, helper modules, or non-user-facing implementation details
-- honor `.devloops` `maxCopilotRounds: 0`, the two-reviewer cap, and low-signal stop; use automated merge only for an issue-backed PR to its exact `milestone-<x.y.z>` target through the repository guard; hand every `develop` or `main` merge to a human; repair closed-class blocking findings now and defer only bounded non-critical findings through an open linked issue and visible PR mapping; invoke the tracked external current-head review only for high-risk work, an owner request, or a disputed finding; for a draft PR, gate coordination is authoritative for gate progression, so proceed with `run_draft_gate` and keep the PR draft when it is explicitly allowed under `requireCi: false`, even if aggregate loop-info reports failed CI; stop on every other contradiction rather than shadowing a pinned route locally
+- honor `.devloops` `maxCopilotRounds: 0`, the one-reviewer routine cap, and low-signal stop; use automated merge only for an issue-backed PR to its exact `milestone-<x.y.z>` target through the repository guard; hand every `develop` or `main` merge to a human; repair closed-class blocking findings now and defer only bounded non-critical findings through an open linked issue and visible PR mapping; invoke the tracked external current-head review only for high-risk work, an owner request, or a disputed finding; for a draft PR, gate coordination is authoritative for gate progression, so proceed with `run_draft_gate` and keep the PR draft when it is explicitly allowed under `requireCi: false`, even if aggregate loop-info reports failed CI; stop on every other contradiction rather than shadowing a pinned route locally
+- apply the production-ready quality budget from `.pi/delivery-profiles.json`: mandatory acceptance, correctness, security, provenance, and required evidence remain complete; after one automatic review round, preserve non-blocking quality recommendations as follow-up work instead of mutating an otherwise eligible exact head
 
 If the current issue/PR/local state is materially unclear, contradictory, off-trail, or not cleanly covered by deterministic guidance, stop and ask for human direction rather than guessing.
 

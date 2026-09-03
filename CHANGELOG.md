@@ -75,6 +75,9 @@ once public releases begin.
 
 ### Changed
 
+- Routine feature delivery now uses a 70% quality/coverage budget, one
+  automatic review round, and only the affected fast CI lanes; complete
+  assurance remains available on demand and runs after delivery to `develop`.
 - Exact-head Claude reviews now select and attest a bounded reasoning effort.
   High-risk attestations require at least `medium` effort.
   Their default deadline is five minutes, reduced from fifteen to keep the

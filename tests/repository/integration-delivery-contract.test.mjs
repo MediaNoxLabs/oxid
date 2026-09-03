@@ -53,6 +53,7 @@ test("only issue-backed develop pull requests are eligible for automated merge",
   assert.equal(closingIssueNumber("Fixes #168"), 168);
   assert.equal(closingIssueNumber("Refs #168"), null);
   assert.equal(validatePrForDevelopMerge(eligibleDevelopPr()).ok, true);
+  assert.equal(validatePrForDevelopMerge(eligibleDevelopPr({ mergeStateStatus: "UNSTABLE" })).ok, true);
   for (const baseRefName of ["main", "integration"]) {
     const result = validatePrForDevelopMerge(eligibleDevelopPr({ baseRefName }));
     assert.equal(result.ok, false);
@@ -64,6 +65,9 @@ test("only issue-backed develop pull requests are eligible for automated merge",
     { isCrossRepository: true },
     { mergeable: "UNKNOWN" },
     { mergeStateStatus: "BEHIND" },
+    { mergeStateStatus: "BLOCKED" },
+    { mergeStateStatus: "DIRTY" },
+    { mergeStateStatus: "UNKNOWN" },
     { title: "WIP: not ready" },
     { body: "Refs #168" },
   ]) assert.equal(validatePrForDevelopMerge(eligibleDevelopPr(overrides)).ok, false);
@@ -288,9 +292,10 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.doesNotMatch(draftGate, /^      - external-review$/m);
   assert.doesNotMatch(preApprovalGate, /^      - external-review$/m);
   assert.match(draftGate, /^    requireCi: false$/m);
-  assert.match(config, /^  fanOut: 2$/m);
+  assert.match(config, /^  fanOut: 1$/m);
   assert.match(config, /^  stopOnLowSignal: true$/m);
-  assert.match(config, /^  maxFanoutReviewers: 2$/m);
+  assert.match(config, /^  maxFanoutReviewers: 1$/m);
+  assert.equal((config.match(/^    blockCleanOnFindingSeverities:\n      - must-fix$/gm) ?? []).length, 2);
   assert.match(config, /^  requireFanoutEvidence: false$/m);
   assert.match(config, /^  requireFanoutProvenance: false$/m);
   const scan = await read(".github/workflows/scan.yml");

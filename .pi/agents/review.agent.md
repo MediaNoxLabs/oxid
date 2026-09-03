@@ -8,7 +8,7 @@ inheritProjectContext: true
 defaultContext: fresh
 user-invocable: false
 timeoutMs: 600000
-turnBudget: {"maxTurns":8,"graceTurns":1}
+turnBudget: {"maxTurns":6,"graceTurns":1}
 ---
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Derived from dev-loops@0.9.0 agents/review.agent.md (Copyright (c) 2026 mfittko). -->
@@ -81,6 +81,8 @@ When NOT given an angle scope, behave exactly as the full-PR review agent descri
 - Read the PR description before reviewing code.
 - Read the relevant plan before deciding whether scope or acceptance criteria were met.
 - Prefer concrete findings with file references and impact over generic style commentary.
+- A routine production-ready review has one automatic round and a 70% quality target. Only concrete correctness, security, acceptance-criterion, regression, or evidence-integrity defects are merge-blocking. Classify remaining polish as follow-up; do not require a new head merely to satisfy advisory taste.
+- Use `must-fix` only for those blocking classes. Use `worth-fixing-now` for a high-value bounded improvement that fits the current round and `defer` for the rest; both advisory classes remain visible but do not block the configured gate.
 - Distinguish clearly between must-fix findings, lower-severity risks, and informational gaps.
 - If the PR description omits required sections, is too thin to ground review without reconstructing intent from commits, or includes verdict status, evidence, or changelog content, treat that as a first-class review issue.
 - The review verdict MUST carry the acceptance-criteria and definition-of-done assessment in explicit markdown verification tables, including status plus concise evidence for each row.

@@ -82,6 +82,9 @@ Follow [the productive loop](docs/factory/productive-loop.md):
   reviewer, no push/PR/hosted-CI wait, and no merge-readiness claim.
 - `/dev-loop production-ready issue <n>` selects the normal affected-target,
   draft, CI, and pre-approval loop. It is the default when no profile is named.
+- Routine work uses a 70% quality target and one automatic review round; all
+  mandatory acceptance, correctness, security, provenance, and required-CI
+  evidence still must be complete.
 - Promotion is explicit: refresh the recorded delivery base, audit prototype gaps,
   invalidate provisional evidence, recompute targets, and run production gates.
   Both profiles retain issue/worktree, contribution, security, process, and
@@ -97,16 +100,16 @@ Follow [the productive loop](docs/factory/productive-loop.md):
    pre-approval.
 4. Batch accepted findings, run the target plan locally, then push one coherent
    current-head candidate.
-5. Run final correctness/security triage and hosted CI once. Repair blocking
-   findings in the current PR; move bounded non-critical findings only to a
-   concrete linked follow-up issue and visible PR triage comment.
+5. Run final correctness/security review and hosted CI once. Resolve blocking
+   findings; leave bounded non-blocking polish as a concrete linked follow-up
+   issue and visible PR triage comment without another exact-head CI cycle.
 6. Invoke independent current-head Claude review only for a high-risk/release-profile
    change, an owner request, or a disputed finding.
 7. At merge, post the exact-head `review-triage.mjs` receipt and use the guarded
    milestone-only wrapper for an eligible product increment, or hand a
    `develop`/`main` promotion to a human.
 
-Automatic review is capped at two concurrent reviewers. Low-signal refinement
+Automatic review is capped at one routine reviewer. Low-signal refinement
 stops. Do not add reviewers, retries, retrospective work, or a second gate to
 compensate for a provider or transport failure.
 
@@ -145,8 +148,9 @@ node scripts/ci/target-plan.mjs \
   within five minutes; non-Rust changes avoid the Rust/Nix closure.
 - L1 `unit-linux`: workspace unit tests on one target within ten minutes.
 - L2 `headless-linux`: hermetic black-box integration within ten minutes.
-- L3 lanes: UI profiles, coverage, quality, Nix package, and Compact artifacts
-  run independently when selected.
+- L3 lanes: optimized UI release, coverage, quality, Nix package, and Compact
+  artifacts run independently on `develop`, `main`, schedules, or explicit
+  demand; routine feature PRs do not pay for the full assurance matrix.
 
 Build/toolchain/lockfile changes and unknown diff state fail closed to every
 public hosted target. Pull requests use affected lanes; each trusted milestone
