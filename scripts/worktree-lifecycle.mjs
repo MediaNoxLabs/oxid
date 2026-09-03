@@ -52,6 +52,14 @@ function isAncestor(root, ancestor, descendant, run = spawnSync) {
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 
+// `integration` was a temporary delivery branch promoted in full by PR #258
+// and then retired under #264. Keep this immutable transition explicit so
+// historical exact-head worktrees can be proven delivered without reviving a
+// second permanent base branch.
+const RETIRED_BRANCH_PROMOTIONS = Object.freeze([
+  Object.freeze({ number: 258, source: "integration", target: "develop" }),
+]);
+
 export function githubRepositoryFromRemote(remote) {
   const match = remote.match(/^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/);
   return match ? `${match[1]}/${match[2]}` : null;
@@ -74,7 +82,16 @@ function remoteDevelopHead(root, run) {
   return head;
 }
 
-export function indexGithubMergeProofs(pulls, mergeCommitIsIntegrated, requestedHeads = null) {
+export function indexGithubMergeProofs(
+  pulls,
+  mergeCommitIsIntegrated,
+  requestedHeads = null,
+  {
+    promotions = [],
+    mergeCommitIsInPromotion = () => false,
+    promotionPreservesTree = () => false,
+  } = {},
+) {
   if (!Array.isArray(pulls)) throw new Error("GitHub merge evidence must be an array");
   const candidates = new Map();
   for (const pull of pulls) {
@@ -82,13 +99,32 @@ export function indexGithubMergeProofs(pulls, mergeCommitIsIntegrated, requested
     const mergeCommit = pull?.mergeCommit?.oid;
     if (!Number.isSafeInteger(pull?.number) || pull.number < 1
       || pull?.state !== "MERGED"
-      || pull?.baseRefName !== "develop"
       || typeof pull?.mergedAt !== "string" || pull.mergedAt.length === 0
       || !SHA_PATTERN.test(head ?? "") || !SHA_PATTERN.test(mergeCommit ?? "")
-      || (requestedHeads !== null && !requestedHeads.has(head))
-      || !mergeCommitIsIntegrated(mergeCommit)) continue;
+      || (requestedHeads !== null && !requestedHeads.has(head))) continue;
     const proofs = candidates.get(head) ?? new Set();
-    proofs.add(`github-pr:${pull.number}`);
+    if (pull.baseRefName === "develop" && mergeCommitIsIntegrated(mergeCommit)) {
+      proofs.add(`github-pr:${pull.number}`);
+    }
+    for (const promotion of promotions) {
+      const promotionHead = promotion?.headRefOid;
+      const promotionMerge = promotion?.mergeCommit?.oid;
+      const specification = RETIRED_BRANCH_PROMOTIONS.find((candidate) => (
+        candidate.number === promotion?.number
+      ));
+      if (specification === undefined
+        || promotion?.state !== "MERGED"
+        || promotion?.baseRefName !== specification.target
+        || promotion?.headRefName !== specification.source
+        || pull.baseRefName !== specification.source
+        || typeof promotion?.mergedAt !== "string" || promotion.mergedAt.length === 0
+        || !SHA_PATTERN.test(promotionHead ?? "") || !SHA_PATTERN.test(promotionMerge ?? "")
+        || !mergeCommitIsIntegrated(promotionMerge)
+        || !promotionPreservesTree(promotionHead, promotionMerge)
+        || !mergeCommitIsInPromotion(mergeCommit, promotionHead)) continue;
+      proofs.add(`github-pr:${pull.number}:via-pr:${promotion.number}`);
+    }
+    if (proofs.size === 0) continue;
     candidates.set(head, proofs);
   }
   const proofs = new Map();
@@ -111,7 +147,10 @@ export function githubMergeQuery(heads) {
   const selections = heads.map((head, index) => (
     `h${index}:object(oid:"${head}"){... on Commit{associatedPullRequests(first:10){nodes{number state mergedAt baseRefName headRefOid mergeCommit{oid}}pageInfo{hasNextPage}}}}`
   )).join("");
-  return `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){${selections}}}`;
+  const promotions = RETIRED_BRANCH_PROMOTIONS.map((promotion, index) => (
+    `p${index}:pullRequest(number:${promotion.number}){number state mergedAt baseRefName headRefName headRefOid mergeCommit{oid}}`
+  )).join("");
+  return `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){${selections}${promotions}}}`;
 }
 
 export function parseGithubMergeResponse(output, heads) {
@@ -120,6 +159,7 @@ export function parseGithubMergeResponse(output, heads) {
     throw new Error("GitHub merge evidence response is incomplete");
   }
   const pulls = [];
+  const promotions = [];
   const unavailableHeads = new Set();
   for (const [index, head] of heads.entries()) {
     const object = payload.data.repository[`h${index}`];
@@ -131,7 +171,17 @@ export function parseGithubMergeResponse(output, heads) {
     if (connection.pageInfo.hasNextPage) unavailableHeads.add(head);
     else pulls.push(...connection.nodes);
   }
-  return { pulls, unavailableHeads };
+  for (const [index] of RETIRED_BRANCH_PROMOTIONS.entries()) {
+    const promotion = payload.data.repository[`p${index}`];
+    if (promotion !== null && promotion !== undefined) promotions.push(promotion);
+  }
+  return { pulls, promotions, unavailableHeads };
+}
+
+function sameTree(root, left, right, run) {
+  const leftTree = commandText(run, "git", ["-C", root, "rev-parse", `${left}^{tree}`]);
+  const rightTree = commandText(run, "git", ["-C", root, "rev-parse", `${right}^{tree}`]);
+  return SHA_PATTERN.test(leftTree ?? "") && leftTree === rightTree;
 }
 
 export function loadGithubMergeEvidence(root, heads, { run = spawnSync } = {}) {
@@ -159,9 +209,20 @@ export function loadGithubMergeEvidence(root, heads, { run = spawnSync } = {}) {
   try {
     const response = parseGithubMergeResponse(output, requested);
     const availableHeads = new Set(requested.filter((head) => !response.unavailableHeads.has(head)));
-    const indexed = indexGithubMergeProofs(response.pulls, (mergeCommit) => (
-      isAncestor(root, mergeCommit, "origin/develop", run)
-    ), availableHeads);
+    const indexed = indexGithubMergeProofs(
+      response.pulls,
+      (mergeCommit) => isAncestor(root, mergeCommit, "origin/develop", run),
+      availableHeads,
+      {
+        promotions: response.promotions,
+        mergeCommitIsInPromotion: (mergeCommit, promotionHead) => (
+          isAncestor(root, mergeCommit, promotionHead, run)
+        ),
+        promotionPreservesTree: (promotionHead, promotionMerge) => (
+          sameTree(root, promotionHead, promotionMerge, run)
+        ),
+      },
+    );
     return { status: "available", ancestry, ...indexed, unavailableHeads: response.unavailableHeads };
   } catch {
     return unavailableEvidence(ancestry);

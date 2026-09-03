@@ -288,9 +288,13 @@ in a diff.
   audit` lists target size, cleanliness, merge state/proof, and age. Direct
   ancestry is preferred; squash-merged heads require one exact merged GitHub PR
   with its recorded delivery base and a merge commit present on that remotely
-  observed, current milestone or `origin/develop`. Unavailable, stale,
-  malformed, or ambiguous
-  evidence fails closed. The audit remains mutation-free, but non-ancestor heads
+  observed, current milestone or `origin/develop`. Historical `integration`
+  heads are accepted only
+  through the immutable PR #258 retirement record: the original merge must be
+  in that promotion head, the promotion must preserve the complete source tree,
+  and its merge commit must be in current `origin/develop`. Unavailable, stale,
+  malformed, tree-changing, or ambiguous evidence fails closed. The audit
+  remains mutation-free, but non-ancestor heads
   require network access plus an installed, logged-in `gh`; offline runs retain
   local ancestry and mark hosted proof `unavailable`. Its human table appends
   the proof column, while automation should use the additive JSON shape. `remove` and
