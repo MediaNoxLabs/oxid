@@ -136,6 +136,12 @@
           ]
         },
         {
+          "name": "proof-benchmark",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/proof_benchmark"
+          ]
+        },
+        {
           "name": "presentation-labels",
           "modulePathPrefixes": [
             "crates/ui-dioxus/src/labels"
@@ -181,9 +187,9 @@
       "facadeFiles": [
         "crates/composition/src/lib.rs"
       ],
-      "facadeMaximumPhysicalLines": 51,
+      "facadeMaximumPhysicalLines": 53,
       "facadeMaximumPhysicalLinesByPath": {
-        "crates/composition/src/lib.rs": 51
+        "crates/composition/src/lib.rs": 53
       },
       "capabilityOwners": [
         {
@@ -202,6 +208,12 @@
           "name": "passport-vault-bridge",
           "modulePathPrefixes": [
             "crates/composition/src/passport_vault"
+          ]
+        },
+        {
+          "name": "proof-benchmark",
+          "modulePathPrefixes": [
+            "crates/composition/src/proof_benchmark"
           ]
         },
         {
