@@ -123,6 +123,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
             p { class: "field-hint",
                 "k=18–21 can consume substantial memory, time, network, and disk. Oxid intentionally does not run high-k proofs in CI. Leaving this page does not cancel an admitted worker."
             }
+            p { class: "status-pill", "Process RSS/CPU unavailable · no reviewed public sampler" }
             div { class: "button-row",
                 label { class: "network-field",
                     span { "Run-all maximum k" }

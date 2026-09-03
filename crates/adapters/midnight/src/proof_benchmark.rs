@@ -423,4 +423,23 @@ mod tests {
         drop(first);
         assert!(BenchmarkAdmission::reserve(state, 8).is_ok());
     }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "downloads public proving parameters and executes a real proof"]
+    async fn low_k_prove_and_verify_smoke() {
+        let cache_directory =
+            std::env::temp_dir().join(format!("oxid-proof-benchmark-smoke-{}", std::process::id()));
+        let config = MidnightProofBenchmarkConfig::new(cache_directory.clone())
+            .expect("isolated absolute cache path");
+        let report = run_benchmark_inner(&config, &BenchmarkState::default(), 4).await;
+        let _ = fs::remove_dir_all(cache_directory);
+        let report = report.expect("low-k proof benchmark");
+
+        assert_eq!(report.requested_k, 4);
+        assert_eq!(
+            report.verification_result,
+            ProofBenchmarkVerification::Verified
+        );
+        assert!(report.proof_bytes > 0);
+    }
 }
