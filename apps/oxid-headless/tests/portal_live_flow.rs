@@ -960,6 +960,12 @@ fn lace_portal_mock_flow_issues_to_same_headless_process_and_restores() {
     );
     let wallet_root = run_root.join("wallet");
     fs::create_dir_all(&wallet_root).expect("wallet root");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&wallet_root, fs::Permissions::from_mode(0o700))
+            .expect("private wallet root");
+    }
     let mut first = ProcessHarness::spawn(&wallet_root, &manifest_path, &manifest_digest);
     let created = first.request(
         "profile-create",
