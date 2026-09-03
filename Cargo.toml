@@ -112,12 +112,14 @@ chacha20poly1305 = { version = "=0.11.0", features = ["zeroize"] }
 ciborium = { version = "=0.2.2" }
 bip32 = { version = "=0.5.3", default-features = false, features = ["secp256k1", "std"] }
 dioxus = { version = "=0.7.10", default-features = false }
+dioxus-document = { version = "=0.7.10" }
 directories = { version = "=6.0.0" }
 ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["fast", "zeroize"] }
 futures = { version = "=0.3.34", default-features = false, features = ["executor"] }
 getrandom = { version = "=0.3.4", features = ["wasm_js"] }
 hex = { version = "=0.4.3" }
 jni = { version = "=0.21.1" }
+jni-022 = { package = "jni", version = "=0.22.4" }
 manganis = { version = "=0.7.10" }
 k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "std"] }
 midnight-base-crypto = { version = "=1.0.0", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-base-crypto" }
@@ -139,6 +141,8 @@ serde_json = { version = "=1.0.151" }
 sha2 = { version = "=0.10.9", default-features = false }
 subtle = { version = "=2.6.1" }
 rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
+rustls-platform-verifier-05 = { package = "rustls-platform-verifier", version = "=0.5.3" }
+rustls-platform-verifier-07 = { package = "rustls-platform-verifier", version = "=0.7.0" }
 rand = { version = "=0.8.7" }
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls"] }
 subxt = { version = "=0.44.3" }

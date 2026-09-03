@@ -4,25 +4,15 @@
 
 use std::{collections::BTreeSet, error::Error, fmt};
 
-use oxid_foundation::{OpaqueId, OpaqueIdError};
+use oxid_foundation::opaque_id_type;
 
 pub const DID_CONTEXT: &str = "https://www.w3.org/ns/did/v1";
 pub const JWK_CONTEXT: &str = "https://w3id.org/security/jwk/v1";
 
-/// Wallet-profile scope used by identity persistence without coupling identity
-/// domain entities to the wallet bounded context.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct IdentityProfileId(OpaqueId);
-
-impl IdentityProfileId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    /// Wallet-profile scope used by identity persistence without coupling identity
+    /// domain entities to the wallet bounded context.
+    pub struct IdentityProfileId;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

@@ -161,8 +161,8 @@ checks, not to the failed predecessor run.
 
 ## Safe resume point
 
-Do not begin with a write. First fetch and verify signed `develop`, check branch
-CI, then run the read-only funded-account observer. If funding is visible,
+Do not begin with a write. First fetch and verify signed `integration`, check
+branch CI, then run the read-only funded-account observer. If funding is visible,
 record only the allowlisted public topology result. The next engineering slice
 is [#115](https://github.com/MediaNoxLabs/oxid/issues/115), followed by the ADR
 boundary in [#116](https://github.com/MediaNoxLabs/oxid/issues/116). The guarded

@@ -58,13 +58,14 @@ pub use compact_proof_worker::{
 pub use digital_passport::{
     CLAIM_DATE_OF_BIRTH, CLAIM_DOCUMENT_NUMBER, CLAIM_FIRST_NAME, CLAIM_ISSUING_STATE,
     CLAIM_LAST_NAME, DigitalPassportCommitments, DigitalPassportDisclosureAdapter, PACKAGE_ID,
-    SCHEMA_ID, STANDALONE_DIGITAL_PASSPORT_CREDENTIAL_B64, standalone_commitments,
-    standalone_credential, standalone_private_material,
+    PortalPrivateMaterialError, SCHEMA_ID, STANDALONE_DIGITAL_PASSPORT_CREDENTIAL_B64,
+    convert_portal_private_parts, standalone_commitments, standalone_credential,
+    standalone_private_material,
 };
 pub use passport_policy::{
-    DigitalPassportIssuerTrustAnchor, DigitalPassportPolicyError, DigitalPassportPolicyEvidence,
-    DigitalPassportPolicyRequest, standalone_digital_passport_issuer_trust_anchor,
-    verify_digital_passport_policy,
+    DigitalPassportIssuerTrustAnchor, DigitalPassportIssuerTrustAnchorError,
+    DigitalPassportPolicyError, DigitalPassportPolicyEvidence, DigitalPassportPolicyRequest,
+    standalone_digital_passport_issuer_trust_anchor, verify_digital_passport_policy,
 };
 pub use protected_presentation::{
     PreparedDigitalPassportPresentation, ProtectedDigitalPassportPresentationError,

@@ -22,6 +22,7 @@ pub const MAX_SELF_ISSUED_REQUEST_BYTES: usize = 32 * 1_024;
 pub const MAX_IDENTITY_REQUEST_URI_BYTES: usize = 32 * 1_024;
 const MAX_DID_CHARACTERS: usize = 8_192;
 const MAX_METHOD_CHARACTERS: usize = 8_192;
+const ISSUANCE_INTERRUPTED_CODE: &str = "issuance_interrupted";
 
 /// A safe routing result for an inbound identity protocol link.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -486,6 +487,20 @@ pub struct CredentialIssuanceService {
     sessions: Mutex<BTreeMap<CredentialIssuanceId, Session>>,
 }
 
+/// Restores a recoverable terminal state if an issuance future is dropped or
+/// unwinds after admission but before its normal success/error transition.
+struct IssuanceAttempt<'a> {
+    service: &'a CredentialIssuanceService,
+    issuance_id: CredentialIssuanceId,
+}
+
+impl Drop for IssuanceAttempt<'_> {
+    fn drop(&mut self) {
+        self.service
+            .fail_if_issuing(&self.issuance_id, ISSUANCE_INTERRUPTED_CODE);
+    }
+}
+
 impl CredentialIssuanceService {
     #[must_use]
     pub fn new(
@@ -511,6 +526,16 @@ impl CredentialIssuanceService {
     fn fail(&self, id: &CredentialIssuanceId, code: &str) {
         if let Ok(mut sessions) = self.sessions.lock()
             && let Some(session) = sessions.get_mut(id)
+        {
+            session.state = CredentialIssuanceState::Failed;
+            session.failure_code = Some(code.to_owned());
+        }
+    }
+
+    fn fail_if_issuing(&self, id: &CredentialIssuanceId, code: &str) {
+        if let Ok(mut sessions) = self.sessions.lock()
+            && let Some(session) = sessions.get_mut(id)
+            && session.state == CredentialIssuanceState::Issuing
         {
             session.state = CredentialIssuanceState::Failed;
             session.failure_code = Some(code.to_owned());
@@ -591,6 +616,10 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
                 }
                 session.state = CredentialIssuanceState::Issuing;
             }
+            let _interrupted_attempt = IssuanceAttempt {
+                service: self,
+                issuance_id: issuance_id.clone(),
+            };
             let issued = match self
                 .protocol
                 .issue(ProtocolIssueRequest {
@@ -661,7 +690,10 @@ impl RefuseCredentialIssuanceUseCase for CredentialIssuanceService {
             if session.profile_id != profile_id {
                 return Err(CredentialIssuanceError::NotFound);
             }
-            if session.state != CredentialIssuanceState::AwaitingConsent {
+            if !matches!(
+                session.state,
+                CredentialIssuanceState::AwaitingConsent | CredentialIssuanceState::Failed
+            ) {
                 return Err(CredentialIssuanceError::InvalidState);
             }
         }
@@ -673,6 +705,7 @@ impl RefuseCredentialIssuanceUseCase for CredentialIssuanceService {
             .get_mut(&issuance_id)
             .ok_or(CredentialIssuanceError::NotFound)?;
         session.state = CredentialIssuanceState::Refused;
+        session.failure_code = None;
         Ok(session.view(&issuance_id))
     }
 }
@@ -1458,6 +1491,127 @@ mod tests {
         );
     }
 
+    #[test]
+    fn failed_issuance_can_be_explicitly_discarded() {
+        let service = service();
+        let prepared = prepare(&service);
+        let failure = futures_lite(AcceptCredentialIssuanceUseCase::execute(
+            &service,
+            AcceptCredentialIssuanceCommand {
+                profile_id: "profile_1".to_owned(),
+                issuance_id: prepared.id.clone(),
+                holder_did: "did:midnight:undeployed:reject".to_owned(),
+                method_id: "did:midnight:undeployed:reject#auth-1".to_owned(),
+                holder_binding_method_id: "did:midnight:undeployed:reject#holder-jubjub-1"
+                    .to_owned(),
+                confirmed: true,
+                intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
+            },
+        ));
+        assert_eq!(
+            failure,
+            Err(CredentialIssuanceError::Protocol(
+                IssuanceProtocolError::InvalidProof
+            ))
+        );
+
+        let failed = GetCredentialIssuanceUseCase::execute(
+            &service,
+            CredentialIssuanceQuery {
+                profile_id: "profile_1".to_owned(),
+                issuance_id: prepared.id.clone(),
+            },
+        )
+        .expect("failed issuance remains inspectable");
+        assert_eq!(failed.state, "failed");
+        assert_eq!(failed.failure_code.as_deref(), Some("invalid_proof"));
+
+        let discarded = RefuseCredentialIssuanceUseCase::execute(
+            &service,
+            RefuseCredentialIssuanceCommand {
+                profile_id: "profile_1".to_owned(),
+                issuance_id: prepared.id,
+            },
+        )
+        .expect("failed issuance should be discardable");
+        assert_eq!(discarded.state, "refused");
+        assert_eq!(discarded.failure_code, None);
+    }
+
+    struct PanickingIssuanceProtocol;
+
+    impl CredentialIssuanceProtocolPort for PanickingIssuanceProtocol {
+        fn prepare<'a>(&'a self, _: PrepareIssuanceRequest) -> PrepareIssuancePortFuture<'a> {
+            Box::pin(async {
+                Ok(PreparedCredentialOffer {
+                    id: CredentialIssuanceId::parse("issuance_interrupted")
+                        .expect("valid fixture id"),
+                    preview: CredentialOfferPreview::new(
+                        "https://issuer.example",
+                        vec!["identity".to_owned()],
+                        vec!["Identity credential".to_owned()],
+                    )
+                    .expect("valid preview"),
+                })
+            })
+        }
+
+        fn issue<'a>(&'a self, _: ProtocolIssueRequest) -> IssueCredentialPortFuture<'a> {
+            Box::pin(async { panic!("closed test-only issuance worker failure") })
+        }
+
+        fn discard(&self, _: &CredentialIssuanceId) -> Result<(), IssuanceProtocolError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn interrupted_issuance_becomes_failed_and_can_be_discarded() {
+        let service =
+            CredentialIssuanceService::new(Arc::new(PanickingIssuanceProtocol), Arc::new(Sink));
+        let prepared = prepare(&service);
+        let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            futures_lite(AcceptCredentialIssuanceUseCase::execute(
+                &service,
+                AcceptCredentialIssuanceCommand {
+                    profile_id: "profile_1".to_owned(),
+                    issuance_id: prepared.id.clone(),
+                    holder_did: "did:midnight:undeployed:holder".to_owned(),
+                    method_id: "did:midnight:undeployed:holder#auth-1".to_owned(),
+                    holder_binding_method_id: "did:midnight:undeployed:holder#holder-jubjub-1"
+                        .to_owned(),
+                    confirmed: true,
+                    intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
+                },
+            ))
+        }));
+        assert!(failure.is_err());
+
+        let interrupted = GetCredentialIssuanceUseCase::execute(
+            &service,
+            CredentialIssuanceQuery {
+                profile_id: "profile_1".to_owned(),
+                issuance_id: prepared.id.clone(),
+            },
+        )
+        .expect("interrupted issuance remains inspectable");
+        assert_eq!(interrupted.state, "failed");
+        assert_eq!(
+            interrupted.failure_code.as_deref(),
+            Some(ISSUANCE_INTERRUPTED_CODE),
+        );
+
+        let discarded = RefuseCredentialIssuanceUseCase::execute(
+            &service,
+            RefuseCredentialIssuanceCommand {
+                profile_id: "profile_1".to_owned(),
+                issuance_id: prepared.id,
+            },
+        )
+        .expect("interrupted issuance should be discardable");
+        assert_eq!(discarded.state, "refused");
+    }
+
     struct AuthenticationProtocol;
 
     impl SelfIssuedAuthenticationProtocolPort for AuthenticationProtocol {
@@ -1590,3 +1744,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod issue_157_tests;

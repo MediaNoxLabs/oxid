@@ -2,16 +2,120 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+mod portal_profile_authority;
+
 mod generated_brand {
     include!(concat!(env!("OUT_DIR"), "/brand.rs"));
 }
 
+#[cfg(any(
+    feature = "standalone-portal",
+    feature = "standalone-portal-tailnet",
+    feature = "preprod-observation"
+))]
+fn startup_failure(error: impl std::fmt::Display) -> ! {
+    eprintln!("Oxid startup failed: {error}");
+    std::process::exit(2)
+}
+
 fn main() {
+    #[cfg(all(
+        feature = "desktop-portal-test",
+        not(all(target_os = "macos", target_arch = "aarch64"))
+    ))]
+    compile_error!("desktop-portal-test is available only on ARM64 macOS");
+
+    #[cfg(all(
+        feature = "desktop-portal-test",
+        any(
+            feature = "mobile",
+            feature = "web",
+            feature = "standalone-local",
+            feature = "standalone-tailnet",
+            feature = "standalone-portal",
+            feature = "standalone-portal-tailnet",
+            feature = "standalone-native-custody",
+            feature = "preprod-observation",
+            feature = "ui-profile-dev",
+            feature = "ui-profile-demo"
+        )
+    ))]
+    compile_error!("desktop-portal-test is an isolated test-only desktop profile");
+
+    #[cfg(all(
+        feature = "preprod-observation",
+        not(any(target_os = "ios", target_os = "android"))
+    ))]
+    compile_error!("preprod-observation is available only on iOS and Android");
+
+    #[cfg(all(
+        feature = "preprod-observation",
+        any(
+            feature = "standalone-development",
+            feature = "standalone-native-custody",
+            feature = "standalone-local",
+            feature = "standalone-tailnet",
+            feature = "standalone-portal",
+            feature = "standalone-portal-tailnet",
+            feature = "standalone-native-proving-artifacts",
+            feature = "ui-profile-dev",
+            feature = "ui-profile-demo"
+        )
+    ))]
+    compile_error!("preprod-observation is an isolated owner profile");
+
     #[cfg(all(
         feature = "android-jni-exception-recovery-test",
         not(target_os = "android")
     ))]
     compile_error!("android-jni-exception-recovery-test is available only on Android");
+
+    #[cfg(all(
+        feature = "standalone-portal",
+        not(any(target_os = "ios", target_os = "android"))
+    ))]
+    compile_error!("standalone-portal is available only on iOS and Android");
+
+    #[cfg(all(
+        feature = "standalone-portal",
+        not(oxid_portal_virtual_device_profile_authorized)
+    ))]
+    compile_error!(
+        "standalone-portal requires the repository-authorized iOS Simulator/Android QEMU build profile"
+    );
+
+    #[cfg(all(feature = "standalone-portal", target_arch = "wasm32"))]
+    compile_error!("standalone-portal is unavailable on WASM");
+
+    #[cfg(all(
+        feature = "standalone-portal",
+        any(feature = "standalone-tailnet", feature = "standalone-native-custody")
+    ))]
+    compile_error!("standalone-portal is incompatible with tailnet and native custody");
+
+    #[cfg(all(feature = "standalone-portal-tailnet", not(target_os = "android")))]
+    compile_error!("standalone-portal-tailnet is available only on Android");
+
+    #[cfg(all(
+        feature = "standalone-portal-tailnet",
+        not(oxid_portal_android_physical_profile_authorized)
+    ))]
+    compile_error!(
+        "standalone-portal-tailnet requires repository physical-device profile authority"
+    );
+
+    #[cfg(all(
+        feature = "standalone-portal-tailnet",
+        any(
+            feature = "standalone-portal",
+            feature = "standalone-local",
+            feature = "standalone-native-custody"
+        )
+    ))]
+    compile_error!(
+        "standalone-portal-tailnet is incompatible with local Portal, local routes, and native custody"
+    );
 
     #[cfg(all(feature = "android-jni-exception-recovery-test", target_os = "android"))]
     oxid_composition::verify_android_jni_exception_recovery()
@@ -71,12 +175,74 @@ fn main() {
     ))]
     compile_error!("standalone-native-proving-artifacts is available only on iOS and Android");
 
+    #[cfg(all(feature = "standalone-portal", target_os = "android"))]
+    oxid_composition::verify_android_portal_virtual_device_profile()
+        .unwrap_or_else(|error| startup_failure(error));
+
+    #[cfg(feature = "desktop-portal-test")]
+    let application = {
+        const OXID_DESKTOP_PORTAL_TEST_PROFILE: &str = "OXID_DESKTOP_PORTAL_TEST_PROFILE";
+        let _ = OXID_DESKTOP_PORTAL_TEST_PROFILE;
+        oxid_composition::compose_native_desktop_test_from_environment()
+            .unwrap_or_else(|error| panic!("desktop Portal test configuration is invalid: {error}"))
+    };
+
+    #[cfg(all(
+        feature = "standalone-portal",
+        feature = "standalone-development",
+        feature = "standalone-local",
+        not(feature = "standalone-tailnet"),
+        not(feature = "standalone-native-custody"),
+        not(target_arch = "wasm32"),
+        any(target_os = "ios", target_os = "android")
+    ))]
+    let application = {
+        const OXID_STANDALONE_PORTAL_PROFILE: &str = "OXID_STANDALONE_PORTAL_PROFILE";
+        let _ = OXID_STANDALONE_PORTAL_PROFILE;
+        oxid_composition::compose_mobile_public_genesis_portal_standalone_from_routes(
+            "ws://127.0.0.1:8088/api/v4/graphql/ws",
+            "http://127.0.0.1:8088/api/v4/graphql",
+            "ws://127.0.0.1:9944",
+            "http://127.0.0.1:6300",
+            include_bytes!(concat!(env!("OUT_DIR"), "/portal-deployment.json")),
+            env!("OXID_EMBEDDED_PORTAL_DEPLOYMENT_SHA256"),
+        )
+        .unwrap_or_else(|error| startup_failure(error))
+    };
+
+    #[cfg(all(
+        feature = "standalone-portal-tailnet",
+        feature = "standalone-development",
+        not(feature = "standalone-portal"),
+        not(feature = "standalone-local"),
+        feature = "standalone-tailnet",
+        not(feature = "standalone-native-custody"),
+        target_os = "android",
+        not(target_arch = "wasm32")
+    ))]
+    let application = oxid_composition::compose_mobile_public_genesis_portal_tailnet_from_routes(
+        env!("OXID_BUILD_MIDNIGHT_INDEXER_WS_URL"),
+        env!("OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL"),
+        env!("OXID_BUILD_MIDNIGHT_NODE_WS_URL"),
+        env!("OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL"),
+        include_bytes!(concat!(env!("OUT_DIR"), "/portal-deployment.json")),
+        env!("OXID_EMBEDDED_PORTAL_DEPLOYMENT_SHA256"),
+        env!("OXID_EMBEDDED_PORTAL_PUBLIC_ORIGIN"),
+    )
+    .unwrap_or_else(|error| startup_failure(error));
+
     #[cfg(feature = "standalone-native-proving-artifacts")]
     let application =
         oxid_composition::compose_mobile_native_standalone_with_compact_presentation()
             .unwrap_or_else(|error| {
                 panic!("embedded Compact presentation runtime is invalid: {error}")
             });
+    #[cfg(all(
+        feature = "preprod-observation",
+        any(target_os = "ios", target_os = "android")
+    ))]
+    let application = oxid_composition::compose_preprod_observation()
+        .unwrap_or_else(|error| startup_failure(error));
     #[cfg(all(
         feature = "standalone-native-custody",
         not(feature = "standalone-native-proving-artifacts"),
@@ -93,12 +259,13 @@ fn main() {
         not(feature = "standalone-native-custody"),
         feature = "standalone-tailnet",
         not(feature = "standalone-local"),
+        not(feature = "standalone-portal-tailnet"),
         not(target_arch = "wasm32")
     ))]
     let application = {
         const OXID_STANDALONE_TAILNET_PROFILE: &str = "OXID_STANDALONE_TAILNET_PROFILE";
         let _ = OXID_STANDALONE_TAILNET_PROFILE;
-        oxid_composition::compose_mobile_development_standalone_from_routes(
+        oxid_composition::compose_mobile_public_genesis_tailnet_standalone_from_routes(
             env!("OXID_BUILD_MIDNIGHT_INDEXER_WS_URL"),
             env!("OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL"),
             env!("OXID_BUILD_MIDNIGHT_NODE_WS_URL"),
@@ -111,12 +278,13 @@ fn main() {
         not(feature = "standalone-native-custody"),
         feature = "standalone-local",
         not(feature = "standalone-tailnet"),
+        not(feature = "standalone-portal"),
         not(target_arch = "wasm32")
     ))]
     let application = {
         const OXID_STANDALONE_LOCAL_PROFILE: &str = "OXID_STANDALONE_LOCAL_PROFILE";
         let _ = OXID_STANDALONE_LOCAL_PROFILE;
-        oxid_composition::compose_mobile_development_standalone_from_routes(
+        oxid_composition::compose_mobile_public_genesis_local_standalone_from_routes(
             "ws://127.0.0.1:8088/api/v4/graphql/ws",
             "http://127.0.0.1:8088/api/v4/graphql",
             "ws://127.0.0.1:9944",
@@ -129,6 +297,8 @@ fn main() {
         not(feature = "standalone-native-custody"),
         not(feature = "standalone-tailnet"),
         not(feature = "standalone-local"),
+        not(feature = "standalone-portal-tailnet"),
+        not(feature = "desktop-portal-test"),
         not(target_arch = "wasm32")
     ))]
     let application = oxid_composition::compose_headless_from_environment()
@@ -141,19 +311,40 @@ fn main() {
     let application = oxid_composition::compose_headless();
     #[cfg(not(any(
         feature = "standalone-development",
-        feature = "standalone-native-custody"
+        feature = "standalone-native-custody",
+        feature = "preprod-observation"
     )))]
     let application = oxid_composition::compose();
+    #[cfg(all(
+        any(
+            feature = "standalone-development",
+            feature = "standalone-native-custody"
+        ),
+        not(feature = "standalone-portal"),
+        not(feature = "standalone-portal-tailnet"),
+        not(feature = "desktop-portal-test")
+    ))]
+    let standalone_credential_offer = Some(oxid_composition::standalone_oid4vci_offer());
+    #[cfg(any(
+        feature = "desktop-portal-test",
+        feature = "standalone-portal",
+        feature = "standalone-portal-tailnet",
+        not(any(
+            feature = "standalone-development",
+            feature = "standalone-native-custody"
+        ))
+    ))]
+    let standalone_credential_offer = None;
     #[cfg(any(
         feature = "standalone-development",
         feature = "standalone-native-custody"
     ))]
-    let standalone_credential_offer = Some(oxid_composition::standalone_oid4vci_offer());
+    let credential_issuance_ready = true;
     #[cfg(not(any(
         feature = "standalone-development",
         feature = "standalone-native-custody"
     )))]
-    let standalone_credential_offer = None;
+    let credential_issuance_ready = false;
     #[cfg(any(
         feature = "standalone-development",
         feature = "standalone-native-custody"
@@ -174,6 +365,30 @@ fn main() {
         feature = "standalone-native-custody"
     )))]
     let standalone_openid4vp_request = None;
+    let wallet_security = oxid_ui_dioxus::WalletSecurityUiServices::new(
+        application.get_wallet_security_status(),
+        application.initialize_wallet_security(),
+        application.unlock_wallet(),
+        application.lock_wallet(),
+        oxid_ui_dioxus::WalletBackupUiServices::new(
+            application.recover_portable_wallet_backup(),
+            application.export_complete_wallet_backup(),
+            application.recover_complete_wallet_backup(),
+            application.get_wallet_backup_receipt(),
+            application.record_wallet_backup_receipt(),
+            application.portable_wallet_backup_documents(),
+        ),
+    );
+    #[cfg(feature = "preprod-observation")]
+    let wallet_security = {
+        let capability = application
+            .wallet_root_recovery()
+            .unwrap_or_else(|| panic!("authenticated PreProd recovery capability is unavailable"));
+        wallet_security.with_root_recovery(oxid_ui_dioxus::WalletRootRecoveryUiServices::new(
+            capability.network_id().to_owned(),
+            capability.recover(),
+        ))
+    };
     let ui = oxid_ui_dioxus::WalletUiServices::new(
         oxid_ui_dioxus::WalletProfileUiServices::new(
             application.create_wallet_profile(),
@@ -181,20 +396,7 @@ fn main() {
             application.select_wallet_profile(),
             application.get_active_wallet_profile(),
         ),
-        oxid_ui_dioxus::WalletSecurityUiServices::new(
-            application.get_wallet_security_status(),
-            application.initialize_wallet_security(),
-            application.unlock_wallet(),
-            application.lock_wallet(),
-            oxid_ui_dioxus::WalletBackupUiServices::new(
-                application.recover_portable_wallet_backup(),
-                application.export_complete_wallet_backup(),
-                application.recover_complete_wallet_backup(),
-                application.get_wallet_backup_receipt(),
-                application.record_wallet_backup_receipt(),
-                application.portable_wallet_backup_documents(),
-            ),
-        ),
+        wallet_security,
         oxid_ui_dioxus::WalletAccountUiServices::new(
             application.list_wallet_networks(),
             application.select_wallet_network(),
@@ -275,7 +477,8 @@ fn main() {
                 application.deactivate_did(),
                 application.sign_did_payload(),
                 application.forget_did(),
-            ),
+            )
+            .with_publisher(application.publish_did()),
             oxid_ui_dioxus::CredentialUiServices::new(
                 oxid_ui_dioxus::CredentialInventoryUiServices::new(
                     application.receive_credential(),
@@ -288,7 +491,9 @@ fn main() {
                     application.prepare_credential_issuance(),
                     application.accept_credential_issuance(),
                     application.refuse_credential_issuance(),
+                    application.list_credential_issuances(),
                     standalone_credential_offer,
+                    credential_issuance_ready,
                 ),
                 oxid_ui_dioxus::CredentialPresentationUiServices::new(
                     application.prepare_credential_presentation(),
@@ -321,12 +526,32 @@ fn main() {
         ),
         application.screen_privacy(),
     );
+    #[cfg(any(feature = "standalone-local", feature = "standalone-tailnet"))]
+    let ui = ui.with_deployment_profile(
+        application
+            .deployment_profile()
+            .unwrap_or_else(|| panic!("standalone deployment profile is unavailable")),
+    );
     #[cfg(feature = "ui-profile-dev")]
     let ui = ui.with_developer_capabilities(oxid_ui_dioxus::CapabilityManifestContext::new(
         application.compact_presentation_proof_available(),
         application.passport_vault_call_mode(),
         application.passport_vault_state_persistence(),
     ));
+    #[cfg(target_os = "android")]
+    let ui = ui.with_android_platform_initializer(std::sync::Arc::new(|| {
+        match oxid_composition::initialize_android_tls() {
+            oxid_composition::AndroidTlsInitialization::Ready => {
+                oxid_ui_dioxus::AndroidPlatformInitialization::Ready
+            }
+            oxid_composition::AndroidTlsInitialization::Retry => {
+                oxid_ui_dioxus::AndroidPlatformInitialization::Retry
+            }
+            oxid_composition::AndroidTlsInitialization::Failed => {
+                oxid_ui_dioxus::AndroidPlatformInitialization::Failed
+            }
+        }
+    }));
 
     let launcher = dioxus::LaunchBuilder::new()
         .with_context(ui)

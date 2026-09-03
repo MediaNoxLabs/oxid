@@ -35,6 +35,35 @@ use serde_json::{Map, Number, Value, json};
 use url::Url;
 use zeroize::Zeroizing;
 
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        feature = "portal-http-mobile",
+        not(any(target_os = "ios", target_os = "android"))
+    )
+))]
+mod portal;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        feature = "portal-http-mobile",
+        not(any(target_os = "ios", target_os = "android"))
+    )
+))]
+pub use portal::{
+    PORTAL_INTEGRATION_COMMIT, PORTAL_INTEGRATION_TREE, PORTAL_PROFILE_SOURCE_COMMIT,
+    PORTAL_PROVENANCE_SHA256, PortalCredentialMaterialDecoder, PortalCredentialMaterialError,
+    PortalDeploymentManifest, PortalDeploymentManifestError, PortalOid4vciClient,
+    PortalOid4vciClientFactory, authenticate_bundled_portal_source,
+};
+#[cfg(all(
+    test,
+    not(target_arch = "wasm32"),
+    not(target_os = "ios"),
+    not(target_os = "android")
+))]
+mod portal_tests;
+
 pub const STANDALONE_CREDENTIAL_ISSUER: &str = "http://127.0.0.1:32191/issuer";
 pub const STANDALONE_AUTHORIZATION_SERVER: &str = "http://127.0.0.1:32191/auth";
 pub const STANDALONE_CONFIGURATION_ID: &str = "oxid_digital_passport";
@@ -542,22 +571,29 @@ fn standalone_issuer_metadata() -> Result<IssuerMetadata, IssuanceProtocolError>
             }
         }
     }"#;
+    parse_issuer_metadata(bytes, EndpointPolicy::StandaloneLoopback)
+}
+
+fn parse_issuer_metadata(
+    bytes: &[u8],
+    policy: EndpointPolicy,
+) -> Result<IssuerMetadata, IssuanceProtocolError> {
     let value = parse_strict_json(bytes)?;
     let object = value
         .as_object()
         .ok_or(IssuanceProtocolError::InvalidMetadata)?;
     let issuer = required_string(object, "credential_issuer", MAX_ENDPOINT_CHARACTERS)?;
-    validate_endpoint(&issuer, EndpointPolicy::StandaloneLoopback)?;
+    validate_endpoint(&issuer, policy)?;
     let authorization_servers =
         required_unique_strings(object, "authorization_servers", 4, MAX_ENDPOINT_CHARACTERS)?;
     for server in &authorization_servers {
-        validate_endpoint(server, EndpointPolicy::StandaloneLoopback)?;
+        validate_endpoint(server, policy)?;
     }
     let credential_endpoint =
         required_string(object, "credential_endpoint", MAX_ENDPOINT_CHARACTERS)?;
-    validate_endpoint(&credential_endpoint, EndpointPolicy::StandaloneLoopback)?;
+    validate_endpoint(&credential_endpoint, policy)?;
     let nonce_endpoint = required_string(object, "nonce_endpoint", MAX_ENDPOINT_CHARACTERS)?;
-    validate_endpoint(&nonce_endpoint, EndpointPolicy::StandaloneLoopback)?;
+    validate_endpoint(&nonce_endpoint, policy)?;
     let raw_configurations = required_object(object, "credential_configurations_supported")?;
     if raw_configurations.is_empty() || raw_configurations.len() > 16 {
         return Err(IssuanceProtocolError::InvalidMetadata);
@@ -1261,6 +1297,9 @@ fn map_import_error(error: CredentialOperationError) -> IssuedCredentialSinkErro
         _ => IssuedCredentialSinkError::Unavailable,
     }
 }
+
+#[cfg(test)]
+mod laceid_portal_contract_tests;
 
 #[cfg(test)]
 mod tests {

@@ -72,3 +72,21 @@ once public releases begin.
   adapters, with profile-scoped list/get/forget headless methods.
 - Separate versioned owner-private public DID-record persistence with restart
   coverage and a functional Dioxus/iOS/Android DID inventory page.
+
+### Changed
+
+- Exact-head Claude reviews now select and attest a bounded reasoning effort.
+  High-risk attestations require at least `medium` effort.
+  Their default deadline is five minutes, reduced from fifteen to keep the
+  review checkpoint inside the factory SLA; the wrapper and verifier reject
+  longer deadlines, callers may select a shorter one, and a timeout is not a
+  pass.
+  The review budget remains positive and is capped at USD 10; sub-dollar
+  canaries remain valid.
+  New attestations use schema v3; rerun reviews whose legacy v2 evidence no
+  longer verifies instead of relabeling records that did not capture effort.
+  In-flight branches must rerun the exact-head review; legacy records are not
+  translated into the stronger shape.
+  Verification reports this migration through the distinct
+  `ClaudeReviewEvidenceVersionError` type rather than as a non-clean verdict;
+  the CLI emits its `CLAUDE_REVIEW_EVIDENCE_VERSION` code with exit status 3.

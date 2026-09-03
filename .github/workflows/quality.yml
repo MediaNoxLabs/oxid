@@ -2,10 +2,21 @@ name: Quality
 
 on:
   push:
-    branches: [develop, main]
+    branches: [integration, develop, main]
   pull_request:
-    branches: [develop, main]
-  workflow_dispatch: {}
+    branches: [integration, develop, main]
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Assurance profile to run
+        required: true
+        default: feature
+        type: choice
+        options: [feature, integration, release]
+      targets:
+        description: Extra hosted targets (comma-separated)
+        required: false
+        type: string
   schedule:
     - cron: "15 3 * * 1"
 
@@ -20,26 +31,38 @@ jobs:
   quality:
     name: Audit, Licenses, Sources, and Documentation
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          fetch-depth: 0
           persist-credentials: false
 
+      - name: Select profile and target lanes
+        id: plan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/integration' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_PROFILE: ${{ inputs.profile || 'auto' }}
+          EXTRA_TARGETS: ${{ inputs.targets || '' }}
+        run: |
+          node scripts/ci/target-plan.mjs \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            --event "$EVENT_NAME" \
+            --profile "$REQUESTED_PROFILE" \
+            --targets "$EXTRA_TARGETS" \
+            --format github >> "$GITHUB_OUTPUT"
+
       - name: Install Nix
+        if: steps.plan.outputs.quality == 'true'
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
-      - name: Restore the devshell Nix store
-        uses: nix-community/cache-nix-action@135667ec418502fa5a3598af6fb9eb733888ce6a # v6.1.3
-        with:
-          primary-key: nix-devshell-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix') }}
-          restore-prefixes-first-match: nix-devshell-${{ runner.os }}-
-          gc-max-store-size-linux: 6G
-          purge: false
-
       - name: Cache the cargo registry
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        if: steps.plan.outputs.quality == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -48,4 +71,11 @@ jobs:
           key: cargo-quality-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
 
       - name: Run quality gate
-        run: nix develop --command ./run.sh quality --strict
+        if: steps.plan.outputs.quality == 'true'
+        run: nix develop .#ci-quality --command ./run.sh quality --strict
+
+      - name: Run lightweight policy gate
+        if: steps.plan.outputs.quality != 'true'
+        run: |
+          ./scripts/check-adr-links.sh
+          node --test tests/repository/target-plan-contract.test.mjs

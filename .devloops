@@ -8,69 +8,49 @@ strategy:
   default: local-first
 
 refinement:
-  fanOut: 3
+  # Two reviewers are enough to expose a disagreement without turning each
+  # iteration into a panel. Keep the pool deliberately smaller than the gate
+  # catalog so refinement cannot fan out across every specialist by default.
+  fanOut: 2
   mode: parallel
   maxCopilotRounds: 0
-  stopOnLowSignal: false
-  lowSignalRoundThreshold: 3
-  lowSignalMaxComments: 2
+  stopOnLowSignal: true
+  lowSignalRoundThreshold: 2
+  lowSignalMaxComments: 1
   roles:
     - scope
     - correctness
-    - coverage
-    - architecture
-    - security
 
 gates:
   draft:
     angles:
       - scope
       - correctness
-      - coverage
-      - architecture
-      - ci-guard
-      - docs
-      - config-drift
-      - security
-      - external-review
     mandatoryAngles:
       - pr-description
     required: true
-    requireCi: true
+    # The draft gate checks direction before hosted CI has finished. Waiting
+    # here made every correction invalidate and repeat both review and CI.
+    requireCi: false
   preApproval:
     angles:
       - correctness
-      - coverage
-      - architecture
-      - ci-guard
-      - docs
-      - config-drift
       - security
-      - external-review
     mandatoryAngles:
       - pr-checklist-matrix
     required: true
     requireCi: true
-  requireFanoutEvidence: true
-  # Evidence without provenance cannot be audited: a gate that records "five
-  # angles reported" but not which reviewer produced which finding cannot be
-  # checked for a collapsed panel, where one reviewer's output is replayed under
-  # several angle names. Provenance is what makes requireFanoutEvidence
-  # falsifiable.
-  requireFanoutProvenance: true
-  maxFanoutReviewers: 8
+  # Integration delivery uses issue scope, exact-head CI, signed commits,
+  # resolved conversations, and visible gate verdicts. Fan-out remains
+  # available on demand, but it is not a merge prerequisite: mandatory fan-out
+  # deadlocked local-only gates when Copilot was deliberately disabled.
+  requireFanoutEvidence: false
+  requireFanoutProvenance: false
+  maxFanoutReviewers: 2
   postFindingsComments: true
   rejectForeignAngles: true
 
 personas:
-  architecture:
-    persona: review
-    prompt: >-
-      Review dependency direction, Oxid-owned core types, port ownership,
-      adapter isolation, composition, and ADR alignment. Report concrete
-      findings with file and line references.
-    defaultModel: null
-
   security:
     persona: review
     prompt: >-
@@ -79,49 +59,56 @@ personas:
       Report concrete findings with file and line references.
     defaultModel: null
 
-  external-review:
-    persona: review
-    prompt: >-
-      Independently review correctness, security, architecture, tests,
-      documentation, public-repository safety, and regression risk. Do not
-      modify files. Return actionable findings with file/line references, or
-      No findings.
-    defaultModel: null
-
-# The schema documents humanHandoff as pairing with autonomy.humanMergeOnly,
-# which is already true below. Without it the loop stops at pre-approval with
-# nothing routed to a person, so the handoff is the missing half of a decision
-# this repository has already taken. OFFER-only: the resolver proposes an
-# assignee from CODEOWNERS for the touched paths and the operator confirms.
-approval:
-  humanHandoff:
-    enabled: true
-    candidatesFrom:
-      - codeowners
-
+# The active owner may authorize an automated merge only for an issue-backed
+# integration PR after the repository merge wrapper passes. Historical main and
+# develop remain human-only; releases, settings, tags, and ADR acceptance remain
+# human actions.
 autonomy:
-  stopAt:
-    - pre-approval
-    - merge
-  humanMergeOnly: true
+  stopAt: []
+  humanMergeOnly: false
 
 workflow:
+  # Permit a small task to stay synchronous. Requiring async start for every
+  # change created extra sessions even when no useful parallel work existed.
+  asyncStartMode: allowed
   requireDraftFirst: true
-  requireRetrospective: true
+  # The repository requires a deterministic, no-model closeout comment and
+  # private metric record on the final head. Model-driven retrospectives stay
+  # conditional on incidents, SLO misses, high-risk work, or owner request.
+  requireRetrospective: false
   devModeDefault: false
+
+localImplementation:
+  lightMode:
+    enabled: true
+    maxFiles: 5
+    maxLines: 400
+    maxCopilotRounds: 0
+
+queue:
+  # One delivery candidate per conductor keeps exact-head evidence and hosted
+  # CI useful. Other parent sessions may auto-drive different issue worktrees;
+  # GitHub claim leases (after #197) and the guarded merge wrapper coordinate
+  # repository state across hosts; until then, humans assign distinct issues.
+  maxParallel: 1
+  maxAutoFiledIssues: 0
+  reDispatchMaxRetries: 0
 
 # Deliberately absent, recorded so the gaps are not mistaken for oversights.
 #
-# models: — per-role model assignment (`models.conductor`, `models.roles`) is
-#   the mechanism behind the factory's provider-agnostic goal, but the package
-#   ships no defaults and documents no model-identifier format, so any value
-#   written here would be a guess that fails at dispatch. Needs one owner
-#   decision naming real identifiers; see docs/factory/runbook.md.
+# models: — `.pi/settings.json` now supplies the balanced routine parent and
+#   subagent default. Per-role `models.conductor` / `models.roles` remains
+#   absent because dev-loops@0.9.0 documents no accepted identifier schema;
+#   do not invent a value that can fail only after dispatch. Canary a future
+#   documented package surface before adding role-specific overrides.
 #
 # worktree: — copyOnInit/linkOnInit provision *gitignored* files into a fresh
 #   worktree. Oxid needs none: the Compact and ZK artifact closures arrive as
 #   devshell environment exports rather than files, `.envrc` is tracked, and
-#   `target/` and `.direnv/` must not be shared between worktrees. The only
-#   remaining candidate is `.pi/npm/node_modules`, which the schema explicitly
-#   warns against targeting. An empty section would be a no-op, so there is
-#   none.
+#   raw `target/` and `.direnv/` must not be shared between worktrees. The
+#   repository worktree wrapper injects an explicit zero-action consumer
+#   provisioning policy before the generic provisioning phase can read
+#   primary-checkout config or create its dev-loops-monorepo `packages/core`
+#   self-link. The runtime resolver reuses the common checkout's `.pi/npm`
+#   directly. An empty section would not disable that generic self-link, so
+#   there is none.

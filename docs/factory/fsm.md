@@ -20,11 +20,12 @@ label is present at a time.
                                      ▼
                          factory:gate-preapproval ── findings ──▶ back to in-progress
                                      │ all pre-approval angles pass + CI green
+                                     │ + fresh Claude current-head evidence posted
                                      ▼
-                        factory:awaiting-human-merge
-                                     │ human merges
+                            factory:merge-ready
+                                     │ authorized clean merge
                                      ▼
-                                   done ──▶ retrospective note on the issue
+                                   done ──▶ bounded PR closeout comment
 ```
 
 Failure edges (from any active state):
@@ -45,8 +46,8 @@ Failure edges (from any active state):
 | `factory:claimed` | Lease held, work not yet visible | Lease comment + assignee | Draft PR opened, or lease expiry |
 | `factory:in-progress` | Draft PR exists | PR links the issue | Gate request, abandon, or lease expiry |
 | `factory:gate-draft` | Fan-out review of the draft | Implementer request | Pass → pre-approval; findings → in-progress |
-| `factory:gate-preapproval` | Final gate before human | Draft gate passed | Pass → awaiting-human-merge; findings → in-progress |
-| `factory:awaiting-human-merge` | Agent work complete | Both gates + CI green | Human merge or human rejection |
+| `factory:gate-preapproval` | Final delivery gate | Draft gate passed | Pass → merge-ready; findings → in-progress |
+| `factory:merge-ready` | Delivery evidence complete | Both gates, CI green, and any risk-required current-head evidence posted | Human merge or remediation |
 | `factory:blocked` | Cannot proceed | Blocking comment | Planner triage |
 
 ## Ready-check
@@ -65,13 +66,23 @@ An item may be labeled `factory:ready` only if all of the following hold:
 ## Gate conditions
 
 Gates reuse the `.devloops` policy verbatim — angles, mandatory angles,
-`requireCi: true`, `maxFanoutReviewers`, and `humanMergeOnly` are the source
-of truth. The FSM only adds the label transitions and the rule that **gate
-evidence is a PR comment** containing: angle name, reviewer identity/harness,
-findings (or "No findings"), and the CI run link.
+draft `requireCi: false`, final CI, and `maxFanoutReviewers` are the source of
+truth. The FSM only adds the label transitions and the
+rule that **gate evidence is a PR comment** containing: angle name, reviewer
+identity/harness, findings (or "No findings"), and the CI run link. The owner
+policy permits an explicitly authorized agent to merge only an issue-backed
+`integration` PR through the guarded wrapper. The wrapper rechecks the exact
+head, current base, conflict-free merge tree, required checks, gate evidence,
+and resolved conversations. `main` and `develop` remain human-only. Fresh
+Claude current-head evidence is added for high-risk `full` work, an owner
+request, or a disputed finding.
 
-## Retrospective
+## Retrospective and closeout
 
-After merge, the implementer (or steward) posts a short retrospective
-comment: what the gates caught, wall-clock and CI time consumed, and any
-protocol friction. The metrics loop aggregates these into metrics.md.
+Every work item leaves one bounded PR closeout comment stating whether the
+private final-head metric record was captured, whether an incident or SLO miss
+occurred, and which follow-up issue owns any confirmed regression. This is the
+routine retrospective and requires no additional model call. A deeper
+retrospective is required after an incident, an SLO miss, high-risk delivery,
+or an owner request; it records what the gates caught, wall-clock and CI time,
+and protocol friction without publishing private raw telemetry.

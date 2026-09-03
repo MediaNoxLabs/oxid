@@ -2,16 +2,8 @@ name: Documentation links
 
 on:
   pull_request:
-    paths:
-      - "**/*.md"
-      - ".lychee.toml"
-      - ".github/workflows/docs-link-check.yml"
   push:
-    branches: [develop, main]
-    paths:
-      - "**/*.md"
-      - ".lychee.toml"
-      - ".github/workflows/docs-link-check.yml"
+    branches: [integration, develop, main]
   workflow_dispatch: {}
 
 permissions:
@@ -30,12 +22,83 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          fetch-depth: 0
           persist-credentials: false
 
+      - name: Detect documentation changes
+        id: changes
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          docs_changed=true
+
+          valid_sha() {
+            [[ "$1" =~ ^[0-9a-f]{40}$ ]]
+          }
+
+          detect_range() {
+            local from_sha="$1"
+            local to_sha="$2"
+            if git diff --quiet "$from_sha" "$to_sha" -- \
+              '*.md' '.lychee.toml' '.github/workflows/docs-link-check.yml'; then
+              docs_changed=false
+            else
+              local status=$?
+              if [[ "$status" -ne 1 ]]; then
+                echo "::warning::Changed-file detection failed; running the link check conservatively."
+              fi
+            fi
+          }
+
+          case "$EVENT_NAME" in
+            workflow_dispatch)
+              ;;
+            pull_request)
+              if valid_sha "$BASE_SHA" && valid_sha "$HEAD_SHA" &&
+                git cat-file -e "$BASE_SHA^{commit}" &&
+                git cat-file -e "$HEAD_SHA^{commit}" &&
+                merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"; then
+                detect_range "$merge_base" "$HEAD_SHA"
+              else
+                echo "::warning::Pull-request range unavailable; running the link check conservatively."
+              fi
+              ;;
+            push)
+              if [[ "$BEFORE_SHA" =~ ^0{40}$ ]]; then
+                echo "::notice::New branch history; running the link check conservatively."
+              elif valid_sha "$BEFORE_SHA" && valid_sha "$HEAD_SHA" &&
+                git cat-file -e "$BEFORE_SHA^{commit}" &&
+                git cat-file -e "$HEAD_SHA^{commit}"; then
+                detect_range "$BEFORE_SHA" "$HEAD_SHA"
+              else
+                echo "::warning::Push range unavailable; running the link check conservatively."
+              fi
+              ;;
+            *)
+              echo "::error::Unsupported event: $EVENT_NAME"
+              exit 1
+              ;;
+          esac
+
+          echo "docs_changed=$docs_changed" >> "$GITHUB_OUTPUT"
+
       - name: Install Nix
+        if: steps.changes.outputs.docs_changed == 'true'
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
       - name: Check Markdown links
-        # The docs shell carries only lychee: link checking must never realize
-        # the default devshell's compiler and Compact/ZK artifact closure.
-        run: nix develop .#docs --command lychee --config .lychee.toml --no-progress --exclude-path LICENSE './**/*.md'
+        if: steps.changes.outputs.docs_changed == 'true'
+        # The docs-only shell carries no compiler or Compact/ZK artifact closure.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            nix develop .#docs --command node scripts/docs/check-links.mjs --candidate
+          else
+            nix develop .#docs --command node scripts/docs/check-links.mjs
+          fi

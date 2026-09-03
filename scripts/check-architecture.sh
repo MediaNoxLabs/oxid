@@ -3,12 +3,26 @@
 
 set -euo pipefail
 
+for override in CAPABILITY_FACADES_INVENTORY CAPABILITY_FACADES_TODAY CAPABILITY_FACADES_TEST_MODE; do
+  if [ "${!override+x}" = x ]; then
+    echo "Architecture check does not accept $override." >&2
+    exit 1
+  fi
+done
+if [ "$#" -ne 0 ]; then
+  echo "Architecture check does not accept arguments." >&2
+  exit 1
+fi
+
 for required_tool in jq rg; do
   if ! command -v "$required_tool" >/dev/null 2>&1; then
     echo "$required_tool is required; run this check from 'nix develop'." >&2
     exit 1
   fi
 done
+
+script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+"$script_directory/check-capability-facades.sh"
 
 metadata_file="$(mktemp)"
 trap 'rm -f "$metadata_file"' EXIT
@@ -114,7 +128,8 @@ check_workspace_dependencies oxid-adapter-storage-memory \
   oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-diagnostics-memory \
   oxid-diagnostics-application
-check_workspace_dependencies oxid-adapter-deployment-profile
+check_workspace_dependencies oxid-adapter-deployment-profile \
+  oxid-capabilities-application
 check_workspace_dependencies oxid-adapter-storage-dev \
   oxid-adapter-backup-portable oxid-foundation oxid-platform-ports \
   oxid-wallet-application oxid-wallet-domain
@@ -186,12 +201,14 @@ check_workspace_dependencies oxid-composition \
   oxid-adapter-storage-identity-json oxid-adapter-vc-midnight \
   oxid-adapter-storage-memory oxid-adapter-storage-mobile \
   oxid-adapter-storage-dev oxid-adapter-midnight \
-  oxid-credential-application oxid-diagnostics-application oxid-identity-application \
+  oxid-capabilities-application oxid-credential-application \
+  oxid-diagnostics-application oxid-identity-application \
   oxid-passport-vault-application oxid-platform-ports oxid-presentation-application \
   oxid-protocol-application \
   oxid-wallet-application
 check_workspace_dependencies oxid-mcp
-check_workspace_dependencies oxid-app oxid-brand-build oxid-composition oxid-ui-dioxus
+check_workspace_dependencies oxid-app \
+  oxid-adapter-identity-ingress oxid-brand-build oxid-composition oxid-ui-dioxus
 check_workspace_dependencies oxid-headless \
   oxid-capabilities-application oxid-composition oxid-credential-application \
   oxid-diagnostics-application oxid-identity-application oxid-identity-domain \
@@ -215,11 +232,12 @@ while IFS= read -r member; do
   fi
 done < <(jq -r '.packages[].name' "$metadata_file" | sort -u)
 
-# Unsafe Rust allowlist: an empty match set is success (the last unsafe block
-# was removed); anything beyond the reviewed boundary is a failure.
-unsafe_sources="$(rg -l '\bunsafe\b' apps crates --glob '*.rs' || true)"
-if [ -n "$unsafe_sources" ] && [ "$unsafe_sources" != "crates/adapters/storage-json/src/lib.rs" ]; then
-  echo "Unsafe Rust is permitted only in the reviewed Android profile-path boundary." >&2
+# Unsafe Rust is confined to the two exact Android JNI ownership boundaries:
+# durable app-path discovery and the cross-jni-version TLS initializer.
+unsafe_sources="$(rg -l '\bunsafe\b' apps crates --glob '*.rs' | sort || true)"
+expected_unsafe_sources=$'crates/adapters/mobile-native-plugin/src/lib.rs\ncrates/adapters/storage-json/src/lib.rs'
+if [ "$unsafe_sources" != "$expected_unsafe_sources" ]; then
+  echo "Unsafe Rust is permitted only in the reviewed Android JNI boundary files." >&2
   echo "$unsafe_sources" >&2
   exit 1
 fi
@@ -240,5 +258,7 @@ check_no_external_dependencies oxid-credential-application
 check_no_external_dependencies oxid-protocol-application
 check_no_external_dependencies oxid-presentation-application
 check_no_external_dependencies oxid-passport-vault-application
+
+./scripts/e2e/android-avd-process-ownership.test.sh
 
 echo "Architecture dependency rules passed."

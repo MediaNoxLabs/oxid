@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
+#[cfg(any(target_os = "android", test))]
+use serde::Deserialize;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use serde::Serialize;
 #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -18,6 +20,31 @@ pub enum NativeBridgeError {
 pub fn start_scan_json() -> Result<String, NativeBridgeError> {
     let plugin = OxidMobilePlugin::new().map_err(|_| NativeBridgeError::Unavailable)?;
     startScanJson(&plugin).map_err(|_| NativeBridgeError::Failed)
+}
+
+#[cfg(any(target_os = "android", test))]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AndroidVirtualDeviceProfile {
+    #[serde(rename = "androidQemu")]
+    android_qemu: bool,
+}
+
+#[cfg(any(target_os = "android", test))]
+fn decode_android_qemu_profile(value: &str) -> Result<(), NativeBridgeError> {
+    let profile: AndroidVirtualDeviceProfile =
+        serde_json::from_str(value).map_err(|_| NativeBridgeError::Failed)?;
+    if profile.android_qemu {
+        Ok(())
+    } else {
+        Err(NativeBridgeError::Unavailable)
+    }
+}
+
+#[cfg(target_os = "android")]
+pub fn verify_android_qemu_profile() -> Result<(), NativeBridgeError> {
+    let response = call_android_activity("oxidVirtualDeviceProfileJson")?;
+    decode_android_qemu_profile(&response)
 }
 
 #[cfg(target_os = "android")]
@@ -262,13 +289,77 @@ fn call_android_custody(
     call_android_activity_with_string("oxidCustodyJson", &request)
 }
 
+/// Initializes every Android certificate-verifier runtime resolved by Oxid.
+///
+/// The reqwest and Subxt transport graphs currently resolve different
+/// `rustls-platform-verifier` versions. Each version owns an independent
+/// process-global Android runtime slot, so both must be initialized before any
+/// HTTPS-backed wallet or identity capability is allowed to start.
+#[cfg(target_os = "android")]
+pub fn initialize_android_tls() -> Result<(), NativeBridgeError> {
+    manganis::android::with_activity(|environment, activity| {
+        let result = (|| {
+            let activity_05 = environment.new_local_ref(activity);
+            let activity_05 = android_jni_result(environment, activity_05)?;
+            let initialized_05 =
+                rustls_platform_verifier_05::android::init_with_env(environment, activity_05);
+            android_jni_result(environment, initialized_05)?;
+
+            let activity_07 = environment.new_local_ref(activity);
+            let activity_07 = android_jni_result(environment, activity_07)?.into_raw();
+            initialize_android_tls_07(environment, activity_07).map_err(|error| {
+                clear_pending_android_exception(environment);
+                error
+            })
+        })();
+        Some(result)
+    })
+    .ok_or(NativeBridgeError::Unavailable)?
+}
+
+/// Bridges the activity reference already authenticated by Manganis from JNI
+/// 0.21 into the JNI 0.22 wrapper used by rustls-platform-verifier 0.7.
+#[cfg(target_os = "android")]
+#[allow(unsafe_code)]
+fn initialize_android_tls_07(
+    environment: &mut manganis::jni::JNIEnv<'_>,
+    activity: manganis::jni::sys::jobject,
+) -> Result<(), NativeBridgeError> {
+    use jni_022::{EnvUnowned, Outcome, objects::JObject};
+
+    let raw_environment = environment
+        .get_raw()
+        .cast::<std::ffi::c_void>()
+        .cast::<jni_022::sys::JNIEnv>();
+    let raw_activity: jni_022::sys::jobject = activity.cast();
+
+    // SAFETY: Manganis supplies the current thread's live JNI environment and
+    // activity local reference for the duration of this closure. Ownership of
+    // the dedicated local reference was transferred out of the 0.21 wrapper;
+    // the 0.22 wrapper neither retains nor deletes the raw reference.
+    let mut environment_022 = unsafe { EnvUnowned::from_raw(raw_environment) };
+    let outcome = environment_022
+        .with_env(|environment_022| -> jni_022::errors::Result<()> {
+            // SAFETY: `raw_activity` is the same live local reference borrowed
+            // above and is scoped to the JNI frame represented by this env.
+            let activity_07 = unsafe { JObject::from_raw(environment_022, raw_activity) };
+            rustls_platform_verifier_07::android::init_with_env(environment_022, activity_07)
+        })
+        .into_outcome();
+
+    match outcome {
+        Outcome::Ok(()) => Ok(()),
+        Outcome::Err(_) | Outcome::Panic(_) => Err(NativeBridgeError::Failed),
+    }
+}
+
 #[cfg(target_os = "android")]
 fn call_android_activity(method: &str) -> Result<String, NativeBridgeError> {
-    manganis::android::with_activity(|mut environment, activity| {
+    manganis::android::with_activity(|environment, activity| {
         let result = (|| {
             let value = environment.call_method(activity, method, "()Ljava/lang/String;", &[]);
-            let value = android_jni_result(&mut environment, value)?;
-            android_string(&mut environment, value)
+            let value = android_jni_result(environment, value)?;
+            android_string(environment, value)
         })();
         Some(result)
     })
@@ -280,10 +371,10 @@ fn call_android_activity_with_string(
     method: &str,
     value: &str,
 ) -> Result<String, NativeBridgeError> {
-    manganis::android::with_activity(|mut environment, activity| {
+    manganis::android::with_activity(|environment, activity| {
         let result = (|| {
             let value = environment.new_string(value);
-            let value = android_jni_result(&mut environment, value)?;
+            let value = android_jni_result(environment, value)?;
             let argument = manganis::jni::objects::JValue::Object(value.as_ref());
             let result = environment.call_method(
                 activity,
@@ -291,8 +382,8 @@ fn call_android_activity_with_string(
                 "(Ljava/lang/String;)Ljava/lang/String;",
                 &[argument],
             );
-            let result = android_jni_result(&mut environment, result)?;
-            android_string(&mut environment, result)
+            let result = android_jni_result(environment, result)?;
+            android_string(environment, result)
         })();
         Some(result)
     })
@@ -301,15 +392,15 @@ fn call_android_activity_with_string(
 
 #[cfg(target_os = "android")]
 fn call_android_activity_with_bool(method: &str, value: bool) -> Result<String, NativeBridgeError> {
-    manganis::android::with_activity(|mut environment, activity| {
+    manganis::android::with_activity(|environment, activity| {
         let result = environment.call_method(
             activity,
             method,
             "(Z)Ljava/lang/String;",
             &[manganis::jni::objects::JValue::Bool(u8::from(value))],
         );
-        let result = android_jni_result(&mut environment, result)
-            .and_then(|value| android_string(&mut environment, value));
+        let result = android_jni_result(environment, result)
+            .and_then(|value| android_string(environment, value));
         Some(result)
     })
     .ok_or(NativeBridgeError::Unavailable)?
@@ -393,5 +484,38 @@ mod android_bridge {
     #[manganis::ffi("android")]
     extern "Kotlin" {
         pub type OxidMobilePlugin;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn android_plugin_packages_the_pinned_platform_verifier_component() {
+        let gradle = include_str!("../android/build.gradle.kts");
+        assert!(gradle.contains("rustlsPlatformVerifierMavenPath()"));
+        assert!(gradle.contains("rootProject.allprojects"));
+        assert!(gradle.contains("implementation(\"rustls:rustls-platform-verifier:0.1.1\")"));
+        assert!(
+            include_str!("../android/consumer-rules.pro").contains("org.rustls.platformverifier")
+        );
+    }
+
+    #[test]
+    fn android_portal_profile_accepts_only_the_exact_positive_qemu_attestation() {
+        assert_eq!(
+            decode_android_qemu_profile(r#"{"androidQemu":true}"#),
+            Ok(())
+        );
+        for rejected in [
+            r#"{"androidQemu":false}"#,
+            r#"{"androidQemu":true,"physical":false}"#,
+            r#"{"androidQemu":"true"}"#,
+            r#"{}"#,
+            "not-json",
+        ] {
+            assert!(decode_android_qemu_profile(rejected).is_err());
+        }
     }
 }

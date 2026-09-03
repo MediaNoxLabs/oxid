@@ -1,6 +1,6 @@
 # Oxid Identity Wallet
 
-[![CI](https://github.com/MediaNoxLabs/oxid/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/MediaNoxLabs/oxid/actions/workflows/ci.yml)
+[![CI](https://github.com/MediaNoxLabs/oxid/actions/workflows/ci.yml/badge.svg?branch=integration)](https://github.com/MediaNoxLabs/oxid/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Oxid is a free and open-source, Rust-first, identity-native wallet foundation.
@@ -21,7 +21,11 @@ than layers bolted onto one chain-specific frontend.
 > inventory through standalone or explicitly configured native adapters. A
 > deterministic OpenID4VCI 1.0 Final adapter now exercises embedded-offer
 > preview, explicit consent, DID-bound proof, strict verification, and protected
-> credential storage end to end. A separate deterministic SIOPv2 draft-13
+> credential storage end to end. Authenticated native headless, ARM64-Darwin,
+> and authority-gated iOS Simulator/Android QEMU development profiles can
+> additionally select the exact Portal `integration` profile for real HTTP
+> issuance without exposing that route to ordinary or production builds. A
+> separate deterministic SIOPv2 draft-13
 > adapter previews a standalone verifier request, requires explicit consent,
 > and independently verifies a single-use self-issued DID login without
 > exposing the ID Token. The standalone issuer now delivers the prototype's
@@ -102,19 +106,39 @@ The bootstrap wrapper also starts the pinned Pi installation, validates its
 project-local review integration, or runs a one-off command in the shell:
 
 ```bash
+./bootstrap.sh --configure-pi
+./bootstrap.sh --configure-git
 ./bootstrap.sh --pi
 ./bootstrap.sh --check
 ./bootstrap.sh -- cargo test --workspace
 ```
 
-It does not read, print, or persist credentials. The Nix shell remains the
-single package-provisioning boundary; `nix develop` continues to work directly.
+The Git-hook installer requires an already configured author identity and
+OpenPGP signing-key selection; it never reads or generates the key. The
+bootstrap does not read, print, or persist credentials. The Nix shell remains
+the single package-provisioning boundary; `nix develop` continues to work
+directly.
 
 Launch the desktop shell:
 
 ```bash
-cargo run -p oxid-app
+just desktop-build
+just desktop-run
 ```
+
+Mobile targets also expose separate build and deploy operations for shorter
+device loops. Deploy verifies a private exact-source artifact receipt and does
+not rebuild or launch the application:
+
+```bash
+just android-build
+just android-deploy
+just ios-build
+just ios-deploy
+```
+
+See [application target commands](docs/factory/application-targets.md) for
+profile matching and the supported Android/iOS destinations.
 
 The default thin app validates and embeds `brands/oxid` at build time. Check
 every pack, or inspect the default generated semantic CSS, with:
@@ -203,6 +227,21 @@ retry requires a fresh preview and consent. It remains an experimental
 simulator/emulator harness, not physical-device or production readiness. The
 ordinary `just ios-run` and `just android-run` paths remain unchanged and
 proof-disabled.
+
+For a provider-neutral OpenID4VC and Midnight demonstration on one physical
+Android phone over Tailscale, use the receipt-supervised
+[operator demo kit](demo/README.md):
+
+```bash
+demo/start.sh
+demo/status.sh
+demo/stop.sh
+```
+
+The kit starts or safely reuses the standalone Midnight stack, exposes its
+node, indexer, and prover through protected Tailscale routes, installs the
+pinned app, and documents the truthful standalone boundaries for OpenID4VCI,
+OpenID4VP, and SIOPv2.
 
 `just ios-native-custody-smoke` accepts either a supported passcode-bound
 Keychain capability or a truthful fail-closed simulator result. The Android
@@ -411,6 +450,156 @@ remains absent from ordinary incoming DTOs. The Digital Passport adapter
 interprets it only after recomputing all five official Midnight commitments and
 the signed claim root. Headless exposes safe candidate/plan metadata but no
 reveal operation.
+The ADR-0102 Portal route is limited to authenticated native-headless and
+compile-gated desktop/virtual-mobile development profiles. It requires an
+absolute regular non-symlink deployment manifest plus its exact SHA-256 in a
+pair; partial or mismatched configuration fails startup:
+
+```bash
+export OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_PATH='<absolute-public-manifest.json>'
+export OXID_OPENID4VCI_PORTAL_DEPLOYMENT_MANIFEST_SHA256='<lowercase-sha256>'
+cargo run -p oxid-headless
+```
+
+The manifest and bundled source lock distinguish Portal's landed
+`integration@22ae536` / tree `74d8d1a`, with the exact Final-profile provenance
+digest retained as a compatibility boundary. The HTTP client accepts only
+the strict Final profile, disables redirects/proxies/retries, keeps plaintext
+loopback-only, converts private parts through the exact Digital Passport
+commitment boundary, and reuses the existing valid-only encrypted import.
+Normal `compose()` remains unavailable; only the explicit virtual-mobile,
+physical-Android, native-headless, and ARM64-Darwin test profiles can name the
+Portal client. WebAssembly and ordinary desktop/mobile graphs cannot. The TypeScript prototypes in
+`midnight-identity-solution-examples` remain behavioral/protocol references;
+this Phase 1 path does not run or copy their issuer. It runs the production-ready
+Rust issuer from the fetched Lace `origin/integration` tree in Lace's supported
+local Smocker configuration. The
+[Portal macOS laptop runbook](docs/factory/portal-macos-laptop.md) defines the
+owner-safe prerequisites, cleanup, and evidence contract for the canonical
+sequence:
+
+```bash
+just standalone-up
+just portal-macos-laptop-e2e
+```
+
+The aggregate command requires a tracked-clean committed head and exactly three
+healthy `oxid-standalone` services validated by the first command. It runs the
+existing headless harness before the native desktop harness, then requires both
+evidence records to identify that same head and tree. The headless-first order
+localizes protocol/composition failures before desktop prequalification and
+avoids entering mobile-specific build/deployment lanes until shared behavior
+passes; the combined L4 duration is unmeasured and no overall speedup is
+claimed. The headless harness fetches and
+authenticates Lace integration commit `22ae5369` / tree `74d8d1a5`, builds the
+Lace resolver, did-manager, and default Rust issuer images, and loads Lace's
+`mock/didit.yml` into the in-stack Smocker. The Rust `DiditHttpAdapter` is
+runtime-bound to `http://smocker:8080`; no live DIDIT endpoint or external KYC
+provider is called. The adapted consumer compose omits Lace's duplicate
+node/indexer/proof-server services and points its resolver and did-manager at
+the existing `oxid-standalone` project. Lace's bootstrap job creates the issuer
+DID and Jubjub assertion key, while the issuer retains signing custody behind
+the Lace did-manager service.
+
+The test asks the running Lace KYC flow for the exact `credentialOfferUri` that
+its completion page stores and represents as the QR/copy offer, routes that same
+URL to Oxid, rejects once before consent with zero token/nonce/credential calls,
+and then explicitly accepts. The same `oxid-headless` process also derives its
+account and runs `wallet.connect` against local indexer v4; its websocket replay reports equal numeric current and target cursors.
+Digital-passport verification,
+encrypted persistence, listing, restart restoration, and fresh reverification
+are required.
+
+Docker cleanup is receipt-scoped to the `oxid-portal-consumer` project and never
+prunes or removes `oxid-standalone`. The command publishes one closed,
+secret-free exact-head JSON under `target/portal-headless-e2e/` with
+`portalServiceExercised:true`, the Lace commit/tree/provenance identities, and
+the supported mock mode. The evidence proves the Oxid process's **indexer
+synchronization only**. Standalone node and proof-server readiness do not prove
+that Oxid used either service, so both interactions remain explicitly false.
+The resolver-observed issuer bootstrap is not a direct node/prover interaction
+claim, and this is not live DIDIT, real-person KYC, production discovery,
+release evidence, or Oxid proving/submission evidence.
+
+The second stage runs the same actual Dioxus `oxid-app` on Apple silicon as a
+release-absent desktop prequalification target. `desktop-portal-test` is
+compile-gated to ARM64 macOS and remains an owner-invoked
+L4 target, not a primary product target or a member of the public `HostedTarget`
+matrix. It reuses the authenticated Lace/Smocker/local-standalone profile and a
+one-shot `QrScannerPort` adapter. The adapter reads and burns the fixed
+app-private capability only after the rendered **Scan** action invokes
+`scan()`; the exact offer then follows the normal strict route, preview,
+consent, verification, and encrypted-storage path. No offer or capability is
+accepted through argv or environment. The release-absent in-process driver
+calls `.click()` only on rendered Dioxus controls; it has no scanner, router,
+or use-case API and requires no Accessibility/System Events authority.
+The target launches a clean second process for visible listing/reverification,
+records only closed exact-head evidence, and captures protocol-redacted native
+window crops under ignored `target/portal-desktop-e2e/`. It proves Oxid app
+indexer synchronization only; node and proof-server use remain false unless
+separately observed.
+
+The `standalone-portal` iOS Simulator/Android QEMU profile has one
+repository-owned stack command. With the validated `oxid-standalone`
+prerequisite still running, this command checks out the pinned Portal source,
+starts the issuer proxy on 18090, issuer resolver on 18093, and single-use offer
+endpoint on 18091, and derives the issuer DID/method/Jubjub facts into a
+canonical digest-authenticated deployment manifest:
+
+```bash
+just portal-virtual-mobile-stack
+```
+
+Keep that command running. It prints owner-private `build.env` and capability
+file paths under ignored `target/portal-virtual-mobile/runtime/`. In another
+shell, source `build.env`, select `OXID_MOBILE_PORTAL_PROFILE=local`, and run the
+repository iOS Simulator or Android QEMU launcher. Copy the 64-byte capability
+into app-private `portal-offer.capability`, delete the host copy, and deliver
+only the fixed `openid-credential-offer://standalone-portal-test-fetch` trigger.
+Ctrl-C on the stack command capability-authenticates completion and proves the
+Portal consumer project was removed; it never removes `oxid-standalone`.
+`just portal-virtual-mobile-stack-contract` drives the real 18090/18091/18093
+routes, derived manifest, unauthorized request, single authenticated offer, and
+exact cleanup without a device.
+
+The [Portal mobile simulator runbook](docs/factory/portal-mobile-simulators.md)
+defines the canonical packaged two-platform lane. It preflights both explicit
+virtual targets, requires the macOS headless/desktop prequalification, creates
+and deletes one receipt-bound iOS Simulator, then runs one fixed-port
+repository-owned Android QEMU AVD:
+
+```bash
+OXID_XCODE_DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+OXID_IOS_RUNTIME_ID='<explicit-reviewed-runtime-id>' \
+OXID_IOS_DEVICE_TYPE_ID='<explicit-reviewed-iphone-device-type-id>' \
+OXID_ANDROID_AVD='<explicit-reviewed-avd>' \
+just portal-mobile-simulators-e2e
+```
+
+The closed per-platform evidence proves exact preview, zero token/nonce/
+credential/issuer-resolution calls before consent (metadata preview calls are
+required), explicit issuance, encrypted persistence, true process death,
+restart listing, fresh resolver-backed reverification, and cleanup at one
+head/tree. This owner-invoked virtual evidence is not a physical-device,
+Tailscale, camera, native-custody, release, live-DIDIT, or performance claim.
+
+The loopback bearer authenticates the app to the offer listener, but plaintext
+loopback does not authenticate that listener to the app. Another local process
+that binds first could consume the capability and choose the candidate offer.
+This is permitted only in the compile-gated virtual development profile and is
+bounded by strict offer routing, explicit holder consent, and complete issuer
+DID/method/JWK trust, credential-proof, and holder-binding verification before
+encrypted storage. It is not a production channel or server-authentication
+claim.
+
+The lower-level `just portal-virtual-mobile-offer-harness` remains available for
+an externally prepared owner-private offer/capability pair; its contract covers
+only exact route, client authentication, replay rejection, and cleanup. Port
+18091 belongs only to these mutually exclusive virtual offer endpoints. The
+physical Android suite keeps its unpublished control API on 18095 and its
+dedicated unpublished offer listener on 18094; neither is installed through
+ADB reverse.
+
 The Dioxus card permits explicit device-local first/last reveal and age
 threshold planning. A separate OpenID4VP 1.0 Final-shaped DCQL panel previews a
 deterministic standalone verifier request, matching credential, and exact claim
@@ -671,9 +860,12 @@ camera and therefore show the expected unavailable message. The offer, login,
 and presentation fixture buttons remain available for complete simulator flow
 testing.
 
-Set `OXID_IOS_DEVICE` to a simulator UDID to select a particular device. The
-script obtains the pinned Dioxus CLI from the locked Nix flake but deliberately
-uses the host Xcode and Rustup toolchain for Apple SDK discovery. Generated
+Set `OXID_IOS_DEVICE` to a simulator UDID to select a particular device. Set
+`OXID_XCODE_DEVELOPER_DIR` to an absolute full-Xcode developer directory when
+the host-global selection is unsuitable; the launcher validates it without
+changing `xcode-select`. The script obtains the pinned Dioxus CLI from the
+locked Nix flake but deliberately uses the host Xcode and Rustup toolchain for
+Apple SDK discovery. Generated
 platform output and signing state remain uncommitted; secure storage arrives as
 an explicit mobile adapter.
 
@@ -794,8 +986,9 @@ custody real assets or externally issued credentials. See
 ## Contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENT.md](AGENT.md) before making
-changes. Contributions require DCO sign-off, and repository-facing commits must
-be GPG signed.
+changes. The [contribution policy](docs/factory/contribution-policy.md) defines
+the closed Conventional Commit vocabulary, issue-branch grammar, exact DCO
+sign-off, and GitHub-verifiable OpenPGP requirements.
 
 Oxid is licensed under the [Apache License 2.0](LICENSE). Retained icon notices
 are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

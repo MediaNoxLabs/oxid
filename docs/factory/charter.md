@@ -22,39 +22,52 @@ factory work items. Duties:
 Claims a `factory:ready` item and delivers a draft PR. Duties:
 
 - Follow the claim/lease protocol (claim-protocol.md) before touching code.
-- Work on a branch named `factory/<issue-number>-<slug>`.
+- Work on a branch named `<type>/issue-<number>`, using the Conventional
+  Commit type that leads the pull-request title and no descriptive suffix.
 - Respect AGENT.md architecture rules and every accepted ADR.
 - Deliver through the `.devloops` `draft` gate with fan-out evidence, then the
   `preApproval` gate with CI green.
-- Never merge; never push to `develop` directly.
+- Never push to `integration` directly. Merge only through the guarded
+  integration wrapper when the active owner request explicitly authorizes it;
+  otherwise stop for a human. A separate fresh Claude current-head review is
+  required only for high-risk `full` work, an owner request, or a disputed
+  finding.
 
 ### Reviewer (fan-out)
-The `.devloops` refinement fan-out (scope, correctness, coverage,
-architecture, security personas) plus `external-review`. Reviewers only ever
-produce findings with file/line references; they never edit the branch.
+The bounded `.devloops` fan-out uses scope/correctness at draft and
+correctness/security at pre-approval, with no more than two concurrent
+reviewers. Reviewers only ever produce findings with file/line references;
+they never edit the branch.
 
 ### Quality Steward
 A standing role, independent of any single work item. Duties:
 
-- Review `develop` deltas on a schedule; verify architecture/security/testing
-  claims against the actual code.
+- Review `integration` deltas on a schedule; verify
+  architecture/security/testing claims against the actual code.
 - Measure local target and CI durations against the budgets in metrics.md;
   flag regressions before they hit the CI time bound.
+- Run the read-only metrics audit weekly and after a harness incident. Review
+  median/p90 and SLO violations monthly; file one bounded issue for each
+  confirmed regression instead of tuning the harness inline.
 - File confirmed findings as factory work items; never fix-and-push directly.
 
 ### Release Manager (human)
-The only role that merges, tags, accepts ADRs, or changes repository
-settings. Agents stop at `factory:awaiting-human-merge`.
+Owns tags, releases, ADR acceptance, repository settings, and every `main` or
+`develop` merge decision. Clean `integration` PRs may be merged by a human, or
+by an agent under explicit active owner authorization, after all current-head
+gates and any risk-required independent review evidence are posted.
 
 ## Authority boundaries
 
 | Action | Who may do it |
 | --- | --- |
 | Create/refine/order work items | Planner, Quality Steward |
-| Claim work, push a `factory/*` branch, open a draft PR | Implementer holding a valid lease |
+| Claim work, push a `<type>/issue-<number>` branch, open a draft PR | Implementer holding a valid lease |
 | Post gate findings | Reviewers |
-| Merge, tag, release, change repo settings, accept ADRs | Release Manager (human) only |
-| Modify factory protocol docs | Via a normal factory work item + human merge |
+| Merge a clean `integration` PR | Human delivery operator, or an explicitly owner-authorized agent through the guarded wrapper, after all current-head evidence is posted |
+| Merge to `main` or `develop` | Human delivery operator only |
+| Tag, release, change repo settings, accept ADRs | Release Manager (human) only |
+| Modify factory protocol docs | Via a normal factory work item and the same delivery gates |
 
 ## Provider agnosticism
 

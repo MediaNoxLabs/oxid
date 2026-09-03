@@ -12,7 +12,11 @@ build = "build.rs"
 [features]
 default = ["desktop"]
 desktop = ["dioxus/desktop"]
-mobile = ["dioxus/mobile", "oxid-ui-dioxus/mobile"]
+mobile = [
+  "dioxus/mobile",
+  "oxid-composition/android-platform-tls",
+  "oxid-ui-dioxus/mobile",
+]
 web = ["dioxus/web"]
 # Opt-in developer presentation profile. Composition authority remains with a
 # standalone feature and is compile-time guarded in main.rs.
@@ -22,18 +26,62 @@ ui-profile-dev = ["oxid-ui-dioxus/ui-profile-dev", "oxid-ui-dioxus/app-profile-a
 ui-profile-demo = ["oxid-ui-dioxus/ui-profile-demo", "oxid-ui-dioxus/app-profile-authority"]
 # Explicit simulator/emulator composition. This never changes the default
 # production-facing composition selected by a normal application build.
-standalone-development = []
+standalone-development = [
+  "oxid-composition/standalone-development",
+  "oxid-ui-dioxus/public-standalone-genesis",
+]
+# Owner-invoked ARM64-Darwin Dioxus test profile. It reuses the exact native
+# Portal/local-standalone policy and is absent from normal release/primary
+# targets and hosted target planning.
+desktop-portal-test = [
+  "desktop",
+  "standalone-development",
+  "oxid-composition/desktop-portal-test",
+  "oxid-ui-dioxus/desktop-test-click-driver",
+]
 # Opt-in native development route profile for the laptop-hosted standalone
 # stack. Routes are immutable loopback constants; Android emulators reach them
 # only through repository-owned adb reverse mappings.
-standalone-local = []
+standalone-local = [
+  "oxid-composition/standalone-readiness",
+  "oxid-ui-dioxus/standalone-deployment-profile",
+]
+# Simulator/emulator-only Portal profile. These feature dependencies make the
+# required mobile development/local composition explicit. `build.rs` also
+# requires the authenticated transient profile-authority manifest emitted only
+# after the repository launchers validate iOS Simulator or Android QEMU.
+standalone-portal = [
+  "mobile",
+  "standalone-development",
+  "standalone-local",
+  "oxid-composition/mobile-portal",
+]
+# Physical Android Portal profile using compile-time authenticated Tailscale
+# HTTPS and the existing standalone Midnight routes.
+standalone-portal-tailnet = [
+  "mobile",
+  "standalone-development",
+  "standalone-tailnet",
+  "oxid-composition/mobile-portal-tailnet",
+]
 # Opt-in physical-device route profile for a TLS-terminated standalone stack.
 # Every route is supplied at compile time by the repository launcher; normal
 # and native-custody builds cannot select it.
-standalone-tailnet = []
+standalone-tailnet = [
+  "oxid-composition/standalone-readiness",
+  "oxid-ui-dioxus/standalone-deployment-profile",
+]
 # Explicit simulator/emulator composition using production native custody and
 # deterministic standalone wallet/SSI adapters.
 standalone-native-custody = []
+# Explicit mobile owner journey for importing an existing root into native
+# custody and observing authenticated PreProd balances. It is mutually
+# exclusive with every standalone profile.
+preprod-observation = [
+  "mobile",
+  "oxid-composition/preprod-observation",
+  "oxid-ui-dioxus/preprod-observation",
+]
 # Opt-in iOS/Android standalone proof conformance harness. This embeds the
 # reviewed Compact artifact closure and selects the foreground-only worker;
 # normal mobile and production builds remain proof-disabled.
@@ -68,8 +116,13 @@ getrandom_04 = { package = "getrandom", version = "=0.4.3", features = [
   "wasm_js",
 ] }
 
+[dev-dependencies]
+oxid-adapter-identity-ingress.workspace = true
+
 [build-dependencies]
+oxid-adapter-identity-ingress.workspace = true
 oxid-brand-build.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true

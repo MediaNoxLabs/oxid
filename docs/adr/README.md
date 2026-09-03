@@ -1,11 +1,13 @@
 # Architecture decision records
 
 ADRs record consequential technical decisions for Oxid. Use four-digit,
-monotonically increasing filenames. Each record describes its status, context,
-decision, consequences, and any superseded decisions.
+monotonically increasing filenames; the sequence need not be contiguous. Each
+record describes its status, context, decision, consequences, and any superseded
+decisions.
 
-Accepted ADRs are changed only by a later ADR that explicitly supersedes them.
-The root blueprint remains the broader product and engineering constitution.
+Accepted ADRs are changed only by a later ADR that explicitly amends or
+supersedes them. The root blueprint remains the broader product and engineering
+constitution.
 
 ## How to read status
 
@@ -122,6 +124,11 @@ ADR status and delivery state answer different questions:
 | [0098](0098-authenticate-deployment-profiles-and-isolate-standalone-funding.md) Authenticate deployment profiles and isolate standalone funding | Accepted | §§3–8, 12–13, 16–18, 21; reviewed prototype live path; issues #2/#90/#91 | Signed atomic Midnight/SSI routes plus node genesis gate are implemented without selecting a deployment; guarded harnesses prove funded unshielded finality/restart and genesis-authority shielded finality/adapter-reconstruction safety |
 | [0099](0099-expose-an-agent-tool-surface-over-mcp.md) Agent tool surface over MCP | Proposed | §§1, 3–7, 11–13, 16, 18, 21 and issues #69/#70 | Dependency-free stdio bridge in apps/oxid-mcp derives its tools from the capability manifest; a test-only workspace dependency proves the composed surface excludes consent, authorization, signing, cancellation, and reconciliation ceremonies; production SDK adoption and the policy engine remain issue #70 |
 | [0100](0100-register-protected-dust-keys-before-fresh-wallet-submission.md) Register protected DUST keys before fresh-wallet submission | Accepted | §§3–8, 12–13, 16–18, 21; prototype onboarding plan; ledger registration semantics; issues #2/#92 | Implemented in repository/headless/Dioxus with guarded public PreProd funding-manifest/read-only-observation foundations and an amount-observed one-output/one-note acceptance harness: a distinct prepare/consent/authorize/submit port registers only current owned NIGHT inputs through protected role-0/role-2 custody; a fresh wallet intentionally starts with zero DUST, and authoritative generated-DUST observation remains a separate spend-readiness gate |
+| [0101](0101-gate-laceid-portal-interoperability-on-final-openid4vci.md) Gate LaceID Portal interoperability on Final OpenID4VCI | Accepted | ADR-0039/0097; issue #124; LaceID Portal `804de0a9e58cf48ece3cc6c24b2245bb70bc80f1` | Source-derived negative contract evidence only: strict Final offer/metadata/request/response boundaries reject the pinned Portal shapes; no live HTTP, trust-manifest consumption, or headless/simulator/device/tailnet interoperability evidence |
+| [0102](0102-admit-pinned-portal-final-in-headless-development.md) Admit pinned Portal Final issuance in headless development | Accepted | ADR-0039/0101; issue #124; Portal `integration@22ae536` | Strict authenticated native-headless Portal HTTP issuance, exact three-part verification/import, encrypted persistence, and new-process restore |
+| [0103](0103-compose-portal-final-for-physical-android.md) Compose Portal Final for physical Android | Accepted | ADR-0039/0097/0102; issue #124; Portal `integration@22ae536` | Compile-gated physical Android issuance, encrypted restart/reverification, runtime-discovered device and tailnet identity, and receipt-exact temporary HTTPS cleanup |
+| [0104](0104-regrow-incoming-adapters-behind-capability-facades.md) Regrow oversized adapters behind capability façades | Accepted | §§3, 6, 13–14, 18–19; issue #145 | Headless, desktop Dioxus, and composition are decomposed behind checked façades; Midnight remains the final ordered root, and no crate extraction is authorized |
+| [0105](0105-recover-owner-midnight-roots-for-preprod-observation.md) Recover owner Midnight roots for PreProd observation | Accepted | §§3–8, 12–13, 16–18, 21; ADR-0071/0074/0090/0098; issue #244 | Opt-in mobile recovery installs one owner-entered root into empty native custody, binds it to signed/genesis-authenticated PreProd, derives account 0/address 0, and exposes balance sync without write controls |
 
 ## Current boundaries
 
@@ -510,3 +517,18 @@ repository/headless/Dioxus path, public PreProd manifest/read-only observer,
 test-only signed Midnight profile, and amount-observed ignored live harness are
 implemented; the funded write, mobile, restart, and physical-device acceptance
 evidence remain in progress.
+
+ADR-0104 governs behavior-preserving source decomposition of the four oversized
+crate roots without changing their dependency or public capability boundaries.
+Headless, desktop Dioxus, and composition now retain stable crate-root
+re-exports over capability-owned source modules; Midnight remains the final
+ordered root. Source modules must establish cohesion before a separately
+approved, measured crate boundary can be proposed.
+
+ADR-0105 admits one owner-entered 32-byte Midnight root only through an
+explicit empty-profile, native-authorized, zeroizing recovery port. The opt-in
+mobile build verifies one signed PreProd deployment and its live node genesis,
+fixes account derivation to account 0/address 0, and reuses the existing
+NIGHT/shielded/DUST sync projection while omitting every write control. Normal
+artifacts, runtime environments, logs, diagnostics, URLs, and public profile
+metadata remain unable to carry the root or select this deployment.

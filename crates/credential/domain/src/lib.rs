@@ -4,7 +4,7 @@
 
 use std::{collections::BTreeSet, error::Error, fmt};
 
-use oxid_foundation::{OpaqueId, OpaqueIdError, UnixTimestampMillis};
+use oxid_foundation::{UnixTimestampMillis, opaque_id_type};
 
 pub const MAX_SIGNED_CREDENTIAL_BYTES: usize = 1_048_576;
 pub const MAX_CREDENTIAL_DETACHED_PROOF_BYTES: usize = 1_048_576;
@@ -15,32 +15,12 @@ const MAX_SCHEMA_IDENTIFIER_CHARACTERS: usize = 256;
 const MAX_CLAIM_PATH_CHARACTERS: usize = 512;
 const MAX_DISCLOSURE_CANDIDATES: usize = 64;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CredentialId(OpaqueId);
-
-impl CredentialId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    pub struct CredentialId;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CredentialProfileId(OpaqueId);
-
-impl CredentialProfileId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    pub struct CredentialProfileId;
 }
 
 /// Opaque, format-owned material delivered alongside a signed credential.

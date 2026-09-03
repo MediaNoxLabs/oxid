@@ -2,15 +2,42 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(any(target_os = "android", test))]
+mod android_platform;
+mod assets_page;
 mod brand;
+#[cfg(feature = "standalone-deployment-profile")]
+mod deployment_profile;
+#[cfg(feature = "desktop-test-click-driver")]
+mod desktop_test_driver;
+mod diagnostics;
+mod dids;
 mod labels;
+mod passport_vault;
 mod profile_guard;
+#[cfg(feature = "preprod-observation")]
+mod wallet_root_recovery;
 
+#[cfg(target_os = "android")]
+pub use android_platform::{AndroidPlatformInitialization, App};
+use assets_page::AssetsPage;
+#[cfg(test)]
+use assets_page::{wallet_account_activation_available, wallet_write_actions_available};
 pub use brand::{BrandProfile, SecurityCopySnapshot, security_copy_snapshot};
+#[cfg(feature = "standalone-deployment-profile")]
+use deployment_profile::DeploymentProfileCard;
+pub use diagnostics::DiagnosticsUiServices;
+use dids::DidsPage;
 #[cfg(feature = "ui-profile-dev")]
 pub use oxid_capabilities_application::CapabilityManifestContext;
+pub use passport_vault::{
+    PassportVaultContractCallRecoveryUiServices, PassportVaultContractCallUiServices,
+    PassportVaultUiServices,
+};
+#[cfg(feature = "preprod-observation")]
+use wallet_root_recovery::WalletRootRecoveryForm;
 
-use std::{fmt, future::Future, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, fmt, future::Future, sync::Arc, time::Duration};
 
 use dioxus::prelude::*;
 #[cfg(feature = "ui-profile-dev")]
@@ -23,33 +50,19 @@ use oxid_credential_application::{
     PreviewCredentialDisclosureUseCase, ReceiveCredentialUseCase, RevealCredentialClaimCommand,
     RevealCredentialClaimUseCase, ReverifyCredentialUseCase,
 };
-use oxid_diagnostics_application::{
-    CLEAR_LOCAL_DIAGNOSTICS_INTENT, ClearDiagnosticsCommand, ClearDiagnosticsUseCase,
-    DiagnosticSnapshotView, GetDiagnosticSnapshotUseCase,
-};
+use oxid_diagnostics_application::{ClearDiagnosticsUseCase, GetDiagnosticSnapshotUseCase};
 use oxid_identity_application::{
     CreateDidCommand, CreateDidUseCase, DeactivateDidCommand, DeactivateDidUseCase,
     DidKeyAlgorithm, DidOperationConfirmation, DidOperationError, DidRecordQuery, DidRecordView,
-    DidUpdate, ForgetDidUseCase, ListDidRecordsQuery, ListDidRecordsUseCase, ResolveDidCommand,
+    DidUpdate, ForgetDidUseCase, ListDidRecordsQuery, ListDidRecordsUseCase,
+    PUBLISH_DID_TO_TEST_ISSUER_INTENT, PublishDidCommand, PublishDidUseCase, ResolveDidCommand,
     ResolveDidUseCase, SignDidPayloadCommand, SignDidPayloadUseCase, UpdateDidCommand,
     UpdateDidUseCase,
 };
 use oxid_identity_domain::VerificationRelationship;
 use oxid_passport_vault_application::{
-    AUTHORIZE_PASSPORT_VAULT_CALL_INTENT, AuthorizePassportVaultCallCommand,
-    AuthorizePassportVaultCallUseCase, CLAIM_INTENT, CREATE_LOCK_INTENT,
-    CancelPassportVaultCallSubmissionUseCase, ClaimPassportVaultLockCommand,
-    ClaimPassportVaultLockUseCase, CreatePassportVaultLockCommand, CreatePassportVaultLockUseCase,
-    DEPOSIT_INTENT, DepositPassportVaultLockUseCase, GetPassportVaultCallSubmissionStatusUseCase,
-    GetPassportVaultCallUseCase, ListPassportVaultCallSubmissionsUseCase,
-    ListPassportVaultLocksUseCase, PassportVaultAmountCommand, PassportVaultCallPreviewView,
-    PassportVaultCallQuery, PassportVaultCallSubmissionStatusView, PassportVaultCallSubmissionView,
-    PassportVaultLockView, PassportVaultView, PreparePassportVaultCallAction,
-    PreparePassportVaultCallCommand, PreparePassportVaultCallUseCase,
-    ReadPassportVaultContractStateCommand, ReadPassportVaultContractStateUseCase,
-    ReconcilePassportVaultCallSubmissionUseCase, SUBMIT_PASSPORT_VAULT_CALL_INTENT,
-    SubmitPassportVaultCallCommand, SubmitPassportVaultCallUseCase, WITHDRAW_INTENT,
-    WithdrawPassportVaultLockUseCase,
+    ClaimPassportVaultLockUseCase, CreatePassportVaultLockUseCase, DepositPassportVaultLockUseCase,
+    ListPassportVaultLocksUseCase, PassportVaultView, WithdrawPassportVaultLockUseCase,
 };
 use oxid_platform_ports::{
     IdentityLinkIngressError, IdentityLinkIngressPort, PublicReceiveAddress, PublicTextExportError,
@@ -66,13 +79,14 @@ use oxid_presentation_application::{
 use oxid_protocol_application::{
     AcceptCredentialIssuanceCommand, AcceptCredentialIssuanceUseCase,
     AcceptSelfIssuedAuthenticationCommand, AcceptSelfIssuedAuthenticationUseCase,
-    CredentialIssuanceError, CredentialIssuanceView, IdentityRequestKind,
-    IdentityRequestRoutingError, PrepareCredentialIssuanceCommand,
-    PrepareCredentialIssuanceUseCase, PrepareSelfIssuedAuthenticationCommand,
-    PrepareSelfIssuedAuthenticationUseCase, RefuseCredentialIssuanceCommand,
-    RefuseCredentialIssuanceUseCase, RefuseSelfIssuedAuthenticationCommand,
-    RefuseSelfIssuedAuthenticationUseCase, RouteIdentityRequestCommand,
-    RouteIdentityRequestUseCase, SelfIssuedAuthenticationError, SelfIssuedAuthenticationView,
+    CredentialIssuanceError, CredentialIssuanceProfileQuery, CredentialIssuanceView,
+    IdentityRequestKind, IdentityRequestRoutingError, ListCredentialIssuancesUseCase,
+    PrepareCredentialIssuanceCommand, PrepareCredentialIssuanceUseCase,
+    PrepareSelfIssuedAuthenticationCommand, PrepareSelfIssuedAuthenticationUseCase,
+    RefuseCredentialIssuanceCommand, RefuseCredentialIssuanceUseCase,
+    RefuseSelfIssuedAuthenticationCommand, RefuseSelfIssuedAuthenticationUseCase,
+    RouteIdentityRequestCommand, RouteIdentityRequestUseCase, SelfIssuedAuthenticationError,
+    SelfIssuedAuthenticationView,
 };
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationCommand, AuthorizeWalletDustRegistrationUseCase,
@@ -116,9 +130,16 @@ use oxid_wallet_application::{
     WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
     WalletTransferSubmissionView,
 };
-use zeroize::Zeroizing;
+#[cfg(feature = "preprod-observation")]
+use oxid_wallet_application::{
+    RECOVER_WALLET_ROOT_SUMMARY, RECOVER_WALLET_ROOT_TITLE, RecoverWalletRootCommand,
+    RecoverWalletRootUseCase, WalletRootSeed,
+};
+use zeroize::{Zeroize, Zeroizing};
 
+use diagnostics::DiagnosticsPage;
 use labels as ui;
+use passport_vault::PassportVaultPage;
 
 const BASE_STYLES: &str = include_str!("../assets/styles.css");
 const DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL: &str = "Protected DUST registration";
@@ -126,6 +147,12 @@ const DUST_REGISTRATION_AUTHORIZE_ACCESSIBLE_LABEL: &str = "Authorize DUST regis
 const DUST_REGISTRATION_SUBMIT_ACCESSIBLE_LABEL: &str = "Register on Midnight";
 const DUST_REGISTRATION_RECONCILE_ACCESSIBLE_LABEL: &str =
     "Reconcile DUST registration with Midnight";
+const CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS: &str =
+    "Credential issuance terminal error: protocol unavailable";
+const CREDENTIAL_ISSUANCE_PROTOCOL_ERROR_STATUS: &str =
+    "Credential issuance protocol error: protocol unavailable";
+const NATIVE_SHIELDED_NIGHT_TOKEN_TYPE: &str =
+    "0000000000000000000000000000000000000000000000000000000000000000";
 #[cfg(not(target_arch = "wasm32"))]
 const UI_BLOCKING_TASK_STACK_BYTES: usize = 8 * 1024 * 1024;
 
@@ -186,7 +213,14 @@ where
     Output: Send + 'static,
     Operation: Future<Output = Output> + Send + 'static,
 {
-    run_ui_blocking(move || futures::executor::block_on(operation)).await
+    run_ui_blocking(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| UiBlockingTaskError::WorkerUnavailable)?;
+        Ok(runtime.block_on(operation))
+    })
+    .await?
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -204,6 +238,11 @@ where
 /// Incoming capabilities made available to Dioxus by the composition root.
 #[derive(Clone)]
 pub struct WalletUiServices {
+    #[cfg(target_os = "android")]
+    android_platform_initializer:
+        Option<Arc<dyn Fn() -> AndroidPlatformInitialization + Send + Sync + 'static>>,
+    #[cfg(feature = "standalone-deployment-profile")]
+    deployment_profile: Option<Arc<dyn oxid_capabilities_application::GetDeploymentProfileUseCase>>,
     #[cfg(feature = "ui-profile-dev")]
     developer_capabilities: Vec<CapabilityView>,
     get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase>,
@@ -227,6 +266,8 @@ pub struct WalletUiServices {
     recover_portable_wallet_backup: Arc<dyn RecoverPortableWalletBackupUseCase>,
     export_complete_wallet_backup: Arc<dyn ExportCompleteWalletBackupUseCase>,
     recover_complete_wallet_backup: Arc<dyn RecoverCompleteWalletBackupUseCase>,
+    #[cfg(feature = "preprod-observation")]
+    wallet_root_recovery: Option<WalletRootRecoveryUiServices>,
     list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
     select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
     derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
@@ -259,6 +300,7 @@ pub struct WalletUiServices {
     create_did: Arc<dyn CreateDidUseCase>,
     resolve_did: Arc<dyn ResolveDidUseCase>,
     list_did_records: Arc<dyn ListDidRecordsUseCase>,
+    publish_did: Option<Arc<dyn PublishDidUseCase>>,
     update_did: Arc<dyn UpdateDidUseCase>,
     deactivate_did: Arc<dyn DeactivateDidUseCase>,
     sign_did_payload: Arc<dyn SignDidPayloadUseCase>,
@@ -274,7 +316,9 @@ pub struct WalletUiServices {
     prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase>,
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
+    list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
     standalone_credential_offer: Option<String>,
+    credential_issuance_ready: bool,
     prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
     accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
     cancel_credential_presentation: Arc<dyn CancelCredentialPresentationUseCase>,
@@ -291,128 +335,6 @@ pub struct WalletUiServices {
     withdraw_passport_vault_lock: Arc<dyn WithdrawPassportVaultLockUseCase>,
     passport_vault_state_persistence: String,
     passport_vault_contract_calls: PassportVaultContractCallUiServices,
-}
-
-/// Process-local, payload-free diagnostic use cases consumed by the
-/// Diagnostics page.
-pub struct DiagnosticsUiServices {
-    get: Arc<dyn GetDiagnosticSnapshotUseCase>,
-    clear: Arc<dyn ClearDiagnosticsUseCase>,
-}
-
-impl DiagnosticsUiServices {
-    #[must_use]
-    pub const fn new(
-        get: Arc<dyn GetDiagnosticSnapshotUseCase>,
-        clear: Arc<dyn ClearDiagnosticsUseCase>,
-    ) -> Self {
-        Self { get, clear }
-    }
-}
-
-/// Product-specific Passport Vault capabilities consumed only by the Vault page.
-pub struct PassportVaultUiServices {
-    list: Arc<dyn ListPassportVaultLocksUseCase>,
-    create: Arc<dyn CreatePassportVaultLockUseCase>,
-    deposit: Arc<dyn DepositPassportVaultLockUseCase>,
-    claim: Arc<dyn ClaimPassportVaultLockUseCase>,
-    withdraw: Arc<dyn WithdrawPassportVaultLockUseCase>,
-    state_persistence: String,
-    contract_calls: PassportVaultContractCallUiServices,
-}
-
-impl PassportVaultUiServices {
-    #[must_use]
-    pub fn new(
-        list: Arc<dyn ListPassportVaultLocksUseCase>,
-        create: Arc<dyn CreatePassportVaultLockUseCase>,
-        deposit: Arc<dyn DepositPassportVaultLockUseCase>,
-        claim: Arc<dyn ClaimPassportVaultLockUseCase>,
-        withdraw: Arc<dyn WithdrawPassportVaultLockUseCase>,
-        state_persistence: impl Into<String>,
-        contract_calls: PassportVaultContractCallUiServices,
-    ) -> Self {
-        Self {
-            list,
-            create,
-            deposit,
-            claim,
-            withdraw,
-            state_persistence: state_persistence.into(),
-            contract_calls,
-        }
-    }
-}
-
-/// Public recovery operations for a retained or ambiguously submitted vault call.
-pub struct PassportVaultContractCallRecoveryUiServices {
-    get_draft: Arc<dyn GetPassportVaultCallUseCase>,
-    get_status: Arc<dyn GetPassportVaultCallSubmissionStatusUseCase>,
-    cancel: Arc<dyn CancelPassportVaultCallSubmissionUseCase>,
-    list: Arc<dyn ListPassportVaultCallSubmissionsUseCase>,
-    reconcile: Arc<dyn ReconcilePassportVaultCallSubmissionUseCase>,
-}
-
-impl PassportVaultContractCallRecoveryUiServices {
-    #[must_use]
-    pub fn new(
-        get_draft: Arc<dyn GetPassportVaultCallUseCase>,
-        get_status: Arc<dyn GetPassportVaultCallSubmissionStatusUseCase>,
-        cancel: Arc<dyn CancelPassportVaultCallSubmissionUseCase>,
-        list: Arc<dyn ListPassportVaultCallSubmissionsUseCase>,
-        reconcile: Arc<dyn ReconcilePassportVaultCallSubmissionUseCase>,
-    ) -> Self {
-        Self {
-            get_draft,
-            get_status,
-            cancel,
-            list,
-            reconcile,
-        }
-    }
-}
-
-/// Production-shaped Passport Vault call lifecycle exposed to the mobile page.
-#[derive(Clone)]
-pub struct PassportVaultContractCallUiServices {
-    read_state: Arc<dyn ReadPassportVaultContractStateUseCase>,
-    prepare: Arc<dyn PreparePassportVaultCallUseCase>,
-    authorize: Arc<dyn AuthorizePassportVaultCallUseCase>,
-    submit: Arc<dyn SubmitPassportVaultCallUseCase>,
-    get_draft: Arc<dyn GetPassportVaultCallUseCase>,
-    get_status: Arc<dyn GetPassportVaultCallSubmissionStatusUseCase>,
-    cancel: Arc<dyn CancelPassportVaultCallSubmissionUseCase>,
-    list: Arc<dyn ListPassportVaultCallSubmissionsUseCase>,
-    reconcile: Arc<dyn ReconcilePassportVaultCallSubmissionUseCase>,
-    mode: String,
-    configured_contract_address_hex: Option<String>,
-}
-
-impl PassportVaultContractCallUiServices {
-    #[must_use]
-    pub fn new(
-        read_state: Arc<dyn ReadPassportVaultContractStateUseCase>,
-        prepare: Arc<dyn PreparePassportVaultCallUseCase>,
-        authorize: Arc<dyn AuthorizePassportVaultCallUseCase>,
-        submit: Arc<dyn SubmitPassportVaultCallUseCase>,
-        recovery: PassportVaultContractCallRecoveryUiServices,
-        mode: impl Into<String>,
-        configured_contract_address_hex: Option<String>,
-    ) -> Self {
-        Self {
-            read_state,
-            prepare,
-            authorize,
-            submit,
-            get_draft: recovery.get_draft,
-            get_status: recovery.get_status,
-            cancel: recovery.cancel,
-            list: recovery.list,
-            reconcile: recovery.reconcile,
-            mode: mode.into(),
-            configured_contract_address_hex,
-        }
-    }
 }
 
 /// Runtime wallet flows kept separate from profile, security, and identity
@@ -449,6 +371,7 @@ pub struct DidUiServices {
     create_did: Arc<dyn CreateDidUseCase>,
     resolve_did: Arc<dyn ResolveDidUseCase>,
     list_did_records: Arc<dyn ListDidRecordsUseCase>,
+    publish_did: Option<Arc<dyn PublishDidUseCase>>,
     update_did: Arc<dyn UpdateDidUseCase>,
     deactivate_did: Arc<dyn DeactivateDidUseCase>,
     sign_did_payload: Arc<dyn SignDidPayloadUseCase>,
@@ -468,7 +391,9 @@ pub struct CredentialUiServices {
     prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase>,
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
+    list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
     standalone_credential_offer: Option<String>,
+    credential_issuance_ready: bool,
     prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
     accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
     cancel_credential_presentation: Arc<dyn CancelCredentialPresentationUseCase>,
@@ -509,7 +434,9 @@ pub struct CredentialIssuanceUiServices {
     prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase>,
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
+    list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
     standalone_credential_offer: Option<String>,
+    credential_issuance_ready: bool,
 }
 
 /// Consent-driven OpenID4VP capabilities consumed by the Credentials page.
@@ -593,13 +520,17 @@ impl CredentialIssuanceUiServices {
         prepare_credential_issuance: Arc<dyn PrepareCredentialIssuanceUseCase>,
         accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
         refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
+        list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
         standalone_credential_offer: Option<String>,
+        credential_issuance_ready: bool,
     ) -> Self {
         Self {
             prepare_credential_issuance,
             accept_credential_issuance,
             refuse_credential_issuance,
+            list_credential_issuances,
             standalone_credential_offer,
+            credential_issuance_ready,
         }
     }
 }
@@ -624,7 +555,9 @@ impl CredentialUiServices {
             prepare_credential_issuance: issuance.prepare_credential_issuance,
             accept_credential_issuance: issuance.accept_credential_issuance,
             refuse_credential_issuance: issuance.refuse_credential_issuance,
+            list_credential_issuances: issuance.list_credential_issuances,
             standalone_credential_offer: issuance.standalone_credential_offer,
+            credential_issuance_ready: issuance.credential_issuance_ready,
             prepare_credential_presentation: presentation.prepare,
             accept_credential_presentation: presentation.accept,
             cancel_credential_presentation: presentation.cancel,
@@ -696,11 +629,18 @@ impl DidUiServices {
             create_did,
             resolve_did,
             list_did_records,
+            publish_did: None,
             update_did,
             deactivate_did,
             sign_did_payload,
             forget_did,
         }
+    }
+
+    #[must_use]
+    pub fn with_publisher(mut self, publish_did: Option<Arc<dyn PublishDidUseCase>>) -> Self {
+        self.publish_did = publish_did;
+        self
     }
 }
 
@@ -736,6 +676,28 @@ pub struct WalletSecurityUiServices {
     unlock_wallet: Arc<dyn UnlockWalletUseCase>,
     lock_wallet: Arc<dyn LockWalletUseCase>,
     backup: WalletBackupUiServices,
+    #[cfg(feature = "preprod-observation")]
+    root_recovery: Option<WalletRootRecoveryUiServices>,
+}
+
+/// Explicit owner-root recovery capability supplied only by an authenticated,
+/// observation-only production deployment composition.
+#[cfg(feature = "preprod-observation")]
+#[derive(Clone)]
+pub struct WalletRootRecoveryUiServices {
+    network_id: String,
+    recover: Arc<dyn RecoverWalletRootUseCase>,
+}
+
+#[cfg(feature = "preprod-observation")]
+impl WalletRootRecoveryUiServices {
+    #[must_use]
+    pub fn new(network_id: String, recover: Arc<dyn RecoverWalletRootUseCase>) -> Self {
+        Self {
+            network_id,
+            recover,
+        }
+    }
 }
 
 /// Complete and legacy custody-only backup use cases plus native document transport.
@@ -784,7 +746,16 @@ impl WalletSecurityUiServices {
             unlock_wallet,
             lock_wallet,
             backup,
+            #[cfg(feature = "preprod-observation")]
+            root_recovery: None,
         }
+    }
+
+    #[cfg(feature = "preprod-observation")]
+    #[must_use]
+    pub fn with_root_recovery(mut self, recovery: WalletRootRecoveryUiServices) -> Self {
+        self.root_recovery = Some(recovery);
+        self
     }
 }
 
@@ -1020,6 +991,10 @@ impl WalletUiServices {
         let authentication = identity.authentication;
         let ingress = identity.ingress;
         Self {
+            #[cfg(target_os = "android")]
+            android_platform_initializer: None,
+            #[cfg(feature = "standalone-deployment-profile")]
+            deployment_profile: None,
             #[cfg(feature = "ui-profile-dev")]
             developer_capabilities: Vec::new(),
             get_diagnostic_snapshot: diagnostics.get,
@@ -1043,6 +1018,8 @@ impl WalletUiServices {
             recover_portable_wallet_backup: security.backup.recover_custody,
             export_complete_wallet_backup: security.backup.export_complete,
             recover_complete_wallet_backup: security.backup.recover_complete,
+            #[cfg(feature = "preprod-observation")]
+            wallet_root_recovery: security.root_recovery,
             list_wallet_networks: account.list_wallet_networks,
             select_wallet_network: account.select_wallet_network,
             derive_wallet_account: account.derive_wallet_account,
@@ -1074,6 +1051,7 @@ impl WalletUiServices {
             create_did: dids.create_did,
             resolve_did: dids.resolve_did,
             list_did_records: dids.list_did_records,
+            publish_did: dids.publish_did,
             update_did: dids.update_did,
             deactivate_did: dids.deactivate_did,
             sign_did_payload: dids.sign_did_payload,
@@ -1089,7 +1067,9 @@ impl WalletUiServices {
             prepare_credential_issuance: credentials.prepare_credential_issuance,
             accept_credential_issuance: credentials.accept_credential_issuance,
             refuse_credential_issuance: credentials.refuse_credential_issuance,
+            list_credential_issuances: credentials.list_credential_issuances,
             standalone_credential_offer: credentials.standalone_credential_offer,
+            credential_issuance_ready: credentials.credential_issuance_ready,
             prepare_credential_presentation: credentials.prepare_credential_presentation,
             accept_credential_presentation: credentials.accept_credential_presentation,
             cancel_credential_presentation: credentials.cancel_credential_presentation,
@@ -1107,6 +1087,38 @@ impl WalletUiServices {
             passport_vault_state_persistence: vault.state_persistence,
             passport_vault_contract_calls: vault.contract_calls,
         }
+    }
+
+    /// Delays the Android UI tree until platform TLS is ready. The incoming
+    /// adapter supplies a payload-free capability so this UI crate remains
+    /// independent of JNI and certificate-verifier implementations.
+    #[cfg(target_os = "android")]
+    #[must_use]
+    pub fn with_android_platform_initializer(
+        mut self,
+        initializer: Arc<dyn Fn() -> AndroidPlatformInitialization + Send + Sync + 'static>,
+    ) -> Self {
+        self.android_platform_initializer = Some(initializer);
+        self
+    }
+
+    /// Attaches the read-only profile selected by the application build.
+    #[cfg(feature = "standalone-deployment-profile")]
+    #[must_use]
+    pub fn with_deployment_profile(
+        mut self,
+        deployment_profile: Arc<dyn oxid_capabilities_application::GetDeploymentProfileUseCase>,
+    ) -> Self {
+        self.deployment_profile = Some(deployment_profile);
+        self
+    }
+
+    #[cfg(feature = "standalone-deployment-profile")]
+    #[must_use]
+    pub fn deployment_profile(
+        &self,
+    ) -> Option<Arc<dyn oxid_capabilities_application::GetDeploymentProfileUseCase>> {
+        self.deployment_profile.as_ref().map(Arc::clone)
     }
 
     /// Adds the public, shared capability manifest to a developer-profile UI.
@@ -1445,8 +1457,18 @@ impl WalletUiServices {
     }
 
     #[must_use]
+    pub fn list_credential_issuances(&self) -> Arc<dyn ListCredentialIssuancesUseCase> {
+        Arc::clone(&self.list_credential_issuances)
+    }
+
+    #[must_use]
     pub fn standalone_credential_offer(&self) -> Option<String> {
         self.standalone_credential_offer.clone()
+    }
+
+    #[must_use]
+    pub const fn credential_issuance_ready(&self) -> bool {
+        self.credential_issuance_ready
     }
 
     #[must_use]
@@ -1498,41 +1520,6 @@ impl WalletUiServices {
     #[must_use]
     pub fn standalone_self_issued_request(&self) -> Option<String> {
         self.standalone_self_issued_request.clone()
-    }
-
-    #[must_use]
-    pub fn list_passport_vault_locks(&self) -> Arc<dyn ListPassportVaultLocksUseCase> {
-        Arc::clone(&self.list_passport_vault_locks)
-    }
-
-    #[must_use]
-    pub fn create_passport_vault_lock(&self) -> Arc<dyn CreatePassportVaultLockUseCase> {
-        Arc::clone(&self.create_passport_vault_lock)
-    }
-
-    #[must_use]
-    pub fn deposit_passport_vault_lock(&self) -> Arc<dyn DepositPassportVaultLockUseCase> {
-        Arc::clone(&self.deposit_passport_vault_lock)
-    }
-
-    #[must_use]
-    pub fn claim_passport_vault_lock(&self) -> Arc<dyn ClaimPassportVaultLockUseCase> {
-        Arc::clone(&self.claim_passport_vault_lock)
-    }
-
-    #[must_use]
-    pub fn withdraw_passport_vault_lock(&self) -> Arc<dyn WithdrawPassportVaultLockUseCase> {
-        Arc::clone(&self.withdraw_passport_vault_lock)
-    }
-
-    #[must_use]
-    pub fn passport_vault_contract_calls(&self) -> PassportVaultContractCallUiServices {
-        self.passport_vault_contract_calls.clone()
-    }
-
-    #[must_use]
-    pub fn passport_vault_state_persistence(&self) -> String {
-        self.passport_vault_state_persistence.clone()
     }
 }
 
@@ -1798,6 +1785,10 @@ enum OnboardingStep {
     Create,
     Protect(WalletProfileView),
     Restore,
+    #[cfg(feature = "preprod-observation")]
+    RecoverRootProfile,
+    #[cfg(feature = "preprod-observation")]
+    RecoverRoot(WalletProfileView),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1805,6 +1796,49 @@ enum OnboardingProtectionState {
     Idle,
     Working,
     Failed(String),
+}
+
+#[cfg(feature = "preprod-observation")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum WalletRootRecoveryUiState {
+    Idle,
+    Working,
+    Failed(String),
+}
+
+#[cfg(feature = "preprod-observation")]
+#[derive(Default)]
+struct WalletRootInput(Zeroizing<String>);
+
+#[cfg(feature = "preprod-observation")]
+impl WalletRootInput {
+    fn new(value: String) -> Self {
+        Self(Zeroizing::new(value))
+    }
+
+    fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn take(&mut self) -> Zeroizing<String> {
+        std::mem::replace(&mut self.0, Zeroizing::new(String::new()))
+    }
+
+    fn clear(&mut self) {
+        self.0.zeroize();
+        self.0.clear();
+    }
+}
+
+#[cfg(feature = "preprod-observation")]
+impl fmt::Debug for WalletRootInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("WalletRootInput([REDACTED])")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1849,14 +1883,326 @@ enum CredentialPageState {
         credentials: Vec<CredentialView>,
         receiving: bool,
         operation_error: Option<String>,
+        reverification_applied: bool,
     },
     Failed(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DidCreationState {
+    Ready,
+    Creating,
+    Created,
+    Failed,
+    AwaitingConfirmation,
+}
+
+fn begin_did_creation_value(state: &mut DidCreationState) -> bool {
+    if *state != DidCreationState::Ready {
+        return false;
+    }
+    *state = DidCreationState::Creating;
+    true
+}
+
+fn arm_another_did_creation_value(state: &mut DidCreationState) -> bool {
+    if !matches!(*state, DidCreationState::Created | DidCreationState::Failed) {
+        return false;
+    }
+    *state = DidCreationState::AwaitingConfirmation;
+    true
+}
+
+fn confirm_another_did_creation_value(state: &mut DidCreationState) -> bool {
+    if *state != DidCreationState::AwaitingConfirmation {
+        return false;
+    }
+    *state = DidCreationState::Ready;
+    true
+}
+
+fn did_record_management_label(source: &str, managed_method_ids: &[String]) -> &'static str {
+    if !managed_method_ids.is_empty() {
+        "Wallet-managed record"
+    } else if source == "standalone" {
+        "Standalone example / resolved external — not wallet-managed"
+    } else {
+        "Resolved external record — not wallet-managed"
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CredentialIssuanceAction {
+    Idle,
+    Previewing,
+    Accepting,
+    Refusing,
+    Cleaning,
+}
+
+fn begin_credential_issuance_action_value(
+    action: &mut CredentialIssuanceAction,
+    requested: CredentialIssuanceAction,
+) -> bool {
+    if *action != CredentialIssuanceAction::Idle || requested == CredentialIssuanceAction::Idle {
+        return false;
+    }
+    *action = requested;
+    true
+}
+
+fn credential_issuance_action_label(action: CredentialIssuanceAction) -> &'static str {
+    match action {
+        CredentialIssuanceAction::Idle => "",
+        CredentialIssuanceAction::Previewing => "Checking offer…",
+        CredentialIssuanceAction::Accepting => "Issuing credential…",
+        CredentialIssuanceAction::Refusing => "Refusing offer…",
+        CredentialIssuanceAction::Cleaning => "Discarding credential review…",
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CredentialIssuanceTerminalError {
+    ProtocolUnavailable,
+}
+
+impl CredentialIssuanceTerminalError {
+    const fn message(self) -> &'static str {
+        match self {
+            Self::ProtocolUnavailable => "This protocol is unavailable in the current build",
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
 struct PendingIdentityRequest {
     kind: IdentityRequestKind,
     request_uri: String,
+}
+
+impl PendingIdentityRequest {
+    fn importable_uri(&self, expected: IdentityRequestKind) -> Option<&str> {
+        (self.kind == expected && !self.request_uri.is_empty()).then_some(self.request_uri.as_str())
+    }
+
+    fn has_raw_uri(&self) -> bool {
+        !self.request_uri.is_empty()
+    }
+}
+
+#[derive(Default)]
+struct CredentialOfferDraft {
+    value: Zeroizing<String>,
+    imported: bool,
+}
+
+impl CredentialOfferDraft {
+    fn editable(value: String) -> Self {
+        Self {
+            value: Zeroizing::new(value),
+            imported: false,
+        }
+    }
+
+    fn imported(value: String) -> Self {
+        Self {
+            value: Zeroizing::new(value),
+            imported: true,
+        }
+    }
+
+    fn import(&mut self, value: String) {
+        *self = Self::imported(value);
+    }
+
+    fn has_imported_offer(&self) -> bool {
+        self.imported
+    }
+
+    fn rendered_editable_value(&self) -> &str {
+        if self.imported {
+            ""
+        } else {
+            self.value.as_str()
+        }
+    }
+
+    fn offer_for_prepare(&self) -> &str {
+        self.value.as_str()
+    }
+
+    fn clear_imported(&mut self) {
+        self.value.zeroize();
+        self.value = Zeroizing::new(String::new());
+        self.imported = false;
+    }
+}
+
+/// Scrubs the raw imported request URI after the protocol adapter has prepared
+/// its private session while retaining the payload-free pending marker. The
+/// marker keeps the one-active-review guard closed until terminal consent or
+/// refusal clears it.
+fn scrub_pending_identity_request_value(
+    pending: &mut Option<PendingIdentityRequest>,
+    kind: IdentityRequestKind,
+) -> bool {
+    let Some(request) = pending
+        .as_mut()
+        .filter(|request| request.kind == kind && request.has_raw_uri())
+    else {
+        return false;
+    };
+    request.request_uri.zeroize();
+    request.request_uri.clear();
+    true
+}
+
+fn scrub_pending_identity_request(
+    pending_identity_request: &mut Signal<Option<PendingIdentityRequest>>,
+    kind: IdentityRequestKind,
+) {
+    let mut guard = pending_identity_request.write();
+    scrub_pending_identity_request_value(&mut guard, kind);
+}
+
+/// Synchronously reserves the process-local admission guard before a manual
+/// credential offer is prepared. Imported reviews keep using their pending
+/// request marker instead, including its existing pre-prepare behavior.
+fn reserve_manual_credential_review_admission_lock_value(
+    manual_review_lock: &mut bool,
+    has_imported_pending_marker: bool,
+) -> bool {
+    if has_imported_pending_marker || *manual_review_lock {
+        return false;
+    }
+    *manual_review_lock = true;
+    true
+}
+
+/// Returns whether this attempt owns a manual reservation. An imported
+/// credential-issuance marker remains the owner for native ingress; every
+/// other pending request kind is cross-kind exclusive with manual issuance.
+fn reserve_credential_preview_review_admission_value(
+    pending: &Option<PendingIdentityRequest>,
+    manual_review_lock: &mut bool,
+) -> Option<bool> {
+    if let Some(request) = pending.as_ref() {
+        return (request.kind == IdentityRequestKind::CredentialIssuance && !*manual_review_lock)
+            .then_some(false);
+    }
+    reserve_manual_credential_review_admission_lock_value(manual_review_lock, false).then_some(true)
+}
+
+fn reserve_credential_preview_review_admission(
+    pending_identity_request: &Signal<Option<PendingIdentityRequest>>,
+    manual_review_lock: &mut Signal<bool>,
+) -> Option<bool> {
+    let pending = pending_identity_request.read();
+    let mut manual_review_lock = manual_review_lock.write();
+    reserve_credential_preview_review_admission_value(&pending, &mut manual_review_lock)
+}
+
+/// A protocol-level preparation error confirms that no prepared manual
+/// session survived. Worker failure is not confirmation and must leave the
+/// reservation closed because the adapter may still hold a session.
+fn release_manual_credential_review_after_confirmed_prepare_failure_value(
+    manual_review_lock: &mut bool,
+    manual_review_reserved: bool,
+) -> bool {
+    if !manual_review_reserved {
+        return false;
+    }
+    *manual_review_lock = false;
+    true
+}
+
+fn release_manual_credential_review_after_confirmed_prepare_failure(
+    manual_review_lock: &mut Signal<bool>,
+    manual_review_reserved: bool,
+) {
+    let mut guard = manual_review_lock.write();
+    release_manual_credential_review_after_confirmed_prepare_failure_value(
+        &mut guard,
+        manual_review_reserved,
+    );
+}
+
+/// Clears a pending identity review and zeroizes any raw URI still present.
+/// This is used only for explicit pre-prepare dismissal or after a prepared
+/// issuance reaches successful acceptance/refusal.
+fn wipe_pending_identity_request_value(
+    pending: &mut Option<PendingIdentityRequest>,
+    kind: Option<IdentityRequestKind>,
+) -> bool {
+    let matches_kind = match kind {
+        Some(expected) => pending
+            .as_ref()
+            .is_some_and(|request| request.kind == expected),
+        None => pending.is_some(),
+    };
+    if matches_kind && let Some(mut request) = pending.take() {
+        request.request_uri.zeroize();
+        return true;
+    }
+    false
+}
+
+fn wipe_pending_identity_request(
+    pending_identity_request: &mut Signal<Option<PendingIdentityRequest>>,
+    kind: Option<IdentityRequestKind>,
+) {
+    let mut guard = pending_identity_request.write();
+    wipe_pending_identity_request_value(&mut guard, kind);
+}
+
+fn clear_credential_issuance_review_admission_value(
+    pending: &mut Option<PendingIdentityRequest>,
+    manual_review_lock: &mut bool,
+) {
+    wipe_pending_identity_request_value(pending, Some(IdentityRequestKind::CredentialIssuance));
+    *manual_review_lock = false;
+}
+
+fn clear_credential_issuance_review_admission(
+    pending_identity_request: &mut Signal<Option<PendingIdentityRequest>>,
+    manual_review_lock: &mut Signal<bool>,
+) {
+    let mut pending = pending_identity_request.write();
+    let mut manual_review_lock = manual_review_lock.write();
+    clear_credential_issuance_review_admission_value(&mut pending, &mut manual_review_lock);
+}
+
+fn credential_issuance_review_blocks_replacement(
+    prepared: Option<&CredentialIssuanceView>,
+) -> bool {
+    prepared.is_some_and(|review| review.state == "awaiting_consent")
+}
+
+fn credential_issuance_review_is_terminal(prepared: Option<&CredentialIssuanceView>) -> bool {
+    prepared
+        .is_some_and(|review| matches!(review.state.as_str(), "succeeded" | "refused" | "failed"))
+}
+
+fn retained_identity_review_route(
+    pending: &Option<PendingIdentityRequest>,
+    manual_credential_review_locked: bool,
+) -> Option<Route> {
+    if pending.as_ref().is_some_and(|request| {
+        request.kind == IdentityRequestKind::CredentialIssuance && !request.has_raw_uri()
+    }) {
+        return Some(Route::CredentialRequest);
+    }
+    manual_credential_review_locked.then_some(Route::Documents)
+}
+
+fn credential_review_escape_is_visible(
+    pending: &Option<PendingIdentityRequest>,
+    manual_credential_review_locked: bool,
+) -> bool {
+    manual_credential_review_locked
+        || pending.as_ref().is_some_and(|request| {
+            request.kind == IdentityRequestKind::CredentialIssuance && !request.has_raw_uri()
+        })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1906,80 +2252,6 @@ enum HomePageState {
     Loading,
     Ready(Box<HomePageProjection>),
     Failed,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum PassportVaultPageState {
-    Loading,
-    Ready {
-        vault: Box<PassportVaultView>,
-        credentials: Vec<CredentialView>,
-        busy: bool,
-        operation_error: Option<String>,
-    },
-    Failed(String),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum PassportVaultLocalOperation {
-    Invalid(String),
-    Deposit {
-        lock_id: u64,
-        amount: u128,
-    },
-    Claim {
-        lock_id: u64,
-        credential_id: String,
-        amount: u128,
-    },
-    Withdraw {
-        lock_id: u64,
-        amount: u128,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum PassportVaultContractPanelState {
-    Editing,
-    Preparing,
-    Prepared(Box<PassportVaultCallPreviewView>),
-    Authorizing(Box<PassportVaultCallPreviewView>),
-    Authorized(Box<PassportVaultCallPreviewView>),
-    Submitting(Box<PassportVaultCallPreviewView>),
-    Cancelling(Box<PassportVaultCallPreviewView>),
-    Submitted(Box<PassportVaultCallSubmissionView>),
-    Resolved(Box<PassportVaultCallSubmissionStatusView>),
-    Failed {
-        message: String,
-        retained: Option<Box<PassportVaultCallPreviewView>>,
-        recovery: PassportVaultCallRecovery,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PassportVaultCallRecovery {
-    Edit,
-    RetryAuthorized,
-    ReconcileUnknown,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum PassportVaultContractStatePaneState {
-    Idle,
-    Loading,
-    Ready(Box<PassportVaultView>),
-    Failed(String),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum PassportVaultCallRecoveryPaneState {
-    Loading,
-    Ready {
-        latest: Option<Box<PassportVaultCallSubmissionStatusView>>,
-        reconciling: bool,
-        operation_error: Option<String>,
-    },
-    Failed(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3039,8 +3311,15 @@ const fn html_boolean_attribute(enabled: bool) -> Option<&'static str> {
     if enabled { Some("true") } else { None }
 }
 
-const fn identity_request_dismiss_is_visible(has_notice: bool, request_waiting: bool) -> bool {
-    has_notice && request_waiting
+const fn identity_request_dismiss_is_visible(has_notice: bool, has_raw_request: bool) -> bool {
+    has_notice && has_raw_request
+}
+
+const fn identity_request_admits_new_link(
+    request_waiting: bool,
+    manual_credential_review_locked: bool,
+) -> bool {
+    !request_waiting && !manual_credential_review_locked
 }
 
 #[cfg(feature = "ui-profile-dev")]
@@ -3061,11 +3340,78 @@ fn developer_profile_banner() -> Element {
     rsx! {}
 }
 
+#[cfg(feature = "public-standalone-genesis")]
+const PUBLIC_STANDALONE_GENESIS_MARKER: &str = "OXID_PUBLIC_STANDALONE_GENESIS_WALLET";
+#[cfg(feature = "public-standalone-genesis")]
+const PUBLIC_STANDALONE_PROFILE_NAME: &str = "Oxid Demo Wallet";
+
+fn profile_creation_default_name() -> String {
+    "My wallet".to_owned()
+}
+
+#[cfg(feature = "public-standalone-genesis")]
+fn public_fixture_profile_exists(profiles: &[WalletProfileView]) -> bool {
+    profiles
+        .iter()
+        .any(|profile| profile.display_name == PUBLIC_STANDALONE_PROFILE_NAME)
+}
+
+#[cfg(feature = "public-standalone-genesis")]
+fn public_fixture_choice_label(fixture_exists: bool, fixture_selected: bool) -> &'static str {
+    if fixture_exists {
+        "Public demo wallet already exists"
+    } else if fixture_selected {
+        "Public demo wallet selected"
+    } else {
+        "Use public demo wallet"
+    }
+}
+
+fn public_fixture_name_conflicts(profiles: &[WalletProfileView], candidate: &str) -> bool {
+    #[cfg(feature = "public-standalone-genesis")]
+    {
+        // `ProfileName::parse` applies the same trim before persistence.
+        candidate.trim() == PUBLIC_STANDALONE_PROFILE_NAME
+            && public_fixture_profile_exists(profiles)
+    }
+    #[cfg(not(feature = "public-standalone-genesis"))]
+    {
+        let _ = (profiles, candidate);
+        false
+    }
+}
+
+#[cfg(feature = "public-standalone-genesis")]
+fn public_standalone_genesis_banner() -> Element {
+    rsx! {
+        aside {
+            class: "developer-profile-banner",
+            role: "alert",
+            "data-wallet-authority": PUBLIC_STANDALONE_GENESIS_MARKER,
+            strong { "Public genesis wallet capability" }
+            span { "Only the unique “Oxid Demo Wallet” profile can use shared, publicly spendable test authority; other profiles remain random. No privacy or ownership is implied." }
+        }
+    }
+}
+
+#[cfg(not(feature = "public-standalone-genesis"))]
+fn public_standalone_genesis_banner() -> Element {
+    rsx! {}
+}
+
 /// Brand-agnostic Dioxus incoming adapter and mobile-first application shell.
+#[cfg(not(target_os = "android"))]
 #[component]
 pub fn App() -> Element {
+    rsx! { WalletApp {} }
+}
+
+#[component]
+fn WalletApp() -> Element {
     let services = consume_context::<WalletUiServices>();
     let brand = consume_context::<BrandProfile>();
+    #[cfg(feature = "desktop-test-click-driver")]
+    desktop_test_driver::use_desktop_test_driver();
     let mut profile_session = use_signal(|| ProfileSessionState::Loading);
     let mut navigation = use_signal(RouteStack::default);
     let mut profile_menu_open = use_signal(|| false);
@@ -3078,6 +3424,7 @@ pub fn App() -> Element {
         state: secret_mode_state,
     };
     let mut pending_identity_request = use_signal(|| None::<PendingIdentityRequest>);
+    let manual_credential_review_lock = use_signal(|| false);
     let mut identity_ingress_notice = use_signal(|| None::<String>);
     let identity_scan_busy = use_signal(|| false);
     #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -3128,22 +3475,26 @@ pub fn App() -> Element {
         });
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     {
         let services_for_native_links = services.clone();
         use_future(move || {
             let services = services_for_native_links.clone();
             async move {
                 // Wry does not surface Android onNewIntent as a Tao Opened
-                // event. Poll only the bounded one-item native handoff; the
-                // task is paused automatically while this component is not
-                // being rendered.
+                // event, while an iOS Portal trigger can finish its worker
+                // after the corresponding Opened wake has been handled. Poll
+                // only the bounded one-item native handoff; no link payload or
+                // routing authority moves into this task. Sleeping first
+                // avoids a busy loop, and the task is paused automatically
+                // while this component is not being rendered.
                 loop {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                     if matches!(*profile_session.read(), ProfileSessionState::Active(_)) {
                         route_pending_identity_link(
                             &services,
                             pending_identity_request,
+                            manual_credential_review_lock,
                             navigation,
                             profile_menu_open,
                             identity_ingress_notice,
@@ -3161,6 +3512,7 @@ pub fn App() -> Element {
             route_pending_identity_link(
                 &services_for_links,
                 pending_identity_request,
+                manual_credential_review_lock,
                 navigation,
                 profile_menu_open,
                 identity_ingress_notice,
@@ -3205,12 +3557,18 @@ pub fn App() -> Element {
                 aria_hidden: if demo_gateway_hidden { "true" } else { "false" },
                 inert: html_boolean_attribute(demo_gateway_inert),
                 {developer_profile_banner()}
+                {public_standalone_genesis_banner()}
                 {demo_gateway_banner}
                 ProfileGateway {
                     state: session,
+                    lifecycle_wake: identity_link_wake,
                     on_selected: move |profile| {
                         profile_session.set(ProfileSessionState::Active(profile));
                         navigation.write().select_primary(PrimaryDestination::Home);
+                    },
+                    on_root_recovered: move |profile| {
+                        profile_session.set(ProfileSessionState::Active(profile));
+                        navigation.write().select_primary(PrimaryDestination::Wallet);
                     },
                     on_retry: move |_| {
                         let services = services.clone();
@@ -3232,19 +3590,28 @@ pub fn App() -> Element {
 
     let active_route = navigation.read().current();
     let receive_sheet_open = active_route == Route::Receive;
-    let content_route = if receive_sheet_open {
-        navigation.read().root()
-    } else {
-        active_route
-    };
+    let content_route = retained_identity_review_route(
+        &pending_identity_request.read(),
+        manual_credential_review_lock(),
+    )
+    .unwrap_or_else(|| {
+        if receive_sheet_open {
+            navigation.read().root()
+        } else {
+            active_route
+        }
+    });
     let active_primary = navigation.read().active_primary();
     let can_go_back = navigation.read().can_go_back();
     let profile_monogram = profile_monogram(&active_profile.display_name, brand.wordmark());
-    let identity_request_waiting = pending_identity_request.read().is_some();
+    let pending_identity_request_has_raw_uri = pending_identity_request
+        .read()
+        .as_ref()
+        .is_some_and(PendingIdentityRequest::has_raw_uri);
     let identity_ingress_notice_snapshot = identity_ingress_notice.read().clone();
     let identity_request_dismiss_visible = identity_request_dismiss_is_visible(
         identity_ingress_notice_snapshot.is_some(),
-        identity_request_waiting,
+        pending_identity_request_has_raw_uri,
     );
     let home_scanner = services.qr_scanner();
     let home_router = services.route_identity_request();
@@ -3303,6 +3670,7 @@ pub fn App() -> Element {
             aria_hidden: if demo_shell_hidden { "true" } else { "false" },
             inert: html_boolean_attribute(demo_shell_inert),
             {developer_profile_banner()}
+            {public_standalone_genesis_banner()}
             {demo_shell_banner}
             header { class: "app-header",
                 button {
@@ -3411,7 +3779,7 @@ pub fn App() -> Element {
                             class: "identity-ingress-dismiss",
                             r#type: "button",
                             onclick: move |_| {
-                                pending_identity_request.set(None);
+                                wipe_pending_identity_request(&mut pending_identity_request, None);
                                 navigation.write().dismiss_identity_request();
                                 identity_ingress_notice.set(Some(
                                     "Identity request dismissed without consent.".to_owned(),
@@ -3458,6 +3826,7 @@ pub fn App() -> Element {
                         DocumentsPage {
                             active_profile: active_profile.clone(),
                             pending_identity_request,
+                            manual_credential_review_lock,
                             on_manage_identities: move |_| navigation.write().push(Route::ManageIdentities),
                         }
                     },
@@ -3473,6 +3842,7 @@ pub fn App() -> Element {
                         CredentialsPage {
                             active_profile: active_profile.clone(),
                             pending_identity_request,
+                            manual_credential_review_lock,
                         }
                     },
                     Route::Diagnostics => rsx! { DiagnosticsPage { active_profile: active_profile.clone() } },
@@ -3483,6 +3853,9 @@ pub fn App() -> Element {
                             active_profile: active_profile.clone(),
                             lifecycle_wake: identity_link_wake,
                             secret_mode,
+                            on_root_recovered: move |_| {
+                                navigation.write().select_primary(PrimaryDestination::Wallet);
+                            },
                             on_open_profile: move |_| navigation.write().push(Route::Profile),
                             on_open_diagnostics: move |_| navigation.write().push(Route::Diagnostics),
                         }
@@ -3602,6 +3975,10 @@ fn PrimaryNavigationButton(
     }
 }
 
+const fn identity_scan_is_admitted(scan_busy: bool, request_pending: bool) -> bool {
+    !scan_busy && !request_pending
+}
+
 fn start_identity_scan(
     scanner: Arc<dyn QrScannerPort>,
     router: Arc<dyn RouteIdentityRequestUseCase>,
@@ -3611,7 +3988,7 @@ fn start_identity_scan(
     mut navigation: Signal<RouteStack>,
     mut profile_menu_open: Signal<bool>,
 ) {
-    if busy() {
+    if !identity_scan_is_admitted(busy(), pending_request.read().is_some()) {
         return;
     }
     busy.set(true);
@@ -3620,6 +3997,10 @@ fn start_identity_scan(
     spawn(async move {
         match scanner.scan().await {
             Ok(payload) => {
+                if !identity_scan_is_admitted(false, pending_request.read().is_some()) {
+                    busy.set(false);
+                    return;
+                }
                 let request_uri = payload.into_inner();
                 match router.execute(RouteIdentityRequestCommand {
                     request_uri: request_uri.clone(),
@@ -3684,7 +4065,9 @@ fn profile_monogram(display_name: &str, fallback: &str) -> String {
 #[component]
 fn ProfileGateway(
     state: ProfileSessionState,
+    lifecycle_wake: Signal<u64>,
     on_selected: EventHandler<WalletProfileView>,
+    on_root_recovered: EventHandler<WalletProfileView>,
     on_retry: EventHandler<MouseEvent>,
 ) -> Element {
     let brand = consume_context::<BrandProfile>();
@@ -3701,7 +4084,7 @@ fn ProfileGateway(
             }
         },
         ProfileSessionState::Onboarding => rsx! {
-            OnboardingFlow { on_selected }
+            OnboardingFlow { lifecycle_wake, on_selected, on_root_recovered }
         },
         ProfileSessionState::Choosing(profiles) => rsx! {
             section { class: "page-heading onboarding-heading",
@@ -3753,9 +4136,33 @@ fn ProfileGateway(
 }
 
 #[component]
-fn OnboardingFlow(on_selected: EventHandler<WalletProfileView>) -> Element {
+fn OnboardingFlow(
+    lifecycle_wake: Signal<u64>,
+    on_selected: EventHandler<WalletProfileView>,
+    on_root_recovered: EventHandler<WalletProfileView>,
+) -> Element {
+    #[cfg(feature = "preprod-observation")]
+    let services = consume_context::<WalletUiServices>();
     let brand = consume_context::<BrandProfile>();
     let mut step = use_signal(|| OnboardingStep::Welcome);
+    #[cfg(feature = "preprod-observation")]
+    let root_recovery_choice = if services.wallet_root_recovery.is_some() {
+        rsx! {
+            button {
+                class: "secondary-action",
+                r#type: "button",
+                onclick: move |_| step.set(OnboardingStep::RecoverRootProfile),
+                "Recover existing PreProd wallet"
+            }
+        }
+    } else {
+        rsx! {}
+    };
+    #[cfg(not(feature = "preprod-observation"))]
+    let root_recovery_choice = {
+        let _ = (lifecycle_wake, on_root_recovered);
+        rsx! {}
+    };
 
     match step.read().clone() {
         OnboardingStep::Welcome => rsx! {
@@ -3777,6 +4184,7 @@ fn OnboardingFlow(on_selected: EventHandler<WalletProfileView>) -> Element {
                     onclick: move |_| step.set(OnboardingStep::Restore),
                     "Restore from backup"
                 }
+                {root_recovery_choice}
             }
         },
         OnboardingStep::Create => rsx! {
@@ -3822,6 +4230,40 @@ fn OnboardingFlow(on_selected: EventHandler<WalletProfileView>) -> Element {
                 on_recovered: move |profile| on_selected.call(profile),
             }
         },
+        #[cfg(feature = "preprod-observation")]
+        OnboardingStep::RecoverRootProfile => rsx! {
+            section { class: "page-heading onboarding-heading",
+                button {
+                    class: "text-action",
+                    r#type: "button",
+                    aria_label: "Back to onboarding choices",
+                    onclick: move |_| step.set(OnboardingStep::Welcome),
+                    "← Back"
+                }
+                p { class: "eyebrow", "PreProd recovery" }
+                h1 { "Name this recovered wallet" }
+                p { "Create an empty public profile before installing the owner root behind device protection." }
+            }
+            ProfileManager {
+                profiles: Vec::new(),
+                active_profile_id: None,
+                onboarding: true,
+                on_selected: move |profile| step.set(OnboardingStep::RecoverRoot(profile)),
+            }
+        },
+        #[cfg(feature = "preprod-observation")]
+        OnboardingStep::RecoverRoot(profile) => {
+            let recovered_profile = profile.clone();
+            let cancelled_profile = profile.clone();
+            rsx! {
+                WalletRootRecoveryForm {
+                    profile,
+                    lifecycle_wake,
+                    on_recovered: move |_| on_root_recovered.call(recovered_profile.clone()),
+                    on_cancel: move |_| on_selected.call(cancelled_profile.clone()),
+                }
+            }
+        }
     }
 }
 
@@ -4063,11 +4505,31 @@ fn ProfileManager(
     let brand = consume_context::<BrandProfile>();
     let create_wallet_profile = services.create_wallet_profile();
     let select_wallet_profile = services.select_wallet_profile();
+    let default_display_name = profile_creation_default_name();
     let mut profile_list = use_signal(|| profiles);
-    let mut display_name = use_signal(|| "My wallet".to_owned());
+    let mut display_name = use_signal(|| default_display_name);
     let mut state = use_signal(|| CreationState::Idle);
     let busy = matches!(*state.read(), CreationState::Working);
-    let can_submit = !busy && !display_name.read().trim().is_empty();
+    let fixture_name_conflict =
+        public_fixture_name_conflicts(&profile_list.read(), display_name.read().trim());
+    let can_submit = !busy && !display_name.read().trim().is_empty() && !fixture_name_conflict;
+    #[cfg(feature = "public-standalone-genesis")]
+    let public_fixture_choice = {
+        let fixture_exists = public_fixture_profile_exists(&profile_list.read());
+        let fixture_selected = display_name.read().trim() == PUBLIC_STANDALONE_PROFILE_NAME;
+        rsx! {
+            p { class: "form-hint", "For a disposable local demo, explicitly select the shared public wallet. Anyone can spend its funds." }
+            button {
+                class: "secondary-action",
+                r#type: "button",
+                disabled: busy || fixture_exists || fixture_selected,
+                onclick: move |_| display_name.set(PUBLIC_STANDALONE_PROFILE_NAME.to_owned()),
+                {public_fixture_choice_label(fixture_exists, fixture_selected)}
+            }
+        }
+    };
+    #[cfg(not(feature = "public-standalone-genesis"))]
+    let public_fixture_choice = rsx! {};
 
     let feedback = match state.read().clone() {
         CreationState::Idle => rsx! {
@@ -4166,6 +4628,10 @@ fn ProfileManager(
                 value: "{display_name}",
                 oninput: move |event| display_name.set(event.value()),
             }
+            if fixture_name_conflict {
+                p { class: "form-hint", role: "alert", "The public demo profile already exists. Choose a different profile name." }
+            }
+            {public_fixture_choice}
             button {
                 class: "primary-action",
                 r#type: "button",
@@ -4193,6 +4659,7 @@ fn ProfileManager(
                         match result {
                             Ok(Ok((created, selected))) => {
                                 profile_list.write().push(created);
+                                display_name.set(profile_creation_default_name());
                                 state.set(CreationState::Created(selected.clone()));
                                 on_selected.call(selected);
                             }
@@ -4871,6 +5338,7 @@ fn HomeActivityPreview(
 fn DocumentsPage(
     active_profile: WalletProfileView,
     pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+    manual_credential_review_lock: Signal<bool>,
     on_manage_identities: EventHandler<MouseEvent>,
 ) -> Element {
     rsx! {
@@ -4891,6 +5359,7 @@ fn DocumentsPage(
         CredentialsPage {
             active_profile,
             pending_identity_request,
+            manual_credential_review_lock,
         }
     }
 }
@@ -4956,324 +5425,6 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
                     SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
                 }
             },
-        }
-    }
-}
-
-#[component]
-fn AssetsPage(active_profile: WalletProfileView, secret_mode: SecretModeController) -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let mut state = use_signal(|| AccountPageState::Loading);
-    let profile_id = active_profile.id.clone();
-    let services_for_load = services.clone();
-    use_effect(move || {
-        let services = services_for_load.clone();
-        let profile_id = profile_id.clone();
-        spawn(async move {
-            state.set(
-                run_ui_blocking(move || load_account_page(&services, &profile_id))
-                    .await
-                    .unwrap_or_else(|error| AccountPageState::Failed(error.to_string())),
-            );
-        });
-    });
-
-    match state.read().clone() {
-        AccountPageState::Loading => rsx! {
-            section { class: "wallet-hero",
-                p { class: "eyebrow", "Wallet overview" }
-                div { class: "wallet-hero__number-row",
-                    h1 { "…" }
-                    span { "NIGHT" }
-                }
-                p { class: "wallet-hero__hint", "Loading the selected Midnight account boundary…" }
-            }
-        },
-        AccountPageState::Failed(error) => rsx! {
-            section { class: "wallet-hero",
-                p { class: "eyebrow", "Wallet overview" }
-                div { class: "wallet-hero__number-row",
-                    h1 { "—" }
-                    span { "NIGHT" }
-                }
-                p { class: "wallet-hero__hint", "Account state could not be loaded safely." }
-            }
-            article { class: "empty-state surface-card", role: "alert",
-                h2 { "Midnight account unavailable" }
-                p { "{error}" }
-                button {
-                    class: "secondary-action",
-                    r#type: "button",
-                    onclick: move |_| {
-                        let services = services.clone();
-                        let profile_id = active_profile.id.clone();
-                        state.set(AccountPageState::Loading);
-                        spawn(async move {
-                            state.set(
-                                run_ui_blocking(move || {
-                                    load_account_page(&services, &profile_id)
-                                })
-                                .await
-                                .unwrap_or_else(|error| {
-                                    AccountPageState::Failed(error.to_string())
-                                }),
-                            );
-                        });
-                    },
-                    "Retry"
-                }
-            }
-        },
-        AccountPageState::Ready {
-            networks,
-            account,
-            security,
-            busy,
-        } => {
-            let night = balance_for(&account, "NIGHT")
-                .map(|balance| ui::format_atomic_units(&balance.atomic_units, balance.decimals))
-                .unwrap_or_else(|| "—".to_owned());
-            let dust = balance_for(&account, "DUST")
-                .map(|balance| ui::format_atomic_units(&balance.atomic_units, balance.decimals))
-                .unwrap_or_else(|| "—".to_owned());
-            let unavailable = account.source == "unavailable";
-            let is_busy = busy.is_some();
-            let account_hint = account_hint(&account, busy);
-            let source_label = ui::account_source(&account.source);
-            let protected_account = has_protected_account(&account);
-            let protection_available = security.is_available();
-            let protection_unlocked = security.state_name() == "Unlocked";
-            let selected_network_id = networks.selected_network_id.clone();
-            let select_services = services.clone();
-            let select_profile_id = active_profile.id.clone();
-            let mut select_state = state;
-            let activate_services = services.clone();
-            let activate_profile_id = active_profile.id.clone();
-            let activate_networks = networks.clone();
-            let activate_account = account.clone();
-            let mut activate_state = state;
-
-            rsx! {
-                section { class: "wallet-hero",
-                    div { class: "wallet-hero__heading-row",
-                        p { class: "eyebrow", "Wallet overview" }
-                        span { class: if account.source == "simulated" { "status-pill warning" } else { "status-pill" },
-                            "{source_label}"
-                        }
-                    }
-                    div { class: "wallet-hero__number-row",
-                        h1 { class: "privacy-value", "{night}" }
-                        span { "NIGHT" }
-                    }
-                    div { class: "dust-pill",
-                        strong { class: "privacy-value", "{dust}" }
-                        span { "DUST" }
-                    }
-                    p { class: "wallet-hero__hint", "{account_hint}" }
-                }
-
-                section { class: "trust-line", role: "status",
-                    span { class: "trust-line__icon", aria_hidden: "true", if unavailable { "○" } else { "◇" } }
-                    div {
-                        strong { "{active_profile.display_name} · {account.network_name}" }
-                        p {
-                            if let Some(height) = account.sync.chain_tip_height {
-                                "{ui::sync_state(&account.sync.state)} · block {height} · {source_label} source"
-                            } else {
-                                "{ui::sync_state(&account.sync.state)} · {source_label} source"
-                            }
-                        }
-                    }
-                }
-
-                label { class: "network-field",
-                    span { "Midnight network" }
-                    select {
-                        value: "{selected_network_id}",
-                        disabled: is_busy,
-                        onchange: move |event| {
-                            let network_id = event.value();
-                            let services = select_services.clone();
-                            let profile_id = select_profile_id.clone();
-                            select_state.set(AccountPageState::Loading);
-                            spawn(async move {
-                                let result = run_ui_blocking(move || {
-                                    services
-                                        .select_wallet_network()
-                                        .execute(SelectWalletNetworkCommand {
-                                            profile_id: profile_id.clone(),
-                                            network_id,
-                                        })
-                                        .and_then(|selected| {
-                                            services
-                                                .get_wallet_account()
-                                                .execute(WalletAccountQuery { profile_id })
-                                                .map(|account| (selected, account))
-                                        })
-                                })
-                                .await;
-                                match result {
-                                    Ok(Ok((networks, account))) => {
-                                        select_state.set(AccountPageState::Ready {
-                                            networks,
-                                            account: Box::new(account),
-                                            security,
-                                            busy: None,
-                                        });
-                                    }
-                                    Ok(Err(error)) => select_state
-                                        .set(AccountPageState::Failed(error.to_string())),
-                                    Err(error) => select_state
-                                        .set(AccountPageState::Failed(error.to_string())),
-                                }
-                            });
-                        },
-                        for network in networks.networks.iter() {
-                            option {
-                                key: "{network.network_id}",
-                                value: "{network.network_id}",
-                                selected: network.selected,
-                                "{network.display_name}"
-                            }
-                        }
-                    }
-                }
-
-                if protection_available && (!protection_unlocked || !protected_account) {
-                    article { class: "surface-card development-card",
-                        p { class: "card-eyebrow", "Standalone development" }
-                        h2 {
-                            if security.state_name() == "Uninitialized" {
-                                "Activate protected test account"
-                            } else if security.state_name() == "Locked" {
-                                "Unlock protected test account"
-                            } else {
-                                "Derive protected NIGHT account"
-                            }
-                        }
-                        p { "This opt-in simulator/emulator mode uses process-local development custody. It is not durable production key protection." }
-                        button {
-                            class: "primary-action",
-                            r#type: "button",
-                            disabled: is_busy,
-                            aria_label: "Activate protected Midnight account",
-                            onclick: move |_| {
-                                activate_state.set(AccountPageState::Ready {
-                                    networks: activate_networks.clone(),
-                                    account: activate_account.clone(),
-                                    security,
-                                    busy: Some(account_activation_operation(security)),
-                                });
-                                let services = activate_services.clone();
-                                let profile_id = activate_profile_id.clone();
-                                let networks = activate_networks.clone();
-                                let account = activate_account.clone();
-                                spawn(async move {
-                                    match activate_protected_account(
-                                        services.clone(),
-                                        profile_id.clone(),
-                                        security,
-                                    )
-                                    .await
-                                    {
-                                        Ok(updated_security) => {
-                                            if matches!(
-                                                security.state_name(),
-                                                "Uninitialized" | "Locked"
-                                            ) {
-                                                secret_mode.rearm();
-                                            }
-                                            let service = services.sync_wallet_account();
-                                            activate_state.set(AccountPageState::Ready {
-                                                networks: networks.clone(),
-                                                account: account.clone(),
-                                                security: updated_security,
-                                                busy: Some(AccountOperation::Syncing),
-                                            });
-                                            match run_ui_future(async move {
-                                                service.execute(WalletAccountQuery { profile_id }).await
-                                            })
-                                            .await
-                                            {
-                                                Ok(Ok(account)) => activate_state.set(AccountPageState::Ready {
-                                                    networks,
-                                                    account: Box::new(account),
-                                                    security: updated_security,
-                                                    busy: None,
-                                                }),
-                                                Ok(Err(error)) => activate_state.set(AccountPageState::Failed(error.to_string())),
-                                                Err(error) => activate_state.set(AccountPageState::Failed(error.to_string())),
-                                            }
-                                        }
-                                        Err(error) => activate_state.set(AccountPageState::Failed(error)),
-                                    }
-                                });
-                            },
-                            if is_busy { "Activating…" } else { "Activate development wallet" }
-                        }
-                    }
-                }
-
-                AccountSyncCard {
-                    profile_id: active_profile.id.clone(),
-                    can_sync: protection_unlocked,
-                    account_unavailable: unavailable,
-                    on_account_updated: move |updated_account| {
-                        state.set(AccountPageState::Ready {
-                            networks: networks.clone(),
-                            account: Box::new(updated_account),
-                            security,
-                            busy: None,
-                        });
-                    },
-                }
-
-                DustRegistrationPanel {
-                    profile_id: active_profile.id.clone(),
-                    availability: dust_registration_availability(
-                        protection_unlocked,
-                        protected_account,
-                        account.sync.state == "synced",
-                        unavailable,
-                    ),
-                }
-
-                div { class: "dashboard-grid",
-                    article { class: "surface-card",
-                        p { class: "card-eyebrow", "Receive" }
-                        if !protected_account || account.addresses.is_empty() {
-                            h2 { "Address unavailable" }
-                            p { "Activate and derive this profile's protected Midnight account before sharing a holder-controlled address." }
-                        } else {
-                            for address in account.addresses.iter() {
-                                ReceiveAddress {
-                                    key: "{address.kind}",
-                                    kind: address.kind.clone(),
-                                    value: address.value.clone(),
-                                }
-                            }
-                            p { "Each QR, clipboard copy, and share sheet contains exactly the public receive address shown." }
-                        }
-                    }
-                    AccountActivityCard { account: (*account).clone(), unavailable }
-                }
-
-                SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
-
-                if protected_account && protection_unlocked && account.sync.state == "synced" {
-                    if let (Some(unshielded), Some(shielded)) = (
-                        account.addresses.iter().find(|address| address.kind == "unshielded"),
-                        account.addresses.iter().find(|address| address.kind == "shielded"),
-                    ) {
-                        SendTransferPanel {
-                            profile_id: active_profile.id.clone(),
-                            unshielded_receive_address: unshielded.value.clone(),
-                            shielded_receive_address: shielded.value.clone(),
-                            night_balance: balance_for(&account, "NIGHT").cloned(),
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -5531,6 +5682,7 @@ fn AccountSyncCard(
             let owned_notes = shielded
                 .owned_note_count
                 .map_or_else(|| "—".to_owned(), |count| count.to_string());
+            let shielded_night = home_shielded_value(&shielded);
             let retained_dust = dust.clone();
             let retained_shielded = shielded.clone();
             let action_services = services.clone();
@@ -5556,15 +5708,16 @@ fn AccountSyncCard(
                         }
                         div { class: "account-sync-card__row",
                             div {
-                                strong { class: "privacy-value", "{owned_notes} shielded notes" }
+                                strong { class: "privacy-value", "{shielded_night}" }
+                                small { "Shielded NIGHT · {owned_notes} protected notes" }
                                 small { "{shielded_sync_note(&shielded)}" }
                             }
                             span { class: "{dust_status_pill_class(&shielded.state)}", "{ui::sync_state(&shielded.state)}" }
                         }
                     }
-                    if !shielded.balances.is_empty() {
+                    if non_native_shielded_balances(&shielded).next().is_some() {
                         div { class: "activity-list", aria_label: "Shielded token balances",
-                            for balance in shielded.balances.iter() {
+                            for balance in non_native_shielded_balances(&shielded) {
                                 div { class: "activity-row", key: "{balance.token_type_hex}",
                                     span { class: "activity-row__mark", aria_hidden: "true", "◈" }
                                     div {
@@ -7749,12 +7902,31 @@ fn newest_credential(credentials: &[CredentialView]) -> Option<&CredentialView> 
 }
 
 fn home_shielded_value(status: &WalletShieldedSyncView) -> String {
+    if let Some(balance) = status
+        .balances
+        .iter()
+        .find(|balance| balance.token_type_hex == NATIVE_SHIELDED_NIGHT_TOKEN_TYPE)
+    {
+        let amount = ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units);
+        return if status.is_complete() {
+            amount
+        } else {
+            format!("{amount} · last known")
+        };
+    }
+    if !status.is_complete() {
+        return "—".to_owned();
+    }
+    ui::format_shielded_amount(NATIVE_SHIELDED_NIGHT_TOKEN_TYPE, "0")
+}
+
+fn non_native_shielded_balances(
+    status: &WalletShieldedSyncView,
+) -> impl Iterator<Item = &oxid_wallet_application::WalletShieldedTokenBalanceView> {
     status
         .balances
         .iter()
-        .find(|balance| balance.token_type_hex == "0".repeat(64))
-        .map(|balance| ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units))
-        .unwrap_or_else(|| ui::sync_state(&status.state).to_owned())
+        .filter(|balance| balance.token_type_hex != NATIVE_SHIELDED_NIGHT_TOKEN_TYPE)
 }
 
 fn home_shielded_detail(status: &WalletShieldedSyncView) -> String {
@@ -8185,1769 +8357,6 @@ fn ManagedDidControls(
     }
 }
 
-fn load_passport_vault_page(
-    services: &WalletUiServices,
-    profile_id: &str,
-    operation_error: Option<String>,
-) -> PassportVaultPageState {
-    let vault = match services.list_passport_vault_locks().execute() {
-        Ok(vault) => vault,
-        Err(error) => return PassportVaultPageState::Failed(error.to_string()),
-    };
-    let credentials = match services.list_credentials().execute(CredentialProfileQuery {
-        profile_id: profile_id.to_owned(),
-    }) {
-        Ok(credentials) => credentials
-            .into_iter()
-            .filter(|credential| {
-                credential.format == "midnight_compact_vc"
-                    && credential.verification_outcome == "valid"
-            })
-            .collect(),
-        Err(error) => return PassportVaultPageState::Failed(error.to_string()),
-    };
-    PassportVaultPageState::Ready {
-        vault: Box::new(vault),
-        credentials,
-        busy: false,
-        operation_error,
-    }
-}
-
-fn parse_vault_amount(value: &str) -> Result<u128, String> {
-    ui::parse_night_amount(value, true)
-        .map_err(str::to_owned)?
-        .parse()
-        .map_err(|_| "The NIGHT amount is outside the supported range.".to_owned())
-}
-
-fn vault_policy_value(value: &str) -> Result<Option<[u8; 32]>, String> {
-    if value.is_empty() {
-        return Ok(None);
-    }
-    if value.trim() != value
-        || value.len() > 32
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_graphic() || byte == b' ')
-    {
-        return Err("Policy values must be 1–32 printable ASCII bytes.".to_owned());
-    }
-    let mut padded = [0_u8; 32];
-    padded[..value.len()].copy_from_slice(value.as_bytes());
-    Ok(Some(padded))
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct PassportVaultContractInputs {
-    operation: String,
-    lock_id: String,
-    amount: String,
-    minimum_age: String,
-    maximum_claim: String,
-    initial_amount: String,
-    required_state: String,
-    required_document: String,
-    credential_id: String,
-}
-
-impl PassportVaultContractInputs {
-    fn action(&self) -> Result<PreparePassportVaultCallAction, String> {
-        let amount = || {
-            let amount = parse_vault_amount(&self.amount)?;
-            if amount == 0 {
-                return Err("The vault operation amount must be greater than zero.".to_owned());
-            }
-            Ok(amount.to_string())
-        };
-        let lock_id = || parse_vault_lock_id(&self.lock_id);
-        match self.operation.as_str() {
-            "create_lock" => {
-                let minimum_age_years = self
-                    .minimum_age
-                    .parse::<u8>()
-                    .map_err(|_| "Minimum age must be 0–120.".to_owned())?;
-                if minimum_age_years > 120 {
-                    return Err("Minimum age must be 0–120.".to_owned());
-                }
-                Ok(PreparePassportVaultCallAction::CreateLock {
-                    minimum_age_years,
-                    required_issuing_state: vault_policy_value(&self.required_state)?,
-                    required_document_number: vault_policy_value(&self.required_document)?,
-                    maximum_claim_amount: parse_vault_amount(&self.maximum_claim)?.to_string(),
-                    initial_amount: parse_vault_amount(&self.initial_amount)?.to_string(),
-                })
-            }
-            "deposit_to_lock" => Ok(PreparePassportVaultCallAction::DepositToLock {
-                lock_id: lock_id()?,
-                amount: amount()?,
-            }),
-            "claim_from_lock" => {
-                if self.credential_id.is_empty() {
-                    return Err("Select a verified Digital Passport before claiming.".to_owned());
-                }
-                Ok(PreparePassportVaultCallAction::ClaimFromLock {
-                    lock_id: lock_id()?,
-                    amount: amount()?,
-                    credential_id: self.credential_id.clone(),
-                })
-            }
-            "withdraw_from_lock" => Ok(PreparePassportVaultCallAction::WithdrawFromLock {
-                lock_id: lock_id()?,
-                amount: amount()?,
-            }),
-            _ => Err("Select a supported Passport Vault operation.".to_owned()),
-        }
-    }
-}
-
-fn parse_vault_lock_id(value: &str) -> Result<u64, String> {
-    if value.is_empty()
-        || !value.bytes().all(|byte| byte.is_ascii_digit())
-        || (value.len() > 1 && value.starts_with('0'))
-    {
-        return Err("Enter a canonical non-negative lock identifier.".to_owned());
-    }
-    value
-        .parse()
-        .map_err(|_| "The lock identifier is outside the supported range.".to_owned())
-}
-
-fn passport_vault_call_recovery(retained_state: Option<&str>) -> PassportVaultCallRecovery {
-    match retained_state {
-        Some("authorized") => PassportVaultCallRecovery::RetryAuthorized,
-        _ => PassportVaultCallRecovery::ReconcileUnknown,
-    }
-}
-
-#[component]
-fn PassportVaultContractCallPanel(profile_id: String, credentials: Vec<CredentialView>) -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let brand = consume_context::<BrandProfile>();
-    let security_copy = brand.security_copy();
-    let calls = services.passport_vault_contract_calls();
-    let configured_address = calls.configured_contract_address_hex.clone();
-    let mut contract_address = use_signal(|| configured_address.clone().unwrap_or_default());
-    let mut operation = use_signal(|| "create_lock".to_owned());
-    let mut lock_id = use_signal(|| "0".to_owned());
-    let mut amount = use_signal(|| "10".to_owned());
-    let mut minimum_age = use_signal(|| "18".to_owned());
-    let mut maximum_claim = use_signal(|| "40".to_owned());
-    let mut initial_amount = use_signal(|| "100".to_owned());
-    let mut required_state = use_signal(String::new);
-    let mut required_document = use_signal(String::new);
-    let mut selected_credential = use_signal(|| {
-        credentials
-            .first()
-            .map_or_else(String::new, |credential| credential.id.clone())
-    });
-    let mut panel = use_signal(|| PassportVaultContractPanelState::Editing);
-    let mut chain_state = use_signal(|| PassportVaultContractStatePaneState::Idle);
-    let available = matches!(
-        calls.mode.as_str(),
-        "native_settlement" | "deterministic_simulation"
-    );
-    let mode_label = ui::vault_call_mode(&calls.mode);
-    let mode_note = ui::vault_call_mode_note(&calls.mode);
-    let read_state_button_label = match chain_state.read().clone() {
-        PassportVaultContractStatePaneState::Loading => "Reading contract state…".to_owned(),
-        PassportVaultContractStatePaneState::Ready(_) => "Refresh contract state".to_owned(),
-        PassportVaultContractStatePaneState::Idle
-        | PassportVaultContractStatePaneState::Failed(_) => "Read contract state".to_owned(),
-    };
-
-    rsx! {
-        article { class: "info-card",
-            div { class: "card-heading",
-                div {
-                    p { class: "card-eyebrow", "Midnight contract lifecycle" }
-                    h2 { "Prepare, authorize, prove, and submit" }
-                }
-                span {
-                    class: if available { "status-pill" } else { "status-pill warning" },
-                    "{mode_label}"
-                }
-            }
-            p { "{mode_note}" }
-            label { "Contract address (hex)"
-                input {
-                    r#type: "text",
-                    aria_label: "Passport Vault contract address",
-                    maxlength: 64,
-                    autocomplete: "off",
-                    disabled: configured_address.is_some(),
-                    value: "{contract_address}",
-                    oninput: move |event| contract_address.set(event.value()),
-                }
-            }
-            if configured_address.is_some() {
-                p { class: "form-hint", "This deterministic fixture address is fixed by the development composition." }
-            } else if calls.mode == "native_settlement" {
-                p { class: "form-hint", "Enter the reviewed deployment address. {brand.product_name()} will authenticate state from configured finalized history." }
-            }
-            div { class: "button-row",
-                button {
-                    class: "secondary-button",
-                    r#type: "button",
-                    disabled: !available || contract_address.read().len() != 64,
-                    onclick: {
-                        let reader = calls.read_state.clone();
-                        let address = contract_address.read().clone();
-                        move |_| {
-                            chain_state.set(PassportVaultContractStatePaneState::Loading);
-                            let reader = reader.clone();
-                            let address = address.clone();
-                            spawn(async move {
-                                match run_ui_future(async move {
-                                    reader.execute(ReadPassportVaultContractStateCommand {
-                                        contract_address_hex: address,
-                                    }).await
-                                })
-                                .await
-                                {
-                                    Ok(Ok(view)) => chain_state.set(PassportVaultContractStatePaneState::Ready(Box::new(view))),
-                                    Ok(Err(error)) => chain_state.set(PassportVaultContractStatePaneState::Failed(error.to_string())),
-                                    Err(error) => chain_state.set(PassportVaultContractStatePaneState::Failed(error.to_string())),
-                                }
-                            });
-                        }
-                    },
-                    "{read_state_button_label}"
-                }
-            }
-            match chain_state.read().clone() {
-                PassportVaultContractStatePaneState::Idle => rsx! {},
-                PassportVaultContractStatePaneState::Loading => rsx! {
-                    p { class: "form-hint", role: "status", "Reading Passport Vault state…" }
-                },
-                PassportVaultContractStatePaneState::Failed(message) => rsx! {
-                    p { class: "field-error", role: "alert", "State unavailable: {message}" }
-                },
-                PassportVaultContractStatePaneState::Ready(vault) => {
-                    let authentication = vault.chain_anchor.as_ref().map_or(
-                        ui::vault_state_authentication("simulated_or_unanchored"),
-                        |anchor| ui::vault_state_authentication(&anchor.state_authentication),
-                    );
-                    let source = ui::vault_contract_source(&vault.source);
-                    rsx! {
-                        p { class: "form-hint", aria_live: "polite",
-                            "Contract state loaded from {source}."
-                        }
-                        div { class: "surface-card",
-                            p { class: "card-eyebrow", "Contract state" }
-                            dl { class: "preview-list",
-                                div { dt { "Source" } dd { "{source}" } }
-                                div { dt { "Authentication" } dd { "{authentication}" } }
-                                div { dt { "Total locked" } dd { class: "privacy-value", "{ui::format_night_amount(&vault.total_locked)}" } }
-                                div { dt { "Locks" } dd { "{vault.locks.len()}" } }
-                                if let Some(anchor) = vault.chain_anchor.as_ref() {
-                                    div { dt { "Finalized height" } dd { "{anchor.finalized_head_height}" } }
-                                }
-                            }
-                        }
-                    }
-                },
-            }
-        }
-
-        if available {
-            PassportVaultCallRecoveryPane { profile_id: profile_id.clone() }
-        }
-
-        match panel.read().clone() {
-            PassportVaultContractPanelState::Editing => {
-                let inputs = PassportVaultContractInputs {
-                    operation: operation.read().clone(),
-                    lock_id: lock_id.read().clone(),
-                    amount: amount.read().clone(),
-                    minimum_age: minimum_age.read().clone(),
-                    maximum_claim: maximum_claim.read().clone(),
-                    initial_amount: initial_amount.read().clone(),
-                    required_state: required_state.read().clone(),
-                    required_document: required_document.read().clone(),
-                    credential_id: selected_credential.read().clone(),
-                };
-                let selected_operation = operation.read().clone();
-                rsx! {
-                    article { class: "info-card",
-                        p { class: "card-eyebrow", "New contract call" }
-                        h2 { "Choose an operation" }
-                        label { "Operation"
-                            select {
-                                aria_label: "Passport Vault contract operation",
-                                disabled: !available,
-                                value: "{operation}",
-                                onchange: move |event| operation.set(event.value()),
-                                option { value: "create_lock", "Create lock" }
-                                option { value: "deposit_to_lock", "Deposit to lock" }
-                                option { value: "claim_from_lock", "Claim from lock" }
-                                option { value: "withdraw_from_lock", "Withdraw from lock" }
-                            }
-                        }
-                        if selected_operation == "create_lock" {
-                            div { class: "field-grid",
-                                label { "Minimum age"
-                                    input { r#type: "number", min: "0", max: "120", value: "{minimum_age}", oninput: move |event| minimum_age.set(event.value()) }
-                                }
-                                label { "Maximum claim (NIGHT)"
-                                    input { inputmode: "decimal", value: "{maximum_claim}", oninput: move |event| maximum_claim.set(event.value()) }
-                                }
-                                label { "Initial deposit (NIGHT)"
-                                    input { inputmode: "decimal", value: "{initial_amount}", oninput: move |event| initial_amount.set(event.value()) }
-                                }
-                                label { "Required issuing state (optional)"
-                                    input { maxlength: "32", value: "{required_state}", oninput: move |event| required_state.set(event.value()) }
-                                }
-                                label { "Required document number (optional)"
-                                    input { maxlength: "32", value: "{required_document}", oninput: move |event| required_document.set(event.value()) }
-                                }
-                            }
-                        } else {
-                            div { class: "field-grid",
-                                label { "Lock ID"
-                                    input { inputmode: "numeric", value: "{lock_id}", oninput: move |event| lock_id.set(event.value()) }
-                                }
-                                label { "Amount (NIGHT)"
-                                    input { inputmode: "decimal", value: "{amount}", oninput: move |event| amount.set(event.value()) }
-                                }
-                            }
-                            if selected_operation == "claim_from_lock" {
-                                label { "Verified Digital Passport"
-                                    select {
-                                        aria_label: "Passport Vault claim credential",
-                                        value: "{selected_credential}",
-                                        onchange: move |event| selected_credential.set(event.value()),
-                                        option { value: "", "Select a credential" }
-                                        for credential in &credentials {
-                                            option { value: "{credential.id}", "{credential.display_name} · {credential.id}" }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        p { class: "consent-copy", "Preparation reads authenticated public state but does not sign, prove, or submit." }
-                        button {
-                            class: "primary-button",
-                            r#type: "button",
-                            disabled: !available || contract_address.read().len() != 64,
-                            onclick: {
-                                let prepare = calls.prepare.clone();
-                                let profile_id = profile_id.clone();
-                                let address = contract_address.read().clone();
-                                move |_| match inputs.action() {
-                                    Err(message) => panel.set(PassportVaultContractPanelState::Failed {
-                                        message,
-                                        retained: None,
-                                        recovery: PassportVaultCallRecovery::Edit,
-                                    }),
-                                    Ok(action) => {
-                                        panel.set(PassportVaultContractPanelState::Preparing);
-                                        let prepare = prepare.clone();
-                                        let profile_id = profile_id.clone();
-                                        let address = address.clone();
-                                        spawn(async move {
-                                            match run_ui_future(async move {
-                                                prepare.execute(PreparePassportVaultCallCommand {
-                                                    profile_id,
-                                                    contract_address_hex: address,
-                                                    action,
-                                                }).await
-                                            })
-                                            .await
-                                            {
-                                                Ok(Ok(preview)) => panel.set(PassportVaultContractPanelState::Prepared(Box::new(preview))),
-                                                Ok(Err(error)) => panel.set(PassportVaultContractPanelState::Failed {
-                                                    message: error.to_string(),
-                                                    retained: None,
-                                                    recovery: PassportVaultCallRecovery::Edit,
-                                                }),
-                                                Err(error) => panel.set(PassportVaultContractPanelState::Failed {
-                                                    message: error.to_string(),
-                                                    retained: None,
-                                                    recovery: PassportVaultCallRecovery::Edit,
-                                                }),
-                                            }
-                                        });
-                                    }
-                                }
-                            },
-                            "Review contract call"
-                        }
-                    }
-                }
-            },
-            PassportVaultContractPanelState::Preparing => rsx! {
-                article { class: "info-card", role: "status", aria_busy: "true",
-                    p { class: "card-eyebrow", "Preparing" }
-                    h2 { "Reading authenticated vault state" }
-                    p { "No protected claim material or transaction signature is produced before review." }
-                }
-            },
-            PassportVaultContractPanelState::Prepared(preview) => {
-                let draft_id = preview.draft_id.clone();
-                let challenge = preview.authorization_challenge.clone();
-                rsx! {
-                    PassportVaultCallPreviewCard { preview: preview.clone() }
-                    article { class: "info-card review-card",
-                        p { class: "consent-copy", "Authorization is bound to this exact operation, amount, contract, state anchor, account context, and expiry. Claim presentations are assembled only after this consent." }
-                        div { class: "button-row",
-                            button { class: "secondary-button", r#type: "button", onclick: move |_| panel.set(PassportVaultContractPanelState::Editing), "Edit" }
-                            button {
-                                class: "primary-button",
-                                r#type: "button",
-                                onclick: {
-                                    let authorize = calls.authorize.clone();
-                                    let profile_id = profile_id.clone();
-                                    move |_| {
-                                        let authorize = authorize.clone();
-                                        let command = AuthorizePassportVaultCallCommand {
-                                            profile_id: profile_id.clone(),
-                                            draft_id: draft_id.clone(),
-                                            authorization_challenge: challenge.clone(),
-                                            confirmed: true,
-                                            intent: AUTHORIZE_PASSPORT_VAULT_CALL_INTENT.to_owned(),
-                                        };
-                                        let retained = preview.clone();
-                                        panel.set(PassportVaultContractPanelState::Authorizing(
-                                            preview.clone(),
-                                        ));
-                                        spawn(async move {
-                                            match run_ui_blocking(move || authorize.execute(command)).await {
-                                                Ok(Ok(authorized)) => panel.set(
-                                                    PassportVaultContractPanelState::Authorized(Box::new(authorized)),
-                                                ),
-                                                Ok(Err(error)) => panel.set(PassportVaultContractPanelState::Failed {
-                                                    message: error.to_string(),
-                                                    retained: Some(retained.clone()),
-                                                    recovery: PassportVaultCallRecovery::Edit,
-                                                }),
-                                                Err(error) => panel.set(PassportVaultContractPanelState::Failed {
-                                                    message: error.to_string(),
-                                                    retained: Some(retained),
-                                                    recovery: PassportVaultCallRecovery::Edit,
-                                                }),
-                                            }
-                                        });
-                                    }
-                                },
-                                "Authorize exact call"
-                            }
-                        }
-                    }
-                }
-            },
-            PassportVaultContractPanelState::Authorizing(preview) => rsx! {
-                PassportVaultCallPreviewCard { preview: preview.clone() }
-                article { class: "info-card", role: "status", aria_busy: "true",
-                    p { class: "card-eyebrow", "Authorizing" }
-                    h2 { "Confirming the exact call with protected custody" }
-                    p { "Native NIGHT funding, holder authorization, and device protection can complete without blocking the wallet interface." }
-                }
-            },
-            PassportVaultContractPanelState::Authorized(preview) => {
-                let draft_id = preview.draft_id.clone();
-                let submitting_preview = preview.clone();
-                rsx! {
-                    PassportVaultCallPreviewCard { preview: preview.clone() }
-                    article { class: "info-card review-card",
-                        h2 { "Authorized call is retained safely" }
-                        p { "Continue to balance NIGHT/DUST, prove, persist the public attempt, and submit. A failure before broadcast remains retryable." }
-                        button {
-                            class: "primary-button",
-                            r#type: "button",
-                            onclick: {
-                                let submit = calls.submit.clone();
-                                let drafts = calls.get_draft.clone();
-                                let profile_id = profile_id.clone();
-                                move |_| {
-                                    panel.set(PassportVaultContractPanelState::Submitting(submitting_preview.clone()));
-                                    let submit = submit.clone();
-                                    let drafts = drafts.clone();
-                                    let profile_id = profile_id.clone();
-                                    let draft_id = draft_id.clone();
-                                    spawn(async move {
-                                        let execute_profile = profile_id.clone();
-                                        let execute_draft = draft_id.clone();
-                                        match run_ui_future(async move {
-                                            submit.execute(SubmitPassportVaultCallCommand {
-                                                profile_id: execute_profile,
-                                                draft_id: execute_draft,
-                                                confirmed: true,
-                                                intent: SUBMIT_PASSPORT_VAULT_CALL_INTENT.to_owned(),
-                                            }).await
-                                        })
-                                        .await
-                                        {
-                                            Ok(Ok(submission)) => panel.set(PassportVaultContractPanelState::Submitted(Box::new(submission))),
-                                            Ok(Err(error)) => {
-                                                let retained = drafts.execute(PassportVaultCallQuery {
-                                                    profile_id,
-                                                    draft_id,
-                                                }).ok().map(Box::new);
-                                                let recovery = passport_vault_call_recovery(
-                                                    retained.as_deref().map(|value| value.state.as_str()),
-                                                );
-                                                panel.set(PassportVaultContractPanelState::Failed {
-                                                    message: error.to_string(),
-                                                    retained,
-                                                    recovery,
-                                                });
-                                            }
-                                            Err(error) => panel.set(PassportVaultContractPanelState::Failed {
-                                                message: error.to_string(),
-                                                retained: None,
-                                                recovery: PassportVaultCallRecovery::ReconcileUnknown,
-                                            }),
-                                        }
-                                    });
-                                }
-                            },
-                            "Prove and submit"
-                        }
-                    }
-                }
-            },
-            PassportVaultContractPanelState::Submitting(preview) => {
-                let profile = profile_id.clone();
-                let draft = preview.draft_id.clone();
-                let cancelling = preview.clone();
-                rsx! {
-                    article { class: "info-card submitting-card", role: "status", aria_live: "polite", aria_busy: "true",
-                        p { class: "card-eyebrow", "Submitting" }
-                        h2 { "Proving {ui::vault_operation(&preview.operation)}" }
-                        p { "{security_copy.vault_broadcast_warning}" }
-                        button {
-                            class: "secondary-button",
-                            r#type: "button",
-                            onclick: {
-                                let calls = calls.clone();
-                                move |_| match calls.cancel.execute(PassportVaultCallQuery {
-                                    profile_id: profile.clone(),
-                                    draft_id: draft.clone(),
-                                }) {
-                                    Ok(status) => {
-                                        panel.set(PassportVaultContractPanelState::Cancelling(cancelling.clone()));
-                                        poll_passport_vault_cancellation(
-                                            calls.clone(),
-                                            profile.clone(),
-                                            draft.clone(),
-                                            panel,
-                                            status,
-                                        );
-                                    }
-                                    Err(error) => panel.set(PassportVaultContractPanelState::Failed {
-                                        message: error.to_string(),
-                                        retained: Some(preview.clone()),
-                                        recovery: PassportVaultCallRecovery::ReconcileUnknown,
-                                    }),
-                                }
-                            },
-                            "Cancel before broadcast"
-                        }
-                    }
-                }
-            },
-            PassportVaultContractPanelState::Cancelling(preview) => rsx! {
-                article { class: "info-card submitting-card", role: "status", aria_live: "polite", aria_busy: "true",
-                    p { class: "card-eyebrow", "Cancelling" }
-                    h2 { "Stopping {ui::vault_operation(&preview.operation)} safely" }
-                    p { "Waiting for the submission worker to acknowledge a pre-broadcast boundary." }
-                }
-            },
-            PassportVaultContractPanelState::Submitted(submission) => rsx! {
-                article { class: "info-card submitted-card", role: "status", aria_live: "polite",
-                    p { class: "card-eyebrow", "Included" }
-                    h2 { "Passport Vault call completed" }
-                    p { "Mode: {ui::vault_submission_mode(&submission.mode)}. Final DUST fee: {ui::format_dust_amount(&submission.fee_atomic_units)}." }
-                    dl { class: "preview-list",
-                        div { dt { "Operation" } dd { "{ui::vault_operation(&submission.call.operation)}" } }
-                        div { dt { "Transaction" } dd { title: "{submission.transaction_hash_hex}", "{truncate_middle(&submission.transaction_hash_hex, 16, 8)}" } }
-                        div { dt { "Block" } dd { title: "{submission.block_hash_hex}", "{truncate_middle(&submission.block_hash_hex, 16, 8)}" } }
-                        div { dt { "Height" } dd { "{submission.block_height}" } }
-                    }
-                    button { class: "secondary-button", r#type: "button", onclick: move |_| panel.set(PassportVaultContractPanelState::Editing), "Prepare another call" }
-                }
-            },
-            PassportVaultContractPanelState::Resolved(submission) => rsx! {
-                article { class: "info-card", role: "status", aria_live: "polite",
-                    p { class: "card-eyebrow", "Cancellation resolved" }
-                    h2 { "{ui::vault_submission_heading(&submission.state)}" }
-                    p { "{ui::vault_submission_note(&submission.state, brand.product_name())}" }
-                    dl { class: "preview-list",
-                        div { dt { "State" } dd { "{ui::submission_state(&submission.state)}" } }
-                        if let Some(mode) = submission.mode.as_deref() {
-                            div { dt { "Mode" } dd { "{ui::vault_submission_mode(mode)}" } }
-                        }
-                        if let Some(transaction) = submission.transaction_hash_hex.as_deref() {
-                            div { dt { "Transaction" } dd { title: "{transaction}", "{truncate_middle(transaction, 16, 8)}" } }
-                        }
-                        if let Some(block) = submission.block_hash_hex.as_deref() {
-                            div { dt { "Block" } dd { title: "{block}", "{truncate_middle(block, 16, 8)}" } }
-                        }
-                    }
-                    button { class: "secondary-button", r#type: "button", onclick: move |_| panel.set(PassportVaultContractPanelState::Editing), "Prepare another call" }
-                }
-            },
-            PassportVaultContractPanelState::Failed { message, retained, recovery } => {
-                let retry = retained.clone();
-                rsx! {
-                    article { class: "info-card warning-card", role: "alert",
-                        p { class: "card-eyebrow", "Call not completed" }
-                        h2 {
-                            if recovery == PassportVaultCallRecovery::ReconcileUnknown {
-                                "Submission outcome needs reconciliation"
-                            } else if recovery == PassportVaultCallRecovery::RetryAuthorized {
-                                "Authorized call can be retried safely"
-                            } else {
-                                "Review the call configuration"
-                            }
-                        }
-                        p { "{message}" }
-                        if recovery == PassportVaultCallRecovery::ReconcileUnknown {
-                            p { "{brand.product_name()} will not prepare or submit a replacement while broadcast may have occurred. Use the recovery card above." }
-                        } else if recovery == PassportVaultCallRecovery::RetryAuthorized {
-                            button {
-                                class: "secondary-button",
-                                r#type: "button",
-                                onclick: move |_| {
-                                    if let Some(preview) = retry.clone() {
-                                        panel.set(PassportVaultContractPanelState::Authorized(preview));
-                                    }
-                                },
-                                "Retry safe submission"
-                            }
-                        } else {
-                            button { class: "secondary-button", r#type: "button", onclick: move |_| panel.set(PassportVaultContractPanelState::Editing), "Back to call" }
-                        }
-                    }
-                }
-            },
-        }
-    }
-}
-
-#[component]
-fn PassportVaultCallPreviewCard(preview: Box<PassportVaultCallPreviewView>) -> Element {
-    rsx! {
-        article { class: "info-card review-card", aria_label: "Reviewed Passport Vault call",
-            p { class: "card-eyebrow", "Exact call preview" }
-            p { class: "privacy-consent-exemption", "Details shown for authorization." }
-            h2 { "{ui::vault_operation(&preview.operation)}" }
-            dl { class: "preview-list",
-                div { dt { "Amount" } dd { "{ui::format_night_amount(&preview.amount_atomic_units)}" } }
-                if let Some(lock_id) = preview.lock_id {
-                    div { dt { "Lock" } dd { "#{lock_id}" } }
-                }
-                div { dt { "State height" } dd { "{preview.state_anchor_block_height}" } }
-                div { dt { "State block" } dd { title: "{preview.state_anchor_block_hash_hex}", "{truncate_middle(&preview.state_anchor_block_hash_hex, 16, 8)}" } }
-                div { dt { "Draft state" } dd { "{ui::vault_draft_state(&preview.state)}" } }
-                div { dt { "DUST fee" } dd { if let Some(fee) = preview.fee_atomic_units.as_deref() { "{ui::format_dust_amount(fee)}" } else { "Calculated during proving" } } }
-            }
-        }
-    }
-}
-
-#[component]
-fn PassportVaultCallRecoveryPane(profile_id: String) -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let brand = consume_context::<BrandProfile>();
-    let calls = services.passport_vault_contract_calls();
-    let mut state = use_signal(|| PassportVaultCallRecoveryPaneState::Loading);
-    let load_calls = calls.clone();
-    let load_profile = profile_id.clone();
-    use_effect(move || {
-        let calls = load_calls.clone();
-        let profile_id = load_profile.clone();
-        spawn(async move {
-            let result = run_ui_blocking(move || calls.list.execute(profile_id)).await;
-            state.set(match result {
-                Ok(Ok(submissions)) => PassportVaultCallRecoveryPaneState::Ready {
-                    latest: submissions.into_iter().next().map(Box::new),
-                    reconciling: false,
-                    operation_error: None,
-                },
-                Ok(Err(error)) => PassportVaultCallRecoveryPaneState::Failed(error.to_string()),
-                Err(error) => PassportVaultCallRecoveryPaneState::Failed(error.to_string()),
-            });
-        });
-    });
-
-    match state.read().clone() {
-        PassportVaultCallRecoveryPaneState::Loading
-        | PassportVaultCallRecoveryPaneState::Ready { latest: None, .. } => rsx! {},
-        PassportVaultCallRecoveryPaneState::Failed(message) => rsx! {
-            article { class: "info-card warning-card", role: "alert",
-                p { class: "card-eyebrow", "Vault-call recovery" }
-                h2 { "Submission history unavailable" }
-                p { "{message}" }
-            }
-        },
-        PassportVaultCallRecoveryPaneState::Ready {
-            latest: Some(submission),
-            reconciling,
-            operation_error,
-        } => {
-            let current = submission.clone();
-            let draft_id = submission.draft_id.clone();
-            rsx! {
-                article { class: "info-card", role: "status", aria_live: "polite", aria_busy: if reconciling { "true" } else { "false" },
-                    p { class: "card-eyebrow", "Latest vault call" }
-                    h2 { "{ui::vault_submission_heading(&submission.state)}" }
-                    p { "{ui::vault_submission_note(&submission.state, brand.product_name())}" }
-                    dl { class: "preview-list",
-                        div { dt { "State" } dd { "{ui::submission_state(&submission.state)}" } }
-                        if let Some(mode) = submission.mode.as_deref() {
-                            div { dt { "Mode" } dd { "{ui::vault_submission_mode(mode)}" } }
-                        }
-                        if let Some(transaction) = submission.transaction_hash_hex.as_deref() {
-                            div { dt { "Transaction" } dd { title: "{transaction}", "{truncate_middle(transaction, 16, 8)}" } }
-                        }
-                        if let Some(block) = submission.block_hash_hex.as_deref() {
-                            div { dt { "Block" } dd { title: "{block}", "{truncate_middle(block, 16, 8)}" } }
-                        }
-                    }
-                    if let Some(message) = operation_error {
-                        p { class: "field-error", role: "alert", "{message}" }
-                    }
-                    if submission.reconciliation_allowed {
-                        button {
-                            class: "secondary-button",
-                            r#type: "button",
-                            disabled: reconciling,
-                            onclick: {
-                                let calls = calls.clone();
-                                let profile_id = profile_id.clone();
-                                move |_| {
-                                    state.set(PassportVaultCallRecoveryPaneState::Ready {
-                                        latest: Some(current.clone()),
-                                        reconciling: true,
-                                        operation_error: None,
-                                    });
-                                    let calls = calls.clone();
-                                    let profile_id = profile_id.clone();
-                                    let draft_id = draft_id.clone();
-                                    let fallback = current.clone();
-                                    spawn(async move {
-                                        match run_ui_future(async move {
-                                            calls.reconcile.execute(PassportVaultCallQuery {
-                                                profile_id,
-                                                draft_id,
-                                            }).await
-                                        })
-                                        .await
-                                        {
-                                            Ok(Ok(updated)) => state.set(PassportVaultCallRecoveryPaneState::Ready {
-                                                latest: Some(Box::new(updated)),
-                                                reconciling: false,
-                                                operation_error: None,
-                                            }),
-                                            Ok(Err(error)) => state.set(PassportVaultCallRecoveryPaneState::Ready {
-                                                latest: Some(fallback.clone()),
-                                                reconciling: false,
-                                                operation_error: Some(error.to_string()),
-                                            }),
-                                            Err(error) => state.set(PassportVaultCallRecoveryPaneState::Ready {
-                                                latest: Some(fallback),
-                                                reconciling: false,
-                                                operation_error: Some(error.to_string()),
-                                            }),
-                                        }
-                                    });
-                                }
-                            },
-                            if reconciling { "Reconciling…" } else { "Reconcile with Midnight" }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn poll_passport_vault_cancellation(
-    calls: PassportVaultContractCallUiServices,
-    profile_id: String,
-    draft_id: String,
-    mut panel: Signal<PassportVaultContractPanelState>,
-    initial: PassportVaultCallSubmissionStatusView,
-) {
-    spawn(async move {
-        let mut status = initial;
-        loop {
-            match status.state.as_str() {
-                "running" | "cancellation_requested" => {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                    match calls.get_status.execute(PassportVaultCallQuery {
-                        profile_id: profile_id.clone(),
-                        draft_id: draft_id.clone(),
-                    }) {
-                        Ok(updated) => status = updated,
-                        Err(error) => {
-                            panel.set(PassportVaultContractPanelState::Failed {
-                                message: format!(
-                                    "Cancellation status is unavailable and may require reconciliation: {error}"
-                                ),
-                                retained: None,
-                                recovery: PassportVaultCallRecovery::ReconcileUnknown,
-                            });
-                            break;
-                        }
-                    }
-                }
-                "cancelled" => {
-                    let retained = calls
-                        .get_draft
-                        .execute(PassportVaultCallQuery {
-                            profile_id,
-                            draft_id,
-                        })
-                        .ok()
-                        .map(Box::new);
-                    let recovery = if retained
-                        .as_deref()
-                        .is_some_and(|preview| preview.state == "authorized")
-                    {
-                        PassportVaultCallRecovery::RetryAuthorized
-                    } else {
-                        PassportVaultCallRecovery::Edit
-                    };
-                    panel.set(PassportVaultContractPanelState::Failed {
-                        message: "Vault-call submission was cancelled before broadcast.".to_owned(),
-                        retained,
-                        recovery,
-                    });
-                    break;
-                }
-                "broadcasting" | "outcome_unknown" => {
-                    panel.set(PassportVaultContractPanelState::Failed {
-                        message:
-                            "The vault call may have reached Midnight and requires reconciliation."
-                                .to_owned(),
-                        retained: None,
-                        recovery: PassportVaultCallRecovery::ReconcileUnknown,
-                    });
-                    break;
-                }
-                "included" | "rejected" | "expired" => {
-                    panel.set(PassportVaultContractPanelState::Resolved(Box::new(status)));
-                    break;
-                }
-                _ => {
-                    panel.set(PassportVaultContractPanelState::Failed {
-                        message: format!(
-                            "Cancellation returned an unsupported status `{}`; reconcile before replacing the call.",
-                            status.state
-                        ),
-                        retained: None,
-                        recovery: PassportVaultCallRecovery::ReconcileUnknown,
-                    });
-                    break;
-                }
-            }
-        }
-    });
-}
-
-#[component]
-fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let state_persistence = services.passport_vault_state_persistence();
-    let mut page = use_signal(|| PassportVaultPageState::Loading);
-    let mut minimum_age = use_signal(|| "18".to_owned());
-    let mut maximum_claim = use_signal(|| "40".to_owned());
-    let mut initial_amount = use_signal(|| "100".to_owned());
-    let mut required_state = use_signal(String::new);
-    let mut required_document = use_signal(String::new);
-    let mut operation_amount = use_signal(|| "10".to_owned());
-    let mut selected_credential = use_signal(String::new);
-    let services_for_load = services.clone();
-    let profile_for_load = active_profile.id.clone();
-    use_effect(move || {
-        let services = services_for_load.clone();
-        let profile_id = profile_for_load.clone();
-        spawn(async move {
-            let loaded =
-                run_ui_blocking(move || load_passport_vault_page(&services, &profile_id, None))
-                    .await
-                    .unwrap_or_else(|error| PassportVaultPageState::Failed(error.to_string()));
-            if selected_credential.read().is_empty()
-                && let PassportVaultPageState::Ready { credentials, .. } = &loaded
-                && let Some(credential) = credentials.first()
-            {
-                selected_credential.set(credential.id.clone());
-            }
-            page.set(loaded);
-        });
-    });
-
-    match page.read().clone() {
-        PassportVaultPageState::Loading => rsx! {
-            section { class: "page-stack", aria_busy: "true",
-                h1 { "Passport Vault" }
-                p { "Loading standalone and Midnight vault capabilities…" }
-            }
-        },
-        PassportVaultPageState::Failed(message) => rsx! {
-            section { class: "page-stack",
-                div { class: "page-heading",
-                    div { h1 { "Passport Vault" } p { "Credential-gated NIGHT locks." } }
-                    span { class: "status-pill warning", "Unavailable" }
-                }
-                article { class: "info-card warning-card",
-                    h2 { "Vault capability unavailable" }
-                    p { "{message}" }
-                    p { "Enable the standalone development composition to exercise local and Midnight-shaped vault flows." }
-                }
-            }
-        },
-        PassportVaultPageState::Ready {
-            vault,
-            credentials,
-            busy,
-            operation_error,
-        } => {
-            let persistence_note = ui::vault_persistence_note(&state_persistence);
-            let profile_id = active_profile.id.clone();
-            let create_services = services.clone();
-            let create_profile = profile_id.clone();
-            let create_state = required_state.read().clone();
-            let create_document = required_document.read().clone();
-            let create_age = minimum_age.read().clone();
-            let create_maximum = maximum_claim.read().clone();
-            let create_initial = initial_amount.read().clone();
-            let create_vault = vault.clone();
-            let create_credentials = credentials.clone();
-            rsx! {
-                section { class: "page-stack",
-                    div { class: "page-heading",
-                        div {
-                            p { class: "eyebrow", "Product adapter" }
-                            h1 { "Passport Vault" }
-                            p { "Create, fund, claim, and withdraw credential-gated NIGHT locks." }
-                        }
-                        span { class: "status-pill", "Standalone + Midnight" }
-                    }
-
-                    PassportVaultContractCallPanel {
-                        profile_id: profile_id.clone(),
-                        credentials: credentials.clone(),
-                    }
-
-                    article { class: "balance-card",
-                        p { class: "card-eyebrow", "Standalone conformance ledger · total locked" }
-                        h2 { class: "privacy-value", "{ui::format_night_amount(&vault.total_locked)}" }
-                        div { class: "balance-breakdown",
-                            span { class: "privacy-value", "Deposited {ui::format_night_amount(&vault.total_deposited)}" }
-                            span { class: "privacy-value", "Released {ui::format_night_amount(&vault.total_released)}" }
-                            span { "Claims {vault.claim_count}" }
-                        }
-                        p { class: "trust-line", "{persistence_note}" }
-                    }
-
-                    if let Some(message) = operation_error {
-                        p { class: "field-error", role: "alert", "{message}" }
-                    }
-
-                    article { class: "info-card",
-                        div { class: "card-heading",
-                            div { p { class: "card-eyebrow", "Locker flow" } h2 { "Create a lock" } }
-                            span { class: "status-pill", "Explicit consent" }
-                        }
-                        div { class: "field-grid",
-                            label { "Minimum age"
-                                input { r#type: "number", min: "0", max: "120", aria_label: "Vault minimum age", value: "{minimum_age}", oninput: move |event| minimum_age.set(event.value()) }
-                            }
-                            label { "Maximum claim (NIGHT)"
-                                input { inputmode: "decimal", aria_label: "Vault maximum claim", value: "{maximum_claim}", oninput: move |event| maximum_claim.set(event.value()) }
-                            }
-                            label { "Initial deposit (NIGHT)"
-                                input { inputmode: "decimal", aria_label: "Vault initial deposit", value: "{initial_amount}", oninput: move |event| initial_amount.set(event.value()) }
-                            }
-                            label { "Required issuing state (optional)"
-                                input { maxlength: "32", aria_label: "Vault required issuing state", value: "{required_state}", placeholder: "US", oninput: move |event| required_state.set(event.value()) }
-                            }
-                            label { "Required document number (optional)"
-                                input { maxlength: "32", aria_label: "Vault required document number", value: "{required_document}", placeholder: "AB1234567", oninput: move |event| required_document.set(event.value()) }
-                            }
-                        }
-                        button {
-                            class: "primary-button",
-                            r#type: "button",
-                            disabled: busy,
-                            onclick: move |_| {
-                                let parsed = (|| {
-                                    let age = create_age.parse::<u8>().map_err(|_| "Minimum age must be 0–120.".to_owned())?;
-                                    let maximum = parse_vault_amount(&create_maximum)?;
-                                    let initial = if create_initial == "0" { 0 } else { parse_vault_amount(&create_initial)? };
-                                    let state = vault_policy_value(&create_state)?;
-                                    let document = vault_policy_value(&create_document)?;
-                                    Ok::<_, String>((age, maximum, initial, state, document))
-                                })();
-                                match parsed {
-                                    Err(message) => page.set(PassportVaultPageState::Ready {
-                                        vault: create_vault.clone(),
-                                        credentials: create_credentials.clone(),
-                                        busy: false,
-                                        operation_error: Some(message),
-                                    }),
-                                    Ok((age, maximum, initial, state, document)) => {
-                                        let services = create_services.clone();
-                                        let profile_id = create_profile.clone();
-                                        page.set(PassportVaultPageState::Ready {
-                                            vault: create_vault.clone(),
-                                            credentials: create_credentials.clone(),
-                                            busy: true,
-                                            operation_error: None,
-                                        });
-                                        spawn(async move {
-                                            let result = run_ui_blocking(move || {
-                                                let operation_error = services
-                                                    .create_passport_vault_lock()
-                                                    .execute(CreatePassportVaultLockCommand {
-                                                        profile_id: profile_id.clone(),
-                                                        minimum_age_years: age,
-                                                        required_issuing_state: state,
-                                                        required_document_number: document,
-                                                        maximum_claim_amount: maximum,
-                                                        initial_amount: initial,
-                                                        confirmed: true,
-                                                        intent: CREATE_LOCK_INTENT.to_owned(),
-                                                    })
-                                                    .err()
-                                                    .map(|error| error.to_string());
-                                                load_passport_vault_page(
-                                                    &services,
-                                                    &profile_id,
-                                                    operation_error,
-                                                )
-                                            })
-                                            .await;
-                                            page.set(result.unwrap_or_else(|error| {
-                                                PassportVaultPageState::Failed(error.to_string())
-                                            }));
-                                        });
-                                    }
-                                }
-                            },
-                            "Create confirmed lock"
-                        }
-                    }
-
-                    article { class: "info-card",
-                        div { class: "card-heading",
-                            div { p { class: "card-eyebrow", "Redeemer flow" } h2 { "Claim controls" } }
-                            span { class: "status-pill", "Digital Passport" }
-                        }
-                        label { "Credential"
-                            select {
-                                aria_label: "Vault credential",
-                                value: "{selected_credential}",
-                                onchange: move |event| selected_credential.set(event.value()),
-                                option { value: "", "Select a verified Digital Passport" }
-                                for credential in &credentials {
-                                    option { value: "{credential.id}", "{credential.display_name} · {credential.id}" }
-                                }
-                            }
-                        }
-                        label { "Operation amount (NIGHT)"
-                            input { inputmode: "decimal", aria_label: "Vault operation amount", value: "{operation_amount}", oninput: move |event| operation_amount.set(event.value()) }
-                        }
-                        if credentials.is_empty() {
-                            p { class: "field-hint", "Issue or import a verified compact Digital Passport on the Credentials page before claiming." }
-                        }
-                    }
-
-                    if vault.locks.is_empty() {
-                        article { class: "empty-card", h2 { "No vault locks" } p { "Create the first policy-bound lock above." } }
-                    } else {
-                        div { class: "credential-list",
-                            for lock in vault.locks.clone() {
-                                {
-                                    let complete_services = services.clone();
-                                    let complete_profile = profile_id.clone();
-                                    let complete_vault = vault.clone();
-                                    let complete_credentials = credentials.clone();
-                                    rsx! {
-                                        PassportVaultLockCard {
-                                            key: "{lock.lock_id}",
-                                            lock,
-                                            profile_id: profile_id.clone(),
-                                            amount: operation_amount.read().clone(),
-                                            credential_id: selected_credential.read().clone(),
-                                            busy,
-                                            on_operation: move |operation: PassportVaultLocalOperation| {
-                                                if let PassportVaultLocalOperation::Invalid(message) = &operation {
-                                                    page.set(PassportVaultPageState::Ready {
-                                                        vault: complete_vault.clone(),
-                                                        credentials: complete_credentials.clone(),
-                                                        busy: false,
-                                                        operation_error: Some(message.clone()),
-                                                    });
-                                                    return;
-                                                }
-                                                let services = complete_services.clone();
-                                                let profile_id = complete_profile.clone();
-                                                page.set(PassportVaultPageState::Ready {
-                                                    vault: complete_vault.clone(),
-                                                    credentials: complete_credentials.clone(),
-                                                    busy: true,
-                                                    operation_error: None,
-                                                });
-                                                spawn(async move {
-                                                    let result = run_ui_blocking(move || {
-                                                        let operation_error = match operation {
-                                                            PassportVaultLocalOperation::Invalid(_) => unreachable!("validated before dispatch"),
-                                                            PassportVaultLocalOperation::Deposit { lock_id, amount } => services
-                                                                .deposit_passport_vault_lock()
-                                                                .execute(PassportVaultAmountCommand {
-                                                                    profile_id: profile_id.clone(),
-                                                                    lock_id,
-                                                                    amount,
-                                                                    confirmed: true,
-                                                                    intent: DEPOSIT_INTENT.to_owned(),
-                                                                })
-                                                                .map(|_| ()),
-                                                            PassportVaultLocalOperation::Claim { lock_id, credential_id, amount } => futures::executor::block_on(
-                                                                services.claim_passport_vault_lock().execute(ClaimPassportVaultLockCommand {
-                                                                    profile_id: profile_id.clone(),
-                                                                    lock_id,
-                                                                    credential_id,
-                                                                    amount,
-                                                                    confirmed: true,
-                                                                    intent: CLAIM_INTENT.to_owned(),
-                                                                }),
-                                                            )
-                                                            .map(|_| ()),
-                                                            PassportVaultLocalOperation::Withdraw { lock_id, amount } => services
-                                                                .withdraw_passport_vault_lock()
-                                                                .execute(PassportVaultAmountCommand {
-                                                                    profile_id: profile_id.clone(),
-                                                                    lock_id,
-                                                                    amount,
-                                                                    confirmed: true,
-                                                                    intent: WITHDRAW_INTENT.to_owned(),
-                                                                })
-                                                                .map(|_| ()),
-                                                        }
-                                                        .err()
-                                                        .map(|error| error.to_string());
-                                                        load_passport_vault_page(&services, &profile_id, operation_error)
-                                                    })
-                                                    .await;
-                                                    page.set(result.unwrap_or_else(|error| {
-                                                        PassportVaultPageState::Failed(error.to_string())
-                                                    }));
-                                                });
-                                            },
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn PassportVaultLockCard(
-    lock: PassportVaultLockView,
-    profile_id: String,
-    amount: String,
-    credential_id: String,
-    busy: bool,
-    on_operation: EventHandler<PassportVaultLocalOperation>,
-) -> Element {
-    let creator = lock.creator_profile_id == profile_id;
-    let policy_detail = format!(
-        "Age {}+ · max {}{}{}",
-        lock.minimum_age_years,
-        ui::format_night_amount(&lock.maximum_claim_amount),
-        lock.required_issuing_state
-            .as_ref()
-            .map_or(String::new(), |value| format!(" · state {value}")),
-        lock.required_document_number
-            .as_ref()
-            .map_or(String::new(), |value| format!(" · document {value}")),
-    );
-    rsx! {
-        article { class: "credential-card",
-            div { class: "credential-card__heading",
-                div { p { class: "card-eyebrow", "Lock #{lock.lock_id}" } h2 { class: "privacy-value", "{ui::format_night_amount(&lock.remaining)} remaining" } }
-                span { class: "status-pill", if creator { "Your lock" } else { "Claimable" } }
-            }
-            p { "{policy_detail}" }
-            p { class: "field-hint privacy-value", "Deposited {ui::format_night_amount(&lock.total_deposited)} · released {ui::format_night_amount(&lock.total_released)}" }
-            div { class: "button-row",
-                button {
-                    class: "secondary-button", r#type: "button", disabled: busy || !creator,
-                    onclick: {
-                        let amount = amount.clone();
-                        move |_| {
-                            on_operation.call(match parse_vault_amount(&amount) {
-                                Ok(amount) => PassportVaultLocalOperation::Deposit {
-                                    lock_id: lock.lock_id,
-                                    amount,
-                                },
-                                Err(message) => PassportVaultLocalOperation::Invalid(message),
-                            });
-                        }
-                    },
-                    "Deposit"
-                }
-                button {
-                    class: "primary-button", r#type: "button", disabled: busy || credential_id.is_empty(),
-                    onclick: {
-                        let amount = amount.clone();
-                        let credential_id = credential_id.clone();
-                        move |_| {
-                            let Ok(amount) = parse_vault_amount(&amount) else {
-                                on_operation.call(PassportVaultLocalOperation::Invalid(
-                                    "Enter a valid claim amount.".to_owned(),
-                                ));
-                                return;
-                            };
-                            on_operation.call(PassportVaultLocalOperation::Claim {
-                                lock_id: lock.lock_id,
-                                credential_id: credential_id.clone(),
-                                amount,
-                            });
-                        }
-                    },
-                    "Claim with credential"
-                }
-                button {
-                    class: "secondary-button", r#type: "button", disabled: busy || !creator,
-                    onclick: {
-                        let amount = amount.clone();
-                        move |_| {
-                            on_operation.call(match parse_vault_amount(&amount) {
-                                Ok(amount) => PassportVaultLocalOperation::Withdraw {
-                                    lock_id: lock.lock_id,
-                                    amount,
-                                },
-                                Err(message) => PassportVaultLocalOperation::Invalid(message),
-                            });
-                        }
-                    },
-                    "Withdraw"
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn DidsPage(
-    active_profile: WalletProfileView,
-    pending_identity_request: Signal<Option<PendingIdentityRequest>>,
-) -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let mut state = use_signal(|| DidPageState::Loading);
-    let mut did_input = use_signal(|| STANDALONE_DID_FIXTURE.to_owned());
-    let mut authentication_input = use_signal(String::new);
-    let mut prepared_authentication = use_signal(|| None::<SelfIssuedAuthenticationView>);
-    let mut authentication_consent = use_signal(|| false);
-    let mut authentication_busy = use_signal(|| false);
-    let mut authentication_notice = use_signal(|| None::<String>);
-    use_effect(move || {
-        let pending = pending_identity_request.read().clone();
-        if let Some(request) = pending
-            && request.kind == IdentityRequestKind::SelfIssuedAuthentication
-        {
-            authentication_input.set(request.request_uri);
-            prepared_authentication.set(None);
-            authentication_consent.set(false);
-            authentication_notice.set(Some(
-                "Imported login request loaded. Preview it before authenticating.".to_owned(),
-            ));
-        }
-    });
-    let profile_id = active_profile.id.clone();
-    let load_services = services.clone();
-    let load_profile = profile_id.clone();
-    use_effect(move || {
-        let services = load_services.clone();
-        let profile_id = load_profile.clone();
-        spawn(async move {
-            state.set(
-                run_ui_blocking(move || load_did_page(&services, &profile_id))
-                    .await
-                    .unwrap_or_else(|error| DidPageState::Failed(error.to_string())),
-            );
-        });
-    });
-
-    let state_snapshot = state.read().clone();
-    match state_snapshot {
-        DidPageState::Loading => rsx! {
-            section { class: "page-heading",
-                p { class: "eyebrow", "Decentralized identity" }
-                h1 { "Your DIDs" }
-                p { "Loading public DID records for this wallet profile…" }
-            }
-        },
-        DidPageState::Failed(message) => rsx! {
-            section { class: "page-heading",
-                p { class: "eyebrow", "Decentralized identity" }
-                h1 { "Your DIDs" }
-                p { "DID inventory is an independently composed identity capability." }
-            }
-            article { class: "empty-state surface-card", role: "alert",
-                span { class: "empty-state__mark", aria_hidden: "true", "◇" }
-                h2 { "DID capability unavailable" }
-                p { "{message}" }
-                button {
-                    class: "secondary-action", r#type: "button",
-                    onclick: move |_| {
-                        let services = services.clone();
-                        let profile_id = profile_id.clone();
-                        state.set(DidPageState::Loading);
-                        spawn(async move {
-                            state.set(
-                                run_ui_blocking(move || {
-                                    load_did_page(&services, &profile_id)
-                                })
-                                .await
-                                .unwrap_or_else(|error| {
-                                    DidPageState::Failed(error.to_string())
-                                }),
-                            );
-                        });
-                    },
-                    "Retry"
-                }
-            }
-        },
-        DidPageState::Ready {
-            records,
-            resolving,
-            operation_error,
-        } => {
-            let can_resolve = !resolving
-                && !did_input.read().trim().is_empty()
-                && did_input.read().len() <= 8_192;
-            let resolve_services = services.clone();
-            let resolve_profile = profile_id.clone();
-            let retained_records = records.clone();
-            let create_services = services.clone();
-            let create_profile = profile_id.clone();
-            let create_records = records.clone();
-            let standalone_authentication_request = services.standalone_self_issued_request();
-            rsx! {
-                section { class: "page-heading",
-                    p { class: "eyebrow", "Decentralized identity" }
-                    h1 { "Your DIDs" }
-                    p { "Create, resolve, update, sign with, and deactivate standards-shaped did:midnight documents under the active profile." }
-                }
-                article { class: "surface-card did-resolver-card",
-                    p { class: "card-eyebrow", "Managed identity" }
-                    h2 { "Create a standalone DID" }
-                    p { class: "form-hint", "Creates protected Ed25519 authentication and P-256 assertion keys. Only the public DID document is persisted." }
-                    button {
-                        class: "primary-action", r#type: "button", disabled: resolving,
-                        onclick: move |_| {
-                            state.set(DidPageState::Ready { records: create_records.clone(), resolving: true, operation_error: None });
-                            let service = create_services.create_did();
-                            let profile_id = create_profile.clone();
-                            let records = create_records.clone();
-                            spawn(async move {
-                                let result = run_ui_blocking(move || {
-                                    service.execute(CreateDidCommand {
-                                        profile_id,
-                                        network: "undeployed".to_owned(),
-                                    })
-                                })
-                                .await;
-                                match result {
-                                    Ok(Ok(record)) => {
-                                        let mut updated = records;
-                                        updated.retain(|existing| existing.document.id != record.document.id);
-                                        updated.push(record);
-                                        updated.sort_by(|left, right| left.document.id.cmp(&right.document.id));
-                                        state.set(DidPageState::Ready { records: updated, resolving: false, operation_error: None });
-                                    }
-                                    Ok(Err(error)) => state.set(DidPageState::Ready {
-                                        records, resolving: false,
-                                        operation_error: Some(did_operation_message(error)),
-                                    }),
-                                    Err(error) => state.set(DidPageState::Ready {
-                                        records, resolving: false,
-                                        operation_error: Some(error.to_string()),
-                                    }),
-                                }
-                            });
-                        },
-                        if resolving { "Working…" } else { "Create standalone DID" }
-                    }
-                }
-                article { class: "surface-card did-resolver-card",
-                    p { class: "card-eyebrow", "SIOPv2 draft 13 · standalone" }
-                    h2 { "Authenticate with a DID" }
-                    p { class: "form-hint", "Preview the verifier and purpose before consent. This flow proves control of a managed DID; it does not disclose a credential. Nonce, state, and the signed ID token remain inside the protocol adapter." }
-                    label { r#for: "self-issued-authentication-request", "Authentication request URI" }
-                    textarea {
-                        id: "self-issued-authentication-request",
-                        maxlength: 32768,
-                        rows: 4,
-                        autocomplete: "off",
-                        spellcheck: false,
-                        value: "{authentication_input}",
-                        oninput: move |event| authentication_input.set(event.value()),
-                    }
-                    if let Some(request) = standalone_authentication_request {
-                        button {
-                            class: "secondary-action",
-                            r#type: "button",
-                            disabled: authentication_busy(),
-                            onclick: move |_| {
-                                authentication_input.set(request.clone());
-                                prepared_authentication.set(None);
-                                authentication_consent.set(false);
-                                authentication_notice.set(Some("Standalone login request loaded. Preview it before authenticating.".to_owned()));
-                            },
-                            "Use standalone login request"
-                        }
-                    }
-                    button {
-                        class: "primary-action",
-                        r#type: "button",
-                        disabled: authentication_busy() || authentication_input.read().trim().is_empty(),
-                        onclick: {
-                            let service = services.prepare_self_issued_authentication();
-                            let profile_id = profile_id.clone();
-                            move |_| {
-                                let service = service.clone();
-                                let profile_id = profile_id.clone();
-                                let request = authentication_input.read().trim().to_owned();
-                                authentication_busy.set(true);
-                                authentication_notice.set(None);
-                                spawn(async move {
-                                    match run_ui_future(async move {
-                                        service.execute(PrepareSelfIssuedAuthenticationCommand { profile_id, request }).await
-                                    })
-                                    .await
-                                    {
-                                        Ok(Ok(preview)) => {
-                                            prepared_authentication.set(Some(preview));
-                                            authentication_consent.set(false);
-                                            authentication_notice.set(Some("Login preview ready. Review the verifier and purpose before consenting.".to_owned()));
-                                        }
-                                        Ok(Err(error)) => {
-                                            prepared_authentication.set(None);
-                                            authentication_notice.set(Some(self_issued_authentication_message(error)));
-                                        }
-                                        Err(error) => {
-                                            prepared_authentication.set(None);
-                                            authentication_notice.set(Some(error.to_string()));
-                                        }
-                                    }
-                                    authentication_busy.set(false);
-                                });
-                            }
-                        },
-                        if authentication_busy() { "Checking request…" } else { "Preview login request" }
-                    }
-                    if let Some(preview) = prepared_authentication.read().clone() {
-                        div { class: "credential-offer-preview",
-                            div { class: "consent-preview__heading",
-                                h3 { "DID authentication preview" }
-                                span { class: "status-pill", "{ui::protocol_state(&preview.state)}" }
-                            }
-                            if preview.state == "awaiting_consent" {
-                                p { class: "privacy-consent-exemption", "Details shown for authorization." }
-                                ol { class: "consent-questions", aria_label: "DID authentication consent questions",
-                                    li { class: "consent-question",
-                                        p { class: "card-eyebrow", "Who" }
-                                        h4 { "Who is asking?" }
-                                        code { title: "{preview.verifier}", "{preview.verifier}" }
-                                        div { class: "consent-trust",
-                                            span { class: "status-pill warning", "Unverified endpoint" }
-                                            p { "Standalone mode has no production trust-registry or verified-domain signal." }
-                                        }
-                                    }
-                                    li { class: "consent-question",
-                                        p { class: "card-eyebrow", "What" }
-                                        h4 { "What will you prove?" }
-                                        p { "Control of the selected managed DID. No credential or document claims will be disclosed." }
-                                    }
-                                    li { class: "consent-question",
-                                        p { class: "card-eyebrow", "From" }
-                                        h4 { "Which identity?" }
-                                        if let Some((holder_did, _)) = active_managed_authentication_method(&records) {
-                                            code { title: "{holder_did}", "{holder_did}" }
-                                            p { class: "form-hint", "A protected authentication method stays inside wallet custody." }
-                                        } else {
-                                            p { class: "field-error", role: "alert", "Create an active managed DID before authenticating." }
-                                        }
-                                    }
-                                    li { class: "consent-question",
-                                        p { class: "card-eyebrow", "Why" }
-                                        h4 { "Why is it requested?" }
-                                        p { "{preview.purpose}" }
-                                    }
-                                }
-                                label { class: "confirmation-check",
-                                    input {
-                                        id: "self-issued-authentication-consent",
-                                        r#type: "checkbox",
-                                        aria_label: "Consent to DID authentication",
-                                        disabled: active_managed_authentication_method(&records).is_none(),
-                                        checked: authentication_consent(),
-                                        onchange: move |event| authentication_consent.set(event.checked()),
-                                    }
-                                    span { "I reviewed this verifier and consent to authenticate with my active managed DID." }
-                                }
-                                div { class: "action-row",
-                                    button {
-                                        class: "primary-action",
-                                        r#type: "button",
-                                        disabled: authentication_busy() || !authentication_consent(),
-                                        onclick: {
-                                            let service = services.accept_self_issued_authentication();
-                                            let profile_id = profile_id.clone();
-                                            let authentication_id = preview.id.clone();
-                                            let records = records.clone();
-                                            move |_| {
-                                                let Some((holder_did, method_id)) = active_managed_authentication_method(&records) else {
-                                                    authentication_notice.set(Some("Create an active managed DID before authenticating.".to_owned()));
-                                                    return;
-                                                };
-                                                let service = service.clone();
-                                                let profile_id = profile_id.clone();
-                                                let authentication_id = authentication_id.clone();
-                                                authentication_busy.set(true);
-                                                authentication_notice.set(None);
-                                                spawn(async move {
-                                                    match run_ui_future(async move {
-                                                        service.execute(AcceptSelfIssuedAuthenticationCommand {
-                                                            profile_id,
-                                                            authentication_id,
-                                                            holder_did,
-                                                            method_id,
-                                                            confirmed: true,
-                                                            intent: "ACCEPT_SELF_ISSUED_AUTHENTICATION".to_owned(),
-                                                        }).await
-                                                    })
-                                                    .await
-                                                    {
-                                                        Ok(Ok(result)) => {
-                                                            prepared_authentication.set(Some(result));
-                                                            authentication_notice.set(Some("DID authentication succeeded and the standalone verifier independently validated the proof.".to_owned()));
-                                                        }
-                                                        Ok(Err(error)) => authentication_notice.set(Some(self_issued_authentication_message(error))),
-                                                        Err(error) => authentication_notice.set(Some(error.to_string())),
-                                                    }
-                                                    authentication_busy.set(false);
-                                                });
-                                            }
-                                        },
-                                        if authentication_busy() { "Authenticating…" } else { "Authenticate with DID" }
-                                    }
-                                    button {
-                                        class: "secondary-action",
-                                        r#type: "button",
-                                        disabled: authentication_busy(),
-                                        onclick: {
-                                            let service = services.refuse_self_issued_authentication();
-                                            let profile_id = profile_id.clone();
-                                            let authentication_id = preview.id.clone();
-                                            move |_| {
-                                                let service = service.clone();
-                                                let profile_id = profile_id.clone();
-                                                let authentication_id = authentication_id.clone();
-                                                authentication_busy.set(true);
-                                                authentication_notice.set(None);
-                                                spawn(async move {
-                                                    let result = run_ui_blocking(move || {
-                                                        service.execute(RefuseSelfIssuedAuthenticationCommand {
-                                                            profile_id,
-                                                            authentication_id,
-                                                        })
-                                                    })
-                                                    .await;
-                                                    match result {
-                                                        Ok(Ok(result)) => {
-                                                            prepared_authentication.set(Some(result));
-                                                            authentication_consent.set(false);
-                                                            authentication_notice.set(Some("Login request refused; ephemeral protocol secrets were discarded.".to_owned()));
-                                                        }
-                                                        Ok(Err(error)) => authentication_notice.set(Some(self_issued_authentication_message(error))),
-                                                        Err(error) => authentication_notice.set(Some(error.to_string())),
-                                                    }
-                                                    authentication_busy.set(false);
-                                                });
-                                            }
-                                        },
-                                        "Refuse login"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if let Some(message) = authentication_notice.read().as_deref() {
-                        p { class: "form-hint", role: "status", "{message}" }
-                    }
-                }
-                article { class: "surface-card did-resolver-card",
-                    p { class: "card-eyebrow", "Resolve a DID" }
-                    label { r#for: "did-identifier", "Midnight DID" }
-                    input {
-                        id: "did-identifier", r#type: "text", maxlength: 8192,
-                        autocomplete: "off", spellcheck: false,
-                        value: "{did_input}",
-                        oninput: move |event| did_input.set(event.value()),
-                    }
-                    p { class: "form-hint", "Standalone mode recognizes the documented fixture shown by default. A live resolver is used only when its base URL is explicitly configured." }
-                    button {
-                        class: "primary-action", r#type: "button", disabled: !can_resolve,
-                        onclick: move |_| {
-                            state.set(DidPageState::Ready { records: retained_records.clone(), resolving: true, operation_error: None });
-                            let service = resolve_services.resolve_did();
-                            let profile_id = resolve_profile.clone();
-                            let did = did_input.read().trim().to_owned();
-                            let mut records = retained_records.clone();
-                            spawn(async move {
-                                match run_ui_future(async move {
-                                    service.execute(ResolveDidCommand { profile_id, did }).await
-                                })
-                                .await
-                                {
-                                    Ok(Ok(record)) => {
-                                        records.retain(|existing| existing.document.id != record.document.id);
-                                        records.push(record);
-                                        records.sort_by(|left, right| left.document.id.cmp(&right.document.id));
-                                        state.set(DidPageState::Ready { records, resolving: false, operation_error: None });
-                                    }
-                                    Ok(Err(error)) => state.set(DidPageState::Ready { records, resolving: false, operation_error: Some(did_operation_message(error)) }),
-                                    Err(error) => state.set(DidPageState::Ready { records, resolving: false, operation_error: Some(error.to_string()) }),
-                                }
-                            });
-                        },
-                        if resolving { "Resolving…" } else { "Resolve and save" }
-                    }
-                    if let Some(error) = operation_error {
-                        p { class: "field-error", role: "alert", "{error}" }
-                    }
-                }
-                if records.is_empty() {
-                    article { class: "empty-state surface-card",
-                        span { class: "empty-state__mark", aria_hidden: "true", "◇" }
-                        h2 { "No saved DIDs" }
-                        p { "Resolve a did:midnight identifier to add its public document to this profile." }
-                        span { class: "status-pill", "Profile scoped" }
-                    }
-                } else {
-                    section { class: "did-inventory", aria_label: "Saved decentralized identifiers",
-                        for record in records.clone() {
-                            {
-                                let did = record.document.id.clone();
-                                let forget_did = did.clone();
-                                let forget_profile = profile_id.clone();
-                                let forget_services = services.clone();
-                                let retained = records.clone();
-                                let source = ui::did_source(&record.source);
-                                let version = record.document_metadata.version_id.clone().unwrap_or_else(|| "Unversioned".to_owned());
-                                rsx! {
-                                    article { class: "surface-card did-record", key: "{did}",
-                                        div { class: "did-record__heading",
-                                            div {
-                                                p { class: "card-eyebrow", "{ui::midnight_network(&record.document.network)} · {source}" }
-                                                h2 { class: "privacy-value", "{truncate_middle(&did, 22, 12)}" }
-                                            }
-                                            span { class: if record.document_metadata.deactivated == Some(true) { "status-pill" } else { "status-pill success" },
-                                                if record.document_metadata.deactivated == Some(true) { "Deactivated" } else { "Resolved" }
-                                            }
-                                        }
-                                        dl { class: "did-record__facts",
-                                            div { dt { "Version" } dd { "{version}" } }
-                                            div { dt { "Public methods" } dd { "{record.document.verification_methods.len()}" } }
-                                            div { dt { "Services" } dd { "{record.document.services.len()}" } }
-                                        }
-                                        if !record.document.verification_methods.is_empty() {
-                                            ul { class: "did-method-list",
-                                                for method in record.document.verification_methods.clone() {
-                                                    li { key: "{method.id}",
-                                                        strong { "{ui::key_curve(&method.public_key_jwk.curve)}" }
-                                                        code { class: "privacy-value", "{truncate_middle(&method.id, 16, 8)}" }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        {
-                                            let managed_did = did.clone();
-                                            let retained = records.clone();
-                                            rsx! {
-                                                ManagedDidControls {
-                                                    profile_id: profile_id.clone(),
-                                                    record: record.clone(),
-                                                    on_record: move |result: Result<DidRecordView, String>| {
-                                                        match result {
-                                                            Ok(updated) => {
-                                                                let mut next = retained.clone();
-                                                                next.retain(|entry| entry.document.id != managed_did);
-                                                                next.push(updated);
-                                                                next.sort_by(|left, right| left.document.id.cmp(&right.document.id));
-                                                                state.set(DidPageState::Ready { records: next, resolving: false, operation_error: None });
-                                                            }
-                                                            Err(message) => state.set(DidPageState::Ready { records: retained.clone(), resolving: false, operation_error: Some(message) }),
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        button {
-                                            class: "secondary-action", r#type: "button",
-                                            aria_label: "Forget saved DID {did}",
-                                            onclick: move |_| {
-                                                let service = forget_services.forget_did();
-                                                let profile_id = forget_profile.clone();
-                                                let did = forget_did.clone();
-                                                let target = did.clone();
-                                                let records = retained.clone();
-                                                state.set(DidPageState::Ready { records: records.clone(), resolving: true, operation_error: None });
-                                                spawn(async move {
-                                                    let result = run_ui_blocking(move || {
-                                                        service.execute(DidRecordQuery {
-                                                            profile_id,
-                                                            did,
-                                                        })
-                                                    })
-                                                    .await;
-                                                    match result {
-                                                        Ok(Ok(())) => state.set(DidPageState::Ready {
-                                                            records: records.iter().filter(|record| record.document.id != target).cloned().collect(),
-                                                            resolving: false,
-                                                            operation_error: None,
-                                                        }),
-                                                        Ok(Err(error)) => state.set(DidPageState::Ready {
-                                                            records,
-                                                            resolving: false,
-                                                            operation_error: Some(did_operation_message(error)),
-                                                        }),
-                                                        Err(error) => state.set(DidPageState::Ready {
-                                                            records,
-                                                            resolving: false,
-                                                            operation_error: Some(error.to_string()),
-                                                        }),
-                                                    }
-                                                });
-                                            },
-                                            "Forget from profile"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 fn load_credential_page(services: &WalletUiServices, profile_id: &str) -> CredentialPageState {
     services
         .list_credentials()
@@ -9960,6 +8369,7 @@ fn load_credential_page(services: &WalletUiServices, profile_id: &str) -> Creden
                 credentials,
                 receiving: false,
                 operation_error: None,
+                reverification_applied: false,
             },
         )
 }
@@ -9973,6 +8383,98 @@ fn credential_issuance_message(error: CredentialIssuanceError) -> String {
         CredentialIssuanceError::Protocol(error) => ui::protocol_failure(error.code()).to_owned(),
         other => other.to_string(),
     }
+}
+
+fn credential_issuance_terminal_error(
+    error: &CredentialIssuanceError,
+) -> Option<CredentialIssuanceTerminalError> {
+    matches!(error, CredentialIssuanceError::Protocol(error) if error.code() == "protocol_unavailable")
+        .then_some(CredentialIssuanceTerminalError::ProtocolUnavailable)
+}
+
+fn credential_issuance_terminal_error_for_message(
+    message: &str,
+) -> Option<CredentialIssuanceTerminalError> {
+    (message == CredentialIssuanceTerminalError::ProtocolUnavailable.message())
+        .then_some(CredentialIssuanceTerminalError::ProtocolUnavailable)
+}
+
+fn credential_issuance_protocol_error_for_message(message: &str) -> bool {
+    let unavailable = CredentialIssuanceTerminalError::ProtocolUnavailable.message();
+    message == unavailable
+        || message.strip_prefix(unavailable).is_some_and(|suffix| {
+            suffix
+                == ". Session cleanup is unavailable; use Leave credential review to retry secret disposal before navigating away."
+        })
+}
+
+fn credential_issuance_error_proves_no_retained_session(error: &CredentialIssuanceError) -> bool {
+    matches!(
+        error,
+        CredentialIssuanceError::NotFound | CredentialIssuanceError::Unavailable
+    )
+}
+
+fn credential_issuance_cleanup_allows_release(
+    result: &Result<CredentialIssuanceView, CredentialIssuanceError>,
+) -> bool {
+    match result {
+        Ok(_) => true,
+        Err(error) => credential_issuance_error_proves_no_retained_session(error),
+    }
+}
+
+fn discard_open_credential_issuance_reviews(
+    list_service: &dyn ListCredentialIssuancesUseCase,
+    refuse_service: &dyn RefuseCredentialIssuanceUseCase,
+    profile_id: &str,
+) -> Result<(), String> {
+    let reviews = match list_service.execute(CredentialIssuanceProfileQuery {
+        profile_id: profile_id.to_owned(),
+    }) {
+        Ok(reviews) => reviews,
+        Err(error) if credential_issuance_error_proves_no_retained_session(&error) => Vec::new(),
+        Err(error) => return Err(credential_issuance_message(error)),
+    };
+    for review in reviews {
+        match review.state.as_str() {
+            "awaiting_consent" => {
+                match refuse_service.execute(RefuseCredentialIssuanceCommand {
+                    profile_id: profile_id.to_owned(),
+                    issuance_id: review.id,
+                }) {
+                    Ok(_) => {}
+                    Err(error) if credential_issuance_error_proves_no_retained_session(&error) => {}
+                    Err(error) => return Err(credential_issuance_message(error)),
+                }
+            }
+            "failed" | "refused" | "succeeded" => {}
+            _ => {
+                return Err(
+                    "Credential cleanup is still in progress. Retry after it finishes.".to_owned(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn apply_failed_credential_acceptance_state<Prepared>(
+    cleanup: &Result<Result<CredentialIssuanceView, CredentialIssuanceError>, UiBlockingTaskError>,
+    pending: &mut Option<PendingIdentityRequest>,
+    manual_review_lock: &mut bool,
+    prepared: &mut Option<Prepared>,
+    consent: &mut bool,
+) -> bool {
+    let cleanup_confirmed = cleanup
+        .as_ref()
+        .is_ok_and(credential_issuance_cleanup_allows_release);
+    *consent = false;
+    if cleanup_confirmed {
+        clear_credential_issuance_review_admission_value(pending, manual_review_lock);
+        *prepared = None;
+    }
+    cleanup_confirmed
 }
 
 fn identity_request_routing_message(error: IdentityRequestRoutingError) -> String {
@@ -9995,11 +8497,15 @@ fn identity_request_routing_message(error: IdentityRequestRoutingError) -> Strin
 fn route_pending_identity_link(
     services: &WalletUiServices,
     mut pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+    manual_credential_review_lock: Signal<bool>,
     mut navigation: Signal<RouteStack>,
     mut profile_menu_open: Signal<bool>,
     mut notice: Signal<Option<String>>,
 ) {
-    if pending_identity_request.read().is_some() {
+    if !identity_request_admits_new_link(
+        pending_identity_request.read().is_some(),
+        manual_credential_review_lock(),
+    ) {
         return;
     }
     let ingress = services.identity_link_ingress();
@@ -10488,21 +8994,47 @@ fn CredentialPresentationPanel(
 }
 
 enum CredentialChange {
-    Updated(CredentialView),
+    ReverificationStarted,
+    Reverified(CredentialView),
     Deleted(String),
     Failed(String),
 }
 
-const PASSPORT_FIRST_NAME: &str = "/credentialSubject/firstName";
-const PASSPORT_LAST_NAME: &str = "/credentialSubject/lastName";
+fn credential_page_after_change(
+    mut credentials: Vec<CredentialView>,
+    change: CredentialChange,
+) -> CredentialPageState {
+    let (operation_error, reverification_applied) = match change {
+        CredentialChange::ReverificationStarted => (None, false),
+        CredentialChange::Reverified(updated) => {
+            credentials.retain(|entry| entry.id != updated.id);
+            credentials.push(updated);
+            credentials.sort_by(|left, right| left.id.cmp(&right.id));
+            (None, true)
+        }
+        CredentialChange::Deleted(identifier) => {
+            credentials.retain(|entry| entry.id != identifier);
+            (None, false)
+        }
+        CredentialChange::Failed(message) => (Some(message), false),
+    };
+    CredentialPageState::Ready {
+        credentials,
+        receiving: false,
+        operation_error,
+        reverification_applied,
+    }
+}
+
+const CREDENTIAL_REVERIFICATION_APPLIED_MARKER: &str = "Credential reverification applied";
+
 const PASSPORT_DATE_OF_BIRTH: &str = "/credentialSubject/dateOfBirth";
 
 #[component]
 fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut disclosure_state = use_signal(|| None::<Result<CredentialDisclosureView, String>>);
-    let mut revealed_first = use_signal(|| None::<String>);
-    let mut revealed_last = use_signal(|| None::<String>);
+    let mut revealed_claims = use_signal(BTreeMap::<String, String>::new);
     let mut age_threshold = use_signal(|| 18_u8);
     let mut plan_notice = use_signal(|| None::<String>);
     let mut operation_busy = use_signal(|| false);
@@ -10542,28 +9074,21 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
             }
         },
         Some(Ok(disclosure)) => {
-            let first = disclosure
+            let revealable = disclosure
                 .candidates
                 .iter()
-                .find(|candidate| candidate.claim_path == PASSPORT_FIRST_NAME)
-                .cloned();
-            let last = disclosure
-                .candidates
-                .iter()
-                .find(|candidate| candidate.claim_path == PASSPORT_LAST_NAME)
-                .cloned();
+                .filter(|candidate| candidate.privacy_tier == "selective_disclosure")
+                .cloned()
+                .collect::<Vec<_>>();
             let date_of_birth = disclosure
                 .candidates
                 .iter()
                 .find(|candidate| candidate.claim_path == PASSPORT_DATE_OF_BIRTH)
                 .cloned();
-            let first_service = services.reveal_credential_claim();
-            let last_service = services.reveal_credential_claim();
+            let reveal_service = services.reveal_credential_claim();
             let preview_service = services.preview_credential_disclosure();
-            let first_profile = profile_id.clone();
-            let first_credential = credential_id.clone();
-            let last_profile = profile_id.clone();
-            let last_credential = credential_id.clone();
+            let reveal_profile = profile_id.clone();
+            let reveal_credential = credential_id.clone();
             let preview_profile = profile_id;
             let preview_credential = credential_id;
             rsx! {
@@ -10571,106 +9096,73 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                     div { class: "passport-claims__heading",
                         div {
                             p { class: "card-eyebrow", "{ui::credential_schema(&disclosure.schema_id)}" }
-                            h3 { "Available proofs" }
+                            h3 { "Credential attributes" }
                         }
-                        span { class: "status-pill", "Holder controlled" }
+                        span { class: "status-pill", "Stored privately" }
                     }
                     p { class: "form-hint",
-                        "Reveal is local to this screen. Preview builds no verifier presentation and sends nothing."
+                        "These attributes belong to this credential. Reveal is local to this screen; preview sends nothing and builds no verifier presentation."
                     }
-                    if let Some(candidate) = first {
-                        article { class: "passport-claim",
-                            div {
-                                span { class: "passport-claim__tier", "{ui::claim_privacy(&candidate.privacy_tier)}" }
-                                h4 { "{candidate.label}" }
-                                if let Some(value) = revealed_first.read().as_deref() {
-                                    p { class: "passport-claim__value privacy-value", "{value}" }
-                                } else {
-                                    p { "Encrypted until locally revealed." }
-                                }
-                            }
-                            button {
-                                class: "secondary-action", r#type: "button",
-                                disabled: operation_busy(),
-                                aria_label: if revealed_first.read().is_some() { "Hide First name" } else { "Reveal First name locally" },
-                                onclick: move |_| {
-                                    if revealed_first.read().is_some() {
-                                        revealed_first.set(None);
-                                    } else {
-                                        let service = first_service.clone();
-                                        let profile_id = first_profile.clone();
-                                        let credential_id = first_credential.clone();
-                                        operation_busy.set(true);
-                                        spawn(async move {
-                                            let result = run_ui_blocking(move || {
-                                                service.execute(RevealCredentialClaimCommand {
-                                                    profile_id,
-                                                    credential_id,
-                                                    claim_path: PASSPORT_FIRST_NAME.to_owned(),
-                                                })
-                                            })
-                                            .await;
-                                            match result {
-                                                Ok(Ok(claim)) => {
-                                                    revealed_first.set(Some(claim.value().to_owned()));
-                                                    plan_notice.set(Some("First name revealed only on this device screen.".to_owned()));
-                                                }
-                                                Ok(Err(error)) => plan_notice.set(Some(credential_operation_message(error))),
-                                                Err(error) => plan_notice.set(Some(error.to_string())),
-                                            }
-                                            operation_busy.set(false);
-                                        });
+                    for candidate in revealable {
+                        {
+                            let claim_path = candidate.claim_path.clone();
+                            let claim_label = candidate.label.clone();
+                            let is_revealed = revealed_claims.read().contains_key(&claim_path);
+                            let revealed_value = revealed_claims.read().get(&claim_path).cloned();
+                            let service = reveal_service.clone();
+                            let profile_id = reveal_profile.clone();
+                            let credential_id = reveal_credential.clone();
+                            rsx! {
+                                article { class: "passport-claim", key: "{claim_path}",
+                                    div {
+                                        span { class: "passport-claim__tier", "{ui::claim_privacy(&candidate.privacy_tier)}" }
+                                        h4 { "{claim_label}" }
+                                        if let Some(value) = revealed_value.as_deref() {
+                                            p { class: "passport-claim__value privacy-value", "{value}" }
+                                        } else {
+                                            p { "Encrypted until locally revealed." }
+                                        }
                                     }
-                                },
-                                if revealed_first.read().is_some() { "Hide" } else { "Reveal locally" }
-                            }
-                        }
-                    }
-                    if let Some(candidate) = last {
-                        article { class: "passport-claim",
-                            div {
-                                span { class: "passport-claim__tier", "{ui::claim_privacy(&candidate.privacy_tier)}" }
-                                h4 { "{candidate.label}" }
-                                if let Some(value) = revealed_last.read().as_deref() {
-                                    p { class: "passport-claim__value privacy-value", "{value}" }
-                                } else {
-                                    p { "Encrypted until locally revealed." }
-                                }
-                            }
-                            button {
-                                class: "secondary-action", r#type: "button",
-                                disabled: operation_busy(),
-                                aria_label: if revealed_last.read().is_some() { "Hide Last name" } else { "Reveal Last name locally" },
-                                onclick: move |_| {
-                                    if revealed_last.read().is_some() {
-                                        revealed_last.set(None);
-                                    } else {
-                                        let service = last_service.clone();
-                                        let profile_id = last_profile.clone();
-                                        let credential_id = last_credential.clone();
-                                        operation_busy.set(true);
-                                        spawn(async move {
-                                            let result = run_ui_blocking(move || {
-                                                service.execute(RevealCredentialClaimCommand {
-                                                    profile_id,
-                                                    credential_id,
-                                                    claim_path: PASSPORT_LAST_NAME.to_owned(),
-                                                })
-                                            })
-                                            .await;
-                                            match result {
-                                                Ok(Ok(claim)) => {
-                                                    revealed_last.set(Some(claim.value().to_owned()));
-                                                    plan_notice.set(Some("Last name revealed only on this device screen.".to_owned()));
-                                                }
-                                                Ok(Err(error)) => plan_notice.set(Some(credential_operation_message(error))),
-                                                Err(error) => plan_notice.set(Some(error.to_string())),
+                                    button {
+                                        class: "secondary-action", r#type: "button",
+                                        disabled: operation_busy(),
+                                        aria_label: if is_revealed { "Hide {claim_label}" } else { "Reveal {claim_label} locally" },
+                                        onclick: move |_| {
+                                            if revealed_claims.read().contains_key(&claim_path) {
+                                                revealed_claims.write().remove(&claim_path);
+                                                plan_notice.set(Some(format!("{claim_label} hidden again.")));
+                                            } else {
+                                                let service = service.clone();
+                                                let profile_id = profile_id.clone();
+                                                let credential_id = credential_id.clone();
+                                                let claim_path = claim_path.clone();
+                                                let claim_label = claim_label.clone();
+                                                operation_busy.set(true);
+                                                spawn(async move {
+                                                    let result = run_ui_blocking(move || {
+                                                        service.execute(RevealCredentialClaimCommand {
+                                                            profile_id,
+                                                            credential_id,
+                                                            claim_path: claim_path.clone(),
+                                                        })
+                                                        .map(|claim| (claim_path, claim.value().to_owned()))
+                                                    })
+                                                    .await;
+                                                    match result {
+                                                        Ok(Ok((claim_path, value))) => {
+                                                            revealed_claims.write().insert(claim_path, value);
+                                                            plan_notice.set(Some(format!("{claim_label} revealed only on this device screen.")));
+                                                        }
+                                                        Ok(Err(error)) => plan_notice.set(Some(credential_operation_message(error))),
+                                                        Err(error) => plan_notice.set(Some(error.to_string())),
+                                                    }
+                                                    operation_busy.set(false);
+                                                });
                                             }
-                                            operation_busy.set(false);
-                                        });
+                                        },
+                                        if is_revealed { "Hide" } else { "Reveal locally" }
                                     }
-                                },
-                                if revealed_last.read().is_some() { "Hide" } else { "Reveal locally" }
+                                }
                             }
                         }
                     }
@@ -10703,13 +9195,8 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                         class: "primary-action", r#type: "button",
                         disabled: operation_busy(),
                         onclick: move |_| {
-                            let mut reveal_claim_paths = Vec::new();
-                            if revealed_first.read().is_some() {
-                                reveal_claim_paths.push(PASSPORT_FIRST_NAME.to_owned());
-                            }
-                            if revealed_last.read().is_some() {
-                                reveal_claim_paths.push(PASSPORT_LAST_NAME.to_owned());
-                            }
+                            let reveal_claim_paths =
+                                revealed_claims.read().keys().cloned().collect::<Vec<_>>();
                             let service = preview_service.clone();
                             let profile_id = preview_profile.clone();
                             let credential_id = preview_credential.clone();
@@ -10833,6 +9320,7 @@ fn CredentialRecordCard(
                 button {
                     class: "secondary-action", r#type: "button", disabled: working(),
                     onclick: move |_| {
+                        on_change.call(CredentialChange::ReverificationStarted);
                         working.set(true);
                         let service = verify_services.reverify_credential();
                         let profile_id = verify_profile.clone();
@@ -10844,7 +9332,7 @@ fn CredentialRecordCard(
                             .await;
                             working.set(false);
                             on_change.call(match result {
-                                Ok(Ok(credential)) => CredentialChange::Updated(credential),
+                                Ok(Ok(credential)) => CredentialChange::Reverified(credential),
                                 Ok(Err(error)) => CredentialChange::Failed(credential_operation_message(error)),
                                 Err(error) => CredentialChange::Failed(error.to_string()),
                             });
@@ -10920,25 +9408,33 @@ fn compact_credential_policy_summary(credential: &CredentialView) -> Option<Stri
 fn CredentialsPage(
     active_profile: WalletProfileView,
     pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+    manual_credential_review_lock: Signal<bool>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| CredentialPageState::Loading);
-    let mut offer_input = use_signal(String::new);
+    let mut offer_draft = use_signal(CredentialOfferDraft::default);
     let mut prepared_issuance = use_signal(|| None::<CredentialIssuanceView>);
     let mut issuance_consent = use_signal(|| false);
-    let mut issuance_busy = use_signal(|| false);
+    let mut issuance_action = use_signal(|| CredentialIssuanceAction::Idle);
     let mut issuance_notice = use_signal(|| None::<String>);
     use_effect(move || {
-        let pending = pending_identity_request.read().clone();
-        if let Some(request) = pending
-            && request.kind == IdentityRequestKind::CredentialIssuance
-        {
-            offer_input.set(request.request_uri);
+        let request_uri = pending_identity_request
+            .read()
+            .as_ref()
+            .and_then(|request| request.importable_uri(IdentityRequestKind::CredentialIssuance))
+            .map(str::to_owned);
+        if let Some(request_uri) = request_uri {
+            offer_draft.write().import(request_uri);
             prepared_issuance.set(None);
             issuance_consent.set(false);
             issuance_notice.set(Some(
                 "Imported credential offer loaded. Preview it before accepting.".to_owned(),
             ));
+        } else if offer_draft.read().has_imported_offer() {
+            offer_draft.write().clear_imported();
+            prepared_issuance.set(None);
+            issuance_consent.set(false);
+            issuance_notice.set(None);
         }
     });
     let profile_id = active_profile.id.clone();
@@ -10996,11 +9492,24 @@ fn CredentialsPage(
             credentials,
             receiving,
             operation_error,
+            reverification_applied,
         } => {
             let receive_service = services.receive_credential();
             let receive_profile = profile_id.clone();
             let retained = credentials.clone();
             let demo_offer = services.standalone_credential_offer();
+            let credential_review_escape_visible = credential_review_escape_is_visible(
+                &pending_identity_request.read(),
+                manual_credential_review_lock(),
+            );
+            let issuance_busy = issuance_action() != CredentialIssuanceAction::Idle;
+            let issuance_terminal =
+                credential_issuance_review_is_terminal(prepared_issuance.read().as_ref());
+            let issuance_succeeded = prepared_issuance
+                .read()
+                .as_ref()
+                .is_some_and(|review| review.state == "succeeded");
+            let issuance_action_label = credential_issuance_action_label(issuance_action());
             rsx! {
                 section { class: "page-heading",
                     p { class: "eyebrow", "Identity centre" }
@@ -11009,78 +9518,307 @@ fn CredentialsPage(
                 }
                 article { class: "surface-card credential-receive-card",
                     p { class: "card-eyebrow", "OpenID4VCI 1.0 Final" }
-                    h2 { "Accept a credential offer" }
-                    p { class: "form-hint", "Preview an embedded offer before consent. The pre-authorized code, access token, nonce, and signed proof remain inside the protocol adapter." }
-                    label { r#for: "credential-offer", "Credential offer URI" }
-                    textarea {
-                        id: "credential-offer",
-                        maxlength: 32768,
-                        rows: 4,
-                        autocomplete: "off",
-                        spellcheck: false,
-                        value: "{offer_input}",
-                        oninput: move |event| offer_input.set(event.value()),
+                    h2 {
+                        if issuance_succeeded {
+                            "Credential added to wallet"
+                        } else if issuance_terminal {
+                            "Credential offer closed"
+                        } else {
+                            "Accept a credential offer"
+                        }
                     }
-                    if let Some(offer) = demo_offer {
+                    p { class: "form-hint",
+                        if issuance_succeeded {
+                            "The offer review is closed. Your credential is in the protected inventory below."
+                        } else if issuance_terminal {
+                            "The offer review is closed. No further action is available for this one-time offer."
+                        } else {
+                            "Preview an embedded offer before consent. The pre-authorized code, access token, nonce, and signed proof remain inside the protocol adapter."
+                        }
+                    }
+                    if let Some(review) = prepared_issuance.read().as_ref() {
+                        p {
+                            class: "form-hint",
+                            role: "status",
+                            aria_label: "Credential offer URI cleared after private admission",
+                            if review.state == "succeeded" {
+                                "The exchange is complete. The transient offer URI, grant, access token, nonce, and proof were cleared."
+                            } else if credential_issuance_review_is_terminal(Some(review)) {
+                                "The offer is closed. Its transient URI, one-time grant, and any protocol secrets were cleared."
+                            } else {
+                                "The offer is admitted to private review. Its URI and one-time grant were cleared instead of being shown in this field."
+                            }
+                        }
+                    } else if offer_draft.read().has_imported_offer() {
+                        p {
+                            class: "form-hint",
+                            aria_label: "Imported credential offer retained privately",
+                            "A credential offer was delivered by the operating system. Its one-time grant is hidden while you review it."
+                        }
+                    } else {
+                        label { r#for: "credential-offer", "Credential offer URI" }
+                        textarea {
+                            id: "credential-offer",
+                            aria_label: "Credential offer URI",
+                            maxlength: 32768,
+                            rows: 4,
+                            autocomplete: "off",
+                            spellcheck: false,
+                            value: "{offer_draft.read().rendered_editable_value()}",
+                            oninput: move |event| offer_draft.set(CredentialOfferDraft::editable(event.value())),
+                        }
+                    }
+                    if credential_issuance_review_is_terminal(prepared_issuance.read().as_ref()) {
                         button {
                             class: "secondary-action",
                             r#type: "button",
-                            disabled: issuance_busy(),
+                            disabled: issuance_busy,
                             onclick: move |_| {
-                                offer_input.set(offer.clone());
+                                offer_draft.set(CredentialOfferDraft::default());
                                 prepared_issuance.set(None);
                                 issuance_consent.set(false);
-                                issuance_notice.set(Some("Standalone credential offer loaded. Preview it before accepting.".to_owned()));
+                                issuance_notice.set(Some("Ready for another credential offer.".to_owned()));
                             },
-                            "Use standalone demo offer"
+                            "Start another offer"
                         }
                     }
-                    button {
-                        class: "primary-action",
-                        r#type: "button",
-                        disabled: issuance_busy() || offer_input.read().trim().is_empty(),
-                        onclick: {
-                            let service = services.prepare_credential_issuance();
-                            let profile_id = profile_id.clone();
-                            move |_| {
-                                let service = service.clone();
+                    if !issuance_terminal {
+                        if let Some(offer) = demo_offer {
+                            button {
+                                class: "secondary-action",
+                                r#type: "button",
+                                disabled: issuance_busy
+                                    || credential_issuance_review_blocks_replacement(
+                                        prepared_issuance.read().as_ref(),
+                                    ),
+                                onclick: move |_| {
+                                    offer_draft.set(CredentialOfferDraft::editable(offer.clone()));
+                                    prepared_issuance.set(None);
+                                    issuance_consent.set(false);
+                                    issuance_notice.set(Some("Standalone credential offer loaded. Preview it before accepting.".to_owned()));
+                                },
+                                "Use standalone demo offer"
+                            }
+                        }
+                        button {
+                            class: "primary-action",
+                            r#type: "button",
+                            disabled: issuance_busy
+                                || credential_issuance_review_blocks_replacement(
+                                    prepared_issuance.read().as_ref(),
+                                )
+                                || offer_draft.read().offer_for_prepare().trim().is_empty(),
+                            onclick: {
+                                let service = services.prepare_credential_issuance();
                                 let profile_id = profile_id.clone();
-                                let offer = offer_input.read().trim().to_owned();
-                                issuance_busy.set(true);
-                                issuance_notice.set(None);
-                                spawn(async move {
-                                    match run_ui_future(async move {
-                                        service.execute(PrepareCredentialIssuanceCommand { profile_id, offer }).await
-                                    })
-                                    .await
+                                move |_| {
+                                    // Preview admission is a synchronous single-flight
+                                    // transaction. The action write guard closes duplicate
+                                    // events before any review reservation or task can start.
                                     {
-                                        Ok(Ok(preview)) => {
-                                            prepared_issuance.set(Some(preview));
-                                            issuance_consent.set(false);
-                                            issuance_notice.set(Some("Offer preview ready. Review the issuer and requested credential before consenting.".to_owned()));
-                                        }
-                                        Ok(Err(error)) => {
-                                            prepared_issuance.set(None);
-                                            issuance_notice.set(Some(credential_issuance_message(error)));
-                                        }
-                                        Err(error) => {
-                                            prepared_issuance.set(None);
-                                            issuance_notice.set(Some(error.to_string()));
+                                        let mut action = issuance_action.write();
+                                        if !begin_credential_issuance_action_value(
+                                            &mut action,
+                                            CredentialIssuanceAction::Previewing,
+                                        ) {
+                                            return;
                                         }
                                     }
-                                    issuance_busy.set(false);
-                                });
+                                    if credential_issuance_review_blocks_replacement(
+                                        prepared_issuance.read().as_ref(),
+                                    ) {
+                                        issuance_action.set(CredentialIssuanceAction::Idle);
+                                        return;
+                                    }
+                                    let offer = offer_draft.read().offer_for_prepare().trim().to_owned();
+                                    if offer.is_empty() {
+                                        issuance_action.set(CredentialIssuanceAction::Idle);
+                                        return;
+                                    }
+                                    let Some(manual_review_reserved) =
+                                        reserve_credential_preview_review_admission(
+                                            &pending_identity_request,
+                                            &mut manual_credential_review_lock,
+                                        )
+                                    else {
+                                        issuance_action.set(CredentialIssuanceAction::Idle);
+                                        return;
+                                    };
+                                    let service = service.clone();
+                                    let profile_id = profile_id.clone();
+                                    prepared_issuance.set(None);
+                                    issuance_consent.set(false);
+                                    issuance_notice.set(None);
+                                    scrub_pending_identity_request(
+                                        &mut pending_identity_request,
+                                        IdentityRequestKind::CredentialIssuance,
+                                    );
+                                    spawn(async move {
+                                        match run_ui_future(async move {
+                                            service.execute(PrepareCredentialIssuanceCommand { profile_id, offer }).await
+                                        })
+                                        .await
+                                        {
+                                            Ok(Ok(preview)) => {
+                                                offer_draft.write().clear_imported();
+                                                scrub_pending_identity_request(
+                                                    &mut pending_identity_request,
+                                                    IdentityRequestKind::CredentialIssuance,
+                                                );
+                                                prepared_issuance.set(Some(preview));
+                                                issuance_consent.set(false);
+                                                issuance_notice.set(Some("Offer preview ready. Review the issuer and requested credential before consenting.".to_owned()));
+                                            }
+                                            Ok(Err(error)) => {
+                                                wipe_pending_identity_request(
+                                                    &mut pending_identity_request,
+                                                    Some(IdentityRequestKind::CredentialIssuance),
+                                                );
+                                                release_manual_credential_review_after_confirmed_prepare_failure(
+                                                    &mut manual_credential_review_lock,
+                                                    manual_review_reserved,
+                                                );
+                                                offer_draft.write().clear_imported();
+                                                prepared_issuance.set(None);
+                                                issuance_consent.set(false);
+                                                let message = credential_issuance_terminal_error(&error)
+                                                    .map(CredentialIssuanceTerminalError::message)
+                                                    .map(str::to_owned)
+                                                    .unwrap_or_else(|| credential_issuance_message(error));
+                                                issuance_notice.set(Some(message));
+                                            }
+                                            Err(error) => {
+                                                offer_draft.write().clear_imported();
+                                                prepared_issuance.set(None);
+                                                issuance_consent.set(false);
+                                                issuance_notice.set(Some(format!(
+                                                    "{error}. Offer preparation could not be confirmed; leave this review to discard any retained protocol session before navigating away."
+                                                )));
+                                            }
+                                        }
+                                        issuance_action.set(CredentialIssuanceAction::Idle);
+                                    });
+                                }
+                            },
+                            if issuance_action() == CredentialIssuanceAction::Previewing { "Checking offer…" } else { "Preview credential offer" }
+                        }
+                    }
+                    if issuance_busy {
+                        p {
+                            class: "form-hint",
+                            role: "status",
+                            aria_live: "polite",
+                            "{issuance_action_label} Wait for a stored, refused, or recovery message before continuing."
+                        }
+                    }
+                    if let Some(message) = issuance_notice.read().as_deref() {
+                        if let Some(error) = credential_issuance_terminal_error_for_message(message) {
+                            p {
+                                class: "form-hint",
+                                role: "status",
+                                aria_live: "polite",
+                                span {
+                                    aria_label: CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS,
+                                    "{error.message()}"
+                                }
                             }
-                        },
-                        if issuance_busy() { "Checking offer…" } else { "Preview credential offer" }
+                        } else if credential_issuance_protocol_error_for_message(message) {
+                            p {
+                                class: "form-hint",
+                                role: "status",
+                                aria_live: "polite",
+                                span {
+                                    aria_label: CREDENTIAL_ISSUANCE_PROTOCOL_ERROR_STATUS,
+                                    "{message}"
+                                }
+                            }
+                        } else {
+                            p {
+                                class: if prepared_issuance.read().as_ref().is_some_and(|review| review.state == "succeeded") { "form-hint credential-reverification-success" } else { "form-hint" },
+                                role: "status",
+                                aria_live: "polite",
+                                "{message}"
+                            }
+                        }
+                    }
+                    if credential_review_escape_visible {
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            disabled: issuance_busy,
+                            onclick: {
+                                let list_service = services.list_credential_issuances();
+                                let refuse_service = services.refuse_credential_issuance();
+                                let profile_id = profile_id.clone();
+                                move |_| {
+                                    let list_service = list_service.clone();
+                                    let refuse_service = refuse_service.clone();
+                                    let profile_id = profile_id.clone();
+                                    {
+                                        let mut action = issuance_action.write();
+                                        if !begin_credential_issuance_action_value(
+                                            &mut action,
+                                            CredentialIssuanceAction::Cleaning,
+                                        ) {
+                                            return;
+                                        }
+                                    }
+                                    issuance_notice.set(None);
+                                    spawn(async move {
+                                        let cleanup = run_ui_blocking(move || {
+                                            discard_open_credential_issuance_reviews(
+                                                list_service.as_ref(),
+                                                refuse_service.as_ref(),
+                                                &profile_id,
+                                            )
+                                        })
+                                        .await;
+                                        match cleanup {
+                                            Ok(Ok(())) => {
+                                                offer_draft.write().clear_imported();
+                                                prepared_issuance.set(None);
+                                                issuance_consent.set(false);
+                                                clear_credential_issuance_review_admission(
+                                                    &mut pending_identity_request,
+                                                    &mut manual_credential_review_lock,
+                                                );
+                                                issuance_notice.set(Some(
+                                                    "Credential review left; transient protocol state was discarded without consent."
+                                                        .to_owned(),
+                                                ));
+                                            }
+                                            Ok(Err(message)) => issuance_notice.set(Some(message)),
+                                            Err(error) => issuance_notice.set(Some(error.to_string())),
+                                        }
+                                        issuance_action.set(CredentialIssuanceAction::Idle);
+                                    });
+                                }
+                            },
+                            "Leave credential review"
+                        }
                     }
                     if let Some(preview) = prepared_issuance.read().clone() {
-                        div { class: "credential-offer-preview",
+                        div { class: if credential_issuance_review_is_terminal(Some(&preview)) { "credential-issued-receipt" } else { "credential-offer-preview" },
                             div { class: "consent-preview__heading",
-                                h3 { "Credential offer preview" }
+                                h3 {
+                                    if preview.state == "succeeded" {
+                                        "Saved to your wallet"
+                                    } else if credential_issuance_review_is_terminal(Some(&preview)) {
+                                        "Offer closed"
+                                    } else {
+                                        "Credential offer preview"
+                                    }
+                                }
                                 span { class: "status-pill", "{ui::protocol_state(&preview.state)}" }
                             }
-                            if preview.state == "awaiting_consent" {
+                            if preview.state == "succeeded" {
+                                p {
+                                    class: "credential-reverification-success",
+                                    role: "status",
+                                    aria_live: "polite",
+                                    "Credential stored. It is visible in the protected inventory below and ready for fresh reverification."
+                                }
+                            } else if preview.state == "awaiting_consent" {
                                 p { class: "privacy-consent-exemption", "Details shown for authorization." }
                                 ol { class: "consent-questions", aria_label: "Credential issuance consent questions",
                                     li { class: "consent-question",
@@ -11113,13 +9851,21 @@ fn CredentialsPage(
                                         p { "Store this document in your protected wallet. You choose when it is used." }
                                     }
                                 }
+                                p {
+                                    id: "credential-issuance-consent-guidance",
+                                    class: "form-hint",
+                                    role: "status",
+                                    aria_live: "polite",
+                                    "Review the offer and check consent before issuing. Accept remains disabled until consent is checked; no issuer secret call is made first."
+                                }
                                 label { class: "confirmation-check",
                                     input {
                                         id: "credential-issuance-consent",
                                         r#type: "checkbox",
                                         aria_label: "Consent to credential issuance",
+                                        aria_describedby: "credential-issuance-consent-guidance",
                                         checked: issuance_consent(),
-                                        onchange: move |event| issuance_consent.set(event.checked()),
+                                        oninput: move |event| issuance_consent.set(event.checked()),
                                     }
                                     span { "I reviewed this issuer and consent to receive the credential using my active DID." }
                                 }
@@ -11127,7 +9873,8 @@ fn CredentialsPage(
                                     button {
                                         class: "primary-action",
                                         r#type: "button",
-                                        disabled: issuance_busy() || !issuance_consent(),
+                                        disabled: issuance_busy || !issuance_consent(),
+                                        aria_describedby: "credential-issuance-consent-guidance",
                                         onclick: {
                                             let services = services.clone();
                                             let profile_id = profile_id.clone();
@@ -11138,7 +9885,15 @@ fn CredentialsPage(
                                                 let refresh_profile = profile_id.clone();
                                                 let execute_profile = profile_id.clone();
                                                 let execute_issuance_id = issuance_id.clone();
-                                                issuance_busy.set(true);
+                                                {
+                                                    let mut action = issuance_action.write();
+                                                    if !begin_credential_issuance_action_value(
+                                                        &mut action,
+                                                        CredentialIssuanceAction::Accepting,
+                                                    ) {
+                                                        return;
+                                                    }
+                                                }
                                                 issuance_notice.set(None);
                                                 spawn(async move {
                                                     let list_service = services.list_did_records();
@@ -11153,21 +9908,24 @@ fn CredentialsPage(
                                                         Ok(Ok(records)) => records,
                                                         Ok(Err(error)) => {
                                                             issuance_notice.set(Some(did_operation_message(error)));
-                                                            issuance_busy.set(false);
+                                                            issuance_action.set(CredentialIssuanceAction::Idle);
                                                             return;
                                                         }
                                                         Err(error) => {
                                                             issuance_notice.set(Some(error.to_string()));
-                                                            issuance_busy.set(false);
+                                                            issuance_action.set(CredentialIssuanceAction::Idle);
                                                             return;
                                                         }
                                                     };
                                                     let Some((holder_did, method_id, holder_binding_method_id)) = active_managed_issuance_methods(&records) else {
                                                         issuance_notice.set(Some("Create an active managed DID with protected authentication and Jubjub assertion methods before accepting this credential offer.".to_owned()));
-                                                        issuance_busy.set(false);
+                                                        issuance_action.set(CredentialIssuanceAction::Idle);
                                                         return;
                                                     };
                                                     let service = services.accept_credential_issuance();
+                                                    let cleanup_service = services.refuse_credential_issuance();
+                                                    let cleanup_profile = execute_profile.clone();
+                                                    let cleanup_issuance_id = execute_issuance_id.clone();
                                                     match run_ui_future(async move {
                                                         service.execute(AcceptCredentialIssuanceCommand {
                                                             profile_id: execute_profile,
@@ -11182,29 +9940,73 @@ fn CredentialsPage(
                                                     .await
                                                     {
                                                         Ok(Ok(result)) => {
+                                                            clear_credential_issuance_review_admission(
+                                                                &mut pending_identity_request,
+                                                                &mut manual_credential_review_lock,
+                                                            );
                                                             prepared_issuance.set(Some(result));
                                                             issuance_notice.set(Some("Credential issued, verified, and stored in the protected inventory.".to_owned()));
-                                                            state.set(
-                                                                run_ui_blocking(move || {
-                                                                    load_credential_page(&refresh_services, &refresh_profile)
-                                                                })
-                                                                .await
-                                                                .unwrap_or_else(|error| CredentialPageState::Failed(error.to_string())),
-                                                            );
+                                                            let refreshed = run_ui_blocking(move || {
+                                                                load_credential_page(&refresh_services, &refresh_profile)
+                                                            })
+                                                            .await;
+                                                            if let Ok(ready @ CredentialPageState::Ready { .. }) = refreshed {
+                                                                state.set(ready);
+                                                            } else {
+                                                                issuance_notice.set(Some("Credential issued, verified, and stored. Inventory refresh is unavailable; reopen Documents to reload the protected inventory.".to_owned()));
+                                                            }
                                                         }
-                                                        Ok(Err(error)) => issuance_notice.set(Some(credential_issuance_message(error))),
-                                                        Err(error) => issuance_notice.set(Some(error.to_string())),
+                                                        failure => {
+                                                            let (message, terminal_error) = match failure {
+                                                                Ok(Err(error)) => (
+                                                                    credential_issuance_message(error.clone()),
+                                                                    credential_issuance_terminal_error(&error),
+                                                                ),
+                                                                Err(error) => (error.to_string(), None),
+                                                                Ok(Ok(_)) => unreachable!(),
+                                                            };
+                                                            let cleanup = run_ui_blocking(move || {
+                                                                cleanup_service.execute(RefuseCredentialIssuanceCommand {
+                                                                    profile_id: cleanup_profile,
+                                                                    issuance_id: cleanup_issuance_id,
+                                                                })
+                                                            }).await;
+                                                            let cleanup_confirmed = {
+                                                                let mut pending = pending_identity_request.write();
+                                                                let mut manual_review_lock = manual_credential_review_lock.write();
+                                                                let mut prepared = prepared_issuance.write();
+                                                                let mut consent = issuance_consent.write();
+                                                                apply_failed_credential_acceptance_state(
+                                                                    &cleanup,
+                                                                    &mut pending,
+                                                                    &mut manual_review_lock,
+                                                                    &mut prepared,
+                                                                    &mut consent,
+                                                                )
+                                                            };
+                                                            if cleanup_confirmed {
+                                                                let message = terminal_error
+                                                                    .map(CredentialIssuanceTerminalError::message)
+                                                                    .map(str::to_owned)
+                                                                    .unwrap_or(message);
+                                                                issuance_notice.set(Some(message));
+                                                            } else {
+                                                                issuance_notice.set(Some(format!(
+                                                                    "{message}. Session cleanup is unavailable; use Leave credential review to retry secret disposal before navigating away."
+                                                                )));
+                                                            }
+                                                        }
                                                     }
-                                                    issuance_busy.set(false);
+                                                    issuance_action.set(CredentialIssuanceAction::Idle);
                                                 });
                                             }
                                         },
-                                        if issuance_busy() { "Issuing credential…" } else { "Accept and issue credential" }
+                                        if issuance_action() == CredentialIssuanceAction::Accepting { "Issuing credential…" } else { "Accept and issue credential" }
                                     }
                                     button {
                                         class: "secondary-action",
                                         r#type: "button",
-                                        disabled: issuance_busy(),
+                                        disabled: issuance_busy,
                                         onclick: {
                                             let service = services.refuse_credential_issuance();
                                             let profile_id = profile_id.clone();
@@ -11213,7 +10015,15 @@ fn CredentialsPage(
                                                 let service = service.clone();
                                                 let profile_id = profile_id.clone();
                                                 let issuance_id = issuance_id.clone();
-                                                issuance_busy.set(true);
+                                                {
+                                                    let mut action = issuance_action.write();
+                                                    if !begin_credential_issuance_action_value(
+                                                        &mut action,
+                                                        CredentialIssuanceAction::Refusing,
+                                                    ) {
+                                                        return;
+                                                    }
+                                                }
                                                 issuance_notice.set(None);
                                                 spawn(async move {
                                                     let result = run_ui_blocking(move || {
@@ -11225,6 +10035,10 @@ fn CredentialsPage(
                                                     .await;
                                                     match result {
                                                         Ok(Ok(result)) => {
+                                                            clear_credential_issuance_review_admission(
+                                                                &mut pending_identity_request,
+                                                                &mut manual_credential_review_lock,
+                                                            );
                                                             prepared_issuance.set(Some(result));
                                                             issuance_consent.set(false);
                                                             issuance_notice.set(Some("Credential offer refused; ephemeral protocol secrets were discarded.".to_owned()));
@@ -11232,63 +10046,82 @@ fn CredentialsPage(
                                                         Ok(Err(error)) => issuance_notice.set(Some(credential_issuance_message(error))),
                                                         Err(error) => issuance_notice.set(Some(error.to_string())),
                                                     }
-                                                    issuance_busy.set(false);
+                                                    issuance_action.set(CredentialIssuanceAction::Idle);
                                                 });
                                             }
                                         },
-                                        "Refuse offer"
+                                        if issuance_action() == CredentialIssuanceAction::Refusing { "Refusing offer…" } else { "Refuse offer" }
                                     }
                                 }
                             }
                         }
-                    }
-                    if let Some(message) = issuance_notice.read().as_deref() {
-                        p { class: "form-hint", role: "status", "{message}" }
                     }
                 }
                 CredentialPresentationPanel {
                     profile_id: profile_id.clone(),
                     pending_identity_request,
                 }
-                article { class: "surface-card credential-receive-card",
-                    p { class: "card-eyebrow", "Standalone credential inbox" }
-                    h2 { "Receive the public identity fixture" }
-                    p { class: "form-hint", "Exercises the same storage and cryptographic verification ports as future protocol ingress. It is clearly marked as a standalone development fixture." }
-                    button {
-                        class: "primary-action", r#type: "button", disabled: receiving,
-                        onclick: move |_| {
-                            state.set(CredentialPageState::Ready { credentials: retained.clone(), receiving: true, operation_error: None });
-                            let service = receive_service.clone();
-                            let profile_id = receive_profile.clone();
-                            let mut next = retained.clone();
-                            spawn(async move {
-                                match run_ui_future(async move {
-                                    service.execute(CredentialProfileQuery { profile_id }).await
-                                })
-                                .await
-                                {
-                                    Ok(Ok(credential)) => {
-                                        next.retain(|existing| existing.id != credential.id);
-                                        next.push(credential);
-                                        next.sort_by(|left, right| left.id.cmp(&right.id));
-                                        state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None });
-                                    }
-                                    Ok(Err(error)) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(credential_operation_message(error)) }),
-                                    Err(error) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(error.to_string()) }),
-                                }
-                            });
-                        },
-                        if receiving { "Receiving and verifying…" } else { "Receive standalone credential" }
+                if reverification_applied {
+                    p {
+                        class: "form-hint credential-reverification-success",
+                        role: "status",
+                        aria_label: CREDENTIAL_REVERIFICATION_APPLIED_MARKER,
+                        "{CREDENTIAL_REVERIFICATION_APPLIED_MARKER}"
                     }
-                    if let Some(error) = operation_error.as_deref() {
-                        p { class: "field-error", role: "alert", "{error}" }
+                }
+                if cfg!(feature = "ui-profile-dev") {
+                    article { class: "surface-card credential-receive-card",
+                        p { class: "card-eyebrow", "Developer fixture" }
+                        h2 { "Receive a standalone test credential" }
+                        p { class: "form-hint", "This bypasses OpenID4VCI and exists only in the explicit developer profile." }
+                        button {
+                            class: "primary-action", r#type: "button", disabled: receiving,
+                            onclick: move |_| {
+                                state.set(CredentialPageState::Ready { credentials: retained.clone(), receiving: true, operation_error: None, reverification_applied: false });
+                                let service = receive_service.clone();
+                                let profile_id = receive_profile.clone();
+                                let mut next = retained.clone();
+                                spawn(async move {
+                                    match run_ui_future(async move {
+                                        service.execute(CredentialProfileQuery { profile_id }).await
+                                    })
+                                    .await
+                                    {
+                                        Ok(Ok(credential)) => {
+                                            next.retain(|existing| existing.id != credential.id);
+                                            next.push(credential);
+                                            next.sort_by(|left, right| left.id.cmp(&right.id));
+                                            state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None, reverification_applied: false });
+                                        }
+                                        Ok(Err(error)) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(credential_operation_message(error)), reverification_applied: false }),
+                                        Err(error) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(error.to_string()), reverification_applied: false }),
+                                    }
+                                });
+                            },
+                            if receiving { "Receiving and verifying…" } else { "Receive standalone credential" }
+                        }
+                    }
+                }
+                if let Some(error) = operation_error.as_deref() {
+                    p {
+                        class: "field-error credential-operation-error",
+                        role: "alert",
+                        strong { "Credential operation error" }
+                        br {}
+                        "{error}"
                     }
                 }
                 if credentials.is_empty() {
                     article { class: "empty-state surface-card",
                         span { class: "empty-state__mark", aria_hidden: "true", "◇" }
                         h2 { "No credentials yet" }
-                        p { "Receive the standalone fixture to prove protected storage and issuer-proof verification." }
+                        p {
+                            if cfg!(feature = "ui-profile-dev") {
+                                "Scan an offer or use the developer fixture to add a test credential."
+                            } else {
+                                "Scan a credential offer to review and add your first credential."
+                            }
+                        }
                         span { class: "status-pill", "Profile scoped" }
                     }
                 } else {
@@ -11303,20 +10136,7 @@ fn CredentialsPage(
                                         profile_id: profile_id.clone(),
                                         credential,
                                         on_change: move |change| {
-                                            let mut next = retained.clone();
-                                            match change {
-                                                CredentialChange::Updated(updated) => {
-                                                    next.retain(|entry| entry.id != updated.id);
-                                                    next.push(updated);
-                                                    next.sort_by(|left, right| left.id.cmp(&right.id));
-                                                    state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None });
-                                                }
-                                                CredentialChange::Deleted(identifier) => {
-                                                    next.retain(|entry| entry.id != identifier);
-                                                    state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None });
-                                                }
-                                                CredentialChange::Failed(message) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(message) }),
-                                            }
+                                            state.set(credential_page_after_change(retained.clone(), change));
                                         }
                                     }
                                 }
@@ -11386,220 +10206,12 @@ fn DeveloperCapabilitiesPage() -> Element {
     }
 }
 
-#[derive(Clone)]
-enum LocalDiagnosticsPageState {
-    Loading,
-    Ready(DiagnosticSnapshotView),
-    Failed,
-}
-
-#[component]
-fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let credential_protocol_ready = services.standalone_credential_offer().is_some();
-    let mut account_state = use_signal(|| AccountPageState::Loading);
-    let mut diagnostic_state = use_signal(|| LocalDiagnosticsPageState::Loading);
-    let profile_id = active_profile.id.clone();
-    let effect_services = services.clone();
-    use_effect(move || {
-        let services = effect_services.clone();
-        let profile_id = profile_id.clone();
-        let get_diagnostics = services.get_diagnostic_snapshot();
-        spawn(async move {
-            account_state.set(
-                run_ui_blocking(move || load_account_page(&services, &profile_id))
-                    .await
-                    .unwrap_or_else(|error| AccountPageState::Failed(error.to_string())),
-            );
-        });
-        spawn(async move {
-            diagnostic_state.set(
-                match run_ui_blocking(move || get_diagnostics.execute()).await {
-                    Ok(Ok(snapshot)) => LocalDiagnosticsPageState::Ready(snapshot),
-                    Ok(Err(_)) | Err(_) => LocalDiagnosticsPageState::Failed,
-                },
-            );
-        });
-    });
-
-    let (protection_state, protection_ready, midnight_state, midnight_ready, completion_state) =
-        match account_state.read().clone() {
-            AccountPageState::Loading => (
-                "Loading".to_owned(),
-                false,
-                "Loading".to_owned(),
-                false,
-                "Loading".to_owned(),
-            ),
-            AccountPageState::Failed(_) => (
-                "Status unavailable".to_owned(),
-                false,
-                "Status unavailable".to_owned(),
-                false,
-                "Status unavailable".to_owned(),
-            ),
-            AccountPageState::Ready {
-                account, security, ..
-            } => {
-                let protection_ready = security.is_available();
-                let midnight_ready = account.source != "unavailable";
-                (
-                    format!("{} · {}", security.state_name(), security.protection_name()),
-                    protection_ready,
-                    format!(
-                        "{} · {}",
-                        ui::account_source(&account.source),
-                        ui::sync_state(&account.sync.state)
-                    ),
-                    midnight_ready,
-                    if account.source == "simulated" {
-                        "Deterministic simulation".to_owned()
-                    } else {
-                        "Not connected".to_owned()
-                    },
-                )
-            }
-        };
-    let (diagnostic_summary, diagnostic_rows, diagnostics_ready) = match diagnostic_state
-        .read()
-        .clone()
-    {
-        LocalDiagnosticsPageState::Loading => ("Loading".to_owned(), Vec::new(), false),
-        LocalDiagnosticsPageState::Failed => ("Status unavailable".to_owned(), Vec::new(), false),
-        LocalDiagnosticsPageState::Ready(snapshot) => {
-            let rows = snapshot
-                .counts()
-                .iter()
-                .map(|count| {
-                    (
-                        count.code().as_str().to_owned(),
-                        format!(
-                            "{} · {} occurrence{}",
-                            count.severity().as_str(),
-                            count.occurrences(),
-                            if count.occurrences() == 1 { "" } else { "s" }
-                        ),
-                    )
-                })
-                .collect();
-            (
-                format!(
-                    "{} retained · {} total · {} evicted · capacity {}",
-                    snapshot.recent().len(),
-                    snapshot.total_events(),
-                    snapshot.evicted_events(),
-                    snapshot.capacity()
-                ),
-                rows,
-                true,
-            )
-        }
-    };
-    let refresh_services = services.clone();
-    let clear_services = services.clone();
-    let mut refresh_state = diagnostic_state;
-    let mut clear_state = diagnostic_state;
-    rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", "Capability status" }
-            h1 { "Diagnostics" }
-            p { "This view reports only capabilities that are actually composed into the current application." }
-        }
-        div { class: "diagnostic-grid",
-            CapabilityStatus { name: "Profile lifecycle", state: "Create · list · select · restore".to_owned(), ready: true }
-            CapabilityStatus { name: "Profile metadata store", state: "Persistent · public metadata only".to_owned(), ready: true }
-            CapabilityStatus { name: "Protected secret store", state: protection_state, ready: protection_ready }
-            CapabilityStatus { name: "Midnight account", state: midnight_state, ready: midnight_ready }
-            CapabilityStatus { name: "Transaction completion", state: completion_state, ready: midnight_ready }
-            CapabilityStatus { name: "Local proof provider", state: "Device-gated".to_owned(), ready: false }
-            CapabilityStatus { name: "DID adapter", state: if credential_protocol_ready { "Standalone Midnight DID".to_owned() } else { "Not connected".to_owned() }, ready: credential_protocol_ready }
-            CapabilityStatus {
-                name: "Credential protocols",
-                state: if credential_protocol_ready { "OpenID4VCI 1.0 · standalone".to_owned() } else { "Not connected".to_owned() },
-                ready: credential_protocol_ready,
-            }
-        }
-        section { class: "surface-card",
-            p { class: "card-eyebrow", "Secret-safe runtime health" }
-            h2 { "Process-local diagnostics" }
-            p { "Telemetry is off. Events use fixed codes, retain no payloads, and disappear when this process exits." }
-            div { class: "button-row",
-                button {
-                    class: "secondary-button",
-                    r#type: "button",
-                    onclick: move |_| {
-                        let get = refresh_services.get_diagnostic_snapshot();
-                        refresh_state.set(LocalDiagnosticsPageState::Loading);
-                        spawn(async move {
-                            refresh_state.set(match run_ui_blocking(move || get.execute()).await {
-                                Ok(Ok(snapshot)) => LocalDiagnosticsPageState::Ready(snapshot),
-                                Ok(Err(_)) | Err(_) => LocalDiagnosticsPageState::Failed,
-                            });
-                        });
-                    },
-                    "Refresh"
-                }
-                button {
-                    class: "secondary-button",
-                    r#type: "button",
-                    onclick: move |_| {
-                        let clear = clear_services.clear_diagnostics();
-                        let get = clear_services.get_diagnostic_snapshot();
-                        clear_state.set(LocalDiagnosticsPageState::Loading);
-                        spawn(async move {
-                            clear_state.set(match run_ui_blocking(move || {
-                                clear.execute(ClearDiagnosticsCommand {
-                                    confirmed: true,
-                                    intent: CLEAR_LOCAL_DIAGNOSTICS_INTENT.to_owned(),
-                                })?;
-                                get.execute()
-                            }).await {
-                                Ok(Ok(snapshot)) => LocalDiagnosticsPageState::Ready(snapshot),
-                                Ok(Err(_)) | Err(_) => LocalDiagnosticsPageState::Failed,
-                            });
-                        });
-                    },
-                    "Clear local events"
-                }
-            }
-            div { class: "diagnostic-grid",
-                CapabilityStatus { name: "Bounded event ring", state: diagnostic_summary, ready: diagnostics_ready }
-                CapabilityStatus { name: "Privacy boundary", state: "No persistence · no upload · no payloads".to_owned(), ready: true }
-                if diagnostic_rows.is_empty() && diagnostics_ready {
-                    article { class: "capability-row",
-                        span { class: "capability-dot ready" }
-                        div { strong { "No diagnostic events recorded" } p { "Runtime health is clean for this process." } }
-                    }
-                }
-                for (code, detail) in diagnostic_rows {
-                    article { class: "capability-row", key: "{code}",
-                        span { class: "capability-dot queued" }
-                        div { strong { "{code}" } p { "{detail}" } }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn CapabilityStatus(name: &'static str, state: String, ready: bool) -> Element {
-    rsx! {
-        article { class: "capability-row",
-            span { class: if ready { "capability-dot ready" } else { "capability-dot queued" } }
-            div {
-                strong { "{name}" }
-                p { "{state}" }
-            }
-        }
-    }
-}
-
 #[component]
 fn SettingsPage(
     active_profile: WalletProfileView,
     lifecycle_wake: Signal<u64>,
     secret_mode: SecretModeController,
+    on_root_recovered: EventHandler<WalletProfileView>,
     on_open_profile: EventHandler<MouseEvent>,
     on_open_diagnostics: EventHandler<MouseEvent>,
 ) -> Element {
@@ -12100,6 +10712,37 @@ fn SettingsPage(
         }
         SecurityCapabilityState::Loading | SecurityCapabilityState::Failed(_) => rsx! {},
     };
+    #[cfg(feature = "preprod-observation")]
+    let root_recovery_card = match security.read().clone() {
+        SecurityCapabilityState::Ready(status)
+            if status.state_name() == "Uninitialized"
+                && services.wallet_root_recovery.is_some() =>
+        {
+            let profile = active_profile.clone();
+            rsx! {
+                WalletRootRecoveryForm {
+                    profile,
+                    lifecycle_wake,
+                    on_recovered: move |profile| {
+                        secret_mode.rearm();
+                        on_root_recovered.call(profile);
+                    },
+                }
+            }
+        }
+        SecurityCapabilityState::Loading
+        | SecurityCapabilityState::Ready(_)
+        | SecurityCapabilityState::Failed(_) => rsx! {},
+    };
+    #[cfg(not(feature = "preprod-observation"))]
+    let root_recovery_card = {
+        let _ = on_root_recovered;
+        rsx! {}
+    };
+    #[cfg(feature = "standalone-deployment-profile")]
+    let deployment_profile_card = rsx! { DeploymentProfileCard {} };
+    #[cfg(not(feature = "standalone-deployment-profile"))]
+    let deployment_profile_card = rsx! {};
 
     rsx! {
         section { class: "page-heading",
@@ -12121,7 +10764,9 @@ fn SettingsPage(
             }
         }
         {security_card}
+        {root_recovery_card}
         {backup_card}
+        {deployment_profile_card}
         article { class: "settings-card surface-card",
             div {
                 p { class: "card-eyebrow", "Privacy" }
@@ -12224,6 +10869,53 @@ const LUCIDE_EYE_OFF: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="2
 mod tests {
     use super::*;
 
+    #[cfg(feature = "preprod-observation")]
+    #[test]
+    fn owner_root_input_is_redacted_and_cleared_by_cancel_or_take() {
+        let secret = "31".repeat(32);
+        let mut input = WalletRootInput::new(secret.clone());
+        assert_eq!(format!("{input:?}"), "WalletRootInput([REDACTED])");
+        assert!(!format!("{input:?}").contains(&secret));
+        input.clear();
+        assert!(input.is_empty());
+
+        let mut input = WalletRootInput::new(secret);
+        let taken = input.take();
+        assert_eq!(taken.len(), 64);
+        assert!(input.is_empty());
+    }
+
+    #[test]
+    fn observation_profile_never_admits_wallet_write_actions() {
+        assert!(!wallet_write_actions_available(true));
+        assert!(wallet_write_actions_available(false));
+    }
+
+    #[test]
+    fn observation_profile_finishes_only_an_installed_recovered_account() {
+        assert!(!wallet_account_activation_available(
+            true,
+            true,
+            "Uninitialized",
+            false,
+        ));
+        assert!(wallet_account_activation_available(
+            true, true, "Locked", false,
+        ));
+        assert!(wallet_account_activation_available(
+            true, true, "Unlocked", false,
+        ));
+        assert!(!wallet_account_activation_available(
+            true, true, "Unlocked", true,
+        ));
+        assert!(wallet_account_activation_available(
+            false,
+            true,
+            "Uninitialized",
+            false,
+        ));
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn blocking_wallet_operations_execute_off_the_caller_thread() {
@@ -12247,11 +10939,17 @@ mod tests {
     fn asynchronous_wallet_operations_are_polled_off_the_caller_thread() {
         let caller = std::thread::current().id();
 
-        let worker =
-            futures::executor::block_on(run_ui_future(async move { std::thread::current().id() }))
-                .expect("worker future");
+        let (worker, reactor_available) = futures::executor::block_on(run_ui_future(async move {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            (
+                std::thread::current().id(),
+                tokio::runtime::Handle::try_current().is_ok(),
+            )
+        }))
+        .expect("worker future");
 
         assert_ne!(worker, caller);
+        assert!(reactor_available);
     }
 
     #[test]
@@ -12264,6 +10962,14 @@ mod tests {
             UiBlockingTaskError::WorkerFailed.to_string(),
             "background wallet operation failed"
         );
+    }
+
+    #[test]
+    fn identity_scan_admission_rejects_busy_pending_and_late_results() {
+        assert!(identity_scan_is_admitted(false, false));
+        assert!(!identity_scan_is_admitted(true, false));
+        assert!(!identity_scan_is_admitted(false, true));
+        assert!(!identity_scan_is_admitted(true, true));
     }
 
     #[test]
@@ -12481,6 +11187,528 @@ mod tests {
         assert!(!identity_request_dismiss_is_visible(true, false));
         assert!(!identity_request_dismiss_is_visible(false, true));
         assert!(!identity_request_dismiss_is_visible(false, false));
+    }
+
+    #[test]
+    fn issuance_failure_releases_the_route_after_cleanup_or_proved_no_session() {
+        assert!(!credential_issuance_cleanup_allows_release(&Err(
+            CredentialIssuanceError::InvalidState
+        )));
+        for error in [
+            CredentialIssuanceError::NotFound,
+            CredentialIssuanceError::Unavailable,
+        ] {
+            assert!(credential_issuance_cleanup_allows_release(&Err(error)));
+        }
+    }
+
+    #[test]
+    fn uncertain_cleanup_retains_imported_or_manual_review_admission_lock() {
+        fn assert_retained(
+            cleanup: Result<
+                Result<CredentialIssuanceView, CredentialIssuanceError>,
+                UiBlockingTaskError,
+            >,
+            mut pending: Option<PendingIdentityRequest>,
+            mut manual_review_lock: bool,
+            expected_route: Option<Route>,
+        ) {
+            let mut prepared = Some("prepared credential review".to_owned());
+            let mut consent = true;
+
+            assert!(!apply_failed_credential_acceptance_state(
+                &cleanup,
+                &mut pending,
+                &mut manual_review_lock,
+                &mut prepared,
+                &mut consent,
+            ));
+
+            assert!(!consent, "failed acceptance must clear prior consent");
+            assert_eq!(prepared.as_deref(), Some("prepared credential review"));
+            assert_eq!(
+                retained_identity_review_route(&pending, manual_review_lock),
+                expected_route
+            );
+            assert!(!identity_request_admits_new_link(
+                pending.is_some(),
+                manual_review_lock,
+            ));
+        }
+
+        let imported_marker = || {
+            Some(PendingIdentityRequest {
+                kind: IdentityRequestKind::CredentialIssuance,
+                request_uri: String::new(),
+            })
+        };
+        for cleanup in [
+            Ok(Err(CredentialIssuanceError::InvalidState)),
+            Err(UiBlockingTaskError::WorkerFailed),
+        ] {
+            assert_retained(
+                cleanup,
+                imported_marker(),
+                false,
+                Some(Route::CredentialRequest),
+            );
+        }
+        for cleanup in [
+            Ok(Err(CredentialIssuanceError::InvalidState)),
+            Err(UiBlockingTaskError::WorkerFailed),
+        ] {
+            assert_retained(cleanup, None, true, Some(Route::Documents));
+        }
+    }
+
+    #[test]
+    fn unavailable_cleanup_releases_imported_and_manual_review_without_restart() {
+        for cleanup_error in [
+            CredentialIssuanceError::NotFound,
+            CredentialIssuanceError::Unavailable,
+        ] {
+            for imported in [true, false] {
+                let mut pending = imported.then(|| PendingIdentityRequest {
+                    kind: IdentityRequestKind::CredentialIssuance,
+                    request_uri: String::new(),
+                });
+                let mut manual_review_lock = !imported;
+                let mut prepared = Some("prepared credential review".to_owned());
+                let mut consent = true;
+                let cleanup = Ok(Err(cleanup_error.clone()));
+
+                assert!(apply_failed_credential_acceptance_state(
+                    &cleanup,
+                    &mut pending,
+                    &mut manual_review_lock,
+                    &mut prepared,
+                    &mut consent,
+                ));
+                assert!(pending.is_none());
+                assert!(!manual_review_lock);
+                assert!(prepared.is_none());
+                assert!(!consent);
+                assert!(identity_request_admits_new_link(false, false));
+                assert_eq!(
+                    retained_identity_review_route(&pending, manual_review_lock),
+                    None
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn leave_review_treats_unavailable_list_and_missing_refusal_as_no_session() {
+        struct UnavailableList;
+        impl ListCredentialIssuancesUseCase for UnavailableList {
+            fn execute(
+                &self,
+                _: CredentialIssuanceProfileQuery,
+            ) -> Result<Vec<CredentialIssuanceView>, CredentialIssuanceError> {
+                Err(CredentialIssuanceError::Unavailable)
+            }
+        }
+
+        struct AwaitingList;
+        impl ListCredentialIssuancesUseCase for AwaitingList {
+            fn execute(
+                &self,
+                _: CredentialIssuanceProfileQuery,
+            ) -> Result<Vec<CredentialIssuanceView>, CredentialIssuanceError> {
+                Ok(vec![CredentialIssuanceView {
+                    id: "issuance-missing".to_owned(),
+                    issuer: "https://issuer.example".to_owned(),
+                    configuration_ids: vec!["DigitalPassport".to_owned()],
+                    display_names: vec!["Digital Passport".to_owned()],
+                    state: "awaiting_consent".to_owned(),
+                    credential_id: None,
+                    failure_code: None,
+                }])
+            }
+        }
+
+        struct MissingRefusal;
+        impl RefuseCredentialIssuanceUseCase for MissingRefusal {
+            fn execute(
+                &self,
+                _: RefuseCredentialIssuanceCommand,
+            ) -> Result<CredentialIssuanceView, CredentialIssuanceError> {
+                Err(CredentialIssuanceError::NotFound)
+            }
+        }
+
+        assert_eq!(
+            discard_open_credential_issuance_reviews(
+                &UnavailableList,
+                &MissingRefusal,
+                "profile-1",
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            discard_open_credential_issuance_reviews(&AwaitingList, &MissingRefusal, "profile-1"),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn manual_preparation_reserves_before_await_and_pins_existing_documents_content() {
+        let pending = None;
+        let mut manual_review_lock = false;
+        let active_route = Route::Documents;
+        let content_before_reservation =
+            retained_identity_review_route(&pending, manual_review_lock).unwrap_or(active_route);
+
+        let reserved =
+            reserve_manual_credential_review_admission_lock_value(&mut manual_review_lock, false);
+
+        assert!(reserved, "manual preparation must reserve synchronously");
+        assert!(pending.is_none(), "manual review must not create a marker");
+        assert_eq!(content_before_reservation, Route::Documents);
+        assert_eq!(
+            retained_identity_review_route(&pending, manual_review_lock),
+            Some(Route::Documents),
+        );
+        assert_eq!(
+            retained_identity_review_route(&pending, manual_review_lock).unwrap_or(active_route),
+            content_before_reservation,
+            "lock acquisition must not remount the Credentials page",
+        );
+        assert!(!identity_request_admits_new_link(
+            pending.is_some(),
+            manual_review_lock,
+        ));
+    }
+
+    #[test]
+    fn credential_preview_duplicate_click_is_single_flight_and_cannot_release_the_winner() {
+        let mut action = CredentialIssuanceAction::Idle;
+        let pending = None;
+        let mut manual_review_lock = false;
+
+        assert!(begin_credential_issuance_action_value(
+            &mut action,
+            CredentialIssuanceAction::Previewing,
+        ));
+        let winning_reservation =
+            reserve_credential_preview_review_admission_value(&pending, &mut manual_review_lock);
+        assert_eq!(winning_reservation, Some(true));
+        assert!(manual_review_lock);
+
+        assert!(!begin_credential_issuance_action_value(
+            &mut action,
+            CredentialIssuanceAction::Previewing,
+        ));
+        assert!(
+            !reserve_manual_credential_review_admission_lock_value(&mut manual_review_lock, false,),
+            "an already-held manual reservation must reject a duplicate",
+        );
+        assert!(
+            !release_manual_credential_review_after_confirmed_prepare_failure_value(
+                &mut manual_review_lock,
+                false,
+            ),
+            "an unadmitted duplicate completion must not release the winning lock",
+        );
+        assert!(manual_review_lock);
+        assert!(credential_review_escape_is_visible(
+            &pending,
+            manual_review_lock,
+        ));
+    }
+
+    #[test]
+    fn credential_preview_admission_rejects_other_request_kinds_but_preserves_imported_issuance() {
+        for kind in [
+            IdentityRequestKind::SelfIssuedAuthentication,
+            IdentityRequestKind::CredentialPresentation,
+        ] {
+            let mut action = CredentialIssuanceAction::Idle;
+            let pending = Some(PendingIdentityRequest {
+                kind,
+                request_uri: "openid://pending-review".to_owned(),
+            });
+            let mut manual_review_lock = false;
+
+            assert!(begin_credential_issuance_action_value(
+                &mut action,
+                CredentialIssuanceAction::Previewing,
+            ));
+            assert_eq!(
+                reserve_credential_preview_review_admission_value(
+                    &pending,
+                    &mut manual_review_lock,
+                ),
+                None,
+            );
+            action = CredentialIssuanceAction::Idle;
+            assert_eq!(action, CredentialIssuanceAction::Idle);
+            assert!(!manual_review_lock);
+            assert_eq!(
+                pending.as_ref().map(|request| request.request_uri.as_str()),
+                Some("openid://pending-review"),
+            );
+        }
+
+        let imported = Some(PendingIdentityRequest {
+            kind: IdentityRequestKind::CredentialIssuance,
+            request_uri: "openid-credential-offer://private".to_owned(),
+        });
+        let mut manual_review_lock = false;
+        assert_eq!(
+            reserve_credential_preview_review_admission_value(&imported, &mut manual_review_lock,),
+            Some(false),
+            "the imported issuance marker remains the review owner",
+        );
+        assert!(!manual_review_lock);
+    }
+
+    #[test]
+    fn only_awaiting_credential_review_blocks_offer_replacement() {
+        let review = |state: &str| CredentialIssuanceView {
+            id: format!("issuance-{state}"),
+            issuer: "https://issuer.example".to_owned(),
+            configuration_ids: vec!["DigitalPassport".to_owned()],
+            display_names: vec!["Digital Passport".to_owned()],
+            state: state.to_owned(),
+            credential_id: None,
+            failure_code: None,
+        };
+        let awaiting = review("awaiting_consent");
+        let issuing = review("issuing");
+        let succeeded = review("succeeded");
+        let refused = review("refused");
+        let failed = review("failed");
+
+        assert!(credential_issuance_review_blocks_replacement(Some(
+            &awaiting
+        )));
+        assert!(!credential_issuance_review_blocks_replacement(Some(
+            &succeeded
+        )));
+        assert!(!credential_issuance_review_blocks_replacement(Some(
+            &refused
+        )));
+        assert!(!credential_issuance_review_blocks_replacement(None));
+        assert!(!credential_issuance_review_is_terminal(Some(&awaiting)));
+        assert!(!credential_issuance_review_is_terminal(Some(&issuing)));
+        assert!(credential_issuance_review_is_terminal(Some(&succeeded)));
+        assert!(credential_issuance_review_is_terminal(Some(&refused)));
+        assert!(credential_issuance_review_is_terminal(Some(&failed)));
+        assert!(!credential_issuance_review_is_terminal(None));
+    }
+
+    #[test]
+    fn confirmed_manual_prepare_failure_releases_reservation_but_uncertainty_retains_it() {
+        let mut manual_review_lock = false;
+        let reserved =
+            reserve_manual_credential_review_admission_lock_value(&mut manual_review_lock, false);
+        assert!(reserved);
+        assert!(manual_review_lock);
+
+        // A worker failure is uncertain: do not invoke the confirmed-failure
+        // release and keep ingress closed.
+        assert_eq!(
+            retained_identity_review_route(&None, manual_review_lock),
+            Some(Route::Documents)
+        );
+        assert!(!identity_request_admits_new_link(false, manual_review_lock));
+
+        assert!(
+            release_manual_credential_review_after_confirmed_prepare_failure_value(
+                &mut manual_review_lock,
+                reserved,
+            )
+        );
+        assert!(!manual_review_lock);
+        assert_eq!(
+            retained_identity_review_route(&None, manual_review_lock),
+            None
+        );
+        assert!(identity_request_admits_new_link(false, manual_review_lock));
+
+        let mut imported_review_lock = false;
+        assert!(!reserve_manual_credential_review_admission_lock_value(
+            &mut imported_review_lock,
+            true,
+        ));
+        assert!(
+            !release_manual_credential_review_after_confirmed_prepare_failure_value(
+                &mut imported_review_lock,
+                false,
+            ),
+            "imported marker behavior must remain separate",
+        );
+    }
+
+    #[test]
+    fn confirmed_acceptance_cleanup_releases_imported_and_manual_review_state() {
+        let cleanup = Ok(Ok(CredentialIssuanceView {
+            id: "issuance-cleaned".to_owned(),
+            issuer: "https://issuer.example".to_owned(),
+            configuration_ids: vec!["DigitalPassport".to_owned()],
+            display_names: vec!["Digital Passport".to_owned()],
+            state: "refused".to_owned(),
+            credential_id: None,
+            failure_code: None,
+        }));
+
+        for imported in [true, false] {
+            let mut pending = imported.then(|| PendingIdentityRequest {
+                kind: IdentityRequestKind::CredentialIssuance,
+                request_uri: String::new(),
+            });
+            let mut manual_review_lock = !imported;
+            let mut prepared = Some("prepared credential review".to_owned());
+            let mut consent = true;
+
+            assert!(apply_failed_credential_acceptance_state(
+                &cleanup,
+                &mut pending,
+                &mut manual_review_lock,
+                &mut prepared,
+                &mut consent,
+            ));
+            assert!(pending.is_none());
+            assert!(!manual_review_lock);
+            assert!(prepared.is_none());
+            assert!(!consent);
+            assert!(identity_request_admits_new_link(
+                pending.is_some(),
+                manual_review_lock,
+            ));
+            assert_eq!(
+                retained_identity_review_route(&pending, manual_review_lock),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_clear_releases_manual_credential_review_admission_lock() {
+        let mut pending = None;
+        let mut manual_review_lock = true;
+
+        clear_credential_issuance_review_admission_value(&mut pending, &mut manual_review_lock);
+
+        assert!(pending.is_none());
+        assert!(!manual_review_lock);
+        assert!(identity_request_admits_new_link(
+            pending.is_some(),
+            manual_review_lock,
+        ));
+    }
+
+    #[test]
+    fn imported_credential_offer_is_never_rendered_and_is_cleared_after_prepare_or_dismissal() {
+        let raw_offer = "openid-credential-offer://?credential_offer=do_not_render";
+        let mut draft = CredentialOfferDraft::default();
+
+        draft.import(raw_offer.to_owned());
+
+        assert!(draft.has_imported_offer());
+        assert_eq!(draft.rendered_editable_value(), "");
+        assert_eq!(draft.offer_for_prepare(), raw_offer);
+
+        draft.clear_imported();
+
+        assert!(!draft.has_imported_offer());
+        assert!(draft.offer_for_prepare().is_empty());
+
+        draft.import(raw_offer.to_owned());
+        draft.clear_imported();
+
+        assert!(!draft.has_imported_offer());
+        assert!(draft.offer_for_prepare().is_empty());
+    }
+
+    #[test]
+    fn prepared_issuance_scrubs_raw_uri_but_guards_the_active_review_until_terminal_clear() {
+        let mut other_kind_pending = Some(PendingIdentityRequest {
+            kind: IdentityRequestKind::SelfIssuedAuthentication,
+            request_uri: "openid://login".to_owned(),
+        });
+        assert!(!scrub_pending_identity_request_value(
+            &mut other_kind_pending,
+            IdentityRequestKind::CredentialIssuance,
+        ));
+        assert_eq!(
+            other_kind_pending.as_ref().and_then(
+                |request| request.importable_uri(IdentityRequestKind::SelfIssuedAuthentication)
+            ),
+            Some("openid://login")
+        );
+
+        let mut matching_pending = Some(PendingIdentityRequest {
+            kind: IdentityRequestKind::CredentialIssuance,
+            request_uri: "openid-credential-offer://?credential_offer=grant".to_owned(),
+        });
+        assert!(scrub_pending_identity_request_value(
+            &mut matching_pending,
+            IdentityRequestKind::CredentialIssuance,
+        ));
+        let mut manual_review_lock = false;
+        assert!(!reserve_manual_credential_review_admission_lock_value(
+            &mut manual_review_lock,
+            true,
+        ));
+        assert!(!manual_review_lock);
+        let scrubbed_guard = matching_pending.as_ref().expect("review guard retained");
+        assert!(!scrubbed_guard.has_raw_uri());
+        assert_eq!(
+            scrubbed_guard.importable_uri(IdentityRequestKind::CredentialIssuance),
+            None
+        );
+        assert!(!identity_request_dismiss_is_visible(
+            true,
+            scrubbed_guard.has_raw_uri()
+        ));
+        assert!(credential_review_escape_is_visible(
+            &matching_pending,
+            manual_review_lock,
+        ));
+        assert_eq!(
+            retained_identity_review_route(&matching_pending, manual_review_lock),
+            Some(Route::CredentialRequest)
+        );
+        assert!(!identity_request_admits_new_link(
+            matching_pending.is_some(),
+            manual_review_lock,
+        ));
+
+        assert!(wipe_pending_identity_request_value(
+            &mut matching_pending,
+            Some(IdentityRequestKind::CredentialIssuance),
+        ));
+        assert!(matching_pending.is_none());
+        assert!(!credential_review_escape_is_visible(
+            &matching_pending,
+            manual_review_lock,
+        ));
+        assert_eq!(
+            retained_identity_review_route(&matching_pending, manual_review_lock),
+            None
+        );
+        assert!(identity_request_admits_new_link(
+            matching_pending.is_some(),
+            manual_review_lock,
+        ));
+    }
+
+    #[test]
+    fn wipe_pending_identity_request_on_dismissal_discards_any_kind() {
+        let mut pending = Some(PendingIdentityRequest {
+            kind: IdentityRequestKind::CredentialPresentation,
+            request_uri: "openid4vp://request".to_owned(),
+        });
+        assert!(wipe_pending_identity_request_value(&mut pending, None));
+        assert!(pending.is_none());
+
+        let mut already_empty = None::<PendingIdentityRequest>;
+        assert!(!wipe_pending_identity_request_value(
+            &mut already_empty,
+            None
+        ));
     }
 
     #[test]
@@ -12841,6 +12069,40 @@ mod tests {
         assert_eq!(profile_monogram("---", "oxid"), "O");
     }
 
+    #[cfg(feature = "public-standalone-genesis")]
+    #[test]
+    fn public_fixture_requires_explicit_selection_and_duplicates_are_blocked() {
+        assert_eq!(profile_creation_default_name(), "My wallet");
+        let profiles = vec![WalletProfileView {
+            id: "profile_demo".to_owned(),
+            display_name: PUBLIC_STANDALONE_PROFILE_NAME.to_owned(),
+            created_at_millis: 1,
+        }];
+
+        assert!(public_fixture_profile_exists(&profiles));
+        assert!(public_fixture_name_conflicts(
+            &profiles,
+            PUBLIC_STANDALONE_PROFILE_NAME
+        ));
+        assert!(public_fixture_name_conflicts(
+            &profiles,
+            "  Oxid Demo Wallet  "
+        ));
+        assert!(!public_fixture_name_conflicts(&profiles, "Another wallet"));
+        assert_eq!(
+            public_fixture_choice_label(false, false),
+            "Use public demo wallet"
+        );
+        assert_eq!(
+            public_fixture_choice_label(false, true),
+            "Public demo wallet selected"
+        );
+        assert_eq!(
+            public_fixture_choice_label(true, false),
+            "Public demo wallet already exists"
+        );
+    }
+
     #[test]
     fn compact_policy_summary_keeps_revocation_truthful() {
         let credential = CredentialView {
@@ -12878,6 +12140,64 @@ mod tests {
         let mut cbor = credential;
         cbor.format = "midnight_cbor_v1".to_owned();
         assert_eq!(compact_credential_policy_summary(&cbor), None);
+    }
+
+    #[test]
+    fn fresh_reverification_marker_requires_an_applied_updated_change() {
+        let credential = CredentialView {
+            id: "credential_test".to_owned(),
+            display_name: "Digital Passport".to_owned(),
+            issuer_did: "did:midnight:undeployed:issuer".to_owned(),
+            subject_did: None,
+            format: "midnight_compact_vc".to_owned(),
+            issued_at_ms: Some(42),
+            verification_outcome: "valid".to_owned(),
+            verification_stages: Vec::new(),
+        };
+
+        let started = credential_page_after_change(
+            vec![credential.clone()],
+            CredentialChange::ReverificationStarted,
+        );
+        assert!(matches!(
+            started,
+            CredentialPageState::Ready {
+                reverification_applied: false,
+                operation_error: None,
+                ..
+            }
+        ));
+
+        let applied = credential_page_after_change(
+            vec![credential.clone()],
+            CredentialChange::Reverified(credential.clone()),
+        );
+        assert!(matches!(
+            applied,
+            CredentialPageState::Ready {
+                reverification_applied: true,
+                operation_error: None,
+                ref credentials,
+                ..
+            } if credentials == std::slice::from_ref(&credential)
+        ));
+
+        let failed = credential_page_after_change(
+            vec![credential],
+            CredentialChange::Failed("payload-free failure".to_owned()),
+        );
+        assert!(matches!(
+            failed,
+            CredentialPageState::Ready {
+                reverification_applied: false,
+                operation_error: Some(_),
+                ..
+            }
+        ));
+        assert_eq!(
+            CREDENTIAL_REVERIFICATION_APPLIED_MARKER,
+            "Credential reverification applied"
+        );
     }
 
     fn presentation_candidate(
@@ -13067,6 +12387,49 @@ mod tests {
     }
 
     #[test]
+    fn shielded_night_balance_distinguishes_zero_from_unavailable() {
+        let synced_zero = shielded_status("synced", Some(2), Some(2));
+        assert_eq!(home_shielded_value(&synced_zero), "0 NIGHT");
+
+        let mut funded = shielded_status("synced", Some(2), Some(2));
+        funded.balances = vec![oxid_wallet_application::WalletShieldedTokenBalanceView {
+            token_type_hex: NATIVE_SHIELDED_NIGHT_TOKEN_TYPE.to_owned(),
+            atomic_units: "1500000".to_owned(),
+        }];
+        assert_eq!(home_shielded_value(&funded), "1.5 NIGHT");
+
+        let unavailable = shielded_status("unavailable", None, None);
+        assert_eq!(home_shielded_value(&unavailable), "—");
+        assert!(home_shielded_detail(&unavailable).contains(ui::sync_state("unavailable")));
+
+        for incomplete in ["cached", "cancelled", "stalled"] {
+            let mut status = shielded_status(incomplete, Some(2), Some(2));
+            status.balances = funded.balances.clone();
+            assert_eq!(home_shielded_value(&status), "1.5 NIGHT · last known");
+            assert!(home_shielded_detail(&status).contains(ui::sync_state(incomplete)));
+        }
+    }
+
+    #[test]
+    fn shielded_token_rows_exclude_native_night_and_preserve_other_tokens() {
+        let mut status = shielded_status("synced", Some(2), Some(2));
+        status.balances = vec![
+            oxid_wallet_application::WalletShieldedTokenBalanceView {
+                token_type_hex: NATIVE_SHIELDED_NIGHT_TOKEN_TYPE.to_owned(),
+                atomic_units: "1".to_owned(),
+            },
+            oxid_wallet_application::WalletShieldedTokenBalanceView {
+                token_type_hex: "aa".repeat(32),
+                atomic_units: "2".to_owned(),
+            },
+        ];
+
+        let rows = non_native_shielded_balances(&status).collect::<Vec<_>>();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].token_type_hex, "aa".repeat(32));
+    }
+
+    #[test]
     fn account_sync_card_combines_progress_without_event_count_copy() {
         let dust = dust_status("syncing", Some(0), Some(2));
         let shielded = shielded_status("syncing", Some(2), Some(2));
@@ -13149,112 +12512,6 @@ mod tests {
         assert!(ui::submission_note("broadcasting", "Oxid").contains("before broadcast"));
         assert!(ui::submission_note("outcome_unknown", "Oxid").contains("not submit a duplicate"));
         assert!(ui::submission_note("expired", "Oxid").contains("expired"));
-    }
-
-    fn vault_contract_inputs(operation: &str) -> PassportVaultContractInputs {
-        PassportVaultContractInputs {
-            operation: operation.to_owned(),
-            lock_id: "7".to_owned(),
-            amount: "10".to_owned(),
-            minimum_age: "18".to_owned(),
-            maximum_claim: "40".to_owned(),
-            initial_amount: "100".to_owned(),
-            required_state: "US".to_owned(),
-            required_document: "AB1234567".to_owned(),
-            credential_id: "credential_test".to_owned(),
-        }
-    }
-
-    #[test]
-    fn mobile_vault_inputs_map_only_the_closed_native_operation_set() {
-        assert!(matches!(
-            vault_contract_inputs("create_lock").action(),
-            Ok(PreparePassportVaultCallAction::CreateLock {
-                minimum_age_years: 18,
-                maximum_claim_amount,
-                initial_amount,
-                ..
-            }) if maximum_claim_amount == "40000000" && initial_amount == "100000000"
-        ));
-        assert!(matches!(
-            vault_contract_inputs("deposit_to_lock").action(),
-            Ok(PreparePassportVaultCallAction::DepositToLock {
-                lock_id: 7,
-                amount,
-            }) if amount == "10000000"
-        ));
-        assert!(matches!(
-            vault_contract_inputs("claim_from_lock").action(),
-            Ok(PreparePassportVaultCallAction::ClaimFromLock {
-                lock_id: 7,
-                amount,
-                credential_id,
-            }) if amount == "10000000" && credential_id == "credential_test"
-        ));
-        assert!(matches!(
-            vault_contract_inputs("withdraw_from_lock").action(),
-            Ok(PreparePassportVaultCallAction::WithdrawFromLock {
-                lock_id: 7,
-                amount,
-            }) if amount == "10000000"
-        ));
-        assert!(
-            vault_contract_inputs("set_trusted_issuer")
-                .action()
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn mobile_vault_claims_require_opaque_credentials_and_nonzero_canonical_amounts() {
-        let mut missing_credential = vault_contract_inputs("claim_from_lock");
-        missing_credential.credential_id.clear();
-        assert!(missing_credential.action().is_err());
-
-        let mut zero = vault_contract_inputs("deposit_to_lock");
-        zero.amount = "0".to_owned();
-        assert!(zero.action().is_err());
-
-        let mut ambiguous_lock = vault_contract_inputs("withdraw_from_lock");
-        ambiguous_lock.lock_id = "07".to_owned();
-        assert!(ambiguous_lock.action().is_err());
-    }
-
-    #[test]
-    fn mobile_vault_modes_and_recovery_copy_never_overstate_settlement() {
-        assert_eq!(
-            ui::vault_call_mode("deterministic_simulation"),
-            "Simulated — runs locally, nothing on Midnight"
-        );
-        assert!(ui::vault_call_mode_note("deterministic_simulation").contains("no node broadcast"));
-        assert_eq!(ui::vault_call_mode("native_settlement"), "Midnight live");
-        assert_eq!(
-            ui::vault_contract_source("deterministic_simulation"),
-            "Simulated — runs locally, nothing on Midnight"
-        );
-        assert_eq!(
-            ui::vault_contract_source("authenticated_node"),
-            "Midnight node"
-        );
-        assert_eq!(
-            ui::vault_submission_mode("deterministic_simulation_only"),
-            "Simulated — runs locally, nothing on Midnight"
-        );
-        assert_eq!(ui::vault_submission_mode("midnight"), "Mode unavailable");
-        assert!(
-            ui::vault_call_mode_note("native_settlement").contains("authenticated finalized state")
-        );
-        assert_eq!(
-            passport_vault_call_recovery(Some("authorized")),
-            PassportVaultCallRecovery::RetryAuthorized
-        );
-        assert_eq!(
-            passport_vault_call_recovery(Some("submitting")),
-            PassportVaultCallRecovery::ReconcileUnknown
-        );
-        assert!(
-            ui::vault_submission_note("outcome_unknown", "Oxid").contains("not submit a duplicate")
-        );
     }
 
     #[test]
@@ -13462,6 +12719,157 @@ mod tests {
             dust_registration_readiness_label("requires_synchronization"),
             "Waiting for spendable DUST — requires DUST synchronization"
         );
+    }
+
+    #[test]
+    fn did_creation_requires_explicit_rearming_and_confirmation() {
+        let mut creation = DidCreationState::Ready;
+        assert!(begin_did_creation_value(&mut creation));
+        assert!(!begin_did_creation_value(&mut creation));
+        assert_eq!(creation, DidCreationState::Creating);
+
+        creation = DidCreationState::Created;
+        assert!(arm_another_did_creation_value(&mut creation));
+        assert_eq!(creation, DidCreationState::AwaitingConfirmation);
+        assert!(confirm_another_did_creation_value(&mut creation));
+        assert_eq!(creation, DidCreationState::Ready);
+        assert!(begin_did_creation_value(&mut creation));
+    }
+
+    #[test]
+    fn did_records_never_imply_wallet_control_without_managed_metadata() {
+        assert_eq!(
+            did_record_management_label("standalone", &[]),
+            "Standalone example / resolved external — not wallet-managed"
+        );
+        assert_eq!(
+            did_record_management_label("live", &["method-1".to_owned()]),
+            "Wallet-managed record"
+        );
+    }
+
+    #[test]
+    fn rendered_identity_and_credential_action_contracts_remain_explicit() {
+        let source = include_str!("lib.rs");
+        for required in [
+            "Creating DID…",
+            "Create another DID",
+            "Confirm create another DID",
+            "Load standalone example DID",
+            "Wallet-managed record",
+            "resolved external — not wallet-managed",
+            "credential-issuance-consent-guidance",
+            "Accept remains disabled until consent is checked",
+            "Issuing credential…",
+            "Refusing offer…",
+        ] {
+            assert!(
+                source.contains(required),
+                "missing rendered contract: {required}"
+            );
+        }
+        assert!(source.contains("aria_busy: true"));
+        assert!(source.contains("aria_describedby: \"credential-issuance-consent-guidance\""));
+        let issuance_consent = source
+            .split("id: \"credential-issuance-consent\"")
+            .nth(1)
+            .expect("credential issuance consent input")
+            .split("}")
+            .next()
+            .expect("credential issuance consent attributes");
+        assert!(issuance_consent.contains("oninput:"));
+        assert!(!issuance_consent.contains("onchange:"));
+    }
+
+    #[test]
+    fn protocol_error_feedback_renders_a_durable_sanitized_terminal_status() {
+        let source = include_str!("lib.rs");
+        let rendered_source = source
+            .split("\n#[cfg(test)]\nmod tests {")
+            .next()
+            .expect("production source precedes tests");
+        assert_eq!(
+            rendered_source
+                .matches("aria_label: CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS")
+                .count(),
+            1,
+            "the terminal error must have one stable accessibility identifier",
+        );
+        assert!(rendered_source.contains("CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS"));
+        assert!(rendered_source.contains("CREDENTIAL_ISSUANCE_PROTOCOL_ERROR_STATUS"));
+        assert!(rendered_source.contains("credential_issuance_protocol_error_for_message"));
+        assert!(rendered_source.contains("credential_issuance_terminal_error_for_message"));
+        assert!(rendered_source.contains("role: \"status\""));
+        assert!(rendered_source.contains("aria_live: \"polite\""));
+
+        let unavailable = CredentialIssuanceError::Protocol(
+            oxid_protocol_application::IssuanceProtocolError::Unavailable,
+        );
+        let terminal_error = credential_issuance_terminal_error(&unavailable);
+        assert_eq!(
+            terminal_error,
+            Some(CredentialIssuanceTerminalError::ProtocolUnavailable)
+        );
+        let terminal_error = terminal_error.expect("known terminal category");
+        assert_eq!(
+            CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS,
+            "Credential issuance terminal error: protocol unavailable"
+        );
+        assert_eq!(
+            terminal_error.message(),
+            "This protocol is unavailable in the current build"
+        );
+        assert_eq!(
+            credential_issuance_terminal_error_for_message(terminal_error.message()),
+            Some(CredentialIssuanceTerminalError::ProtocolUnavailable)
+        );
+        assert!(credential_issuance_protocol_error_for_message(
+            terminal_error.message()
+        ));
+        assert!(credential_issuance_protocol_error_for_message(
+            "This protocol is unavailable in the current build. Session cleanup is unavailable; use Leave credential review to retry secret disposal before navigating away."
+        ));
+
+        let mut action = CredentialIssuanceAction::Idle;
+        assert!(begin_credential_issuance_action_value(
+            &mut action,
+            CredentialIssuanceAction::Previewing,
+        ));
+        assert_eq!(action, CredentialIssuanceAction::Previewing);
+        action = CredentialIssuanceAction::Idle;
+        assert_eq!(action, CredentialIssuanceAction::Idle);
+
+        let mut pending = Some(PendingIdentityRequest {
+            kind: IdentityRequestKind::CredentialIssuance,
+            request_uri: String::new(),
+        });
+        let mut manual_review_lock = false;
+        clear_credential_issuance_review_admission_value(&mut pending, &mut manual_review_lock);
+        assert!(pending.is_none());
+        assert!(!manual_review_lock);
+    }
+
+    #[test]
+    fn credential_decision_admission_is_single_flight_and_has_distinct_busy_copy() {
+        let mut action = CredentialIssuanceAction::Idle;
+        assert!(begin_credential_issuance_action_value(
+            &mut action,
+            CredentialIssuanceAction::Accepting,
+        ));
+        assert!(!begin_credential_issuance_action_value(
+            &mut action,
+            CredentialIssuanceAction::Refusing,
+        ));
+        assert_eq!(
+            credential_issuance_action_label(action),
+            "Issuing credential…"
+        );
+        action = CredentialIssuanceAction::Idle;
+        assert!(begin_credential_issuance_action_value(
+            &mut action,
+            CredentialIssuanceAction::Refusing,
+        ));
+        assert_eq!(credential_issuance_action_label(action), "Refusing offer…");
     }
 
     #[test]

@@ -6,9 +6,9 @@
 - Normative source: [OpenID for Verifiable Credential Issuance 1.0 Final](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html), published 2025-09-16
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/oid4vci_client/` and `mobile-bench/wallet-core/tests/oid4vci_issuance_e2e.rs`
 - Supersedes: ADR-0038 statements that all protocol ingress is queued
-- Amended by: ADR-0047; also amended by ADR-0040, ADR-0041, ADR-0042, ADR-0045
+- Amended by: ADR-0047 and ADR-0102; also amended by ADR-0040, ADR-0041, ADR-0042, ADR-0045
 - Amends: ADR-0004, ADR-0007, ADR-0010, ADR-0011, ADR-0013, ADR-0017, ADR-0018, ADR-0020, ADR-0021, ADR-0023, ADR-0024, ADR-0029, and ADR-0038
-- Implementation state: final-shape embedded-offer, pre-authorized-code issuance is implemented with an in-process standalone issuer, explicit consent, a DID-bound JWT proof, a separately selected managed Jubjub holder method, strict verification, protected persistence, headless flow, and Dioxus mobile flow; production HTTP, discovery, native custody, and other grant/transport variants remain unavailable
+- Implementation state: final-shape embedded-offer issuance remains the standalone mobile/test path; ADR-0102 also admits one immutable Portal Final real-HTTP route in native desktop/headless development with the same consent, managed proof, distinct Jubjub binding, verification, and encrypted persistence boundaries; production HTTP/discovery, native custody, and other grant/transport variants remain unavailable
 
 ## Context
 

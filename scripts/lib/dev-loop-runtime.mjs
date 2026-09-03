@@ -1,0 +1,475 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { lstat, mkdir, readdir, readFile, realpath, stat, symlink } from "node:fs/promises";
+import path from "node:path";
+
+const SETTINGS_PATH = path.join(".pi", "settings.json");
+const PROJECT_AGENTS_PATH = path.join(".pi", "agents");
+
+export const PI_BUILTIN_CHILD_TOOLS = Object.freeze([
+  "read", "grep", "find", "ls", "bash", "edit", "write",
+]);
+
+export const DEV_LOOP_SELECTED_TOOLS = Object.freeze([
+  "read", "grep", "find", "ls", "bash", "subagent",
+]);
+
+export const REPOSITORY_CONFIGURED_TOOLS = Object.freeze([
+  ...PI_BUILTIN_CHILD_TOOLS,
+  "subagent",
+  "labels_bootstrap", "pr_approve_dep_upgrade", "pr_expedite", "pr_request_review",
+  "pr_stabilize", "pr_watch", "review_claim", "review_complete", "review_create",
+  "review_enrich", "review_list",
+]);
+
+async function exists(candidate) {
+  try {
+    await stat(candidate);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return false;
+    throw error;
+  }
+}
+
+async function findGitRoot(cwd) {
+  const requested = await realpath(path.resolve(cwd));
+  let reported;
+  try {
+    reported = execFileSync("git", ["-C", requested, "rev-parse", "--path-format=absolute", "--show-toplevel"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch (error) {
+    throw new Error(`not inside a registered Git checkout: ${cwd}: ${(error.stderr ?? error.message).toString().trim()}`, { cause: error });
+  }
+  const gitRoot = await realpath(reported);
+  if (!isContained(gitRoot, requested)) throw new Error(`Git checkout root ${gitRoot} does not contain requested path ${requested}`);
+  return gitRoot;
+}
+
+async function resolveCommonCheckoutRoot(gitRoot) {
+  let porcelain;
+  try {
+    porcelain = execFileSync("git", ["-C", gitRoot, "worktree", "list", "--porcelain"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    throw new Error(`could not verify registered Git worktrees for ${gitRoot}: ${(error.stderr ?? error.message).toString().trim()}`, { cause: error });
+  }
+  const registered = porcelain.split(/\r?\n/)
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length));
+  if (registered.length === 0) throw new Error(`Git did not report a common checkout for ${gitRoot}`);
+  const resolved = await Promise.all(registered.map(async (candidate) => {
+    try {
+      return await realpath(candidate);
+    } catch {
+      return null;
+    }
+  }));
+  if (!resolved.includes(gitRoot)) throw new Error(`Git checkout is not registered in its common worktree list: ${gitRoot}`);
+  const commonRoot = resolved[0];
+  if (commonRoot === null) throw new Error(`registered common checkout is unavailable: ${registered[0]}`);
+  return commonRoot;
+}
+
+async function lstatIfPresent(candidate) {
+  try {
+    return await lstat(candidate);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+export async function ensureSharedPiPackageStore({ cwd = process.cwd() } = {}) {
+  const gitRoot = await findGitRoot(cwd);
+  const commonRoot = await resolveCommonCheckoutRoot(gitRoot);
+  for (const piRoot of new Set([path.join(gitRoot, ".pi"), path.join(commonRoot, ".pi")])) {
+    const info = await lstat(piRoot);
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(`Pi project root must be a real directory: ${piRoot}`);
+  }
+  const commonStore = path.join(commonRoot, ".pi", "npm");
+  await mkdir(commonStore, { recursive: true });
+  const commonInfo = await lstat(commonStore);
+  if (!commonInfo.isDirectory() || commonInfo.isSymbolicLink()) {
+    throw new Error(`common Pi package store must be a real directory: ${commonStore}`);
+  }
+  if (gitRoot === commonRoot) return { mode: "primary", gitRoot, commonRoot, store: commonStore };
+
+  const localStore = path.join(gitRoot, ".pi", "npm");
+  let localInfo = await lstatIfPresent(localStore);
+  if (localInfo === null) {
+    try {
+      await symlink(commonStore, localStore, "dir");
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+    }
+    localInfo = await lstatIfPresent(localStore);
+  }
+  if (!localInfo?.isSymbolicLink()) {
+    throw new Error(`linked worktree Pi package store must be absent or a managed symlink: ${localStore}`);
+  }
+  let resolvedLocal;
+  try {
+    resolvedLocal = await realpath(localStore);
+  } catch (error) {
+    throw new Error(`linked worktree Pi package store is a broken symlink: ${localStore}`, { cause: error });
+  }
+  if (resolvedLocal !== await realpath(commonStore)) {
+    throw new Error(`linked worktree Pi package store points outside the registered common checkout: ${localStore}`);
+  }
+  return { mode: "linked", gitRoot, commonRoot, store: commonStore, link: localStore };
+}
+
+const EXACT_SEMVER = "(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
+const EXACT_NPM_PIN = new RegExp(`^npm:((?:@[A-Za-z0-9_.-]+/)?[A-Za-z0-9_.-]+)@(${EXACT_SEMVER})$`);
+
+function parseExactNpmPins(settings) {
+  const packages = settings?.packages;
+  if (!Array.isArray(packages)) throw new Error(".pi/settings.json packages must be an array");
+  return packages.map((entry) => {
+    if (typeof entry !== "string" || !entry.startsWith("npm:")) {
+      throw new Error("every repository Pi package must be an exact npm semantic-version pin");
+    }
+    const match = entry.match(EXACT_NPM_PIN);
+    if (!match) throw new Error(`repository Pi package must use an exact npm semantic-version pin: ${entry}`);
+    return { name: match[1], version: match[2], spec: entry };
+  });
+}
+
+function parseExactNpmPin(settings) {
+  const pins = parseExactNpmPins(settings).filter(({ name }) => name === "dev-loops");
+  if (pins.length !== 1) throw new Error(".pi/settings.json must contain exactly one dev-loops npm pin");
+  return pins[0];
+}
+
+function npmPackagePath(root, name) {
+  return path.join(root, ".pi", "npm", "node_modules", ...name.split("/"));
+}
+
+function isContained(parent, child) {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+async function readJson(file, description) {
+  let source;
+  try {
+    source = await readFile(file, "utf8");
+  } catch (error) {
+    throw new Error(`could not read ${description} at ${file}: ${error.message}`, { cause: error });
+  }
+  try {
+    return JSON.parse(source);
+  } catch (error) {
+    throw new Error(`invalid JSON in ${description} at ${file}: ${error.message}`, { cause: error });
+  }
+}
+
+async function resolveInstalledPinnedPackages({ candidates, pins }) {
+  const installed = [];
+  const candidateRoots = await Promise.all(candidates.map(({ root }) => realpath(root)));
+  for (const pin of pins) {
+    let found = false;
+    for (const candidate of candidates) {
+      const requestedRoot = npmPackagePath(candidate.root, pin.name);
+      if (!(await exists(requestedRoot))) continue;
+      const packageRoot = await realpath(requestedRoot);
+      const ownerIndex = candidateRoots.findIndex((root) => isContained(root, packageRoot));
+      if (ownerIndex === -1) {
+        throw new Error(`${pin.name} package escapes allowed project roots: ${requestedRoot}`);
+      }
+      const manifest = await readJson(path.join(packageRoot, "package.json"), `${pin.name} package manifest`);
+      if (manifest.name !== pin.name || manifest.version !== pin.version) {
+        throw new Error(
+          `expected ${pin.name}@${pin.version} at ${requestedRoot}, found ${manifest.name ?? "unknown"}@${manifest.version ?? "unknown"}`,
+        );
+      }
+      installed.push({ ...pin, packageRoot, source: candidates[ownerIndex].source });
+      found = true;
+      break;
+    }
+    if (!found) {
+      throw new Error(
+        `missing exact ${pin.name}@${pin.version}; checked only ${candidates.map(({ root }) => npmPackagePath(root, pin.name)).join(", ")}`,
+      );
+    }
+  }
+  return installed;
+}
+
+/**
+ * Resolve only exact repository pins. Candidates are bounded to the active Git
+ * root and, for a linked worktree, that worktree's common checkout root.
+ */
+export async function resolveDevLoopsPackageRoot({ cwd = process.cwd(), includeAllPinnedPackages = false } = {}) {
+  const gitRoot = await findGitRoot(cwd);
+  const commonRoot = await resolveCommonCheckoutRoot(gitRoot);
+  const settingsPath = path.join(gitRoot, SETTINGS_PATH);
+  const settings = await readJson(settingsPath, "project Pi settings");
+  const pin = parseExactNpmPin(settings);
+  const candidates = [
+    { root: gitRoot, source: "git-root" },
+    ...(path.resolve(commonRoot) === path.resolve(gitRoot) ? [] : [{ root: commonRoot, source: "git-common-root" }]),
+  ];
+
+  // Public CLI wrappers need only dev-loops itself. The provider preflight opts
+  // into every repository pin because it inspects every installed agent set.
+  const pins = includeAllPinnedPackages ? parseExactNpmPins(settings) : [pin];
+  const packageRoots = await resolveInstalledPinnedPackages({ candidates, pins });
+  const devLoops = packageRoots.find(({ name }) => name === pin.name);
+  if (!(await exists(path.join(devLoops.packageRoot, "cli", "index.mjs")))) {
+    throw new Error(`expected ${pin.name}@${pin.version} CLI at ${path.join(devLoops.packageRoot, "cli", "index.mjs")}`);
+  }
+  return {
+    packageRoot: devLoops.packageRoot,
+    packageRoots,
+    version: pin.version,
+    spec: pin.spec,
+    source: devLoops.source,
+    gitRoot,
+    commonRoot,
+    settingsPath,
+    settings,
+  };
+}
+
+function stripYamlComment(value, file) {
+  let quote = null;
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote === '"' && escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote === '"' && character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (character === quote) quote = null;
+      continue;
+    }
+    if (character === '"' || character === "'") quote = character;
+    else if (character === "#" && (index === 0 || /\s/.test(value[index - 1]))) return value.slice(0, index).trimEnd();
+  }
+  if (quote) throw new Error(`unmodelled YAML frontmatter in agent manifest ${file}: unmatched quote`);
+  return value;
+}
+
+function unquoteFrontmatterScalar(value, file) {
+  const trimmed = stripYamlComment(value, file).trim();
+  if (!trimmed) return "";
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1);
+  }
+  if (trimmed.startsWith('"') || trimmed.endsWith('"') || trimmed.startsWith("'") || trimmed.endsWith("'")) {
+    throw new Error(`unmodelled YAML frontmatter in agent manifest ${file}: unmatched quote`);
+  }
+  return trimmed;
+}
+
+/**
+ * Parse only root-level name/tools fields. Other valid YAML fields, including
+ * nested lists and folded content, are deliberately ignored. An unmodelled
+ * tools shape throws; Pi hooks report it advisory, while the mandatory tracked
+ * pre-flight wrapper rejects it before routed actions or delegation.
+ */
+export function parseAgentFrontmatter(source, file) {
+  const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!match) throw new Error(`agent manifest has no YAML frontmatter: ${file}`);
+  const lines = match[1].split(/\r?\n/);
+  let name = "";
+  let tools = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^\s*(?:#.*)?$/.test(line) || /^\s/.test(line)) continue;
+    const field = line.match(/^([A-Za-z][A-Za-z0-9_-]*):(?:\s*(.*))?$/);
+    if (!field) continue;
+    const [, key, raw = ""] = field;
+    if (key === "name") name = unquoteFrontmatterScalar(raw, file).trim();
+    if (key !== "tools") continue;
+    const value = stripYamlComment(raw, file).trim();
+    if (value === ">" || value === "|" || value.startsWith(">-") || value.startsWith("|-")) {
+      throw new Error(`unmodelled YAML frontmatter in agent manifest ${file}: tools must be a scalar or sequence`);
+    }
+    if (value.startsWith("[")) {
+      if (!value.endsWith("]")) throw new Error(`unmodelled YAML frontmatter in agent manifest ${file}: unterminated tools list`);
+      tools = value.slice(1, -1).split(",").map((tool) => unquoteFrontmatterScalar(tool, file).trim()).filter(Boolean);
+    } else if (value) {
+      const scalar = unquoteFrontmatterScalar(value, file);
+      tools = scalar.split(",").map((tool) => tool.trim()).filter(Boolean);
+    } else {
+      tools = [];
+      while (index + 1 < lines.length) {
+        const next = lines[index + 1];
+        if (/^\s*(?:#.*)?$/.test(next)) {
+          index += 1;
+          continue;
+        }
+        const item = next.match(/^\s+-\s+(.+?)\s*$/);
+        if (item) {
+          const tool = unquoteFrontmatterScalar(item[1], file).trim();
+          if (tool) tools.push(tool);
+          index += 1;
+          continue;
+        }
+        if (/^\s/.test(next)) {
+          throw new Error(`unmodelled YAML frontmatter in agent manifest ${file}: unsupported tools sequence`);
+        }
+        break;
+      }
+    }
+  }
+  if (!name) throw new Error(`agent manifest requires a non-empty name: ${file}`);
+  return { name, tools };
+}
+
+function assertSupportedProjectSettings(settings) {
+  const subagents = settings?.subagents;
+  if (!subagents || typeof subagents !== "object" || Array.isArray(subagents)) {
+    throw new Error(".pi/settings.json must define subagents.projectRootResolution");
+  }
+  if (subagents.projectRootResolution !== "git-root") {
+    throw new Error("subagents.projectRootResolution must be git-root for managed worktrees");
+  }
+  if (subagents.agentOverrides !== undefined) {
+    throw new Error(
+      "tracked agentOverrides are forbidden for tool repair: pi-subagents 0.42.1 does not replace a custom agent's frontmatter tools; use tracked .pi/agents shadows",
+    );
+  }
+}
+
+async function readAgentDirectory(root, { requireTools = false } = {}) {
+  if (!(await exists(root))) return [];
+  const files = (await readdir(root)).filter((file) => file.endsWith(".agent.md")).sort();
+  const agents = await Promise.all(files.map(async (file) => ({
+    ...parseAgentFrontmatter(await readFile(path.join(root, file), "utf8"), path.join(root, file)),
+    file: path.join(root, file),
+  })));
+  if (requireTools) {
+    const inherited = agents.find(({ tools }) => tools === null);
+    if (inherited) throw new Error(`tracked project agent must declare an explicit tools allowlist: ${inherited.file}`);
+  }
+  // A package manifest without tools inherits runtime defaults and declares no
+  // allowlist for this preflight to validate.
+  return agents.filter(({ tools }) => tools !== null);
+}
+
+/** Check every installed repository-pinned package after project shadows. */
+export async function checkAgentToolAllowlists({
+  packageRoot,
+  packageRoots,
+  settings,
+  availableTools,
+  activeAgent,
+  activeTools,
+  futureTools,
+  projectRoot,
+}) {
+  const roots = packageRoots ?? (packageRoot ? [{ name: "dev-loops", packageRoot }] : []);
+  if (!Array.isArray(roots) || roots.length === 0) throw new Error("at least one pinned packageRoot is required");
+  if (!projectRoot) throw new Error("projectRoot is required");
+  if (!Array.isArray(availableTools)) throw new Error("availableTools must be an array");
+  if (activeAgent !== undefined && (typeof activeAgent !== "string" || activeAgent.trim() === "")) {
+    throw new Error("activeAgent must be a non-empty string when provided");
+  }
+  if (activeTools !== undefined && !Array.isArray(activeTools)) throw new Error("activeTools must be an array");
+  if (futureTools !== undefined && !Array.isArray(futureTools)) throw new Error("futureTools must be an array");
+  assertSupportedProjectSettings(settings);
+  const rootAvailable = new Set(availableTools);
+  const activeAvailable = new Set(activeTools ?? availableTools);
+  const futureAvailable = new Set(futureTools ?? availableTools);
+  const packaged = (await Promise.all(roots.map(async ({ name = "unknown", packageRoot: root }) =>
+    (await readAgentDirectory(path.join(root, "agents"))).map((agent) => ({ ...agent, packageName: name }))
+  ))).flat();
+  const project = await readAgentDirectory(path.join(projectRoot, PROJECT_AGENTS_PATH), { requireTools: true });
+  const projectByName = new Map();
+  for (const agent of project) {
+    if (projectByName.has(agent.name)) throw new Error(`duplicate tracked project agent '${agent.name}'`);
+    projectByName.set(agent.name, agent);
+  }
+
+  const agents = [];
+  const shadowedNames = new Set();
+  for (const packageAgent of packaged) {
+    const shadow = projectByName.get(packageAgent.name);
+    if (shadow) {
+      shadowedNames.add(packageAgent.name);
+      continue;
+    }
+    // Validate every duplicate-named package manifest. Settings order is not
+    // assumed to match Pi's package-discovery precedence.
+    const scope = activeAgent === undefined ? "root" : packageAgent.name === activeAgent ? "active" : "future-child";
+    const scopeTools = scope === "active" ? activeAvailable : scope === "future-child" ? futureAvailable : rootAvailable;
+    const missingTools = packageAgent.tools.filter((tool) => !scopeTools.has(tool));
+    agents.push({
+      name: packageAgent.name,
+      file: packageAgent.file,
+      source: `package:${packageAgent.packageName}`,
+      scope,
+      tools: [...packageAgent.tools],
+      missingTools,
+    });
+  }
+  for (const projectAgent of project) {
+    const scope = activeAgent === undefined ? "root" : projectAgent.name === activeAgent ? "active" : "future-child";
+    const scopeTools = scope === "active" ? activeAvailable : scope === "future-child" ? futureAvailable : rootAvailable;
+    const missingTools = projectAgent.tools.filter((tool) => !scopeTools.has(tool));
+    agents.push({
+      name: projectAgent.name,
+      file: projectAgent.file,
+      source: "project",
+      scope,
+      shadowsPackages: shadowedNames.has(projectAgent.name),
+      tools: [...projectAgent.tools],
+      missingTools,
+    });
+  }
+
+  return { ok: agents.every(({ missingTools }) => missingTools.length === 0), agents };
+}
+
+async function contentFingerprint(file) {
+  const source = await readFile(file);
+  return `${file}:sha256:${createHash("sha256").update(source).digest("hex")}`;
+}
+
+async function manifestFingerprints(root) {
+  if (!(await exists(root))) return [];
+  const files = (await readdir(root)).filter((file) => file.endsWith(".agent.md")).sort();
+  return Promise.all(files.map((file) => contentFingerprint(path.join(root, file))));
+}
+
+/** Content-bound session cache key for the checkout, pins, manifests, and Pi tool scopes. */
+export async function devLoopPreflightCacheKey({ resolved, availableTools, activeAgent, activeTools, futureTools }) {
+  const roots = resolved.packageRoots ?? [{ name: "dev-loops", packageRoot: resolved.packageRoot }];
+  const fingerprints = [
+    `cwd:${resolved.gitRoot}`,
+    `settings:${await contentFingerprint(resolved.settingsPath)}`,
+    `root-tools:${[...availableTools].sort().join(",")}`,
+    `active-agent:${activeAgent ?? "root"}`,
+    `active-tools:${[...(activeTools ?? availableTools)].sort().join(",")}`,
+    `future-tools:${[...(futureTools ?? availableTools)].sort().join(",")}`,
+  ];
+  for (const { name, version = "", packageRoot: root } of roots) {
+    fingerprints.push(`package:${name}@${version}:${root}:${await contentFingerprint(path.join(root, "package.json"))}`);
+    fingerprints.push(...await manifestFingerprints(path.join(root, "agents")));
+  }
+  fingerprints.push(...await manifestFingerprints(path.join(resolved.gitRoot, PROJECT_AGENTS_PATH)));
+  return fingerprints.join("|");
+}
+
+export function formatAgentToolAllowlistFailure(result) {
+  const invalid = result.agents.filter(({ missingTools }) => missingTools.length > 0);
+  if (invalid.length === 0) return "";
+  return `Pi dev-loop preflight failed: unavailable repository/package agent tools: ${invalid
+    .map(({ name, source, scope, missingTools }) => `${name}@${source}:${scope ?? "root"}=[${missingTools.join(", ")}]`)
+    .join("; ")}. Fix the tracked .pi/agents manifest or exact package installation before model execution. This preflight covers every installed repository-pinned package plus repository-local shadows; separately installed user agents are outside its claim.`;
+}

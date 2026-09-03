@@ -7,6 +7,12 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(all(feature = "readiness", not(target_arch = "wasm32")))]
+mod readiness;
+
+#[cfg(all(feature = "readiness", not(target_arch = "wasm32")))]
+pub use readiness::{StandaloneDeploymentReadiness, StandaloneReadinessConfigurationError};
+
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};

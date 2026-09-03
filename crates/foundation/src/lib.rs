@@ -4,6 +4,84 @@
 
 use std::{error::Error, fmt};
 
+/// Declares a domain-specific newtype backed by [`OpaqueId`].
+///
+/// The generated type preserves the deliberately small `OpaqueId` surface: it
+/// derives the standard value traits and exposes only `parse` and `as_str`.
+/// `Display` remains opt-in so adding a new identifier does not make it
+/// printable accidentally.
+///
+/// ```
+/// use oxid_foundation::opaque_id_type;
+///
+/// opaque_id_type! {
+///     /// Identifier used by this example boundary.
+///     pub struct ExampleId;
+///     display;
+/// }
+///
+/// let identifier = ExampleId::parse("example_42").expect("valid identifier");
+/// assert_eq!(identifier.as_str(), "example_42");
+/// assert_eq!(identifier.to_string(), "example_42");
+/// ```
+#[macro_export]
+macro_rules! opaque_id_type {
+    (
+        $(#[$attribute:meta])*
+        $visibility:vis struct $name:ident;
+        display;
+    ) => {
+        $crate::opaque_id_type! {
+            @define
+            $(#[$attribute])*
+            $visibility struct $name;
+        }
+        $crate::opaque_id_type!(@display $name);
+    };
+    (
+        $(#[$attribute:meta])*
+        $visibility:vis struct $name:ident;
+    ) => {
+        $crate::opaque_id_type! {
+            @define
+            $(#[$attribute])*
+            $visibility struct $name;
+        }
+    };
+    (
+        @define
+        $(#[$attribute:meta])*
+        $visibility:vis struct $name:ident;
+    ) => {
+        $(#[$attribute])*
+        #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        $visibility struct $name($crate::OpaqueId);
+
+        impl $name {
+            pub fn parse(
+                value: impl ::core::convert::Into<::std::string::String>,
+            ) -> ::core::result::Result<Self, $crate::OpaqueIdError> {
+                $crate::OpaqueId::parse(value).map(Self)
+            }
+
+            #[must_use]
+            pub fn as_str(&self) -> &str {
+                self.0.as_str()
+            }
+        }
+    };
+    (@display $name:ident) => {
+        impl ::core::fmt::Display for $name {
+            fn fmt(
+                &self,
+                formatter: &mut ::core::fmt::Formatter<'_>,
+            ) -> ::core::fmt::Result {
+                ::core::fmt::Display::fmt(&self.0, formatter)
+            }
+        }
+    };
+}
+
 /// A validated identifier whose representation is owned by Oxid.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OpaqueId(String);
@@ -84,6 +162,16 @@ impl UnixTimestampMillis {
 mod tests {
     use super::*;
 
+    crate::opaque_id_type! {
+        #[allow(dead_code)]
+        pub(crate) struct MacroOpaqueId;
+    }
+
+    crate::opaque_id_type! {
+        pub(crate) struct DisplayMacroOpaqueId;
+        display;
+    }
+
     #[test]
     fn opaque_id_accepts_a_stable_application_identifier() {
         let identifier = OpaqueId::parse("profile_42").expect("identifier should be valid");
@@ -97,5 +185,45 @@ mod tests {
             OpaqueId::parse("profile 42"),
             Err(OpaqueIdError::ContainsWhitespace)
         );
+    }
+
+    #[test]
+    fn opaque_id_macro_preserves_validation_and_value_traits() {
+        let identifier = MacroOpaqueId::parse("macro_42").expect("identifier should be valid");
+        let clone = identifier.clone();
+
+        assert_eq!(identifier, clone);
+        assert_eq!(identifier.as_str(), "macro_42");
+        assert_eq!(MacroOpaqueId::parse(""), Err(OpaqueIdError::Empty));
+        assert_eq!(
+            MacroOpaqueId::parse("x".repeat(129)),
+            Err(OpaqueIdError::TooLong)
+        );
+        assert_eq!(
+            MacroOpaqueId::parse("macro 42"),
+            Err(OpaqueIdError::ContainsWhitespace)
+        );
+        assert_eq!(
+            MacroOpaqueId::parse("macro\0"),
+            Err(OpaqueIdError::ContainsControlCharacter)
+        );
+
+        let mut ordered = std::collections::BTreeSet::new();
+        ordered.insert(identifier.clone());
+        assert!(ordered.contains(&identifier));
+
+        let mut hashed = std::collections::HashSet::new();
+        hashed.insert(identifier.clone());
+        assert!(hashed.contains(&identifier));
+        assert!(format!("{identifier:?}").contains("macro_42"));
+    }
+
+    #[test]
+    fn opaque_id_macro_adds_display_only_when_requested() {
+        let identifier =
+            DisplayMacroOpaqueId::parse("display_42").expect("identifier should be valid");
+
+        assert_eq!(identifier.to_string(), "display_42");
+        assert_eq!(identifier.as_str(), "display_42");
     }
 }

@@ -491,11 +491,11 @@ impl fmt::Display for SensitiveWalletOperationError {
 
 impl Error for SensitiveWalletOperationError {}
 
-pub struct WalletProtectionService<P> {
+pub struct WalletProtectionService<P: ?Sized> {
     protection: Arc<P>,
 }
 
-impl<P> WalletProtectionService<P> {
+impl<P: ?Sized> WalletProtectionService<P> {
     #[must_use]
     pub const fn new(protection: Arc<P>) -> Self {
         Self { protection }
@@ -504,7 +504,7 @@ impl<P> WalletProtectionService<P> {
 
 impl<P> GetWalletSecurityStatusUseCase for WalletProtectionService<P>
 where
-    P: WalletProtectionPort + 'static,
+    P: WalletProtectionPort + ?Sized + 'static,
 {
     fn execute(
         &self,
@@ -520,7 +520,7 @@ where
 
 impl<P> InitializeWalletSecurityUseCase for WalletProtectionService<P>
 where
-    P: WalletProtectionPort + 'static,
+    P: WalletProtectionPort + ?Sized + 'static,
 {
     fn execute(
         &self,
@@ -536,7 +536,7 @@ where
 
 impl<P> UnlockWalletUseCase for WalletProtectionService<P>
 where
-    P: WalletProtectionPort + 'static,
+    P: WalletProtectionPort + ?Sized + 'static,
 {
     fn execute(
         &self,
@@ -552,7 +552,7 @@ where
 
 impl<P> LockWalletUseCase for WalletProtectionService<P>
 where
-    P: WalletProtectionPort + 'static,
+    P: WalletProtectionPort + ?Sized + 'static,
 {
     fn execute(
         &self,

@@ -10,14 +10,45 @@ publish = false
 
 [features]
 default = []
+# Public standalone genesis custody for explicit development app profiles.
+# Normal composition does not compile the fixture authority.
+standalone-development = ["oxid-adapter-storage-dev/development-fixture"]
+# Sanitized health projection for an explicitly selected local or Tailnet
+# standalone app profile. It never enters normal or production composition.
+standalone-readiness = ["oxid-adapter-deployment-profile/readiness"]
+# Native oxid-headless-only development admission for the exact local Portal +
+# standalone bundle. Other consumers compile without this escape hatch.
+headless-portal-local = []
+# Owner-invoked ARM64-Darwin Dioxus test profile. The app feature is the only
+# caller; normal composition remains unchanged.
+desktop-portal-test = ["oxid-adapter-identity-ingress/desktop-test-qr-scanner"]
 mobile-compact-artifacts = ["oxid-adapter-vc-midnight/mobile-compact-artifacts"]
+# Android HTTPS initialization is owned by composition so the app and UI
+# boundaries never depend on JNI/native adapter implementations directly.
+android-platform-tls = ["dep:oxid-adapter-mobile-native"]
+# Explicit owner-invoked read-only PreProd mobile composition. Public signed
+# deployment material is compiled only into this profile; seed custody remains
+# owner-entered and platform-backed.
+preprod-observation = []
+# Native-mobile Portal identity/HTTP capability. It is target-gated, and its
+# fixed trigger remains runtime-inert until the app-owned standalone-portal path
+# calls the explicit Portal composition constructor.
+mobile-portal = [
+  "dep:oxid-adapter-mobile-native",
+  "oxid-adapter-openid4vci/portal-http-mobile",
+  "oxid-adapter-identity-ingress/loopback-test-offer-trigger",
+]
+mobile-portal-tailnet = [
+  "mobile-portal",
+  "oxid-adapter-did-midnight/tailnet-test-did-publication",
+  "oxid-adapter-identity-ingress/tailnet-test-offer-trigger",
+]
 android-jni-exception-recovery-test = [
   "dep:oxid-adapter-mobile-native",
   "oxid-adapter-mobile-native/android-jni-exception-recovery-test",
 ]
 
 [dependencies]
-hex.workspace = true
 oxid-adapter-backup-complete.workspace = true
 oxid-adapter-backup-portable.workspace = true
 oxid-adapter-did-midnight.workspace = true
@@ -47,15 +78,20 @@ oxid-passport-vault-application.workspace = true
 oxid-platform-ports.workspace = true
 oxid-protocol-application.workspace = true
 oxid-wallet-application.workspace = true
+oxid-capabilities-application.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 futures.workspace = true
+hex.workspace = true
 midnight-base-crypto.workspace = true
 midnight-ledger.workspace = true
 midnight-onchain-runtime.workspace = true
 midnight-serialize.workspace = true
 midnight-storage.workspace = true
 midnight-zswap.workspace = true
+oxid-wallet-domain.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 zeroize.workspace = true
 

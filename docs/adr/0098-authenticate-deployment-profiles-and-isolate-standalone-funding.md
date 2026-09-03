@@ -6,8 +6,10 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`
 - Implementation state: Signed profile and node-genesis gates implemented;
   guarded funded standalone unshielded and shielded finality/adapter-reconstruction flows proven;
-  no production trust root, signed profile, issuer/verifier transport, or
+  ADR-0105 selects the reviewed signed PreProd profile only in an opt-in
+  observation build; no production trust root, issuer/verifier transport, or
   deployment is selected by the default application
+- Amended by: ADR-0105
 
 ## Context
 

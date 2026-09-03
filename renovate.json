@@ -1,16 +1,19 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
-  "baseBranchPatterns": ["develop"],
   "dependencyDashboard": true,
   "minimumReleaseAge": "7 days",
+  "semanticCommits": "enabled",
+  "semanticCommitScope": "deps",
+  "labels": ["scope:deps"],
   "packageRules": [
     {
       "description": "Keep the Dioxus framework family aligned.",
       "groupName": "Dioxus framework",
       "matchPackageNames": ["dioxus", "/^dioxus-/"],
       "matchUpdateTypes": ["minor", "patch"],
-      "semanticCommitType": "fix"
+      "semanticCommitType": "fix",
+      "addLabels": ["type:fix"]
     },
     {
       "description": "Group non-major Rust development tooling updates.",
@@ -18,14 +21,16 @@
       "matchDepTypes": ["devDependencies"],
       "matchManagers": ["cargo"],
       "matchUpdateTypes": ["minor", "patch"],
-      "semanticCommitType": "chore"
+      "semanticCommitType": "chore",
+      "addLabels": ["type:chore"]
     },
     {
       "description": "Keep GitHub Actions reviewable as a separate group.",
       "groupName": "GitHub Actions",
       "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["minor", "patch"],
-      "semanticCommitType": "ci"
+      "semanticCommitType": "ci",
+      "addLabels": ["type:ci"]
     }
   ]
 }

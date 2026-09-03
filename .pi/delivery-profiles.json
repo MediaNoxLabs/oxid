@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "defaultProfile": "production-ready",
+  "profiles": {
+    "prototype": {
+      "remoteMutation": false,
+      "mergeEligible": false,
+      "evidenceClass": "provisional",
+      "maximumReviewers": 1,
+      "targets": {
+        "required": ["basic"],
+        "optionalHostedOnDemand": ["unit-linux", "headless-linux"],
+        "maximumFocusedQualifications": 1,
+        "neverImplied": [
+          "full-nix",
+          "ui-linux",
+          "ui-release-linux",
+          "coverage-linux",
+          "quality",
+          "nix-package",
+          "compact-artifacts",
+          "real-portal",
+          "real-midnight",
+          "desktop",
+          "ios",
+          "android",
+          "physical-device",
+          "tailnet",
+          "hosted-ci",
+          "multi-review"
+        ]
+      },
+      "sloSeconds": {
+        "firstFeedback": 180,
+        "focusedIteration": 600,
+        "workItem": 3600
+      },
+      "closeoutFields": [
+        "hypothesis",
+        "result",
+        "changedPaths",
+        "checksRun",
+        "knownGaps",
+        "resourceUse",
+        "promotionPlan"
+      ]
+    },
+    "production-ready": {
+      "remoteMutation": "authority-gated",
+      "mergeEligible": "after-required-gates",
+      "evidenceClass": "production",
+      "maximumReviewers": 2,
+      "targets": {
+        "strategy": "path-and-risk",
+        "featureCiProfile": "feature"
+      }
+    }
+  },
+  "promotion": {
+    "explicit": true,
+    "refreshBase": "origin/integration",
+    "auditPrototypeGaps": true,
+    "invalidateProvisionalEvidence": true,
+    "recomputeTargets": true
+  },
+  "alwaysEnforced": [
+    "issue-backed-worktree",
+    "branch-grammar",
+    "conventional-commits",
+    "dco-signoff",
+    "gpg-signing",
+    "secret-and-custody-boundaries",
+    "process-ownership",
+    "disk-bounds"
+  ]
+}

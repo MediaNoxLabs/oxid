@@ -8,6 +8,20 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = []
+# The strict Portal client remains available on native desktop/headless builds.
+# Mobile builds must opt into every HTTP/runtime dependency explicitly.
+portal-http-mobile = [
+  "dep:futures",
+  "dep:hex",
+  "dep:reqwest",
+  "dep:rustls",
+  "dep:sha2",
+  "dep:tokio",
+  "dep:webpki-root-certs",
+]
+
 [dependencies]
 base64.workspace = true
 ed25519-dalek.workspace = true
@@ -22,7 +36,26 @@ serde_json.workspace = true
 url.workspace = true
 zeroize.workspace = true
 
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "ios"), not(target_os = "android")))'.dependencies]
+futures.workspace = true
+hex.workspace = true
+reqwest = { workspace = true, features = ["form", "stream"] }
+rustls.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+webpki-root-certs.workspace = true
+
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
+futures = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
+reqwest = { workspace = true, features = ["form", "stream"], optional = true }
+rustls = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["rt-multi-thread"], optional = true }
+webpki-root-certs = { workspace = true, optional = true }
+
 [dev-dependencies]
+hex.workspace = true
 oxid-adapter-did-midnight.workspace = true
 oxid-adapter-platform-system.workspace = true
 oxid-adapter-storage-dev.workspace = true
@@ -31,6 +64,8 @@ oxid-credential-domain.workspace = true
 oxid-identity-domain.workspace = true
 oxid-wallet-application.workspace = true
 oxid-wallet-domain.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

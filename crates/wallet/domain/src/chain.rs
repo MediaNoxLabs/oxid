@@ -2,7 +2,7 @@
 
 use std::{error::Error, fmt};
 
-use oxid_foundation::{OpaqueId, OpaqueIdError, UnixTimestampMillis};
+use oxid_foundation::{UnixTimestampMillis, opaque_id_type};
 
 use crate::{WalletKeyReference, WalletPublicKey};
 
@@ -16,25 +16,10 @@ pub enum ChainKind {
     Midnight,
 }
 
-/// Stable network identity, independent from HTTP or WebSocket routes.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ChainNetworkId(OpaqueId);
-
-impl ChainNetworkId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
-impl fmt::Display for ChainNetworkId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
+opaque_id_type! {
+    /// Stable network identity, independent from HTTP or WebSocket routes.
+    pub struct ChainNetworkId;
+    display;
 }
 
 /// Broad environment classification for presentation and safety policy.
@@ -109,19 +94,9 @@ impl ChainNetwork {
     }
 }
 
-/// Stable public identifier for one account within a wallet profile.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ChainAccountId(OpaqueId);
-
-impl ChainAccountId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    /// Stable public identifier for one account within a wallet profile.
+    pub struct ChainAccountId;
 }
 
 /// Address semantics known to the chain-neutral wallet boundary.
@@ -324,19 +299,9 @@ impl fmt::Display for ChainAccountDerivationError {
 
 impl Error for ChainAccountDerivationError {}
 
-/// Stable asset identity within a chain adapter.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ChainAssetId(OpaqueId);
-
-impl ChainAssetId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    /// Stable asset identity within a chain adapter.
+    pub struct ChainAssetId;
 }
 
 /// Short public symbol such as NIGHT or DUST.
@@ -448,34 +413,14 @@ impl AssetBalanceChange {
     }
 }
 
-/// Stable transaction identity owned by Oxid.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ChainTransactionId(OpaqueId);
-
-impl ChainTransactionId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    /// Stable transaction identity owned by Oxid.
+    pub struct ChainTransactionId;
 }
 
-/// Stable public block identity owned by Oxid.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ChainBlockId(OpaqueId);
-
-impl ChainBlockId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    /// Stable public block identity owned by Oxid.
+    pub struct ChainBlockId;
 }
 
 /// Wallet-relative transaction direction.

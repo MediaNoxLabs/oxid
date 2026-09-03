@@ -1,0 +1,11 @@
+{
+  "credential_configuration_id": "digital_passport_v1",
+  "proofs": {
+    "jwt": [
+      "SYNTHETIC_MALFORMED_PROOF"
+    ]
+  },
+  "midnight": {
+    "holderBindingMethod": "did:example:synthetic-holder#assert"
+  }
+}

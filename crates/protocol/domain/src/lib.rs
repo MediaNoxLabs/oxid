@@ -4,7 +4,7 @@
 
 use std::{collections::BTreeSet, error::Error, fmt};
 
-use oxid_foundation::{OpaqueId, OpaqueIdError};
+use oxid_foundation::opaque_id_type;
 
 const MAX_ISSUER_CHARACTERS: usize = 2_048;
 const MAX_CONFIGURATION_CHARACTERS: usize = 256;
@@ -12,46 +12,16 @@ const MAX_CONFIGURATION_COUNT: usize = 16;
 const MAX_VERIFIER_CHARACTERS: usize = 2_048;
 const MAX_PURPOSE_CHARACTERS: usize = 512;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CredentialIssuanceId(OpaqueId);
-
-impl CredentialIssuanceId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    pub struct CredentialIssuanceId;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ProtocolProfileId(OpaqueId);
-
-impl ProtocolProfileId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    pub struct ProtocolProfileId;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SelfIssuedAuthenticationId(OpaqueId);
-
-impl SelfIssuedAuthenticationId {
-    pub fn parse(value: impl Into<String>) -> Result<Self, OpaqueIdError> {
-        OpaqueId::parse(value).map(Self)
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
+opaque_id_type! {
+    pub struct SelfIssuedAuthenticationId;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

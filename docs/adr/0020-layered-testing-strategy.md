@@ -4,7 +4,7 @@
 - Date: 2026-08-11
 - Blueprint source: Sections 3, 13, and 18
 - Implementation state: M0 baseline implemented; security suites expand later
-- Amended by: ADR-0038, ADR-0039, ADR-0040, ADR-0041, ADR-0042, ADR-0043, ADR-0044, ADR-0045, ADR-0046
+- Amended by: ADR-0038, ADR-0039, ADR-0040, ADR-0041, ADR-0042, ADR-0043, ADR-0044, ADR-0045, ADR-0046, ADR-0104
 
 ## Context
 

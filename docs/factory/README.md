@@ -3,8 +3,8 @@
 The factory is Oxid's formalized agent-driven delivery system, proposed in
 [issue #35](https://github.com/MediaNoxLabs/oxid/issues/35). The repository
 itself is the coordination plane: issues are the backlog, pull requests are
-work units, labels carry finite-state-machine state, checks are gates, and a
-human holds merge authority.
+work units, labels carry finite-state-machine state, and checks plus recorded
+current-head review evidence are the delivery gates.
 
 | Document | Contents |
 | --- | --- |
@@ -12,12 +12,23 @@ human holds merge authority.
 | [fsm.md](fsm.md) | The work-item finite state machine: states, transitions, gate conditions, failure edges. |
 | [claim-protocol.md](claim-protocol.md) | Decentralized claim/lease protocol so agents on different machines never double-work an item. |
 | [metrics.md](metrics.md) | The measurements the factory watches and the current baselines. |
+| [work-item-metrics-v1.schema.json](work-item-metrics-v1.schema.json) | Closed, machine-readable per-issue/PR/head telemetry contract. |
+| [contribution-policy.md](contribution-policy.md) | Branch, commit, signature, scope, and contribution-label rules. |
+| [ci-target-matrix.md](ci-target-matrix.md) | Assurance levels, component routing, branch profiles, target dependencies, budgets, and promotion gaps. |
 | [runbook.md](runbook.md) | Phase 1 operations: what is installed, the three concurrency mechanisms, the label profile, and what refuses to work by design. |
+| [productive-loop.md](productive-loop.md) | Time-to-main SLOs, target routing, review limits, and worktree/disk lifecycle. |
+| [pi-runtime-audit.md](pi-runtime-audit.md) | Effective Pi/model/package budgets, measured disk state, package canaries, and operator setup. |
+| [worker-topology.md](worker-topology.md) | Multiple local sessions, cloud workers, independent engineer setup, and concurrency ownership. |
+| [application-targets.md](application-targets.md) | Build, exact-artifact receipt, deploy, and run commands for desktop, Android, and iOS Simulator. |
+| [portal-macos-laptop.md](portal-macos-laptop.md) | Owner-invoked local Portal macOS prequalification. |
+| [portal-mobile-simulators.md](portal-mobile-simulators.md) | Owner-invoked packaged iOS Simulator and Android QEMU Portal evidence. |
+| [portal-android-tailnet-physical.md](portal-android-tailnet-physical.md) | Owner-invoked physical Android Tailnet Portal conformance evidence. |
+| [../../demo/README.md](../../demo/README.md) | Provider-neutral physical Android demo for Tailnet Midnight services and standalone OpenID4VC protocols. |
 
-Tooling lives in [`.pi/extensions/factory.ts`](../../.pi/extensions/factory.ts)
-(a [pi](https://pi.dev) repo-local extension) so any engineer or agent with the
-repository checkout and a `gh` login can participate — from any machine, with
-any LLM provider.
+Read-only status tooling lives in
+[`.pi/extensions/factory.ts`](../../.pi/extensions/factory.ts). GitHub mutation
+belongs to tracked, contract-tested repository wrappers; `/factory claim`
+fails closed until the guarded lease transaction in issue #197 is delivered.
 
 ## Design constraints
 
@@ -25,20 +36,28 @@ any LLM provider.
    existing development flow; a work item enters the factory only when it
    carries a `factory:*` label.
 2. **No coordination infrastructure.** GitHub is the lock service, the queue,
-   and the audit log. Any agent that can run `gh` can participate.
+   and the audit log. Any conforming worker that can run `gh` can participate
+   from an isolated local or cloud checkout.
 3. **Provider-agnostic.** Roles reference capabilities, never a specific LLM.
    Model selection is configuration (`.pi/settings.json`, `.devloops`
    persona `defaultModel`), not process.
-4. **Humans merge.** Agents deliver evidence; `.devloops` `humanMergeOnly`
-   remains binding.
+4. **Proportional evidence before delivery.** Stable required aggregators
+   run the impact-planned hosted targets. Independent Claude CLI
+   current-head evidence is added for high-risk work, an owner request, or a
+   disputed finding. An active owner request may authorize the guarded wrapper
+   to merge an issue-backed `integration` PR; `main`, `develop`, release,
+   settings, tag, and ADR authority remain human.
 
-## Field experience, 2026-08-18 to 2026-08-20
+## Historical field experience, 2026-08-18 to 2026-08-20
 
 The protocol in these documents was exercised before it was accepted, by two
-agents working the same repository in parallel: a build agent delivering the
-feature backlog on `develop`, and a quality steward reviewing that stream and
-executing separate backlog items on branches. What held up and what did not is
-recorded here so the proposal is judged on evidence rather than intent.
+agents working the same repository in parallel. During that recorded period,
+`develop` was the active delivery branch: a build agent delivered the feature
+backlog there while a quality steward reviewed that stream and executed
+separate backlog items on branches. Current work instead targets `integration`
+as defined by [the delivery authority](../integration-delivery.md). What held
+up and what did not is recorded here so the proposal is judged on evidence
+rather than intent.
 
 **What worked.**
 
@@ -69,11 +88,12 @@ recorded here so the proposal is judged on evidence rather than intent.
   steward's own worktree left uncommitted changes on the wrong branch. Parallel
   workers need separate worktrees, and `git add` with explicit paths rather
   than `-A`.
-- *Merge cadence hides verification.* Merging five pull requests in quick
-  succession made `cancel-in-progress` cancel each intermediate `develop` run,
-  so those commits carry no completed verdict even though every pull request
-  was green before merge. Space merges, or state plainly that verification is
-  tip-only.
+- *Merge cadence hides verification.* During that historical `develop` period,
+  merging five pull requests in quick succession made `cancel-in-progress`
+  cancel each intermediate run, so those commits carry no completed verdict
+  even though every pull request was green before merge. This lesson now
+  applies to `integration`: space merges, or state plainly that verification
+  is tip-only.
 - *A check that cannot fail is worse than no check.* A first version of the
   decision-record lint used `sed` alternation that BSD `sed` ignores: it
   reported a clean corpus while matching nothing. Prove a new gate fails

@@ -868,9 +868,9 @@ dependencies = [
 
 [[package]]
 name = "chacha20"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d524456ba66e72eb8b115ff89e01e497f8e6d11d78b70b1aa13c0fbd97540a81"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
 dependencies = [
  "cfg-if",
  "cipher 0.5.2",
@@ -886,7 +886,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b89e1c441e926b9c82a8d023f6e1b7ae0adcfaa7d621814e4d60789bac751cb"
 dependencies = [
  "aead 0.6.1",
- "chacha20 0.10.1",
+ "chacha20 0.10.2",
  "cipher 0.5.2",
  "poly1305 0.9.1",
  "zeroize",
@@ -5580,9 +5580,15 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
+ "futures",
  "hex",
+ "oxid-capabilities-application",
+ "reqwest 0.13.4",
+ "rustls",
  "serde",
  "serde_json",
+ "tokio",
+ "tokio-tungstenite",
  "url",
 ]
 
@@ -5608,11 +5614,13 @@ dependencies = [
  "oxid-wallet-domain",
  "p256",
  "reqwest 0.13.4",
+ "rustls",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tokio",
  "webpki-root-certs 1.0.9",
+ "zeroize",
 ]
 
 [[package]]
@@ -5622,10 +5630,14 @@ dependencies = [
  "oxid-adapter-mobile-native",
  "oxid-platform-ports",
  "oxid-protocol-application",
+ "reqwest 0.13.4",
+ "rustls",
  "serde",
  "serde_json",
  "tokio",
  "url",
+ "webpki-root-certs 1.0.9",
+ "zeroize",
 ]
 
 [[package]]
@@ -5666,7 +5678,10 @@ dependencies = [
 name = "oxid-adapter-mobile-native"
 version = "0.1.0"
 dependencies = [
+ "jni 0.22.4",
  "manganis",
+ "rustls-platform-verifier 0.5.3",
+ "rustls-platform-verifier 0.7.0",
  "serde",
  "serde_json",
  "zeroize",
@@ -5678,6 +5693,8 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
+ "futures",
+ "hex",
  "oxid-adapter-did-midnight",
  "oxid-adapter-platform-system",
  "oxid-adapter-storage-dev",
@@ -5692,9 +5709,14 @@ dependencies = [
  "oxid-wallet-application",
  "oxid-wallet-domain",
  "p256",
+ "reqwest 0.13.4",
+ "rustls",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tokio",
  "url",
+ "webpki-root-certs 1.0.9",
  "zeroize",
 ]
 
@@ -5812,6 +5834,7 @@ dependencies = [
  "midnight-serialize",
  "midnight-transient-crypto",
  "oxid-adapter-backup-portable",
+ "oxid-adapter-storage-memory",
  "oxid-foundation",
  "oxid-platform-ports",
  "oxid-wallet-application",
@@ -5920,9 +5943,11 @@ dependencies = [
  "dioxus",
  "getrandom 0.2.17",
  "getrandom 0.4.3",
+ "oxid-adapter-identity-ingress",
  "oxid-brand-build",
  "oxid-composition",
  "oxid-ui-dioxus",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -5970,6 +5995,7 @@ dependencies = [
  "oxid-adapter-storage-memory",
  "oxid-adapter-storage-mobile",
  "oxid-adapter-vc-midnight",
+ "oxid-capabilities-application",
  "oxid-credential-application",
  "oxid-diagnostics-application",
  "oxid-identity-application",
@@ -5978,6 +6004,8 @@ dependencies = [
  "oxid-presentation-application",
  "oxid-protocol-application",
  "oxid-wallet-application",
+ "oxid-wallet-domain",
+ "sha2 0.10.9",
  "tokio",
  "zeroize",
 ]
@@ -6009,9 +6037,14 @@ version = "0.1.0"
 name = "oxid-headless"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "futures",
+ "hex",
+ "oxid-adapter-did-midnight",
  "oxid-adapter-openid4vci",
+ "oxid-adapter-platform-system",
  "oxid-adapter-siopv2",
+ "oxid-adapter-vc-midnight",
  "oxid-capabilities-application",
  "oxid-composition",
  "oxid-credential-application",
@@ -6026,8 +6059,10 @@ dependencies = [
  "oxid-wallet-domain",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "tokio-tungstenite",
+ "url",
 ]
 
 [[package]]
@@ -6110,6 +6145,7 @@ name = "oxid-ui-dioxus"
 version = "0.1.0"
 dependencies = [
  "dioxus",
+ "dioxus-document",
  "futures",
  "oxid-capabilities-application",
  "oxid-credential-application",
@@ -6937,7 +6973,7 @@ version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c7f5fa3a058cd35567ef9bfa5e75732bee0f9e4c55fa90477bef2dfcdbc4be80"
 dependencies = [
- "chacha20 0.10.1",
+ "chacha20 0.10.2",
  "getrandom 0.4.3",
  "rand_core 0.10.1",
 ]
@@ -7243,6 +7279,7 @@ dependencies = [
  "rustls-platform-verifier 0.7.0",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
