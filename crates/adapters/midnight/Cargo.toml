@@ -19,6 +19,7 @@ required-features = ["proving-bench"]
 [dependencies]
 bech32.workspace = true
 hex.workspace = true
+oxid-adapter-store-atomic.workspace = true
 oxid-foundation.workspace = true
 oxid-diagnostics-application.workspace = true
 oxid-platform-ports.workspace = true

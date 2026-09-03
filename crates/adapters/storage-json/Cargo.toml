@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 directories.workspace = true
+oxid-adapter-store-atomic.workspace = true
 oxid-foundation.workspace = true
 oxid-wallet-application.workspace = true
 oxid-wallet-domain.workspace = true
