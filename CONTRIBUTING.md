@@ -8,7 +8,7 @@ Read `AGENT.md`, `OXID_IDENTITY_WALLET_BLUEPRINT.md`, the
 [`RUST_MONOREPO_QUALITY.md`](RUST_MONOREPO_QUALITY.md) non-functional north
 star, its
 [versioned quality constitution](docs/site/src/quality-constitution.md),
-and `docs/integration-delivery.md`. Architectural work must preserve inward
+and `docs/issue-branch-delivery.md`. Architectural work must preserve inward
 dependencies and include an ADR. Open an issue before a large feature or
 dependency migration so its capability boundary and security impact can be
 agreed first.
@@ -39,11 +39,10 @@ outgoing adapters. Run it directly with `./run.sh coverage --strict`.
 
 ## Pull requests
 
-- Target `integration` for issue-backed product, refactor, quality, and tooling
-  work. It is the only writable delivery branch and the sole Pages publishing
-  source; historical `main` and migration-era `develop` are read-only under
-  repository ruleset `21481544`. Follow `docs/integration-delivery.md` for the
-  full base and required-check contract.
+- Create `<type>/issue-<number>` from `origin/develop` for issue-backed product,
+  refactor, quality, documentation, and tooling work, then target `develop`.
+  `main` is the human-controlled release branch and the Pages source. Follow
+  `docs/issue-branch-delivery.md` for the full base and required-check contract.
 - Keep one bounded vertical slice per pull request.
 - Open the pull request as a draft first.
 - Add or update tests and public documentation with behavior.
@@ -75,7 +74,7 @@ Use the mandatory scope in real commands, for example:
 
 ```bash
 git commit -S --signoff -m "feat(wallet): add profile creation"
-./scripts/check-dco.sh "$(git merge-base HEAD origin/integration)" HEAD
+./scripts/check-dco.sh "$(git merge-base HEAD origin/develop)" HEAD
 ```
 
 Install the repository-scoped local hooks once per clone:

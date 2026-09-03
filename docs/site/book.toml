@@ -15,7 +15,7 @@ command = "mdbook-mermaid"
 [output.html]
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
 git-repository-url = "https://github.com/MediaNoxLabs/oxid"
-edit-url-template = "https://github.com/MediaNoxLabs/oxid/edit/integration/docs/site/{path}"
+edit-url-template = "https://github.com/MediaNoxLabs/oxid/edit/develop/docs/site/{path}"
 site-url = "/oxid/"
 default-theme = "rust"
 preferred-dark-theme = "navy"

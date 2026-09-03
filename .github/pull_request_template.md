@@ -2,8 +2,8 @@
 
 <!-- What changed, why, and which user/capability boundary owns it? -->
 
-Target branch: `integration`; historical `main` and `develop` are read-only.
-See `docs/integration-delivery.md`.
+Target branch: `develop`; `main` is the human-controlled release branch.
+See `docs/issue-branch-delivery.md`.
 
 ## Validation
 

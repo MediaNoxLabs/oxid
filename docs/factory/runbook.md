@@ -176,7 +176,7 @@ root or its linked-worktree common checkout; it never searches home/global
 installs. Project Pi input is also preflighted against the effective packaged
 agent tool allowlists before model dispatch. See
 `docs/dev-loop-stability.md` for failure remediation, the REST GitHub probes,
-forced integration-base wrappers, exact-head Claude command, and the explicit
+forced develop-base wrappers, exact-head Claude command, and the explicit
 upstream-only gap table.
 
 `gates` is the authoritative dev-loop config validator — it exercises the real loader,
@@ -192,13 +192,13 @@ undetectable later. The check that matters is `gates` parsing.
 ## What will refuse to work, by design
 
 - **No unguarded or cross-base automated merge.** `.devloops` permits the loop
-  to reach merge, but `scripts/github/merge-integration-pr.mjs` accepts only an
-  issue-backed `integration` PR and requires an explicit active owner
+  to reach merge, but `scripts/github/merge-develop-pr.mjs` accepts only an
+  issue-backed `develop` PR and requires an explicit active owner
   authorization for `--execute`. It fails closed unless the base and head stay
   unchanged, the merge tree is conflict-free, all required checks (including
   GPG/DCO) pass, both gate verdicts match, and conversations are resolved.
-  `main` and `develop` remain human-only.
-- **Fan-out is on demand, not an integration merge prerequisite.**
+  promotion to `main` remains human-only.
+- **Fan-out is on demand, not a develop merge prerequisite.**
   `gates.requireFanoutEvidence: false` and `requireFanoutProvenance: false`
   keep the ordinary local-only path compatible with
   `refinement.maxCopilotRounds: 0`. High-risk work may still fan out to the
@@ -272,14 +272,14 @@ in a diff.
 - **Audit before creating another worktree.** `node scripts/worktree-lifecycle.mjs
   audit` lists target size, cleanliness, merge state/proof, and age. Direct
   ancestry is preferred; squash-merged heads require one exact merged GitHub PR
-  with an `integration` base and a merge commit present on a remotely observed,
-  current `origin/integration`. Unavailable, stale, malformed, or ambiguous
+  with a `develop` base and a merge commit present on a remotely observed,
+  current `origin/develop`. Unavailable, stale, malformed, or ambiguous
   evidence fails closed. The audit remains mutation-free, but non-ancestor heads
   require network access plus an installed, logged-in `gh`; offline runs retain
   local ancestry and mark hosted proof `unavailable`. Its human table appends
   the proof column, while automation should use the additive JSON shape. `remove` and
   `clean-target` require an exact path, expected head SHA, and `--execute`;
-  removal additionally requires a clean head integrated into `origin/integration`
+  removal additionally requires a clean head integrated into `origin/develop`
   and seven days of retention. Before creating a new canonical worktree, the
   tracked wrapper runs only host-capacity admission for that Git common
   checkout. A measured red worktree count or target-storage result blocks new
@@ -315,7 +315,7 @@ in a diff.
   extensions and instructions. Stop it, preserve its branch/head, then restart
   after changing `.pi/`, `.devloops`, or their installed pins.
 - **Space out merges.** CI uses `cancel-in-progress`, so several merges in quick
-  succession cancel intermediate `integration` runs and leave only the tip verified.
+  succession cancel intermediate `develop` runs and leave only the tip verified.
   Either pace them or state explicitly that verification is tip-only.
 - **Verify then merge, in separate commands.** Chaining a check and a merge with
   `||` or `&&` has already merged a red PR once here. Assert zero non-passing

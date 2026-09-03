@@ -9,10 +9,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  INTEGRATION_BLOB_PREFIX,
-  INTEGRATION_BLOB_REMAP_PATTERN,
+  DEVELOP_BLOB_PREFIX,
+  DEVELOP_BLOB_REMAP_PATTERN,
   buildLycheeArgs,
-  candidateIntegrationUrls,
+  candidateDevelopUrls,
   candidatePath,
   validateCandidateLinks,
 } from "../../scripts/docs/check-links.mjs";
@@ -50,7 +50,7 @@ test("ADR catalog generation is identical without remotes and across arbitrary r
     }
   }
   assert.equal(new Set(outputs).size, 1);
-  assert.match(outputs[0], /blob\/integration\/docs\/adr\/0104-example\.md/);
+  assert.match(outputs[0], /blob\/develop\/docs\/adr\/0104-example\.md/);
 });
 
 test("catalog generation executes when the script path traverses a symlink", () => {
@@ -68,12 +68,12 @@ test("catalog generation executes when the script path traverses a symlink", () 
   }
 });
 
-test("candidate integration blob links resolve to tracked local files before Lychee", async () => {
+test("candidate develop blob links resolve to tracked local files before Lychee", async () => {
   const root = tempDir();
   try {
     git(root, "init", "-q", "-b", "candidate");
     mkdirSync(path.join(root, "docs", "adr"), { recursive: true });
-    writeFileSync(path.join(root, "README.md"), `[ADR](${INTEGRATION_BLOB_PREFIX}docs/adr/0104-example.md)\n`);
+    writeFileSync(path.join(root, "README.md"), `[ADR](${DEVELOP_BLOB_PREFIX}docs/adr/0104-example.md)\n`);
     writeFileSync(path.join(root, "docs", "adr", "0104-example.md"), "# Example\n");
     git(root, "add", "README.md", "docs/adr/0104-example.md");
     await validateCandidateLinks(root);
@@ -82,27 +82,27 @@ test("candidate integration blob links resolve to tracked local files before Lyc
   }
 });
 
-test("candidate integration blob validation fails for missing and ambiguous targets", async () => {
+test("candidate develop blob validation fails for missing and ambiguous targets", async () => {
   const root = tempDir();
   try {
     git(root, "init", "-q", "-b", "candidate");
-    writeFileSync(path.join(root, "README.md"), `[missing](${INTEGRATION_BLOB_PREFIX}docs/missing.md)\n`);
+    writeFileSync(path.join(root, "README.md"), `[missing](${DEVELOP_BLOB_PREFIX}docs/missing.md)\n`);
     git(root, "add", "README.md");
     await assert.rejects(validateCandidateLinks(root), /not tracked/);
-    assert.throws(() => candidatePath(`${INTEGRATION_BLOB_PREFIX}docs/%2e%2e/secret.md`), /ambiguous/);
-    assert.throws(() => candidatePath(`${INTEGRATION_BLOB_PREFIX}docs/../secret.md`), /unsafe/);
-    assert.equal(candidatePath(`${INTEGRATION_BLOB_PREFIX}docs/adr/0104-example.md?plain=1#decision`), "docs/adr/0104-example.md");
+    assert.throws(() => candidatePath(`${DEVELOP_BLOB_PREFIX}docs/%2e%2e/secret.md`), /ambiguous/);
+    assert.throws(() => candidatePath(`${DEVELOP_BLOB_PREFIX}docs/../secret.md`), /unsafe/);
+    assert.equal(candidatePath(`${DEVELOP_BLOB_PREFIX}docs/adr/0104-example.md?plain=1#decision`), "docs/adr/0104-example.md");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("candidate integration blob validation rejects tracked symlink targets", async () => {
+test("candidate develop blob validation rejects tracked symlink targets", async () => {
   const root = tempDir();
   try {
     git(root, "init", "-q", "-b", "candidate");
     mkdirSync(path.join(root, "docs"), { recursive: true });
-    writeFileSync(path.join(root, "README.md"), `[link](${INTEGRATION_BLOB_PREFIX}docs/link.md)\n`);
+    writeFileSync(path.join(root, "README.md"), `[link](${DEVELOP_BLOB_PREFIX}docs/link.md)\n`);
     writeFileSync(path.join(root, "outside.md"), "# Outside\n");
     symlinkSync("../outside.md", path.join(root, "docs", "link.md"));
     git(root, "add", "README.md", "outside.md", "docs/link.md");
@@ -113,31 +113,31 @@ test("candidate integration blob validation rejects tracked symlink targets", as
 });
 
 test("candidate scanning ignores code examples and trims prose punctuation", () => {
-  const live = `${INTEGRATION_BLOB_PREFIX}docs/adr/0104-example.md#decision`;
-  const markdown = `A live URL ${live}.\n\n\`inline ${INTEGRATION_BLOB_PREFIX}secret.md\`\n\n    ${INTEGRATION_BLOB_PREFIX}indented.md\n\n\`\`\`text\n${INTEGRATION_BLOB_PREFIX}fenced.md\n\`\`\`\n\n~~~text\n${INTEGRATION_BLOB_PREFIX}unclosed.md`;
-  assert.deepEqual(candidateIntegrationUrls(markdown), [live]);
+  const live = `${DEVELOP_BLOB_PREFIX}docs/adr/0104-example.md#decision`;
+  const markdown = `A live URL ${live}.\n\n\`inline ${DEVELOP_BLOB_PREFIX}secret.md\`\n\n    ${DEVELOP_BLOB_PREFIX}indented.md\n\n\`\`\`text\n${DEVELOP_BLOB_PREFIX}fenced.md\n\`\`\`\n\n~~~text\n${DEVELOP_BLOB_PREFIX}unclosed.md`;
+  assert.deepEqual(candidateDevelopUrls(markdown), [live]);
 });
 
-test("Lychee remaps only the same-repository integration prefix and still checks all Markdown", () => {
+test("Lychee remaps only the same-repository develop prefix and still checks all Markdown", () => {
   const args = buildLycheeArgs(repoRoot, { candidate: true });
   const remapIndex = args.indexOf("--remap");
   assert.notEqual(remapIndex, -1);
-  assert.match(args[remapIndex + 1], /^\^https:\/\/github\\\.com\/MediaNoxLabs\/oxid\/blob\/integration\/ file:\/\//);
-  const remap = new RegExp(INTEGRATION_BLOB_REMAP_PATTERN);
-  assert.equal(remap.test(INTEGRATION_BLOB_PREFIX), true);
-  assert.equal(remap.test("https://githubXcom/MediaNoxLabs/oxid/blob/integration/docs/adr/0104.md"), false);
+  assert.match(args[remapIndex + 1], /^\^https:\/\/github\\\.com\/MediaNoxLabs\/oxid\/blob\/develop\/ file:\/\//);
+  const remap = new RegExp(DEVELOP_BLOB_REMAP_PATTERN);
+  assert.equal(remap.test(DEVELOP_BLOB_PREFIX), true);
+  assert.equal(remap.test("https://githubXcom/MediaNoxLabs/oxid/blob/develop/docs/adr/0104.md"), false);
   assert.equal(args.at(-1), "./**/*.md");
   assert.equal(args.includes("--include-fragments=none"), false);
   assert.equal(args.includes("--include-verbatim=false"), false);
   assert.equal(args.includes("--offline"), false);
   assert.equal(args.includes("--exclude"), false);
-  const integrationArgs = buildLycheeArgs(repoRoot);
-  assert.equal(integrationArgs.includes("--remap"), false);
+  const stableArgs = buildLycheeArgs(repoRoot);
+  assert.equal(stableArgs.includes("--remap"), false);
 });
 
-test("the renderer keeps durable integration URLs for candidate-only ADRs", () => {
+test("the renderer keeps durable develop URLs for candidate-only ADRs", () => {
   const rendered = renderAdrCatalog("# ADRs\n\n| [0104](0104-example.md) Example | Accepted |\n");
-  assert.ok(rendered.includes(`${INTEGRATION_BLOB_PREFIX}docs/adr/0104-example.md`));
+  assert.ok(rendered.includes(`${DEVELOP_BLOB_PREFIX}docs/adr/0104-example.md`));
 });
 
 test("the committed ADR catalog is the exact hermetic renderer output", () => {

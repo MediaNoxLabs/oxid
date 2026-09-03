@@ -27,8 +27,8 @@ Claims a `factory:ready` item and delivers a draft PR. Duties:
 - Respect AGENT.md architecture rules and every accepted ADR.
 - Deliver through the `.devloops` `draft` gate with fan-out evidence, then the
   `preApproval` gate with CI green.
-- Never push to `integration` directly. Merge only through the guarded
-  integration wrapper when the active owner request explicitly authorizes it;
+- Never push to `develop` directly. Merge only through the guarded
+  develop wrapper when the active owner request explicitly authorizes it;
   otherwise stop for a human. A separate fresh Claude current-head review is
   required only for high-risk `full` work, an owner request, or a disputed
   finding.
@@ -42,7 +42,7 @@ they never edit the branch.
 ### Quality Steward
 A standing role, independent of any single work item. Duties:
 
-- Review `integration` deltas on a schedule; verify
+- Review `develop` deltas on a schedule; verify
   architecture/security/testing claims against the actual code.
 - Measure local target and CI durations against the budgets in metrics.md;
   flag regressions before they hit the CI time bound.
@@ -52,8 +52,8 @@ A standing role, independent of any single work item. Duties:
 - File confirmed findings as factory work items; never fix-and-push directly.
 
 ### Release Manager (human)
-Owns tags, releases, ADR acceptance, repository settings, and every `main` or
-`develop` merge decision. Clean `integration` PRs may be merged by a human, or
+Owns tags, releases, ADR acceptance, repository settings, and every `main`
+promotion decision. Clean `develop` PRs may be merged by a human, or
 by an agent under explicit active owner authorization, after all current-head
 gates and any risk-required independent review evidence are posted.
 
@@ -64,8 +64,8 @@ gates and any risk-required independent review evidence are posted.
 | Create/refine/order work items | Planner, Quality Steward |
 | Claim work, push a `<type>/issue-<number>` branch, open a draft PR | Implementer holding a valid lease |
 | Post gate findings | Reviewers |
-| Merge a clean `integration` PR | Human delivery operator, or an explicitly owner-authorized agent through the guarded wrapper, after all current-head evidence is posted |
-| Merge to `main` or `develop` | Human delivery operator only |
+| Merge a clean `develop` PR | Human delivery operator, or an explicitly owner-authorized agent through the guarded wrapper, after all current-head evidence is posted |
+| Merge to `main` | Human delivery operator only |
 | Tag, release, change repo settings, accept ADRs | Release Manager (human) only |
 | Modify factory protocol docs | Via a normal factory work item and the same delivery gates |
 

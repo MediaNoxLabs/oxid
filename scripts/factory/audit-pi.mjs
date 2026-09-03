@@ -252,10 +252,10 @@ async function inspectDeliveryProfiles(repoRoot) {
     if (production?.maximumReviewers !== 2) problems.push("production-ready reviewer cap must remain two");
 
     const promotion = profiles.promotion;
-    if (promotion?.explicit !== true || promotion?.refreshBase !== "origin/integration"
+    if (promotion?.explicit !== true || promotion?.refreshBase !== "origin/develop"
       || promotion?.auditPrototypeGaps !== true || promotion?.invalidateProvisionalEvidence !== true
       || promotion?.recomputeTargets !== true) {
-      problems.push("promotion must refresh integration, audit gaps, invalidate provisional evidence, and recompute targets");
+      problems.push("promotion must refresh develop, audit gaps, invalidate provisional evidence, and recompute targets");
     }
 
     const [devLoopAgent, rootAgent] = await Promise.all([
@@ -393,7 +393,7 @@ export async function auditPi({
   ];
   checks.push(check("dev-loop-bounds", devloopBounds.every((pattern) => pattern.test(devloops)) ? "pass" : "fail",
     devloopBounds.every((pattern) => pattern.test(devloops))
-      ? "Dev-loop review, queue, retry, and integration merge concurrency are bounded"
+      ? "Dev-loop review, queue, retry, and develop merge concurrency are bounded"
       : "One or more dev-loop constitutional bounds are missing"));
 
   checks.push(await inspectDeliveryProfiles(repoRoot));

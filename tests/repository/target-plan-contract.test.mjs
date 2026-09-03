@@ -10,12 +10,23 @@ import {
   Profile,
   classifyAreas,
   makeTargetPlan,
+  resolveProfile,
 } from "../../scripts/ci/target-plan.mjs";
+
+test("automatic profiles follow the durable develop-to-main promotion flow", () => {
+  assert.equal(resolveProfile("auto", "pull_request", "develop"), Profile.FEATURE);
+  assert.equal(resolveProfile("auto", "push", "develop"), Profile.INTEGRATION);
+  assert.equal(resolveProfile("auto", "pull_request", "main"), Profile.RELEASE);
+  assert.equal(resolveProfile("auto", "push", "", "main"), Profile.RELEASE);
+  assert.equal(resolveProfile(Profile.FEATURE, "push", "", "main"), Profile.FEATURE);
+});
 
 test("documentation, harness, and workflow-only feature changes keep the basic gate", () => {
   for (const paths of [
     ["README.md", "docs/factory/runbook.md"],
+    ["scripts/docs/check-links.mjs", "scripts/docs/generate-adr-catalog.mjs"],
     [".devloops", "scripts/loop/pre-flight-gate.mjs"],
+    ["scripts/git-hooks/local-policy.mjs"],
     ["scripts/check-pi-devshell.sh", "scripts/lib/dev-loop-runtime.mjs"],
     [".github/workflows/ci.yml", "scripts/ci/target-plan.mjs"],
     ["docs/factory/metrics.md", "scripts/ci/target-plan.mjs"],

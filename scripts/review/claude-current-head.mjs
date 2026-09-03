@@ -9,7 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-const BASE_REF = "origin/integration";
+const BASE_REF = "origin/develop";
 export const MAX_CLAUDE_REVIEW_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = MAX_CLAUDE_REVIEW_TIMEOUT_MS;
 const DEFAULT_MAX_BUDGET_USD = 10;
@@ -621,7 +621,7 @@ export async function runClaudeCurrentHeadReview({
   const actualRoot = await realpath(gitText(gitCommand, ["rev-parse", "--show-toplevel"], root));
   if (root !== actualRoot) throw new Error(`repoRoot must be the active Git top-level: ${actualRoot}`);
   assertClean(gitCommand, root);
-  if (fetchBase) gitText(gitCommand, ["fetch", "origin", "integration"], root);
+  if (fetchBase) gitText(gitCommand, ["fetch", "origin", "develop"], root);
 
   const headSha = gitText(gitCommand, ["rev-parse", "HEAD"], root);
   if (expectedHead && expectedHead !== headSha) throw new Error(`expected head ${expectedHead}, found ${headSha}`);
@@ -682,7 +682,7 @@ export async function runClaudeCurrentHeadReview({
   const finalBase = gitText(gitCommand, ["merge-base", "HEAD", BASE_REF], root);
   const finalDiff = exactDiff(gitCommand, finalBase, finalHead, root);
   if (finalHead !== headSha || finalBase !== baseSha || sha256(finalDiff) !== diffDigest) {
-    throw new Error("head, integration merge base, or exact diff bytes changed during Claude review; evidence is stale");
+    throw new Error("head, develop merge base, or exact diff bytes changed during Claude review; evidence is stale");
   }
 
   const parsed = parseClaudeReviewResult(rawResponse);
@@ -794,13 +794,13 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
     throw new Error("Claude review attestation is missing artifact descriptors");
   }
   assertClean(gitCommand, root);
-  if (fetchBase) gitText(gitCommand, ["fetch", "origin", "integration"], root);
+  if (fetchBase) gitText(gitCommand, ["fetch", "origin", "develop"], root);
   const headSha = gitText(gitCommand, ["rev-parse", "HEAD"], root);
   const baseSha = gitText(gitCommand, ["merge-base", "HEAD", BASE_REF], root);
   assertNoBinaryChanges(gitCommand, baseSha, headSha, root);
   const diffContent = exactDiff(gitCommand, baseSha, headSha, root);
   if (headSha !== evidence.headSha || baseSha !== evidence.baseSha || sha256(diffContent) !== evidence.diff?.sha256) {
-    throw new Error("Claude review attestation is stale for the current head or integration base");
+    throw new Error("Claude review attestation is stale for the current head or develop base");
   }
   const artifactPath = (value) => {
     if (typeof value !== "string" || path.basename(value) !== value) throw new Error("Claude review attestation contains an unsafe artifact path");

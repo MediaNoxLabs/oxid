@@ -1,59 +1,59 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
   closingIssueNumber,
-  parseMergeIntegrationArgs,
-  validatePrForIntegrationMerge,
+  parseMergeDevelopArgs,
+  validatePrForDevelopMerge,
   validateRequiredChecks,
-} from "../../scripts/github/merge-integration-pr.mjs";
+} from "../../scripts/github/merge-develop-pr.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (relativePath) => readFile(path.join(repoRoot, relativePath), "utf8");
 
-function eligibleIntegrationPr(overrides = {}) {
+function eligibleDevelopPr(overrides = {}) {
   return {
     state: "OPEN",
-    baseRefName: "integration",
+    baseRefName: "develop",
     baseRefOid: "a".repeat(40),
     headRefOid: "b".repeat(40),
     isDraft: false,
     isCrossRepository: false,
     mergeable: "MERGEABLE",
     mergeStateStatus: "CLEAN",
-    title: "chore: stabilize delivery",
+    title: "ci(ci): stabilize delivery",
     body: "Closes #168",
     ...overrides,
   };
 }
 
-test("integration merge execution requires explicit active owner authorization", () => {
+test("develop merge execution requires explicit active owner authorization", () => {
   assert.throws(
-    () => parseMergeIntegrationArgs(["--repo", "someone/else", "--pr", "168"]),
+    () => parseMergeDevelopArgs(["--repo", "someone/else", "--pr", "168"]),
     /must be MediaNoxLabs\/oxid/,
   );
   assert.throws(
-    () => parseMergeIntegrationArgs(["--repo", "MediaNoxLabs/oxid", "--pr", "168", "--execute"]),
+    () => parseMergeDevelopArgs(["--repo", "MediaNoxLabs/oxid", "--pr", "168", "--execute"]),
     /requires --authorized-by-owner/,
   );
   assert.deepEqual(
-    parseMergeIntegrationArgs(["--repo", "MediaNoxLabs/oxid", "--pr", "168", "--execute", "--authorized-by-owner"]),
+    parseMergeDevelopArgs(["--repo", "MediaNoxLabs/oxid", "--pr", "168", "--execute", "--authorized-by-owner"]),
     { help: false, repo: "MediaNoxLabs/oxid", pr: 168, execute: true, authorizedByOwner: true },
   );
 });
 
-test("only issue-backed integration pull requests are eligible for automated merge", () => {
+test("only issue-backed develop pull requests are eligible for automated merge", () => {
   assert.equal(closingIssueNumber("Fixes #168"), 168);
   assert.equal(closingIssueNumber("Refs #168"), null);
-  assert.equal(validatePrForIntegrationMerge(eligibleIntegrationPr()).ok, true);
-  for (const baseRefName of ["main", "develop"]) {
-    const result = validatePrForIntegrationMerge(eligibleIntegrationPr({ baseRefName }));
+  assert.equal(validatePrForDevelopMerge(eligibleDevelopPr()).ok, true);
+  for (const baseRefName of ["main", "integration"]) {
+    const result = validatePrForDevelopMerge(eligibleDevelopPr({ baseRefName }));
     assert.equal(result.ok, false);
-    assert.match(result.failures.join("; "), /human-only/);
+    assert.match(result.failures.join("; "), /base must be develop/);
   }
   for (const overrides of [
     { state: "CLOSED" },
@@ -63,7 +63,7 @@ test("only issue-backed integration pull requests are eligible for automated mer
     { mergeStateStatus: "BEHIND" },
     { title: "WIP: not ready" },
     { body: "Refs #168" },
-  ]) assert.equal(validatePrForIntegrationMerge(eligibleIntegrationPr(overrides)).ok, false);
+  ]) assert.equal(validatePrForDevelopMerge(eligibleDevelopPr(overrides)).ok, false);
 });
 
 test("required checks include a passing signature and DCO gate", () => {
@@ -77,8 +77,8 @@ test("required checks include a passing signature and DCO gate", () => {
   assert.equal(validateRequiredChecks([{ name: "Repository gate", bucket: "pass", state: "SUCCESS" }]).ok, false);
 });
 
-test("integration merge wrapper pins a guarded squash merge to the audited head", async () => {
-  const source = await read("scripts/github/merge-integration-pr.mjs");
+test("develop merge wrapper pins a guarded squash merge to the audited head", async () => {
+  const source = await read("scripts/github/merge-develop-pr.mjs");
   for (const required of [
     /git[\s\S]*fetch/,
     /merge-base[\s\S]*--is-ancestor/,
@@ -91,12 +91,6 @@ test("integration merge wrapper pins a guarded squash merge to the audited head"
   ]) assert.match(source, required);
   assert.doesNotMatch(source, /--admin/);
 });
-
-async function markdownFilesUnder(relativeRoot) {
-  return (await readdir(path.join(repoRoot, relativeRoot), { recursive: true }))
-    .filter((file) => file.endsWith(".md"))
-    .map((file) => path.join(relativeRoot, file));
-}
 
 function eventBlock(workflow, eventName) {
   const lines = workflow.split("\n");
@@ -135,17 +129,17 @@ function eventBranches(workflow, eventName) {
 }
 
 for (const workflowPath of [".github/workflows/ci.yml", ".github/workflows/quality.yml", ".github/workflows/scan.yml"]) {
-  test(`${workflowPath} runs for integration without retiring migration branches`, async () => {
+  test(`${workflowPath} runs only for durable branches`, async () => {
     const workflow = await read(workflowPath);
     for (const eventName of ["push", "pull_request"]) {
-      assert.deepEqual(new Set(eventBranches(workflow, eventName)), new Set(["integration", "develop", "main"]));
+      assert.deepEqual(new Set(eventBranches(workflow, eventName)), new Set(["develop", "main"]));
     }
   });
 }
 
-test("Scorecard scans each integration delivery with its exact context", async () => {
+test("Scorecard scans durable branch deliveries with its exact context", async () => {
   const scorecard = await read(".github/workflows/scorecard.yml");
-  assert.deepEqual(eventBranches(scorecard, "push"), ["integration", "main"]);
+  assert.deepEqual(eventBranches(scorecard, "push"), ["develop", "main"]);
   assert.doesNotMatch(eventBlock(scorecard, "push"), /^    paths(?:-ignore)?:/m);
   assert.match(scorecard, /^  workflow_dispatch: \{\}$/m);
   assert.match(scorecard, /^  schedule:\n    - cron: "30 1 \* \* 6"$/m);
@@ -156,7 +150,7 @@ test("documentation links always emit a context and skip outbound work safely", 
   const links = await read(".github/workflows/docs-link-check.yml");
   assert.equal(eventBranches(links, "pull_request"), null);
   assert.doesNotMatch(eventBlock(links, "pull_request"), /^    paths(?:-ignore)?:/m);
-  assert.deepEqual(new Set(eventBranches(links, "push")), new Set(["integration", "develop", "main"]));
+  assert.deepEqual(new Set(eventBranches(links, "push")), new Set(["develop", "main"]));
   assert.doesNotMatch(eventBlock(links, "push"), /^    paths(?:-ignore)?:/m);
   for (const eventCase of ["workflow_dispatch)", "pull_request)", "push)"]) assert.match(links, new RegExp(eventCase.replace(/[()]/g, "\\$&")));
   for (const safety of [/fetch-depth: 0/, /valid_sha/, /git cat-file -e/, /git merge-base/, /git diff --quiet/, /running the link check conservatively/]) assert.match(links, safety);
@@ -166,16 +160,15 @@ test("documentation links always emit a context and skip outbound work safely", 
   assert.doesNotMatch(links, /--exclude.*blob\/integration/);
 });
 
-test("Pages builds and publishes only from integration", async () => {
+test("Pages builds and publishes only from main", async () => {
   const pages = await read(".github/workflows/pages.yml");
-  assert.deepEqual(eventBranches(pages, "push"), ["integration"]);
-  assert.doesNotMatch(eventBlock(pages, "push"), /develop|main/);
-  assert.match(pages, /if: github\.ref == 'refs\/heads\/integration'/);
+  assert.deepEqual(eventBranches(pages, "push"), ["main"]);
+  assert.doesNotMatch(eventBlock(pages, "push"), /develop|integration/);
+  assert.match(pages, /if: github\.ref == 'refs\/heads\/main'/);
 
-  const contract = await read("docs/integration-delivery.md");
-  assert.match(contract, /`github-pages` environment/);
-  assert.match(contract, /policy `58259903`/);
-  assert.match(contract, /only allowed branch is\s+`integration`/);
+  const contract = await read("docs/issue-branch-delivery.md");
+  assert.match(contract, /`main` is the stable release branch and GitHub Pages source/);
+  assert.match(contract, /Pages is configured\s+for `main`/);
 });
 
 test("trusted policy workflows publish required contexts on exact PR head SHAs", async () => {
@@ -199,29 +192,25 @@ test("trusted policy workflows publish required contexts on exact PR head SHAs",
   }
 });
 
-test("cross-base authority stays in the owner ruleset, not a dangerous advisory workflow", async () => {
+test("branch authority stays in protection settings, not a candidate-controlled workflow", async () => {
   await assert.rejects(read(".github/workflows/pr-base-check.yml"), { code: "ENOENT" });
-  const contract = await read("docs/integration-delivery.md");
-  assert.match(contract, /ruleset `21481544` is the\s+cross-base authority/);
-  assert.match(contract, /workflows deliberately make no cross-base enforcement claim/);
-  assert.match(contract, /false failures for stacked pull requests/);
+  const contract = await read("docs/issue-branch-delivery.md");
+  assert.match(contract, /`develop` requires these checks/);
+  assert.match(contract, /`main` additionally\s+requires human\/code-owner review/);
 });
 
-test("dependency automation inherits integration from default-branch authority", async () => {
+test("dependency automation inherits develop from default-branch authority", async () => {
   const dependabot = await read(".github/dependabot.yml");
   assert.doesNotMatch(dependabot, /^\s+target-branch:/m);
 
   const renovate = JSON.parse(await read("renovate.json"));
   assert.equal(Object.hasOwn(renovate, "baseBranchPatterns"), false);
 
-  for (const file of ["docs/dependencies/README.md", "docs/integration-delivery.md"]) {
+  for (const file of ["docs/dependencies/README.md", "docs/issue-branch-delivery.md"]) {
     const guidance = await read(file);
     assert.match(guidance, /default branch/i, file);
-    assert.match(guidance, /Dependabot[\s\S]*`target-branch`[\s\S]*disables security updates/i, file);
-    for (const pr of ["#138", "#139"]) assert.match(guidance, new RegExp(pr), file);
-    assert.match(guidance, /stale/i, file);
-    assert.match(guidance, /close\s+(?:them|those stale)/i, file);
-    assert.match(guidance, /recreate/i, file);
+    assert.match(guidance, /Dependabot[\s\S]*`target-branch`[\s\S]*(?:disables|changes).*security[- ]update/i, file);
+    assert.match(guidance, /develop/i, file);
   }
 });
 
@@ -237,53 +226,44 @@ test("repository gate runs architecture and the delivery contract with its decla
 
 test("guidance, required contexts, and review configuration agree", async () => {
   const guidancePatterns = {
-    "AGENT.md": /only writable delivery and Pages publishing branch/,
-    "CONTRIBUTING.md": /only writable delivery branch and the sole Pages publishing/,
-    ".github/pull_request_template.md": /historical `main` and `develop` are read-only/,
-    "docs/site/src/contributing.md": /only writable delivery and\s+Pages publishing branch/,
+    "AGENT.md": /shared development and PR target branch/,
+    "CONTRIBUTING.md": /Create `<type>\/issue-<number>` from `origin\/develop`/,
+    ".github/pull_request_template.md": /Target branch: `develop`/,
+    "docs/site/src/contributing.md": /against `develop`/,
   };
   for (const [file, pattern] of Object.entries(guidancePatterns)) assert.match(await read(file), pattern, file);
-  const documentationFiles = [
+  const branchAuthorityFiles = [
     "AGENT.md",
-    "CHANGELOG.md",
     "CONTRIBUTING.md",
-    "OXID_IDENTITY_WALLET_BLUEPRINT.md",
-    "README.md",
-    "SECURITY.md",
-    "SUPPORT.md",
     ".github/pull_request_template.md",
-    ...(await markdownFilesUnder("docs")),
+    "docs/issue-branch-delivery.md",
+    "docs/factory/productive-loop.md",
+    "docs/factory/runbook.md",
   ];
-  for (const file of documentationFiles) {
+  for (const file of branchAuthorityFiles) {
     const content = await read(file);
     assert.doesNotMatch(
       content,
-      /https?:\/\/(?:www\.)?github\.com\/MediaNoxLabs\/oxid\/(?:blob|tree)\/(?:develop|main)(?:\/|\b)/i,
-      file,
-    );
-    assert.doesNotMatch(
-      content,
-      /\b(?:base|target(?:s|ed|ing)?|against)\s+(?:branch\s+)?["'`]*(?:develop|main)["'`]*\b/i,
+      /(?:origin\/integration|--base integration|refs\/heads\/integration|merge-integration-pr)/i,
       file,
     );
   }
   const routedSurfaces = {
-    "README.md": /badge\.svg\?branch=integration/,
-    "SECURITY.md": /latest commit on `integration` receives\s+security fixes/,
-    "docs/site/book.toml": /edit\/integration\/docs\/site\/\{path\}/,
-    "docs/factory/charter.md": /Review `integration` deltas on a schedule/,
-    "docs/site/src/agent-process.md": /reviews\s+`integration` deltas on a schedule/,
-    "docs/migration/delivery-audit-2026-08-20.md": /fetch and verify signed `integration`/,
+    "README.md": /badge\.svg\?branch=develop/,
+    "SECURITY.md": /latest commit on `develop` receives\s+security fixes/,
+    "docs/site/book.toml": /edit\/develop\/docs\/site\/\{path\}/,
+    "docs/factory/charter.md": /Review `develop` deltas on a schedule/,
+    "docs/site/src/agent-process.md": /reviews\s+`develop` deltas on a schedule/,
   };
   for (const [file, pattern] of Object.entries(routedSurfaces)) {
     const content = await read(file);
     assert.match(content, pattern, file);
   }
   const siteBuild = `${await read("scripts/build-docs-site.sh")}\n${await read("scripts/docs/generate-adr-catalog.mjs")}`;
-  assert.match(siteBuild, /blob\/integration\/docs\/adr/);
-  assert.doesNotMatch(siteBuild, /blob\/(?:develop|main)\/docs\/adr/);
-  const contract = await read("docs/integration-delivery.md");
-  for (const pattern of [/default branch/, /--base origin\/integration/, /--base integration/, /git merge-base HEAD origin\/integration/, /git merge-base --is-ancestor origin\/integration HEAD/, /git merge-tree --write-tree origin\/integration HEAD/, /no `integration -> main` release-promotion exception/i, /separate tracked issue/, /owner ruleset change/, /21481544/, /Pages workflow must trigger and deploy only from\s+`integration`/]) assert.match(contract, pattern);
+  assert.match(siteBuild, /blob\/develop\/docs\/adr/);
+  assert.doesNotMatch(siteBuild, /blob\/integration\/docs\/adr/);
+  const contract = await read("docs/issue-branch-delivery.md");
+  for (const pattern of [/default branch/, /pins `origin\/develop`/, /wrapper pins `develop`/, /git merge-base HEAD origin\/develop/, /`develop` is the shared development branch/, /`main` is the stable release branch/, /Pages source/, /temporary branch/i]) assert.match(contract, pattern);
   const expectedNames = {
     "ci.yml": ["Repository gate (fmt, architecture, lint, tests, coverage)", "Locked Nix package and Compact artifacts"],
     "quality.yml": ["Audit, Licenses, Sources, and Documentation"],
@@ -373,7 +353,7 @@ test("guidance, required contexts, and review configuration agree", async () => 
     ci.indexOf("\n  unit_linux:\n    name:"),
     ci.indexOf("\n  headless_linux:\n    name:"),
   );
-  assert.match(unitJob, /trustedIntegrationPush[\s\S]*SCCACHE_GHA_RW_MODE[\s\S]*READ_WRITE[\s\S]*READ_ONLY/);
+  assert.match(unitJob, /trustedDevelopPush[\s\S]*SCCACHE_GHA_RW_MODE[\s\S]*READ_WRITE[\s\S]*READ_ONLY/);
   assert.match(ciShells, /export CARGO_INCREMENTAL="''\$\{CARGO_INCREMENTAL:-0\}"/);
   assert.match(ciShells, /devShells\.ci-quality = pkgs\.mkShell/);
   assert.match(sccacheRunner, /"\$@" \|\| command_status=\$\?/);
@@ -381,20 +361,19 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(sccacheRunner, /write-error counters are expected for rejected local puts/);
   assert.doesNotMatch(ci, /path: ~\/\.cache\/oxid-sccache/);
   assert.doesNotMatch(ci, /key: sccache-/);
-  assert.match(ci, /save: \$\{\{ github\.event_name == 'push' && github\.ref == 'refs\/heads\/integration' \}\}/);
+  assert.match(ci, /save: \$\{\{ github\.event_name == 'push' && github\.ref == 'refs\/heads\/develop' \}\}/);
   assert.match(ci, /if: always\(\)[\s\S]*?needs: \[plan, basic, unit_linux, headless_linux, ui_linux, ui_release_linux, coverage_linux\]/);
   assert.doesNotMatch(ci, /Run full repository gate/);
   assert.doesNotMatch(ci, /^\s+target$/m);
   const quality = await read(".github/workflows/quality.yml");
   assert.match(quality, /nix develop \.#ci-quality --command \.\/run\.sh quality --strict/);
   assert.doesNotMatch(quality, /cache-nix-action|nix7-devshell/);
-  const contractReviewPolicy = await read("docs/integration-delivery.md");
-  assert.match(contractReviewPolicy, /required_approving_review_count: 0/);
-  assert.match(contractReviewPolicy, /require_code_owner_reviews: false/);
-  assert.match(contractReviewPolicy, /humanMergeOnly: false/);
-  assert.match(contractReviewPolicy, /main.*develop.*human-only/is);
-  assert.match(contractReviewPolicy, /merge-integration-pr\.mjs/);
-  for (const file of ["docs/integration-delivery.md", "docs/factory/runbook.md"]) {
+  const contractReviewPolicy = await read("docs/issue-branch-delivery.md");
+  assert.match(contractReviewPolicy, /`develop` requires these checks/);
+  assert.match(contractReviewPolicy, /no additional approval/);
+  assert.match(contractReviewPolicy, /Promotion to it\s+is human-controlled/);
+  assert.match(contractReviewPolicy, /merge-develop-pr\.mjs/);
+  for (const file of ["docs/factory/runbook.md"]) {
     const guidance = await read(file);
     assert.match(guidance, /manually invoked/i, file);
     assert.match(guidance, /not a hosted GitHub\s+(?:status\s+)?check/i, file);

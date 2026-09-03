@@ -8,8 +8,8 @@ import process from "node:process";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-export const INTEGRATION_BLOB_PREFIX = "https://github.com/MediaNoxLabs/oxid/blob/integration/";
-export const INTEGRATION_BLOB_REMAP_PATTERN = String.raw`^https://github\.com/MediaNoxLabs/oxid/blob/integration/`;
+export const DEVELOP_BLOB_PREFIX = "https://github.com/MediaNoxLabs/oxid/blob/develop/";
+export const DEVELOP_BLOB_REMAP_PATTERN = String.raw`^https://github\.com/MediaNoxLabs/oxid/blob/develop/`;
 
 function markdownWithoutCode(markdown) {
   let fence = null;
@@ -30,20 +30,20 @@ function markdownWithoutCode(markdown) {
   return lines.join("\n");
 }
 
-export function candidateIntegrationUrls(markdown) {
-  const pattern = /https:\/\/github\.com\/MediaNoxLabs\/oxid\/blob\/integration\/[^\s<>"'`)\]]+/g;
+export function candidateDevelopUrls(markdown) {
+  const pattern = /https:\/\/github\.com\/MediaNoxLabs\/oxid\/blob\/develop\/[^\s<>"'`)\]]+/g;
   return (markdownWithoutCode(markdown).match(pattern) ?? []).map((url) => url.replace(/[.,;:!]+$/u, ""));
 }
 
 export function candidatePath(rawUrl) {
-  if (!rawUrl.startsWith(INTEGRATION_BLOB_PREFIX)) throw new Error(`not a candidate integration URL: ${rawUrl}`);
-  const suffix = rawUrl.slice(INTEGRATION_BLOB_PREFIX.length).split(/[?#]/u, 1)[0];
+  if (!rawUrl.startsWith(DEVELOP_BLOB_PREFIX)) throw new Error(`not a candidate develop URL: ${rawUrl}`);
+  const suffix = rawUrl.slice(DEVELOP_BLOB_PREFIX.length).split(/[?#]/u, 1)[0];
   if (!suffix || suffix.includes("%") || suffix.includes("\\")) {
-    throw new Error(`ambiguous candidate integration URL: ${rawUrl}`);
+    throw new Error(`ambiguous candidate develop URL: ${rawUrl}`);
   }
   const segments = suffix.split("/");
   if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
-    throw new Error(`unsafe candidate integration URL: ${rawUrl}`);
+    throw new Error(`unsafe candidate develop URL: ${rawUrl}`);
   }
   return suffix;
 }
@@ -55,7 +55,7 @@ export function buildLycheeArgs(repoRoot, { candidate = false } = {}) {
     "--exclude-path", "LICENSE",
   ];
   if (candidate) {
-    args.push("--remap", `${INTEGRATION_BLOB_REMAP_PATTERN} ${pathToFileURL(`${repoRoot}${path.sep}`).href}`);
+    args.push("--remap", `${DEVELOP_BLOB_REMAP_PATTERN} ${pathToFileURL(`${repoRoot}${path.sep}`).href}`);
   }
   return [...args, "./**/*.md"];
 }
@@ -76,18 +76,18 @@ export async function validateCandidateLinks(repoRoot, markdownPaths = undefined
   const documents = markdownPaths ?? [...tracked].filter((file) => file.endsWith(".md"));
   for (const document of documents) {
     const markdown = await readFile(path.join(repoRoot, document), "utf8");
-    for (const rawUrl of candidateIntegrationUrls(markdown)) {
+    for (const rawUrl of candidateDevelopUrls(markdown)) {
       try {
         const candidate = candidatePath(rawUrl);
-        if (!tracked.has(candidate)) throw new Error(`candidate integration link target is not tracked: ${candidate}`);
+        if (!tracked.has(candidate)) throw new Error(`candidate develop link target is not tracked: ${candidate}`);
         const target = path.resolve(repoRoot, candidate);
         const relative = path.relative(repoRoot, target);
         if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
-          throw new Error(`candidate integration link escapes the repository: ${candidate}`);
+          throw new Error(`candidate develop link escapes the repository: ${candidate}`);
         }
         const metadata = await lstat(target);
         if (!metadata.isFile() || metadata.isSymbolicLink()) {
-          throw new Error(`candidate integration link target is not a regular file: ${candidate}`);
+          throw new Error(`candidate develop link target is not a regular file: ${candidate}`);
         }
       } catch (error) {
         throw new Error(`${document}: ${error.message}`, { cause: error });

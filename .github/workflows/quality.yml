@@ -2,9 +2,9 @@ name: Quality
 
 on:
   push:
-    branches: [integration, develop, main]
+    branches: [develop, main]
   pull_request:
-    branches: [integration, develop, main]
+    branches: [develop, main]
   workflow_dispatch:
     inputs:
       profile:
@@ -42,9 +42,11 @@ jobs:
       - name: Select profile and target lanes
         id: plan
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/integration' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/develop' }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           EVENT_NAME: ${{ github.event_name }}
+          BASE_BRANCH: ${{ github.base_ref || '' }}
+          REF_NAME: ${{ github.ref_name }}
           REQUESTED_PROFILE: ${{ inputs.profile || 'auto' }}
           EXTRA_TARGETS: ${{ inputs.targets || '' }}
         run: |
@@ -52,6 +54,8 @@ jobs:
             --base "$BASE_SHA" \
             --head "$HEAD_SHA" \
             --event "$EVENT_NAME" \
+            --base-branch "$BASE_BRANCH" \
+            --ref-name "$REF_NAME" \
             --profile "$REQUESTED_PROFILE" \
             --targets "$EXTRA_TARGETS" \
             --format github >> "$GITHUB_OUTPUT"

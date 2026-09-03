@@ -17,13 +17,13 @@ test("worktree porcelain parsing preserves paths and branches", () => {
   assert.deepEqual(parseWorktrees([
     "worktree /repo",
     "HEAD abc",
-    "branch refs/heads/integration",
+    "branch refs/heads/develop",
     "",
     "worktree /repo/tmp/worktrees/issue-1",
     "HEAD def",
     "detached",
   ].join("\n")), [
-    { worktree: "/repo", HEAD: "abc", branch: "refs/heads/integration" },
+    { worktree: "/repo", HEAD: "abc", branch: "refs/heads/develop" },
     { worktree: "/repo/tmp/worktrees/issue-1", HEAD: "def", detached: true },
   ]);
 });
@@ -35,7 +35,7 @@ test("removal requires a clean, merged, old, non-primary worktree", () => {
   assert.equal(removalEligibility({ ...candidate, clean: false }, { primary: "/repo" }), "worktree is dirty");
   assert.equal(
     removalEligibility({ ...candidate, merged: false, mergeProof: "unavailable" }, { primary: "/repo" }),
-    "head is not integrated into origin/integration (merge proof: unavailable)",
+    "head is not integrated into origin/develop (merge proof: unavailable)",
   );
   assert.match(removalEligibility({ ...candidate, ageDays: 2 }, { primary: "/repo" }), /newer than 7 days/);
 });
@@ -46,7 +46,7 @@ test("GitHub squash proof requires one exact integrated PR", () => {
   const valid = {
     number: 189,
     state: "MERGED",
-    baseRefName: "integration",
+    baseRefName: "develop",
     headRefOid: head,
     mergedAt: "2026-08-28T12:00:00Z",
     mergeCommit: { oid: mergeCommit },
@@ -60,7 +60,7 @@ test("GitHub squash proof requires one exact integrated PR", () => {
   for (const invalid of [
     { ...valid, number: 0 },
     { ...valid, state: "OPEN" },
-    { ...valid, baseRefName: "develop" },
+    { ...valid, baseRefName: "integration" },
     { ...valid, headRefOid: "c".repeat(39) },
     { ...valid, mergedAt: null },
     { ...valid, mergeCommit: null },
@@ -75,7 +75,7 @@ test("duplicate exact-head GitHub merge proofs fail closed", () => {
   const first = {
     number: 188,
     state: "MERGED",
-    baseRefName: "integration",
+    baseRefName: "develop",
     headRefOid: head,
     mergedAt: "2026-08-28T11:39:28Z",
     mergeCommit: { oid: "b".repeat(40) },
@@ -95,7 +95,7 @@ test("repeated identical GraphQL associations are one proof", () => {
   const pull = {
     number: 189,
     state: "MERGED",
-    baseRefName: "integration",
+    baseRefName: "develop",
     headRefOid: head,
     mergedAt: "2026-08-28T12:00:00Z",
     mergeCommit: { oid: "b".repeat(40) },
@@ -145,7 +145,7 @@ function graphqlEvidence(head, mergeCommit, { hasNextPage = false } = {}) {
             nodes: [{
               number: 189,
               state: "MERGED",
-              baseRefName: "integration",
+              baseRefName: "develop",
               headRefOid: head,
               mergedAt: "2026-08-28T12:00:00Z",
               mergeCommit: { oid: mergeCommit },
@@ -174,7 +174,7 @@ function evidenceRunner({ head, tracked, mergeCommit, remoteHeads = [tracked, tr
     if (args.includes("ls-remote")) {
       const remote = remoteHeads[Math.min(remoteIndex, remoteHeads.length - 1)];
       remoteIndex += 1;
-      return { status: 0, stdout: `${remote}\trefs/heads/integration\n` };
+      return { status: 0, stdout: `${remote}\trefs/heads/develop\n` };
     }
     throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
   };

@@ -89,10 +89,10 @@ The commit hook checks signing configuration, Git itself aborts a normal commit
 when OpenPGP signing fails, and the message hook rejects a non-conventional
 subject or missing exact DCO trailer. The push hook permits issue branches
 only, derives their complete range from the locally fetched
-`<remote>/integration`, checks every commit, and runs `git verify-commit` before
+`<remote>/develop`, checks every commit, and runs `git verify-commit` before
 Git transfers objects. It ignores deletions and rejects tag, protected-branch,
 stale-base, malformed, empty, or oversized ranges. Run `git fetch origin
-integration` before pushing.
+develop` before pushing.
 
 Hooks can be bypassed with Git's `--no-verify` and a command-line
 `--no-gpg-sign` can override the signing default. Therefore hooks are early
@@ -114,7 +114,7 @@ exact PR head SHA. It never checks out or
 executes candidate files. The PR-title and body contexts use the same pattern,
 so a PR cannot approve a weakened workflow or checker included in its own diff.
 
-An owner-requested, same-repository `integration` to `develop` promotion is a
+An owner-requested, same-repository `develop` to `main` promotion is a
 different evidence boundary. Its commit range contains GitHub-generated squash
 merge artifacts rather than the issue-branch commits already judged on their
 original pull requests. The trusted workflow therefore requires a
@@ -122,7 +122,7 @@ GitHub-verified OpenPGP signature on every promoted artifact and exact-head
 binding, but does not reapply contributor subject or exact-DCO rules to those
 artifacts. The workflow recognizes only that exact head/base/repository tuple.
 This evidence profile does not authorize a merge or override the owner-managed
-ruleset that keeps `develop` read-only.
+ruleset that protects `main`.
 
 ### Completed rollout
 

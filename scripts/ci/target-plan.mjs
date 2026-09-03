@@ -36,6 +36,7 @@ const AREA_PATTERNS = Object.freeze({
     /(^|\/)README\.md$/,
     /\.md$/,
     /^docs\//,
+    /^scripts\/docs\//,
     /^\.github\/ISSUE_TEMPLATE\//,
     /^(?:LICENSE|CODE_OF_CONDUCT\.md|CONTRIBUTING\.md|SECURITY\.md|SUPPORT\.md)$/,
   ],
@@ -44,7 +45,7 @@ const AREA_PATTERNS = Object.freeze({
     /^\.pi\//,
     /^AGENT\.md$/,
     /^scripts\/check-pi-devshell\.sh$/,
-    /^scripts\/(?:dev-loops\.mjs|factory\/|github\/|loop\/|lib\/(?:dev-loop|handoff-envelope)|review\/|worktree-lifecycle\.mjs)/,
+    /^scripts\/(?:dev-loops\.mjs|factory\/|git-hooks\/|github\/|loop\/|lib\/(?:dev-loop|handoff-envelope)|review\/|worktree-lifecycle\.mjs)/,
     /^tests\/repository\//,
   ],
   ci: [
@@ -226,10 +227,10 @@ function changedPaths(base, head, cwd) {
   }
 }
 
-function resolveProfile(requested, eventName) {
+export function resolveProfile(requested, eventName, baseBranch = "", refName = "") {
   if (requested && requested !== "auto") return requested;
-  if (eventName === "pull_request") return Profile.FEATURE;
-  if (eventName === "push") return Profile.INTEGRATION;
+  if (eventName === "pull_request") return baseBranch === "main" ? Profile.RELEASE : Profile.FEATURE;
+  if (eventName === "push") return refName === "main" ? Profile.RELEASE : Profile.INTEGRATION;
   return Profile.RELEASE;
 }
 
@@ -253,7 +254,12 @@ function githubOutput(plan) {
 }
 
 export function run(argv = process.argv.slice(2), { cwd = process.cwd(), stdout = process.stdout } = {}) {
-  const profile = resolveProfile(readOption(argv, "--profile") ?? "auto", readOption(argv, "--event"));
+  const profile = resolveProfile(
+    readOption(argv, "--profile") ?? "auto",
+    readOption(argv, "--event"),
+    readOption(argv, "--base-branch"),
+    readOption(argv, "--ref-name"),
+  );
   const deliveryProfile = readOption(argv, "--delivery-profile") ?? DeliveryProfile.PRODUCTION_READY;
   const paths = changedPaths(readOption(argv, "--base"), readOption(argv, "--head"), cwd);
   const plan = makeTargetPlan(paths ?? [], {

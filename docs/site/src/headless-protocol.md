@@ -7,7 +7,7 @@ wallet — same domain logic, same composition rules, no rendering.
 
 It is governed by ADR-0024 and its successors; the complete method reference
 lives in the repository
-[README](https://github.com/MediaNoxLabs/oxid/blob/integration/README.md).
+[README](https://github.com/MediaNoxLabs/oxid/blob/develop/README.md).
 
 ## The envelope
 

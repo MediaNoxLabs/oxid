@@ -10,7 +10,7 @@ each entry is dated and states its measurement environment.
   work item slows down.
 - **CI wall time** is target-based. Documentation, harness, and CI-only feature
   changes should not realize the Rust/Nix closure; affected targets fan out in
-  parallel and `integration` remains the complete hosted backstop.
+  parallel and a trusted `develop` push remains the complete hosted backstop.
 - **Time to merge-ready** captures review, canceled runs, and repeated pushes
   that a single job duration hides.
 - **Per-crate build time** reveals decomposition problems (a crate growing
@@ -249,7 +249,7 @@ cache entries (including three approximately 2 GB immutable quality-devshell
 archives). Minimal CI shells now default `CARGO_INCREMENTAL=0`, every Rust lane
 prints sccache statistics, the unit lane is the single writer, and the other
 Rust lanes are read-only consumers. Pull requests do not write either compiler
-objects or Nix-store archives; only a trusted `integration` push may seed the
+objects or Nix-store archives; only a trusted `develop` push may seed the
 unit compiler cache and locked-package store cache. Quality uses an uncached
 minimal shell; the locked package lane remains the only whole-store GitHub
 cache while a proper signed Nix substituter is unprovisioned.

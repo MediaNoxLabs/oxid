@@ -14,7 +14,7 @@ devices, and a separate repository remain explicit owner evidence.
 | L0 basic | Advisory PR title/body feedback; required DCO, GitHub-verified commit signature, repository contracts, formatting, architecture, lint, and production compilation | 0–5 min | Every PR. Rust compilation is omitted only when the impact plan proves no Rust/build surface changed. |
 | L1 host | Workspace unit tests on one Linux host | 5–10 min | Rust, UI, headless, platform, Compact, or build changes; on demand for any PR. |
 | L2 component integration | Hermetic headless black-box tests, then deterministic Docker integration when its fixture is ready | 5–10 min for the current hermetic lane; Docker budget pending measurement | Affected host/component changes and on demand. |
-| L3 extended | UI feature profiles, optimized UI release audit, coverage, quality, locked Nix package, Compact artifacts | 10–30 min per parallel lane | Affected high-risk/build changes; every `integration` delivery; release profile. |
+| L3 extended | UI feature profiles, optimized UI release audit, coverage, quality, locked Nix package, Compact artifacts | 10–30 min per parallel lane | Affected high-risk/build changes; every trusted `develop` push; release profile. |
 | L4 platform/release | WASM, Android, iOS, Portal, standalone Midnight, PreProd, physical-device and real-proof evidence | Target-specific | Scheduled, on demand, or owner-private until each row below has a hermetic hosted runner. |
 
 L0 is an envelope of parallel policy and build contexts rather than one serial
@@ -93,14 +93,14 @@ hit/miss/non-cacheable statistics. The interactive developer shell keeps
 Cargo's normal incremental behavior. Local CI shells use a bounded 2 GiB cache
 and the local default remains a bounded 10 GiB shared cache. Rust
 feedback lanes do not restore the whole Nix store. Pull requests are read-only
-cache consumers. On a trusted `integration` push, the unit lane is the sole
+cache consumers. On a trusted `develop` push, the unit lane is the sole
 hosted object-cache writer; the other five Rust lanes remain read-only.
 GitHub's cache-service write quota is shared by a workflow run, and concurrent
 writers otherwise lose throttled objects before sccache can reuse them.
 Quality uses a minimal shell without archiving the Nix store, preventing a new
 roughly 2 GiB immutable cache whenever a Nix expression changes. The locked
 package lane may update its bounded Nix-store cache only on trusted
-`integration` pushes; PRs restore it without allocating a branch-scoped copy.
+`develop` pushes; PRs restore it without allocating a branch-scoped copy.
 It uses `cache-nix-action` v7 in a new namespace so the noisy v6 archive
 observed on PR #165 cannot be reused.
 
@@ -121,7 +121,7 @@ Introduce finer reuse as a separately measured package migration:
    ports; domains; applications; adapters/composition; then UI/headless/apps.
    A layer changes only when its source, feature set, compiler, native inputs,
    or an upstream layer changes.
-4. Publish those derivation outputs from trusted `integration`/release builds
+4. Publish those derivation outputs from trusted `develop`/release builds
    to a signed Nix binary cache. PRs use it only as a substituter; GitHub cache
    remains for the Cargo registry and read-mostly compiler objects, never raw
    `target/` trees.
@@ -156,17 +156,14 @@ storage ceiling before any new layer becomes required.
 
 | Repository event | Effective profile | Gate set |
 | --- | --- | --- |
-| PR to `integration` | `feature` | L0 plus change-relevant hosted lanes and requested extras |
-| push to `integration` | `integration` | every deterministic public hosted lane, in parallel |
+| PR to `develop` | `feature` | L0 plus change-relevant hosted lanes and requested extras |
+| push to `develop` | `integration` | every deterministic public hosted lane, in parallel |
+| PR or push to `main` | `release` | every deterministic public hosted lane, in parallel |
 | manual workflow | selected `feature`, `integration`, or `release` | impacted, public-full, or public-full respectively; extra hosted targets may be named |
 | nightly schedule | release backstop | complete hermetic Nix suite |
 
-`integration` is currently the only writable delivery branch. `main` and
-`develop` are read-only under ruleset `21481544`, so implementing distinct
-write-time policies for them would contradict current repository authority.
-If owners later reintroduce that branch model, map feature branches to
-`feature`, `develop` to `integration`, and `main` to `release` in a separate
-tracked ruleset migration. “Release” here means all deterministic public
+`develop` is the writable PR target and maps to the internal `integration`
+assurance profile after merge; `main` maps to `release`. “Release” here means all deterministic public
 targets; owner-private/device evidence remains a separate explicit checklist.
 
 ## Promotion criteria for missing L4 lanes

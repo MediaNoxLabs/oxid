@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
-const INTEGRATION_BASE = "integration";
+const DEVELOP_BASE = "develop";
 const REPOSITORY = "MediaNoxLabs/oxid";
 const BLOCKING_TITLE_MARKERS = /(?:\[?\bWIP\b\]?|\bDRAFT\b|DO NOT MERGE|🚧)/i;
 const CLOSING_ISSUE = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#([1-9]\d*)\b/i;
@@ -19,7 +19,7 @@ function parseJson(source, label) {
   }
 }
 
-export function parseMergeIntegrationArgs(argv) {
+export function parseMergeDevelopArgs(argv) {
   const { values } = parseArgs({
     args: argv,
     options: {
@@ -48,11 +48,11 @@ export function closingIssueNumber(body) {
   return match ? Number(match[1]) : null;
 }
 
-export function validatePrForIntegrationMerge(pr) {
+export function validatePrForDevelopMerge(pr) {
   const failures = [];
   if (pr?.state !== "OPEN") failures.push("pull request is not open");
-  if (pr?.baseRefName !== INTEGRATION_BASE) {
-    failures.push(`base must be ${INTEGRATION_BASE}; main and develop are human-only`);
+  if (pr?.baseRefName !== DEVELOP_BASE) {
+    failures.push(`base must be ${DEVELOP_BASE}; main is human-only`);
   }
   if (pr?.isDraft !== false) failures.push("pull request is still a draft");
   if (pr?.isCrossRepository === true) failures.push("cross-repository heads are not eligible for automated merge");
@@ -97,11 +97,11 @@ function ghJson(run, args, cwd, label) {
   return parseJson(run("gh", args, { cwd, label }), label);
 }
 
-export function auditIntegrationMerge(options, { cwd = process.cwd(), run = defaultRun } = {}) {
+export function auditDevelopMerge(options, { cwd = process.cwd(), run = defaultRun } = {}) {
   const root = run("git", ["rev-parse", "--show-toplevel"], { cwd, label: "resolve repository root" }).trim();
   const prFields = "state,baseRefName,baseRefOid,headRefName,headRefOid,isDraft,isCrossRepository,mergeable,mergeStateStatus,title,body";
   const pr = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", prFields], root, "read pull request facts");
-  const eligibility = validatePrForIntegrationMerge(pr);
+  const eligibility = validatePrForDevelopMerge(pr);
   if (!eligibility.ok) throw new Error(`automated merge denied: ${eligibility.failures.join("; ")}`);
 
   const issue = ghJson(run, ["issue", "view", String(eligibility.issue), "--repo", options.repo, "--json", "state,body"], root, "read backing issue");
@@ -109,8 +109,8 @@ export function auditIntegrationMerge(options, { cwd = process.cwd(), run = defa
     throw new Error(`backing issue #${eligibility.issue} must be open and contain a problem statement`);
   }
 
-  run("git", ["fetch", "--no-tags", "origin", INTEGRATION_BASE, pr.headRefOid], { cwd: root, label: "refresh integration and PR head" });
-  const localBase = run("git", ["rev-parse", `refs/remotes/origin/${INTEGRATION_BASE}`], { cwd: root, label: "resolve fetched integration" }).trim();
+  run("git", ["fetch", "--no-tags", "origin", DEVELOP_BASE, pr.headRefOid], { cwd: root, label: "refresh develop and PR head" });
+  const localBase = run("git", ["rev-parse", `refs/remotes/origin/${DEVELOP_BASE}`], { cwd: root, label: "resolve fetched develop" }).trim();
   if (localBase !== pr.baseRefOid) throw new Error(`base changed during audit: GitHub ${pr.baseRefOid}, fetched ${localBase}`);
   run("git", ["merge-base", "--is-ancestor", localBase, pr.headRefOid], { cwd: root, label: "verify current-head freshness" });
   run("git", ["merge-tree", "--write-tree", localBase, pr.headRefOid], { cwd: root, label: "verify conflict-free merge tree" });
@@ -127,27 +127,27 @@ export function auditIntegrationMerge(options, { cwd = process.cwd(), run = defa
   });
 
   const current = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", "baseRefName,baseRefOid,headRefOid"], root, "re-read pull request head");
-  if (current?.baseRefName !== INTEGRATION_BASE || current?.baseRefOid !== localBase || current?.headRefOid !== pr.headRefOid) {
-    throw new Error("pull request head or integration base changed during the merge audit");
+  if (current?.baseRefName !== DEVELOP_BASE || current?.baseRefOid !== localBase || current?.headRefOid !== pr.headRefOid) {
+    throw new Error("pull request head or develop base changed during the merge audit");
   }
 
   return { ok: true, repo: options.repo, pr: options.pr, issue: eligibility.issue, headSha: pr.headRefOid, baseSha: localBase, checks: checks.length };
 }
 
 export function runCli(argv = process.argv.slice(2), runtime = {}) {
-  const options = parseMergeIntegrationArgs(argv);
+  const options = parseMergeDevelopArgs(argv);
   if (options.help) {
     (runtime.stdout ?? process.stdout).write(
-      "Usage: merge-integration-pr.mjs --repo OWNER/REPO --pr NUMBER [--authorized-by-owner --execute]\n",
+      "Usage: merge-develop-pr.mjs --repo OWNER/REPO --pr NUMBER [--authorized-by-owner --execute]\n",
     );
     return;
   }
-  const result = auditIntegrationMerge(options, runtime);
+  const result = auditDevelopMerge(options, runtime);
   if (options.execute) {
     const run = runtime.run ?? defaultRun;
     run("gh", ["pr", "merge", String(options.pr), "--repo", options.repo, "--squash", "--match-head-commit", result.headSha], {
       cwd: runtime.cwd ?? process.cwd(),
-      label: "merge audited integration pull request",
+      label: "merge audited develop pull request",
     });
   }
   (runtime.stdout ?? process.stdout).write(`${JSON.stringify({ ...result, merged: options.execute })}\n`);
@@ -161,7 +161,7 @@ if (isDirectRun(import.meta.url)) {
   try {
     runCli();
   } catch (error) {
-    process.stderr.write(`[merge-integration-pr] ${error.message}\n`);
+    process.stderr.write(`[merge-develop-pr] ${error.message}\n`);
     process.exitCode = 1;
   }
 }

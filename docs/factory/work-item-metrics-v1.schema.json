@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/MediaNoxLabs/oxid/integration/docs/factory/work-item-metrics-v1.schema.json",
+  "$id": "https://raw.githubusercontent.com/MediaNoxLabs/oxid/develop/docs/factory/work-item-metrics-v1.schema.json",
   "title": "Oxid factory work-item metrics v1",
   "type": "object",
   "additionalProperties": false,

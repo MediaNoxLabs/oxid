@@ -45,7 +45,7 @@ fails closed until the guarded lease transaction in issue #197 is delivered.
    run the impact-planned hosted targets. Independent Claude CLI
    current-head evidence is added for high-risk work, an owner request, or a
    disputed finding. An active owner request may authorize the guarded wrapper
-   to merge an issue-backed `integration` PR; `main`, `develop`, release,
+   to merge an issue-backed `develop` PR; `main` promotion, release,
    settings, tag, and ADR authority remain human.
 
 ## Historical field experience, 2026-08-18 to 2026-08-20
@@ -54,8 +54,8 @@ The protocol in these documents was exercised before it was accepted, by two
 agents working the same repository in parallel. During that recorded period,
 `develop` was the active delivery branch: a build agent delivered the feature
 backlog there while a quality steward reviewed that stream and executed
-separate backlog items on branches. Current work instead targets `integration`
-as defined by [the delivery authority](../integration-delivery.md). What held
+separate backlog items on branches. Current work targets `develop`
+as defined by [the delivery authority](../issue-branch-delivery.md). What held
 up and what did not is recorded here so the proposal is judged on evidence
 rather than intent.
 
@@ -92,7 +92,7 @@ rather than intent.
   merging five pull requests in quick succession made `cancel-in-progress`
   cancel each intermediate run, so those commits carry no completed verdict
   even though every pull request was green before merge. This lesson now
-  applies to `integration`: space merges, or state plainly that verification
+  applies to `develop`: space merges, or state plainly that verification
   is tip-only.
 - *A check that cannot fail is worse than no check.* A first version of the
   decision-record lint used `sed` alternation that BSD `sed` ignores: it

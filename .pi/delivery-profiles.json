@@ -58,7 +58,7 @@
   },
   "promotion": {
     "explicit": true,
-    "refreshBase": "origin/integration",
+    "refreshBase": "origin/develop",
     "auditPrototypeGaps": true,
     "invalidateProvisionalEvidence": true,
     "recomputeTargets": true

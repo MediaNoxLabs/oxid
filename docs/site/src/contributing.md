@@ -1,7 +1,7 @@
 # Contributor quickstart
 
 The full policy lives in
-[`CONTRIBUTING.md`](https://github.com/MediaNoxLabs/oxid/blob/integration/CONTRIBUTING.md);
+[`CONTRIBUTING.md`](https://github.com/MediaNoxLabs/oxid/blob/develop/CONTRIBUTING.md);
 this page is the five-minute version for a human who wants to build, test,
 and land one change.
 
@@ -27,7 +27,7 @@ interactive shells, and public packages need no credentials.
    or tokens in DTOs, logs, fixtures, or committed config — reviewers and
    tests both check this.
 3. **Architectural changes need an ADR.** Follow the format in
-   [`docs/adr/`](https://github.com/MediaNoxLabs/oxid/tree/integration/docs/adr);
+   [`docs/adr/`](https://github.com/MediaNoxLabs/oxid/tree/develop/docs/adr);
    an accepted ADR is binding even before it is fully delivered.
 4. **Conventional commits, signed and signed-off.** `type(scope): subject`,
    GPG-signed (`-S`) with a DCO trailer (`-s`). CI verifies both on pull
@@ -38,13 +38,12 @@ interactive shells, and public packages need no credentials.
 
 ## Landing a change
 
-Open a draft pull request against `integration`, the only writable delivery and
-Pages publishing branch. Historical `main` and `develop` are read-only. Let the
+Open a draft pull request from `<type>/issue-<number>` against `develop`. Let the
 CI gate run (it is the same `just check` you ran locally, plus the locked Nix
 package build), mark it ready when green, and expect review findings with
 file/line references. Merges are squash merges. A human may merge; an agent may
-merge only an issue-backed `integration` PR through the exact-head guard when
-the active owner request explicitly authorizes it. `main` and `develop` remain
+merge only an issue-backed `develop` PR through the exact-head guard when
+the active owner request explicitly authorizes it. Promotion to `main` remains
 human-only.
 
 Good first contributions: issues labeled

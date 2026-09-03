@@ -10,7 +10,7 @@ import { runManagedChild } from "./lib/managed-child-process.mjs";
 import { resolveDevLoopsPackageRoot } from "./lib/dev-loop-runtime.mjs";
 import { enforceSingleBase, pinnedPublicRoute } from "./lib/pinned-dev-loops-args.mjs";
 
-const INTEGRATION_BASE = "integration";
+const DELIVERY_BASE = "develop";
 const DELIVERY_PROFILE_OPTION = "--delivery-profile";
 
 /** Force the base on dev-loops' public PR create route and deprecated alias. */
@@ -19,7 +19,7 @@ export function normalizeDevLoopsArgs(argv) {
   const args = [...argv];
   const route = pinnedPublicRoute(args);
   const isPrCreate = route.category === "pr" && (route.command === "create" || route.command === "create-draft");
-  return enforceSingleBase(args, INTEGRATION_BASE, {
+  return enforceSingleBase(args, DELIVERY_BASE, {
     addWhenMissing: isPrCreate,
     label: "repository dev-loops operations",
   });

@@ -89,7 +89,7 @@ export function parsePushUpdates(input) {
 export function planPushRanges({ repository, remoteName, input, gitRunner = git }) {
   if (!REMOTE_NAME.test(remoteName)) throw new Error("pre-push remote name is invalid");
   const updates = parsePushUpdates(input);
-  const integrationRef = `refs/remotes/${remoteName}/integration`;
+  const developRef = `refs/remotes/${remoteName}/develop`;
   const plans = [];
   for (const update of updates) {
     if (update.deletion) continue;
@@ -111,18 +111,18 @@ export function planPushRanges({ repository, remoteName, input, gitRunner = git 
       throw new Error(`issue branch ${localRef} may only push to the same remote ref, not ${update.remoteRef}`);
     }
     try {
-      gitRunner(repository, ["rev-parse", "--verify", `${integrationRef}^{commit}`]);
+      gitRunner(repository, ["rev-parse", "--verify", `${developRef}^{commit}`]);
       gitRunner(repository, ["rev-parse", "--verify", `${update.localSha}^{commit}`]);
     } catch {
-      throw new Error(`fetch ${remoteName}/integration before pushing so the complete candidate range can be verified`);
+      throw new Error(`fetch ${remoteName}/develop before pushing so the complete candidate range can be verified`);
     }
     let base;
     try {
-      base = gitRunner(repository, ["merge-base", integrationRef, update.localSha]);
+      base = gitRunner(repository, ["merge-base", developRef, update.localSha]);
     } catch {
-      throw new Error(`${branch} has no locally resolvable ${remoteName}/integration merge base`);
+      throw new Error(`${branch} has no locally resolvable ${remoteName}/develop merge base`);
     }
-    if (!base) throw new Error(`${branch} has an empty ${remoteName}/integration merge base`);
+    if (!base) throw new Error(`${branch} has an empty ${remoteName}/develop merge base`);
     plans.push({ branch, base, head: update.localSha, remoteRef: update.remoteRef });
   }
   return plans;

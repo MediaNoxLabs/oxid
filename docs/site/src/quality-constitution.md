@@ -10,7 +10,7 @@ binding now, which targets require measured follow-up, and how exceptions are
 reviewed.
 
 The product and dependency architecture remains governed by
-[`OXID_IDENTITY_WALLET_BLUEPRINT.md`](https://github.com/MediaNoxLabs/oxid/blob/integration/OXID_IDENTITY_WALLET_BLUEPRINT.md),
+[`OXID_IDENTITY_WALLET_BLUEPRINT.md`](https://github.com/MediaNoxLabs/oxid/blob/develop/OXID_IDENTITY_WALLET_BLUEPRINT.md),
 accepted [ADRs](adr-catalog.md), and the executable architecture allowlist.
 This constitution does not authorize behavior, dependency, security, or gate
 changes that those authorities forbid.
@@ -37,9 +37,9 @@ inward dependency violation, reduced test depth, or weaker security.
 
 These rules reflect current repository controls and apply to every change:
 
-- Issue-backed work starts from `origin/integration`, targets `integration`,
+- Issue-backed work starts from `origin/develop`, targets `develop`,
   and follows
-  [`docs/integration-delivery.md`](https://github.com/MediaNoxLabs/oxid/blob/integration/docs/integration-delivery.md).
+  [`docs/issue-branch-delivery.md`](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/issue-branch-delivery.md).
 - Architectural changes require an ADR. Dependencies continue to point inward;
   domain and application crates remain independent of platform and adapter
   implementations.
@@ -205,7 +205,7 @@ or the affected change must stop.
 Generated code, bindings, protocol fixtures, test vectors, declarative tables,
 and cohesive algorithms may justify an exception, but are not automatically
 excluded. Existing RustSec allowances remain governed separately by
-[`docs/security/advisory-exceptions.md`](https://github.com/MediaNoxLabs/oxid/blob/integration/docs/security/advisory-exceptions.md).
+[`docs/security/advisory-exceptions.md`](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/security/advisory-exceptions.md).
 
 ## Change control
 

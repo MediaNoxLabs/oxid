@@ -21,17 +21,17 @@ index points to it; it is not a required read for unrelated work.
 
 ## Delivery authority
 
-- Fetch `origin/integration` before starting. It is the only writable delivery and Pages publishing branch. Historical `main` and `develop` are read-only.
-- Use a dedicated worktree based on the fetched integration ref. Never develop
+- Fetch `origin/develop` before starting. It is the shared development and PR target branch; `main` is the human-controlled release branch.
+- Use a dedicated worktree based on the fetched develop ref. Never develop
   in a dirty primary checkout and never delete unrelated user files.
 - Name issue-backed branches `<type>/issue-<number>`, where `type` is the
   Conventional Commit type that will lead the pull-request title. Do not add a
   descriptive suffix.
-- Target pull requests at `integration`. Start as draft.
+- Target pull requests at `develop`. Start as draft.
 - With explicit authorization in the active user request, automation may merge
-  an issue-backed `integration` PR only through
-  `scripts/github/merge-integration-pr.mjs` after its exact-head audit passes.
-  `main` and `develop` merges remain human-only.
+  an issue-backed `develop` PR only through
+  `scripts/github/merge-develop-pr.mjs` after its exact-head audit passes.
+  Promotion from `develop` to `main` remains human-only.
 - Every commit and pull-request title follows the repository contribution
   policy: allowed Conventional Commit type and mandatory scope, exact DCO
   sign-off, and a GitHub-verifiable OpenPGP signature. Before any push, verify
@@ -42,7 +42,7 @@ index points to it; it is not a required read for unrelated work.
 - Do not push, merge, change repository settings, accept an ADR, tag, or release
   without the authority required by the active user request.
 
-See [integration delivery](docs/integration-delivery.md) for branch protection,
+See [issue-branch delivery](docs/issue-branch-delivery.md) for branch protection,
 freshness, and exact required contexts.
 
 ## Architecture and security invariants
@@ -76,7 +76,7 @@ Follow [the productive loop](docs/factory/productive-loop.md):
   reviewer, no push/PR/hosted-CI wait, and no merge-readiness claim.
 - `/dev-loop production-ready issue <n>` selects the normal affected-target,
   draft, CI, and pre-approval loop. It is the default when no profile is named.
-- Promotion is explicit: refresh `origin/integration`, audit prototype gaps,
+- Promotion is explicit: refresh `origin/develop`, audit prototype gaps,
   invalidate provisional evidence, recompute targets, and run production gates.
   Both profiles retain issue/worktree, contribution, security, process, and
   disk invariants.
@@ -95,7 +95,7 @@ Follow [the productive loop](docs/factory/productive-loop.md):
 6. Invoke independent current-head Claude review only for a high-risk/release-profile
    change, an owner request, or a disputed finding.
 7. At merge, either hand off to a human or, when the active request explicitly
-   authorizes it, use the guarded integration-only merge wrapper.
+   authorizes it, use the guarded develop-only merge wrapper.
 
 Automatic review is capped at two concurrent reviewers. Low-signal refinement
 stops. Do not add reviewers, retries, retrospective work, or a second gate to
@@ -125,7 +125,7 @@ Run focused checks first. The path planner chooses proportional target lanes:
 
 ```bash
 node scripts/ci/target-plan.mjs \
-  --base "$(git merge-base HEAD origin/integration)" \
+  --base "$(git merge-base HEAD origin/develop)" \
   --head HEAD \
   --event pull_request \
   --delivery-profile production-ready
@@ -139,8 +139,8 @@ node scripts/ci/target-plan.mjs \
   run independently when selected.
 
 Build/toolchain/lockfile changes and unknown diff state fail closed to every
-public hosted target. Pull requests use affected lanes; each `integration`
-delivery and release-profile run executes the complete hosted set. Platform,
+public hosted target. Pull requests use affected lanes; each trusted `develop`
+push and release-profile run executes the complete hosted set. Platform,
 Docker, cross-repository, and owner-private dependencies are inventoried in
 `docs/factory/ci-target-matrix.md`. Quality/scanner schedules and the nightly
 hermetic flake check remain backstops.

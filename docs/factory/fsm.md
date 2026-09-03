@@ -71,9 +71,9 @@ truth. The FSM only adds the label transitions and the
 rule that **gate evidence is a PR comment** containing: angle name, reviewer
 identity/harness, findings (or "No findings"), and the CI run link. The owner
 policy permits an explicitly authorized agent to merge only an issue-backed
-`integration` PR through the guarded wrapper. The wrapper rechecks the exact
+`develop` PR through the guarded wrapper. The wrapper rechecks the exact
 head, current base, conflict-free merge tree, required checks, gate evidence,
-and resolved conversations. `main` and `develop` remain human-only. Fresh
+and resolved conversations. Promotion to `main` remains human-only. Fresh
 Claude current-head evidence is added for high-risk `full` work, an owner
 request, or a disputed finding.
 

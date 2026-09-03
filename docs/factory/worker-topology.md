@@ -61,8 +61,8 @@ Every operator starts from a normal clone and installs the host-local policy:
 ```bash
 git clone https://github.com/MediaNoxLabs/oxid.git
 cd oxid
-git fetch origin integration
-git switch --detach origin/integration
+git fetch origin develop
+git switch --detach origin/develop
 gh auth status
 git config user.name "Your Name"
 git config user.email "you@example.com"

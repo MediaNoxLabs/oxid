@@ -116,7 +116,7 @@ test("pre-push plans the complete issue range from local integration and ignores
     head: localSha,
     remoteRef: "refs/heads/feat/issue-200",
   }]);
-  assert.ok(calls.some((args) => args.includes("refs/remotes/origin/integration^{commit}")));
+  assert.ok(calls.some((args) => args.includes("refs/remotes/origin/develop^{commit}")));
 
   const zeros = "0".repeat(40);
   assert.deepEqual(planPushRanges({
@@ -135,7 +135,7 @@ test("pre-push plans the complete issue range from local integration and ignores
   assert.throws(() => planPushRanges({
     repository: "/repo",
     remoteName: "origin",
-    input: `refs/heads/feat/issue-200 ${localSha} refs/heads/integration ${remoteSha}\n`,
+    input: `refs/heads/feat/issue-200 ${localSha} refs/heads/develop ${remoteSha}\n`,
     gitRunner,
   }), /only push to the same remote ref/u);
 

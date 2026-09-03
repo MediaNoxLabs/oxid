@@ -663,22 +663,22 @@ test("repository wrappers force only the public PR-creation and managed-worktree
   assert.deepEqual(normalizeDevLoopsArgs(["--help"]), ["help"]);
   assert.deepEqual(normalizeDevLoopsArgs(["-h"]), ["help"]);
   assert.throws(() => normalizeDevLoopsArgs(["--help", "pr", "create"]), /unsupported leading/);
-  assert.deepEqual(normalizeDevLoopsArgs(["pr", "create", "--head", "topic"]), ["pr", "create", "--head", "topic", "--base", "integration"]);
-  assert.deepEqual(normalizeDevLoopsArgs(["--silent", "pr", "create-draft", "--head", "topic"]), ["--silent", "pr", "create-draft", "--head", "topic", "--base", "integration"]);
-  assert.deepEqual(normalizeDevLoopsArgs(["-s", "pr", "create", "--head", "topic"]), ["-s", "pr", "create", "--head", "topic", "--base", "integration"]);
-  assert.deepEqual(normalizeDevLoopsArgs(["--repo", "MediaNoxLabs/oxid", "pr", "create", "--head", "topic"]), ["--repo", "MediaNoxLabs/oxid", "pr", "create", "--head", "topic", "--base", "integration"]);
-  assert.deepEqual(normalizeDevLoopsArgs(["--repo=MediaNoxLabs/oxid", "--json", "pr", "create", "--head", "topic"]), ["--repo=MediaNoxLabs/oxid", "--json", "pr", "create", "--head", "topic", "--base", "integration"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["pr", "create", "--head", "topic"]), ["pr", "create", "--head", "topic", "--base", "develop"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["--silent", "pr", "create-draft", "--head", "topic"]), ["--silent", "pr", "create-draft", "--head", "topic", "--base", "develop"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["-s", "pr", "create", "--head", "topic"]), ["-s", "pr", "create", "--head", "topic", "--base", "develop"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["--repo", "MediaNoxLabs/oxid", "pr", "create", "--head", "topic"]), ["--repo", "MediaNoxLabs/oxid", "pr", "create", "--head", "topic", "--base", "develop"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["--repo=MediaNoxLabs/oxid", "--json", "pr", "create", "--head", "topic"]), ["--repo=MediaNoxLabs/oxid", "--json", "pr", "create", "--head", "topic", "--base", "develop"]);
   assert.deepEqual(normalizeDevLoopsArgs(["pr", "ready-for-review", "--pr", "153"]), ["pr", "ready-for-review", "--pr", "153"]);
-  assert.deepEqual(normalizeDevLoopsArgs(["pr", "edit", "--pr", "153", "--base", "integration"]), ["pr", "edit", "--pr", "153", "--base", "integration"]);
-  assert.throws(() => normalizeDevLoopsArgs(["pr", "edit", "--pr", "153", "--base", "main"]), /must use integration/);
+  assert.deepEqual(normalizeDevLoopsArgs(["pr", "edit", "--pr", "153", "--base", "develop"]), ["pr", "edit", "--pr", "153", "--base", "develop"]);
+  assert.throws(() => normalizeDevLoopsArgs(["pr", "edit", "--pr", "153", "--base", "main"]), /must use develop/);
   assert.deepEqual(normalizeDevLoopsArgs(["queue", "add", "--title", "pr", "create"]), ["queue", "add", "--title", "pr", "create"]);
-  assert.deepEqual(normalizeDevLoopsArgs(["--jq", ".ok", "pr", "create"]), ["--jq", ".ok", "pr", "create", "--base", "integration"]);
-  assert.throws(() => normalizeDevLoopsArgs(["--silent", "pr", "create", "--base", "main"]), /must use integration/);
-  assert.throws(() => normalizeDevLoopsArgs(["--repo", "MediaNoxLabs/oxid", "pr", "create", "--base", "main"]), /must use integration/);
+  assert.deepEqual(normalizeDevLoopsArgs(["--jq", ".ok", "pr", "create"]), ["--jq", ".ok", "pr", "create", "--base", "develop"]);
+  assert.throws(() => normalizeDevLoopsArgs(["--silent", "pr", "create", "--base", "main"]), /must use develop/);
+  assert.throws(() => normalizeDevLoopsArgs(["--repo", "MediaNoxLabs/oxid", "pr", "create", "--base", "main"]), /must use develop/);
   assert.throws(() => normalizeDevLoopsArgs(["--future-global", "pr", "create", "--base", "main"]), /unsupported leading dev-loops@0\.9\.0 option/);
-  assert.throws(() => normalizeDevLoopsArgs(["pr", "create-draft", "--base=develop"]), /must use integration/);
-  assert.deepEqual(normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150"]), ["--repo-root", "/repo", "--issue", "150", "--base", "origin/integration"]);
-  assert.throws(() => normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150", "--base", "origin/main"]), /must use origin\/integration/);
+  assert.throws(() => normalizeDevLoopsArgs(["pr", "create-draft", "--base=integration"]), /must use develop/);
+  assert.deepEqual(normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150"]), ["--repo-root", "/repo", "--issue", "150", "--base", "origin/develop"]);
+  assert.throws(() => normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150", "--base", "origin/main"]), /must use origin\/develop/);
   assert.doesNotThrow(() => assertReviewedWorktreePin("0.9.0"));
   assert.throws(() => assertReviewedWorktreePin("0.9.1"), /supports only reviewed dev-loops@0\.9\.0/);
   assert.notStrictEqual(oxidConsumerProvision(), oxidConsumerProvision());
@@ -777,7 +777,7 @@ test("new managed worktrees gate only on host capacity admission", async (t) => 
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
   const existing = await enforceFactoryAdmissionForCreation([
-    "--repo-root", fixture.root, "--issue", "150", "--base", "origin/integration",
+    "--repo-root", fixture.root, "--issue", "150", "--base", "origin/develop",
   ], {
     admissionAudit: async () => { throw new Error("audit must not run for an existing canonical worktree"); },
   });
@@ -786,7 +786,7 @@ test("new managed worktrees gate only on host capacity admission", async (t) => 
   await mkdir(path.join(fixture.root, "tmp", "worktrees", "dev-loops", "issue-151"));
   let auditOptions;
   const admitted = await enforceFactoryAdmissionForCreation([
-    "--repo-root", fixture.root, "--issue", "151", "--base", "origin/integration",
+    "--repo-root", fixture.root, "--issue", "151", "--base", "origin/develop",
   ], {
     admissionAudit: async (options) => {
       auditOptions = options;
@@ -797,7 +797,7 @@ test("new managed worktrees gate only on host capacity admission", async (t) => 
   assert.deepEqual(auditOptions, { repoRoot: await realpath(fixture.root) });
 
   await assert.rejects(enforceFactoryAdmissionForCreation([
-    "--repo-root", fixture.root, "--issue", "152", "--base", "origin/integration",
+    "--repo-root", fixture.root, "--issue", "152", "--base", "origin/develop",
   ], {
     admissionAudit: async () => ({
       admissionReady: false,
@@ -1775,8 +1775,8 @@ test("Claude runner binds clean exact-head evidence and rejects stale worktrees"
   const origin = path.join(fixtureRoot, "origin.git");
   execFileSync("git", ["init", "--bare", "--quiet", origin]);
   git("remote", "add", "origin", origin);
-  git("push", "--quiet", "origin", "HEAD:refs/heads/integration");
-  git("update-ref", "refs/remotes/origin/integration", baseSha);
+  git("push", "--quiet", "origin", "HEAD:refs/heads/develop");
+  git("update-ref", "refs/remotes/origin/develop", baseSha);
   await writeFile(path.join(repository, "contract.txt"), "base\nhead\n");
   git("add", "contract.txt");
   git("commit", "--quiet", "-m", "head");
