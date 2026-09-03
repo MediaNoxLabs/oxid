@@ -14,7 +14,7 @@ mod dust_sync;
 mod indexer;
 #[cfg(not(target_arch = "wasm32"))]
 mod local_proving;
-#[cfg(feature = "proving-bench")]
+#[cfg(all(not(target_arch = "wasm32"), feature = "proving-bench"))]
 mod proof_benchmark;
 #[cfg(not(target_arch = "wasm32"))]
 mod shielded;

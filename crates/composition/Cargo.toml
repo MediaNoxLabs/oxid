@@ -30,6 +30,9 @@ android-platform-tls = ["dep:oxid-adapter-mobile-native"]
 # deployment material is compiled only into this profile; seed custody remains
 # owner-entered and platform-backed.
 preprod-observation = []
+# Explicit development-only synthetic proof benchmark. The normal composition
+# graph and release profiles do not carry this capability.
+proof-benchmark = ["oxid-adapter-midnight/proving-bench"]
 # Native-mobile Portal identity/HTTP capability. It is target-gated, and its
 # fixed trigger remains runtime-inert until the app-owned standalone-portal path
 # calls the explicit Portal composition constructor.
