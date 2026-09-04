@@ -24,6 +24,14 @@ ui-profile-dev = ["oxid-ui-dioxus/ui-profile-dev", "oxid-ui-dioxus/app-profile-a
 # Opt-in fixture bootstrap presentation. It is accepted only with the
 # deterministic standalone-development composition.
 ui-profile-demo = ["oxid-ui-dioxus/ui-profile-demo", "oxid-ui-dioxus/app-profile-authority"]
+# Opt-in synthetic proof benchmark for development artifacts. This selects the
+# standalone developer profile but remains independent of its network routes.
+developer-proof-benchmark = [
+  "ui-profile-dev",
+  "standalone-development",
+  "oxid-composition/proof-benchmark",
+  "oxid-ui-dioxus/proof-benchmark",
+]
 # Explicit simulator/emulator composition. This never changes the default
 # production-facing composition selected by a normal application build.
 standalone-development = [

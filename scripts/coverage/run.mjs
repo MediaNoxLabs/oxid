@@ -28,13 +28,13 @@ const EXPECTED_COMMANDS = Object.freeze([
     "--exclude", "oxid-ui-dioxus",
     "--exclude", "oxid-app",
     "--exclude", "oxid-headless",
-    "--features", "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication,oxid-adapter-storage-dev/development-fixture,oxid-composition/preprod-observation,oxid-composition/standalone-development",
+    "--features", "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication,oxid-adapter-storage-dev/development-fixture,oxid-composition/preprod-observation,oxid-composition/proof-benchmark,oxid-composition/standalone-development",
     "--json", "--fail-under-lines", "80",
   ],
   ["cargo", "llvm-cov", "-p", "oxid-headless", "--all-targets", "--json"],
   [
     "cargo", "llvm-cov", "-p", "oxid-ui-dioxus", "--all-targets",
-    "--features", "ui-profile-demo,app-profile-authority,standalone-deployment-profile,preprod-observation", "--json",
+    "--features", "ui-profile-dev,app-profile-authority,standalone-deployment-profile,preprod-observation,proof-benchmark", "--json",
   ],
 ]);
 const CLASSIFICATION_KEYS = Object.freeze([
@@ -128,6 +128,7 @@ function scopeMetadata(scope) {
         "oxid-adapter-did-midnight/tailnet-test-did-publication",
         "oxid-adapter-storage-dev/development-fixture",
         "oxid-composition/preprod-observation",
+        "oxid-composition/proof-benchmark",
         "oxid-composition/standalone-development",
       ],
       profile: "test",
@@ -137,10 +138,11 @@ function scopeMetadata(scope) {
   return {
     packages: ["oxid-ui-dioxus"],
     features: [
-      "ui-profile-demo",
+      "ui-profile-dev",
       "app-profile-authority",
       "standalone-deployment-profile",
       "preprod-observation",
+      "proof-benchmark",
     ],
     profile: "all-targets",
   };

@@ -14,6 +14,8 @@ mod dust_sync;
 mod indexer;
 #[cfg(not(target_arch = "wasm32"))]
 mod local_proving;
+#[cfg(all(not(target_arch = "wasm32"), feature = "proving-bench"))]
+mod proof_benchmark;
 #[cfg(not(target_arch = "wasm32"))]
 mod shielded;
 #[cfg(not(target_arch = "wasm32"))]
@@ -46,6 +48,8 @@ pub use local_proving::{
 };
 #[cfg(all(not(target_arch = "wasm32"), feature = "proving-bench"))]
 pub use local_proving::{MidnightLocalProvingFixtureReport, run_local_proving_fixture};
+#[cfg(all(not(target_arch = "wasm32"), feature = "proving-bench"))]
+pub use proof_benchmark::{MidnightProofBenchmark, MidnightProofBenchmarkConfig};
 #[cfg(not(target_arch = "wasm32"))]
 pub use shielded_checkpoint::{
     MidnightShieldedCheckpointConfig, MidnightShieldedCheckpointConfigError,

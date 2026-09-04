@@ -254,12 +254,12 @@ test("workspace, headless, and desktop commands run in strict order with bounded
   assert.match(result.calls[0].argv.join(" "), /--fail-under-lines 80/u);
   assert.match(
     result.calls[0].argv.join(" "),
-    /--features oxid-adapter-deployment-profile\/readiness,oxid-adapter-did-midnight\/tailnet-test-did-publication,oxid-adapter-storage-dev\/development-fixture,oxid-composition\/preprod-observation,oxid-composition\/standalone-development/u,
+    /--features oxid-adapter-deployment-profile\/readiness,oxid-adapter-did-midnight\/tailnet-test-did-publication,oxid-adapter-storage-dev\/development-fixture,oxid-composition\/preprod-observation,oxid-composition\/proof-benchmark,oxid-composition\/standalone-development/u,
   );
   assert.match(result.calls[1].argv.join(" "), /-p oxid-headless --all-targets/u);
   assert.match(
     result.calls[2].argv.join(" "),
-    /-p oxid-ui-dioxus --all-targets --features ui-profile-demo,app-profile-authority,standalone-deployment-profile,preprod-observation/u,
+    /-p oxid-ui-dioxus --all-targets --features ui-profile-dev,app-profile-authority,standalone-deployment-profile,preprod-observation,proof-benchmark/u,
   );
 
   const explicit = await runSynthetic(t, { env: { OXID_COVERAGE_JOBS: "4" } });

@@ -15,6 +15,8 @@ mod dids;
 mod labels;
 mod passport_vault;
 mod profile_guard;
+#[cfg(feature = "proof-benchmark")]
+mod proof_benchmark;
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
 
@@ -88,6 +90,8 @@ use oxid_protocol_application::{
     RouteIdentityRequestCommand, RouteIdentityRequestUseCase, SelfIssuedAuthenticationError,
     SelfIssuedAuthenticationView,
 };
+#[cfg(feature = "proof-benchmark")]
+use oxid_wallet_application::RunProofBenchmarkUseCase;
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationCommand, AuthorizeWalletDustRegistrationUseCase,
     AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase,
@@ -140,6 +144,8 @@ use zeroize::{Zeroize, Zeroizing};
 use diagnostics::DiagnosticsPage;
 use labels as ui;
 use passport_vault::PassportVaultPage;
+#[cfg(feature = "proof-benchmark")]
+use proof_benchmark::ProofBenchmarkPanel;
 
 const BASE_STYLES: &str = include_str!("../assets/styles.css");
 const DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL: &str = "Protected DUST registration";
@@ -245,6 +251,8 @@ pub struct WalletUiServices {
     deployment_profile: Option<Arc<dyn oxid_capabilities_application::GetDeploymentProfileUseCase>>,
     #[cfg(feature = "ui-profile-dev")]
     developer_capabilities: Vec<CapabilityView>,
+    #[cfg(feature = "proof-benchmark")]
+    proof_benchmark: Option<Arc<dyn RunProofBenchmarkUseCase>>,
     get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase>,
     clear_diagnostics: Arc<dyn ClearDiagnosticsUseCase>,
     qr_scanner: Arc<dyn QrScannerPort>,
@@ -997,6 +1005,8 @@ impl WalletUiServices {
             deployment_profile: None,
             #[cfg(feature = "ui-profile-dev")]
             developer_capabilities: Vec::new(),
+            #[cfg(feature = "proof-benchmark")]
+            proof_benchmark: None,
             get_diagnostic_snapshot: diagnostics.get,
             clear_diagnostics: diagnostics.clear,
             qr_scanner: ingress.qr_scanner,
@@ -1134,6 +1144,24 @@ impl WalletUiServices {
     #[must_use]
     pub fn developer_capabilities(&self) -> &[CapabilityView] {
         &self.developer_capabilities
+    }
+
+    /// Attaches the explicit development proof benchmark. Distributed user
+    /// profiles do not compile this builder or its service field.
+    #[cfg(feature = "proof-benchmark")]
+    #[must_use]
+    pub fn with_proof_benchmark(
+        mut self,
+        proof_benchmark: Arc<dyn RunProofBenchmarkUseCase>,
+    ) -> Self {
+        self.proof_benchmark = Some(proof_benchmark);
+        self
+    }
+
+    #[cfg(feature = "proof-benchmark")]
+    #[must_use]
+    pub fn proof_benchmark(&self) -> Option<Arc<dyn RunProofBenchmarkUseCase>> {
+        self.proof_benchmark.as_ref().map(Arc::clone)
     }
 
     #[must_use]
@@ -10159,6 +10187,10 @@ fn DeveloperCapabilitiesPage() -> Element {
         .filter(|capability| capability.status() == "ready")
         .count();
     let attention = capabilities.len().saturating_sub(ready);
+    #[cfg(feature = "proof-benchmark")]
+    let proof_benchmark_panel = rsx! { ProofBenchmarkPanel {} };
+    #[cfg(not(feature = "proof-benchmark"))]
+    let proof_benchmark_panel = rsx! {};
 
     rsx! {
         section { class: "page-heading",
@@ -10176,6 +10208,7 @@ fn DeveloperCapabilitiesPage() -> Element {
             }
             code { "source=oxid_capabilities_application freshness=composition_time cursor=not_applicable timing=not_collected" }
         }
+        {proof_benchmark_panel}
         div { class: "developer-capability-list",
             for capability in capabilities {
                 article {

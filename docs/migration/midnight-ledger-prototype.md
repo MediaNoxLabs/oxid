@@ -32,7 +32,7 @@ before migrating later work.
 | `dioxus-wallet/src/logs.rs`, `telemetry_panel.rs`, `proc_stats.rs`, and worker boundaries | Persistent tracing, free-form fields, HTTP/operation/process measurements, and background worker visibility | `diagnostics/application`, `adapters/diagnostics-memory`, composed closed-code sinks, headless snapshot/reset, and the Dioxus Diagnostics page | ADR-0080 reimplements only bounded payload-free runtime health and worker recovery; storage, upload, tracing strings, endpoints, process statistics, and benchmark telemetry remain excluded |
 | capability/worker visibility adjacent to the prototype diagnostics tabs | Useful development discovery was mixed with unsafe log and benchmark surfaces | `capabilities/application`, headless `system.capabilities`, and the opt-in standalone Dioxus developer profile | ADR-0095 keeps only closed public composition facts, corrects confirmation declarations, reports timing as `not_collected`, and proves the normal release excludes the developer marker; ADR-0096 adds a separate compile-time demo drawer that serializes safe setup and stops every protocol fixture at unchanged review |
 | `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Private local DUST proving implemented with an authenticated bounded cache; remote proving retained for explicit development |
-| benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated opt-in adapter harness | One real DUST proof/seal/codec harness is measured on iOS/Android; ADR-0072 adds an authenticated executable-embedded presentation artifact package and ADR-0083 runs it through an explicit foreground worker, while physical-device budgets remain gated; generated artifacts remain uncommitted |
+| benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated opt-in adapter harness | Issue #275 ports the parameterized synthetic proof benchmark through k=21 behind an explicit developer feature, a single process-wide worker, a safe k=17 sweep default, and a high-resource acknowledgement; CI compiles and unit-tests the path but executes no proof or parameter download. One real DUST proof/seal/codec harness remains measured on iOS/Android; physical-device high-k budgets remain gated and generated artifacts remain uncommitted |
 | Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts plus the shared `adapters/mobile-native-plugin` | Dioxus-generated hosts build and launch explicit development or native-custody standalone composition; the single static Swift/Kotlin plugin packages QR, links, typed clipboard/share, device custody, bounded backup documents, and one boolean screen-privacy operation (`FLAG_SECURE`/iOS background overlay); Android JNI failures clear pending Java exceptions without exposing details, and an emulator throw-then-full-wallet regression covers continued bridge use; disposable iOS Simulator and Android emulator flows verify complete native export/reset/import/recovery round trips through their system document pickers; Samsung SM-S928B / Android 16 physical evidence proves QR success/cancel/timeout, post-return liveness, consent isolation, warm/cold custom schemes, numeric `FLAG_SECURE`, protected tailnet account sync, durable public binding, honest process-local restart state, and real-touch Scan/activation separation; ADR-0097 adds a development-only MagicDNS/TLS physical-phone launcher without copying the prototype's personal endpoint, while physical iOS, multi-vendor screenshot behavior, universal links, funded live transactions, and resource baselines remain deferred |
 
 ## M0 migration decisions
@@ -50,6 +50,36 @@ before migrating later work.
 - Future ledger and proof dependencies must replace prototype-relative paths
   and mutable fork branches with the official GitHub sources and full commit
   pins defined in [the Midnight Git source policy](../dependencies/midnight-git-sources.md).
+
+## Development proof benchmark
+
+The opt-in `developer-proof-benchmark` app feature reimplements the reviewed
+`mobile-bench/contract-benchmark` and Dioxus Benchmark tab from source commit
+`074b1a4bccbfee1740ee188374b606a022ecef42`. Oxid deliberately stops at k=21,
+uses the repository's pinned public Midnight revision, and does not adopt the
+prototype's experimental personal `midnight-zk` fork or its mmap/disk-spill
+extensions.
+
+Compile the desktop development artifact without running proofs:
+
+```console
+cargo check -p oxid-app --no-default-features \
+  --features desktop,developer-proof-benchmark
+```
+
+The Developer page runs k=1 through k=21 sequentially. Its default sweep ends
+at k=17. Any sweep or individual run at k=18 or above requires the visible
+resource acknowledgement. A run owns the process-wide admission slot until
+its worker actually exits; navigating away does not cancel it. Results are
+process-local and contain only circuit size, row/hash counts, timings,
+verification state, and proof size. They are neither persisted nor emitted to
+the diagnostic event ring.
+
+The first run may download public proving parameters from
+`srs.midnight.network` into the app-private cache. CI validates construction,
+feature isolation, and low-cost model shapes only: it never downloads proving
+parameters and never executes a high-k proof. Real-device measurements require
+an owner-invoked resource receipt and remain evidence rather than a merge gate.
 
 ## First post-M0 slice: wallet presentation shell
 

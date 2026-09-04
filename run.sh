@@ -145,6 +145,7 @@ run_ui() {
   cargo check -p oxid-app --no-default-features --features mobile
   cargo check -p oxid-app --no-default-features --features mobile,standalone-development
   cargo check -p oxid-app --no-default-features --features mobile,standalone-development,ui-profile-dev
+  cargo check -p oxid-app --no-default-features --features mobile,developer-proof-benchmark
   cargo check -p oxid-app --no-default-features --features mobile,standalone-development,ui-profile-demo
 }
 

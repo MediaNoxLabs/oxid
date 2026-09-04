@@ -80,6 +80,11 @@ assert_public_fixture_feature_absent() {
     echo "$label oxid-app release profile enables the public-genesis warning UI" >&2
     exit 1
   fi
+  if has_feature "$composition_features" proof-benchmark ||
+    has_feature "$ui_features" proof-benchmark; then
+    echo "$label oxid-app release profile enables the development proof benchmark" >&2
+    exit 1
+  fi
   if has_feature "$storage_dev_features" development-fixture; then
     echo "$label oxid-app release profile enables arbitrary development fixture custody" >&2
     exit 1
@@ -334,6 +339,12 @@ fi
 
 cargo check -p oxid-app --no-default-features \
   --features desktop,standalone-development,standalone-local
+
+# The synthetic benchmark is an explicit developer profile. Compile the
+# complete incoming-port -> Midnight-adapter -> Dioxus path without executing
+# any proof or downloading proving parameters in CI.
+cargo check -p oxid-app --no-default-features \
+  --features desktop,developer-proof-benchmark
 
 # The physical launcher owns service selection. Keep the current laptop
 # MagicDNS lookup and the complete route set in one process; the app receives

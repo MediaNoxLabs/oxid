@@ -26,6 +26,8 @@ mod profile_mobile;
 #[cfg(all(feature = "preprod-observation", not(target_arch = "wasm32")))]
 mod profile_preprod;
 mod profile_production;
+#[cfg(all(feature = "proof-benchmark", not(target_arch = "wasm32")))]
+mod proof_benchmark;
 mod services;
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(any(test, feature = "standalone-development"))]
@@ -41,6 +43,8 @@ pub use profile_mobile::*;
 #[cfg(all(feature = "preprod-observation", not(target_arch = "wasm32")))]
 pub use profile_preprod::*;
 pub use profile_production::*;
+#[cfg(all(feature = "proof-benchmark", not(target_arch = "wasm32")))]
+pub use proof_benchmark::compose_development_proof_benchmark;
 pub use services::{ApplicationServices, WalletRootRecoveryCapability};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

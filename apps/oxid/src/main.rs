@@ -9,6 +9,17 @@ mod generated_brand {
     include!(concat!(env!("OUT_DIR"), "/brand.rs"));
 }
 
+#[cfg(feature = "developer-proof-benchmark")]
+fn development_proof_cache_directory() -> std::path::PathBuf {
+    #[cfg(target_os = "android")]
+    {
+        return std::path::PathBuf::from("/data/data/io.medianox.oxid/cache")
+            .join("midnight-proof-benchmark");
+    }
+    #[cfg(not(target_os = "android"))]
+    std::env::temp_dir().join("oxid-midnight-proof-benchmark")
+}
+
 #[cfg(any(
     feature = "standalone-portal",
     feature = "standalone-portal-tailnet",
@@ -20,6 +31,9 @@ fn startup_failure(error: impl std::fmt::Display) -> ! {
 }
 
 fn main() {
+    #[cfg(all(feature = "developer-proof-benchmark", target_arch = "wasm32"))]
+    compile_error!("developer-proof-benchmark is available only on native targets");
+
     #[cfg(all(
         feature = "desktop-portal-test",
         not(all(target_os = "macos", target_arch = "aarch64"))
@@ -538,6 +552,11 @@ fn main() {
         application.passport_vault_call_mode(),
         application.passport_vault_state_persistence(),
     ));
+    #[cfg(feature = "developer-proof-benchmark")]
+    let ui = ui.with_proof_benchmark(
+        oxid_composition::compose_development_proof_benchmark(development_proof_cache_directory())
+            .unwrap_or_else(|error| panic!("development proof benchmark is unavailable: {error}")),
+    );
     #[cfg(target_os = "android")]
     let ui = ui.with_android_platform_initializer(std::sync::Arc::new(|| {
         match oxid_composition::initialize_android_tls() {
