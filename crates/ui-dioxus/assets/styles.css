@@ -1903,6 +1903,29 @@ textarea:focus-visible {
   color: var(--text-strong);
 }
 
+.network-field input {
+  width: 100%;
+  min-height: 3.25rem;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  outline: 0;
+  background: color-mix(in srgb, var(--surface-0) 70%, transparent);
+  color: var(--text-strong);
+}
+
+.diagnostic-event-log {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.diagnostic-event-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
 .network-field select:focus-visible {
   border-color: var(--accent);
 }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use dioxus::prelude::*;
 use oxid_diagnostics_application::{
     CLEAR_LOCAL_DIAGNOSTICS_INTENT, ClearDiagnosticsCommand, ClearDiagnosticsUseCase,
-    DiagnosticSnapshotView, GetDiagnosticSnapshotUseCase,
+    DiagnosticSeverity, DiagnosticSnapshotView, GetDiagnosticSnapshotUseCase,
 };
 use oxid_wallet_application::WalletProfileView;
 
@@ -65,6 +65,44 @@ struct DiagnosticsProjection {
     rows: Vec<(String, String)>,
     ready: bool,
     empty: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DiagnosticEventRow {
+    sequence: u64,
+    code: String,
+    severity: String,
+}
+
+fn project_event_log(
+    state: &LocalDiagnosticsPageState,
+    show_warnings: bool,
+    show_errors: bool,
+    query: &str,
+) -> Vec<DiagnosticEventRow> {
+    let LocalDiagnosticsPageState::Ready(snapshot) = state else {
+        return Vec::new();
+    };
+    let normalized_query = query.trim().to_ascii_lowercase();
+    snapshot
+        .recent()
+        .iter()
+        .rev()
+        .filter(|event| match event.severity() {
+            DiagnosticSeverity::Warning => show_warnings,
+            DiagnosticSeverity::Error => show_errors,
+        })
+        .filter(|event| {
+            normalized_query.is_empty()
+                || event.code().as_str().contains(&normalized_query)
+                || event.severity().as_str().contains(&normalized_query)
+        })
+        .map(|event| DiagnosticEventRow {
+            sequence: event.sequence(),
+            code: event.code().as_str().to_owned(),
+            severity: event.severity().as_str().to_owned(),
+        })
+        .collect()
 }
 
 fn project_diagnostics(state: &LocalDiagnosticsPageState) -> DiagnosticsProjection {
@@ -157,6 +195,10 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
     );
     let mut account_state = use_signal(|| AccountPageState::Loading);
     let mut diagnostic_state = use_signal(|| LocalDiagnosticsPageState::Loading);
+    let mut show_warnings = use_signal(|| true);
+    let mut show_errors = use_signal(|| true);
+    let mut event_query = use_signal(String::new);
+    let mut clear_confirmation = use_signal(|| false);
     let profile_id = active_profile.id.clone();
     let effect_services = services.clone();
     use_effect(move || {
@@ -218,6 +260,12 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
     let diagnostic_rows = diagnostic_projection.rows;
     let diagnostics_ready = diagnostic_projection.ready;
     let diagnostics_empty = diagnostic_projection.empty;
+    let diagnostic_events = project_event_log(
+        &diagnostic_state.read(),
+        show_warnings(),
+        show_errors(),
+        &event_query(),
+    );
     let refresh_services = services.clone();
     let clear_services = services.clone();
     let mut refresh_state = diagnostic_state;
@@ -262,15 +310,36 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
                 button {
                     class: "secondary-button",
                     r#type: "button",
-                    onclick: move |_| {
-                        let clear = clear_services.clear_diagnostics();
-                        let get = clear_services.get_diagnostic_snapshot();
-                        clear_state.set(LocalDiagnosticsPageState::Loading);
-                        spawn(async move {
-                            clear_state.set(clear_diagnostics_and_reload(clear, get).await);
-                        });
-                    },
+                    onclick: move |_| clear_confirmation.set(true),
                     "Clear local events"
+                }
+            }
+            if clear_confirmation() {
+                div { class: "surface-card", role: "alertdialog", aria_label: "Confirm clearing local diagnostic events",
+                    h2 { "Clear retained events?" }
+                    p { "This removes the process-local event ring. It cannot be undone." }
+                    div { class: "button-row",
+                        button {
+                            class: "danger-action",
+                            r#type: "button",
+                            onclick: move |_| {
+                                let clear = clear_services.clear_diagnostics();
+                                let get = clear_services.get_diagnostic_snapshot();
+                                clear_confirmation.set(false);
+                                clear_state.set(LocalDiagnosticsPageState::Loading);
+                                spawn(async move {
+                                    clear_state.set(clear_diagnostics_and_reload(clear, get).await);
+                                });
+                            },
+                            "Clear now"
+                        }
+                        button {
+                            class: "secondary-button",
+                            r#type: "button",
+                            onclick: move |_| clear_confirmation.set(false),
+                            "Keep events"
+                        }
+                    }
                 }
             }
             div { class: "diagnostic-grid",
@@ -286,6 +355,52 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
                     article { class: "capability-row", key: "{code}",
                         span { class: "capability-dot queued" }
                         div { strong { "{code}" } p { "{detail}" } }
+                    }
+                }
+            }
+            section { class: "diagnostic-event-log", aria_label: "Recent diagnostic events",
+                p { class: "card-eyebrow", "Recent event log" }
+                h2 { "Newest retained events" }
+                p { "Search and filters inspect only fixed event codes and severity labels." }
+                div { class: "diagnostic-event-filters",
+                    label { class: "confirmation-check",
+                        input {
+                            r#type: "checkbox",
+                            checked: show_warnings(),
+                            onchange: move |event| show_warnings.set(event.checked()),
+                        }
+                        span { "Warnings" }
+                    }
+                    label { class: "confirmation-check",
+                        input {
+                            r#type: "checkbox",
+                            checked: show_errors(),
+                            onchange: move |event| show_errors.set(event.checked()),
+                        }
+                        span { "Errors" }
+                    }
+                }
+                label { class: "network-field",
+                    span { "Search fixed event codes" }
+                    input {
+                        r#type: "search",
+                        value: "{event_query}",
+                        placeholder: "midnight.dust",
+                        oninput: move |event| event_query.set(event.value()),
+                    }
+                }
+                if diagnostic_events.is_empty() && diagnostics_ready {
+                    p { class: "field-hint", "No retained events match these filters." }
+                }
+                div { class: "diagnostic-grid",
+                    for event in diagnostic_events {
+                        article { class: "capability-row", key: "diagnostic-event-{event.sequence}",
+                            span { class: "capability-dot queued" }
+                            div {
+                                strong { "{event.code}" }
+                                p { "#{event.sequence} · {event.severity}" }
+                            }
+                        }
                     }
                 }
             }
@@ -537,6 +652,35 @@ mod tests {
         assert!(projection.rows.is_empty());
         assert!(projection.ready);
         assert!(projection.empty);
+    }
+
+    #[test]
+    fn event_log_is_newest_first_and_filters_closed_labels() {
+        let state = LocalDiagnosticsPageState::Ready(populated_snapshot());
+
+        let all = project_event_log(&state, true, true, "");
+        assert_eq!(
+            all.iter().map(|event| event.sequence).collect::<Vec<_>>(),
+            [4, 2]
+        );
+        assert_eq!(all[0].code, "midnight.dust.sync.failed");
+        assert_eq!(all[0].severity, "error");
+
+        let warning = project_event_log(&state, true, false, "HEADLESS.REQUEST");
+        assert_eq!(warning.len(), 1);
+        assert_eq!(warning[0].sequence, 2);
+
+        let error = project_event_log(&state, false, true, "error");
+        assert_eq!(error.len(), 1);
+        assert_eq!(error[0].sequence, 4);
+        assert!(project_event_log(&state, false, false, "").is_empty());
+    }
+
+    #[test]
+    fn event_search_never_projects_unknown_payload_text() {
+        let state = LocalDiagnosticsPageState::Ready(populated_snapshot());
+        let events = project_event_log(&state, true, true, SECRET_SENTINEL);
+        assert!(events.is_empty());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
