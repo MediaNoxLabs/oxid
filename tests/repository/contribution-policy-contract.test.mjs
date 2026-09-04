@@ -12,6 +12,7 @@ import {
   validateCommitMessage,
   validateCommitEvidence,
   validateHostedCommits,
+  validateGitHubUpdateBranchEvidence,
   validateIntegrationPromotionEvidence,
   validatePullRequest,
   validatePullRequestBody,
@@ -144,6 +145,112 @@ test("hosted commit evidence is exact-head, unique, and GitHub-verified OpenPGP"
   assert.equal(validateHostedCommits([{ ...valid[0], verification: { verified: true, reason: "valid", signature: "-----BEGIN SSH SIGNATURE-----" } }], { expectedHead: sha }).ok, false);
 });
 
+test("GitHub update-branch merges retain OpenPGP and topology evidence while omitting DCO", () => {
+  const featureSha = "a".repeat(40);
+  const baseSha = "b".repeat(40);
+  const updateSha = "c".repeat(40);
+  const verification = {
+    verified: true,
+    reason: "valid",
+    signature: "-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----",
+  };
+  const feature = {
+    sha: featureSha,
+    message: "feat(wallet): expose balance\n\nSigned-off-by: Factory Agent <agent@example.com>\n",
+    authorName: "Factory Agent",
+    authorEmail: "agent@example.com",
+    verification,
+  };
+  const update = {
+    sha: updateSha,
+    message: "Merge branch 'develop' into feat/issue-285",
+    authorName: "Factory Agent",
+    authorEmail: "agent@example.com",
+    committerName: "GitHub",
+    committerEmail: "noreply@github.com",
+    committerLogin: "web-flow",
+    committerType: "User",
+    parents: [featureSha, baseSha],
+    baseParentOnBase: true,
+    verification,
+  };
+  const context = {
+    expectedHead: updateSha,
+    baseRef: "develop",
+    headRef: "feat/issue-285",
+  };
+  assert.equal(validateHostedCommits([feature, update], context).ok, true);
+  assert.equal(validateGitHubUpdateBranchEvidence({
+    record: update,
+    baseRef: context.baseRef,
+    headRef: context.headRef,
+    priorCommitShas: new Set([featureSha]),
+    allCommitShas: new Set([featureSha, updateSha]),
+  }).ok, true);
+
+  for (const invalid of [
+    { ...update, committerLogin: "octocat" },
+    { ...update, committerName: "Factory Agent", committerEmail: "agent@example.com" },
+    { ...update, parents: [baseSha, featureSha] },
+    { ...update, parents: [featureSha] },
+    { ...update, baseParentOnBase: false },
+    { ...update, message: "Merge branch 'main' into feat/issue-285" },
+    { ...update, verification: { ...verification, verified: false, reason: "unsigned" } },
+    { ...update, verification: { ...verification, reason: "unknown_signature_type" } },
+    { ...update, verification: { ...verification, signature: "-----BEGIN SSH SIGNATURE-----" } },
+  ]) {
+    assert.equal(validateHostedCommits([feature, invalid], context).ok, false, JSON.stringify(invalid));
+  }
+
+  const disconnectedParent = { ...update, parents: ["d".repeat(40), baseSha] };
+  assert.equal(validateHostedCommits([feature, disconnectedParent], context).ok, false);
+  const injectedBaseParent = { ...update, parents: [featureSha, updateSha] };
+  assert.equal(validateHostedCommits([feature, injectedBaseParent], context).ok, false);
+});
+
+test("repeated GitHub update-branch merges remain valid as the base advances", () => {
+  const signature = {
+    verified: true,
+    reason: "valid",
+    signature: "-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----",
+  };
+  const normal = (sha, subject) => ({
+    sha,
+    message: `${subject}\n\nSigned-off-by: Factory Agent <agent@example.com>\n`,
+    authorName: "Factory Agent",
+    authorEmail: "agent@example.com",
+    verification: signature,
+  });
+  const update = (sha, featureParent, baseParent) => ({
+    sha,
+    message: "Merge branch 'develop' into fix/issue-285",
+    authorName: "Factory Agent",
+    authorEmail: "agent@example.com",
+    committerName: "GitHub",
+    committerEmail: "noreply@github.com",
+    committerLogin: "web-flow",
+    committerType: "User",
+    parents: [featureParent, baseParent],
+    baseParentOnBase: true,
+    verification: signature,
+  });
+  const first = "1".repeat(40);
+  const firstUpdate = "2".repeat(40);
+  const second = "3".repeat(40);
+  const secondUpdate = "4".repeat(40);
+  const records = [
+    normal(first, "fix(ci): preserve the contribution gate"),
+    update(firstUpdate, first, "a".repeat(40)),
+    normal(second, "test(ci): cover a second update"),
+    update(secondUpdate, second, "b".repeat(40)),
+  ];
+  assert.equal(validateHostedCommits(records, {
+    expectedHead: secondUpdate,
+    baseRef: "develop",
+    headRef: "fix/issue-285",
+  }).ok, true);
+});
+
 test("integration promotion evidence accepts only verified OpenPGP merge artifacts", () => {
   const sha = "a".repeat(40);
   const mergeArtifact = {
@@ -193,6 +300,11 @@ test("hosted policy evaluates trusted base code and verifies OpenPGP through Git
   assert.match(dco, /ref: \$\{\{ github\.workflow_sha \}\}/);
   assert.match(dco, /github\.rest\.pulls\.listCommits/);
   assert.match(dco, /candidate\.commit\.verification/);
+  assert.match(dco, /candidate\.committer\?\.login/);
+  assert.match(dco, /candidate\.parents/);
+  assert.match(dco, /compareCommitsWithBasehead/);
+  assert.match(dco, /PR_BASE_REF:/);
+  assert.match(dco, /PR_HEAD_REF:/);
   assert.match(dco, /policy\/scripts\/ci\/contribution-policy\.mjs hosted-commits/);
   assert.match(dco, /COMMIT_POLICY_MODE:/);
   assert.match(dco, /head\.ref == 'develop'/);
