@@ -65,13 +65,45 @@ jobs:
               pull_number: context.issue.number,
               per_page: 100,
             });
-            const records = commits.map((candidate) => ({
-              sha: candidate.sha,
-              message: candidate.commit.message,
-              authorName: candidate.commit.author?.name,
-              authorEmail: candidate.commit.author?.email,
-              verification: candidate.commit.verification,
-            }));
+            const expectedUpdateSubject = `Merge branch '${context.payload.pull_request.base.ref}' into ${context.payload.pull_request.head.ref}`;
+            const records = [];
+            for (const candidate of commits) {
+              const parents = (candidate.parents ?? []).map((parent) => parent.sha);
+              const isUpdateCandidate = candidate.commit.message.replace(/\n+$/u, '') === expectedUpdateSubject
+                && parents.length === 2
+                && candidate.committer?.login === 'web-flow';
+              let baseParentOnBase = false;
+              if (isUpdateCandidate) {
+                if (parents[1] === context.payload.pull_request.base.sha) {
+                  baseParentOnBase = true;
+                } else if (/^[0-9a-f]{40}$/u.test(parents[1])) {
+                  try {
+                    const comparison = await github.rest.repos.compareCommitsWithBasehead({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      basehead: `${parents[1]}...${context.payload.pull_request.base.sha}`,
+                    });
+                    baseParentOnBase = comparison.data.status === 'ahead'
+                      && comparison.data.merge_base_commit?.sha === parents[1];
+                  } catch (error) {
+                    core.warning(`Could not verify update-branch base ancestry for ${candidate.sha}: ${error.message}`);
+                  }
+                }
+              }
+              records.push({
+                sha: candidate.sha,
+                message: candidate.commit.message,
+                authorName: candidate.commit.author?.name,
+                authorEmail: candidate.commit.author?.email,
+                committerName: candidate.commit.committer?.name,
+                committerEmail: candidate.commit.committer?.email,
+                committerLogin: candidate.committer?.login,
+                committerType: candidate.committer?.type,
+                parents,
+                baseParentOnBase,
+                verification: candidate.commit.verification,
+              });
+            }
             fs.writeFileSync(process.env.COMMITS_FILE, JSON.stringify(records), { encoding: 'utf8', mode: 0o600 });
 
       - name: Verify Conventional Commits, DCO, and OpenPGP
@@ -82,6 +114,8 @@ jobs:
           COMMITS_FILE: ${{ runner.temp }}/pull-request-commits.json
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_ACTOR: ${{ github.event.pull_request.user.login }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           COMMIT_POLICY_MODE: ${{ ((github.event.pull_request.head.ref == 'develop' && github.event.pull_request.base.ref == 'main') || (startsWith(github.event.pull_request.head.ref, 'milestone-') && github.event.pull_request.base.ref == 'develop')) && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository && 'integration-promotion' || 'contributor' }}
         run: node policy/scripts/ci/contribution-policy.mjs hosted-commits
 

@@ -135,7 +135,14 @@ export function planPushRanges({ repository, remoteName, input, gitRunner = git,
       throw new Error(`${branch} has no locally resolvable ${deliveryRef} merge base`);
     }
     if (!base) throw new Error(`${branch} has an empty ${deliveryRef} merge base`);
-    plans.push({ branch, deliveryRef, base, head: update.localSha, remoteRef: update.remoteRef });
+    plans.push({
+      branch,
+      deliveryRef,
+      deliveryBranch: deliveryRef.slice(`refs/remotes/${remoteName}/`.length),
+      base,
+      head: update.localSha,
+      remoteRef: update.remoteRef,
+    });
   }
   return plans;
 }
@@ -155,6 +162,8 @@ export function validatePrePush({
       repository,
       base: plan.base,
       head: plan.head,
+      baseRef: plan.deliveryBranch,
+      headRef: plan.branch,
       verifyOpenPgp: true,
     }),
   }));

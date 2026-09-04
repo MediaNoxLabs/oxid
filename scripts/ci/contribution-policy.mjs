@@ -119,6 +119,58 @@ export function validateCommitEvidence({ message, authorName, authorEmail, rawCo
   return { ok: errors.length === 0, errors, subject: messageResult.subject };
 }
 
+function normalizedMessage(message) {
+  return typeof message === "string" ? message.replace(/\n+$/u, "") : "";
+}
+
+function githubUpdateSubject(baseRef, headRef) {
+  if (!baseRef || !headRef) return null;
+  return `Merge branch '${baseRef}' into ${headRef}`;
+}
+
+export function validateGitHubUpdateBranchEvidence({
+  record,
+  baseRef,
+  headRef,
+  priorCommitShas = new Set(),
+  allCommitShas = new Set(),
+  source = "hosted",
+}) {
+  const errors = [];
+  const expectedSubject = githubUpdateSubject(baseRef, headRef);
+  if (!expectedSubject || normalizedMessage(record?.message) !== expectedSubject) {
+    errors.push("message is not the exact GitHub update-branch subject");
+  }
+  if (!Array.isArray(record?.parents) || record.parents.length !== 2) {
+    errors.push("GitHub update-branch commit must have exactly two parents");
+  } else {
+    const [featureParent, baseParent] = record.parents;
+    if (!priorCommitShas.has(featureParent)) {
+      errors.push("first parent is not an earlier commit from this pull request");
+    }
+    if (allCommitShas.has(baseParent)) {
+      errors.push("second parent must come from the pull request base history");
+    }
+    if (record.baseParentOnBase !== true) {
+      errors.push("second parent is not verified as an ancestor of the pull request base");
+    }
+  }
+  if (record?.committerName !== "GitHub" || record?.committerEmail !== "noreply@github.com") {
+    errors.push("committer is not GitHub <noreply@github.com>");
+  }
+  if (source === "hosted" && (record?.committerLogin !== "web-flow" || record?.committerType !== "User")) {
+    errors.push("GitHub API committer is not the web-flow identity");
+  }
+  if (source === "hosted" && record?.verification?.reason !== "valid") {
+    errors.push("GitHub update-branch OpenPGP verification reason is not valid");
+  }
+  errors.push(...openPgpErrors({
+    rawCommit: source === "local" ? record?.rawCommit : null,
+    verification: source === "hosted" ? record?.verification : null,
+  }));
+  return { ok: errors.length === 0, errors, subject: null, githubUpdateBranch: errors.length === 0 };
+}
+
 function openPgpErrors({ rawCommit = null, verification = null }) {
   const errors = [];
   if (contributionPolicy.commit.requireOpenPgp) {
@@ -165,6 +217,8 @@ export function validateCommitRange({
   base,
   head,
   actor = "",
+  baseRef = "",
+  headRef = "",
   verifyOpenPgp = false,
   verifyCommit = verifyOpenPgpCommit,
 }) {
@@ -173,31 +227,75 @@ export function validateCommitRange({
   const commits = git(repository, ["rev-list", "--reverse", `${base}..${head}`]).trim().split("\n").filter(Boolean);
   if (commits.length === 0) return { ok: false, commits: [], errors: ["commit range is empty"] };
   if (commits.length > 250) return { ok: false, commits: [], errors: ["commit range exceeds the 250-commit policy bound"] };
+  const allCommitShas = new Set(commits);
+  const priorCommitShas = new Set();
   const results = [];
   for (const commit of commits) {
-    const evidence = validateCommitEvidence({
-      message: git(repository, ["show", "-s", "--format=%B", commit]),
+    const message = git(repository, ["show", "-s", "--format=%B", commit]);
+    const rawCommit = git(repository, ["cat-file", "commit", commit]);
+    const parents = git(repository, ["show", "-s", "--format=%P", commit]).trim().split(/\s+/u).filter(Boolean);
+    let baseParentOnBase = false;
+    if (parents.length === 2) {
+      try {
+        git(repository, ["merge-base", "--is-ancestor", parents[1], base]);
+        baseParentOnBase = true;
+      } catch {
+        baseParentOnBase = false;
+      }
+    }
+    const record = {
+      sha: commit,
+      message,
       authorName: git(repository, ["show", "-s", "--format=%an", commit]).trim(),
       authorEmail: git(repository, ["show", "-s", "--format=%ae", commit]).trim(),
-      rawCommit: git(repository, ["cat-file", "commit", commit]),
-      actor,
-    });
+      committerName: git(repository, ["show", "-s", "--format=%cn", commit]).trim(),
+      committerEmail: git(repository, ["show", "-s", "--format=%ce", commit]).trim(),
+      parents,
+      baseParentOnBase,
+      rawCommit,
+    };
+    const expectedUpdateSubject = githubUpdateSubject(baseRef, headRef);
+    const evidence = expectedUpdateSubject && normalizedMessage(message) === expectedUpdateSubject
+      ? validateGitHubUpdateBranchEvidence({
+        record,
+        baseRef,
+        headRef,
+        priorCommitShas,
+        allCommitShas,
+        source: "local",
+      })
+      : validateCommitEvidence({
+        message,
+        authorName: record.authorName,
+        authorEmail: record.authorEmail,
+        rawCommit,
+        actor,
+      });
     if (verifyOpenPgp) {
       const verificationError = verifyCommit(repository, commit);
       if (verificationError) evidence.errors.push(verificationError);
       evidence.ok = evidence.errors.length === 0;
     }
     results.push({ commit, ok: evidence.ok, errors: evidence.errors });
+    priorCommitShas.add(commit);
   }
   return { ok: results.every((result) => result.ok), commits: results, errors: [] };
 }
 
-export function validateHostedCommits(records, { actor = "", expectedHead = null, mode = "contributor" } = {}) {
+export function validateHostedCommits(records, {
+  actor = "",
+  expectedHead = null,
+  mode = "contributor",
+  baseRef = "",
+  headRef = "",
+} = {}) {
   if (!Array.isArray(records) || records.length === 0) return { ok: false, commits: [], errors: ["pull request has no commits"] };
   if (records.length > 250) return { ok: false, commits: [], errors: ["pull request exceeds the 250-commit policy bound"] };
   if (!HOSTED_COMMIT_MODES.has(mode)) return { ok: false, commits: [], errors: [`unsupported hosted commit policy mode '${mode}'`] };
   const errors = [];
   const seen = new Set();
+  const priorCommitShas = new Set();
+  const allCommitShas = new Set(records.map((record) => record?.sha).filter((sha) => typeof sha === "string"));
   const results = [];
   for (const record of records) {
     if (!record || !/^[0-9a-f]{40}$/u.test(record.sha ?? "")) {
@@ -213,8 +311,17 @@ export function validateHostedCommits(records, { actor = "", expectedHead = null
       errors.push(`${record.sha} has incomplete author or message metadata`);
       continue;
     }
+    const expectedUpdateSubject = githubUpdateSubject(baseRef, headRef);
     const evidence = mode === "integration-promotion"
       ? validateIntegrationPromotionEvidence({ verification: record.verification })
+      : expectedUpdateSubject && normalizedMessage(record.message) === expectedUpdateSubject
+        ? validateGitHubUpdateBranchEvidence({
+          record,
+          baseRef,
+          headRef,
+          priorCommitShas,
+          allCommitShas,
+        })
       : validateCommitEvidence({
         message: record.message,
         authorName: record.authorName,
@@ -223,6 +330,7 @@ export function validateHostedCommits(records, { actor = "", expectedHead = null
         actor,
       });
     results.push({ commit: record.sha, ok: evidence.ok, errors: evidence.errors });
+    priorCommitShas.add(record.sha);
   }
   if (expectedHead && records.at(-1)?.sha !== expectedHead) {
     errors.push(`last hosted commit is not exact PR head ${expectedHead}`);
@@ -304,6 +412,8 @@ function run() {
       actor: process.env.PR_ACTOR ?? "",
       expectedHead: requiredEnvironment("HEAD_SHA"),
       mode: process.env.COMMIT_POLICY_MODE ?? "contributor",
+      baseRef: process.env.PR_BASE_REF ?? "",
+      headRef: process.env.PR_HEAD_REF ?? "",
     });
     for (const problem of result.errors) process.stderr.write(`[contribution-policy] ${problem}\n`);
     for (const candidate of result.commits) {

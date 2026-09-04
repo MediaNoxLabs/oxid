@@ -105,6 +105,22 @@ still require conventional subjects and GitHub-verified OpenPGP signatures. A
 generated update that cannot meet those rules must be recreated on a normal
 issue branch; its gate is not waived.
 
+GitHub's **Update branch** action is a narrow server-generated exception. The
+traditional merge option creates a commit with GitHub's fixed merge subject and
+does not add a DCO trailer. Hosted policy admits that commit only when all of
+the following agree: the exact PR base and head names in the subject, two-parent
+topology linking an earlier PR commit to verified base history, the GitHub
+`web-flow` committer identity, and a GitHub-verified OpenPGP signature. Only the
+Conventional subject and DCO checks are skipped for that artifact; exact-head
+binding and every other contributor commit remain strict. Repeated Web UI
+updates are supported. A locally created merge, a GitHub-authored edit, an
+unverified signature, or a topology mismatch is not this exception.
+
+The local pre-push hook recognizes the same fixed subject, topology, GitHub
+committer, base ancestry, and cryptographic signature after an updated branch
+is fetched. This lets a contributor add another signed commit after using the
+Web UI without rewriting the server-generated merge.
+
 The required check retains the historical name `Verify commit sign-offs` so
 the active ruleset remains effective while its implementation now verifies the
 full commit policy. A trusted `pull_request_target` workflow reads commit

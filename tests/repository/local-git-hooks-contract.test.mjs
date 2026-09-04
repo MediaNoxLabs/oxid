@@ -114,6 +114,7 @@ test("pre-push plans the complete issue range from each branch's recorded target
   assert.deepEqual(planPushRanges({ repository: "/repo", remoteName: "origin", input, gitRunner, deliveryBaseResolver }), [{
     branch: "feat/issue-200",
     deliveryRef: "refs/remotes/origin/milestone-0.4.0",
+    deliveryBranch: "milestone-0.4.0",
     base: baseSha,
     head: localSha,
     remoteRef: "refs/heads/feat/issue-200",
@@ -178,6 +179,8 @@ test("pre-push requests local cryptographic verification and propagates range fa
   });
   assert.equal(options.verifyOpenPgp, true);
   assert.equal(options.base, baseSha);
+  assert.equal(options.baseRef, "develop");
+  assert.equal(options.headRef, "fix/issue-200");
   assert.equal(failed.ok, false);
 });
 
