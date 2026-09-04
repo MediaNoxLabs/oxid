@@ -20,9 +20,10 @@ not.
 - Multiple parents may work different issue branches locally or on other
   hosts. One mutating parent owns each issue worktree; repository merges remain
   serialized.
-- A clean gate is evidence, not permission to mutate the delivery branch. An
-  agent may merge only an issue-backed `develop` PR when the active owner
-  request explicitly authorizes it and the guarded merge audit passes.
+- A clean gate is evidence, not permission to push directly to a protected
+  branch. An authorized agent may merge only an issue-backed PR to its declared
+  `milestone-<x.y.z>` through the guarded audit. Humans alone merge to
+  `develop` or `main`.
 
 An SLO miss is a process finding. Do not answer it by adding retries, reviewers,
 or a second implementation path. Record which phase consumed the time and fix
@@ -37,7 +38,7 @@ state:
 | Profile | Purpose | Required evidence | Remote posture |
 | --- | --- | --- | --- |
 | `prototype` | Answer one product or technical hypothesis quickly | `basic`, plus an explicitly needed focused unit or headless check | Local only; evidence is provisional and never merge-eligible |
-| `production-ready` | Produce a reviewable, merge-eligible change | Affected targets, draft review, hosted CI, and pre-approval review | Normal authority-gated branch/PR flow |
+| `production-ready` | Produce a reviewable, merge-eligible increment | Affected critical targets, bounded review, hosted CI, and complete finding triage | Guarded milestone flow or human durable-branch handoff |
 
 Invoke the public entrypoint as:
 
@@ -56,7 +57,7 @@ the result as provisional.
 
 A prototype closes with its hypothesis, result, changed paths, checks run,
 known gaps, resource use, and promotion plan. Promotion is a deliberate new
-`production-ready` invocation: fetch and refresh from `origin/develop`,
+`production-ready` invocation: fetch and refresh from the recorded delivery base,
 audit every shortcut and known gap, discard provisional gate claims, rebuild
 the handoff envelope, recompute the affected targets, and execute the normal
 production gates. Do not turn a prototype into a PR by merely pushing its head.
@@ -66,18 +67,38 @@ DCO/GPG requirements, secret and custody boundaries, process ownership, and
 disk limits. The machine-readable contract is
 `.pi/delivery-profiles.json`; `scripts/factory/audit-pi.mjs` rejects drift.
 
+## Delivery targets and concurrent trains
+
+Several milestone trains may stream concurrently. Each session binds one work
+item to one explicit base; there is no repository-global “current milestone”
+that independent workers can overwrite. Product branches target their selected
+`milestone-<x.y.z>`. Factory, harness, CI, documentation, dependency, and
+governance branches can target `develop` so factory tuning remains isolated
+from every active product train.
+
+One branch is never merged separately into two trains. If both need the same
+change, land it through human review in `develop` and create an explicit sync
+or backport PR for each train. When stacked work is necessary, keep at most two
+active engineering branches and preserve the final milestone target in both
+work items. See [the delivery authority](../issue-branch-delivery.md) for train
+lifecycle and human promotion rules.
+
 ## One candidate, two checkpoints
 
-1. Start from fetched `origin/develop` in a dedicated worktree. Run
+1. Resolve exactly one delivery base. Product work uses its criteria-backed
+   `origin/milestone-<x.y.z>`; factory work may use `origin/develop`. Start
+   from that fetched ref in a dedicated worktree. Run
    `node scripts/worktree-lifecycle.mjs audit` before creating another.
 2. Make a bounded change and run the narrowest meaningful local test.
 3. Run the draft gate for scope and correctness. It does not wait for hosted
-   CI. Fix accepted direction findings together.
+   CI. Repair blocking findings together. Record bounded non-critical findings
+   as linked follow-up issues instead of extending the current iteration.
 4. Run the target planner locally against the intended base and head:
 
    ```bash
+   delivery_base="${DELIVERY_BASE:?set DELIVERY_BASE to the recorded origin/... ref}"
    node scripts/ci/target-plan.mjs \
-     --base "$(git merge-base HEAD origin/develop)" \
+     --base "$(git merge-base HEAD "$delivery_base")" \
      --head HEAD \
      --event pull_request \
      --delivery-profile production-ready
@@ -86,14 +107,16 @@ disk limits. The machine-readable contract is
 5. Run the matching local gate, commit once, and push one coherent candidate.
    Do not push after each finding; every push cancels CI and stales exact-head
    evidence.
-6. Pre-approval runs correctness/security review against that candidate and
-   waits for the protected contexts once.
+6. Pre-approval runs correctness/security triage against that candidate and
+   waits for the critical protected contexts once. A non-critical finding is
+   complete for this increment only when its follow-up issue and mapping comment
+   exist.
 7. For a release-profile/high-risk change, an owner request, or a disputed finding, run
    the manually invoked current-head Claude review once after the last edit.
-8. Recheck current-head freshness. Hand off to the human operator, or use the
-   guarded develop-only merge wrapper when the active owner request
-   explicitly authorizes automated merge. Return any failed audit to
-   remediation.
+8. Recheck current-head and delivery-base freshness. Use the guarded
+   milestone-only merge path for an eligible product increment. Hand every
+   milestone promotion, direct factory PR, and release promotion to a human.
+   Return a failed critical audit to remediation.
 
 ## Assurance levels and target routing
 
@@ -139,15 +162,16 @@ node scripts/worktree-lifecycle.mjs audit --json
 
 Mutation is intentionally awkward and single-target. It requires an exact
 registered path, the expected head, and `--execute`. Worktree removal also
-requires a clean head already integrated into `origin/develop` and at least
-seven days old. The audit accepts direct Git ancestry first. For a squash merge,
+requires a clean head already integrated into its recorded milestone or
+`origin/develop` delivery base and at least seven days old. The audit accepts
+direct Git ancestry first. For a squash merge,
 it uses one exact merged GitHub PR head/base/merge-commit match and verifies that
-merge commit against a remotely observed, current `origin/develop`. Stale,
+merge commit against a remotely observed, current delivery base. Stale,
 unavailable, malformed, or ambiguous hosted evidence fails closed and is shown
 in the `mergeProof` field. `audit` remains mutation-free but is no longer purely
 local: non-ancestor heads make bounded read-only `git ls-remote` and authenticated
 `gh api graphql` calls. Without network access, a logged-in `gh`, or a current
-local develop ref, those heads report `unavailable`; direct ancestry and the
+local delivery ref, those heads report `unavailable`; direct ancestry and the
 rest of the inventory remain usable. The human table appends `proof` as its last
 column so the pre-existing column positions remain stable; prefer `--json` for
 automation:

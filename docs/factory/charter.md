@@ -15,6 +15,9 @@ factory work items. Duties:
   structure: goal, acceptance criteria, explicit out-of-scope list, and
   verification commands.
 - Keep items **bounded**: one reviewable slice, sized S/M/L (see fsm.md).
+- Assign exactly one delivery target: a criteria-backed
+  `milestone-<x.y.z>` for product work, or `develop` for factory, harness, CI,
+  documentation, dependency, and governance work.
 - Order the backlog and mark items `factory:ready` only after the ready-check
   (fsm.md §Ready) passes.
 
@@ -25,24 +28,25 @@ Claims a `factory:ready` item and delivers a draft PR. Duties:
 - Work on a branch named `<type>/issue-<number>`, using the Conventional
   Commit type that leads the pull-request title and no descriptive suffix.
 - Respect AGENT.md architecture rules and every accepted ADR.
-- Deliver through the `.devloops` `draft` gate with fan-out evidence, then the
-  `preApproval` gate with CI green.
-- Never push to `develop` directly. Merge only through the guarded
-  develop wrapper when the active owner request explicitly authorizes it;
-  otherwise stop for a human. A separate fresh Claude current-head review is
-  required only for high-risk `full` work, an owner request, or a disputed
-  finding.
+- Deliver through the `.devloops` draft gate, exact-head critical CI, and final
+  finding triage. Blocking findings return to implementation. Non-critical
+  findings move forward only through linked follow-up issues.
+- Never push directly to a milestone, `develop`, or `main`. The guarded merge
+  path is milestone-only; every `develop` or `main` merge is handed to a human.
+  A separate fresh Claude current-head review is required only for high-risk
+  work, an owner request, or a disputed finding.
 
 ### Reviewer (fan-out)
 The bounded `.devloops` fan-out uses scope/correctness at draft and
-correctness/security at pre-approval, with no more than two concurrent
-reviewers. Reviewers only ever produce findings with file/line references;
-they never edit the branch.
+correctness/security at final triage, with no more than two concurrent
+reviewers. Reviewers produce actionable findings with file/line references and
+classify them against the blocking contract; they never edit the branch. A
+non-critical finding is advisory until its follow-up issue is recorded.
 
 ### Quality Steward
 A standing role, independent of any single work item. Duties:
 
-- Review `develop` deltas on a schedule; verify
+- Review active milestone and `develop` deltas on a schedule; verify
   architecture/security/testing claims against the actual code.
 - Measure local target and CI durations against the budgets in metrics.md;
   flag regressions before they hit the CI time bound.
@@ -52,20 +56,21 @@ A standing role, independent of any single work item. Duties:
 - File confirmed findings as factory work items; never fix-and-push directly.
 
 ### Release Manager (human)
-Owns tags, releases, ADR acceptance, repository settings, and every `main`
-promotion decision. Clean `develop` PRs may be merged by a human, or
-by an agent under explicit active owner authorization, after all current-head
-gates and any risk-required independent review evidence are posted.
+Owns milestone lifecycle, tags, releases, ADR acceptance, repository settings,
+and every merge to `develop` or `main`. An authorized factory worker may merge
+only to `milestone-<x.y.z>` through the exact-head guard. Humans decide when and
+in which order concurrent trains promote.
 
 ## Authority boundaries
 
 | Action | Who may do it |
 | --- | --- |
-| Create/refine/order work items | Planner, Quality Steward |
+| Create/refine/order work items and assign one delivery target | Planner, Quality Steward |
 | Claim work, push a `<type>/issue-<number>` branch, open a draft PR | Implementer holding a valid lease |
 | Post gate findings | Reviewers |
-| Merge a clean `develop` PR | Human delivery operator, or an explicitly owner-authorized agent through the guarded wrapper, after all current-head evidence is posted |
-| Merge to `main` | Human delivery operator only |
+| Merge an exact-head green issue PR to its declared `milestone-<x.y.z>` | Authorized factory worker through the guarded milestone wrapper |
+| Merge to `develop` or `main` | Human delivery operator only |
+| Create, close, synchronize, or delete a milestone train | Human delivery operator; agents may prepare the issue-backed PR |
 | Tag, release, change repo settings, accept ADRs | Release Manager (human) only |
 | Modify factory protocol docs | Via a normal factory work item and the same delivery gates |
 

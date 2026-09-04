@@ -41,12 +41,13 @@ fails closed until the guarded lease transaction in issue #197 is delivered.
 3. **Provider-agnostic.** Roles reference capabilities, never a specific LLM.
    Model selection is configuration (`.pi/settings.json`, `.devloops`
    persona `defaultModel`), not process.
-4. **Proportional evidence before delivery.** Stable required aggregators
-   run the impact-planned hosted targets. Independent Claude CLI
-   current-head evidence is added for high-risk work, an owner request, or a
-   disputed finding. An active owner request may authorize the guarded wrapper
-   to merge an issue-backed `develop` PR; `main` promotion, release,
-   settings, tag, and ADR authority remain human.
+4. **Proportional critical evidence before delivery.** Stable required
+   aggregators run the impact-planned critical targets. Independent review is
+   advisory unless it identifies a closed-class blocking finding; bounded
+   non-critical findings become linked follow-up issues. The guarded wrapper
+   may merge only to a declared `milestone-<x.y.z>` train. Every `develop` or
+   `main` merge, promotion, release, settings, tag, and ADR decision remains
+   human-controlled.
 
 ## Historical field experience, 2026-08-18 to 2026-08-20
 
@@ -54,8 +55,9 @@ The protocol in these documents was exercised before it was accepted, by two
 agents working the same repository in parallel. During that recorded period,
 `develop` was the active delivery branch: a build agent delivered the feature
 backlog there while a quality steward reviewed that stream and executed
-separate backlog items on branches. Current work targets `develop`
-as defined by [the delivery authority](../issue-branch-delivery.md). What held
+separate backlog items on branches. Product work now targets an explicit
+milestone train while factory work may target `develop`, as defined by
+[the delivery authority](../issue-branch-delivery.md). What held
 up and what did not is recorded here so the proposal is judged on evidence
 rather than intent.
 

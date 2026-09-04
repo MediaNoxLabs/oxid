@@ -156,15 +156,20 @@ storage ceiling before any new layer becomes required.
 
 | Repository event | Effective profile | Gate set |
 | --- | --- | --- |
-| PR to `develop` | `feature` | L0 plus change-relevant hosted lanes and requested extras |
-| push to `develop` | `integration` | every deterministic public hosted lane, in parallel |
+| Product PR to `milestone-<x.y.z>` | `feature` | L0 plus critical change- and risk-relevant hosted lanes; optional extras remain advisory |
+| Push to `milestone-<x.y.z>` | `integration` | every deterministic public hosted lane, in parallel; a red tip pauses automatic merges |
+| Factory/harness/CI/docs/dependency/governance PR to `develop` | `feature` | L0 plus change-relevant hosted lanes and requested extras; human merge only |
+| Milestone promotion PR or push to `develop` | `integration` | every deterministic public hosted lane, in parallel; human merge only |
 | PR or push to `main` | `release` | every deterministic public hosted lane, in parallel |
 | manual workflow | selected `feature`, `integration`, or `release` | impacted, public-full, or public-full respectively; extra hosted targets may be named |
 | nightly schedule | release backstop | complete hermetic Nix suite |
 
-`develop` is the writable PR target and maps to the internal `integration`
-assurance profile after merge; `main` maps to `release`. “Release” here means all deterministic public
-targets; owner-private/device evidence remains a separate explicit checklist.
+Milestone trains are the only agent-mergeable targets. `develop` remains the
+human-controlled engineering baseline and maps to the internal `integration`
+assurance profile after merge; `main` maps to `release`. “Integration” names an
+assurance level, not the retired branch. “Release” means all deterministic
+public targets; owner-private/device evidence remains a separate explicit
+checklist.
 
 ## Promotion criteria for missing L4 lanes
 

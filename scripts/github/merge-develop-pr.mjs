@@ -37,9 +37,7 @@ export function parseMergeDevelopArgs(argv) {
   if (!Number.isInteger(pr) || pr < 1) throw new Error("--pr must be a positive integer");
   const execute = values.execute === true;
   const authorizedByOwner = values["authorized-by-owner"] === true;
-  if (execute && !authorizedByOwner) {
-    throw new Error("--execute requires --authorized-by-owner from the active user request");
-  }
+  if (execute) throw new Error("automated merges to develop are disabled; hand the PR to a human");
   return { help: false, repo: values.repo, pr, execute, authorizedByOwner };
 }
 
@@ -143,14 +141,7 @@ export function runCli(argv = process.argv.slice(2), runtime = {}) {
     return;
   }
   const result = auditDevelopMerge(options, runtime);
-  if (options.execute) {
-    const run = runtime.run ?? defaultRun;
-    run("gh", ["pr", "merge", String(options.pr), "--repo", options.repo, "--squash", "--match-head-commit", result.headSha], {
-      cwd: runtime.cwd ?? process.cwd(),
-      label: "merge audited develop pull request",
-    });
-  }
-  (runtime.stdout ?? process.stdout).write(`${JSON.stringify({ ...result, merged: options.execute })}\n`);
+  (runtime.stdout ?? process.stdout).write(`${JSON.stringify({ ...result, merged: false })}\n`);
 }
 
 function isDirectRun(metaUrl) {

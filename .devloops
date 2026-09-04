@@ -40,7 +40,7 @@ gates:
       - pr-checklist-matrix
     required: true
     requireCi: true
-  # Integration delivery uses issue scope, exact-head CI, signed commits,
+  # Streaming milestone delivery uses issue scope, exact-head CI, signed commits,
   # resolved conversations, and visible gate verdicts. Fan-out remains
   # available on demand, but it is not a merge prerequisite: mandatory fan-out
   # deadlocked local-only gates when Copilot was deliberately disabled.
@@ -59,12 +59,12 @@ personas:
       Report concrete findings with file and line references.
     defaultModel: null
 
-# The active owner may authorize an automated merge only for an issue-backed
-# develop PR after the repository merge wrapper passes. Promotion to main,
-# releases, settings, tags, and ADR acceptance remain human actions.
+# Automatic merge remains disabled while the milestone-only guard is delivered.
+# Develop, main, milestone lifecycle, releases, settings, tags, and ADR
+# acceptance are human actions.
 autonomy:
   stopAt: []
-  humanMergeOnly: false
+  humanMergeOnly: true
 
 workflow:
   # Permit a small task to stay synchronous. Requiring async start for every

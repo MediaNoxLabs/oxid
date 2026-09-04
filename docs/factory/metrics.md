@@ -203,9 +203,9 @@ they do not change workflow timeouts in this metrics-only slice.
 
 ## Historical trend log
 
-These immutable measurements predate `integration` becoming the sole delivery
-branch; `develop` identifies the branch on which the evidence was collected,
-not a current delivery instruction.
+These immutable measurements predate the streaming milestone model. `develop`
+identifies the branch on which the evidence was collected, not an instruction
+to bypass the work item's declared delivery target.
 
 | Date | Historical `develop` SHA | Cold check | Test (cold) | CI job | Notes |
 | --- | --- | --- | --- | --- | --- |

@@ -38,13 +38,13 @@ interactive shells, and public packages need no credentials.
 
 ## Landing a change
 
-Open a draft pull request from `<type>/issue-<number>` against `develop`. Let the
-CI gate run (it is the same `just check` you ran locally, plus the locked Nix
-package build), mark it ready when green, and expect review findings with
-file/line references. Merges are squash merges. A human may merge; an agent may
-merge only an issue-backed `develop` PR through the exact-head guard when
-the active owner request explicitly authorizes it. Promotion to `main` remains
-human-only.
+Open a draft pull request from `<type>/issue-<number>` against the exact target
+recorded on the issue: a `milestone-<x.y.z>` train for product work, or
+`develop` for eligible factory work. Let the path- and risk-relevant CI gate
+run, then classify review findings. Correctness and invariant failures stay in
+the PR; bounded non-critical debt needs a linked follow-up issue. Merges are
+squash merges. An authorized factory worker may use the exact-head guard only
+for milestone delivery. Merges to `develop` and `main` remain human-only.
 
 Good first contributions: issues labeled
 [`enhancement`](https://github.com/MediaNoxLabs/oxid/issues?q=is%3Aissue+is%3Aopen+label%3Aenhancement)

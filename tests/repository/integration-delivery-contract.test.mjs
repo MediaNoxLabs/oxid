@@ -31,19 +31,22 @@ function eligibleDevelopPr(overrides = {}) {
   };
 }
 
-test("develop merge execution requires explicit active owner authorization", () => {
+test("develop merge audit is read-only and execution fails closed", () => {
   assert.throws(
     () => parseMergeDevelopArgs(["--repo", "someone/else", "--pr", "168"]),
     /must be MediaNoxLabs\/oxid/,
   );
   assert.throws(
     () => parseMergeDevelopArgs(["--repo", "MediaNoxLabs/oxid", "--pr", "168", "--execute"]),
-    /requires --authorized-by-owner/,
+    /automated merges to develop are disabled/,
   );
-  assert.deepEqual(
-    parseMergeDevelopArgs(["--repo", "MediaNoxLabs/oxid", "--pr", "168", "--execute", "--authorized-by-owner"]),
-    { help: false, repo: "MediaNoxLabs/oxid", pr: 168, execute: true, authorizedByOwner: true },
-  );
+  assert.deepEqual(parseMergeDevelopArgs(["--repo", "MediaNoxLabs/oxid", "--pr", "168"]), {
+    help: false,
+    repo: "MediaNoxLabs/oxid",
+    pr: 168,
+    execute: false,
+    authorizedByOwner: false,
+  });
 });
 
 test("only issue-backed develop pull requests are eligible for automated merge", () => {
@@ -77,7 +80,7 @@ test("required checks include a passing signature and DCO gate", () => {
   assert.equal(validateRequiredChecks([{ name: "Repository gate", bucket: "pass", state: "SUCCESS" }]).ok, false);
 });
 
-test("develop merge wrapper pins a guarded squash merge to the audited head", async () => {
+test("legacy develop wrapper retains exact-head audit but cannot execute a merge", async () => {
   const source = await read("scripts/github/merge-develop-pr.mjs");
   for (const required of [
     /git[\s\S]*fetch/,
@@ -86,10 +89,8 @@ test("develop merge wrapper pins a guarded squash merge to the audited head", as
     /pr[\s\S]*checks[\s\S]*--required/,
     /devLoops, "gates"/,
     /gate[\s\S]*detect-evidence/,
-    /--match-head-commit/,
-    /--squash/,
   ]) assert.match(source, required);
-  assert.doesNotMatch(source, /--admin/);
+  assert.doesNotMatch(source, /gh", \["pr", "merge"|--admin|--match-head-commit|--squash/);
 });
 
 function eventBlock(workflow, eventName) {
@@ -195,8 +196,9 @@ test("trusted policy workflows publish required contexts on exact PR head SHAs",
 test("branch authority stays in protection settings, not a candidate-controlled workflow", async () => {
   await assert.rejects(read(".github/workflows/pr-base-check.yml"), { code: "ENOENT" });
   const contract = await read("docs/issue-branch-delivery.md");
-  assert.match(contract, /`develop` requires these checks/);
-  assert.match(contract, /`main` additionally\s+requires human\/code-owner review/);
+  assert.match(contract, /Milestone rulesets require commit authenticity/);
+  assert.match(contract, /Humans alone\s+merge pull requests to it/);
+  assert.match(contract, /`develop`-to-`main` promotion is human-only/);
 });
 
 test("dependency automation inherits develop from default-branch authority", async () => {
@@ -226,10 +228,10 @@ test("repository gate runs architecture and the delivery contract with its decla
 
 test("guidance, required contexts, and review configuration agree", async () => {
   const guidancePatterns = {
-    "AGENT.md": /shared development and PR target branch/,
-    "CONTRIBUTING.md": /Create `<type>\/issue-<number>` from `origin\/develop`/,
-    ".github/pull_request_template.md": /Target branch: `develop`/,
-    "docs/site/src/contributing.md": /against `develop`/,
+    "AGENT.md": /explicit delivery base/,
+    "CONTRIBUTING.md": /explicit delivery base/,
+    ".github/pull_request_template.md": /Delivery target: `milestone-x\.y\.z`/,
+    "docs/site/src/contributing.md": /exact target\s+recorded on the issue/,
   };
   for (const [file, pattern] of Object.entries(guidancePatterns)) assert.match(await read(file), pattern, file);
   const branchAuthorityFiles = [
@@ -252,7 +254,7 @@ test("guidance, required contexts, and review configuration agree", async () => 
     "README.md": /badge\.svg\?branch=develop/,
     "SECURITY.md": /latest commit on `develop` receives\s+security fixes/,
     "docs/site/book.toml": /edit\/develop\/docs\/site\/\{path\}/,
-    "docs/factory/charter.md": /Review `develop` deltas on a schedule/,
+    "docs/factory/charter.md": /Review active milestone and `develop` deltas on a schedule/,
     "docs/site/src/agent-process.md": /reviews\s+`develop` deltas on a schedule/,
   };
   for (const [file, pattern] of Object.entries(routedSurfaces)) {
@@ -263,7 +265,7 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(siteBuild, /blob\/develop\/docs\/adr/);
   assert.doesNotMatch(siteBuild, /blob\/integration\/docs\/adr/);
   const contract = await read("docs/issue-branch-delivery.md");
-  for (const pattern of [/default branch/, /pins `origin\/develop`/, /wrapper pins `develop`/, /git merge-base HEAD origin\/develop/, /`develop` is the shared development branch/, /`main` is the stable release branch/, /Pages source/, /temporary branch/i]) assert.match(contract, pattern);
+  for (const pattern of [/default branch/, /explicit base/, /milestone-<x\.y\.z>/, /git merge-base HEAD "\$delivery_base"/, /stable-enough shared engineering baseline/, /`main` is the stable release branch/, /Pages source/, /temporary branch/i]) assert.match(contract, pattern);
   const expectedNames = {
     "ci.yml": ["Repository gate (fmt, architecture, lint, tests, coverage)", "Locked Nix package and Compact artifacts"],
     "quality.yml": ["Audit, Licenses, Sources, and Documentation"],
@@ -316,7 +318,7 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.doesNotMatch(scanJob, /skip_(?:zizmor|gitleaks|opengrep|trivy)_scan:\s*["']?true/i);
   assert.match(config, /maxCopilotRounds: 0/);
   assert.match(config, /^  stopAt: \[\]$/m);
-  assert.match(config, /^  humanMergeOnly: false$/m);
+  assert.match(config, /^  humanMergeOnly: true$/m);
   assert.match(config, /^  requireRetrospective: false$/m);
   assert.match(config, /^  maxParallel: 1$/m);
   assert.doesNotMatch(config, /humanHandoff|candidatesFrom:\s*\n\s*- codeowners/);
@@ -369,10 +371,10 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(quality, /nix develop \.#ci-quality --command \.\/run\.sh quality --strict/);
   assert.doesNotMatch(quality, /cache-nix-action|nix7-devshell/);
   const contractReviewPolicy = await read("docs/issue-branch-delivery.md");
-  assert.match(contractReviewPolicy, /`develop` requires these checks/);
-  assert.match(contractReviewPolicy, /no additional approval/);
-  assert.match(contractReviewPolicy, /Promotion to it\s+is human-controlled/);
-  assert.match(contractReviewPolicy, /merge-develop-pr\.mjs/);
+  assert.match(contractReviewPolicy, /critical set/);
+  assert.match(contractReviewPolicy, /follow-up issue/);
+  assert.match(contractReviewPolicy, /milestone-to-`develop` promotion PR is human-only/);
+  assert.match(contractReviewPolicy, /milestone guard/);
   for (const file of ["docs/factory/runbook.md"]) {
     const guidance = await read(file);
     assert.match(guidance, /manually invoked/i, file);

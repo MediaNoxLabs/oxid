@@ -21,17 +21,21 @@ index points to it; it is not a required read for unrelated work.
 
 ## Delivery authority
 
-- Fetch `origin/develop` before starting. It is the shared development and PR target branch; `main` is the human-controlled release branch.
-- Use a dedicated worktree based on the fetched develop ref. Never develop
+- Resolve and fetch the work item's explicit delivery base before starting.
+  Product work targets one `milestone-<x.y.z>` train; factory, harness, CI,
+  documentation, dependency, and governance work may target `develop` directly.
+  Never guess the newest milestone.
+- Use a dedicated worktree based on the fetched delivery ref. Never develop
   in a dirty primary checkout and never delete unrelated user files.
 - Name issue-backed branches `<type>/issue-<number>`, where `type` is the
   Conventional Commit type that will lead the pull-request title. Do not add a
   descriptive suffix.
-- Target pull requests at `develop`. Start as draft.
-- With explicit authorization in the active user request, automation may merge
-  an issue-backed `develop` PR only through
-  `scripts/github/merge-develop-pr.mjs` after its exact-head audit passes.
-  Promotion from `develop` to `main` remains human-only.
+- Target the PR at its recorded delivery base. Start as draft. Stacked children
+  may temporarily target their parent branch but retain the same final target.
+- Automation may merge an issue-backed PR only to a matching
+  `milestone-<x.y.z>` branch, through the guarded milestone wrapper, after its
+  exact-head critical audit passes. Merges to `develop` and `main`, milestone
+  promotion/creation/deletion, releases, and repository settings are human-only.
 - Every commit and pull-request title follows the repository contribution
   policy: allowed Conventional Commit type and mandatory scope, exact DCO
   sign-off, and a GitHub-verifiable OpenPGP signature. Before any push, verify
@@ -76,7 +80,7 @@ Follow [the productive loop](docs/factory/productive-loop.md):
   reviewer, no push/PR/hosted-CI wait, and no merge-readiness claim.
 - `/dev-loop production-ready issue <n>` selects the normal affected-target,
   draft, CI, and pre-approval loop. It is the default when no profile is named.
-- Promotion is explicit: refresh `origin/develop`, audit prototype gaps,
+- Promotion is explicit: refresh the recorded delivery base, audit prototype gaps,
   invalidate provisional evidence, recompute targets, and run production gates.
   Both profiles retain issue/worktree, contribution, security, process, and
   disk invariants.
@@ -91,11 +95,13 @@ Follow [the productive loop](docs/factory/productive-loop.md):
    pre-approval.
 4. Batch accepted findings, run the target plan locally, then push one coherent
    current-head candidate.
-5. Run final correctness/security review and hosted CI once.
+5. Run final correctness/security triage and hosted CI once. Repair blocking
+   findings in the current PR; move bounded non-critical findings only to a
+   concrete linked follow-up issue and visible PR triage comment.
 6. Invoke independent current-head Claude review only for a high-risk/release-profile
    change, an owner request, or a disputed finding.
-7. At merge, either hand off to a human or, when the active request explicitly
-   authorizes it, use the guarded develop-only merge wrapper.
+7. At merge, use the guarded milestone-only wrapper for an eligible product
+   increment or hand a `develop`/`main` promotion to a human.
 
 Automatic review is capped at two concurrent reviewers. Low-signal refinement
 stops. Do not add reviewers, retries, retrospective work, or a second gate to
@@ -124,8 +130,9 @@ runbooks.
 Run focused checks first. The path planner chooses proportional target lanes:
 
 ```bash
+delivery_base="${DELIVERY_BASE:?set DELIVERY_BASE to the recorded origin/... ref}"
 node scripts/ci/target-plan.mjs \
-  --base "$(git merge-base HEAD origin/develop)" \
+  --base "$(git merge-base HEAD "$delivery_base")" \
   --head HEAD \
   --event pull_request \
   --delivery-profile production-ready
@@ -139,8 +146,9 @@ node scripts/ci/target-plan.mjs \
   run independently when selected.
 
 Build/toolchain/lockfile changes and unknown diff state fail closed to every
-public hosted target. Pull requests use affected lanes; each trusted `develop`
-push and release-profile run executes the complete hosted set. Platform,
+public hosted target. Pull requests use affected lanes; each trusted milestone
+or `develop` update and each promotion/release-profile run executes the complete
+hosted set. Platform,
 Docker, cross-repository, and owner-private dependencies are inventoried in
 `docs/factory/ci-target-matrix.md`. Quality/scanner schedules and the nightly
 hermetic flake check remain backstops.

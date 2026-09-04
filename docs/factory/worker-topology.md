@@ -12,7 +12,7 @@ are the shared coordination plane; a local process or filesystem is not.
 
 | Scope | Default bound | Meaning |
 | --- | --- | --- |
-| Repository | Multiple issue-backed candidates; one guarded merge at a time | Development and PR CI may overlap. The guarded claim lease in #197 will prevent two hosts from taking the same issue. |
+| Repository | Multiple issue-backed candidates across explicit trains; one guarded merge per milestone target at a time | Development and PR CI may overlap. The guarded claim lease in #197 will prevent two hosts from taking the same issue. |
 | Git common checkout on one host | Two active managed delivery worktrees | This is a disk and local-compute admission bound, not a repository-wide queue. A second clone has its own bound and cache accounting. |
 | Parent Pi session | One remotely driven candidate | `.devloops` `queue.maxParallel: 1` limits one conductor. It does not prohibit another parent session working another issue. |
 | Issue worktree | One mutating parent session | Never attach two writers to one worktree, branch, target directory, or session file. Extra sessions may inspect through read-only tools. |
@@ -36,9 +36,11 @@ cd /path/to/oxid
 ./bootstrap.sh --audit-pi
 
 node scripts/loop/ensure-worktree.mjs \
-  --repo-root "$PWD" --issue 201 --branch feat/issue-201
+  --repo-root "$PWD" --issue 201 --branch feat/issue-201 \
+  --delivery-base origin/milestone-0.4.0
 node scripts/loop/ensure-worktree.mjs \
-  --repo-root "$PWD" --issue 202 --branch fix/issue-202
+  --repo-root "$PWD" --issue 202 --branch fix/issue-202 \
+  --delivery-base origin/milestone-0.5.0
 ```
 
 Start one `./bootstrap.sh --pi` process from each returned worktree. The default
@@ -61,8 +63,8 @@ Every operator starts from a normal clone and installs the host-local policy:
 ```bash
 git clone https://github.com/MediaNoxLabs/oxid.git
 cd oxid
-git fetch origin develop
-git switch --detach origin/develop
+git fetch origin develop milestone-0.4.0
+git switch --detach origin/milestone-0.4.0
 gh auth status
 git config user.name "Your Name"
 git config user.email "you@example.com"
@@ -88,6 +90,12 @@ Each engineer supplies their own GitHub and model-provider authentication.
 or writes `auth.json`. Credentials, personal trust decisions, signing keys, and
 session transcripts are host state and must not be committed or copied into a
 shared worktree.
+
+Concurrent milestone selection is session-local and immutable for one work
+item. Never store a mutable host-wide “active milestone” that another Pi or
+cloud worker can overwrite. Factory, harness, CI, documentation, dependency,
+and governance sessions select `origin/develop`; product sessions select the
+one milestone recorded by their work item.
 
 ## Cloud workers
 
