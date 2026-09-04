@@ -37,7 +37,7 @@ export function assertNoPreflightBypass(env = process.env) {
 }
 
 const PACKAGE_RECOVERY_GUIDANCE = "(creates+provisions tmp/worktrees/dev-loops/<kind>-<n> from origin/main)";
-const REPOSITORY_RECOVERY_GUIDANCE = "(creates+provisions tmp/worktrees/dev-loops/<kind>-<n> from origin/develop)";
+const REPOSITORY_RECOVERY_GUIDANCE = "(requires explicit --delivery-base from the issue; never infers a milestone)";
 
 /**
  * The pinned generic package describes its own main-based repository. Oxid's

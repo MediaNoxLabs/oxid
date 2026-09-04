@@ -36,8 +36,11 @@ gates:
     angles:
       - correctness
       - security
-    mandatoryAngles:
-      - pr-checklist-matrix
+    # The draft description gate owns the increment contract. A global
+    # all-checkbox matrix turned optional evidence into a blocker and forced
+    # polish into the current PR; exact-head CI plus the triage receipt now own
+    # final readiness.
+    mandatoryAngles: []
     required: true
     requireCi: true
   # Streaming milestone delivery uses issue scope, exact-head CI, signed commits,
@@ -59,12 +62,12 @@ personas:
       Report concrete findings with file and line references.
     defaultModel: null
 
-# Automatic merge remains disabled while the milestone-only guard is delivered.
+# Automated merge is available only through scripts/github/merge-milestone-pr.mjs.
 # Develop, main, milestone lifecycle, releases, settings, tags, and ADR
-# acceptance are human actions.
+# acceptance remain human actions; the generic harness never owns them.
 autonomy:
   stopAt: []
-  humanMergeOnly: true
+  humanMergeOnly: false
 
 workflow:
   # Permit a small task to stay synchronous. Requiring async start for every

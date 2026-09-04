@@ -99,7 +99,7 @@ test("commit-msg validates Conventional Commit and exact DCO before commit creat
   assert.match(invalid.errors.join("\n"), /missing exact DCO trailer/u);
 });
 
-test("pre-push plans the complete issue range from local integration and ignores deletions", () => {
+test("pre-push plans the complete issue range from each branch's recorded target", () => {
   const localSha = "a".repeat(40);
   const remoteSha = "b".repeat(40);
   const baseSha = "c".repeat(40);
@@ -110,13 +110,15 @@ test("pre-push plans the complete issue range from local integration and ignores
     if (args[0] === "merge-base") return baseSha;
     return args.at(-1);
   };
-  assert.deepEqual(planPushRanges({ repository: "/repo", remoteName: "origin", input, gitRunner }), [{
+  const deliveryBaseResolver = () => "refs/remotes/origin/milestone-0.4.0";
+  assert.deepEqual(planPushRanges({ repository: "/repo", remoteName: "origin", input, gitRunner, deliveryBaseResolver }), [{
     branch: "feat/issue-200",
+    deliveryRef: "refs/remotes/origin/milestone-0.4.0",
     base: baseSha,
     head: localSha,
     remoteRef: "refs/heads/feat/issue-200",
   }]);
-  assert.ok(calls.some((args) => args.includes("refs/remotes/origin/develop^{commit}")));
+  assert.ok(calls.some((args) => args.includes("refs/remotes/origin/milestone-0.4.0^{commit}")));
 
   const zeros = "0".repeat(40);
   assert.deepEqual(planPushRanges({
@@ -124,6 +126,7 @@ test("pre-push plans the complete issue range from local integration and ignores
     remoteName: "origin",
     input: `(delete) ${zeros} refs/heads/feat/issue-200 ${remoteSha}\n`,
     gitRunner,
+    deliveryBaseResolver,
   }), []);
   assert.equal(parsePushUpdates(input).length, 1);
   assert.throws(() => planPushRanges({
@@ -131,12 +134,14 @@ test("pre-push plans the complete issue range from local integration and ignores
     remoteName: "origin",
     input: `refs/tags/v1 ${localSha} refs/tags/v1 ${remoteSha}\n`,
     gitRunner,
+    deliveryBaseResolver,
   }), /branch pushes only/u);
   assert.throws(() => planPushRanges({
     repository: "/repo",
     remoteName: "origin",
     input: `refs/heads/feat/issue-200 ${localSha} refs/heads/develop ${remoteSha}\n`,
     gitRunner,
+    deliveryBaseResolver,
   }), /only push to the same remote ref/u);
 
   const headRunner = (_repository, args) => {
@@ -149,6 +154,7 @@ test("pre-push plans the complete issue range from local integration and ignores
     remoteName: "origin",
     input: `HEAD ${localSha} refs/heads/feat/issue-200 ${remoteSha}\n`,
     gitRunner: headRunner,
+    deliveryBaseResolver,
   })[0].branch, "feat/issue-200");
 });
 
@@ -164,6 +170,7 @@ test("pre-push requests local cryptographic verification and propagates range fa
     remoteName: "origin",
     input,
     gitRunner,
+    deliveryBaseResolver: () => "refs/remotes/origin/develop",
     rangeValidator(candidate) {
       options = candidate;
       return { ok: false, errors: [], commits: [{ commit: localSha, ok: false, errors: ["invalid signature"] }] };

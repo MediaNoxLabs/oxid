@@ -110,11 +110,13 @@ lifecycle and human promotion rules.
 6. Pre-approval runs correctness/security triage against that candidate and
    waits for the critical protected contexts once. A non-critical finding is
    complete for this increment only when its follow-up issue and mapping comment
-   exist.
+   exist. Post one current-head receipt with `review-triage.mjs`; a new head
+   invalidates it.
 7. For a release-profile/high-risk change, an owner request, or a disputed finding, run
    the manually invoked current-head Claude review once after the last edit.
-8. Recheck current-head and delivery-base freshness. Use the guarded
-   milestone-only merge path for an eligible product increment. Hand every
+8. Recheck current-head and delivery-base freshness. Use
+   `scripts/github/merge-milestone-pr.mjs` for an eligible product increment;
+   it audits by default and mutates only with `--execute`. Hand every
    milestone promotion, direct factory PR, and release promotion to a human.
    Return a failed critical audit to remediation.
 

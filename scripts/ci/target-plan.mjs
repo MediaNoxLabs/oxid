@@ -30,6 +30,7 @@ export const HostedTarget = Object.freeze({
 
 export const HOSTED_TARGETS = Object.freeze(Object.values(HostedTarget));
 const PROTOTYPE_HOSTED_TARGETS = new Set([HostedTarget.UNIT_LINUX, HostedTarget.HEADLESS_LINUX]);
+const MILESTONE_BRANCH = /^milestone-(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 
 const AREA_PATTERNS = Object.freeze({
   docs: [
@@ -227,9 +228,13 @@ function changedPaths(base, head, cwd) {
   }
 }
 
-export function resolveProfile(requested, eventName, baseBranch = "", refName = "") {
+export function resolveProfile(requested, eventName, baseBranch = "", refName = "", headBranch = "") {
   if (requested && requested !== "auto") return requested;
-  if (eventName === "pull_request") return baseBranch === "main" ? Profile.RELEASE : Profile.FEATURE;
+  if (eventName === "pull_request") {
+    if (baseBranch === "main") return Profile.RELEASE;
+    if (baseBranch === "develop" && MILESTONE_BRANCH.test(headBranch)) return Profile.INTEGRATION;
+    return Profile.FEATURE;
+  }
   if (eventName === "push") return refName === "main" ? Profile.RELEASE : Profile.INTEGRATION;
   return Profile.RELEASE;
 }
@@ -259,6 +264,7 @@ export function run(argv = process.argv.slice(2), { cwd = process.cwd(), stdout 
     readOption(argv, "--event"),
     readOption(argv, "--base-branch"),
     readOption(argv, "--ref-name"),
+    readOption(argv, "--head-branch"),
   );
   const deliveryProfile = readOption(argv, "--delivery-profile") ?? DeliveryProfile.PRODUCTION_READY;
   const paths = changedPaths(readOption(argv, "--base"), readOption(argv, "--head"), cwd);

@@ -11,6 +11,7 @@ import {
   validateCommitMessage,
   validateCommitRange,
 } from "../ci/contribution-policy.mjs";
+import { parseDeliveryTarget } from "../lib/delivery-target.mjs";
 
 const ZERO_OID = /^(?:0{40}|0{64})$/u;
 const REMOTE_NAME = /^[A-Za-z0-9._-]+$/u;
@@ -86,10 +87,20 @@ export function parsePushUpdates(input) {
   return updates;
 }
 
-export function planPushRanges({ repository, remoteName, input, gitRunner = git }) {
+function configuredDeliveryRef(repository, remoteName, branch, gitRunner) {
+  let configured;
+  try {
+    configured = gitRunner(repository, ["config", "--local", "--get", `branch.${branch}.oxidDeliveryBase`]);
+  } catch {
+    throw new Error(`${branch} has no recorded delivery base; create it with the managed worktree wrapper or configure branch.${branch}.oxidDeliveryBase`);
+  }
+  const target = parseDeliveryTarget(configured);
+  return `refs/remotes/${remoteName}/${target.branch}`;
+}
+
+export function planPushRanges({ repository, remoteName, input, gitRunner = git, deliveryBaseResolver = configuredDeliveryRef }) {
   if (!REMOTE_NAME.test(remoteName)) throw new Error("pre-push remote name is invalid");
   const updates = parsePushUpdates(input);
-  const developRef = `refs/remotes/${remoteName}/develop`;
   const plans = [];
   for (const update of updates) {
     if (update.deletion) continue;
@@ -110,20 +121,21 @@ export function planPushRanges({ repository, remoteName, input, gitRunner = git 
     if (update.remoteRef !== localRef) {
       throw new Error(`issue branch ${localRef} may only push to the same remote ref, not ${update.remoteRef}`);
     }
+    const deliveryRef = deliveryBaseResolver(repository, remoteName, branch, gitRunner);
     try {
-      gitRunner(repository, ["rev-parse", "--verify", `${developRef}^{commit}`]);
+      gitRunner(repository, ["rev-parse", "--verify", `${deliveryRef}^{commit}`]);
       gitRunner(repository, ["rev-parse", "--verify", `${update.localSha}^{commit}`]);
     } catch {
-      throw new Error(`fetch ${remoteName}/develop before pushing so the complete candidate range can be verified`);
+      throw new Error(`fetch ${deliveryRef} before pushing so the complete candidate range can be verified`);
     }
     let base;
     try {
-      base = gitRunner(repository, ["merge-base", developRef, update.localSha]);
+      base = gitRunner(repository, ["merge-base", deliveryRef, update.localSha]);
     } catch {
-      throw new Error(`${branch} has no locally resolvable ${remoteName}/develop merge base`);
+      throw new Error(`${branch} has no locally resolvable ${deliveryRef} merge base`);
     }
-    if (!base) throw new Error(`${branch} has an empty ${remoteName}/develop merge base`);
-    plans.push({ branch, base, head: update.localSha, remoteRef: update.remoteRef });
+    if (!base) throw new Error(`${branch} has an empty ${deliveryRef} merge base`);
+    plans.push({ branch, deliveryRef, base, head: update.localSha, remoteRef: update.remoteRef });
   }
   return plans;
 }
@@ -133,9 +145,10 @@ export function validatePrePush({
   remoteName,
   input,
   gitRunner = git,
+  deliveryBaseResolver = configuredDeliveryRef,
   rangeValidator = validateCommitRange,
 }) {
-  const plans = planPushRanges({ repository, remoteName, input, gitRunner });
+  const plans = planPushRanges({ repository, remoteName, input, gitRunner, deliveryBaseResolver });
   const results = plans.map((plan) => ({
     ...plan,
     result: rangeValidator({

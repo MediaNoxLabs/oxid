@@ -58,10 +58,17 @@
   },
   "promotion": {
     "explicit": true,
-    "refreshBase": "origin/develop",
+    "refreshBase": "recorded-delivery-base",
     "auditPrototypeGaps": true,
     "invalidateProvisionalEvidence": true,
     "recomputeTargets": true
+  },
+  "deliveryTarget": {
+    "required": true,
+    "productPattern": "origin/milestone-<x.y.z>",
+    "factoryTarget": "origin/develop",
+    "inferNewest": false,
+    "sessionLocal": true
   },
   "alwaysEnforced": [
     "issue-backed-worktree",

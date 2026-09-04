@@ -51,10 +51,17 @@ test("delivery profiles keep prototype evidence local and promotion explicit", a
 
   assert.deepEqual(profiles.promotion, {
     explicit: true,
-    refreshBase: "origin/develop",
+    refreshBase: "recorded-delivery-base",
     auditPrototypeGaps: true,
     invalidateProvisionalEvidence: true,
     recomputeTargets: true,
+  });
+  assert.deepEqual(profiles.deliveryTarget, {
+    required: true,
+    productPattern: "origin/milestone-<x.y.z>",
+    factoryTarget: "origin/develop",
+    inferNewest: false,
+    sessionLocal: true,
   });
 
   const [rootAgent, devLoopAgent, developerAgent, reviewAgent, productiveLoop] = await Promise.all([
@@ -101,8 +108,11 @@ test("the handoff wrapper makes prototype local and production-ready the default
     /only once/u,
   );
 
-  const prototype = applyDeliveryProfile(base, contract, "prototype");
+  const prototype = applyDeliveryProfile(base, contract, "prototype", {
+    branch: "milestone-0.4.0", remoteRef: "origin/milestone-0.4.0", kind: "milestone",
+  });
   assert.equal(prototype.deliveryProfile, "prototype");
+  assert.equal(prototype.deliveryBase, "origin/milestone-0.4.0");
   assert.equal(prototype.executionMode, "bounded_handoff");
   assert.equal(prototype.requireDraftFirst, false);
   assert.equal(prototype.maxCopilotRounds, 0);
@@ -112,13 +122,17 @@ test("the handoff wrapper makes prototype local and production-ready the default
   assert.equal(prototype.control.activeNoticeAfterMs, 600000);
   assert.equal(prototype.acceptance.criteria.length, contract.profiles.prototype.closeoutFields.length);
 
-  const production = applyDeliveryProfile(base, contract, "production-ready");
+  const production = applyDeliveryProfile(base, contract, "production-ready", {
+    branch: "develop", remoteRef: "origin/develop", kind: "factory",
+  });
   assert.equal(production.deliveryProfile, "production-ready");
   assert.equal(production.nextAction, base.nextAction);
   assert.deepEqual(production.stopRules, base.stopRules);
   assert.equal(production.requiredReads.includes(".pi/delivery-profiles.json"), true);
   assert.throws(
-    () => applyDeliveryProfile({ ...base, target: { kind: "pr", pr: 1, repo: "owner/repo" } }, contract, "prototype"),
+    () => applyDeliveryProfile({ ...base, target: { kind: "pr", pr: 1, repo: "owner/repo" } }, contract, "prototype", {
+      branch: "develop", remoteRef: "origin/develop", kind: "factory",
+    }),
     /issue-backed target/u,
   );
 });
@@ -168,7 +182,7 @@ test("user subagent policy merge is bounded and preserves unrelated settings", (
   ]);
 });
 
-test("preflight rewrites split and late generic main guidance to integration", async () => {
+test("preflight rewrites generic main recovery to explicit delivery targeting", async () => {
   let output = "";
   const destination = new Writable({
     write(chunk, _encoding, callback) {
@@ -185,7 +199,7 @@ test("preflight rewrites split and late generic main guidance to integration", a
   ));
   await rewritten.flush();
   assert.equal(output, [
-    "  (creates+provisions tmp/worktrees/dev-loops/<kind>-<n> from origin/develop)",
+    "  (requires explicit --delivery-base from the issue; never infers a milestone)",
     "legitimate origin/main and origin/main-release diagnostic",
     "",
   ].join("\n"));
@@ -224,7 +238,7 @@ test("preflight rewrite sink honors destination backpressure", async () => {
   await new Promise((resolve) => setImmediate(resolve));
   release();
   await flush;
-  assert.match(output, /origin\/develop/u);
+  assert.match(output, /requires explicit --delivery-base/u);
   assert.doesNotMatch(output, /origin\/main/u);
 });
 

@@ -252,10 +252,16 @@ async function inspectDeliveryProfiles(repoRoot) {
     if (production?.maximumReviewers !== 2) problems.push("production-ready reviewer cap must remain two");
 
     const promotion = profiles.promotion;
-    if (promotion?.explicit !== true || promotion?.refreshBase !== "origin/develop"
+    if (promotion?.explicit !== true || promotion?.refreshBase !== "recorded-delivery-base"
       || promotion?.auditPrototypeGaps !== true || promotion?.invalidateProvisionalEvidence !== true
       || promotion?.recomputeTargets !== true) {
-      problems.push("promotion must refresh develop, audit gaps, invalidate provisional evidence, and recompute targets");
+      problems.push("promotion must refresh the recorded delivery base, audit gaps, invalidate provisional evidence, and recompute targets");
+    }
+    const target = profiles.deliveryTarget;
+    if (target?.required !== true || target?.productPattern !== "origin/milestone-<x.y.z>"
+      || target?.factoryTarget !== "origin/develop" || target?.inferNewest !== false
+      || target?.sessionLocal !== true) {
+      problems.push("delivery target must be explicit, session-local, and never inferred");
     }
 
     const [devLoopAgent, rootAgent] = await Promise.all([
@@ -268,6 +274,9 @@ async function inspectDeliveryProfiles(repoRoot) {
     }
     if (!devLoopAgent.includes("--delivery-profile <profile>")) {
       problems.push(".pi/agents/dev-loop.agent.md does not bind the profile into the handoff envelope");
+    }
+    if (!devLoopAgent.includes("--delivery-base <target>")) {
+      problems.push(".pi/agents/dev-loop.agent.md does not bind the issue target into the handoff envelope");
     }
   } catch (error) {
     problems.push(error.message);

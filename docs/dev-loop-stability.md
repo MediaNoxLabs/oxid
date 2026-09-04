@@ -18,16 +18,24 @@ and must have the exact package identity and version. There is no home, global,
 personal-path, arbitrary-ancestor, or filesystem-search fallback.
 
 ```bash
-# Managed issue worktree; origin/develop is added and any other base fails.
+# Managed issue worktree; select the exact Delivery target recorded on the issue.
 node scripts/loop/ensure-worktree.mjs \
-  --repo-root "$PWD" --issue <number>
+  --repo-root "$PWD" --issue <number> \
+  --branch feat/issue-<number> \
+  --delivery-base origin/milestone-<x.y.z>
 
-# Public dev-loops PR creation (`create-draft` is the deprecated alias) adds
-# integration. Every wrapper route rejects an explicit non-integration base.
+# Public dev-loops PR creation (`create-draft` is the deprecated alias) pins
+# that same target. Factory-policy work uses origin/develop instead.
 node scripts/dev-loops.mjs pr create \
   --repo MediaNoxLabs/oxid --head <branch> \
+  --delivery-base origin/milestone-<x.y.z> \
   --assignee @me --title "<type>: <subject>" --body-file <body-file>
 ```
+
+A stacked child may additionally pass `--base <parent-type>/issue-<parent>`.
+That review base is temporary; `--delivery-base` remains the immutable issue
+target and the child is retargeted there after its parent lands. `main`, another
+milestone, or an arbitrary branch can never be used as a stack base.
 
 The public wrapper accepts only the global option forms supported by the exact
 `dev-loops@0.9.0` pin (`--repo`, `--cwd`, `--config`, `--jq`, `--silent`/`-s`,
@@ -166,9 +174,9 @@ no-network contract.
 
 The ordinary draft and pre-approval gates do not invoke an external model.
 For a high-risk `full` change, an explicit owner request, or a disputed
-finding, commit all intended changes, fetch `origin/develop`, and manually
-invoke the reviewer once from a clean worktree. `maxCopilotRounds` remains
-zero. By
+finding, commit all intended changes, fetch the issue's recorded delivery
+target, and manually invoke the reviewer once from a clean worktree.
+`maxCopilotRounds` remains zero. By
 default it writes beneath `${XDG_STATE_HOME:-$HOME/.local/state}/oxid/claude-reviews`.
 The final directory must be a real, invoking-user-owned `0700` directory and
 each artifact is an owned regular `0600` file; a symlink as the final evidence
@@ -181,9 +189,10 @@ group/world-writable without sticky protection. Root and sticky temporary
 directories remain valid.
 
 ```bash
-git fetch origin integration
+git fetch origin milestone-<x.y.z>
 node scripts/review/claude-current-head.mjs \
   --issue <number> \
+  --delivery-base origin/milestone-<x.y.z> \
   --expected-head "$(git rev-parse HEAD)" \
   --effort medium \
   --timeout-ms 300000 \
@@ -193,7 +202,8 @@ node scripts/review/claude-current-head.mjs \
   --verify-evidence <evidence.json>
 ```
 
-The runner independently derives HEAD and the `origin/develop` merge base,
+The runner independently derives HEAD and the merge base with the selected
+delivery target,
 rejects any binary path before review, and creates a `git diff --binary` UTF-8
 text artifact whose exact bytes are both hashed and sent to the reviewer. It
 supports the deliberately bounded Claude CLI range `>= 2.1.228,< 2.2.0`, parses
@@ -292,7 +302,7 @@ continues to fail closed on CLI or account incompatibility.
 | Project-local package discovery works at root and linked worktrees | Landed in this slice | The bounded tracked resolver and wrappers above |
 | Timeout, deadline, `usageBudget`, turn, tool, and control budgets survive resume exactly | Pin-upgrade / upstream-owned | Closed/completed [pi-subagents #985](https://github.com/nicobailon/pi-subagents/issues/985) documents adjacent persisted turn-budget recovery and was fixed by merged [PR #987](https://github.com/nicobailon/pi-subagents/pull/987). The pinned [v0.42.1 async-resume source](https://github.com/nicobailon/pi-subagents/blob/v0.42.1/src/runs/background/async-resume.ts) remains repository authority pending a separately tested upgrade. |
 | Provider payload compaction/checkpointing and streamed-mutation retry idempotency | Deferred / **upstream-only** | No exact upstream issue was established during this bounded slice. File a minimal upstream reproduction before claiming a fix; no repository wrapper can safely reconstruct provider stream state. |
-| `integration` is the worktree, PR, diff, and evidence base | Landed in this slice | `scripts/loop/ensure-worktree.mjs`, `scripts/dev-loops.mjs`, and the Claude runner |
+| The issue's explicit milestone or `develop` target is the worktree, PR, diff, and evidence base | Landed in this slice | `scripts/loop/ensure-worktree.mjs`, `scripts/dev-loops.mjs`, and the Claude runner |
 | Unavailable Copilot review has a bounded independent current-head Claude route | Landed, policy right-sized by issue #161 | Hosted Copilot stays disabled; the tracked Claude runner is manually invoked for high-risk work, an owner request, or a disputed finding rather than every ordinary gate. |
 | Valid nested reviewer output cannot be overturned by a late unavailable-tool diagnostic | Deferred / upstream-owned | Closed/completed [pi-subagents #1434](https://github.com/nicobailon/pi-subagents/issues/1434) documents the adjacent final-return serialization failure and was fixed by merged [PR #1448](https://github.com/nicobailon/pi-subagents/pull/1448). The late-diagnostic case still needs its own minimal reproduction and a separately tested repository pin upgrade. |
 | Supported GitHub CLI behavior is deterministic | Landed in this slice | Nix pin plus REST behavior probe and timeline resolver |

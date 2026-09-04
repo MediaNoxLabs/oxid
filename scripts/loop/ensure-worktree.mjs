@@ -6,15 +6,19 @@ import { existsSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
+import { extractDeliveryTargetOption } from "../lib/delivery-target.mjs";
 import { runManagedChild } from "../lib/managed-child-process.mjs";
 import { enforceSingleBase, readLongOptionValues } from "../lib/pinned-dev-loops-args.mjs";
 import { auditWorktreeAdmission } from "../factory/audit-pi.mjs";
 
-const DELIVERY_BASE = "origin/develop";
-
-/** Force all managed worktrees to start from the durable development ref. */
+/** Bind every managed worktree to the exact target recorded on its issue. */
 export function normalizeWorktreeArgs(argv) {
-  return enforceSingleBase(argv, DELIVERY_BASE, {
+  if (argv.includes("--help") || argv.includes("-h")) return [...argv];
+  const { args, target } = extractDeliveryTargetOption(argv, { required: true });
+  if (optionValue(args, "--branch") === undefined) {
+    throw new Error("--branch is required; use the conventional <type>/issue-N branch recorded for the work item");
+  }
+  return enforceSingleBase(args, target.remoteRef, {
     addWhenMissing: true,
     label: "repository worktrees",
   });
@@ -120,15 +124,24 @@ export async function runEnsureWorktree(argv = process.argv.slice(2), {
   stderr = process.stderr,
   admissionAudit = auditWorktreeAdmission,
 } = {}) {
+  const selected = extractDeliveryTargetOption(argv, { required: !argv.includes("--help") && !argv.includes("-h") });
   const args = normalizeLinkedWorktreeContext(normalizeWorktreeArgs(argv));
   await enforceFactoryAdmissionForCreation(args, { admissionAudit });
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "ensure-worktree-consumer.mjs");
-  return runManagedChild(process.execPath, [script, ...args], {
+  const code = await runManagedChild(process.execPath, [script, ...args], {
     cwd,
     stdout,
     stderr,
     label: "ensure-worktree",
   });
+  const branch = optionValue(args, "--branch");
+  const repoRoot = optionValue(args, "--repo-root");
+  if (code === 0 && selected.target && branch && repoRoot) {
+    execFileSync("git", ["-C", repoRoot, "config", "--local", `branch.${branch}.oxidDeliveryBase`, selected.target.remoteRef], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  }
+  return code;
 }
 
 function isDirectRun(metaUrl) {

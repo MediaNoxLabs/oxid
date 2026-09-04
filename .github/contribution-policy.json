@@ -45,7 +45,7 @@
   ],
   "branch": {
     "format": "{type}/issue-{positive-integer}",
-    "protected": ["develop", "main"]
+    "protected": ["develop", "main", "milestone-*"]
   },
   "commit": {
     "maxSubjectLength": 100,

@@ -198,6 +198,20 @@ undetectable later. The check that matters is `gates` parsing.
   the merge tree is conflict-free, all critical required checks (including
   GPG/DCO) pass, and every review finding is either repaired or mapped to an
   open follow-up issue. It cannot merge to `develop` or `main`.
+
+  ```bash
+  node scripts/github/review-triage.mjs \
+    --repo MediaNoxLabs/oxid --pr "$PR" --head "$HEAD_SHA" \
+    --follow-up "$FOLLOW_UP_ISSUES" --post
+  node scripts/github/merge-milestone-pr.mjs \
+    --repo MediaNoxLabs/oxid --pr "$PR"       # audit only
+  node scripts/github/merge-milestone-pr.mjs \
+    --repo MediaNoxLabs/oxid --pr "$PR" --execute
+  ```
+
+  Omit `--follow-up` when there are none. The receipt contains counts and issue
+  numbers only; never copy review text, prompts, credentials, or product data
+  into it.
 - **Fan-out is on demand, not a milestone merge prerequisite.**
   `gates.requireFanoutEvidence: false` and `requireFanoutProvenance: false`
   keep the ordinary local-only path compatible with
@@ -219,6 +233,7 @@ undetectable later. The check that matters is `gates` parsing.
   high-risk `full` changes, an owner request, or a disputed finding. It is not a hosted GitHub check and does not authenticate reviewer identity. Run
   `scripts/review/claude-current-head.mjs` once on the final head as
   documented in `docs/dev-loop-stability.md`. The wrapper selects and records
+  the branch's recorded delivery base (or requires `--delivery-base`) and
   bounded `medium` effort by default; a timeout remains a failed review rather
   than permission to merge. Concrete blocking findings stop delivery;
   recommendations are retained on the PR and tracked as follow-up issues.
