@@ -39,13 +39,17 @@ outgoing adapters. Run it directly with `./run.sh coverage --strict`.
 
 ## Pull requests
 
-- Create `<type>/issue-<number>` from `origin/develop` for issue-backed product,
-  refactor, quality, documentation, and tooling work, then target `develop`.
-  `main` is the human-controlled release branch and the Pages source. Follow
-  `docs/issue-branch-delivery.md` for the full base and required-check contract.
+- Create `<type>/issue-<number>` from the work item's explicit delivery base.
+  Product work targets exactly one `milestone-<x.y.z>` train. Factory, harness,
+  CI, documentation, dependency, and governance work may target `develop`
+  directly. `main` is the human-controlled release branch and Pages source.
+  Follow `docs/issue-branch-delivery.md` for the full authority and gate contract.
 - Keep one bounded vertical slice per pull request.
 - Open the pull request as a draft first.
 - Add or update tests and public documentation with behavior.
+- Repair critical findings in the current PR. A bounded non-critical review
+  finding may be deferred only through a linked follow-up issue and visible PR
+  triage comment; optional polish does not strand a coherent green increment.
 - Explain security/privacy consequences and migration provenance where relevant.
 - Do not include private infrastructure, tracker links, tokens, personal paths,
   pre-production keys, wallet seeds, or generated proof artifacts.
@@ -74,7 +78,8 @@ Use the mandatory scope in real commands, for example:
 
 ```bash
 git commit -S --signoff -m "feat(wallet): add profile creation"
-./scripts/check-dco.sh "$(git merge-base HEAD origin/develop)" HEAD
+delivery_base="${DELIVERY_BASE:?set DELIVERY_BASE to the recorded origin/... ref}"
+./scripts/check-dco.sh "$(git merge-base HEAD "$delivery_base")" HEAD
 ```
 
 Install the repository-scoped local hooks once per clone:
