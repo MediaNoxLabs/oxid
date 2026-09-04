@@ -30,6 +30,14 @@ body:
         - ...
     validations:
       required: true
+  - type: input
+    id: delivery_target
+    attributes:
+      label: Delivery target
+      description: Exact existing milestone-x.y.z branch for product work, or develop for eligible factory/harness/CI/docs/dependency/governance work. Never write latest or current.
+      placeholder: milestone-0.4.0
+    validations:
+      required: true
   - type: textarea
     id: verification
     attributes:

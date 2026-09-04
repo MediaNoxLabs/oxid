@@ -9,7 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-const BASE_REF = "origin/develop";
+import { parseDeliveryTarget } from "../lib/delivery-target.mjs";
 export const MAX_CLAUDE_REVIEW_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = MAX_CLAUDE_REVIEW_TIMEOUT_MS;
 const DEFAULT_MAX_BUDGET_USD = 10;
@@ -577,10 +577,10 @@ async function atomicPrivateWrite(file, content) {
   }
 }
 
-function reviewPrompt({ issue, headSha, baseSha, diffPath, diffDigest, diff, issueContract, boundary }) {
+function reviewPrompt({ issue, headSha, baseRef, baseSha, diffPath, diffDigest, diff, issueContract, boundary }) {
   return [
     "Act as an independent, read-only reviewer. Do not use tools or infer a different revision.",
-    `Review issue #${issue} at exact head ${headSha} against merge base ${baseSha} from ${BASE_REF}.`,
+    `Review issue #${issue} at exact head ${headSha} against merge base ${baseSha} from ${baseRef}.`,
     `The immutable diff artifact basename is ${path.basename(diffPath)} with SHA-256 ${diffDigest}. Its complete content follows below.`,
     "Review correctness, security, architecture, tests, documentation, public-repository safety, and regression risk.",
     "Return the required structured result. Use verdict clean with no findings only when there are no actionable findings.",
@@ -603,6 +603,7 @@ export async function runClaudeCurrentHeadReview({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxBudgetUsd = DEFAULT_MAX_BUDGET_USD,
   effort = DEFAULT_CLAUDE_REVIEW_EFFORT,
+  deliveryBase,
   fetchBase = true,
   claudeRunner = run,
 } = {}) {
@@ -620,12 +621,17 @@ export async function runClaudeCurrentHeadReview({
   const root = await realpath(path.resolve(repoRoot));
   const actualRoot = await realpath(gitText(gitCommand, ["rev-parse", "--show-toplevel"], root));
   if (root !== actualRoot) throw new Error(`repoRoot must be the active Git top-level: ${actualRoot}`);
+  const currentBranch = gitText(gitCommand, ["branch", "--show-current"], root);
+  const configuredBase = deliveryBase ?? gitText(gitCommand, [
+    "config", "--local", "--get", `branch.${currentBranch}.oxidDeliveryBase`,
+  ], root);
+  const baseRef = parseDeliveryTarget(configuredBase).remoteRef;
   assertClean(gitCommand, root);
-  if (fetchBase) gitText(gitCommand, ["fetch", "origin", "develop"], root);
+  if (fetchBase) gitText(gitCommand, ["fetch", "origin", baseRef.slice("origin/".length)], root);
 
   const headSha = gitText(gitCommand, ["rev-parse", "HEAD"], root);
   if (expectedHead && expectedHead !== headSha) throw new Error(`expected head ${expectedHead}, found ${headSha}`);
-  const baseSha = gitText(gitCommand, ["merge-base", "HEAD", BASE_REF], root);
+  const baseSha = gitText(gitCommand, ["merge-base", "HEAD", baseRef], root);
   assertNoBinaryChanges(gitCommand, baseSha, headSha, root);
   const diffContent = exactDiff(gitCommand, baseSha, headSha, root);
   const diffText = exactUtf8(diffContent);
@@ -658,6 +664,7 @@ export async function runClaudeCurrentHeadReview({
   const prompt = reviewPrompt({
     issue,
     headSha,
+    baseRef,
     baseSha,
     diffPath,
     diffDigest,
@@ -679,10 +686,10 @@ export async function runClaudeCurrentHeadReview({
 
   assertClean(gitCommand, root);
   const finalHead = gitText(gitCommand, ["rev-parse", "HEAD"], root);
-  const finalBase = gitText(gitCommand, ["merge-base", "HEAD", BASE_REF], root);
+  const finalBase = gitText(gitCommand, ["merge-base", "HEAD", baseRef], root);
   const finalDiff = exactDiff(gitCommand, finalBase, finalHead, root);
   if (finalHead !== headSha || finalBase !== baseSha || sha256(finalDiff) !== diffDigest) {
-    throw new Error("head, develop merge base, or exact diff bytes changed during Claude review; evidence is stale");
+    throw new Error("head, delivery merge base, or exact diff bytes changed during Claude review; evidence is stale");
   }
 
   const parsed = parseClaudeReviewResult(rawResponse);
@@ -696,7 +703,7 @@ export async function runClaudeCurrentHeadReview({
       "This record is not a dev-loops-native or GitHub-hosted review status.",
     ],
     issue,
-    baseRef: BASE_REF,
+    baseRef,
     headSha,
     baseSha,
     diff: { path: path.basename(diffPath), sha256: diffDigest, bytes: diffContent.length },
@@ -764,9 +771,10 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   if (evidence.schemaVersion !== 3) {
     throw new ClaudeReviewEvidenceVersionError(evidence.schemaVersion);
   }
-  if (evidence.evidenceKind !== "local-attestation" || evidence.baseRef !== BASE_REF || evidence.verdict !== "clean") {
+  if (evidence.evidenceKind !== "local-attestation" || evidence.verdict !== "clean") {
     throw new Error("unsupported or non-clean Claude review attestation");
   }
+  const baseRef = parseDeliveryTarget(evidence.baseRef).remoteRef;
   try {
     assertClaudeReviewTimeoutMs(evidence.invocation?.timeoutMs);
   } catch (error) {
@@ -794,13 +802,13 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
     throw new Error("Claude review attestation is missing artifact descriptors");
   }
   assertClean(gitCommand, root);
-  if (fetchBase) gitText(gitCommand, ["fetch", "origin", "develop"], root);
+  if (fetchBase) gitText(gitCommand, ["fetch", "origin", baseRef.slice("origin/".length)], root);
   const headSha = gitText(gitCommand, ["rev-parse", "HEAD"], root);
-  const baseSha = gitText(gitCommand, ["merge-base", "HEAD", BASE_REF], root);
+  const baseSha = gitText(gitCommand, ["merge-base", "HEAD", baseRef], root);
   assertNoBinaryChanges(gitCommand, baseSha, headSha, root);
   const diffContent = exactDiff(gitCommand, baseSha, headSha, root);
   if (headSha !== evidence.headSha || baseSha !== evidence.baseSha || sha256(diffContent) !== evidence.diff?.sha256) {
-    throw new Error("Claude review attestation is stale for the current head or develop base");
+    throw new Error("Claude review attestation is stale for the current head or delivery base");
   }
   const artifactPath = (value) => {
     if (typeof value !== "string" || path.basename(value) !== value) throw new Error("Claude review attestation contains an unsafe artifact path");
@@ -869,6 +877,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
       "evidence-dir": { type: "string" },
       "issue-contract-file": { type: "string" },
       "expected-head": { type: "string" },
+      "delivery-base": { type: "string" },
       "timeout-ms": { type: "string" },
       "max-budget-usd": { type: "string" },
       effort: { type: "string" },
@@ -878,7 +887,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     strict: true,
   });
   if (values.help) {
-    stdout.write(`Usage: claude-current-head.mjs --issue NUMBER [--repo-root PATH] [--evidence-dir PATH] [--issue-contract-file PATH] [--expected-head SHA] [--effort LEVEL] [--timeout-ms INTEGER] [--max-budget-usd NUMBER]\n       claude-current-head.mjs --verify-evidence FILE [--repo-root PATH]\n\nAttested effort levels: ${CLAUDE_REVIEW_EFFORTS.join(", ")}.\nDefaults: --effort ${DEFAULT_CLAUDE_REVIEW_EFFORT}; --timeout-ms ${DEFAULT_TIMEOUT_MS} (five minutes); --max-budget-usd ${DEFAULT_MAX_BUDGET_USD}. Budget must be positive and no more than ${MAXIMUM_CLAUDE_REVIEW_BUDGET_USD} USD.\n`);
+    stdout.write(`Usage: claude-current-head.mjs --issue NUMBER [--delivery-base REF] [--repo-root PATH] [--evidence-dir PATH] [--issue-contract-file PATH] [--expected-head SHA] [--effort LEVEL] [--timeout-ms INTEGER] [--max-budget-usd NUMBER]\n       claude-current-head.mjs --verify-evidence FILE [--repo-root PATH]\n\nAttested effort levels: ${CLAUDE_REVIEW_EFFORTS.join(", ")}.\nDefaults: --effort ${DEFAULT_CLAUDE_REVIEW_EFFORT}; --timeout-ms ${DEFAULT_TIMEOUT_MS} (five minutes); --max-budget-usd ${DEFAULT_MAX_BUDGET_USD}. Budget must be positive and no more than ${MAXIMUM_CLAUDE_REVIEW_BUDGET_USD} USD.\n`);
     return;
   }
   if (values["verify-evidence"]) {
@@ -908,6 +917,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     evidenceDir: values["evidence-dir"],
     issueContract,
     expectedHead: values["expected-head"],
+    deliveryBase: values["delivery-base"],
     timeoutMs,
     maxBudgetUsd,
     effort,

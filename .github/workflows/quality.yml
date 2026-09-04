@@ -2,9 +2,8 @@ name: Quality
 
 on:
   push:
-    branches: [develop, main]
+    branches: [develop, main, "milestone-*"]
   pull_request:
-    branches: [develop, main]
   workflow_dispatch:
     inputs:
       profile:
@@ -46,6 +45,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           EVENT_NAME: ${{ github.event_name }}
           BASE_BRANCH: ${{ github.base_ref || '' }}
+          HEAD_BRANCH: ${{ github.head_ref || '' }}
           REF_NAME: ${{ github.ref_name }}
           REQUESTED_PROFILE: ${{ inputs.profile || 'auto' }}
           EXTRA_TARGETS: ${{ inputs.targets || '' }}
@@ -55,6 +55,7 @@ jobs:
             --head "$HEAD_SHA" \
             --event "$EVENT_NAME" \
             --base-branch "$BASE_BRANCH" \
+            --head-branch "$HEAD_BRANCH" \
             --ref-name "$REF_NAME" \
             --profile "$REQUESTED_PROFILE" \
             --targets "$EXTRA_TARGETS" \

@@ -663,22 +663,25 @@ test("repository wrappers force only the public PR-creation and managed-worktree
   assert.deepEqual(normalizeDevLoopsArgs(["--help"]), ["help"]);
   assert.deepEqual(normalizeDevLoopsArgs(["-h"]), ["help"]);
   assert.throws(() => normalizeDevLoopsArgs(["--help", "pr", "create"]), /unsupported leading/);
-  assert.deepEqual(normalizeDevLoopsArgs(["pr", "create", "--head", "topic"]), ["pr", "create", "--head", "topic", "--base", "develop"]);
-  assert.deepEqual(normalizeDevLoopsArgs(["--silent", "pr", "create-draft", "--head", "topic"]), ["--silent", "pr", "create-draft", "--head", "topic", "--base", "develop"]);
-  assert.deepEqual(normalizeDevLoopsArgs(["-s", "pr", "create", "--head", "topic"]), ["-s", "pr", "create", "--head", "topic", "--base", "develop"]);
-  assert.deepEqual(normalizeDevLoopsArgs(["--repo", "MediaNoxLabs/oxid", "pr", "create", "--head", "topic"]), ["--repo", "MediaNoxLabs/oxid", "pr", "create", "--head", "topic", "--base", "develop"]);
-  assert.deepEqual(normalizeDevLoopsArgs(["--repo=MediaNoxLabs/oxid", "--json", "pr", "create", "--head", "topic"]), ["--repo=MediaNoxLabs/oxid", "--json", "pr", "create", "--head", "topic", "--base", "develop"]);
+  assert.throws(() => normalizeDevLoopsArgs(["pr", "create", "--head", "topic"]), /--delivery-base is required/);
+  assert.deepEqual(normalizeDevLoopsArgs(["pr", "create", "--head", "topic", "--delivery-base", "milestone-0.4.0"]), ["pr", "create", "--head", "topic", "--base", "milestone-0.4.0"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["--silent", "pr", "create-draft", "--head", "topic", "--delivery-base=origin/milestone-0.5.0"]), ["--silent", "pr", "create-draft", "--head", "topic", "--base", "milestone-0.5.0"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["-s", "pr", "create", "--head", "topic", "--delivery-base", "develop"]), ["-s", "pr", "create", "--head", "topic", "--base", "develop"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["--repo", "MediaNoxLabs/oxid", "pr", "create", "--head", "topic", "--delivery-base", "origin/develop"]), ["--repo", "MediaNoxLabs/oxid", "pr", "create", "--head", "topic", "--base", "develop"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["pr", "create", "--head", "feat/issue-280", "--base", "docs/issue-279", "--delivery-base", "develop"]), ["pr", "create", "--head", "feat/issue-280", "--base", "docs/issue-279"]);
+  assert.throws(() => normalizeDevLoopsArgs(["pr", "create", "--head", "feat/issue-280", "--base", "main", "--delivery-base", "develop"]), /delivery target develop or a conventional issue branch/);
   assert.deepEqual(normalizeDevLoopsArgs(["pr", "ready-for-review", "--pr", "153"]), ["pr", "ready-for-review", "--pr", "153"]);
-  assert.deepEqual(normalizeDevLoopsArgs(["pr", "edit", "--pr", "153", "--base", "develop"]), ["pr", "edit", "--pr", "153", "--base", "develop"]);
-  assert.throws(() => normalizeDevLoopsArgs(["pr", "edit", "--pr", "153", "--base", "main"]), /must use develop/);
+  assert.deepEqual(normalizeDevLoopsArgs(["pr", "edit", "--pr", "153", "--base", "milestone-0.4.0", "--delivery-base", "milestone-0.4.0"]), ["pr", "edit", "--pr", "153", "--base", "milestone-0.4.0"]);
+  assert.throws(() => normalizeDevLoopsArgs(["pr", "edit", "--pr", "153", "--base", "main", "--delivery-base", "develop"]), /must use develop/);
   assert.deepEqual(normalizeDevLoopsArgs(["queue", "add", "--title", "pr", "create"]), ["queue", "add", "--title", "pr", "create"]);
-  assert.deepEqual(normalizeDevLoopsArgs(["--jq", ".ok", "pr", "create"]), ["--jq", ".ok", "pr", "create", "--base", "develop"]);
-  assert.throws(() => normalizeDevLoopsArgs(["--silent", "pr", "create", "--base", "main"]), /must use develop/);
-  assert.throws(() => normalizeDevLoopsArgs(["--repo", "MediaNoxLabs/oxid", "pr", "create", "--base", "main"]), /must use develop/);
+  assert.deepEqual(normalizeDevLoopsArgs(["--jq", ".ok", "pr", "create", "--delivery-base", "milestone-1.0.0"]), ["--jq", ".ok", "pr", "create", "--base", "milestone-1.0.0"]);
+  assert.throws(() => normalizeDevLoopsArgs(["--silent", "pr", "create", "--base", "main", "--delivery-base", "develop"]), /delivery target develop or a conventional issue branch/);
   assert.throws(() => normalizeDevLoopsArgs(["--future-global", "pr", "create", "--base", "main"]), /unsupported leading dev-loops@0\.9\.0 option/);
-  assert.throws(() => normalizeDevLoopsArgs(["pr", "create-draft", "--base=integration"]), /must use develop/);
-  assert.deepEqual(normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150"]), ["--repo-root", "/repo", "--issue", "150", "--base", "origin/develop"]);
-  assert.throws(() => normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150", "--base", "origin/main"]), /must use origin\/develop/);
+  assert.throws(() => normalizeDevLoopsArgs(["pr", "create-draft", "--base=integration", "--delivery-base", "milestone-0.4.0"]), /delivery target milestone-0\.4\.0 or a conventional issue branch/);
+  assert.throws(() => normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150"]), /--delivery-base is required/);
+  assert.throws(() => normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150", "--delivery-base", "milestone-0.4.0"]), /--branch is required/);
+  assert.deepEqual(normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150", "--branch", "feat/issue-150", "--delivery-base", "milestone-0.4.0"]), ["--repo-root", "/repo", "--issue", "150", "--branch", "feat/issue-150", "--base", "origin/milestone-0.4.0"]);
+  assert.throws(() => normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150", "--branch", "feat/issue-150", "--base", "origin/main", "--delivery-base", "develop"]), /must use origin\/develop/);
   assert.doesNotThrow(() => assertReviewedWorktreePin("0.9.0"));
   assert.throws(() => assertReviewedWorktreePin("0.9.1"), /supports only reviewed dev-loops@0\.9\.0/);
   assert.notStrictEqual(oxidConsumerProvision(), oxidConsumerProvision());
@@ -758,7 +761,7 @@ test("Oxid worktree creation applies zero consumer provisioning despite a dirty 
   const stderr = [];
   const stdoutSink = new Writable({ write(chunk, _encoding, callback) { stdout.push(chunk.toString()); callback(); } });
   const stderrSink = new Writable({ write(chunk, _encoding, callback) { stderr.push(chunk.toString()); callback(); } });
-  assert.equal(await runEnsureWorktree(["--repo-root", fixture.root, "--issue", "150"], {
+  assert.equal(await runEnsureWorktree(["--repo-root", fixture.root, "--issue", "150", "--branch", "issue-150", "--delivery-base", "develop"], {
     cwd: fixture.worktree,
     stdout: stdoutSink,
     stderr: stderrSink,
@@ -821,10 +824,10 @@ test("Oxid worktree consumer preserves help, parse-error, conflict, jq, and sile
   };
 
   assert.deepEqual(await invoke(["--help"]), { code: 0, stdout: "fixture help\n", stderr: "" });
-  assert.deepEqual(await invoke(["--issue", "150"]), { code: 1, stdout: "", stderr: "Missing required --repo-root\n" });
-  assert.deepEqual(await invoke(["--repo-root", fixture.root, "--issue", "150", "--branch", "conflict"]), { code: 1, stdout: "", stderr: "fixture branch conflict\n" });
-  assert.deepEqual(await invoke(["--repo-root", fixture.root, "--issue", "150", "--jq", ".ok"]), { code: 0, stdout: "true\n", stderr: "" });
-  assert.deepEqual(await invoke(["--repo-root", fixture.root, "--issue", "150", "--silent"]), { code: 0, stdout: "", stderr: "" });
+  assert.deepEqual(await invoke(["--issue", "150", "--branch", "issue-150", "--delivery-base", "develop"]), { code: 1, stdout: "", stderr: "Missing required --repo-root\n" });
+  assert.deepEqual(await invoke(["--repo-root", fixture.root, "--issue", "150", "--branch", "conflict", "--delivery-base", "develop"]), { code: 1, stdout: "", stderr: "fixture branch conflict\n" });
+  assert.deepEqual(await invoke(["--repo-root", fixture.root, "--issue", "150", "--branch", "issue-150", "--jq", ".ok", "--delivery-base", "develop"]), { code: 0, stdout: "true\n", stderr: "" });
+  assert.deepEqual(await invoke(["--repo-root", fixture.root, "--issue", "150", "--branch", "issue-150", "--silent", "--delivery-base", "develop"]), { code: 0, stdout: "", stderr: "" });
 
   const helperLink = path.join(fixture.root, "tmp", "ensure-worktree-consumer-link.mjs");
   await symlink(path.join(repoRoot, "scripts", "loop", "ensure-worktree-consumer.mjs"), helperLink);
@@ -1163,7 +1166,7 @@ test("tracked build-envelope route rejects non-directory prospective topology be
       const fixture = await makeProspectiveEnvelopeRouteFixture(subtest, fixtureCase.blockedAncestor);
       const out = [];
       const err = [];
-      const code = await runDevLoops(["loop", "build-envelope", "--input", fixture.input], {
+      const code = await runDevLoops(["loop", "build-envelope", "--input", fixture.input, "--delivery-base", "milestone-0.4.0"], {
         cwd: fixture.root,
         stdout: captureSink(out),
         stderr: captureSink(err),
@@ -1219,6 +1222,7 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
 
   const split = await run([
     "--json", "loop", "build-envelope", "--input", input,
+    "--delivery-base", "origin/milestone-0.4.0",
     "--gate-state", '{"currentHeadSha":"fixture-head","ciStatus":"success","unresolvedThreadCount":3}',
     "--overrides", '{"preferLocal":true}',
   ]);
@@ -1230,42 +1234,46 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
   assert.equal(envelope.unresolvedThreadCount, 3);
   assert.equal(envelope.target.repo, "owner/repo");
   assert.equal(envelope.deliveryProfile, "production-ready");
+  assert.equal(envelope.deliveryBase, "origin/milestone-0.4.0");
+  assert.equal(envelope.deliveryTargetKind, "milestone");
   assert.equal(envelope.requiredReads.includes(".pi/delivery-profiles.json"), true);
   assert.deepEqual(envelope.overrides, { preferLocal: true });
   assert.equal(envelope.maxCopilotRounds, 2);
   assert.ok(envelope.sanctionedCommands);
 
   const prototypeResult = await run([
-    "loop", "build-envelope", `--input=${input}`, "--delivery-profile=prototype",
+    "loop", "build-envelope", `--input=${input}`, "--delivery-profile=prototype", "--delivery-base=develop",
   ]);
   assert.equal(prototypeResult.code, 0, prototypeResult.err);
   const prototype = JSON.parse(prototypeResult.out);
   assert.equal(prototype.deliveryProfile, "prototype");
+  assert.equal(prototype.deliveryBase, "origin/develop");
   assert.equal(prototype.executionMode, "bounded_handoff");
   assert.equal(prototype.nextAction.includes("prototype hypothesis locally"), true);
   assert.deepEqual(prototype.stopRules, ["remote-mutation", "hosted-ci", "merge-readiness", "merge"]);
   assert.equal(Object.hasOwn(prototype, "gateConfig"), false);
 
-  const equals = await run(["--jq=.cwd", "loop", "build-envelope", `--input=${input}`, "--repo=owner/repo"]);
+  const equals = await run(["--jq=.cwd", "loop", "build-envelope", `--input=${input}`, "--repo=owner/repo", "--delivery-base=milestone-0.4.0"]);
   assert.deepEqual(equals, { code: 0, out: `${issueTarget}\n`, err: "" });
-  const silent = await run(["-s", "loop", "build-envelope", `--input=${input}`]);
+  const silent = await run(["-s", "loop", "build-envelope", `--input=${input}`, "--delivery-base=milestone-0.4.0"]);
   assert.deepEqual(silent, { code: 0, out: "", err: "" });
   assert.deepEqual(
-    await run(["--silent", "loop", "build-envelope", `--input=${input}`]),
+    await run(["--silent", "loop", "build-envelope", `--input=${input}`, "--delivery-base=milestone-0.4.0"]),
     { code: 0, out: "", err: "" },
   );
   const help = await run(["loop", "build-envelope", "--help"]);
   assert.equal(help.code, 0);
   assert.match(help.out, /Usage: build-handoff-envelope/);
+  assert.match(help.out, /--delivery-base <origin\/develop\|origin\/milestone-x\.y\.z>/u);
   assert.match(help.out, /--delivery-profile <prototype\|production-ready>/u);
-  const badJq = await run(["loop", "build-envelope", `--input=${input}`, "--jq", "unsupported"]);
+  const badJq = await run(["loop", "build-envelope", `--input=${input}`, "--jq", "unsupported", "--delivery-base", "milestone-0.4.0"]);
   assert.equal(badJq.code, 2);
   assert.match(badJq.err, /--jq/);
-  const unknownProfile = await run(["loop", "build-envelope", `--input=${input}`, "--delivery-profile", "fast-ish"]);
+  const unknownProfile = await run(["loop", "build-envelope", `--input=${input}`, "--delivery-profile", "fast-ish", "--delivery-base", "milestone-0.4.0"]);
   assert.equal(unknownProfile.code, 1);
   assert.match(unknownProfile.err, /unknown delivery profile/u);
   await writeFile(path.join(issueTarget, "malformed.json"), "{");
-  const malformed = await run(["loop", "build-envelope", "--input", "malformed.json"]);
+  const malformed = await run(["loop", "build-envelope", "--input", "malformed.json", "--delivery-base", "milestone-0.4.0"]);
   assert.equal(malformed.code, 1);
   assert.match(malformed.err, /Invalid JSON/);
 });
@@ -1364,7 +1372,10 @@ test("repository wrappers await child close and preserve trailing output", async
   const output = [];
   const sink = new Writable({ write(chunk, _encoding, callback) { output.push(chunk.toString()); callback(); } });
   assert.equal(await runDevLoops(["gates"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
-  assert.equal(await runEnsureWorktree(["--repo-root", fixture.root, "--issue", "150", "--branch", "trailing"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
+  assert.equal(await runEnsureWorktree(["--repo-root", fixture.root, "--issue", "150", "--branch", "trailing", "--delivery-base", "develop"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
+  assert.equal(execFileSync("git", ["config", "--local", "--get", "branch.trailing.oxidDeliveryBase"], {
+    cwd: fixture.root, encoding: "utf8",
+  }).trim(), "origin/develop");
   assert.match(output.join(""), /dev-loop-out/);
   assert.match(output.join(""), /dev-loop-err/);
   assert.match(output.join(""), /worktree-out/);
@@ -1768,6 +1779,7 @@ test("Claude runner binds clean exact-head evidence and rejects stale worktrees"
   git("config", "user.name", "Fixture");
   git("config", "user.email", "fixture@example.invalid");
   git("config", "commit.gpgsign", "false");
+  git("config", `branch.${git("branch", "--show-current")}.oxidDeliveryBase`, "origin/develop");
   await writeFile(path.join(repository, "contract.txt"), "base\n");
   git("add", "contract.txt");
   git("commit", "--quiet", "-m", "base");
@@ -1875,6 +1887,7 @@ if (process.argv.includes("--version")) {
         "--evidence-dir", path.join(fixtureRoot, evidenceName),
         "--issue-contract-file", issueContractPath,
         "--expected-head", headSha,
+        "--delivery-base", "origin/develop",
       ];
       if (effort) args.push("--effort", effort);
       if (timeoutMs) args.push("--timeout-ms", timeoutMs);
@@ -2411,7 +2424,8 @@ test("routine gates stay bounded and preserve the explicit high-risk review rout
   assert.match(config, /^  requireFanoutEvidence: false$/m);
   assert.match(config, /^  requireFanoutProvenance: false$/m);
   assert.match(config, /^  stopAt: \[\]$/m);
-  assert.match(config, /^  humanMergeOnly: true$/m);
+  assert.match(config, /^  humanMergeOnly: false$/m);
+  assert.match(config, /^    mandatoryAngles: \[\]$/m);
   assert.match(await read("docs/dev-loop-stability.md"), /manually\s+invoke the reviewer once/i);
 });
 

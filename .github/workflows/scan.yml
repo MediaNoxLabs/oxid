@@ -2,9 +2,8 @@ name: Scan
 
 on:
   push:
-    branches: [develop, main]
+    branches: [develop, main, "milestone-*"]
   pull_request:
-    branches: [develop, main]
   workflow_dispatch: {}
   schedule:
     - cron: "0 0 * * *"

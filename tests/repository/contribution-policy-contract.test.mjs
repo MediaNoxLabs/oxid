@@ -27,7 +27,7 @@ test("contribution policy has unique sorted bounded types and scopes", () => {
     assert.deepEqual(values, [...new Set(values)].sort());
     for (const value of values) assert.match(value, /^[a-z][a-z0-9-]*$/u);
   }
-  assert.deepEqual(contributionPolicy.branch.protected, ["develop", "main"]);
+  assert.deepEqual(contributionPolicy.branch.protected, ["develop", "main", "milestone-*"]);
   assert.equal(contributionPolicy.commit.requireDco, true);
   assert.equal(contributionPolicy.commit.requireOpenPgp, true);
   assert.equal(contributionPolicy.commit.requireScope, true);
@@ -196,7 +196,9 @@ test("hosted policy evaluates trusted base code and verifies OpenPGP through Git
   assert.match(dco, /policy\/scripts\/ci\/contribution-policy\.mjs hosted-commits/);
   assert.match(dco, /COMMIT_POLICY_MODE:/);
   assert.match(dco, /head\.ref == 'develop'/);
+  assert.match(dco, /startsWith\(github\.event\.pull_request\.head\.ref, 'milestone-'\)/);
   assert.match(dco, /base\.ref == 'main'/);
+  assert.match(dco, /base\.ref == 'develop'/);
   assert.equal((dco.match(/repo\.full_name == github\.repository/g) || []).length, 4);
   assert.match(dco, /'integration-promotion' \|\| 'contributor'/);
   assert.match(dco, /createCommitStatus/);

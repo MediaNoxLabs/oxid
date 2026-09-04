@@ -13,9 +13,13 @@ import {
   resolveProfile,
 } from "../../scripts/ci/target-plan.mjs";
 
-test("automatic profiles follow the durable develop-to-main promotion flow", () => {
+test("automatic profiles distinguish feature, milestone promotion, and release flows", () => {
   assert.equal(resolveProfile("auto", "pull_request", "develop"), Profile.FEATURE);
+  assert.equal(resolveProfile("auto", "pull_request", "milestone-0.4.0", "", "feat/issue-1"), Profile.FEATURE);
+  assert.equal(resolveProfile("auto", "pull_request", "develop", "", "milestone-0.4.0"), Profile.INTEGRATION);
+  assert.equal(resolveProfile("auto", "pull_request", "develop", "", "milestone-latest"), Profile.FEATURE);
   assert.equal(resolveProfile("auto", "push", "develop"), Profile.INTEGRATION);
+  assert.equal(resolveProfile("auto", "push", "", "milestone-0.4.0"), Profile.INTEGRATION);
   assert.equal(resolveProfile("auto", "pull_request", "main"), Profile.RELEASE);
   assert.equal(resolveProfile("auto", "push", "", "main"), Profile.RELEASE);
   assert.equal(resolveProfile(Profile.FEATURE, "push", "", "main"), Profile.FEATURE);

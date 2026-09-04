@@ -5,22 +5,43 @@ import { readFile, realpath } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
+import { validateBranchName } from "./ci/contribution-policy.mjs";
+import { extractDeliveryTargetOption } from "./lib/delivery-target.mjs";
 import { normalizeHandoffEnvelopeCwd } from "./lib/handoff-envelope-cwd.mjs";
 import { runManagedChild } from "./lib/managed-child-process.mjs";
 import { resolveDevLoopsPackageRoot } from "./lib/dev-loop-runtime.mjs";
-import { enforceSingleBase, pinnedPublicRoute } from "./lib/pinned-dev-loops-args.mjs";
+import { enforceSingleBase, pinnedPublicRoute, readLongOptionValues } from "./lib/pinned-dev-loops-args.mjs";
 
-const DELIVERY_BASE = "develop";
 const DELIVERY_PROFILE_OPTION = "--delivery-profile";
 
-/** Force the base on dev-loops' public PR create route and deprecated alias. */
+function bindPrBase(args, target) {
+  const bases = readLongOptionValues(args, "--base");
+  if (bases.length === 0) {
+    return enforceSingleBase(args, target.branch, { addWhenMissing: true, label: "repository dev-loops operations" });
+  }
+  if (bases.length > 1) throw new Error("repository dev-loops operations accepts exactly one --base");
+  if (bases[0] === target.branch) return args;
+  const stackBase = validateBranchName(bases[0]);
+  if (!stackBase.ok) {
+    throw new Error(`PR base must be delivery target ${target.branch} or a conventional issue branch: ${stackBase.errors.join("; ")}`);
+  }
+  return args;
+}
+
+/** Bind public PR routes to the exact issue target; never infer a milestone. */
 export function normalizeDevLoopsArgs(argv) {
   if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) return ["help"];
   const args = [...argv];
   const route = pinnedPublicRoute(args);
   const isPrCreate = route.category === "pr" && (route.command === "create" || route.command === "create-draft");
-  return enforceSingleBase(args, DELIVERY_BASE, {
-    addWhenMissing: isPrCreate,
+  const isEnvelope = route.category === "loop" && route.command === "build-envelope";
+  if (isEnvelope) return args;
+  const hasBase = readLongOptionValues(args, "--base").length > 0;
+  const selected = extractDeliveryTargetOption(args, { required: isPrCreate || hasBase });
+  if (!selected.target) return selected.args;
+  if (isPrCreate) return bindPrBase(selected.args, selected.target);
+  return enforceSingleBase(selected.args, selected.target.branch, {
+    addWhenMissing: false,
     label: "repository dev-loops operations",
   });
 }
@@ -76,9 +97,16 @@ async function loadDeliveryProfile(repoRoot, requested) {
   return { contract, profile };
 }
 
-export function applyDeliveryProfile(envelope, contract, profile) {
+export function applyDeliveryProfile(envelope, contract, profile, deliveryTarget) {
   const requiredReads = [...new Set([...envelope.requiredReads, ".pi/delivery-profiles.json"])];
-  if (profile === "production-ready") return { ...envelope, deliveryProfile: profile, requiredReads };
+  const routed = {
+    ...envelope,
+    deliveryBase: deliveryTarget.remoteRef,
+    deliveryTargetKind: deliveryTarget.kind,
+    deliveryProfile: profile,
+    requiredReads,
+  };
+  if (profile === "production-ready") return routed;
   if (profile !== "prototype") throw new Error(`unsupported delivery profile: ${profile}`);
   const issueBacked = envelope.target?.kind === "issue"
     || (envelope.target?.kind === "local_phase" && Number.isInteger(envelope.target.issue));
@@ -91,8 +119,7 @@ export function applyDeliveryProfile(envelope, contract, profile) {
     severity: "required",
   }));
   const profiled = {
-    ...envelope,
-    deliveryProfile: profile,
+    ...routed,
     executionMode: "bounded_handoff",
     currentGate: "default",
     nextAction: "Execute one explicit prototype hypothesis locally, run the bounded focused evidence, and return a provisional closeout.",
@@ -151,8 +178,11 @@ async function loadPinnedEnvelopeModules(packageRoot) {
 async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
   const { cli, output, helpers, core } = await loadPinnedEnvelopeModules(resolved.packageRoot);
   let deliveryArgs;
+  let deliveryTarget;
   try {
-    deliveryArgs = extractDeliveryProfileArgs(args);
+    const selected = extractDeliveryTargetOption(args, { required: !args.includes("--help") });
+    deliveryTarget = selected.target;
+    deliveryArgs = extractDeliveryProfileArgs(selected.args);
   } catch (error) {
     stderr.write(`${helpers.formatCliError(error)}\n`);
     return 1;
@@ -172,7 +202,7 @@ async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
       stderr,
       adapter: { getCwd: () => cwd, getRepoRoot: () => resolved.gitRoot },
     });
-    stdout.write("Repository option:\n  --delivery-profile <prototype|production-ready>  Select a bounded delivery profile (default: production-ready).\n");
+    stdout.write("Repository options:\n  --delivery-base <origin/develop|origin/milestone-x.y.z>  Use the exact target recorded on the issue.\n  --delivery-profile <prototype|production-ready>  Select a bounded delivery profile (default: production-ready).\n");
     const code = process.exitCode ?? 0;
     process.exitCode = previousExitCode;
     return code;
@@ -183,7 +213,7 @@ async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
     });
     const normalized = await normalizeHandoffEnvelopeCwd(candidate, resolved, core);
     const { contract, profile } = await loadDeliveryProfile(resolved.gitRoot, deliveryArgs.requested);
-    const envelope = applyDeliveryProfile(normalized, contract, profile);
+    const envelope = applyDeliveryProfile(normalized, contract, profile, deliveryTarget);
     const validation = core.validateHandoffEnvelope(envelope);
     if (!validation.ok) throw new Error(`profiled handoff envelope failed core validation: ${JSON.stringify(validation.errors)}`);
     return output.emitResult(envelope, { jq: options.jq, silent: options.silent, stdout, stderr });

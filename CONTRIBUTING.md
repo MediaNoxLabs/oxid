@@ -98,6 +98,11 @@ attestation automatically: continue to use `--signoff`/`-s`. Local hooks are
 developer feedback, not a trust boundary; the hosted gate still verifies the
 exact PR range and GitHub's OpenPGP result.
 
+Managed worktrees record `branch.<name>.oxidDeliveryBase` in repository-local
+Git configuration. If a branch was created manually, set that key to its exact
+`origin/milestone-x.y.z` or `origin/develop` target before pushing. The key is
+branch-specific, so concurrent sessions do not share mutable target state.
+
 By adding the `Signed-off-by` trailer, you certify the contribution under the
 [Developer Certificate of Origin 1.1](https://developercertificate.org/).
 

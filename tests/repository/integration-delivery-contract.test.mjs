@@ -115,7 +115,7 @@ function eventBranches(workflow, eventName) {
     const line = lines[index];
     if (/^  \S/.test(line)) break;
     const inline = line.match(/^    branches: \[([^\]]+)\]$/);
-    if (inline) return inline[1].split(",").map((branch) => branch.trim());
+    if (inline) return inline[1].split(",").map((branch) => branch.trim().replace(/^['"]|['"]$/gu, ""));
     if (line === "    branches:") {
       const branches = [];
       for (let branchIndex = index + 1; branchIndex < lines.length; branchIndex += 1) {
@@ -130,11 +130,10 @@ function eventBranches(workflow, eventName) {
 }
 
 for (const workflowPath of [".github/workflows/ci.yml", ".github/workflows/quality.yml", ".github/workflows/scan.yml"]) {
-  test(`${workflowPath} runs only for durable branches`, async () => {
+  test(`${workflowPath} covers concurrent milestone streams and stacked PRs`, async () => {
     const workflow = await read(workflowPath);
-    for (const eventName of ["push", "pull_request"]) {
-      assert.deepEqual(new Set(eventBranches(workflow, eventName)), new Set(["develop", "main"]));
-    }
+    assert.deepEqual(new Set(eventBranches(workflow, "push")), new Set(["develop", "main", "milestone-*"]));
+    assert.equal(eventBranches(workflow, "pull_request"), null);
   });
 }
 
@@ -318,7 +317,8 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.doesNotMatch(scanJob, /skip_(?:zizmor|gitleaks|opengrep|trivy)_scan:\s*["']?true/i);
   assert.match(config, /maxCopilotRounds: 0/);
   assert.match(config, /^  stopAt: \[\]$/m);
-  assert.match(config, /^  humanMergeOnly: true$/m);
+  assert.match(config, /^  humanMergeOnly: false$/m);
+  assert.match(config, /^    mandatoryAngles: \[\]$/m);
   assert.match(config, /^  requireRetrospective: false$/m);
   assert.match(config, /^  maxParallel: 1$/m);
   assert.doesNotMatch(config, /humanHandoff|candidatesFrom:\s*\n\s*- codeowners/);
@@ -355,7 +355,7 @@ test("guidance, required contexts, and review configuration agree", async () => 
     ci.indexOf("\n  unit_linux:\n    name:"),
     ci.indexOf("\n  headless_linux:\n    name:"),
   );
-  assert.match(unitJob, /trustedDevelopPush[\s\S]*SCCACHE_GHA_RW_MODE[\s\S]*READ_WRITE[\s\S]*READ_ONLY/);
+  assert.match(unitJob, /trustedTrainPush[\s\S]*refs\/heads\/milestone-[\s\S]*SCCACHE_GHA_RW_MODE[\s\S]*READ_WRITE[\s\S]*READ_ONLY/);
   assert.match(ciShells, /export CARGO_INCREMENTAL="''\$\{CARGO_INCREMENTAL:-0\}"/);
   assert.match(ciShells, /devShells\.ci-quality = pkgs\.mkShell/);
   assert.match(sccacheRunner, /"\$@" \|\| command_status=\$\?/);
@@ -363,7 +363,7 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(sccacheRunner, /write-error counters are expected for rejected local puts/);
   assert.doesNotMatch(ci, /path: ~\/\.cache\/oxid-sccache/);
   assert.doesNotMatch(ci, /key: sccache-/);
-  assert.match(ci, /save: \$\{\{ github\.event_name == 'push' && github\.ref == 'refs\/heads\/develop' \}\}/);
+  assert.match(ci, /save: \$\{\{ github\.event_name == 'push' && \(github\.ref == 'refs\/heads\/develop' \|\| startsWith\(github\.ref, 'refs\/heads\/milestone-'\)\) \}\}/);
   assert.match(ci, /if: always\(\)[\s\S]*?needs: \[plan, basic, unit_linux, headless_linux, ui_linux, ui_release_linux, coverage_linux\]/);
   assert.doesNotMatch(ci, /Run full repository gate/);
   assert.doesNotMatch(ci, /^\s+target$/m);

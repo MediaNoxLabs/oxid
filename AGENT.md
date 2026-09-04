@@ -42,7 +42,9 @@ index points to it; it is not a required read for unrelated work.
   the full local commit range.
 - Install and audit the repository-scoped contribution hooks with
   `./bootstrap.sh --configure-git` and `./bootstrap.sh --check`. Hooks provide
-  early feedback; hosted exact-head verification remains authoritative.
+  early feedback; managed worktrees record the branch-specific delivery base
+  used by pre-push and review tools. Hosted exact-head verification remains
+  authoritative.
 - Do not push, merge, change repository settings, accept an ADR, tag, or release
   without the authority required by the active user request.
 
@@ -100,8 +102,9 @@ Follow [the productive loop](docs/factory/productive-loop.md):
    concrete linked follow-up issue and visible PR triage comment.
 6. Invoke independent current-head Claude review only for a high-risk/release-profile
    change, an owner request, or a disputed finding.
-7. At merge, use the guarded milestone-only wrapper for an eligible product
-   increment or hand a `develop`/`main` promotion to a human.
+7. At merge, post the exact-head `review-triage.mjs` receipt and use the guarded
+   milestone-only wrapper for an eligible product increment, or hand a
+   `develop`/`main` promotion to a human.
 
 Automatic review is capped at two concurrent reviewers. Low-signal refinement
 stops. Do not add reviewers, retries, retrospective work, or a second gate to

@@ -19,6 +19,7 @@ export const HOOK_NAMES = Object.freeze(["pre-commit", "commit-msg", "pre-push"]
 export const BUNDLE_FILES = Object.freeze([
   "scripts/git-hooks/local-policy.mjs",
   "scripts/ci/contribution-policy.mjs",
+  "scripts/lib/delivery-target.mjs",
   ".github/contribution-policy.json",
 ]);
 
