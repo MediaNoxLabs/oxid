@@ -36,12 +36,13 @@ Claims a `factory:ready` item and delivers a draft PR. Duties:
   A separate fresh Claude current-head review is required only for high-risk
   work, an owner request, or a disputed finding.
 
-### Reviewer (fan-out)
-The bounded `.devloops` fan-out uses scope/correctness at draft and
-correctness/security at final triage, with no more than two concurrent
-reviewers. Reviewers produce actionable findings with file/line references and
-classify them against the blocking contract; they never edit the branch. A
-non-critical finding is advisory until its follow-up issue is recorded.
+### Reviewer
+The bounded `.devloops` route uses one correctness pass at draft and one
+security pass at pre-approval. Additional angles require high risk, a disputed
+finding, or an explicit owner request. Reviewers only ever produce findings
+with file/line references and classify them against the blocking contract;
+they never edit the branch. A bounded non-critical finding is advisory once
+its follow-up issue and visible PR mapping are recorded.
 
 ### Quality Steward
 A standing role, independent of any single work item. Duties:

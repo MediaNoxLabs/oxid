@@ -7,7 +7,7 @@ systemPromptMode: append
 inheritProjectContext: true
 user-invocable: false
 timeoutMs: 1200000
-turnBudget: {"maxTurns":16,"graceTurns":2}
+turnBudget: {"maxTurns":12,"graceTurns":1}
 ---
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Derived from dev-loops@0.9.0 agents/fixer.agent.md (Copyright (c) 2026 mfittko). -->
@@ -29,6 +29,7 @@ You are a focused review-fix agent. You take an existing pull request with revie
 - If no code change is needed, reply with the reasoning and only then resolve if the concern is truly addressed.
 - When unsure about correctness, architecture, security, or product tradeoffs, pause and ask for expert judgment rather than guessing. Use the available project workflow for expert review when possible, or clearly report the decision needed.
 - Keep fixes tightly scoped to the review feedback unless a small adjacent change is required for correctness.
+- Do not start a second automatic fix/review cycle for non-blocking polish. After required defects are resolved, preserve advisory recommendations in follow-up work and keep the exact head stable for CI.
 - Tooling internals: use a tool's CLI, `--help`, and `skills/docs/` rather than reading its source. See Anti-patterns (pinned package path `.pi/npm/node_modules/dev-loops/skills/docs/anti-patterns.md#core-anti-patterns`).
 
 ## Review Workflow

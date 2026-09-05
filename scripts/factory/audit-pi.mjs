@@ -249,7 +249,13 @@ async function inspectDeliveryProfiles(repoRoot) {
       || production?.evidenceClass !== "production") {
       problems.push("production-ready must retain authority, gate, and evidence controls");
     }
-    if (production?.maximumReviewers !== 2) problems.push("production-ready reviewer cap must remain two");
+    if (production?.maximumReviewers !== 1) problems.push("production-ready must default to one reviewer");
+    if (production?.qualityBudget?.targetPercent !== 70
+      || production?.qualityBudget?.mandatoryInvariantsPercent !== 100
+      || production?.qualityBudget?.maximumAutomaticReviewRounds !== 1
+      || production?.qualityBudget?.advisoryDisposition !== "follow-up") {
+      problems.push("production-ready must preserve the 70 percent quality budget and complete mandatory invariants");
+    }
 
     const promotion = profiles.promotion;
     if (promotion?.explicit !== true || promotion?.refreshBase !== "recorded-delivery-base"
@@ -395,8 +401,10 @@ export async function auditPi({
 
   const devloops = await readFile(path.join(repoRoot, ".devloops"), "utf8");
   const devloopBounds = [
-    /fanOut:\s*2/u,
-    /maxFanoutReviewers:\s*2/u,
+    /fanOut:\s*1/u,
+    /maxFanoutReviewers:\s*1/u,
+    /draft:[\s\S]*?blockCleanOnFindingSeverities:\s*\n\s*- must-fix/u,
+    /preApproval:[\s\S]*?blockCleanOnFindingSeverities:\s*\n\s*- must-fix/u,
     /maxParallel:\s*1/u,
     /reDispatchMaxRetries:\s*0/u,
   ];

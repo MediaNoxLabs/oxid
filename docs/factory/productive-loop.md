@@ -11,8 +11,9 @@ not.
 
 - A draft-direction result should take at most 10 minutes.
 - A routine PR should be merge-ready in 35–60 minutes of elapsed time.
-- At most two review agents run concurrently and at most four automatic review
-  sessions are expected across ordinary draft and pre-approval gates.
+- One review agent is the routine default and one automatic review/fix round is
+  the limit. A second opinion requires high risk, a disputed finding, or an
+  explicit owner request.
 - Only one PR candidate is auto-driven remotely by each parent session.
 - Keep at most two active managed delivery worktrees per Git common checkout
   on a host. An experiment may use a temporary third worktree only when its
@@ -38,7 +39,7 @@ state:
 | Profile | Purpose | Required evidence | Remote posture |
 | --- | --- | --- | --- |
 | `prototype` | Answer one product or technical hypothesis quickly | `basic`, plus an explicitly needed focused unit or headless check | Local only; evidence is provisional and never merge-eligible |
-| `production-ready` | Produce a reviewable, merge-eligible increment | Affected critical targets, bounded review, hosted CI, and complete finding triage | Guarded milestone flow or human durable-branch handoff |
+| `production-ready` | Produce a reviewable, merge-eligible increment | Mandatory acceptance and safety evidence, affected fast targets, one review round, hosted CI, and complete finding triage | Guarded milestone flow or human durable-branch handoff |
 
 Invoke the public entrypoint as:
 
@@ -83,6 +84,17 @@ active engineering branches and preserve the final milestone target in both
 work items. See [the delivery authority](../issue-branch-delivery.md) for train
 lifecycle and human promotion rules.
 
+Production-ready uses a 70% routine quality target during the current delivery
+phase. This is a throughput budget, not permission to ship a known defect:
+acceptance criteria, correctness, security, provenance, and selected required
+checks remain 100% complete. Resolve blocking defects and the highest-value
+quality improvements within one automatic review round. Preserve remaining
+advisory improvements in the PR follow-up comment or an issue; do not change an
+otherwise eligible exact head merely to polish it.
+Both gates therefore configure `blockCleanOnFindingSeverities: [must-fix]`;
+`worth-fixing-now` and `defer` findings remain visible in the disposition
+ledger and PR comment without blocking a clean verdict.
+
 ## One candidate, two checkpoints
 
 1. Resolve exactly one delivery base. Product work uses its criteria-backed
@@ -107,10 +119,11 @@ lifecycle and human promotion rules.
 5. Run the matching local gate, commit once, and push one coherent candidate.
    Do not push after each finding; every push cancels CI and stales exact-head
    evidence.
-6. Pre-approval runs correctness/security triage against that candidate and
-   waits for the critical protected contexts once. A non-critical finding is
+6. Pre-approval runs one correctness/security review against that candidate and
+   waits for the protected contexts once. A bounded non-critical finding is
    complete for this increment only when its follow-up issue and mapping comment
-   exist. Post one current-head receipt with `review-triage.mjs`; a new head
+   exist; a second automatic fix/review cycle is forbidden for advisory-only
+   findings. Post one current-head receipt with `review-triage.mjs`; a new head
    invalidates it.
 7. For a release-profile/high-risk change, an owner request, or a disputed finding, run
    the manually invoked current-head Claude review once after the last edit.
@@ -125,9 +138,11 @@ lifecycle and human promotion rules.
 The planner is conservative and based on changed paths plus an explicit
 `feature`, `integration`, or `release` profile. L0 basic evidence is emitted
 for every PR within five minutes. L1 unit and L2 headless integration have
-ten-minute bounds on the Linux host. L3 UI profiles/tests, the optimized UI
-release audit, coverage, quality, Nix package, and Compact artifact lanes run
-independently when their component or profile selects them. The complete target/dependency inventory and missing platform
+ten-minute bounds on the Linux host. A routine feature PR runs unit plus one
+affected host consumer: headless for shared/headless/Compact code, or UI for
+UI/platform code. Optimized UI release, coverage, quality, and Nix packaging
+remain available on demand and run in the complete `develop`/`main` profiles;
+Compact source changes retain their artifact check. The complete target/dependency inventory and missing platform
 gates live in [the CI target matrix](ci-target-matrix.md).
 
 The workflow keeps the existing required context names as aggregators, so
@@ -139,8 +154,8 @@ secret can be committed in any file. It is already a short parallel check and
 is not on the Rust/Nix critical path.
 
 Build/toolchain/lockfile changes and unknown or unavailable diff state select
-every public hosted target. Shared core changes select both headless and UI
-consumers; focused components do not pay for unrelated consumers. The nightly
+every public hosted target. Shared core changes use the headless consumer on
+feature PRs; focused components do not pay for unrelated consumers. The nightly
 is the backstop for complete hermetic validation, not an excuse to weaken a
 change-relevant PR gate.
 

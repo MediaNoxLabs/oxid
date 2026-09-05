@@ -206,7 +206,10 @@ Coverage MUST NOT be treated as the sole measure of test quality.
 | New/changed production code | `>= 90%` |
 | Bindings/platform glue | `>= 70–80%` |
 
-Generated code SHOULD be excluded. Workspace coverage below **75%** SHOULD fail CI unless an explicit exception exists.
+Generated code SHOULD be excluded. During the current owner-approved delivery
+phase, measured workspace and changed-production coverage below **70%** SHOULD
+fail CI. The higher table values remain ratchet targets for a later phase, not
+per-PR blockers today.
 
 The repository SHOULD use appropriate combinations of:
 

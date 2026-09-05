@@ -126,6 +126,13 @@ test("the handoff wrapper makes prototype local and production-ready the default
     branch: "develop", remoteRef: "origin/develop", kind: "factory",
   });
   assert.equal(production.deliveryProfile, "production-ready");
+  assert.equal(contract.profiles["production-ready"].maximumReviewers, 1);
+  assert.deepEqual(contract.profiles["production-ready"].qualityBudget, {
+    targetPercent: 70,
+    mandatoryInvariantsPercent: 100,
+    maximumAutomaticReviewRounds: 1,
+    advisoryDisposition: "follow-up",
+  });
   assert.equal(production.nextAction, base.nextAction);
   assert.deepEqual(production.stopRules, base.stopRules);
   assert.equal(production.requiredReads.includes(".pi/delivery-profiles.json"), true);
