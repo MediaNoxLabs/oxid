@@ -70,6 +70,64 @@ test("GitHub squash proof requires one exact integrated PR", () => {
   }
 });
 
+test("retired integration proof requires the exact full-tree promotion", () => {
+  const head = "a".repeat(40);
+  const integrationMerge = "b".repeat(40);
+  const promotionHead = "c".repeat(40);
+  const promotionMerge = "d".repeat(40);
+  const pull = {
+    number: 239,
+    state: "MERGED",
+    baseRefName: "integration",
+    headRefOid: head,
+    mergedAt: "2026-09-01T07:17:22Z",
+    mergeCommit: { oid: integrationMerge },
+  };
+  const promotion = {
+    number: 258,
+    state: "MERGED",
+    baseRefName: "develop",
+    headRefName: "integration",
+    headRefOid: promotionHead,
+    mergedAt: "2026-09-03T15:06:49Z",
+    mergeCommit: { oid: promotionMerge },
+  };
+  const options = {
+    promotions: [promotion],
+    mergeCommitIsInPromotion: (merge, finalHead) => (
+      merge === integrationMerge && finalHead === promotionHead
+    ),
+    promotionPreservesTree: (source, target) => (
+      source === promotionHead && target === promotionMerge
+    ),
+  };
+  const integrated = (candidate) => candidate === promotionMerge;
+
+  assert.equal(
+    indexGithubMergeProofs([pull], integrated, null, options).proofs.get(head),
+    "github-pr:239:via-pr:258",
+  );
+  for (const invalid of [
+    { ...promotion, number: 257 },
+    { ...promotion, state: "OPEN" },
+    { ...promotion, baseRefName: "main" },
+    { ...promotion, headRefName: "other" },
+  ]) {
+    assert.equal(indexGithubMergeProofs([pull], integrated, null, {
+      ...options,
+      promotions: [invalid],
+    }).proofs.size, 0);
+  }
+  assert.equal(indexGithubMergeProofs([pull], integrated, null, {
+    ...options,
+    promotionPreservesTree: () => false,
+  }).proofs.size, 0);
+  assert.equal(indexGithubMergeProofs([pull], integrated, null, {
+    ...options,
+    mergeCommitIsInPromotion: () => false,
+  }).proofs.size, 0);
+});
+
 test("duplicate exact-head GitHub merge proofs fail closed", () => {
   const head = "a".repeat(40);
   const first = {
@@ -153,6 +211,15 @@ function graphqlEvidence(head, mergeCommit, { hasNextPage = false } = {}) {
             pageInfo: { hasNextPage },
           },
         },
+        p0: {
+          number: 258,
+          state: "MERGED",
+          baseRefName: "develop",
+          headRefName: "integration",
+          headRefOid: "d".repeat(40),
+          mergedAt: "2026-09-03T15:06:49Z",
+          mergeCommit: { oid: "e".repeat(40) },
+        },
       },
     },
   });
@@ -220,6 +287,7 @@ test("head-scoped GraphQL truncation is unavailable rather than absent", () => {
   assert.deepEqual([...parsed.unavailableHeads], [head]);
   assert.equal(parsed.pulls.length, 0);
   assert.match(githubMergeQuery([head]), new RegExp(head));
+  assert.match(githubMergeQuery([head]), /pullRequest\(number:258\)/);
   assert.throws(() => githubMergeQuery([]), /requires exact commit heads/);
   assert.throws(() => githubMergeQuery(["not-a-sha"]), /requires exact commit heads/);
 });

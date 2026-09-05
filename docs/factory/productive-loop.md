@@ -185,7 +185,12 @@ direct Git ancestry first. For a squash merge,
 it uses one exact merged GitHub PR head/base/merge-commit match and verifies that
 merge commit against a remotely observed, current delivery base. Stale,
 unavailable, malformed, or ambiguous hosted evidence fails closed and is shown
-in the `mergeProof` field. `audit` remains mutation-free but is no longer purely
+in the `mergeProof` field. The retired `integration` branch has one explicit
+exception for its full-tree promotion in PR #258: both the historical PR and
+promotion are fetched by exact identity, the former merge must be an ancestor
+of the promoted head, the promoted and merged trees must match, and the latter
+merge must be integrated into current `origin/develop`. No other historical
+base receives transitive trust. `audit` remains mutation-free but is no longer purely
 local: non-ancestor heads make bounded read-only `git ls-remote` and authenticated
 `gh api graphql` calls. Without network access, a logged-in `gh`, or a current
 local delivery ref, those heads report `unavailable`; direct ancestry and the
