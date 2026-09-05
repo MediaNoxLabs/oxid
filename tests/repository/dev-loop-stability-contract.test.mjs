@@ -2420,7 +2420,8 @@ test("routine gates stay bounded and preserve the explicit high-risk review rout
   ]) {
     assert.doesNotMatch(block, /^\s+- external-review$/m);
   }
-  assert.match(config, /^  maxFanoutReviewers: 2$/m);
+  assert.match(config, /^  maxFanoutReviewers: 1$/m);
+  assert.equal((config.match(/^    blockCleanOnFindingSeverities:\n      - must-fix$/gm) ?? []).length, 2);
   assert.match(config, /^  requireFanoutEvidence: false$/m);
   assert.match(config, /^  requireFanoutProvenance: false$/m);
   assert.match(config, /^  stopAt: \[\]$/m);

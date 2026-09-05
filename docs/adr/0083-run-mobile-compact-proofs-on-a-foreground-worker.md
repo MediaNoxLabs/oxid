@@ -4,9 +4,9 @@
 - Date: 2026-08-19
 - Blueprint source: Sections 3–7, 9–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, mobile presentation proving and worker lifecycle
-- Tracking: issues #2, #27, #29, and #30
+- Tracking: issues #2, #27, #29, #30, and #127
 - Amends: ADR-0043, ADR-0050, and ADR-0072
-- Implementation state: the explicit `standalone-native-proving-artifacts` iOS/Android composition authenticates the embedded runtime, admits one foreground proof on a dedicated worker, independently verifies it, and exposes Dioxus success/cancellation/timeout states; physical-device release budgets and ADR-0071/issue-#29 custody evidence remain open, so normal production and ordinary standalone builds stay proof-disabled
+- Implementation state: the explicit `standalone-native-proving-artifacts` iOS/Android composition authenticates the embedded runtime, admits one foreground proof on a dedicated worker, independently verifies it, safely reports cancellation/backgrounding after worker completion, and bounds timeout acknowledgement while retaining the worker-owned slot until completion; physical-device release budgets and ADR-0071/issue-#29 custody evidence remain open, so normal production and ordinary standalone builds stay proof-disabled
 
 ## Context
 
@@ -35,13 +35,15 @@ authorization, proving, and verification never execute on the UI executor.
 Admission requires the app to be foreground. The worker owns an atomic,
 profile-and-presentation-scoped control token. Explicit cancellation,
 backgrounding, and the conservative five-minute standalone timeout set only a
-terminal reason. They do not stop or detach the non-interruptible prover. The
-proof future waits until the worker exits. Successful proof bytes pass through
-the existing independent verifier while the admission slot remains held. A
-final control checkpoint then discards every result affected by a late signal,
-releases admission, and only then permits success or reports
-`proof_cancelled`, `proof_backgrounded`, or `proof_timed_out`. A panic or
-disconnected worker fails closed without proof output.
+terminal reason. They do not stop the non-interruptible prover. Explicit
+cancellation and backgrounding wait until the worker exits. The timeout bounds
+the caller's wait and returns `proof_timed_out`, while a worker-owned admission
+lease keeps the single slot occupied until that worker exits and discards its
+late result. Successful proof bytes transfer the same lease to the awaiting
+future and pass through the existing independent verifier while admission
+remains held. A final control checkpoint then releases admission and only then
+permits success. A panic, disconnected worker, or dropped proof future fails
+closed without proof output and releases admission after the worker stops.
 
 Expose cancellation and foreground lifecycle through application-owned ports.
 Application state moves from `presenting` to `cancellation_requested` when a
@@ -72,12 +74,13 @@ native-custody standalone builds remain unchanged and fail closed at
   closed states; they never expose credentials, claims, witnesses, openings,
   holder signatures, proof bytes, nonces, or `vp_token` contents.
 - A cancellation request is never labelled `cancelled` until the worker has
-  stopped and any result has been discarded.
+  stopped and any result has been discarded. A timeout labels the bounded
+  request wait, not worker termination; retry remains `proof_busy` until the
+  worker-owned lease is released.
 - Backgrounding prevents new admission and marks an active attempt for result
   disposal. Resuming cannot revive an old attempt.
-- The five-minute value is a conservative standalone safety stop, not a
-  production latency budget. Because the prover is non-interruptible, timeout
-  acknowledgement may occur later than five minutes.
+- The five-minute value is a conservative standalone request deadline, not a
+  production latency budget or a claim that the prover was interrupted.
 - Process death relies on the OS to terminate the process. No proof session or
   partial result is written for recovery.
 - Successful simulator/emulator execution is conformance evidence only. It is
@@ -91,7 +94,8 @@ native-custody standalone builds remain unchanged and fail closed at
 - One-proof admission remains held through independent verification, bounds
   concurrent proving memory, and makes `proof_busy` a stable fail-closed result.
 - Cancellation is safe but may feel delayed while the generated prover is
-  inside its non-interruptible call.
+  inside its non-interruptible call. Timeout is prompt, but a retry remains
+  unavailable until that call exits.
 - Physical iOS and Android measurements must still define release-mode prover
   and verifier latency, peak/resident memory, package delta, free-storage,
   thermal, low-memory, background, and restart budgets before any production
@@ -100,8 +104,9 @@ native-custody standalone builds remain unchanged and fail closed at
 ## Validation
 
 - Worker tests cover one-proof admission through independent verification,
-  profile-isolated cancellation, background rejection, timeout, late-result
-  disposal, and acknowledgement only after worker completion.
+  profile-isolated cancellation, background rejection, bounded timeout with
+  retained admission, dropped-future cleanup, late-result disposal, and
+  cancellation acknowledgement only after worker completion.
 - Application tests cover profile isolation and the distinct
   `cancellation_requested` lifecycle state.
 - Existing native Compact tests continue to cover exact preimage conformance,
@@ -113,8 +118,9 @@ native-custody standalone builds remain unchanged and fail closed at
 
 ## Rejected alternatives
 
-- Force-stopping or detaching the prover thread would make cleanup and
-  cancellation acknowledgement untrustworthy.
+- Force-stopping the prover thread would make cleanup and cancellation
+  acknowledgement untrustworthy. Timeout detaches only the caller's wait; the
+  admission lease remains worker-owned until safe cleanup.
 - Returning immediately after setting a cancellation flag would misstate that
   witness and custody use had ended.
 - Allowing parallel proofs would multiply an already large memory footprint.

@@ -33,6 +33,7 @@ test("documentation, harness, and workflow-only feature changes keep the basic g
     ["scripts/git-hooks/local-policy.mjs"],
     ["scripts/check-pi-devshell.sh", "scripts/lib/dev-loop-runtime.mjs"],
     [".github/workflows/ci.yml", "scripts/ci/target-plan.mjs"],
+    ["scripts/coverage/policy.json", "scripts/coverage/run.mjs"],
     ["docs/factory/metrics.md", "scripts/ci/target-plan.mjs"],
     ["scripts/factory/metrics.mjs", "docs/factory/work-item-metrics-v1.schema.json"],
   ]) {
@@ -51,8 +52,6 @@ test("focused application changes select their component lanes", () => {
       HostedTarget.BASIC,
       HostedTarget.UNIT_LINUX,
       HostedTarget.HEADLESS_LINUX,
-      HostedTarget.COVERAGE_LINUX,
-      HostedTarget.QUALITY,
     ],
   );
   assert.deepEqual(
@@ -61,24 +60,17 @@ test("focused application changes select their component lanes", () => {
       HostedTarget.BASIC,
       HostedTarget.UNIT_LINUX,
       HostedTarget.UI_LINUX,
-      HostedTarget.UI_RELEASE_LINUX,
-      HostedTarget.COVERAGE_LINUX,
-      HostedTarget.QUALITY,
     ],
   );
 });
 
-test("shared core fans out to both public host consumers", () => {
+test("shared core uses the headless consumer on the feature PR critical path", () => {
   const plan = makeTargetPlan(["crates/foundation/src/lib.rs"]);
   assert.deepEqual(plan.areas, ["core"]);
   assert.deepEqual(plan.targets, [
     HostedTarget.BASIC,
     HostedTarget.UNIT_LINUX,
     HostedTarget.HEADLESS_LINUX,
-    HostedTarget.UI_LINUX,
-    HostedTarget.UI_RELEASE_LINUX,
-    HostedTarget.COVERAGE_LINUX,
-    HostedTarget.QUALITY,
   ]);
 });
 
@@ -92,11 +84,22 @@ test("build inputs and unavailable diffs fail closed to all hosted targets", () 
 test("Compact changes include artifacts and their host consumers", () => {
   const plan = makeTargetPlan(["contracts/presentation/src/presentation.compact"]);
   assert.equal(plan.areas.includes("compact"), true);
-  assert.equal(plan.targets.includes(HostedTarget.NIX_PACKAGE), true);
+  assert.equal(plan.targets.includes(HostedTarget.NIX_PACKAGE), false);
   assert.equal(plan.targets.includes(HostedTarget.COMPACT_ARTIFACTS), true);
   assert.equal(plan.targets.includes(HostedTarget.HEADLESS_LINUX), true);
-  assert.equal(plan.targets.includes(HostedTarget.UI_LINUX), true);
-  assert.equal(plan.targets.includes(HostedTarget.UI_RELEASE_LINUX), true);
+  assert.equal(plan.targets.includes(HostedTarget.UI_LINUX), false);
+  assert.equal(plan.targets.includes(HostedTarget.UI_RELEASE_LINUX), false);
+});
+
+test("expensive assurance lanes remain available explicitly on feature PRs", () => {
+  const targets = [
+    HostedTarget.COVERAGE_LINUX,
+    HostedTarget.QUALITY,
+    HostedTarget.UI_RELEASE_LINUX,
+    HostedTarget.NIX_PACKAGE,
+  ];
+  const plan = makeTargetPlan(["crates/foundation/src/lib.rs"], { extraTargets: targets });
+  for (const target of targets) assert.equal(plan.targets.includes(target), true, target);
 });
 
 test("integration and release profiles are complete backstops", () => {

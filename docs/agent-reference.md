@@ -185,10 +185,13 @@ standalone proof-execution harness: one named worker admits one foreground
 proof, holds admission through independent verification, and sets
 `compact_presentation_proof_available`. Profile-scoped cancellation,
 backgrounding, and the five-minute standalone timeout set a terminal flag but
-do not force-stop the generated non-interruptible prover. The future must wait
-for the worker to stop, discard every late result, and only then publish
-`cancelled`, `backgrounded`, or `timed_out`. Retry requires a fresh OpenID4VP
-preview, exact credential selection, consent, holder authorization, and proof.
+do not force-stop the generated non-interruptible prover. Cancellation and
+backgrounding wait for the worker to stop before acknowledgement. Timeout
+bounds the caller's wait while a worker-owned lease retains admission until the
+late result is discarded; retry reports `proof_busy` until that release. A
+dropped future follows the same worker-owned cleanup path. Retry requires a
+fresh OpenID4VP preview, exact credential selection, consent, holder
+authorization, and proof.
 Normal production, ordinary development mobile, and native-custody mobile
 without the artifact feature remain `proof_unavailable`; physical-device
 budgets and the remaining ADR-0071 release gate stay open.
