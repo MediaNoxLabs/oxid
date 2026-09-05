@@ -4,15 +4,11 @@
 
 use std::{
     collections::BTreeSet,
-    fs,
-    io::{Read as _, Write as _},
     path::{Component, Path, PathBuf},
-    sync::{
-        Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Mutex,
 };
 
+use oxid_adapter_store_atomic as store_atomic;
 use oxid_foundation::UnixTimestampMillis;
 use oxid_wallet_domain::{
     ChainNetworkId, WalletProfileId, WalletTransactionDraftId, WalletTransferSubmissionMode,
@@ -23,7 +19,6 @@ const SCHEMA_VERSION: u32 = 2;
 const LEGACY_SCHEMA_VERSION: u32 = 1;
 const MAX_RECORDS: usize = 128;
 const MAX_FILE_BYTES: u64 = 256 * 1024;
-static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Validated location for public transaction submission metadata.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -221,38 +216,18 @@ impl JsonMidnightSubmissionJournalStore {
     fn load_entries(
         &self,
     ) -> Result<Vec<StoredSubmissionJournalEntry>, SubmissionJournalStoreError> {
-        reject_symlink(&self.path)?;
-        let file = match fs::File::open(&self.path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(_) => return Err(SubmissionJournalStoreError::Unavailable),
-        };
-        let metadata = file
-            .metadata()
-            .map_err(|_| SubmissionJournalStoreError::Unavailable)?;
-        if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
-            return Err(SubmissionJournalStoreError::InvalidData);
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            if metadata.permissions().mode() & 0o077 != 0 {
-                return Err(SubmissionJournalStoreError::InvalidData);
-            }
-        }
         let parent = self
             .path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .ok_or(SubmissionJournalStoreError::InvalidData)?;
-        validate_private_directory(parent)?;
-        let mut bytes = Vec::with_capacity(metadata.len() as usize);
-        file.take(MAX_FILE_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| SubmissionJournalStoreError::Unavailable)?;
-        if bytes.len() as u64 > MAX_FILE_BYTES {
-            return Err(SubmissionJournalStoreError::InvalidData);
-        }
+        store_atomic::reject_non_private_directory(parent).map_err(map_store_error)?;
+        let max_bytes = usize::try_from(MAX_FILE_BYTES).unwrap_or(usize::MAX);
+        let Some(bytes) = store_atomic::read_owner_private_bounded(&self.path, max_bytes)
+            .map_err(map_store_error)?
+        else {
+            return Ok(Vec::new());
+        };
         decode_document(&bytes)
     }
 
@@ -261,47 +236,14 @@ impl JsonMidnightSubmissionJournalStore {
         entries: &[StoredSubmissionJournalEntry],
     ) -> Result<(), SubmissionJournalStoreError> {
         let bytes = encode_document(entries)?;
-        reject_symlink(&self.path)?;
-        let parent = self
-            .path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .ok_or(SubmissionJournalStoreError::InvalidData)?;
-        ensure_private_directory(parent)?;
-        let temporary_path = temporary_path(&self.path);
-        let mut options = fs::OpenOptions::new();
-        options.create_new(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(&temporary_path)
-            .map_err(|_| SubmissionJournalStoreError::Unavailable)?;
-        if file
-            .write_all(&bytes)
-            .and_then(|()| file.sync_all())
-            .is_err()
-        {
-            drop(file);
-            let _ = fs::remove_file(&temporary_path);
-            return Err(SubmissionJournalStoreError::Unavailable);
-        }
-        drop(file);
-        #[cfg(windows)]
-        if self.path.exists() {
-            fs::remove_file(&self.path).map_err(|_| SubmissionJournalStoreError::Unavailable)?;
-        }
-        if fs::rename(&temporary_path, &self.path).is_err() {
-            let _ = fs::remove_file(&temporary_path);
-            return Err(SubmissionJournalStoreError::Unavailable);
-        }
-        #[cfg(unix)]
-        fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|_| SubmissionJournalStoreError::Unavailable)?;
-        Ok(())
+        store_atomic::write_owner_private(&self.path, &bytes).map_err(map_store_error)
+    }
+}
+
+const fn map_store_error(error: store_atomic::AtomicStoreError) -> SubmissionJournalStoreError {
+    match error {
+        store_atomic::AtomicStoreError::Integrity => SubmissionJournalStoreError::InvalidData,
+        store_atomic::AtomicStoreError::Unavailable => SubmissionJournalStoreError::Unavailable,
     }
 }
 
@@ -639,75 +581,32 @@ fn parse_submission_mode(
     }
 }
 
-fn reject_symlink(path: &Path) -> Result<(), SubmissionJournalStoreError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            Err(SubmissionJournalStoreError::InvalidData)
-        }
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(SubmissionJournalStoreError::Unavailable),
-    }
-}
-
-fn ensure_private_directory(path: &Path) -> Result<(), SubmissionJournalStoreError> {
-    reject_symlink(path)?;
-    fs::create_dir_all(path).map_err(|_| SubmissionJournalStoreError::Unavailable)?;
-    reject_symlink(path)?;
-    let metadata =
-        fs::symlink_metadata(path).map_err(|_| SubmissionJournalStoreError::Unavailable)?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err(SubmissionJournalStoreError::InvalidData);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        let mut permissions = metadata.permissions();
-        if permissions.mode() & 0o077 != 0 {
-            permissions.set_mode(0o700);
-            fs::set_permissions(path, permissions)
-                .map_err(|_| SubmissionJournalStoreError::Unavailable)?;
-        }
-    }
-    validate_private_directory(path)
-}
-
-fn validate_private_directory(path: &Path) -> Result<(), SubmissionJournalStoreError> {
-    reject_symlink(path)?;
-    let metadata =
-        fs::symlink_metadata(path).map_err(|_| SubmissionJournalStoreError::Unavailable)?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err(SubmissionJournalStoreError::InvalidData);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        if metadata.permissions().mode() & 0o077 != 0 {
-            return Err(SubmissionJournalStoreError::InvalidData);
-        }
-    }
-    Ok(())
-}
-
-fn temporary_path(path: &Path) -> PathBuf {
-    let sequence = TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    path.with_extension(format!("tmp-{}-{sequence}", std::process::id()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        fs,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     struct TestDirectory(PathBuf);
 
     impl TestDirectory {
         fn new(label: &str) -> Self {
-            let sequence = TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let sequence = TEST_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
                 "oxid-submission-journal-{label}-{}-{sequence}",
                 std::process::id()
             ));
             fs::create_dir_all(&path).expect("temporary directory");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
+                    .expect("private temporary directory");
+            }
             Self(path)
         }
 
@@ -949,6 +848,8 @@ mod tests {
 
         #[cfg(unix)]
         {
+            use std::os::unix::fs::{PermissionsExt as _, symlink};
+
             std::os::unix::fs::symlink(directory.path(), directory.path().join("linked"))
                 .expect("fixture symlink is created");
             let linked = JsonMidnightSubmissionJournalStore::new(
@@ -959,6 +860,35 @@ mod tests {
             );
             assert_eq!(
                 linked.save(&entry(StoredSubmissionState::Broadcasting)),
+                Err(SubmissionJournalStoreError::InvalidData)
+            );
+
+            let target = directory.path().join("outside.json");
+            fs::write(&target, b"outside").expect("target fixture writes");
+            let direct_link = directory.path().join("direct-link.json");
+            symlink(&target, &direct_link).expect("direct symlink is created");
+            let linked_file = JsonMidnightSubmissionJournalStore::new(
+                MidnightSubmissionJournalConfig::new(direct_link).expect("valid path"),
+            );
+            assert_eq!(
+                linked_file.save(&entry(StoredSubmissionState::Broadcasting)),
+                Err(SubmissionJournalStoreError::InvalidData)
+            );
+            assert_eq!(
+                fs::read(target).expect("target remains readable"),
+                b"outside"
+            );
+
+            let permissive = directory.path().join("permissive");
+            fs::create_dir(&permissive).expect("permissive directory is created");
+            fs::set_permissions(&permissive, fs::Permissions::from_mode(0o755))
+                .expect("permissive mode is set");
+            let permissive_store = JsonMidnightSubmissionJournalStore::new(
+                MidnightSubmissionJournalConfig::new(permissive.join("journal.json"))
+                    .expect("valid path"),
+            );
+            assert_eq!(
+                permissive_store.save(&entry(StoredSubmissionState::Broadcasting)),
                 Err(SubmissionJournalStoreError::InvalidData)
             );
         }

@@ -80,6 +80,12 @@ impl TestStore {
             TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&root).expect("test root");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
+                .expect("private test root");
+        }
         Self { root }
     }
 

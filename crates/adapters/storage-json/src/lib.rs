@@ -4,17 +4,14 @@
 
 use std::{
     collections::BTreeSet,
-    env, fs,
-    io::{Read as _, Write as _},
+    env,
     path::{Path, PathBuf},
-    sync::{
-        Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Mutex,
 };
 
 #[cfg(not(target_os = "android"))]
 use directories::ProjectDirs;
+use oxid_adapter_store_atomic as store_atomic;
 use oxid_foundation::UnixTimestampMillis;
 use oxid_wallet_application::{
     WalletAccountAssociation, WalletBackupReceiptRepository, WalletProfileAssociationRepository,
@@ -30,7 +27,6 @@ const ASSOCIATION_SCHEMA_VERSION: u32 = 2;
 const MAX_PROFILE_COUNT: usize = 128;
 const MAX_STORE_BYTES: u64 = 1024 * 1024;
 const STORE_FILE_NAME: &str = "wallet-profiles.json";
-static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// JSON persistence for public profile labels and active selection.
 ///
@@ -80,27 +76,17 @@ impl JsonWalletProfileRepository {
 
     fn load_document(&self) -> Result<StoreDocument, WalletProfileRepositoryError> {
         let path = self.path()?;
-        let file = match fs::File::open(path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(StoreDocument::default());
-            }
-            Err(_) => return Err(WalletProfileRepositoryError::Unavailable),
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .ok_or(WalletProfileRepositoryError::Unavailable)?;
+        store_atomic::reject_non_private_directory(parent).map_err(map_store_error)?;
+        let max_bytes = usize::try_from(MAX_STORE_BYTES).unwrap_or(usize::MAX);
+        let Some(bytes) =
+            store_atomic::read_owner_private_bounded(path, max_bytes).map_err(map_store_error)?
+        else {
+            return Ok(StoreDocument::default());
         };
-        let metadata = file
-            .metadata()
-            .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
-        if metadata.len() > MAX_STORE_BYTES {
-            return Err(WalletProfileRepositoryError::Unavailable);
-        }
-
-        let mut bytes = Vec::with_capacity(metadata.len() as usize);
-        file.take(MAX_STORE_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
-        if bytes.len() as u64 > MAX_STORE_BYTES {
-            return Err(WalletProfileRepositoryError::Unavailable);
-        }
         let mut document: StoreDocument = serde_json::from_slice(&bytes)
             .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
         validate_document(&document)?;
@@ -114,52 +100,17 @@ impl JsonWalletProfileRepository {
     fn save_document(&self, document: &StoreDocument) -> Result<(), WalletProfileRepositoryError> {
         validate_document(document)?;
         let path = self.path()?;
-        if let Some(parent) = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-        {
-            fs::create_dir_all(parent).map_err(|_| WalletProfileRepositoryError::Unavailable)?;
-        }
-
         let bytes = serde_json::to_vec_pretty(document)
             .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
         if bytes.len() as u64 > MAX_STORE_BYTES {
             return Err(WalletProfileRepositoryError::Unavailable);
         }
-
-        let temporary_path = temporary_path(path);
-        let mut options = fs::OpenOptions::new();
-        options.create_new(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(&temporary_path)
-            .map_err(|_| WalletProfileRepositoryError::Unavailable)?;
-        if file
-            .write_all(&bytes)
-            .and_then(|()| file.sync_all())
-            .is_err()
-        {
-            drop(file);
-            let _ = fs::remove_file(&temporary_path);
-            return Err(WalletProfileRepositoryError::Unavailable);
-        }
-        drop(file);
-
-        #[cfg(windows)]
-        if path.exists() {
-            fs::remove_file(path).map_err(|_| WalletProfileRepositoryError::Unavailable)?;
-        }
-        if fs::rename(&temporary_path, path).is_err() {
-            let _ = fs::remove_file(&temporary_path);
-            return Err(WalletProfileRepositoryError::Unavailable);
-        }
-
-        Ok(())
+        store_atomic::write_owner_private(path, &bytes).map_err(map_store_error)
     }
+}
+
+const fn map_store_error(_: store_atomic::AtomicStoreError) -> WalletProfileRepositoryError {
+    WalletProfileRepositoryError::Unavailable
 }
 
 /// Canonical, bounded public profile/association snapshot used only inside the
@@ -695,23 +646,12 @@ fn profile_from_record(
     ))
 }
 
-fn temporary_path(path: &Path) -> PathBuf {
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(STORE_FILE_NAME);
-    let sequence = TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    path.with_file_name(format!(
-        ".{file_name}.tmp-{}-{sequence}",
-        std::process::id()
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
+    use std::fs;
 
     static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -737,6 +677,23 @@ mod tests {
     impl Drop for TestStore {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn write_private_fixture(store: &TestStore, bytes: &[u8]) {
+        fs::create_dir_all(&store.root).expect("test directory should be created");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&store.root, fs::Permissions::from_mode(0o700))
+                .expect("test directory should be private");
+        }
+        fs::write(&store.path, bytes).expect("fixture should be written");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&store.path, fs::Permissions::from_mode(0o600))
+                .expect("fixture should be private");
         }
     }
 
@@ -876,6 +833,15 @@ mod tests {
     }
 
     #[test]
+    fn rejects_relative_store_paths() {
+        let repository = JsonWalletProfileRepository::new("wallet-profiles.json");
+        assert_eq!(
+            repository.list(),
+            Err(WalletProfileRepositoryError::Unavailable)
+        );
+    }
+
+    #[test]
     fn file_contains_only_versioned_public_profile_metadata() {
         let store = TestStore::new();
         let repository = JsonWalletProfileRepository::new(&store.path);
@@ -896,12 +862,10 @@ mod tests {
     #[test]
     fn rejects_corrupt_or_unknown_store_schemas() {
         let store = TestStore::new();
-        fs::create_dir_all(&store.root).expect("test directory should be created");
-        fs::write(
-            &store.path,
+        write_private_fixture(
+            &store,
             br#"{"schemaVersion":999,"profiles":[],"activeProfileId":null}"#,
-        )
-        .expect("fixture should be written");
+        );
         let repository = JsonWalletProfileRepository::new(&store.path);
 
         assert_eq!(
@@ -913,12 +877,10 @@ mod tests {
     #[test]
     fn reads_schema_two_documents_without_fabricating_backup_receipts() {
         let store = TestStore::new();
-        fs::create_dir_all(&store.root).expect("test directory should be created");
-        fs::write(
-            &store.path,
+        write_private_fixture(
+            &store,
             br#"{"schemaVersion":2,"profiles":[{"id":"profile_legacy","displayName":"Legacy","createdAtMillis":42}],"activeProfileId":"profile_legacy","accountAssociations":[]}"#,
-        )
-        .expect("fixture should be written");
+        );
         let repository = JsonWalletProfileRepository::new(&store.path);
         let profile_id = WalletProfileId::parse("profile_legacy").expect("profile identifier");
 
@@ -934,23 +896,20 @@ mod tests {
     #[test]
     fn rejects_unknown_fields_and_dangling_active_selection() {
         let store = TestStore::new();
-        fs::create_dir_all(&store.root).expect("test directory should be created");
-        fs::write(
-            &store.path,
+        write_private_fixture(
+            &store,
             br#"{"schemaVersion":1,"profiles":[],"activeProfileId":null,"secret":"no"}"#,
-        )
-        .expect("fixture should be written");
+        );
         let repository = JsonWalletProfileRepository::new(&store.path);
         assert_eq!(
             repository.list(),
             Err(WalletProfileRepositoryError::Unavailable)
         );
 
-        fs::write(
-            &store.path,
+        write_private_fixture(
+            &store,
             br#"{"schemaVersion":1,"profiles":[],"activeProfileId":"profile_missing"}"#,
-        )
-        .expect("fixture should be written");
+        );
         assert_eq!(
             repository.active(),
             Err(WalletProfileRepositoryError::Unavailable)
@@ -974,5 +933,51 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_store_files() {
+        use std::os::unix::fs::{PermissionsExt as _, symlink};
+
+        let store = TestStore::new();
+        fs::create_dir_all(&store.root).expect("test directory should be created");
+        fs::set_permissions(&store.root, fs::Permissions::from_mode(0o700))
+            .expect("test directory should be private");
+        let target = store.root.join("outside.json");
+        fs::write(&target, b"outside").expect("target should be written");
+        symlink(&target, &store.path).expect("store symlink should be created");
+
+        let repository = JsonWalletProfileRepository::new(&store.path);
+        assert_eq!(
+            repository.list(),
+            Err(WalletProfileRepositoryError::Unavailable)
+        );
+        assert_eq!(
+            repository.save(profile("profile_redirected", "Redirected", 42)),
+            Err(WalletProfileRepositoryError::Unavailable)
+        );
+        assert_eq!(
+            fs::read(target).expect("target should remain readable"),
+            b"outside"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_permissive_parent_directories() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let store = TestStore::new();
+        fs::create_dir_all(&store.root).expect("test directory should be created");
+        fs::set_permissions(&store.root, fs::Permissions::from_mode(0o755))
+            .expect("test directory should be permissive");
+        let repository = JsonWalletProfileRepository::new(&store.path);
+
+        assert_eq!(
+            repository.save(profile("profile_exposed", "Exposed", 42)),
+            Err(WalletProfileRepositoryError::Unavailable)
+        );
+        assert!(!store.path.exists());
     }
 }

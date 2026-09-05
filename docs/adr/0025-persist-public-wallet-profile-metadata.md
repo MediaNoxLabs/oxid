@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-11
 - Source: Blueprint Sections 3, 7, 12, 13, and 17 plus [issue #1](https://github.com/MediaNoxLabs/oxid/issues/1)
-- Implementation state: Version 1 JSON profile store, active selection, mobile onboarding, and headless profile lifecycle implemented
+- Implementation state: Version 3 bounded owner-private atomic JSON profile store, active selection, account associations, backup receipts, mobile onboarding, and headless profile lifecycle implemented
 
 ## Context
 
@@ -33,8 +33,9 @@ the evictable cache directory. If a durable default path cannot be resolved,
 the repository fails closed. `OXID_PROFILE_STORE_PATH` provides an explicit path
 for isolated development and headless test runs. Writes validate domain
 invariants, reject unknown fields and schema versions, cap document size and
-profile count, write through a temporary file, sync it, and replace the prior
-document. Unix files are created with owner-only permissions.
+profile count, reject symlinked or permissive file/directory paths, and delegate
+same-directory atomic replacement, file and parent-directory sync, temporary
+cleanup, and owner-only permissions to the shared `store-atomic` adapter.
 
 This adapter must never contain seeds, raw private keys, recovery phrases,
 credentials, credential claims, signing payloads, or authentication tokens.
