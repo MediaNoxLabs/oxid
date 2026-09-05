@@ -7,7 +7,7 @@ systemPromptMode: append
 inheritProjectContext: true
 user-invocable: false
 timeoutMs: 1200000
-turnBudget: {"maxTurns":14,"graceTurns":2}
+turnBudget: {"maxTurns":10,"graceTurns":1}
 ---
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Derived from dev-loops@0.9.0 agents/quality.agent.md (Copyright (c) 2026 mfittko). -->

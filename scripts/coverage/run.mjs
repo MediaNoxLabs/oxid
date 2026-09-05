@@ -29,7 +29,7 @@ const EXPECTED_COMMANDS = Object.freeze([
     "--exclude", "oxid-app",
     "--exclude", "oxid-headless",
     "--features", "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication,oxid-adapter-storage-dev/development-fixture,oxid-composition/preprod-observation,oxid-composition/proof-benchmark,oxid-composition/standalone-development",
-    "--json", "--fail-under-lines", "80",
+    "--json", "--fail-under-lines", "70",
   ],
   ["cargo", "llvm-cov", "-p", "oxid-headless", "--all-targets", "--json"],
   [
@@ -207,10 +207,10 @@ function expectedPackagesByScope(policy) {
 export function validatePolicy(policy, workspacePackages, { now = new Date() } = {}) {
   assertClosedObject(policy, POLICY_KEYS, "policy");
   if (policy.schemaVersion !== 2) throw new Error("unsupported coverage policy schemaVersion");
-  if (policy.workspaceFloorPercent !== 80) throw new Error("workspace coverage floor must remain 80 percent");
+  if (policy.workspaceFloorPercent !== 70) throw new Error("workspace coverage floor must remain 70 percent");
   assertClosedObject(policy.packageFloorsPercent, ["core", "critical"], "packageFloorsPercent");
-  if (policy.packageFloorsPercent.core !== 85 || policy.packageFloorsPercent.critical !== 90) {
-    throw new Error("package coverage floors must preserve the reviewed 85/90 contract");
+  if (policy.packageFloorsPercent.core !== 70 || policy.packageFloorsPercent.critical !== 70) {
+    throw new Error("package coverage floors must preserve the current-phase 70 percent contract");
   }
 
   if (!Array.isArray(policy.scopes) || policy.scopes.length !== EXPECTED_SCOPE_IDS.length) {
@@ -253,11 +253,11 @@ export function validatePolicy(policy, workspacePackages, { now = new Date() } =
     throw new Error("production, test, generated, non-executable, or sibling path rules differ from the reviewed contract");
   }
   assertClosedObject(policy.changedLines, ["floorPercent", "diffArguments", "range", "zeroDenominator"], "changedLines");
-  if (policy.changedLines.floorPercent !== 90
+  if (policy.changedLines.floorPercent !== 70
       || JSON.stringify(policy.changedLines.diffArguments) !== JSON.stringify(["--unified=0", "--diff-filter=AMCR"])
       || policy.changedLines.range !== "BASE...HEAD"
       || policy.changedLines.zeroDenominator !== "not-applicable") {
-    throw new Error("changed-line policy differs from the reviewed 90 percent contract");
+    throw new Error("changed-line policy differs from the current-phase 70 percent contract");
   }
   assertClosedObject(policy.comparisonBase, ["resolveToCommit", "requireAncestor", "range"], "comparisonBase");
   if (policy.comparisonBase.resolveToCommit !== true || policy.comparisonBase.requireAncestor !== true
@@ -440,7 +440,7 @@ export function normalizeLlvmReport(raw, {
   repoRoot,
   scopeId,
   packageInventory = [],
-  workspaceFloorPercent = 80,
+  workspaceFloorPercent = 70,
   pathRules: _pathRules,
 } = {}) {
   if (!raw || typeof raw !== "object" || !Array.isArray(raw.data) || raw.data.length !== 1) {

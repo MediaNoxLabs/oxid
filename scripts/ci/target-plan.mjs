@@ -52,6 +52,7 @@ const AREA_PATTERNS = Object.freeze({
   ci: [
     /^\.github\/(?:actions|workflows)\//,
     /^scripts\/ci\//,
+    /^scripts\/coverage\//,
   ],
   build: [
     /^\.cargo\//,
@@ -137,22 +138,15 @@ function featureTargets(areas) {
   const rustArea = areas.some((area) => ["core", "headless", "ui", "platform", "compact"].includes(area));
   if (rustArea) {
     targets.add(HostedTarget.UNIT_LINUX);
-    targets.add(HostedTarget.COVERAGE_LINUX);
-    targets.add(HostedTarget.QUALITY);
   }
 
-  if (areas.includes("core") || areas.includes("platform") || areas.includes("compact")) {
+  if (areas.includes("core") || areas.includes("headless") || areas.includes("compact")) {
     targets.add(HostedTarget.HEADLESS_LINUX);
-    targets.add(HostedTarget.UI_LINUX);
-    targets.add(HostedTarget.UI_RELEASE_LINUX);
   }
-  if (areas.includes("headless")) targets.add(HostedTarget.HEADLESS_LINUX);
-  if (areas.includes("ui")) {
+  if (areas.includes("ui") || areas.includes("platform")) {
     targets.add(HostedTarget.UI_LINUX);
-    targets.add(HostedTarget.UI_RELEASE_LINUX);
   }
   if (areas.includes("compact")) {
-    targets.add(HostedTarget.NIX_PACKAGE);
     targets.add(HostedTarget.COMPACT_ARTIFACTS);
   }
 

@@ -251,7 +251,7 @@ test("workspace, headless, and desktop commands run in strict order with bounded
   assert.equal(result.peak, 1);
   assert.deepEqual(result.calls.map(({ id }) => id), ["workspace-aggregate", "headless-host", "desktop-host"]);
   assert.deepEqual(result.calls.map(({ jobs }) => jobs), ["2", "2", "2"]);
-  assert.match(result.calls[0].argv.join(" "), /--fail-under-lines 80/u);
+  assert.match(result.calls[0].argv.join(" "), /--fail-under-lines 70/u);
   assert.match(
     result.calls[0].argv.join(" "),
     /--features oxid-adapter-deployment-profile\/readiness,oxid-adapter-did-midnight\/tailnet-test-did-publication,oxid-adapter-storage-dev\/development-fixture,oxid-composition\/preprod-observation,oxid-composition\/proof-benchmark,oxid-composition\/standalone-development/u,

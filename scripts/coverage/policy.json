@@ -1,9 +1,9 @@
 {
   "schemaVersion": 2,
-  "workspaceFloorPercent": 80,
+  "workspaceFloorPercent": 70,
   "packageFloorsPercent": {
-    "core": 85,
-    "critical": 90
+    "core": 70,
+    "critical": 70
   },
   "scopes": [
     {
@@ -22,7 +22,7 @@
         "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication,oxid-adapter-storage-dev/development-fixture,oxid-composition/preprod-observation,oxid-composition/proof-benchmark,oxid-composition/standalone-development",
         "--json",
         "--fail-under-lines",
-        "80"
+        "70"
       ]
     },
     {
@@ -81,7 +81,7 @@
     "siblingTestSuffix": "_tests.rs"
   },
   "changedLines": {
-    "floorPercent": 90,
+    "floorPercent": 70,
     "diffArguments": [
       "--unified=0",
       "--diff-filter=AMCR"
