@@ -17,6 +17,7 @@ current-head review evidence are the delivery gates.
 | [ci-target-matrix.md](ci-target-matrix.md) | Assurance levels, component routing, branch profiles, target dependencies, budgets, and promotion gaps. |
 | [runbook.md](runbook.md) | Phase 1 operations: what is installed, the three concurrency mechanisms, the label profile, and what refuses to work by design. |
 | [productive-loop.md](productive-loop.md) | Time-to-main SLOs, target routing, review limits, and worktree/disk lifecycle. |
+| [retrospective-2026-09-03.md](retrospective-2026-09-03.md) | Evidence and next-phase decisions from the temporary `integration` stream. |
 | [pi-runtime-audit.md](pi-runtime-audit.md) | Effective Pi/model/package budgets, measured disk state, package canaries, and operator setup. |
 | [worker-topology.md](worker-topology.md) | Multiple local sessions, cloud workers, independent engineer setup, and concurrency ownership. |
 | [application-targets.md](application-targets.md) | Build, exact-artifact receipt, deploy, and run commands for desktop, Android, and iOS Simulator. |

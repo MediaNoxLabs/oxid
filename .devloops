@@ -8,39 +8,38 @@ strategy:
   default: local-first
 
 refinement:
-  # Two reviewers are enough to expose a disagreement without turning each
-  # iteration into a panel. Keep the pool deliberately smaller than the gate
-  # catalog so refinement cannot fan out across every specialist by default.
-  fanOut: 2
+  # One refinement pass is the routine default. A second opinion is an explicit
+  # high-risk/dispute route, not automatic ceremony for every issue.
+  fanOut: 1
   mode: parallel
   maxCopilotRounds: 0
   stopOnLowSignal: true
-  lowSignalRoundThreshold: 2
+  lowSignalRoundThreshold: 1
   lowSignalMaxComments: 1
   roles:
-    - scope
     - correctness
 
 gates:
   draft:
     angles:
-      - scope
       - correctness
-    mandatoryAngles:
-      - pr-description
+    mandatoryAngles: []
+    blockCleanOnFindingSeverities:
+      - must-fix
     required: true
     # The draft gate checks direction before hosted CI has finished. Waiting
     # here made every correction invalidate and repeat both review and CI.
     requireCi: false
   preApproval:
     angles:
-      - correctness
       - security
     # The draft description gate owns the increment contract. A global
     # all-checkbox matrix turned optional evidence into a blocker and forced
     # polish into the current PR; exact-head CI plus the triage receipt now own
     # final readiness.
     mandatoryAngles: []
+    blockCleanOnFindingSeverities:
+      - must-fix
     required: true
     requireCi: true
   # Streaming milestone delivery uses issue scope, exact-head CI, signed commits,
@@ -49,7 +48,7 @@ gates:
   # deadlocked local-only gates when Copilot was deliberately disabled.
   requireFanoutEvidence: false
   requireFanoutProvenance: false
-  maxFanoutReviewers: 2
+  maxFanoutReviewers: 1
   postFindingsComments: true
   rejectForeignAngles: true
 

@@ -100,11 +100,12 @@ const reviewedException = {
   removalCondition: "Remove when every executable changed line is covered.",
 };
 
-test("policy pins reviewed 85/90 floors, baseline placeholders, paths, diff semantics, and exceptions", async () => {
+test("policy pins the current-phase 70 percent floors, baseline placeholders, paths, diff semantics, and exceptions", async () => {
   const policy = await loadPolicy();
   const inventory = await discoverWorkspacePackageInventory(repoRoot);
   assert.doesNotThrow(() => validatePolicy(policy, inventory));
-  assert.deepEqual(policy.packageFloorsPercent, { core: 85, critical: 90 });
+  assert.equal(policy.workspaceFloorPercent, 70);
+  assert.deepEqual(policy.packageFloorsPercent, { core: 70, critical: 70 });
   assert.equal(policy.baselines.mode, "placeholder");
   assert.deepEqual(policy.baselines.scopes.map(({ scope }) => scope), policy.scopes.map(({ id }) => id));
   assert.ok(policy.baselines.scopes.every(({ count, covered }) => count === null && covered === null));
@@ -114,7 +115,7 @@ test("policy pins reviewed 85/90 floors, baseline placeholders, paths, diff sema
   assert.deepEqual(policy.pathRules.testOnlySources, ["crates/ui-dioxus/src/desktop_test_driver.rs"]);
   assert.equal(policy.pathRules.testModuleFilename, "tests.rs");
   assert.deepEqual(policy.changedLines, {
-    floorPercent: 90,
+    floorPercent: 70,
     diffArguments: ["--unified=0", "--diff-filter=AMCR"],
     range: "BASE...HEAD",
     zeroDenominator: "not-applicable",
@@ -127,9 +128,9 @@ test("policy pins reviewed 85/90 floors, baseline placeholders, paths, diff sema
   assert.deepEqual(policy.exceptions, []);
 
   for (const mutation of [
-    (copy) => { copy.packageFloorsPercent.core = 84; },
-    (copy) => { copy.packageFloorsPercent.critical = 89; },
-    (copy) => { copy.changedLines.floorPercent = 89; },
+    (copy) => { copy.packageFloorsPercent.core = 69; },
+    (copy) => { copy.packageFloorsPercent.critical = 69; },
+    (copy) => { copy.changedLines.floorPercent = 69; },
     (copy) => { copy.pathRules.production.push("tools/**/*.rs"); },
     (copy) => { copy.baselines.unreviewed = true; },
   ]) {
@@ -144,19 +145,19 @@ test("per-package integer evaluation prevents aggregate masking and honors exact
   const inventory = await discoverWorkspacePackageInventory(repoRoot);
   const reports = reportsFor(policy, inventory, {
     "oxid-foundation": { count: 20, covered: 17 },
-    "oxid-platform-ports": { count: 100, covered: 84 },
+    "oxid-platform-ports": { count: 100, covered: 69 },
     "oxid-wallet-application": { count: 20, covered: 18 },
-    "oxid-identity-application": { count: 100, covered: 89 },
+    "oxid-identity-application": { count: 100, covered: 69 },
   });
   const evaluation = evaluateCoverage(policy, reports, { packageInventory: inventory, changedLines: null });
   assert.equal(evaluation.status, "fail");
-  assert.equal(evaluation.aggregate.lines.covered * 100 >= evaluation.aggregate.lines.count * 80, true);
+  assert.equal(evaluation.aggregate.lines.covered * 100 >= evaluation.aggregate.lines.count * 70, true);
   const ledger = new Map(evaluation.packages.map((entry) => [entry.name, entry]));
   assert.equal(ledger.get("oxid-foundation").status, "pass");
   assert.equal(ledger.get("oxid-platform-ports").status, "fail");
   assert.equal(ledger.get("oxid-wallet-application").status, "pass");
   assert.equal(ledger.get("oxid-identity-application").status, "fail");
-  assert.equal(ledger.get("oxid-identity-application").requiredCovered, 90);
+  assert.equal(ledger.get("oxid-identity-application").requiredCovered, 70);
   assert.deepEqual(evaluation.packages.map(({ name }) => name), evaluation.packages.map(({ name }) => name).toSorted());
 });
 
@@ -206,7 +207,7 @@ test("changed-line scorer handles changes, new files, renames, comments, tests, 
   const inventory = await discoverWorkspacePackageInventory(repoRoot);
   const diff = await readFile(path.join(fixtureRoot, "changed-production.diff"), "utf8");
   const score = scoreChangedLines(diff, changedReport(inventory), { policy, packageInventory: inventory });
-  assert.deepEqual(score.lines, { count: 5, covered: 3, requiredCovered: 5 });
+  assert.deepEqual(score.lines, { count: 5, covered: 3, requiredCovered: 4 });
   assert.equal(score.status, "fail");
   assert.deepEqual(score.files.filter(({ status }) => status === "excluded").map(({ reason }) => reason).toSorted(), [
     "generated", "sibling-test", "test-directory",
@@ -347,7 +348,7 @@ test("reviewed exceptions are closed, expire fail-closed, and never bypass absol
   const diff = await readFile(path.join(fixtureRoot, "changed-production.diff"), "utf8");
   policy.exceptions = [reviewedException];
   assert.doesNotThrow(() => validatePolicy(policy, inventory, { now: new Date("2026-09-01T00:00:00Z") }));
-  const reports = reportsFor(policy, inventory, { "oxid-foundation": { count: 100, covered: 84 } });
+  const reports = reportsFor(policy, inventory, { "oxid-foundation": { count: 100, covered: 69 } });
   const changedLines = scoreChangedLines(diff, changedReport(inventory), {
     policy, packageInventory: inventory, now: new Date("2026-09-01T00:00:00Z"),
   });

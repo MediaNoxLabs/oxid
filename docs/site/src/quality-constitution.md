@@ -64,9 +64,10 @@ These rules reflect current repository controls and apply to every change:
 - Tests must be deterministic and isolated from public networks, execution
   order, ambient developer configuration, and shared mutable state unless an
   explicitly configured evidence lane owns that dependency.
-- The aggregate core/outgoing-adapter coverage gate remains at 80% line
-  coverage. Coverage exclusions or threshold changes may not be used to make a
-  change pass.
+- The current delivery phase uses a uniform 70% line-coverage floor for the
+  workspace, package classes, and changed production code. This owner-approved
+  throughput policy is reviewed after the next metrics window; exclusions may
+  not be added merely to make a change pass.
 - DCO sign-off, commit signature, architecture, lint, test, coverage,
   dependency, source, documentation, and existing platform gates may not be
   bypassed or weakened.
@@ -109,7 +110,7 @@ v1:
 | Function size | Prefer below 50 lines; review above 80–100 | A reviewed Rust-aware measurement with macro and closure handling |
 | Cyclomatic complexity | Target 10 or less; warn above 15; review above 20 | A pinned reproducible tool, baseline, and false-positive policy |
 | Crate size | Typical capability crate 2k–10k lines; review above 20k–30k | Capability and dependency analysis; no quota-driven splitting |
-| Coverage | Workspace 80%, core/domain 85%, critical and changed production code 90%, platform glue 70–80% | Stable scope definitions, per-scope baselines, and non-gameable CI reporting |
+| Coverage | Current gate 70% across measured scopes; later ratchet toward workspace 80%, core/domain 85%, critical and changed production code 90% | Stable scope definitions, per-scope baselines, non-gameable CI reporting, and measured throughput headroom |
 | Documentation | Public APIs and major workflows documented | Baseline missing-doc coverage and stage warning-to-deny by public surface |
 | CI latency | Fast feedback at most 5 minutes; required PR CI at most 10 minutes; investigate above 15 | Per-job history, cache correctness, and separate problem-focused CI work |
 
@@ -155,7 +156,7 @@ implemented through separate reviewed issues rather than by deleting checks.
 | Tier | Intended evidence | Duration policy in v1 |
 | --- | --- | --- |
 | Fast PR | Formatting, static architecture/source/docs checks, and focused headless/desktop checks that do not require the full artifact graph | Target at most 5 minutes; not yet a separately required hosted context |
-| Required PR | All required public merge evidence: strict repository gate, coverage, dependency/source/security policy, docs, DCO/signature, and locked package/artifact checks | Target at most 10 minutes; investigate any job above 15; retain current explicit workflow timeouts until decomposition is proven |
+| Required PR | Change-relevant public merge evidence: strict basic gate, affected unit/host consumer, docs, DCO/signature, and security checks | Target at most 10 minutes; expensive coverage, quality, optimized release, and packaging remain explicit on-demand lanes and complete-branch backstops |
 | Integration branch | The required-PR contract at the merged head plus branch publishing checks | Same job budgets as required PR; no merge result is accepted if required evidence is stale for the head |
 | Scheduled | Full hermetic Nix checks and other expensive deterministic public evidence | Explicit 120-minute ceiling; failures remain failures and may not be hidden with retries |
 | Owner-private | Credentials, funded infrastructure, physical devices, and private environments | Deferred; no v1 runtime budget or required public status is claimed |

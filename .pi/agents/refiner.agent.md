@@ -7,7 +7,7 @@ systemPromptMode: append
 inheritProjectContext: true
 user-invocable: false
 timeoutMs: 600000
-turnBudget: {"maxTurns":10,"graceTurns":1}
+turnBudget: {"maxTurns":6,"graceTurns":1}
 ---
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Derived from dev-loops@0.9.0 agents/refiner.agent.md (Copyright (c) 2026 mfittko). -->
@@ -89,5 +89,6 @@ Return:
 - Any RFC escalation needed to the parent session / human operator
 
 ## Completion quality bar
-- A refinement is complete only when no item in the AC/DoD/Non-goal coverage matrix has status `Partial`, `Unmet`, or `Unverified`.
-- Any `Partial`, `Unmet`, or `Unverified` item means the refinement is still incomplete and MUST NOT be presented as ready.
+- Required acceptance criteria, correctness/security boundaries, provenance, and required evidence must have no `Partial`, `Unmet`, or `Unverified` item before implementation is presented as ready.
+- Classify optional quality improvements explicitly. The production-ready routine target is 70%; optional residuals may remain `Partial` or `Unverified` only when they are named as non-blocking follow-up work and do not undermine a required item.
+- Do not expand the phase merely to make an optional matrix cosmetically complete.
