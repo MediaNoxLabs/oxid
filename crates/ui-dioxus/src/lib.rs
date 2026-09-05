@@ -8617,7 +8617,7 @@ fn credential_presentation_message(error: CredentialPresentationError) -> String
         CredentialPresentationError::Protocol(PresentationProtocolError::ProofBackgrounded) =>
             "The app left the foreground. The proof worker stopped and discarded its result; preview a fresh request to retry.".to_owned(),
         CredentialPresentationError::Protocol(PresentationProtocolError::ProofTimedOut) =>
-            "The proof exceeded the standalone time limit. The worker stopped and its result was discarded; preview a fresh request to retry.".to_owned(),
+            "The proof exceeded the standalone time limit. Its result will be discarded when the worker stops; retry after the worker is available.".to_owned(),
         CredentialPresentationError::Protocol(error) => ui::protocol_failure(error.code()).to_owned(),
         other => other.to_string(),
     }

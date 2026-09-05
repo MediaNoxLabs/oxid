@@ -39,13 +39,58 @@ struct WorkerState {
     active: Option<ActiveProof>,
 }
 
+struct AdmissionLease {
+    state: Arc<Mutex<WorkerState>>,
+    cancellation: Arc<AtomicU8>,
+    armed: bool,
+}
+
+impl AdmissionLease {
+    fn new(state: Arc<Mutex<WorkerState>>, cancellation: Arc<AtomicU8>) -> Self {
+        Self {
+            state,
+            cancellation,
+            armed: true,
+        }
+    }
+
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for AdmissionLease {
+    fn drop(&mut self) {
+        if self.armed
+            && let Ok(mut state) = self.state.lock()
+            && state
+                .active
+                .as_ref()
+                .is_some_and(|active| Arc::ptr_eq(&active.cancellation, &self.cancellation))
+        {
+            state.active = None;
+        }
+    }
+}
+
+type WorkerResult =
+    Result<oxid_presentation_application::PresentationProofArtifact, PresentationProofError>;
+
+enum WorkerWaitOutcome {
+    Completed(WorkerResult, AdmissionLease),
+    TimedOut,
+    Disconnected,
+}
+
 /// Runs at most one proof on a named worker and discards every result produced
 /// after cancellation, backgrounding, or timeout.
 ///
 /// The generated prover is currently non-interruptible while inside its proof
 /// call. Consequently, a control request only sets an atomic flag. The proof
-/// future waits for the worker to stop and then returns the safe terminal
-/// error; it never acknowledges cancellation while witness material is in use.
+/// future waits for the worker to stop before acknowledging explicit
+/// cancellation or backgrounding. A timeout bounds the caller's wait while an
+/// admission lease keeps the slot occupied until the non-interruptible worker
+/// actually exits.
 pub struct ForegroundCompactPresentationProofWorker {
     inner: Arc<dyn PresentationProofPort>,
     state: Arc<Mutex<WorkerState>>,
@@ -73,7 +118,7 @@ impl ForegroundCompactPresentationProofWorker {
     fn admit(
         &self,
         request: &PresentationProofRequest,
-    ) -> Result<(Arc<AtomicU8>, Instant), PresentationProofError> {
+    ) -> Result<(AdmissionLease, Instant), PresentationProofError> {
         let mut state = self
             .state
             .lock()
@@ -92,18 +137,10 @@ impl ForegroundCompactPresentationProofWorker {
             cancellation: Arc::clone(&cancellation),
             started_at,
         });
-        Ok((cancellation, started_at))
-    }
-
-    fn release(&self, cancellation: &Arc<AtomicU8>) {
-        if let Ok(mut state) = self.state.lock()
-            && state
-                .active
-                .as_ref()
-                .is_some_and(|active| Arc::ptr_eq(&active.cancellation, cancellation))
-        {
-            state.active = None;
-        }
+        Ok((
+            AdmissionLease::new(Arc::clone(&self.state), cancellation),
+            started_at,
+        ))
     }
 }
 
@@ -113,9 +150,10 @@ impl PresentationProofPort for ForegroundCompactPresentationProofWorker {
         request: PresentationProofRequest,
     ) -> CreatePresentationProofFuture<'a> {
         Box::pin(async move {
-            let (cancellation, started_at) = self.admit(&request)?;
+            let (lease, started_at) = self.admit(&request)?;
+            let cancellation = Arc::clone(&lease.cancellation);
             let inner = Arc::clone(&self.inner);
-            let (sender, receiver) = mpsc::sync_channel(1);
+            let (worker_sender, worker_receiver) = mpsc::sync_channel(1);
             let spawn = std::thread::Builder::new()
                 .name("oxid-compact-proof".to_owned())
                 .stack_size(8 * 1_024 * 1_024)
@@ -124,69 +162,73 @@ impl PresentationProofPort for ForegroundCompactPresentationProofWorker {
                         futures::executor::block_on(inner.create(request))
                     }))
                     .unwrap_or(Err(PresentationProofError::Rejected));
-                    let _ = sender.send(result);
+                    let _ = worker_sender.send((result, lease));
                 });
             if spawn.is_err() {
-                self.release(&cancellation);
                 return Err(PresentationProofError::Unavailable);
             }
 
             let remaining = self.timeout.checked_sub(started_at.elapsed());
-            let result = match remaining {
-                Some(remaining) => match receiver.recv_timeout(remaining) {
-                    Ok(result) => result,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        let _ = cancellation.compare_exchange(
-                            NOT_CANCELLED,
-                            CANCELLED_BY_TIMEOUT,
-                            Ordering::AcqRel,
-                            Ordering::Acquire,
-                        );
-                        receiver
-                            .recv()
-                            .unwrap_or(Err(PresentationProofError::Unavailable))
-                    }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => {
-                        Err(PresentationProofError::Unavailable)
-                    }
-                },
-                None => {
-                    let _ = cancellation.compare_exchange(
-                        NOT_CANCELLED,
-                        CANCELLED_BY_TIMEOUT,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    );
-                    receiver
-                        .recv()
-                        .unwrap_or(Err(PresentationProofError::Unavailable))
+            let (outcome_sender, outcome_receiver) = futures::channel::oneshot::channel();
+            let waiter = std::thread::Builder::new()
+                .name("oxid-compact-proof-waiter".to_owned())
+                .stack_size(256 * 1_024)
+                .spawn(move || {
+                    let outcome = match remaining {
+                        Some(remaining) => match worker_receiver.recv_timeout(remaining) {
+                            Ok((result, lease)) => WorkerWaitOutcome::Completed(result, lease),
+                            Err(mpsc::RecvTimeoutError::Timeout) => {
+                                let _ = cancellation.compare_exchange(
+                                    NOT_CANCELLED,
+                                    CANCELLED_BY_TIMEOUT,
+                                    Ordering::AcqRel,
+                                    Ordering::Acquire,
+                                );
+                                WorkerWaitOutcome::TimedOut
+                            }
+                            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                                WorkerWaitOutcome::Disconnected
+                            }
+                        },
+                        None => {
+                            let _ = cancellation.compare_exchange(
+                                NOT_CANCELLED,
+                                CANCELLED_BY_TIMEOUT,
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                            );
+                            WorkerWaitOutcome::TimedOut
+                        }
+                    };
+                    let _ = outcome_sender.send(outcome);
+                });
+            if waiter.is_err() {
+                return Err(PresentationProofError::Unavailable);
+            }
+
+            let outcome = outcome_receiver
+                .await
+                .unwrap_or(WorkerWaitOutcome::Disconnected);
+            let (result, lease) = match outcome {
+                WorkerWaitOutcome::Completed(result, lease) => (result, lease),
+                WorkerWaitOutcome::TimedOut => return Err(PresentationProofError::TimedOut),
+                WorkerWaitOutcome::Disconnected => {
+                    return Err(PresentationProofError::Unavailable);
                 }
             };
-            let terminal = cancellation.load(Ordering::Acquire);
+            let terminal = lease.cancellation.load(Ordering::Acquire);
             match terminal {
                 NOT_CANCELLED => match result {
-                    Ok(proof) => Ok(proof),
-                    Err(error) => {
-                        self.release(&cancellation);
-                        Err(error)
+                    Ok(proof) => {
+                        lease.disarm();
+                        Ok(proof)
                     }
+                    Err(error) => Err(error),
                 },
-                CANCELLED_BY_USER => {
-                    self.release(&cancellation);
-                    Err(PresentationProofError::Cancelled)
-                }
-                CANCELLED_BY_BACKGROUND => {
-                    self.release(&cancellation);
-                    Err(PresentationProofError::Backgrounded)
-                }
-                CANCELLED_BY_TIMEOUT => {
-                    self.release(&cancellation);
-                    Err(PresentationProofError::TimedOut)
-                }
-                _ => {
-                    self.release(&cancellation);
-                    Err(PresentationProofError::Rejected)
-                }
+                CANCELLED_BY_USER => Err(PresentationProofError::Cancelled),
+                CANCELLED_BY_BACKGROUND => Err(PresentationProofError::Backgrounded),
+                CANCELLED_BY_TIMEOUT => Err(PresentationProofError::TimedOut),
+                _ => Err(PresentationProofError::Rejected),
             }
         })
     }
@@ -274,7 +316,12 @@ impl PresentationProofControlPort for ForegroundCompactPresentationProofWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Condvar, MutexGuard};
+    use std::{
+        future::Future,
+        pin::Pin,
+        sync::{Condvar, MutexGuard},
+        task::{Context, Poll},
+    };
 
     use oxid_presentation_application::PresentationProofArtifact;
 
@@ -333,6 +380,24 @@ mod tests {
         let mut guard = state.0.lock().expect("control state");
         guard.1 = true;
         state.1.notify_all();
+    }
+
+    fn poll_once(
+        future: Pin<&mut (dyn Future<Output = WorkerResult> + Send)>,
+    ) -> Poll<WorkerResult> {
+        let waker = futures::task::noop_waker();
+        let mut context = Context::from_waker(&waker);
+        future.poll(&mut context)
+    }
+
+    fn wait_until_slot_is_released(worker: &ForegroundCompactPresentationProofWorker) {
+        for _ in 0..100 {
+            if worker.state.lock().expect("worker state").active.is_none() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        panic!("proof worker did not release its admission slot");
     }
 
     #[test]
@@ -414,27 +479,62 @@ mod tests {
     }
 
     #[test]
-    fn timeout_waits_for_worker_and_discards_its_result() {
+    fn timeout_bounds_the_wait_but_holds_admission_until_worker_stops() {
         let state = Arc::new((Mutex::new((false, false)), Condvar::new()));
         let worker = Arc::new(ForegroundCompactPresentationProofWorker::with_timeout(
             Arc::new(ControlledProof {
                 state: Arc::clone(&state),
             }),
-            Duration::ZERO,
+            Duration::from_millis(10),
         ));
-        let worker_for_thread = Arc::clone(&worker);
-        let proof = std::thread::spawn(move || {
-            futures::executor::block_on(
-                worker_for_thread.create(request("profile_one", "presentation_one")),
-            )
-        });
-        drop(wait_started(&state));
-        assert!(!proof.is_finished());
-        release(&state);
         assert_eq!(
-            proof.join().expect("proof thread"),
+            futures::executor::block_on(worker.create(request("profile_one", "presentation_one"))),
             Err(PresentationProofError::TimedOut)
         );
+        drop(wait_started(&state));
+        assert_eq!(
+            futures::executor::block_on(worker.create(request("profile_one", "presentation_two"))),
+            Err(PresentationProofError::Busy)
+        );
+        release(&state);
+        wait_until_slot_is_released(&worker);
+        let retry = request("profile_one", "presentation_three");
+        let retry_for_finish = retry.clone();
+        futures::executor::block_on(worker.create(retry)).expect("retry proof");
+        worker
+            .finish(CancelPresentationProofRequest {
+                profile_id: retry_for_finish.profile_id,
+                presentation_id: retry_for_finish.presentation_id,
+            })
+            .expect("finish retry");
+    }
+
+    #[test]
+    fn dropping_the_create_future_releases_admission_after_worker_stops() {
+        let state = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        let worker = ForegroundCompactPresentationProofWorker::new(Arc::new(ControlledProof {
+            state: Arc::clone(&state),
+        }));
+        let mut proof = worker.create(request("profile_one", "presentation_one"));
+        assert!(poll_once(proof.as_mut()).is_pending());
+        drop(wait_started(&state));
+        drop(proof);
+        assert_eq!(
+            futures::executor::block_on(worker.create(request("profile_one", "presentation_two"))),
+            Err(PresentationProofError::Busy)
+        );
+        release(&state);
+        wait_until_slot_is_released(&worker);
+
+        let retry = request("profile_one", "presentation_three");
+        let retry_for_finish = retry.clone();
+        futures::executor::block_on(worker.create(retry)).expect("retry proof");
+        worker
+            .finish(CancelPresentationProofRequest {
+                profile_id: retry_for_finish.profile_id,
+                presentation_id: retry_for_finish.presentation_id,
+            })
+            .expect("finish retry");
     }
 
     #[test]
