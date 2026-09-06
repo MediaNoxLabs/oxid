@@ -340,6 +340,7 @@ test("read-only Pi audit recognizes tracked configuration controls", async () =>
     repoRoot,
     includeOperational: false,
     piVersion: "0.84.0",
+    piExecutable: `/nix/store/${"a".repeat(32)}-pi-coding-agent-0.84.0/bin/pi`,
     userPolicyResult: { ok: true, configPath: "/private/policy.json", mismatches: [] },
   });
   assert.equal(result.operationalChecked, false);
@@ -356,6 +357,19 @@ test("read-only Pi audit recognizes tracked configuration controls", async () =>
   ]) {
     assert.equal(byId.get(id)?.status, "pass", `${id}: ${byId.get(id)?.summary}`);
   }
+});
+
+test("Pi audit rejects an unpinned host executable even when its version is valid", async () => {
+  const result = await auditPi({
+    repoRoot,
+    includeOperational: false,
+    piVersion: "0.84.0",
+    piExecutable: "/opt/homebrew/bin/pi",
+    userPolicyResult: { ok: true, configPath: "/private/policy.json", mismatches: [] },
+  });
+  const runtime = result.checks.find((entry) => entry.id === "pi-runtime");
+  assert.equal(runtime?.status, "fail");
+  assert.deepEqual(runtime?.details, { versionValid: true, nixStoreExecutable: false });
 });
 
 test("factory topology permits isolated multi-host workers without sharing mutation lanes", async () => {
