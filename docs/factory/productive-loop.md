@@ -189,9 +189,13 @@ in the `mergeProof` field. The retired `integration` branch has one explicit
 exception for its full-tree promotion in PR #258: both the historical PR and
 promotion are fetched by exact identity, the former merge must be an ancestor
 of the promoted head, the promoted and merged trees must match, and the latter
-merge must be integrated into current `origin/develop`. No other historical
-base receives transitive trust. `audit` remains mutation-free but is no longer purely
-local: non-ancestor heads make bounded read-only `git ls-remote` and authenticated
+merge must be integrated into current `origin/develop`. A clean retained commit
+that is itself an ancestor of PR #258's exact head is also reconciled for
+admission; this is retention and cleanup evidence only, not delivery or merge
+authority. Dirty worktrees remain active even when their committed head is
+delivered because untracked owner work is outside the promotion proof. No other
+historical base receives transitive trust. `audit` remains mutation-free but is
+no longer purely local: non-ancestor heads make bounded read-only `git ls-remote` and authenticated
 `gh api graphql` calls. Without network access, a logged-in `gh`, or a current
 local delivery ref, those heads report `unavailable`; direct ancestry and the
 rest of the inventory remain usable. The human table appends `proof` as its last

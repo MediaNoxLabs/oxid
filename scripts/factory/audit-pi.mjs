@@ -145,24 +145,12 @@ function inspectOperationalState(repoRoot) {
       cwd: repoRoot,
       timeout: 60_000,
     }));
-    if (!Array.isArray(lifecycle) || lifecycle.some((item) => !item || typeof item.merged !== "boolean"
+    if (!Array.isArray(lifecycle) || lifecycle.some((item) => !item || typeof item.clean !== "boolean"
+      || typeof item.merged !== "boolean"
       || !Number.isFinite(item.targetGiB) || item.targetGiB < 0 || typeof item.removableAfterSevenDays !== "boolean")) {
       throw new Error("lifecycle audit returned an invalid JSON contract");
     }
-    const nonPrimary = lifecycle.slice(1);
-    const active = nonPrimary.filter((item) => !item.merged);
-    const targetGiB = lifecycle.reduce((sum, item) => sum + (Number(item.targetGiB) || 0), 0);
-    const removable = nonPrimary.filter((item) => item.removableAfterSevenDays).length;
-    const worktreeStatus = active.length <= 2 ? "pass" : "fail";
-    const diskStatus = targetGiB <= 100 ? "pass" : targetGiB <= 200 ? "warn" : "fail";
-    return [
-      check("worktree-admission", worktreeStatus,
-        `${active.length} active and ${lifecycle.length} registered worktrees in this Git common checkout; green active limit is 2`,
-        { active: active.length, registered: lifecycle.length, removable }, "operational"),
-      check("worktree-target-storage", diskStatus,
-        `${targetGiB.toFixed(1)} GiB in worktree-local target directories`,
-        { targetGiB, greenMaximumGiB: 100, amberMaximumGiB: 200 }, "operational"),
-    ];
+    return lifecycleCapacityChecks(lifecycle);
   } catch (error) {
     try {
       const worktrees = run("git", ["worktree", "list", "--porcelain"], { cwd: repoRoot })
@@ -192,6 +180,26 @@ function inspectOperationalState(repoRoot) {
         undefined, "operational")];
     }
   }
+}
+
+export function lifecycleCapacityChecks(lifecycle) {
+  if (!Array.isArray(lifecycle) || lifecycle.length === 0) {
+    throw new Error("lifecycle audit must contain the primary checkout");
+  }
+  const nonPrimary = lifecycle.slice(1);
+  const active = nonPrimary.filter((item) => !item.merged || !item.clean);
+  const targetGiB = lifecycle.reduce((sum, item) => sum + (Number(item.targetGiB) || 0), 0);
+  const removable = nonPrimary.filter((item) => item.removableAfterSevenDays).length;
+  const worktreeStatus = active.length <= 2 ? "pass" : "fail";
+  const diskStatus = targetGiB <= 100 ? "pass" : targetGiB <= 200 ? "warn" : "fail";
+  return [
+    check("worktree-admission", worktreeStatus,
+      `${active.length} active and ${lifecycle.length} registered worktrees in this Git common checkout; green active limit is 2`,
+      { active: active.length, registered: lifecycle.length, removable }, "operational"),
+    check("worktree-target-storage", diskStatus,
+      `${targetGiB.toFixed(1)} GiB in worktree-local target directories`,
+      { targetGiB, greenMaximumGiB: 100, amberMaximumGiB: 200 }, "operational"),
+  ];
 }
 
 async function inspectMetrics(repoRoot) {

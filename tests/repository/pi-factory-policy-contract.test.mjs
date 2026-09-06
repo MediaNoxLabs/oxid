@@ -9,7 +9,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { createDeliveryBranchRewriteSink } from "../../scripts/loop/pre-flight-gate.mjs";
-import { auditPi, auditWorktreeAdmission } from "../../scripts/factory/audit-pi.mjs";
+import { auditPi, auditWorktreeAdmission, lifecycleCapacityChecks } from "../../scripts/factory/audit-pi.mjs";
 import { applyUserPolicy, mergePolicy, policyMismatches } from "../../scripts/factory/pi-policy.mjs";
 import { FACTORY_STATE_LABELS, syncFactoryLabels } from "../../scripts/github/sync-factory-labels.mjs";
 import { applyDeliveryProfile, extractDeliveryProfileArgs } from "../../scripts/dev-loops.mjs";
@@ -156,6 +156,19 @@ test("unavailable lifecycle helper uses conservative fresh-checkout capacity", a
     { id: "worktree-target-storage", status: "pass" },
   ]);
   assert.match(result.checks[0].summary, /conservative fallback/u);
+});
+
+test("worktree admission retains dirty delivered heads as active", () => {
+  const lifecycle = [
+    { clean: true, merged: true, targetGiB: 1, removableAfterSevenDays: false },
+    { clean: true, merged: true, targetGiB: 2, removableAfterSevenDays: true },
+    { clean: false, merged: true, targetGiB: 3, removableAfterSevenDays: false },
+    { clean: true, merged: false, targetGiB: 4, removableAfterSevenDays: false },
+  ];
+  const [admission, storage] = lifecycleCapacityChecks(lifecycle);
+  assert.equal(admission.status, "pass");
+  assert.deepEqual(admission.details, { active: 2, registered: 4, removable: 1 });
+  assert.equal(storage.details.targetGiB, 10);
 });
 
 test("config-only audit rejects admission enforcement instead of reporting false red", () => {

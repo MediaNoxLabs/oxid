@@ -146,6 +146,48 @@ export function indexGithubMergeProofs(
   return { proofs, ambiguous };
 }
 
+export function indexRetiredPromotionAncestryProofs(
+  heads,
+  promotions,
+  {
+    mergeCommitIsIntegrated = () => false,
+    promotionPreservesTree = () => false,
+    headIsInPromotion = () => false,
+  } = {},
+) {
+  if (!Array.isArray(heads) || heads.some((head) => !SHA_PATTERN.test(head))) {
+    throw new Error("retired promotion ancestry requires exact commit heads");
+  }
+  if (!Array.isArray(promotions)) throw new Error("retired promotion evidence must be an array");
+  const candidates = new Map();
+  for (const promotion of promotions) {
+    const specification = RETIRED_BRANCH_PROMOTIONS.find((candidate) => candidate.number === promotion?.number);
+    const promotionHead = promotion?.headRefOid;
+    const promotionMerge = promotion?.mergeCommit?.oid;
+    if (specification === undefined
+      || promotion?.state !== "MERGED"
+      || promotion?.baseRefName !== specification.target
+      || promotion?.headRefName !== specification.source
+      || typeof promotion?.mergedAt !== "string" || promotion.mergedAt.length === 0
+      || !SHA_PATTERN.test(promotionHead ?? "") || !SHA_PATTERN.test(promotionMerge ?? "")
+      || !mergeCommitIsIntegrated(promotionMerge)
+      || !promotionPreservesTree(promotionHead, promotionMerge)) continue;
+    for (const head of heads) {
+      if (!headIsInPromotion(head, promotionHead)) continue;
+      const proofs = candidates.get(head) ?? new Set();
+      proofs.add(`retired-${specification.source}-ancestor:via-pr:${promotion.number}`);
+      candidates.set(head, proofs);
+    }
+  }
+  const proofs = new Map();
+  const ambiguous = new Set();
+  for (const [head, matches] of candidates) {
+    if (matches.size === 1) proofs.set(head, [...matches][0]);
+    else ambiguous.add(head);
+  }
+  return { proofs, ambiguous };
+}
+
 function unavailableEvidence(ancestry = new Set()) {
   return { status: "unavailable", ancestry, proofs: new Map(), ambiguous: new Set(), unavailableHeads: new Set() };
 }
@@ -233,7 +275,20 @@ export function loadGithubMergeEvidence(root, heads, { run = spawnSync } = {}) {
         ),
       },
     );
-    return { status: "available", ancestry, ...indexed, unavailableHeads: response.unavailableHeads };
+    const promotedAncestors = indexRetiredPromotionAncestryProofs(requested, response.promotions, {
+      mergeCommitIsIntegrated: (mergeCommit) => isAncestor(root, mergeCommit, "origin/develop", run),
+      promotionPreservesTree: (promotionHead, promotionMerge) => sameTree(root, promotionHead, promotionMerge, run),
+      headIsInPromotion: (head, promotionHead) => isAncestor(root, head, promotionHead, run),
+    });
+    const proofs = new Map(indexed.proofs);
+    const ambiguous = new Set(indexed.ambiguous);
+    for (const head of promotedAncestors.ambiguous) {
+      if (!proofs.has(head)) ambiguous.add(head);
+    }
+    for (const [head, proof] of promotedAncestors.proofs) {
+      if (!proofs.has(head) && !ambiguous.has(head)) proofs.set(head, proof);
+    }
+    return { status: "available", ancestry, proofs, ambiguous, unavailableHeads: response.unavailableHeads };
   } catch {
     return unavailableEvidence(ancestry);
   }
