@@ -174,6 +174,10 @@ hermetic flake check remain backstops.
 - Audit before cleanup with `node scripts/worktree-lifecycle.mjs audit`.
   Mutating commands require one exact path, expected head SHA, and `--execute`.
   Never bulk-delete based on a branch name or a gone upstream alone.
+- A clean unintegrated worktree may be retired only through the explicit
+  owner-approved archive command. It must retain the exact commit under a
+  private `refs/oxid-archive/worktrees/<sha>` ref and a mode-0600 receipt; an
+  archive is preservation, never evidence that the work was delivered.
 
 ## Maintaining instructions
 

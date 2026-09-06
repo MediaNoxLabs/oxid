@@ -26,7 +26,9 @@ local.properties
 # Project-local agent package installs and transient state
 /.pi/npm
 /.pi/runner-coordination/
+/.pi/taskflows/
 /.pi-subagents/
+/review/
 
 # JavaScript dependencies used by future controlled adapters
 node_modules/

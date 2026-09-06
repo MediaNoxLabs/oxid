@@ -210,6 +210,24 @@ node scripts/worktree-lifecycle.mjs remove \
 Never bulk-delete worktrees based only on branch names or “gone” upstreams.
 Preserve dirty/untracked files and open PR heads first.
 
+When an old clean worktree contains a unique or superseded head that must be
+preserved but must not be represented as delivered, archive it explicitly:
+
+```bash
+node scripts/worktree-lifecycle.mjs archive \
+  --path /absolute/worktree --expect-head <sha> \
+  --issue <number> --disposition owner-preserved \
+  --older-than-days 7 --owner-approved --execute
+```
+
+The only dispositions are `owner-preserved`, `superseded`, and
+`integrated-equivalent`. The command refuses the primary checkout, dirty or
+recent worktrees, already-integrated heads, missing owner approval, and
+non-issue-backed archives. Before removal it creates an exact private
+`refs/oxid-archive/worktrees/<sha>` ref and a mode-0600 receipt under the Git
+common directory. This keeps the commit recoverable without claiming merge or
+acceptance; restoring or deleting an archive remains a separate owner action.
+
 ## Failure and cancellation rules
 
 - On cancellation, the owner of a spawned process group terminates its children
