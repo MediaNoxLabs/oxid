@@ -1302,11 +1302,12 @@ impl<C> SimulatedMidnightAccountSource<C> {
             .cloned();
         let (account_id, addresses) = match derived {
             Some(derived) => (derived.account_id().clone(), derived.addresses().to_vec()),
-            None => (
+            None if network.id().as_str() == DEFAULT_NETWORK_ID => (
                 ChainAccountId::parse(profile_id.as_str().to_owned())
                     .map_err(|_| WalletAccountPortError::InvalidData)?,
                 fixture_addresses(network.id())?,
             ),
+            None => return Err(WalletAccountPortError::Unavailable),
         };
         let sync = if synchronized {
             WalletSyncStatus::new(
@@ -2192,6 +2193,20 @@ mod tests {
     }
 
     #[test]
+    fn configuration_placeholder_is_network_valid_transport_input() {
+        for network in ["mainnet", "testnet", "preprod"] {
+            let address = configuration_placeholder_address(network)
+                .expect("transport configuration address");
+            MidnightIndexerConfig::new(
+                network,
+                "wss://indexer.example.invalid/api/v4/graphql/ws",
+                address.value(),
+            )
+            .expect("network-valid transport configuration");
+        }
+    }
+
+    #[test]
     fn simulated_account_is_empty_until_explicit_sync() {
         let adapter = simulated_midnight_wallet(Arc::new(FixedClock));
         let before = adapter.account(&profile()).expect("account is available");
@@ -2211,7 +2226,7 @@ mod tests {
     }
 
     #[test]
-    fn network_selection_is_profile_scoped_and_changes_address_hrp() {
+    fn simulated_unbound_value_bearing_network_is_unavailable() {
         let adapter = simulated_midnight_wallet(Arc::new(FixedClock));
         let second = WalletProfileId::parse("profile_second").expect("profile id is valid");
         let preprod = network_id("preprod").expect("network is valid");
@@ -2219,14 +2234,11 @@ mod tests {
             .select_network(&profile(), &preprod)
             .expect("selection succeeds");
 
-        let first_account = adapter.account(&profile()).expect("account is available");
-        let second_account = adapter.account(&second).expect("account is available");
-        assert_eq!(first_account.network().id().as_str(), "preprod");
-        assert!(
-            first_account.addresses()[0]
-                .value()
-                .starts_with("mn_addr_preprod1")
+        assert_eq!(
+            adapter.account(&profile()),
+            Err(WalletAccountPortError::Unavailable)
         );
+        let second_account = adapter.account(&second).expect("account is available");
         assert_eq!(second_account.network().id().as_str(), "undeployed");
         assert!(
             second_account.addresses()[0]

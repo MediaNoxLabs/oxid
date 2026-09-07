@@ -284,7 +284,6 @@ where
 /// Live unshielded account source backed by a replaceable indexer transport.
 pub struct LiveMidnightAccountSource<C> {
     network_id: ChainNetworkId,
-    address: ChainAddress,
     clock: std::sync::Arc<C>,
     transport: std::sync::Arc<dyn MidnightIndexerTransport>,
     checkpoints: std::sync::Arc<dyn MidnightAccountCheckpointStore>,
@@ -326,13 +325,13 @@ impl<C> LiveMidnightAccountSource<C> {
     #[cfg(test)]
     fn with_transport(
         network_id: ChainNetworkId,
-        address: ChainAddress,
+        _address: ChainAddress,
         clock: std::sync::Arc<C>,
         transport: std::sync::Arc<dyn MidnightIndexerTransport>,
     ) -> Self {
         Self::with_transport_and_checkpoints(
             network_id,
-            address,
+            _address,
             clock,
             transport,
             std::sync::Arc::new(UnavailableMidnightAccountCheckpointStore),
@@ -341,14 +340,13 @@ impl<C> LiveMidnightAccountSource<C> {
 
     fn with_transport_and_checkpoints(
         network_id: ChainNetworkId,
-        address: ChainAddress,
+        _address: ChainAddress,
         clock: std::sync::Arc<C>,
         transport: std::sync::Arc<dyn MidnightIndexerTransport>,
         checkpoints: std::sync::Arc<dyn MidnightAccountCheckpointStore>,
     ) -> Self {
         Self {
             network_id,
-            address,
             clock,
             transport,
             checkpoints,
@@ -399,16 +397,7 @@ impl<C> LiveMidnightAccountSource<C> {
                     derived.addresses().to_vec(),
                 )
             })
-            .map_or_else(
-                || {
-                    Ok((
-                        account_id(profile_id)?,
-                        self.address.clone(),
-                        vec![self.address.clone()],
-                    ))
-                },
-                Ok,
-            )
+            .map_or_else(|| Err(WalletAccountPortError::Unavailable), Ok)
     }
 
     fn replace_sync_status(
@@ -1600,11 +1589,6 @@ fn asset_for_token(token_type: &str) -> Result<ChainAsset, WalletAccountPortErro
     ))
 }
 
-fn account_id(profile_id: &WalletProfileId) -> Result<ChainAccountId, WalletAccountPortError> {
-    ChainAccountId::parse(profile_id.as_str().to_owned())
-        .map_err(|_| WalletAccountPortError::InvalidData)
-}
-
 pub(crate) fn validate_websocket_url(value: &str) -> Result<String, MidnightIndexerConfigError> {
     if value.chars().count() > MAX_ENDPOINT_CHARACTERS {
         return Err(MidnightIndexerConfigError::EndpointTooLong);
@@ -2193,6 +2177,9 @@ mod tests {
             Arc::new(FixedClock),
             transport,
         );
+        source
+            .bind_derived_account(&profile(), &network(), &derived_account())
+            .expect("derived account binds");
         let before = source
             .account(&profile(), &network())
             .expect("configured account is readable");
@@ -2226,6 +2213,29 @@ mod tests {
     }
 
     #[test]
+    fn live_source_rejects_an_unbound_configuration_address() {
+        let source = LiveMidnightAccountSource::with_transport(
+            network().id().clone(),
+            address(),
+            Arc::new(FixedClock),
+            Arc::new(ScriptedTransport {
+                results: Mutex::new(VecDeque::new()),
+                addresses: Mutex::new(Vec::new()),
+                starting_cursors: Mutex::new(Vec::new()),
+            }),
+        );
+
+        assert_eq!(
+            source.account(&profile(), &network()),
+            Err(WalletAccountPortError::Unavailable)
+        );
+        assert_eq!(
+            resolve(source.sync(&profile(), &network())),
+            Err(WalletAccountPortError::Unavailable)
+        );
+    }
+
+    #[test]
     fn failed_refresh_preserves_cached_values_and_marks_them_stalled() {
         let transport = Arc::new(ScriptedTransport {
             results: Mutex::new(VecDeque::from([
@@ -2241,6 +2251,9 @@ mod tests {
             Arc::new(FixedClock),
             transport,
         );
+        source
+            .bind_derived_account(&profile(), &network(), &derived_account())
+            .expect("derived account binds");
         let live = resolve(source.sync(&profile(), &network())).expect("initial sync succeeds");
         assert_eq!(
             resolve(source.sync(&profile(), &network())),
@@ -2273,6 +2286,9 @@ mod tests {
             Arc::new(FixedClock),
             transport.clone(),
         );
+        source
+            .bind_derived_account(&profile(), &network(), &derived_account())
+            .expect("derived account binds");
 
         resolve(source.sync(&profile(), &network())).expect("initial replay should succeed");
         resolve(source.sync(&profile(), &network()))
@@ -2366,7 +2382,6 @@ mod tests {
             transport.clone(),
         );
 
-        resolve(source.sync(&profile(), &network())).expect("configured watch sync succeeds");
         let derived = derived_account();
         let derived_address = derived.receive_address().clone();
         source
@@ -2393,10 +2408,7 @@ mod tests {
                 .addresses
                 .lock()
                 .expect("recorded addresses are readable"),
-            vec![
-                configured_address.value().to_owned(),
-                derived_address.value().to_owned(),
-            ]
+            vec![derived_address.value().to_owned()]
         );
     }
 }
