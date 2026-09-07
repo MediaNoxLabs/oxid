@@ -6,6 +6,7 @@
 - Prototype source: `midnight-ledger` `mobile-prototype@255f2caf` for balance behavior only; embedded prototype seeds and key files are explicitly rejected
 - Implementation state: opt-in Android/iOS composition, empty-profile root recovery, native one-shot custody, canonical account derivation, observation-only UI, and guarded launcher implemented; owner-entered live PreProd evidence remains manual
 - Amends: ADR-0071 and ADR-0098
+- Amended by: ADR-0106
 
 ## Context
 

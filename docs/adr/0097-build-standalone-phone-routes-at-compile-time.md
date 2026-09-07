@@ -7,6 +7,7 @@
 - Implementation state: Opt-in localhost simulator/desktop and Android
   physical-device tailnet profiles implemented with public standalone-genesis
   development custody; production and native-custody composition unchanged
+- Amended by: ADR-0106
 
 ## Context
 
