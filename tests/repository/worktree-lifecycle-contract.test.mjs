@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  archiveEligibility,
   githubMergeQuery,
   githubRepositoryFromRemote,
   indexGithubMergeProofs,
@@ -11,6 +12,7 @@ import {
   parseWorktrees,
   removalEligibility,
   resolveMergeState,
+  worktreeArchiveRef,
 } from "../../scripts/worktree-lifecycle.mjs";
 
 test("worktree porcelain parsing preserves paths and branches", () => {
@@ -38,6 +40,28 @@ test("removal requires a clean, merged, old, non-primary worktree", () => {
     "head is not integrated into origin/develop (merge proof: unavailable)",
   );
   assert.match(removalEligibility({ ...candidate, ageDays: 2 }, { primary: "/repo" }), /newer than 7 days/);
+});
+
+test("archive requires a clean, old, unmerged worktree and explicit owner approval", () => {
+  const candidate = { worktree: "/repo/w", clean: true, merged: false, ageDays: 8 };
+  const options = {
+    primary: "/repo",
+    ownerApproved: true,
+    disposition: "owner-preserved",
+  };
+  assert.equal(archiveEligibility(candidate, options), null);
+  assert.equal(archiveEligibility({ ...candidate, worktree: "/repo" }, options), "primary checkout");
+  assert.equal(archiveEligibility({ ...candidate, clean: false }, options), "worktree is dirty");
+  assert.equal(archiveEligibility({ ...candidate, merged: true }, options), "head is already integrated; use remove");
+  assert.match(archiveEligibility({ ...candidate, ageDays: 2 }, options), /newer than 7 days/);
+  assert.equal(archiveEligibility(candidate, { ...options, ownerApproved: false }), "explicit owner approval is required");
+  assert.equal(archiveEligibility(candidate, { ...options, disposition: "discarded" }), "archive disposition is invalid");
+});
+
+test("archive refs retain one exact commit without branch-derived input", () => {
+  const head = "a".repeat(40);
+  assert.equal(worktreeArchiveRef(head), `refs/oxid-archive/worktrees/${head}`);
+  assert.throws(() => worktreeArchiveRef("main"), /exact commit SHA/);
 });
 
 test("GitHub squash proof requires one exact integrated PR", () => {
