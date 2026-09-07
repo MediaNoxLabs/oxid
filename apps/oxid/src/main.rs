@@ -556,7 +556,7 @@ fn main() {
     let ui = ui.with_proof_benchmark(
         oxid_composition::compose_development_proof_benchmark(development_proof_cache_directory())
             .unwrap_or_else(|error| panic!("development proof benchmark is unavailable: {error}")),
-        oxid_composition::compose_development_process_resource_sampler(),
+        oxid_composition::compose_development_resource_sampler(),
     );
     #[cfg(target_os = "android")]
     let ui = ui.with_android_platform_initializer(std::sync::Arc::new(|| {

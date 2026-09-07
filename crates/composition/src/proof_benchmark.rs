@@ -20,7 +20,7 @@ pub fn compose_development_proof_benchmark(
 /// Composes the current-process sampler beside the development benchmark.
 /// Unsupported native targets receive an explicit fail-closed adapter.
 #[must_use]
-pub fn compose_development_process_resource_sampler() -> Arc<dyn ProcessResourceSamplerPort> {
+pub fn compose_development_resource_sampler() -> Arc<dyn ProcessResourceSamplerPort> {
     #[cfg(not(target_os = "ios"))]
     if let Ok(sampler) = SystemProcessResourceSampler::new() {
         return Arc::new(sampler);
