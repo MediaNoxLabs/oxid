@@ -126,6 +126,16 @@ Automatic review is capped at one routine reviewer. Low-signal refinement
 stops. Do not add reviewers, retries, retrospective work, or a second gate to
 compensate for a provider or transport failure.
 
+Classify failures by origin before ordering rollback. A shell parser error that
+occurs before an agent-generated command starts its named helper is a
+recoverable command-construction error, not a harness failure. Preserve valid
+scoped edits, inspect mutation state, and allow one corrected invocation within
+the existing budget. If it affected only advisory review after required focused
+evidence passed, record the gap as follow-up. Missing helpers, pin/admission
+failures, helper-originated errors, and failed required validation still stop
+fail-closed. Never discard verified work solely because of malformed shell
+quoting.
+
 Pi retains loaded instructions and extensions. After changing `.pi/`,
 `.devloops`, or installed pins, preserve the branch/head, stop Pi, and restart
 it from the canonical checkout. Never assume a long-running process is running
