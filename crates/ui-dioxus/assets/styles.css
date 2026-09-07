@@ -1707,7 +1707,7 @@ textarea:focus-visible {
   padding: 0;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
-  border-radius: 50%;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--accent) 9%, transparent);
   color: var(--accent);
   font: inherit;
@@ -1733,7 +1733,7 @@ textarea:focus-visible {
   max-width: 54ch;
   padding: var(--space-3);
   border-left: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  border-radius: 0 var(--radius-control) var(--radius-control) 0;
+  border-radius: var(--radius-control);
   background: color-mix(in srgb, var(--accent) 7%, transparent);
   color: var(--text-muted);
   font-size: var(--font-caption);
