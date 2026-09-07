@@ -3774,7 +3774,9 @@ fn WalletApp() -> Element {
                     span { class: "status-dot" }
                     "{active_profile.display_name}"
                 }
-                span { class: "page-context__title", "{active_primary.label()}" }
+                if let Some(primary_label) = page_context_primary_label(content_route, active_primary) {
+                    span { class: "page-context__title", "{primary_label}" }
+                }
             }
 
             if *profile_menu_open.read() {
@@ -8569,6 +8571,17 @@ const fn is_developer_route(_route: Route) -> bool {
     false
 }
 
+const fn page_context_primary_label(
+    content_route: Route,
+    active_primary: PrimaryDestination,
+) -> Option<&'static str> {
+    if is_developer_route(content_route) {
+        None
+    } else {
+        Some(active_primary.label())
+    }
+}
+
 fn route_pending_identity_link(
     services: &WalletUiServices,
     mut pending_identity_request: Signal<Option<PendingIdentityRequest>>,
@@ -11163,8 +11176,13 @@ mod tests {
         assert!(developer_routes.into_iter().all(|route| {
             route.primary().is_none()
                 && is_developer_route(route)
+                && page_context_primary_label(route, PrimaryDestination::Home).is_none()
                 && !route_forces_screen_privacy(route)
         }));
+        assert_eq!(
+            page_context_primary_label(Route::Wallet, PrimaryDestination::Wallet),
+            Some("Wallet")
+        );
 
         let mut navigation = RouteStack::default();
         navigation.push(Route::Developer);
