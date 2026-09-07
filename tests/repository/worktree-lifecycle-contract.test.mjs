@@ -3,14 +3,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  archiveEligibility,
   githubMergeQuery,
   githubRepositoryFromRemote,
   indexGithubMergeProofs,
+  indexRetiredPromotionAncestryProofs,
   loadGithubMergeEvidence,
   parseGithubMergeResponse,
   parseWorktrees,
   removalEligibility,
   resolveMergeState,
+  worktreeArchiveRef,
 } from "../../scripts/worktree-lifecycle.mjs";
 
 test("worktree porcelain parsing preserves paths and branches", () => {
@@ -38,6 +41,28 @@ test("removal requires a clean, merged, old, non-primary worktree", () => {
     "head is not integrated into origin/develop (merge proof: unavailable)",
   );
   assert.match(removalEligibility({ ...candidate, ageDays: 2 }, { primary: "/repo" }), /newer than 7 days/);
+});
+
+test("archive requires a clean, old, unmerged worktree and explicit owner approval", () => {
+  const candidate = { worktree: "/repo/w", clean: true, merged: false, ageDays: 8 };
+  const options = {
+    primary: "/repo",
+    ownerApproved: true,
+    disposition: "owner-preserved",
+  };
+  assert.equal(archiveEligibility(candidate, options), null);
+  assert.equal(archiveEligibility({ ...candidate, worktree: "/repo" }, options), "primary checkout");
+  assert.equal(archiveEligibility({ ...candidate, clean: false }, options), "worktree is dirty");
+  assert.equal(archiveEligibility({ ...candidate, merged: true }, options), "head is already integrated; use remove");
+  assert.match(archiveEligibility({ ...candidate, ageDays: 2 }, options), /newer than 7 days/);
+  assert.equal(archiveEligibility(candidate, { ...options, ownerApproved: false }), "explicit owner approval is required");
+  assert.equal(archiveEligibility(candidate, { ...options, disposition: "discarded" }), "archive disposition is invalid");
+});
+
+test("archive refs retain one exact commit without branch-derived input", () => {
+  const head = "a".repeat(40);
+  assert.equal(worktreeArchiveRef(head), `refs/oxid-archive/worktrees/${head}`);
+  assert.throws(() => worktreeArchiveRef("main"), /exact commit SHA/);
 });
 
 test("GitHub squash proof requires one exact integrated PR", () => {
@@ -126,6 +151,43 @@ test("retired integration proof requires the exact full-tree promotion", () => {
     ...options,
     mergeCommitIsInPromotion: () => false,
   }).proofs.size, 0);
+});
+
+test("retired integration ancestry reconciles only commits contained by the exact promotion", () => {
+  const contained = "a".repeat(40);
+  const unrelated = "b".repeat(40);
+  const promotionHead = "c".repeat(40);
+  const promotionMerge = "d".repeat(40);
+  const promotion = {
+    number: 258,
+    state: "MERGED",
+    baseRefName: "develop",
+    headRefName: "integration",
+    headRefOid: promotionHead,
+    mergedAt: "2026-09-03T15:06:49Z",
+    mergeCommit: { oid: promotionMerge },
+  };
+  const result = indexRetiredPromotionAncestryProofs([contained, unrelated], [promotion], {
+    mergeCommitIsIntegrated: (candidate) => candidate === promotionMerge,
+    promotionPreservesTree: (source, target) => source === promotionHead && target === promotionMerge,
+    headIsInPromotion: (candidate, finalHead) => candidate === contained && finalHead === promotionHead,
+  });
+  assert.equal(result.proofs.get(contained), "retired-integration-ancestor:via-pr:258");
+  assert.equal(result.proofs.has(unrelated), false);
+
+  for (const invalid of [
+    { ...promotion, number: 257 },
+    { ...promotion, state: "OPEN" },
+    { ...promotion, baseRefName: "main" },
+    { ...promotion, headRefName: "other" },
+  ]) {
+    assert.equal(indexRetiredPromotionAncestryProofs([contained], [invalid], {
+      mergeCommitIsIntegrated: () => true,
+      promotionPreservesTree: () => true,
+      headIsInPromotion: () => true,
+    }).proofs.size, 0);
+  }
+  assert.throws(() => indexRetiredPromotionAncestryProofs(["main"], []), /exact commit heads/);
 });
 
 test("duplicate exact-head GitHub merge proofs fail closed", () => {

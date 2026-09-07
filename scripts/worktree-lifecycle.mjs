@@ -2,7 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, realpathSync, rmSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -136,6 +146,48 @@ export function indexGithubMergeProofs(
   return { proofs, ambiguous };
 }
 
+export function indexRetiredPromotionAncestryProofs(
+  heads,
+  promotions,
+  {
+    mergeCommitIsIntegrated = () => false,
+    promotionPreservesTree = () => false,
+    headIsInPromotion = () => false,
+  } = {},
+) {
+  if (!Array.isArray(heads) || heads.some((head) => !SHA_PATTERN.test(head))) {
+    throw new Error("retired promotion ancestry requires exact commit heads");
+  }
+  if (!Array.isArray(promotions)) throw new Error("retired promotion evidence must be an array");
+  const candidates = new Map();
+  for (const promotion of promotions) {
+    const specification = RETIRED_BRANCH_PROMOTIONS.find((candidate) => candidate.number === promotion?.number);
+    const promotionHead = promotion?.headRefOid;
+    const promotionMerge = promotion?.mergeCommit?.oid;
+    if (specification === undefined
+      || promotion?.state !== "MERGED"
+      || promotion?.baseRefName !== specification.target
+      || promotion?.headRefName !== specification.source
+      || typeof promotion?.mergedAt !== "string" || promotion.mergedAt.length === 0
+      || !SHA_PATTERN.test(promotionHead ?? "") || !SHA_PATTERN.test(promotionMerge ?? "")
+      || !mergeCommitIsIntegrated(promotionMerge)
+      || !promotionPreservesTree(promotionHead, promotionMerge)) continue;
+    for (const head of heads) {
+      if (!headIsInPromotion(head, promotionHead)) continue;
+      const proofs = candidates.get(head) ?? new Set();
+      proofs.add(`retired-${specification.source}-ancestor:via-pr:${promotion.number}`);
+      candidates.set(head, proofs);
+    }
+  }
+  const proofs = new Map();
+  const ambiguous = new Set();
+  for (const [head, matches] of candidates) {
+    if (matches.size === 1) proofs.set(head, [...matches][0]);
+    else ambiguous.add(head);
+  }
+  return { proofs, ambiguous };
+}
+
 function unavailableEvidence(ancestry = new Set()) {
   return { status: "unavailable", ancestry, proofs: new Map(), ambiguous: new Set(), unavailableHeads: new Set() };
 }
@@ -223,7 +275,20 @@ export function loadGithubMergeEvidence(root, heads, { run = spawnSync } = {}) {
         ),
       },
     );
-    return { status: "available", ancestry, ...indexed, unavailableHeads: response.unavailableHeads };
+    const promotedAncestors = indexRetiredPromotionAncestryProofs(requested, response.promotions, {
+      mergeCommitIsIntegrated: (mergeCommit) => isAncestor(root, mergeCommit, "origin/develop", run),
+      promotionPreservesTree: (promotionHead, promotionMerge) => sameTree(root, promotionHead, promotionMerge, run),
+      headIsInPromotion: (head, promotionHead) => isAncestor(root, head, promotionHead, run),
+    });
+    const proofs = new Map(indexed.proofs);
+    const ambiguous = new Set(indexed.ambiguous);
+    for (const head of promotedAncestors.ambiguous) {
+      if (!proofs.has(head)) ambiguous.add(head);
+    }
+    for (const [head, proof] of promotedAncestors.proofs) {
+      if (!proofs.has(head) && !ambiguous.has(head)) proofs.set(head, proof);
+    }
+    return { status: "available", ancestry, proofs, ambiguous, unavailableHeads: response.unavailableHeads };
   } catch {
     return unavailableEvidence(ancestry);
   }
@@ -269,6 +334,71 @@ export function removalEligibility(item, { primary, olderThanDays = 7 }) {
   return null;
 }
 
+const ARCHIVE_DISPOSITIONS = new Set([
+  "integrated-equivalent",
+  "owner-preserved",
+  "superseded",
+]);
+
+export function archiveEligibility(item, {
+  primary,
+  olderThanDays = 7,
+  ownerApproved = false,
+  disposition,
+}) {
+  if (item.worktree === primary) return "primary checkout";
+  if (!item.clean) return "worktree is dirty";
+  if (item.merged) return "head is already integrated; use remove";
+  if (item.ageDays < olderThanDays) return `last commit is newer than ${olderThanDays} days`;
+  if (!ARCHIVE_DISPOSITIONS.has(disposition)) return "archive disposition is invalid";
+  if (!ownerApproved) return "explicit owner approval is required";
+  return null;
+}
+
+export function worktreeArchiveRef(head) {
+  if (!SHA_PATTERN.test(head)) throw new Error("archive head must be an exact commit SHA");
+  return `refs/oxid-archive/worktrees/${head}`;
+}
+
+function archiveReceipt(root, item, { disposition, issueNumber, archiveRef }) {
+  const commonDir = git(root, ["rev-parse", "--git-common-dir"]);
+  const resolvedCommonDir = path.resolve(root, commonDir);
+  const receiptDir = path.join(resolvedCommonDir, "oxid-factory", "worktree-archives");
+  mkdirSync(receiptDir, { recursive: true, mode: 0o700 });
+  chmodSync(receiptDir, 0o700);
+  const receipt = {
+    schemaVersion: 1,
+    head: item.head,
+    branch: item.branch,
+    issue: issueNumber,
+    disposition,
+    archiveRef,
+    archivedAt: new Date().toISOString(),
+  };
+  const destination = path.join(receiptDir, `${item.head}.json`);
+  const temporary = `${destination}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  renameSync(temporary, destination);
+  chmodSync(destination, 0o600);
+  return destination;
+}
+
+function preserveArchiveRef(root, head) {
+  const archiveRef = worktreeArchiveRef(head);
+  let existing = null;
+  try {
+    existing = git(root, ["rev-parse", "--verify", archiveRef]);
+  } catch {
+    // A missing archive ref is the expected first-run state.
+  }
+  if (existing !== null && existing !== head) throw new Error("archive ref does not match its encoded head");
+  if (existing === null) {
+    execFileSync("git", ["-C", root, "update-ref", archiveRef, head, "0".repeat(40)], { stdio: "inherit" });
+  }
+  if (git(root, ["rev-parse", archiveRef]) !== head) throw new Error("archive ref verification failed");
+  return archiveRef;
+}
+
 function audit(root, entries, githubEvidence, { json = false } = {}) {
   const items = entries.map((entry) => describe(root, entry, Date.now(), githubEvidence));
   const primary = realpathSync(entries[0].worktree);
@@ -308,7 +438,7 @@ function main(argv = process.argv.slice(2)) {
     .split("\n").find((line) => line.startsWith("worktree ")).slice("worktree ".length);
   const entries = parseWorktrees(git(root, ["worktree", "list", "--porcelain"]));
   const primary = realpathSync(entries[0].worktree);
-  const githubEvidence = command === "audit" || command === "remove"
+  const githubEvidence = command === "audit" || command === "remove" || command === "archive"
     ? loadGithubMergeEvidence(root, entries.map((entry) => entry.HEAD))
     : unavailableEvidence();
   if (command === "audit") return audit(root, entries, githubEvidence, { json: argv.includes("--json") });
@@ -337,6 +467,25 @@ function main(argv = process.argv.slice(2)) {
     const reason = removalEligibility(item, { primary, olderThanDays });
     if (reason) throw new Error(`refusing removal: ${reason}`);
     execFileSync("git", ["-C", root, "worktree", "remove", "--", item.worktree], { stdio: "inherit" });
+    return;
+  }
+  if (command === "archive") {
+    const olderThanDays = Number(option(argv, "--older-than-days") ?? "7");
+    const issueNumber = Number(option(argv, "--issue"));
+    const disposition = option(argv, "--disposition");
+    if (!Number.isFinite(olderThanDays) || olderThanDays < 1) throw new Error("--older-than-days must be at least 1");
+    if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) throw new Error("--issue must be a positive integer");
+    const reason = archiveEligibility(item, {
+      primary,
+      olderThanDays,
+      ownerApproved: argv.includes("--owner-approved"),
+      disposition,
+    });
+    if (reason) throw new Error(`refusing archive: ${reason}`);
+    const archiveRef = preserveArchiveRef(root, item.head);
+    archiveReceipt(root, item, { disposition, issueNumber, archiveRef });
+    execFileSync("git", ["-C", root, "worktree", "remove", "--", item.worktree], { stdio: "inherit" });
+    process.stdout.write(`${JSON.stringify({ archiveRef, head: item.head, disposition, issue: issueNumber })}\n`);
     return;
   }
   throw new Error(`unknown command: ${command}`);
