@@ -192,7 +192,10 @@ async function resolveInstalledPinnedPackages({ candidates, pins }) {
       const manifest = await readJson(path.join(packageRoot, "package.json"), `${pin.name} package manifest`);
       if (manifest.name !== pin.name || manifest.version !== pin.version) {
         throw new Error(
-          `expected ${pin.name}@${pin.version} at ${requestedRoot}, found ${manifest.name ?? "unknown"}@${manifest.version ?? "unknown"}`,
+          `candidate checkout/package closure mismatch: expected ${pin.name}@${pin.version} at ${requestedRoot}, ` +
+          `found ${manifest.name ?? "unknown"}@${manifest.version ?? "unknown"} from ${candidate.source}. ` +
+          "Align the delivery branch's .pi/settings.json with an available exact package closure before dispatch; " +
+          "do not overwrite a shared closure used by another session.",
         );
       }
       installed.push({ ...pin, packageRoot, source: candidates[ownerIndex].source });
