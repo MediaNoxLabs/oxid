@@ -58,6 +58,15 @@ selected child lane fails and succeed when an unselected lane is intentionally
 skipped. This changes execution topology without requiring an unsafe one-step
 branch-protection migration.
 
+### Capability-ownership metadata routing
+
+Changes to `scripts/architecture/capability-facades.json` inherit the lane of
+each changed crate entry: `oxid-ui-dioxus` selects the UI lane and
+`oxid-headless` selects the headless lane. Shared or unknown crates, malformed
+metadata, and metadata changes that cannot be attributed to a crate select the
+shared-core (headless) path fail-closed. Mixed ownership changes select every
+affected lane.
+
 ## Dependency graph and parallelism
 
 ```text
