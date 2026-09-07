@@ -754,6 +754,9 @@ impl AcceptCredentialPresentationUseCase for CredentialPresentationService {
             let session = sessions
                 .get_mut(&presentation_id)
                 .ok_or(CredentialPresentationError::NotFound)?;
+            if session.state != CredentialPresentationState::Presenting {
+                return Err(CredentialPresentationError::InvalidState);
+            }
             session.state = CredentialPresentationState::Succeeded;
             session.presentation_generated = true;
             session.verifier_validated = true;
@@ -938,6 +941,7 @@ impl PresentationVerifierPort for UnavailablePresentationVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::task::{Context, Poll, Waker};
 
     fn ready<F: Future>(future: F) -> F::Output {
@@ -955,6 +959,8 @@ mod tests {
         selected_credential_id: Mutex<Option<String>>,
         cancelled_presentation_id: Mutex<Option<String>>,
         foreground_events: Mutex<Vec<bool>>,
+        present_succeeds: AtomicBool,
+        present_yields_once: AtomicBool,
     }
 
     impl CredentialPresentationProtocolPort for Protocol {
@@ -1007,13 +1013,22 @@ mod tests {
             &'a self,
             request: ProtocolPresentCredentialRequest,
         ) -> PresentCredentialPortFuture<'a> {
-            Box::pin(async move {
+            Box::pin(std::future::poll_fn(move |_| {
                 *self
                     .selected_credential_id
                     .lock()
-                    .expect("selected credential lock") = Some(request.credential_id);
-                Err(PresentationProtocolError::ProofUnavailable)
-            })
+                    .expect("selected credential lock") = Some(request.credential_id.clone());
+                if self.present_yields_once.swap(false, Ordering::SeqCst) {
+                    return Poll::Pending;
+                }
+                if self.present_succeeds.load(Ordering::SeqCst) {
+                    Poll::Ready(Ok(PresentationProtocolOutcome {
+                        verifier_validated: true,
+                    }))
+                } else {
+                    Poll::Ready(Err(PresentationProtocolError::ProofUnavailable))
+                }
+            }))
         }
 
         fn discard(&self, _: &CredentialPresentationId) -> Result<(), PresentationProtocolError> {
@@ -1171,6 +1186,59 @@ mod tests {
                 .as_deref(),
             Some(prepared.id.as_str())
         );
+    }
+
+    #[test]
+    fn accept_does_not_overwrite_an_intervening_session_state_change() {
+        let protocol = Arc::new(Protocol::default());
+        protocol.present_succeeds.store(true, Ordering::SeqCst);
+        protocol.present_yields_once.store(true, Ordering::SeqCst);
+        let service = CredentialPresentationService::new(protocol);
+        let prepared = ready(PrepareCredentialPresentationUseCase::execute(
+            &service,
+            PrepareCredentialPresentationCommand {
+                profile_id: "profile_one".to_owned(),
+                request: "openid4vp://authorize".to_owned(),
+            },
+        ))
+        .expect("prepare");
+        let presentation_id =
+            CredentialPresentationId::parse(prepared.id.clone()).expect("presentation id");
+        let mut accept = Box::pin(AcceptCredentialPresentationUseCase::execute(
+            &service,
+            AcceptCredentialPresentationCommand {
+                profile_id: "profile_one".to_owned(),
+                presentation_id: prepared.id,
+                credential_id: "vc_one".to_owned(),
+                confirmed: true,
+                intent: "ACCEPT_CREDENTIAL_PRESENTATION".to_owned(),
+            },
+        ));
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(accept.as_mut().poll(&mut context), Poll::Pending));
+
+        service
+            .sessions
+            .lock()
+            .expect("sessions")
+            .get_mut(&presentation_id)
+            .expect("session")
+            .state = CredentialPresentationState::CancellationRequested;
+
+        assert_eq!(
+            accept.as_mut().poll(&mut context),
+            Poll::Ready(Err(CredentialPresentationError::InvalidState))
+        );
+        let view = GetCredentialPresentationUseCase::execute(
+            &service,
+            CredentialPresentationQuery {
+                profile_id: "profile_one".to_owned(),
+                presentation_id: presentation_id.as_str().to_owned(),
+            },
+        )
+        .expect("view");
+        assert_eq!(view.state, "cancellation_requested");
     }
 
     #[test]
