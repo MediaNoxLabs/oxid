@@ -928,13 +928,20 @@ async function makeEnvelopeGitFixture(t) {
   const worktrees = {
     issue150: path.join(namespace, "issue-150"),
     issue151: path.join(namespace, "issue-151"),
+    issue158: path.join(namespace, "issue-158"),
     pr153: path.join(namespace, "pr-153"),
     phase150: path.join(namespace, "phase-150-issue-150"),
     phase151: path.join(namespace, "phase-151-other"),
   };
   for (const [branch, target] of Object.entries(worktrees)) {
-    execFileSync("git", ["worktree", "add", "--quiet", "-b", `fixture-${branch}`, target], { cwd: root });
+    const branchName = branch === "issue158" ? "test/issue-158" : `fixture-${branch}`;
+    execFileSync("git", ["worktree", "add", "--quiet", "-b", branchName, target], { cwd: root });
   }
+  execFileSync(
+    "git",
+    ["config", "branch.test/issue-158.oxidDeliveryBase", "origin/develop"],
+    { cwd: root },
+  );
   return { parent, root: await realpath(root), namespace, worktrees };
 }
 
@@ -962,6 +969,28 @@ test("handoff envelope cwd normalization uses owned canonical Git topology", asy
   assert.equal((await normalizeHandoffEnvelopeCwd(
     validEnvelope(pr, "ignored"), resolve(fixture.worktrees.pr153), handoffCore,
   )).cwd, fixture.worktrees.pr153);
+  const issuePr = { kind: "pr", repo: "owner/repo", pr: 321 };
+  const issuePrHead = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: fixture.worktrees.issue158,
+    encoding: "utf8",
+  }).trim();
+  const resolveIssuePrHead = async () => ({
+    state: "OPEN",
+    headRefName: "test/issue-158",
+    headRefOid: issuePrHead,
+  });
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope(issuePr, "ignored"),
+    resolve(fixture.worktrees.issue158),
+    handoffCore,
+    { resolvePrHead: resolveIssuePrHead },
+  )).cwd, fixture.worktrees.issue158);
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope(issuePr, fixture.worktrees.issue158),
+    resolve(fixture.root),
+    handoffCore,
+    { resolvePrHead: resolveIssuePrHead },
+  )).cwd, fixture.worktrees.issue158);
   assert.equal((await normalizeHandoffEnvelopeCwd(
     validEnvelope(phase, "ignored"), resolve(fixture.worktrees.issue150), handoffCore,
   )).cwd, fixture.worktrees.issue150);
@@ -974,8 +1003,28 @@ test("handoff envelope cwd normalization uses owned canonical Git topology", asy
     /disagrees with resolver target/,
   );
   await assert.rejects(
-    normalizeHandoffEnvelopeCwd(validEnvelope(pr, "ignored"), resolve(fixture.worktrees.issue150), handoffCore),
+    normalizeHandoffEnvelopeCwd(
+      validEnvelope(pr, "ignored"),
+      resolve(fixture.worktrees.issue150),
+      handoffCore,
+      { resolvePrHead: async () => null },
+    ),
     /disagrees with resolver target/,
+  );
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(
+      validEnvelope(issuePr, "ignored"),
+      resolve(fixture.worktrees.issue158),
+      handoffCore,
+      {
+        resolvePrHead: async () => ({
+          state: "OPEN",
+          headRefName: "test/issue-158",
+          headRefOid: "f".repeat(40),
+        }),
+      },
+    ),
+    /does not match hosted PR #321 head/,
   );
   await assert.rejects(
     normalizeHandoffEnvelopeCwd(validEnvelope({ ...phase, issue: 151, phase: "other" }, "ignored"), resolve(fixture.worktrees.phase150), handoffCore),
