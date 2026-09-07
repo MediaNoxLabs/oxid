@@ -10,6 +10,8 @@ mod brand;
 mod deployment_profile;
 #[cfg(feature = "desktop-test-click-driver")]
 mod desktop_test_driver;
+#[cfg(feature = "ui-profile-dev")]
+mod developer_tools;
 mod diagnostics;
 mod dids;
 mod labels;
@@ -142,12 +144,14 @@ use oxid_wallet_application::{
 use zeroize::{Zeroize, Zeroizing};
 
 #[cfg(feature = "ui-profile-dev")]
+use developer_tools::{
+    DeveloperCapabilitiesPage, DeveloperProofBenchmarkPage, DeveloperToolsHub, is_developer_route,
+};
+#[cfg(feature = "ui-profile-dev")]
 use diagnostics::DeveloperDiagnosticsPage;
 use diagnostics::DiagnosticsPage;
 use labels as ui;
 use passport_vault::PassportVaultPage;
-#[cfg(feature = "proof-benchmark")]
-use proof_benchmark::ProofBenchmarkPanel;
 
 const BASE_STYLES: &str = include_str!("../assets/styles.css");
 const DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL: &str = "Protected DUST registration";
@@ -8555,17 +8559,6 @@ fn identity_request_routing_message(error: IdentityRequestRoutingError) -> Strin
     }
 }
 
-#[cfg(feature = "ui-profile-dev")]
-const fn is_developer_route(route: Route) -> bool {
-    matches!(
-        route,
-        Route::Developer
-            | Route::DeveloperManifest
-            | Route::DeveloperProofBenchmark
-            | Route::DeveloperDiagnostics
-    )
-}
-
 #[cfg(not(feature = "ui-profile-dev"))]
 const fn is_developer_route(_route: Route) -> bool {
     false
@@ -10226,146 +10219,6 @@ fn CredentialsPage(
                                         on_change: move |change| {
                                             state.set(credential_page_after_change(retained.clone(), change));
                                         }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[cfg(feature = "ui-profile-dev")]
-#[component]
-fn DeveloperToolsHub(
-    on_open_manifest: EventHandler<MouseEvent>,
-    on_open_benchmark: EventHandler<MouseEvent>,
-    on_open_diagnostics: EventHandler<MouseEvent>,
-) -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let capabilities = services.developer_capabilities();
-    let ready = capabilities
-        .iter()
-        .filter(|capability| capability.status() == "ready")
-        .count();
-    rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", "Standalone developer profile" }
-            h1 { "Developer tools" }
-            p { "Focused, process-local tools for inspecting this development composition." }
-        }
-        section { class: "developer-tool-list", aria_label: "Developer tools",
-            DeveloperToolLink {
-                title: "Capability manifest",
-                purpose: "Review public composition facts and service availability.",
-                availability: format!("{ready} of {} methods ready", capabilities.len()),
-                action: "Open manifest",
-                on_open: on_open_manifest,
-            }
-            DeveloperToolLink {
-                title: "Proof benchmark",
-                purpose: "Run synthetic proofs and inspect process-local results.",
-                availability: if cfg!(feature = "proof-benchmark") { "Available in this development build".to_owned() } else { "Not compiled into this build".to_owned() },
-                action: "Open benchmark",
-                on_open: on_open_benchmark,
-            }
-            DeveloperToolLink {
-                title: "Event log",
-                purpose: "Filter and clear bounded, payload-free diagnostic events.",
-                availability: "Process-local · telemetry off".to_owned(),
-                action: "Open event log",
-                on_open: on_open_diagnostics,
-            }
-        }
-    }
-}
-
-#[cfg(feature = "ui-profile-dev")]
-#[component]
-fn DeveloperToolLink(
-    title: &'static str,
-    purpose: &'static str,
-    availability: String,
-    action: &'static str,
-    on_open: EventHandler<MouseEvent>,
-) -> Element {
-    rsx! {
-        article { class: "developer-tool surface-card",
-            div {
-                h2 { "{title}" }
-                p { "{purpose}" }
-                span { class: "status-pill", "{availability}" }
-            }
-            button { class: "secondary-button", r#type: "button", onclick: move |event| on_open.call(event), "{action}" }
-        }
-    }
-}
-
-#[cfg(all(feature = "ui-profile-dev", feature = "proof-benchmark"))]
-#[component]
-fn DeveloperProofBenchmarkPage() -> Element {
-    rsx! { ProofBenchmarkPanel {} }
-}
-
-#[cfg(all(feature = "ui-profile-dev", not(feature = "proof-benchmark")))]
-#[component]
-fn DeveloperProofBenchmarkPage() -> Element {
-    rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", "Development tool" }
-            h1 { "Proof benchmark" }
-            p { "This development build does not include the proof benchmark capability." }
-        }
-    }
-}
-
-#[cfg(feature = "ui-profile-dev")]
-#[component]
-fn DeveloperCapabilitiesPage() -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let capabilities = services.developer_capabilities();
-    let ready = capabilities
-        .iter()
-        .filter(|capability| capability.status() == "ready")
-        .count();
-    let attention = capabilities.len().saturating_sub(ready);
-    rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", "Standalone developer profile" }
-            h1 { "Capability manifest" }
-            p {
-                "Rendered from the same Oxid-owned manifest serialized by system.capabilities. Values are public composition facts; request payloads, identifiers, claims, endpoints, logs, and process telemetry are excluded."
-            }
-        }
-        section { class: "developer-capability-summary surface-card",
-            div {
-                p { class: "card-eyebrow", "Manifest snapshot" }
-                h2 { "{capabilities.len()} declared methods" }
-                p { "{ready} ready · {attention} queued, blocked, superseded, or composition-dependent" }
-            }
-            code { "source=oxid_capabilities_application freshness=composition_time cursor=not_applicable timing=not_collected" }
-        }
-        div { class: "developer-capability-list",
-            for capability in capabilities {
-                article {
-                    class: "developer-capability-row capability-row",
-                    key: "{capability.method()}",
-                    span {
-                        class: if capability.status() == "ready" { "capability-dot ready" } else { "capability-dot queued" }
-                    }
-                    div { class: "developer-capability-row__body",
-                        strong { "{capability.method()}" }
-                        code { "status={capability.status()}" }
-                        if capability.facts().is_empty() {
-                            small { "No additional public composition facts" }
-                        } else {
-                            dl { class: "developer-capability-facts",
-                                for fact in capability.facts() {
-                                    div { key: "{fact.key()}",
-                                        dt { "{fact.key()}" }
-                                        dd { code { "{fact.value().display_text()}" } }
                                     }
                                 }
                             }
