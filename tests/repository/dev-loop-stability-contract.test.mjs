@@ -612,6 +612,10 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   assert.match(devLoop, /run_draft_gate[\s\S]*requireCi: false/);
   assert.match(devLoop, /MUST NOT place this conductor inside `taskflow`/u);
   assert.match(devLoop, /Never substitute `npm run verify`/u);
+  assert.match(devLoop, /shell parser diagnostic emitted before the named helper starts/u);
+  assert.match(devLoop, /correct\s+the command once within the existing turn budget/u);
+  assert.match(devLoop, /Never revert valid scoped\s+work solely/u);
+  assert.match(devLoop, /Missing\s+helpers,\s+pin mismatches,\s+admission failures,\s+helper-originated nonzero exits,[\s\S]*remain fail-closed/u);
   assert.match(devLoop, /stop on every other contradiction/);
   assert.doesNotMatch(devLoop, /review-routing\.mjs|~\/.pi|npm root -g|require\.resolve\(['"]dev-loops|<dev-loops-package-root>\/cli\/index\.mjs/);
   const review = await read(".pi/agents/review.agent.md");

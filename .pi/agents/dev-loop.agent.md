@@ -91,6 +91,19 @@ use the handoff envelope's target plan and its sanctioned Cargo, Just, Nix, or
 focused platform commands. Never substitute `npm run verify` or another
 ecosystem-generic command that is absent from the repository.
 
+A shell parser diagnostic emitted before the named helper starts (for example,
+an unmatched quote or unexpected EOF in an agent-generated `bash -c` command)
+is an invocation-construction error, not evidence that the tracked helper or
+harness failed. Inspect mutation state, preserve valid scoped edits, correct
+the command once within the existing turn budget, rerun preflight, and invoke
+the same helper directly. Never repeat a command that may have partially
+mutated state without first proving that state. If the one failed construction
+was only for advisory review after required focused evidence passed, record the
+review gap as follow-up rather than rolling back otherwise valid work. Missing
+helpers, pin mismatches, admission failures, helper-originated nonzero exits,
+and failed required validation remain fail-closed. Never revert valid scoped
+work solely because the agent constructed malformed shell text.
+
 When that skill is not available beneath the exact repository pin, stop at the tracked wrapper/preflight diagnostic; do not search other installation layouts.
 
 When the installed skill calls for the tracker-backed spec helper, invoke only
