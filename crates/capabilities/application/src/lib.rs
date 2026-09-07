@@ -500,6 +500,7 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
             .text("intent", "SUBMIT_PASSPORT_VAULT_CALL"),
         CapabilityView::new("vault.contract_call.start_submission", call_status)
             .text("mode", call_mode)
+            .boolean("confirmationRequired", true)
             .text("execution", "adapter_worker"),
         CapabilityView::new("vault.contract_call.submission_status", call_status)
             .text("mode", call_mode),
@@ -761,6 +762,7 @@ mod tests {
             "wallet.dust.registration.start_submission",
             "vault.contract_call.authorize",
             "vault.contract_call.submit",
+            "vault.contract_call.start_submission",
             "vault.lock.create",
             "vault.deposit",
             "vault.claim",
