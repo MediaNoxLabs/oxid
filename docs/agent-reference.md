@@ -1555,19 +1555,17 @@ ZKIR, and p18 parameters before enabling presentation proof generation; do not
 replace that path with a mutable cache or runtime download.
 
 The Pi review integration is pinned as
-`@input-output-hk/agent-review-pi@0.5.0`. That package declares both its review
-extension and bundled review skill in Pi metadata; the shell installs them
-together into the ignored project-local `.pi/npm` tree. Installation requires
-an existing GitHub token with package-read access. Never write that token into
-repository configuration or diagnostics. Pi `0.84.0` cannot parse the pinned
-package's bundled skill because its YAML description contains an unquoted
-colon. The tracked `.pi/skills/agent-review/SKILL.md` compatibility loader
-checks version `0.5.0` and delegates to the complete package workflow without
-copying it. `./bootstrap.sh --check` (equivalent to
+`@input-output-hk/agent-review-pi@0.6.0` with exact `typebox@1.3.9` and
+`pi-taskflow@0.2.10` peers. The package declares both its review extension and
+bundled review skill in Pi metadata; the shell installs them together into the
+ignored project-local `.pi/npm` tree. Installation requires an existing GitHub
+token with package-read access. Never write that token into repository
+configuration or diagnostics. Project filters disable every taskflow runtime
+resource while retaining the package as a peer because its detached/nested
+process behavior is unsafe for the Oxid dev-loop topology. `./bootstrap.sh --check` (equivalent to
 `nix develop --command just pi-smoke`) deterministically verifies
 the package metadata, all registered native review tools, and runtime skill
-discovery without an LLM call or GitHub mutation. Remove the loader only after
-a reviewed package update passes that same runtime inventory directly.
+discovery without an LLM call or GitHub mutation.
 
 Fast validation:
 
