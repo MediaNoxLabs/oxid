@@ -7,6 +7,8 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const WORKTREE_NAMESPACE_SEGMENTS = ["tmp", "worktrees", "dev-loops"];
+const SHA_PATTERN = /^[0-9a-f]{40}$/;
+const ISSUE_BRANCH_PATTERN = /^(?:build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)\/issue-([1-9]\d*)$/;
 
 function isContained(parent, child) {
   const relative = path.relative(parent, child);
@@ -45,6 +47,76 @@ async function listedWorktrees(commonRoot) {
   return stdout.split("\0")
     .filter((field) => field.startsWith("worktree "))
     .map((field) => path.resolve(field.slice("worktree ".length)));
+}
+
+async function commandText(command, args) {
+  const { stdout } = await execFileAsync(command, args, {
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024,
+    timeout: 30_000,
+  });
+  return stdout.trim();
+}
+
+async function resolveHostedPrHead(target) {
+  const output = await commandText("gh", [
+    "pr",
+    "view",
+    String(target.pr),
+    "--repo",
+    target.repo,
+    "--json",
+    "state,headRefName,headRefOid",
+  ]);
+  const result = JSON.parse(output);
+  if (result?.state !== "OPEN"
+    || typeof result.headRefName !== "string" || result.headRefName.length === 0
+    || !SHA_PATTERN.test(result.headRefOid ?? "")) {
+    throw new Error(`hosted PR #${target.pr} has no exact open head`);
+  }
+  return result;
+}
+
+async function authorizePrIssueWorktree(target, candidate, {
+  commonRoot,
+  core,
+  worktrees,
+  resolvePrHead,
+}) {
+  if (target?.kind !== "pr" || !worktrees.includes(candidate)) return false;
+  let branch;
+  try {
+    branch = await commandText("git", ["-C", candidate, "branch", "--show-current"]);
+  } catch {
+    return false;
+  }
+  const match = branch.match(ISSUE_BRANCH_PATTERN);
+  if (match === null) return false;
+  const issue = Number(match[1]);
+  if (candidate !== path.resolve(core.resolveWorktreePath({ repoRoot: commonRoot, kind: "issue", number: issue }))) {
+    return false;
+  }
+  let deliveryBase;
+  try {
+    deliveryBase = await commandText("git", [
+      "-C",
+      commonRoot,
+      "config",
+      "--get",
+      `branch.${branch}.oxidDeliveryBase`,
+    ]);
+  } catch {
+    return false;
+  }
+  if (!/^origin\/(?:develop|milestone-\d+\.\d+\.\d+)$/.test(deliveryBase)) return false;
+  const [head, hosted] = await Promise.all([
+    commandText("git", ["-C", candidate, "rev-parse", "HEAD"]),
+    resolvePrHead(target),
+  ]);
+  if (head !== hosted.headRefOid || branch !== hosted.headRefName) {
+    throw new Error(`managed issue worktree does not match hosted PR #${target.pr} head`);
+  }
+  return true;
 }
 
 function canonicalTargets(target, commonRoot, core) {
@@ -113,7 +185,9 @@ async function assertOwnedOrProspective(candidate, { commonRoot, canonical, work
   }
 }
 
-export async function normalizeHandoffEnvelopeCwd(envelope, resolved, core) {
+export async function normalizeHandoffEnvelopeCwd(envelope, resolved, core, {
+  resolvePrHead = resolveHostedPrHead,
+} = {}) {
   const commonRoot = path.resolve(resolved.commonRoot);
   const gitRoot = path.resolve(resolved.gitRoot);
   const [commonState, gitState] = await Promise.all([pathState(commonRoot), pathState(gitRoot)]);
@@ -133,10 +207,19 @@ export async function normalizeHandoffEnvelopeCwd(envelope, resolved, core) {
   }
 
   const worktrees = await listedWorktrees(commonRoot);
-  const canonical = canonicalTargets(envelope.target, commonRoot, core);
+  let canonical = canonicalTargets(envelope.target, commonRoot, core);
   let cwd;
+  const candidate = isMainCheckout ? path.resolve(envelope.cwd) : gitRoot;
+  if (!canonical.includes(candidate) && await authorizePrIssueWorktree(envelope.target, candidate, {
+    commonRoot,
+    core,
+    worktrees,
+    resolvePrHead,
+  })) {
+    canonical = [...canonical, candidate];
+  }
   if (isMainCheckout) {
-    cwd = path.resolve(envelope.cwd);
+    cwd = candidate;
     await assertOwnedOrProspective(cwd, { commonRoot, canonical, worktrees });
   } else {
     if (!worktrees.includes(gitRoot)) throw new Error(`invocation checkout is not an owned Git worktree: ${gitRoot}`);
