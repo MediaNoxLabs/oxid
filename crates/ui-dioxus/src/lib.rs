@@ -10,6 +10,8 @@ mod brand;
 mod deployment_profile;
 #[cfg(feature = "desktop-test-click-driver")]
 mod desktop_test_driver;
+#[cfg(feature = "ui-profile-dev")]
+mod developer_tools;
 mod diagnostics;
 mod dids;
 mod labels;
@@ -141,11 +143,15 @@ use oxid_wallet_application::{
 };
 use zeroize::{Zeroize, Zeroizing};
 
+#[cfg(feature = "ui-profile-dev")]
+use developer_tools::{
+    DeveloperCapabilitiesPage, DeveloperProofBenchmarkPage, DeveloperToolsHub, is_developer_route,
+};
+#[cfg(feature = "ui-profile-dev")]
+use diagnostics::DeveloperDiagnosticsPage;
 use diagnostics::DiagnosticsPage;
 use labels as ui;
 use passport_vault::PassportVaultPage;
-#[cfg(feature = "proof-benchmark")]
-use proof_benchmark::ProofBenchmarkPanel;
 
 const BASE_STYLES: &str = include_str!("../assets/styles.css");
 const DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL: &str = "Protected DUST registration";
@@ -1661,6 +1667,12 @@ enum Route {
     Diagnostics,
     #[cfg(feature = "ui-profile-dev")]
     Developer,
+    #[cfg(feature = "ui-profile-dev")]
+    DeveloperManifest,
+    #[cfg(feature = "ui-profile-dev")]
+    DeveloperProofBenchmark,
+    #[cfg(feature = "ui-profile-dev")]
+    DeveloperDiagnostics,
     Profile,
 }
 
@@ -1679,7 +1691,13 @@ impl Route {
             Self::Settings => "Settings",
             Self::Diagnostics => "Diagnostics",
             #[cfg(feature = "ui-profile-dev")]
-            Self::Developer => "Developer capabilities",
+            Self::Developer => "Developer tools",
+            #[cfg(feature = "ui-profile-dev")]
+            Self::DeveloperManifest => "Capability manifest",
+            #[cfg(feature = "ui-profile-dev")]
+            Self::DeveloperProofBenchmark => "Proof benchmark",
+            #[cfg(feature = "ui-profile-dev")]
+            Self::DeveloperDiagnostics => "Event log",
             Self::Profile => "Wallet profiles",
         }
     }
@@ -1699,7 +1717,10 @@ impl Route {
             | Self::Diagnostics
             | Self::Profile => None,
             #[cfg(feature = "ui-profile-dev")]
-            Self::Developer => None,
+            Self::Developer
+            | Self::DeveloperManifest
+            | Self::DeveloperProofBenchmark
+            | Self::DeveloperDiagnostics => None,
         }
     }
 }
@@ -3650,12 +3671,12 @@ fn WalletApp() -> Element {
         button {
             class: "profile-sheet__item",
             r#type: "button",
-            aria_label: "Open developer capabilities",
+            aria_label: "Open developer tools",
             onclick: move |_| {
                 navigation.write().push(Route::Developer);
                 profile_menu_open.set(false);
             },
-            "Developer capabilities"
+            "Developer tools"
         }
     };
     #[cfg(not(feature = "ui-profile-dev"))]
@@ -3757,7 +3778,9 @@ fn WalletApp() -> Element {
                     span { class: "status-dot" }
                     "{active_profile.display_name}"
                 }
-                span { class: "page-context__title", "{active_primary.label()}" }
+                if let Some(primary_label) = page_context_primary_label(content_route, active_primary) {
+                    span { class: "page-context__title", "{primary_label}" }
+                }
             }
 
             if *profile_menu_open.read() {
@@ -3875,7 +3898,19 @@ fn WalletApp() -> Element {
                     },
                     Route::Diagnostics => rsx! { DiagnosticsPage { active_profile: active_profile.clone() } },
                     #[cfg(feature = "ui-profile-dev")]
-                    Route::Developer => rsx! { DeveloperCapabilitiesPage {} },
+                    Route::Developer => rsx! {
+                        DeveloperToolsHub {
+                            on_open_manifest: move |_| navigation.write().push(Route::DeveloperManifest),
+                            on_open_benchmark: move |_| navigation.write().push(Route::DeveloperProofBenchmark),
+                            on_open_diagnostics: move |_| navigation.write().push(Route::DeveloperDiagnostics),
+                        }
+                    },
+                    #[cfg(feature = "ui-profile-dev")]
+                    Route::DeveloperManifest => rsx! { DeveloperCapabilitiesPage {} },
+                    #[cfg(feature = "ui-profile-dev")]
+                    Route::DeveloperProofBenchmark => rsx! { DeveloperProofBenchmarkPage {} },
+                    #[cfg(feature = "ui-profile-dev")]
+                    Route::DeveloperDiagnostics => rsx! { DeveloperDiagnosticsPage {} },
                     Route::Settings => rsx! {
                         SettingsPage {
                             active_profile: active_profile.clone(),
@@ -3900,7 +3935,8 @@ fn WalletApp() -> Element {
                 }
             }
 
-            nav { class: "bottom-nav", aria_label: "Primary wallet destinations",
+            if !is_developer_route(content_route) {
+                nav { class: "bottom-nav", aria_label: "Primary wallet destinations",
                 for destination in PRIMARY_DESTINATIONS[..2].iter().copied() {
                     {
                         let is_active = active_primary == destination;
@@ -3960,6 +3996,7 @@ fn WalletApp() -> Element {
                             }
                         }
                     }
+                }
                 }
             }
         }
@@ -8522,6 +8559,22 @@ fn identity_request_routing_message(error: IdentityRequestRoutingError) -> Strin
     }
 }
 
+#[cfg(not(feature = "ui-profile-dev"))]
+const fn is_developer_route(_route: Route) -> bool {
+    false
+}
+
+const fn page_context_primary_label(
+    content_route: Route,
+    active_primary: PrimaryDestination,
+) -> Option<&'static str> {
+    if is_developer_route(content_route) {
+        None
+    } else {
+        Some(active_primary.label())
+    }
+}
+
 fn route_pending_identity_link(
     services: &WalletUiServices,
     mut pending_identity_request: Signal<Option<PendingIdentityRequest>>,
@@ -10177,68 +10230,6 @@ fn CredentialsPage(
     }
 }
 
-#[cfg(feature = "ui-profile-dev")]
-#[component]
-fn DeveloperCapabilitiesPage() -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let capabilities = services.developer_capabilities();
-    let ready = capabilities
-        .iter()
-        .filter(|capability| capability.status() == "ready")
-        .count();
-    let attention = capabilities.len().saturating_sub(ready);
-    #[cfg(feature = "proof-benchmark")]
-    let proof_benchmark_panel = rsx! { ProofBenchmarkPanel {} };
-    #[cfg(not(feature = "proof-benchmark"))]
-    let proof_benchmark_panel = rsx! {};
-
-    rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", "Standalone developer profile" }
-            h1 { "Capability manifest" }
-            p {
-                "Rendered from the same Oxid-owned manifest serialized by system.capabilities. Values are public composition facts; request payloads, identifiers, claims, endpoints, logs, and process telemetry are excluded."
-            }
-        }
-        section { class: "developer-capability-summary surface-card",
-            div {
-                p { class: "card-eyebrow", "Manifest snapshot" }
-                h2 { "{capabilities.len()} declared methods" }
-                p { "{ready} ready · {attention} queued, blocked, superseded, or composition-dependent" }
-            }
-            code { "source=oxid_capabilities_application freshness=composition_time cursor=not_applicable timing=not_collected" }
-        }
-        {proof_benchmark_panel}
-        div { class: "developer-capability-list",
-            for capability in capabilities {
-                article {
-                    class: "developer-capability-row capability-row",
-                    key: "{capability.method()}",
-                    span {
-                        class: if capability.status() == "ready" { "capability-dot ready" } else { "capability-dot queued" }
-                    }
-                    div { class: "developer-capability-row__body",
-                        strong { "{capability.method()}" }
-                        code { "status={capability.status()}" }
-                        if capability.facts().is_empty() {
-                            small { "No additional public composition facts" }
-                        } else {
-                            dl { class: "developer-capability-facts",
-                                for fact in capability.facts() {
-                                    div { key: "{fact.key()}",
-                                        dt { "{fact.key()}" }
-                                        dd { code { "{fact.value().display_text()}" } }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[component]
 fn SettingsPage(
     active_profile: WalletProfileView,
@@ -11027,16 +11018,38 @@ mod tests {
 
     #[cfg(feature = "ui-profile-dev")]
     #[test]
-    fn developer_capabilities_are_a_bounded_secondary_route() {
-        assert_eq!(Route::Developer.title(), "Developer capabilities");
-        assert_eq!(Route::Developer.primary(), None);
-        assert!(!route_forces_screen_privacy(Route::Developer));
+    fn developer_tools_are_focused_secondary_routes_without_primary_navigation() {
+        let developer_routes = [
+            Route::Developer,
+            Route::DeveloperManifest,
+            Route::DeveloperProofBenchmark,
+            Route::DeveloperDiagnostics,
+        ];
+        assert_eq!(Route::Developer.title(), "Developer tools");
+        assert!(developer_routes.into_iter().all(|route| {
+            route.primary().is_none()
+                && is_developer_route(route)
+                && page_context_primary_label(route, PrimaryDestination::Home).is_none()
+                && !route_forces_screen_privacy(route)
+        }));
+        assert_eq!(
+            page_context_primary_label(Route::Wallet, PrimaryDestination::Wallet),
+            Some("Wallet")
+        );
 
         let mut navigation = RouteStack::default();
         navigation.push(Route::Developer);
-        assert_eq!(navigation.current(), Route::Developer);
+        navigation.push(Route::DeveloperProofBenchmark);
+        assert_eq!(
+            navigation.routes,
+            vec![
+                Route::Home,
+                Route::Developer,
+                Route::DeveloperProofBenchmark
+            ]
+        );
         assert!(navigation.pop());
-        assert_eq!(navigation.current(), Route::Home);
+        assert_eq!(navigation.current(), Route::Developer);
     }
 
     #[cfg(feature = "ui-profile-demo")]

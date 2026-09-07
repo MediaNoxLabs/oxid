@@ -114,8 +114,13 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
     let benchmark_for_sweep = Arc::clone(&benchmark);
 
     rsx! {
+        section { class: "page-heading",
+            p { class: "eyebrow", "Development tool" }
+            h1 { "Proof benchmark" }
+            p { "Synthetic proving measurements are process-local and never change wallet policy." }
+        }
         section { class: "surface-card", aria_label: "Development proof benchmark",
-            p { class: "card-eyebrow", "Development-only proof benchmark" }
+            p { class: "card-eyebrow", "Controls and resource boundary" }
             h2 { "Midnight proving envelope" }
             p {
                 "Runs one synthetic proof at a time through k=21. Results live only in this process. First runs may download public proving parameters into the app-private cache."
@@ -194,7 +199,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
             if let Some(message) = notice() {
                 p { class: "field-error", role: "alert", "{message}" }
             }
-            div { class: "developer-capability-list",
+            div { class: "proof-benchmark-list", aria_label: "Circuit benchmark results",
                 for k in PROOF_BENCHMARK_MIN_K..=PROOF_BENCHMARK_MAX_K {
                     {
                         let outcome = result_snapshot.get(&k).copied();
@@ -202,7 +207,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                         let high_k_blocked = k >= PROOF_BENCHMARK_HIGH_RESOURCE_K
                             && !high_resource_acknowledged();
                         rsx! {
-                            article { class: "developer-capability-row capability-row", key: "proof-k-{k}",
+                            article { class: "proof-benchmark-row capability-row", key: "proof-k-{k}",
                                 span { class: if matches!(outcome, Some(BenchmarkOutcome::Completed(_))) { "capability-dot ready" } else { "capability-dot queued" } }
                                 div { class: "developer-capability-row__body",
                                     strong { "Circuit k={k}" }
