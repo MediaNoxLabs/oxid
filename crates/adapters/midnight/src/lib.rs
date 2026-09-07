@@ -92,6 +92,9 @@ pub fn standalone_configuration_placeholder_address() -> Result<ChainAddress, Wa
 pub fn configuration_placeholder_address(
     network_id_value: &str,
 ) -> Result<ChainAddress, WalletAccountPortError> {
+    if network_id_value != DEFAULT_NETWORK_ID {
+        return Err(WalletAccountPortError::Unavailable);
+    }
     let network = network_id(network_id_value)?;
     fixture_addresses(&network)?
         .into_iter()
@@ -2189,6 +2192,17 @@ mod tests {
             address.value(),
         )
         .expect("the placeholder validates only public route composition");
+    }
+
+    #[test]
+    fn configuration_placeholder_rejects_value_bearing_networks() {
+        for network in ["mainnet", "testnet"] {
+            assert_eq!(
+                configuration_placeholder_address(network),
+                Err(WalletAccountPortError::Unavailable),
+                "{network} must not turn a public vector into a receive address"
+            );
+        }
     }
 
     #[test]
