@@ -65,6 +65,36 @@ That makes an upgrade valuable and too risky to bundle blindly. Version 0.6.0
 of `agent-review-pi` adds `pi-taskflow` and `typebox` peer requirements, so its
 complete closure and the existing compatibility skill must be tested together.
 
+### Supervised taskflow canary (2026-09-07)
+
+Issue [#158](https://github.com/MediaNoxLabs/oxid/issues/158) was used as a
+production-ready delivery canary. It did not reach a reviewable result. The
+detached `pi-taskflow@0.2.10` runner exited in 70 ms before phase `main` because
+its isolated package root could not resolve host peer dependencies. The runner
+discarded stderr, so the parent retained only exit code 1. An inline retry then
+wrapped the read-only `dev-loop` conductor around an async `pi-subagents` child.
+Although the child was active, taskflow observed no nested output for 300
+seconds, killed the conductor after 439 seconds, and left the child process
+group alive. The supervisor terminated that exact owned process group.
+
+The full canary lasted 1,243 seconds. Pi reported 91,383 input tokens, 3,470
+output tokens, 492,160 cached-input tokens, and $0.6567644 model cost. The clone
+grew from 16 MiB to 4.0 GiB, almost entirely a 3.9 GiB worktree-local Rust
+target. It produced one uncommitted partial test edit, zero commits, zero pull
+requests, and zero hosted-CI results. The partial implementation passed 20
+focused Rust tests and formatting, then attempted the nonexistent
+`npm run verify` fallback. It was not review-ready because its assertions no
+longer proved that concrete private values stayed absent.
+
+Issue [#301](https://github.com/MediaNoxLabs/oxid/issues/301) therefore applies
+a local fail-closed mitigation: project settings suppress inherited taskflow
+extensions and skills, `/dev-loop` requires direct bounded `pi-subagents`
+dispatch, the smoke test proves taskflow is absent from effective commands, and
+validation remains target-plan/Cargo/Just/Nix native. Re-enable taskflow only
+after #301 has a passing isolated peer-resolution, nested-progress, cancellation,
+and orphan-cleanup canary; coordinate any package change with #196. General
+cumulative budget and terminal-reconciliation improvements remain in #227.
+
 ## Required operator flow
 
 Configure the bounded user-level package policy once, then start Pi only

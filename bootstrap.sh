@@ -39,6 +39,10 @@ case "${1:-}" in
         echo "Pi startup audit failed. If user-subagent-policy is red, run ./bootstrap.sh --configure-pi; otherwise fix the reported control, then retry ./bootstrap.sh --pi." >&2
         exit 1
       }
+      bash scripts/check-pi-devshell.sh || {
+        echo "Pi runtime smoke failed; resolve the reported package/resource problem before starting an agent." >&2
+        exit 1
+      }
       exec pi "$@"
     ' bootstrap-pi "$@"
     ;;

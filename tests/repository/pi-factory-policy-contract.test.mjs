@@ -27,12 +27,28 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.deepEqual(settings.packages, [
     "npm:dev-loops@0.9.0",
     "npm:pi-subagents@0.42.1",
-    "npm:@input-output-hk/agent-review-pi@0.5.0",
+    {
+      source: "npm:@input-output-hk/agent-review-pi@0.5.0",
+      skills: [],
+    },
+    {
+      source: "npm:pi-taskflow@0.2.10",
+      autoload: false,
+      extensions: ["!**"],
+      skills: ["!**"],
+      prompts: ["!**"],
+      themes: ["!**"],
+    },
   ]);
   assert.equal(settings.subagents.defaultModel, `${settings.defaultProvider}/${settings.defaultModel}`);
   assert.equal(settings.subagents.defaultThinking, settings.defaultThinkingLevel);
   const smoke = await readFile(path.join(repoRoot, "scripts", "check-pi-devshell.sh"), "utf8");
+  const bootstrap = await readFile(path.join(repoRoot, "bootstrap.sh"), "utf8");
   assert.match(smoke, /pi --list-models/u);
+  assert.match(smoke, /skill:taskflow/u);
+  assert.match(smoke, /unsafe inherited taskflow resources are active/u);
+  assert.match(smoke, /Failed to load skill/u);
+  assert.match(bootstrap, /bash scripts\/check-pi-devshell\.sh/u);
 });
 
 test("delivery profiles keep prototype evidence local and promotion explicit", async () => {

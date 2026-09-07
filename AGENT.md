@@ -82,6 +82,9 @@ Follow [the productive loop](docs/factory/productive-loop.md):
   reviewer, no push/PR/hosted-CI wait, and no merge-readiness claim.
 - `/dev-loop production-ready issue <n>` selects the normal affected-target,
   draft, CI, and pre-approval loop. It is the default when no profile is named.
+- Dispatch the tracked `dev-loop` agent directly through `pi-subagents`. Never
+  wrap `/dev-loop` in `taskflow`: the current detached runner cannot prove its
+  peer closure, nested progress, or descendant cancellation in this project.
 - Routine work uses a 70% quality target and one automatic review round; all
   mandatory acceptance, correctness, security, provenance, and required-CI
   evidence still must be complete.
@@ -143,6 +146,10 @@ node scripts/ci/target-plan.mjs \
   --event pull_request \
   --delivery-profile production-ready
 ```
+
+Oxid is a Cargo workspace and has no root `package.json`. Never invent a
+generic `npm run verify` fallback. Execute the target planner's Cargo/Just/Nix
+commands and only the focused platform command selected for the changed paths.
 
 - L0 `basic`: policy, formatting, architecture, lint, and production compilation
   within five minutes; non-Rust changes avoid the Rust/Nix closure.

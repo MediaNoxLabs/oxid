@@ -165,9 +165,30 @@ if (JSON.stringify(registered) !== JSON.stringify(expected)) {
 }
 NODE
 
-pi_rpc_output="$({
+pi_rpc_stderr="$(mktemp "${TMPDIR:-/tmp}/oxid-pi-smoke.XXXXXX")"
+trap 'rm -f "$pi_rpc_stderr"' EXIT
+if ! pi_rpc_output="$({
   printf '%s\n' '{"type":"get_commands"}'
-} | pi --approve --offline --mode rpc --no-session)"
+} | pi --approve --offline --mode rpc --no-session 2>"$pi_rpc_stderr")"; then
+  echo "Pi offline RPC startup failed:" >&2
+  sed -n '1,20p' "$pi_rpc_stderr" >&2
+  exit 1
+fi
+if grep -F "Failed to load skill" "$pi_rpc_stderr" >/dev/null; then
+  echo "Pi rejected skill metadata during startup:" >&2
+  grep -F "Failed to load skill" "$pi_rpc_stderr" >&2
+  exit 1
+fi
+
+if jq -s -e '
+  map(select(.type == "response" and .command == "get_commands"))[0]
+  | .data.commands
+  | any(.name == "tf" or .name == "skill:taskflow")
+' <<<"$pi_rpc_output" >/dev/null; then
+  echo "unsafe inherited taskflow resources are active; project suppression did not take effect" >&2
+  echo "do not start Pi: detached peer resolution, nested progress, and descendant cancellation are unverified" >&2
+  exit 1
+fi
 
 loader_path="$repo_root/.pi/skills/agent-review/SKILL.md"
 if ! jq -s -e --arg loader_path "$loader_path" '
@@ -183,4 +204,4 @@ if ! jq -s -e --arg loader_path "$loader_path" '
   exit 1
 fi
 
-echo "Pi devshell smoke passed: pi $pi_version, $expected_provider/$expected_model, agent-review-pi 0.5.0 extension and skill available."
+echo "Pi devshell smoke passed: pi $pi_version, $expected_provider/$expected_model, agent-review-pi 0.5.0 extension and tracked skill available; unsafe taskflow resources suppressed."

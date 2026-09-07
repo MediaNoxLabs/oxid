@@ -20,7 +20,18 @@
   "packages": [
     "npm:dev-loops@0.9.0",
     "npm:pi-subagents@0.42.1",
-    "npm:@input-output-hk/agent-review-pi@0.5.0"
+    {
+      "source": "npm:@input-output-hk/agent-review-pi@0.5.0",
+      "skills": []
+    },
+    {
+      "source": "npm:pi-taskflow@0.2.10",
+      "autoload": false,
+      "extensions": ["!**"],
+      "skills": ["!**"],
+      "prompts": ["!**"],
+      "themes": ["!**"]
+    }
   ],
   "subagents": {
     "projectRootResolution": "git-root",

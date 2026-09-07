@@ -15,6 +15,14 @@ const EXPECTED_PACKAGES = new Map([
   ["pi-subagents", "0.42.1"],
   ["@input-output-hk/agent-review-pi", "0.5.0"],
 ]);
+const TASKFLOW_SUPPRESSION = Object.freeze({
+  source: "npm:pi-taskflow@0.2.10",
+  autoload: false,
+  extensions: ["!**"],
+  skills: ["!**"],
+  prompts: ["!**"],
+  themes: ["!**"],
+});
 const EXPECTED_PROJECT_VALUES = Object.freeze({
   "compaction.enabled": true,
   "compaction.reserveTokens": 16384,
@@ -370,11 +378,20 @@ export async function auditPi({
 
   const packageProblems = [];
   const configuredPackages = new Map((settings.packages ?? []).map((entry) => {
-    const match = String(entry).match(/^npm:(@[^/]+\/[^@]+|[^@]+)@(.+)$/u);
-    return match ? [match[1], match[2]] : [String(entry), null];
+    const source = typeof entry === "string" ? entry : entry?.source;
+    const match = String(source).match(/^npm:(@[^/]+\/[^@]+|[^@]+)@(.+)$/u);
+    return match ? [match[1], { version: match[2], entry }] : [String(source), { version: null, entry }];
   }));
   for (const [name, expected] of EXPECTED_PACKAGES) {
-    if (configuredPackages.get(name) !== expected) packageProblems.push(`${name}: expected exact pin ${expected}`);
+    if (configuredPackages.get(name)?.version !== expected) packageProblems.push(`${name}: expected exact pin ${expected}`);
+  }
+  const reviewEntry = configuredPackages.get("@input-output-hk/agent-review-pi")?.entry;
+  if (typeof reviewEntry !== "object" || JSON.stringify(reviewEntry.skills) !== "[]") {
+    packageProblems.push("agent-review-pi: bundled invalid skill must be suppressed in favor of the tracked compatibility skill");
+  }
+  const taskflowEntry = configuredPackages.get("pi-taskflow")?.entry;
+  if (JSON.stringify(taskflowEntry) !== JSON.stringify(TASKFLOW_SUPPRESSION)) {
+    packageProblems.push("pi-taskflow: inherited extension and skills must be fully suppressed until #301 and #196 pass");
   }
   checks.push(check("package-pins", packageProblems.length ? "fail" : "pass",
     packageProblems.length ? "Package pins are incomplete or floating" : "All Pi packages use exact tracked pins",

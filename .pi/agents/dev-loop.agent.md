@@ -66,6 +66,18 @@ An omitted profile means `production-ready`. Reject an unknown or conflicting pr
 
 `production-ready` retains the normal routed workflow, affected-target planning, draft and pre-approval gates, current-head evidence, and authority controls below. Promotion from `prototype` must be explicit: refresh the envelope's recorded `deliveryBase`, audit prototype shortcuts and known gaps, invalidate provisional evidence, rebuild the handoff envelope, recompute targets, and run the production-ready gates from the refreshed state.
 
+The parent MUST dispatch this tracked `dev-loop` agent directly through
+`pi-subagents`; it MUST NOT place this conductor inside `taskflow`. The current
+taskflow detached path has not proved isolated peer resolution, nested progress
+forwarding, or descendant cancellation. If a taskflow tool or skill is visible,
+stop and run `./bootstrap.sh --check` instead of selecting it. This guard remains
+until the canary in #301 passes and the package upgrade in #196 is reviewed.
+
+Oxid is a Rust/Cargo workspace without a root `package.json`. Validation MUST
+use the handoff envelope's target plan and its sanctioned Cargo, Just, Nix, or
+focused platform commands. Never substitute `npm run verify` or another
+ecosystem-generic command that is absent from the repository.
+
 When that skill is not available beneath the exact repository pin, stop at the tracked wrapper/preflight diagnostic; do not search other installation layouts.
 
 This entrypoint MUST stay thin: do not restate the skill's phase sequencing or workflow policy here. The envelope owns handoff sequencing; the skill owns routed strategy execution procedures.
