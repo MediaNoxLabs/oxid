@@ -132,13 +132,18 @@ const EXACT_NPM_PIN = new RegExp(`^npm:((?:@[A-Za-z0-9_.-]+/)?[A-Za-z0-9_.-]+)@(
 function parseExactNpmPins(settings) {
   const packages = settings?.packages;
   if (!Array.isArray(packages)) throw new Error(".pi/settings.json packages must be an array");
-  return packages.map((entry) => {
-    if (typeof entry !== "string" || !entry.startsWith("npm:")) {
+  return packages.flatMap((entry) => {
+    const source = typeof entry === "string" ? entry : entry?.source;
+    if (typeof source !== "string" || !source.startsWith("npm:")) {
       throw new Error("every repository Pi package must be an exact npm semantic-version pin");
     }
-    const match = entry.match(EXACT_NPM_PIN);
-    if (!match) throw new Error(`repository Pi package must use an exact npm semantic-version pin: ${entry}`);
-    return { name: match[1], version: match[2], spec: entry };
+    const match = source.match(EXACT_NPM_PIN);
+    if (!match) throw new Error(`repository Pi package must use an exact npm semantic-version pin: ${source}`);
+    // autoload:false entries are project-local deltas over inherited global
+    // packages. They constrain effective resources but do not claim that the
+    // package is installed in the repository-owned store.
+    if (typeof entry === "object" && entry.autoload === false) return [];
+    return [{ name: match[1], version: match[2], spec: source }];
   });
 }
 
@@ -187,7 +192,10 @@ async function resolveInstalledPinnedPackages({ candidates, pins }) {
       const manifest = await readJson(path.join(packageRoot, "package.json"), `${pin.name} package manifest`);
       if (manifest.name !== pin.name || manifest.version !== pin.version) {
         throw new Error(
-          `expected ${pin.name}@${pin.version} at ${requestedRoot}, found ${manifest.name ?? "unknown"}@${manifest.version ?? "unknown"}`,
+          `candidate checkout/package closure mismatch: expected ${pin.name}@${pin.version} at ${requestedRoot}, ` +
+          `found ${manifest.name ?? "unknown"}@${manifest.version ?? "unknown"} from ${candidate.source}. ` +
+          "Align the delivery branch's .pi/settings.json with an available exact package closure before dispatch; " +
+          "do not overwrite a shared closure used by another session.",
         );
       }
       installed.push({ ...pin, packageRoot, source: candidates[ownerIndex].source });

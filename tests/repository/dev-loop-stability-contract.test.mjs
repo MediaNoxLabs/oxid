@@ -18,6 +18,7 @@ import {
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
 import { normalizeDevLoopsArgs, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
+import { runResolveTrackerLocalSpec } from "../../scripts/github/resolve-tracker-local-spec.mjs";
 import { assertNoPreflightBypass, inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
 import { enforceFactoryAdmissionForCreation, normalizeLinkedWorktreeContext, normalizeWorktreeArgs, resolveRepositoryWorktreePath, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
 import { assertReviewedWorktreePin, oxidConsumerProvision } from "../../scripts/loop/ensure-worktree-consumer.mjs";
@@ -251,7 +252,10 @@ test("package resolution rejects mismatched identities and symlink escapes", asy
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
   const manifest = path.join(fixture.packageRoot, "package.json");
   await writeFile(manifest, JSON.stringify({ name: "dev-loops", version: "9.9.9" }));
-  await assert.rejects(resolveDevLoopsPackageRoot({ cwd: fixture.root }), /expected dev-loops@0\.9\.0/);
+  await assert.rejects(
+    resolveDevLoopsPackageRoot({ cwd: fixture.root }),
+    /candidate checkout\/package closure mismatch: expected dev-loops@0\.9\.0.*do not overwrite a shared closure used by another session/s,
+  );
 
   await rm(fixture.packageRoot, { recursive: true, force: true });
   const outside = await realMkdtemp("oxid-dev-loop-outside-");
@@ -261,6 +265,19 @@ test("package resolution rejects mismatched identities and symlink escapes", asy
   await writeFile(path.join(outside, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.9.0" }));
   await symlink(outside, fixture.packageRoot, "dir");
   await assert.rejects(resolveDevLoopsPackageRoot({ cwd: fixture.root }), /escapes allowed project roots/);
+});
+
+test("linked milestone checkout rejects a shared package pin from a newer branch before dispatch", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  await writeFile(path.join(fixture.worktree, ".pi", "settings.json"), JSON.stringify({
+    packages: ["npm:dev-loops@0.8.0"],
+  }));
+
+  await assert.rejects(
+    resolveDevLoopsPackageRoot({ cwd: fixture.worktree }),
+    /candidate checkout\/package closure mismatch: expected dev-loops@0\.8\.0.*found dev-loops@0\.9\.0 from git-common-root.*Align the delivery branch/s,
+  );
 });
 
 test("package resolution rejects an unregistered path with borrowed worktree metadata", async (t) => {
@@ -583,6 +600,8 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   assert.match(devLoop, /pre-flight-gate\.mjs --check-subagents.*before each later delegation or routed action/s);
   assert.match(devLoop, /gate coordination is authoritative for gate progression/);
   assert.match(devLoop, /run_draft_gate[\s\S]*requireCi: false/);
+  assert.match(devLoop, /MUST NOT place this conductor inside `taskflow`/u);
+  assert.match(devLoop, /Never substitute `npm run verify`/u);
   assert.match(devLoop, /stop on every other contradiction/);
   assert.doesNotMatch(devLoop, /review-routing\.mjs|~\/.pi|npm root -g|require\.resolve\(['"]dev-loops|<dev-loops-package-root>\/cli\/index\.mjs/);
   const review = await read(".pi/agents/review.agent.md");
@@ -1007,7 +1026,10 @@ async function installPinnedEnvelopeFixture(root, { nestedCore = false } = {}) {
   const coreRoot = path.join(corePackageRoot, "src", "loop");
   await mkdir(path.join(packageRoot, "cli"), { recursive: true });
   await mkdir(path.join(packageRoot, "scripts", "loop"), { recursive: true });
+  await mkdir(path.join(packageRoot, "scripts", "github"), { recursive: true });
   await mkdir(path.join(packageRoot, "scripts", "lib"), { recursive: true });
+  await mkdir(path.join(packageRoot, "skills", "docs"), { recursive: true });
+  await mkdir(path.join(packageRoot, "skills", "local-implementation"), { recursive: true });
   await mkdir(coreRoot, { recursive: true });
   await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.9.0" }));
   await writeFile(path.join(packageRoot, "cli", "index.mjs"), "");
@@ -1064,8 +1086,8 @@ async function installPinnedEnvelopeFixture(root, { nestedCore = false } = {}) {
     '  const gateState = options.gateState ? parseJsonText(options.gateState) : {};',
     '  const overrides = options.overrides ? parseJsonText(options.overrides) : undefined;',
     '  return {',
-    '    handoffVersion: 1, target, nextAction: bundle.nextAction, requiredReads: [],',
-    '    acceptance: { criteria: [] }, stopRules: [], executionMode: bundle.executionMode,',
+    '    handoffVersion: 1, target, nextAction: bundle.nextAction, requiredReads: Array.isArray(bundle.requiredReads) ? bundle.requiredReads : [],',
+    '    acceptance: { criteria: [{ id: "verify-green", must: "`npm run verify` passes with no failures.", severity: "required" }] }, stopRules: [], executionMode: bundle.executionMode,',
     '    asyncStartMode: "required", asyncStartEffective: "required", cwd: envelopeCwd,',
     '    ...gateState, overrides, maxCopilotRounds,',
     '    sanctionedCommands: { createPr: "scripts/dev-loops.mjs pr create" },',
@@ -1080,6 +1102,13 @@ async function installPinnedEnvelopeFixture(root, { nestedCore = false } = {}) {
     '  } catch (error) { stderr.write(`${error.message}\\n`); process.exitCode = 1; }',
     '}',
   ].join("\n"));
+  await writeFile(path.join(packageRoot, "scripts", "github", "resolve-tracker-local-spec.mjs"), [
+    'export async function runCli(argv, { stdout }) {',
+    '  stdout.write(`${JSON.stringify({ ok: true, argv, source: "exact-pinned-package" })}\\n`);',
+    '}',
+  ].join("\n"));
+  await writeFile(path.join(packageRoot, "skills", "docs", "public-dev-loop-contract.md"), "fixture package contract\n");
+  await writeFile(path.join(packageRoot, "skills", "local-implementation", "SKILL.md"), "fixture package skill\n");
   await writeFile(path.join(packageRoot, "scripts", "lib", "jq-output.mjs"), [
     'export function emitResult(result, { jq, silent, stdout, stderr }) {',
     '  let output = result;',
@@ -1158,9 +1187,9 @@ async function makeProspectiveEnvelopeRouteFixture(t, blockedAncestor) {
 
 test("tracked build-envelope route rejects non-directory prospective topology before emission", async (t) => {
   for (const fixtureCase of [
-    { name: "absent prospective path", blockedAncestor: null, accepted: true },
-    { name: "common-root tmp file", blockedAncestor: "tmp", accepted: false },
-    { name: "managed namespace file", blockedAncestor: "namespace", accepted: false },
+    { name: "absent prospective path", blockedAncestor: null, accepted: false, error: /repository read root is unavailable/u },
+    { name: "common-root tmp file", blockedAncestor: "tmp", accepted: false, error: /non-directory ancestor/u },
+    { name: "managed namespace file", blockedAncestor: "namespace", accepted: false, error: /non-directory ancestor/u },
   ]) {
     await t.test(fixtureCase.name, async (subtest) => {
       const fixture = await makeProspectiveEnvelopeRouteFixture(subtest, fixtureCase.blockedAncestor);
@@ -1178,7 +1207,7 @@ test("tracked build-envelope route rejects non-directory prospective topology be
       } else {
         assert.equal(code, 1);
         assert.equal(out.join(""), "");
-        assert.match(err.join(""), /non-directory ancestor/);
+        assert.match(err.join(""), fixtureCase.error);
       }
     });
   }
@@ -1207,6 +1236,10 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
       selectedStrategy: "local_implementation",
       executionMode: "bounded_handoff",
       nextAction: "fixture action",
+      requiredReads: [
+        "skills/docs/public-dev-loop-contract.md",
+        "skills/local-implementation/SKILL.md",
+      ],
       activeArtifact: { kind: "local_phase", issue: 150, phase: "issue-150" },
     },
   };
@@ -1236,7 +1269,17 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
   assert.equal(envelope.deliveryProfile, "production-ready");
   assert.equal(envelope.deliveryBase, "origin/milestone-0.4.0");
   assert.equal(envelope.deliveryTargetKind, "milestone");
-  assert.equal(envelope.requiredReads.includes(".pi/delivery-profiles.json"), true);
+  assert.deepEqual(envelope.requiredReadManifest.entries.map(({ logicalPath, owner }) => [logicalPath, owner]), [
+    ["skills/docs/public-dev-loop-contract.md", "package"],
+    ["skills/local-implementation/SKILL.md", "package"],
+    [".pi/delivery-profiles.json", "repository"],
+  ]);
+  assert.deepEqual(envelope.requiredReads, envelope.requiredReadManifest.entries.map(({ resolvedPath }) => resolvedPath));
+  assert.equal(envelope.requiredReads.every((requiredRead) => path.isAbsolute(requiredRead)), true);
+  assert.equal(envelope.requiredReadManifest.roots.repository, issueTarget);
+  assert.equal(envelope.requiredReadManifest.roots.package, await realpath(path.join(root, ".pi", "npm", "node_modules", "dev-loops")));
+  assert.doesNotMatch(envelope.acceptance.criteria.find(({ id }) => id === "verify-green").must, /npm run verify/u);
+  assert.match(envelope.acceptance.criteria.find(({ id }) => id === "verify-green").must, /Oxid target plan/u);
   assert.deepEqual(envelope.overrides, { preferLocal: true });
   assert.equal(envelope.maxCopilotRounds, 2);
   assert.ok(envelope.sanctionedCommands);
@@ -1252,6 +1295,19 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
   assert.equal(prototype.nextAction.includes("prototype hypothesis locally"), true);
   assert.deepEqual(prototype.stopRules, ["remote-mutation", "hosted-ci", "merge-readiness", "merge"]);
   assert.equal(Object.hasOwn(prototype, "gateConfig"), false);
+
+  const trackerOut = [];
+  const trackerCode = await runResolveTrackerLocalSpec(["--repo", "owner/repo", "--issue", "150"], {
+    cwd: issueTarget,
+    stdout: captureSink(trackerOut),
+    stderr: captureSink([]),
+  });
+  assert.equal(trackerCode, 0);
+  assert.deepEqual(JSON.parse(trackerOut.join("")), {
+    ok: true,
+    argv: ["--repo", "owner/repo", "--issue", "150"],
+    source: "exact-pinned-package",
+  });
 
   const equals = await run(["--jq=.cwd", "loop", "build-envelope", `--input=${input}`, "--repo=owner/repo", "--delivery-base=milestone-0.4.0"]);
   assert.deepEqual(equals, { code: 0, out: `${issueTarget}\n`, err: "" });
@@ -1276,6 +1332,24 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
   const malformed = await run(["loop", "build-envelope", "--input", "malformed.json", "--delivery-base", "milestone-0.4.0"]);
   assert.equal(malformed.code, 1);
   assert.match(malformed.err, /Invalid JSON/);
+
+  await writeFile(path.join(issueTarget, "missing-read.json"), JSON.stringify({
+    ...resolver,
+    bundle: { ...resolver.bundle, requiredReads: ["skills/docs/missing.md"] },
+  }));
+  const missingRead = await run(["loop", "build-envelope", "--input", "missing-read.json", "--delivery-base", "milestone-0.4.0"]);
+  assert.equal(missingRead.code, 1);
+  assert.equal(missingRead.out, "");
+  assert.match(missingRead.err, /required read is missing from its package root/u);
+
+  await writeFile(path.join(issueTarget, "traversal-read.json"), JSON.stringify({
+    ...resolver,
+    bundle: { ...resolver.bundle, requiredReads: ["skills/../package.json"] },
+  }));
+  const traversalRead = await run(["loop", "build-envelope", "--input", "traversal-read.json", "--delivery-base", "milestone-0.4.0"]);
+  assert.equal(traversalRead.code, 1);
+  assert.equal(traversalRead.out, "");
+  assert.match(traversalRead.err, /traversal or ambiguous segments/u);
 });
 
 test("tracked pre-flight wrapper reports Pi child dispatch availability deterministically", async (t) => {

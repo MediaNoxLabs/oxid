@@ -8,6 +8,7 @@ import path from "node:path";
 import { validateBranchName } from "./ci/contribution-policy.mjs";
 import { extractDeliveryTargetOption } from "./lib/delivery-target.mjs";
 import { normalizeHandoffEnvelopeCwd } from "./lib/handoff-envelope-cwd.mjs";
+import { applyRepositoryAcceptance, resolveHandoffRequiredReads } from "./lib/handoff-required-reads.mjs";
 import { runManagedChild } from "./lib/managed-child-process.mjs";
 import { resolveDevLoopsPackageRoot } from "./lib/dev-loop-runtime.mjs";
 import { enforceSingleBase, pinnedPublicRoute, readLongOptionValues } from "./lib/pinned-dev-loops-args.mjs";
@@ -213,7 +214,12 @@ async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
     });
     const normalized = await normalizeHandoffEnvelopeCwd(candidate, resolved, core);
     const { contract, profile } = await loadDeliveryProfile(resolved.gitRoot, deliveryArgs.requested);
-    const envelope = applyDeliveryProfile(normalized, contract, profile, deliveryTarget);
+    const profiled = applyDeliveryProfile(normalized, contract, profile, deliveryTarget);
+    const repositoryAcceptance = applyRepositoryAcceptance(profiled);
+    const envelope = await resolveHandoffRequiredReads(repositoryAcceptance, {
+      repositoryRoot: repositoryAcceptance.cwd,
+      packageRoot: resolved.packageRoot,
+    });
     const validation = core.validateHandoffEnvelope(envelope);
     if (!validation.ok) throw new Error(`profiled handoff envelope failed core validation: ${JSON.stringify(validation.errors)}`);
     return output.emitResult(envelope, { jq: options.jq, silent: options.silent, stdout, stderr });

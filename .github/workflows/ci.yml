@@ -126,9 +126,10 @@ jobs:
     needs: plan
     if: needs.plan.outputs.unit_linux == 'true'
     runs-on: ubuntu-24.04
-    # Keep the unit command within its 5-10 minute target while reserving two
-    # bounded minutes for Nix/cache setup, metrics, and GitHub post-job cleanup.
-    timeout-minutes: 12
+    # Keep the unit command bounded while reserving enough time for cold Nix
+    # setup, sccache metrics, and GitHub post-job cleanup. A green command on a
+    # cold runner can otherwise be cancelled at the old 12-minute boundary.
+    timeout-minutes: 14
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -197,10 +198,10 @@ jobs:
     needs: plan
     if: needs.plan.outputs.ui_linux == 'true'
     runs-on: ubuntu-24.04
-    # A read-only PR with no trusted sccache seed needed more than 15 minutes
-    # to compile every desktop/mobile feature profile. Keep the cold fallback
-    # bounded without making an empty cache a false correctness failure.
-    timeout-minutes: 20
+    # A read-only PR with no trusted sccache seed can finish the command at the
+    # 20-minute boundary. Keep the cold fallback bounded while leaving time for
+    # sccache metrics and GitHub post-job cleanup.
+    timeout-minutes: 22
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
