@@ -196,7 +196,6 @@ button {
 }
 
 .profile-shortcut:focus-visible,
-.privacy-toggle:focus-visible,
 .back-action:focus-visible,
 .demo-profile-banner__action:focus-visible,
 .profile-sheet__item:focus-visible,
@@ -302,7 +301,6 @@ textarea:focus-visible {
   display: grid;
   width: 2.65rem;
   height: 2.65rem;
-  justify-self: end;
   place-content: center;
   color: var(--accent);
 }
@@ -314,30 +312,10 @@ textarea:focus-visible {
   gap: var(--space-2);
 }
 
-.privacy-toggle {
-  display: grid;
+.app-header__spacer {
+  display: block;
   width: 2.65rem;
   height: 2.65rem;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-pill);
-  background: var(--surface-4);
-  color: var(--text-soft);
-  cursor: pointer;
-}
-
-.privacy-toggle.is-masked {
-  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface-4));
-  color: var(--accent);
-}
-
-.privacy-toggle span,
-.privacy-toggle svg {
-  display: block;
-  width: 1.25rem;
-  height: 1.25rem;
 }
 
 .profile-shortcut {
@@ -1727,10 +1705,10 @@ textarea:focus-visible {
   gap: var(--space-2);
 }
 
-.proof-benchmark-row {
+.proof-benchmark-row.capability-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
   gap: var(--space-3);
   padding: var(--space-3);
 }
@@ -1740,6 +1718,30 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
   color: var(--text-muted);
   line-height: 1.4;
+}
+
+.proof-benchmark-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2) var(--space-3);
+  margin: var(--space-3) 0 0;
+}
+
+.proof-benchmark-metrics div {
+  min-width: 0;
+}
+
+.proof-benchmark-metrics dt {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.proof-benchmark-metrics dd {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: var(--font-caption);
 }
 
 .proof-benchmark-row .secondary-button {
@@ -3025,15 +3027,31 @@ select:focus-visible {
     grid-template-columns: 1fr;
   }
 
-  .developer-tool,
-  .proof-benchmark-row {
+  .developer-tool {
     grid-template-columns: 1fr;
     align-items: stretch;
   }
 
-  .developer-tool .secondary-button,
-  .proof-benchmark-row .secondary-button {
+  .developer-tool .secondary-button {
     width: 100%;
+  }
+
+  .proof-benchmark-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .proof-benchmark-row.capability-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .proof-benchmark-row .secondary-button {
+    grid-column: 2;
+    justify-self: start;
+    width: auto;
+  }
+
+  .proof-benchmark-metrics {
+    grid-template-columns: 1fr;
   }
 
   .settings-card {

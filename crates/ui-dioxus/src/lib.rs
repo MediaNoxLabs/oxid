@@ -3725,9 +3725,9 @@ fn WalletApp() -> Element {
                 button {
                     class: if *profile_menu_open.read() { "profile-shortcut active" } else { "profile-shortcut" },
                     r#type: "button",
-                    aria_label: "Open profile menu",
+                    aria_label: "Open current profile settings",
                     aria_expanded: if *profile_menu_open.read() { "true" } else { "false" },
-                    title: "Profile and settings",
+                    title: "Current profile settings",
                     onclick: move |_| {
                         let next = !*profile_menu_open.read();
                         profile_menu_open.set(next);
@@ -3739,18 +3739,6 @@ fn WalletApp() -> Element {
                     small { "{brand.product_name()} {brand.tagline()}" }
                 }
                 div { class: "app-header__actions",
-                    button {
-                        class: if secret_mode_state().masked { "privacy-toggle is-masked" } else { "privacy-toggle" },
-                        r#type: "button",
-                        aria_label: if secret_mode_state().masked { "Show private values for 30 seconds" } else { "Hide private values" },
-                        aria_pressed: if secret_mode_state().masked { "true" } else { "false" },
-                        title: if secret_mode_state().masked { "Show private values for 30 seconds" } else { "Hide private values" },
-                        onclick: move |_| secret_mode.toggle(),
-                        span {
-                            aria_hidden: "true",
-                            dangerous_inner_html: if secret_mode_state().masked { LUCIDE_EYE_OFF } else { LUCIDE_EYE },
-                        }
-                    }
                     if can_go_back {
                         button {
                             class: "back-action",
@@ -3764,11 +3752,7 @@ fn WalletApp() -> Element {
                             span { "Back" }
                         }
                     } else {
-                        span {
-                            class: "app-header__mark brand-mark",
-                            aria_hidden: "true",
-                            dangerous_inner_html: "{brand.logo_svg()}",
-                        }
+                        span { class: "app-header__spacer", aria_hidden: "true" }
                     }
                 }
             }
@@ -3811,6 +3795,14 @@ fn WalletApp() -> Element {
                             profile_menu_open.set(false);
                         },
                         "Settings & backup"
+                    }
+                    button {
+                        class: "profile-sheet__item",
+                        r#type: "button",
+                        aria_label: if secret_mode_state().masked { "Show private values for 30 seconds" } else { "Hide private values" },
+                        aria_pressed: if secret_mode_state().masked { "true" } else { "false" },
+                        onclick: move |_| secret_mode.toggle(),
+                        if secret_mode_state().masked { "Show balances for 30 seconds" } else { "Hide balances now" }
                     }
                     {developer_profile_shortcut}
                     button {
@@ -10886,8 +10878,6 @@ const LUCIDE_ACTIVITY: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="
 const LUCIDE_SCAN_LINE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>"#;
 const LUCIDE_RECEIVE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>"#;
 const LUCIDE_SEND: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>"#;
-const LUCIDE_EYE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.06 12.35a1 1 0 0 1 0-.7C3.73 7.6 7.7 5 12 5c4.3 0 8.27 2.6 9.94 6.65a1 1 0 0 1 0 .7C20.27 16.4 16.3 19 12 19c-4.3 0-8.27-2.6-9.94-6.65"/><circle cx="12" cy="12" r="3"/></svg>"#;
-const LUCIDE_EYE_OFF: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 2 20 20"/><path d="M6.71 6.71C4.9 7.9 3.52 9.6 2.66 11.65a1 1 0 0 0 0 .7C4.33 16.4 8.3 19 12.6 19c1.3 0 2.56-.24 3.72-.68"/><path d="M10.73 5.08A9 9 0 0 1 12.6 5c4.3 0 8.27 2.6 9.94 6.65a1 1 0 0 1 0 .7 11.1 11.1 0 0 1-2.1 3.18"/><path d="M14.72 14.72A3 3 0 0 1 10.48 10.48"/></svg>"#;
 
 #[cfg(test)]
 mod tests {

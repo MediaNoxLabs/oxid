@@ -600,7 +600,25 @@ fn main() {
             });
         launcher.with_cfg(config).launch(oxid_ui_dioxus::App);
     }
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    #[cfg(all(
+        feature = "desktop",
+        not(any(target_os = "ios", target_os = "android"))
+    ))]
+    launcher
+        .with_cfg(
+            dioxus::desktop::Config::new().with_window(
+                dioxus::desktop::WindowBuilder::new()
+                    .with_title(generated_brand::BRAND_PROFILE.product_name())
+                    .with_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(390.0, 844.0))
+                    .with_min_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(360.0, 640.0))
+                    .with_resizable(true),
+            ),
+        )
+        .launch(oxid_ui_dioxus::App);
+    #[cfg(all(
+        not(feature = "desktop"),
+        not(any(target_os = "ios", target_os = "android"))
+    ))]
     launcher.launch(oxid_ui_dioxus::App);
 }
 

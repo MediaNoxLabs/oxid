@@ -46,31 +46,15 @@ fn duration_text(duration: Duration) -> String {
     }
 }
 
-fn report_text(report: ProofBenchmarkReport) -> String {
-    let row_qualifier = if report.row_count.is_estimated() {
-        "estimated rows"
-    } else {
-        "measured rows"
-    };
-    let verification = match report.verification_result {
+fn verification_text(report: ProofBenchmarkReport) -> String {
+    match report.verification_result {
         ProofBenchmarkVerification::Verified => report.verification.map_or_else(
             || "verified".to_owned(),
             |duration| format!("verified in {}", duration_text(duration)),
         ),
         ProofBenchmarkVerification::Failed => "verification failed".to_owned(),
         ProofBenchmarkVerification::Skipped => "verification unavailable above k=14".to_owned(),
-    };
-    format!(
-        "realized k={} · {} {} · {} hashes · keygen {} · prove {} · {} · {} bytes",
-        report.realized_k,
-        report.row_count.value(),
-        row_qualifier,
-        report.hash_chain_length,
-        duration_text(report.key_generation),
-        duration_text(report.proving),
-        verification,
-        report.proof_bytes,
-    )
+    }
 }
 
 async fn run_one(benchmark: Arc<dyn RunProofBenchmarkUseCase>, k: u8) -> BenchmarkOutcome {
@@ -129,7 +113,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                 "k=18–21 can consume substantial memory, time, network, and disk. Oxid intentionally does not run high-k proofs in CI. Leaving this page does not cancel an admitted worker."
             }
             p { class: "status-pill", "Process RSS/CPU unavailable · no reviewed public sampler" }
-            div { class: "button-row",
+            div { class: "button-row proof-benchmark-controls",
                 label { class: "network-field",
                     span { "Run-all maximum k" }
                     input {
@@ -214,7 +198,18 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                                     if let Some(outcome) = outcome {
                                         match outcome {
                                             BenchmarkOutcome::Completed(report) => rsx! {
-                                                small { "{report_text(report)}" }
+                                                dl { class: "proof-benchmark-metrics", aria_label: "Circuit k={k} benchmark metrics",
+                                                    div { dt { "Circuit" } dd { "k={report.realized_k}" } }
+                                                    div {
+                                                        dt { if report.row_count.is_estimated() { "Estimated rows" } else { "Measured rows" } }
+                                                        dd { "{report.row_count.value()}" }
+                                                    }
+                                                    div { dt { "Hashes" } dd { "{report.hash_chain_length}" } }
+                                                    div { dt { "Keygen" } dd { "{duration_text(report.key_generation)}" } }
+                                                    div { dt { "Prove" } dd { "{duration_text(report.proving)}" } }
+                                                    div { dt { "Verify" } dd { "{verification_text(report)}" } }
+                                                    div { dt { "Proof size" } dd { "{report.proof_bytes} bytes" } }
+                                                }
                                             },
                                             BenchmarkOutcome::Failed(error) => rsx! {
                                                 small { "{error}" }
