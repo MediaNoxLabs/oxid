@@ -146,7 +146,18 @@ export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaul
   if (current?.baseRefName !== eligibility.target.branch || current?.baseRefOid !== localBase || current?.headRefOid !== pr.headRefOid) {
     throw new Error("pull request head or milestone base changed during the merge audit");
   }
-  return { ok: true, repo: options.repo, pr: options.pr, issue: eligibility.issue, target: eligibility.target.branch, headSha: pr.headRefOid, baseSha: localBase, checks: CRITICAL_CHECKS.length, followUps: triage.followUpIssues };
+  return {
+    ok: true,
+    repo: options.repo,
+    pr: options.pr,
+    issue: eligibility.issue,
+    target: eligibility.target.branch,
+    headSha: pr.headRefOid,
+    baseSha: localBase,
+    worktree: root,
+    checks: CRITICAL_CHECKS.length,
+    followUps: triage.followUpIssues,
+  };
 }
 
 export function runCli(argv = process.argv.slice(2), runtime = {}) {
@@ -162,7 +173,20 @@ export function runCli(argv = process.argv.slice(2), runtime = {}) {
       cwd: runtime.cwd ?? process.cwd(), label: "merge audited milestone pull request",
     });
   }
-  (runtime.stdout ?? process.stdout).write(`${JSON.stringify({ ...result, merged: options.execute })}\n`);
+  const closeout = options.execute ? {
+    required: true,
+    runFrom: "outside the merged PR worktree after metrics are recorded",
+    command: [
+      process.execPath,
+      path.join("scripts", "worktree-lifecycle.mjs"),
+      "closeout-pr",
+      "--pr", String(options.pr),
+      "--path", result.worktree,
+      "--expect-head", result.headSha,
+      "--execute",
+    ],
+  } : null;
+  (runtime.stdout ?? process.stdout).write(`${JSON.stringify({ ...result, merged: options.execute, closeout })}\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

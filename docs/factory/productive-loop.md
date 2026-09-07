@@ -197,6 +197,22 @@ node scripts/worktree-lifecycle.mjs audit
 node scripts/worktree-lifecycle.mjs audit --json
 ```
 
+After a PR is merged, its supervisor records the final metric/closeout receipt,
+changes to another checkout, and closes the exact merged worktree immediately:
+
+```bash
+node scripts/worktree-lifecycle.mjs closeout-pr \
+  --pr <number> --path /absolute/managed/worktree \
+  --expect-head <merged-pr-head-sha> --execute
+```
+
+This is an exact PR closeout, not a sweep. The command re-reads the hosted
+merged PR and requires an exact head, branch, and canonical managed path. It
+refuses the primary checkout, its current working directory, dirty or locked
+worktrees, and all unavailable or mismatched evidence. Other Codex Desktop and
+Pi sessions may retain their worktrees; their mere presence or age is not
+cleanup authority.
+
 Mutation is intentionally awkward and single-target. It requires an exact
 registered path, the expected head, and `--execute`. Worktree removal also
 requires a clean head already integrated into its recorded milestone or

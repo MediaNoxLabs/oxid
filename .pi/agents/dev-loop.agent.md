@@ -42,7 +42,11 @@ Do not invoke a package `cli/index.mjs` directly. Do not use user-home, global n
 3. Pass the resolver output file, current gate state, delivery target, and invocation profile to `node <git-root>/scripts/dev-loops.mjs loop build-envelope --input <resolver-output> --gate-state <json> --delivery-base <target> --delivery-profile <profile>`. Parse only the exact `prototype` or `production-ready` token from the invocation at this point; an omitted token means `production-ready`. Do not call the package builder directly. The tracked route loads the candidate checkout's `.devloops`, preserves pinned derivation, records the immutable delivery base in the envelope, applies the tracked delivery-profile envelope, reuses an identity-matching existing canonical managed worktree, rejects ambiguous/foreign/nested topology, and validates the normalized envelope with the exact pinned core validator before emission.
 4. **Validate the emitted envelope** with `validateHandoffEnvelope()` before consuming any field. If validation returns `ok: false`, reject the handoff with the structured error — do not load requiredReads, do not execute nextAction, do not delegate. Stop if `deliveryProfile` does not equal the requested/default profile or `deliveryBase` does not equal the issue target.
 5. Read the envelope as the first artifact.
-6. Load every path listed in `requiredReads` (in order).
+6. Load every absolute path listed in `requiredReads` (in order). The repository
+   wrapper has already resolved and verified each entry. Inspect
+   `requiredReadManifest` when ownership matters; never reinterpret a path
+   relative to the current directory, search for a missing read, or substitute
+   a global/user-home package copy.
 7. Execute `nextAction` constrained by `stopRules` and `acceptance`.
 
 **The agent MUST NOT load skills, route packs, or delegate work before the envelope is built and read.** The derivation contract is Workflow Handoff Contract (pinned package path `.pi/npm/node_modules/dev-loops/skills/docs/workflow-handoff-contract.md`).
@@ -88,6 +92,12 @@ focused platform commands. Never substitute `npm run verify` or another
 ecosystem-generic command that is absent from the repository.
 
 When that skill is not available beneath the exact repository pin, stop at the tracked wrapper/preflight diagnostic; do not search other installation layouts.
+
+When the installed skill calls for the tracker-backed spec helper, invoke only
+the tracked repository façade at
+`node <git-root>/scripts/github/resolve-tracker-local-spec.mjs`. That façade
+loads the helper from the exact package root selected by the same pin resolver;
+never guess a package-relative `scripts/` path.
 
 This entrypoint MUST stay thin: do not restate the skill's phase sequencing or workflow policy here. The envelope owns handoff sequencing; the skill owns routed strategy execution procedures.
 

@@ -319,11 +319,64 @@ function describe(root, entry, now = Date.now(), githubEvidence = unavailableEvi
     branch: typeof entry.branch === "string" ? entry.branch.replace("refs/heads/", "") : "(detached)",
     head,
     clean,
+    locked: entry.locked !== undefined,
     merged,
     mergeProof,
     ageDays,
     targetGiB: targetGiB(worktree),
   };
+}
+
+export function managedWorktreeSelector(worktree, primary) {
+  if (typeof worktree !== "string" || typeof primary !== "string") return null;
+  const relative = path.relative(path.resolve(primary), path.resolve(worktree));
+  if (relative === "" || path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+    return null;
+  }
+  const parts = relative.split(path.sep);
+  if (parts.length !== 4 || parts[0] !== "tmp" || parts[1] !== "worktrees" || parts[2] !== "dev-loops") {
+    return null;
+  }
+  const match = parts[3].match(/^(issue|pr)-([1-9]\d*)$/u);
+  return match ? { kind: match[1], number: Number(match[2]) } : null;
+}
+
+function pathContains(parent, candidate) {
+  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
+  return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
+}
+
+export function prCloseoutEligibility(item, {
+  primary,
+  currentCwd,
+  prNumber,
+  pullRequest,
+}) {
+  if (item.worktree === primary) return "primary checkout";
+  if (!item.clean) return "worktree is dirty";
+  if (item.locked) return "worktree is locked by an active owner";
+  if (pathContains(item.worktree, currentCwd)) return "run closeout from outside the selected worktree";
+  const selector = managedWorktreeSelector(item.worktree, primary);
+  if (selector === null) return "worktree is not a canonical managed delivery checkout";
+  if (pullRequest?.state !== "MERGED" || typeof pullRequest?.mergedAt !== "string" || pullRequest.mergedAt.length === 0) {
+    return "pull request is not merged";
+  }
+  if (!SHA_PATTERN.test(pullRequest?.headRefOid ?? "") || pullRequest.headRefOid !== item.head) {
+    return "worktree head does not match the merged pull request head";
+  }
+  if (typeof pullRequest?.headRefName !== "string" || pullRequest.headRefName !== item.branch) {
+    return "worktree branch does not match the merged pull request branch";
+  }
+  if (selector.kind === "pr" && selector.number !== prNumber) {
+    return "PR worktree selector does not match the merged pull request";
+  }
+  if (selector.kind === "issue") {
+    const branchIssue = item.branch.match(/^[a-z][a-z0-9-]*\/issue-([1-9]\d*)$/u);
+    if (branchIssue === null || Number(branchIssue[1]) !== selector.number) {
+      return "issue worktree selector does not match its contribution branch";
+    }
+  }
+  return null;
 }
 
 export function removalEligibility(item, { primary, olderThanDays = 7 }) {
@@ -432,6 +485,16 @@ function requireExecute(argv) {
   if (!argv.includes("--execute")) throw new Error("refusing mutation without --execute");
 }
 
+function pullRequestForCloseout(root, prNumber) {
+  const repository = githubRepositoryFromRemote(git(root, ["remote", "get-url", "origin"]));
+  if (repository === null) throw new Error("closeout requires an exact github.com origin repository");
+  const output = execFileSync("gh", [
+    "pr", "view", String(prNumber), "--repo", repository,
+    "--json", "state,mergedAt,headRefName,headRefOid",
+  ], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  return JSON.parse(output);
+}
+
 function main(argv = process.argv.slice(2)) {
   const command = argv[0] ?? "audit";
   const root = git(process.cwd(), ["worktree", "list", "--porcelain"])
@@ -445,6 +508,28 @@ function main(argv = process.argv.slice(2)) {
 
   const item = selectedItem(root, entries, argv, githubEvidence);
   requireExecute(argv);
+  if (command === "closeout-pr") {
+    const prNumber = Number(option(argv, "--pr"));
+    if (!Number.isSafeInteger(prNumber) || prNumber < 1) throw new Error("--pr must be a positive integer");
+    const pullRequest = pullRequestForCloseout(root, prNumber);
+    const reason = prCloseoutEligibility(item, {
+      primary,
+      currentCwd: realpathSync(process.cwd()),
+      prNumber,
+      pullRequest,
+    });
+    if (reason) throw new Error(`refusing PR closeout: ${reason}`);
+    execFileSync("git", ["-C", root, "worktree", "remove", "--", item.worktree], { stdio: "inherit" });
+    process.stdout.write(`${JSON.stringify({
+      closedOut: true,
+      pr: prNumber,
+      worktree: item.worktree,
+      head: item.head,
+      branch: item.branch,
+      mergedAt: pullRequest.mergedAt,
+    })}\n`);
+    return;
+  }
   if (command === "clean-target") {
     if (item.worktree === primary) throw new Error("refusing to clean the primary checkout target");
     if (!item.clean) throw new Error("refusing to clean a dirty worktree");

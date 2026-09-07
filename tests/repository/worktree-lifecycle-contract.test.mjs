@@ -9,8 +9,10 @@ import {
   indexGithubMergeProofs,
   indexRetiredPromotionAncestryProofs,
   loadGithubMergeEvidence,
+  managedWorktreeSelector,
   parseGithubMergeResponse,
   parseWorktrees,
+  prCloseoutEligibility,
   removalEligibility,
   resolveMergeState,
   worktreeArchiveRef,
@@ -41,6 +43,90 @@ test("removal requires a clean, merged, old, non-primary worktree", () => {
     "head is not integrated into origin/develop (merge proof: unavailable)",
   );
   assert.match(removalEligibility({ ...candidate, ageDays: 2 }, { primary: "/repo" }), /newer than 7 days/);
+});
+
+test("managed worktree selector accepts only canonical issue and PR paths", () => {
+  assert.deepEqual(managedWorktreeSelector("/repo/tmp/worktrees/dev-loops/issue-315", "/repo"), {
+    kind: "issue", number: 315,
+  });
+  assert.deepEqual(managedWorktreeSelector("/repo/tmp/worktrees/dev-loops/pr-313", "/repo"), {
+    kind: "pr", number: 313,
+  });
+  for (const invalid of [
+    "/repo",
+    "/repo/tmp/worktrees/dev-loops/issue-0",
+    "/repo/tmp/worktrees/dev-loops/feature-315",
+    "/repo/other/issue-315",
+    "/outside/tmp/worktrees/dev-loops/issue-315",
+  ]) {
+    assert.equal(managedWorktreeSelector(invalid, "/repo"), null);
+  }
+});
+
+test("PR closeout requires exact merged evidence and a non-current unlocked canonical worktree", () => {
+  const head = "a".repeat(40);
+  const item = {
+    worktree: "/repo/tmp/worktrees/dev-loops/issue-315",
+    branch: "fix/issue-315",
+    head,
+    clean: true,
+    locked: false,
+  };
+  const options = {
+    primary: "/repo",
+    currentCwd: "/repo/tmp/worktrees/dev-loops/issue-309",
+    prNumber: 316,
+    pullRequest: {
+      state: "MERGED",
+      mergedAt: "2026-09-07T12:29:04Z",
+      headRefName: item.branch,
+      headRefOid: head,
+    },
+  };
+  assert.equal(prCloseoutEligibility(item, options), null);
+  assert.equal(prCloseoutEligibility({ ...item, worktree: "/repo" }, options), "primary checkout");
+  assert.equal(prCloseoutEligibility({ ...item, clean: false }, options), "worktree is dirty");
+  assert.equal(
+    prCloseoutEligibility({ ...item, locked: true }, options),
+    "worktree is locked by an active owner",
+  );
+  assert.equal(
+    prCloseoutEligibility(item, { ...options, currentCwd: `${item.worktree}/crates` }),
+    "run closeout from outside the selected worktree",
+  );
+  assert.equal(
+    prCloseoutEligibility({ ...item, worktree: "/repo/other/issue-315" }, options),
+    "worktree is not a canonical managed delivery checkout",
+  );
+  assert.equal(
+    prCloseoutEligibility(item, { ...options, pullRequest: { ...options.pullRequest, state: "OPEN" } }),
+    "pull request is not merged",
+  );
+  assert.equal(
+    prCloseoutEligibility(item, {
+      ...options,
+      pullRequest: { ...options.pullRequest, headRefOid: "b".repeat(40) },
+    }),
+    "worktree head does not match the merged pull request head",
+  );
+  assert.equal(
+    prCloseoutEligibility(item, {
+      ...options,
+      pullRequest: { ...options.pullRequest, headRefName: "fix/issue-314" },
+    }),
+    "worktree branch does not match the merged pull request branch",
+  );
+  assert.equal(
+    prCloseoutEligibility({ ...item, branch: "fix/issue-314" }, {
+      ...options,
+      pullRequest: { ...options.pullRequest, headRefName: "fix/issue-314" },
+    }),
+    "issue worktree selector does not match its contribution branch",
+  );
+  assert.equal(
+    prCloseoutEligibility({ ...item, worktree: "/repo/tmp/worktrees/dev-loops/pr-313" }, options),
+    "PR worktree selector does not match the merged pull request",
+  );
 });
 
 test("archive requires a clean, old, unmerged worktree and explicit owner approval", () => {
