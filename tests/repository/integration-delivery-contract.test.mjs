@@ -150,18 +150,17 @@ test("Scorecard scans durable branch deliveries with its exact context", async (
   assert.equal((scorecard.match(/^    name: Scorecard analysis$/gm) || []).length, 1);
 });
 
-test("documentation links always emit a context and skip outbound work safely", async () => {
+test("documentation links preserve the PR context while probing only weekly or on demand", async () => {
   const links = await read(".github/workflows/docs-link-check.yml");
   assert.equal(eventBranches(links, "pull_request"), null);
   assert.doesNotMatch(eventBlock(links, "pull_request"), /^    paths(?:-ignore)?:/m);
-  assert.deepEqual(new Set(eventBranches(links, "push")), new Set(["develop", "main"]));
-  assert.doesNotMatch(eventBlock(links, "push"), /^    paths(?:-ignore)?:/m);
-  for (const eventCase of ["workflow_dispatch)", "pull_request)", "push)"]) assert.match(links, new RegExp(eventCase.replace(/[()]/g, "\\$&")));
-  for (const safety of [/fetch-depth: 0/, /valid_sha/, /git cat-file -e/, /git merge-base/, /git diff --quiet/, /running the link check conservatively/]) assert.match(links, safety);
-  assert.equal((links.match(/if: steps\.changes\.outputs\.docs_changed == 'true'/g) || []).length, 2);
-  assert.match(links, /if \[\[ "\$EVENT_NAME" == "pull_request" \]\]; then\n\s+nix develop \.#docs --command node scripts\/docs\/check-links\.mjs --candidate\n\s+else\n\s+nix develop \.#docs --command node scripts\/docs\/check-links\.mjs\n\s+fi/);
-  assert.match(links, /EVENT_NAME: \$\{\{ github\.event_name \}\}/);
-  assert.doesNotMatch(links, /--exclude.*blob\/integration/);
+  assert.throws(() => eventBlock(links, "push"), /missing push trigger/);
+  assert.match(links, /^  workflow_dispatch: \{\}$/m);
+  assert.match(links, /^  schedule:\n    - cron: "30 4 \* \* 0"$/m);
+  assert.match(links, /name: Check documentation links\n    if: github\.event_name == 'pull_request'/);
+  assert.match(links, /name: Check documentation links\n    if: github\.event_name != 'pull_request'/);
+  assert.match(links, /nix develop \.#docs --command node scripts\/docs\/check-links\.mjs/);
+  assert.doesNotMatch(links, /--candidate/);
 });
 
 test("Pages builds and publishes only from main", async () => {
