@@ -27,28 +27,27 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.deepEqual(settings.packages, [
     "npm:dev-loops@0.9.0",
     "npm:pi-subagents@0.42.1",
-    {
-      source: "npm:@input-output-hk/agent-review-pi@0.5.0",
-      skills: [],
-    },
+    "npm:typebox@1.3.9",
     {
       source: "npm:pi-taskflow@0.2.10",
-      autoload: false,
-      extensions: ["!**"],
-      skills: ["!**"],
-      prompts: ["!**"],
-      themes: ["!**"],
+      extensions: [],
+      skills: [],
+      prompts: [],
+      themes: [],
     },
+    "npm:@input-output-hk/agent-review-pi@0.6.0",
   ]);
   assert.equal(settings.subagents.defaultModel, `${settings.defaultProvider}/${settings.defaultModel}`);
   assert.equal(settings.subagents.defaultThinking, settings.defaultThinkingLevel);
   const smoke = await readFile(path.join(repoRoot, "scripts", "check-pi-devshell.sh"), "utf8");
   const bootstrap = await readFile(path.join(repoRoot, "bootstrap.sh"), "utf8");
+  const devshell = await readFile(path.join(repoRoot, "nix", "devshells", "default.nix"), "utf8");
   assert.match(smoke, /pi --list-models/u);
   assert.match(smoke, /skill:taskflow/u);
   assert.match(smoke, /unsafe inherited taskflow resources are active/u);
   assert.match(smoke, /Failed to load skill/u);
   assert.match(bootstrap, /bash scripts\/check-pi-devshell\.sh/u);
+  assert.match(devshell, /typeof entry === "string" \? entry : entry\?\.source/u);
 });
 
 test("delivery profiles keep prototype evidence local and promotion explicit", async () => {
@@ -94,6 +93,9 @@ test("delivery profiles keep prototype evidence local and promotion explicit", a
   assert.match(developerAgent, /deliveryProfile: prototype/u);
   assert.match(reviewAgent, /provisional/u);
   assert.match(productiveLoop, /Do not turn a prototype into a PR by merely pushing its head/u);
+  assert.match(rootAgent, /classify solution complexity from reversibility, blast\s+radius, and evidence cost/u);
+  assert.match(devLoopAgent, /local ignored package store or exact-pinned Pi configuration/u);
+  assert.match(productiveLoop, /Do not promote a low-complexity change merely because tooling calls it an\s+upgrade/u);
 });
 
 test("the handoff wrapper makes prototype local and production-ready the default", async () => {

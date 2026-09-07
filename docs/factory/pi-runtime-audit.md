@@ -34,7 +34,7 @@ the startup audit rejects formats outside that tracked contract.
 | --- | --- | --- |
 | Devshell Pi | Nix-pinned; `./bootstrap.sh --check` passed | healthy |
 | Direct host Pi | outside Nix | unsupported path; use `./bootstrap.sh --pi` |
-| Project packages | `dev-loops@0.9.0`, `pi-subagents@0.42.1`, `agent-review-pi@0.5.0` | exact pins installed |
+| Project packages | `dev-loops@0.9.0`, `pi-subagents@0.42.1`, `agent-review-pi@0.6.0` plus exact peers | exact pins installed |
 | npm production audit | 0 reported vulnerabilities | healthy at audit time |
 | Common Pi package store | one shared store per Git common checkout | healthy |
 | Registered worktrees | above the active green limit | red; exact counts remain private operational telemetry |
@@ -54,16 +54,29 @@ The owner-aware reconciliation of remaining dirty/unmerged state is tracked by
 
 | Package | Pin | Available at audit | Decision |
 | --- | --- | --- | --- |
-| `dev-loops` | `0.9.0` | `0.9.0` | retain |
-| `pi-subagents` | `0.42.1` | `0.58.0` | canary in [#195](https://github.com/MediaNoxLabs/oxid/issues/195) |
-| `agent-review-pi` | `0.5.0` | `0.6.0` | canary with new peers in [#196](https://github.com/MediaNoxLabs/oxid/issues/196) |
+| `pi-coding-agent` | `0.84.0` via Nix | `0.85.1` on npm | retain Nix pin while package peers target 0.84 |
+| `dev-loops` | `0.9.0` | `1.0.1` | major update in [#303](https://github.com/MediaNoxLabs/oxid/issues/303) |
+| `pi-subagents` | `0.42.1` | `0.66.0` | orchestration update in [#195](https://github.com/MediaNoxLabs/oxid/issues/195) |
+| `agent-review-pi` | `0.6.0` | `0.6.0` | adopted with exact peers by [#301](https://github.com/MediaNoxLabs/oxid/issues/301) |
+| `pi-taskflow` | `0.2.10` | `0.3.0-beta.1.2` | peer only; runtime resources disabled |
+| `typebox` | `1.3.9` | `1.3.28` | minimum compatible exact peer; retain |
 
-The `pi-subagents` releases between the pin and 0.58.0 contain fixes directly
+The `pi-subagents` releases between the pin and 0.66.0 contain fixes directly
 related to recovered/detached runs, budget/timeout terminal classification,
 smaller child context, exact model failures, and Codex priority propagation.
-That makes an upgrade valuable and too risky to bundle blindly. Version 0.6.0
-of `agent-review-pi` adds `pi-taskflow` and `typebox` peer requirements, so its
-complete closure and the existing compatibility skill must be tested together.
+That makes an upgrade valuable and too risky to bundle with this review-package
+fix. `agent-review-pi@0.6.0` is small enough to verify here: its exact peer
+closure reports zero npm vulnerabilities, its 13 native tools register, and its
+corrected bundled skill loads through Pi RPC. The former compatibility loader
+is removed.
+
+The local migration changed the shared package store from roughly 70 MiB in the
+#158 preflight to 81,616 KiB with the complete 0.6.0 closure. A cold offline Pi
+RPC command inventory completed in 0.88 seconds. Read-only `whoami`, skill-list,
+and review-list calls succeeded; no review or label mutation was used as a
+package test. Rollback is one repository revert followed by shell entry with a
+package-read token: the shell hook reinstalls the reverted exact 0.5.0 pin, and
+the ignored newer peer files may remain inert until normal bounded cleanup.
 
 ### Supervised taskflow canary (2026-09-07)
 
@@ -91,9 +104,9 @@ a local fail-closed mitigation: project settings suppress inherited taskflow
 extensions and skills, `/dev-loop` requires direct bounded `pi-subagents`
 dispatch, the smoke test proves taskflow is absent from effective commands, and
 validation remains target-plan/Cargo/Just/Nix native. Re-enable taskflow only
-after #301 has a passing isolated peer-resolution, nested-progress, cancellation,
-and orphan-cleanup canary; coordinate any package change with #196. General
-cumulative budget and terminal-reconciliation improvements remain in #227.
+after detached peer-resolution, nested-progress, cancellation, and orphan-cleanup
+behavior is fixed and verified. General cumulative budget and terminal-
+reconciliation improvements remain in #227.
 
 ## Required operator flow
 

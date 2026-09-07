@@ -105,7 +105,7 @@ NODE
 
 review_package_json="$review_package_root/package.json"
 if [[ ! -f "$review_package_json" ]]; then
-  echo "missing exact project @input-output-hk/agent-review-pi@0.5.0" >&2
+  echo "missing exact project @input-output-hk/agent-review-pi@0.6.0" >&2
   echo "enter nix develop with a GitHub token that can read packages" >&2
   exit 1
 fi
@@ -117,7 +117,7 @@ const packagePath = process.argv[2];
 const manifest = JSON.parse(fs.readFileSync(packagePath, "utf8"));
 const expected = {
   name: "@input-output-hk/agent-review-pi",
-  version: "0.5.0",
+  version: "0.6.0",
   extension: "./dist/extension.js",
   skill: "./skills",
 };
@@ -148,8 +148,10 @@ extension.registerTools({
 const expected = [
   "labels_bootstrap",
   "pr_approve_dep_upgrade",
+  "pr_create_followup",
   "pr_expedite",
   "pr_request_review",
+  "pr_self_review",
   "pr_stabilize",
   "pr_watch",
   "review_claim",
@@ -190,7 +192,7 @@ if jq -s -e '
   exit 1
 fi
 
-loader_path="$repo_root/.pi/skills/agent-review/SKILL.md"
+loader_path="$repo_root/.pi/npm/node_modules/@input-output-hk/agent-review-pi/skills/agent-review/SKILL.md"
 if ! jq -s -e --arg loader_path "$loader_path" '
   map(select(.type == "response" and .command == "get_commands"))[0]
   | .data.commands
@@ -200,8 +202,8 @@ if ! jq -s -e --arg loader_path "$loader_path" '
       and .sourceInfo.path == $loader_path
     )
 ' <<<"$pi_rpc_output" >/dev/null; then
-  echo "Pi did not expose the tracked agent-review compatibility skill" >&2
+  echo "Pi did not expose the bundled agent-review 0.6.0 skill" >&2
   exit 1
 fi
 
-echo "Pi devshell smoke passed: pi $pi_version, $expected_provider/$expected_model, agent-review-pi 0.5.0 extension and tracked skill available; unsafe taskflow resources suppressed."
+echo "Pi devshell smoke passed: pi $pi_version, $expected_provider/$expected_model, agent-review-pi 0.6.0 extension and bundled skill available; unsafe taskflow resources suppressed."

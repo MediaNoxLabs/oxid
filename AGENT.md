@@ -88,6 +88,12 @@ Follow [the productive loop](docs/factory/productive-loop.md):
 - Routine work uses a 70% quality target and one automatic review round; all
   mandatory acceptance, correctness, security, provenance, and required-CI
   evidence still must be complete.
+- Before adding process, classify solution complexity from reversibility, blast
+  radius, and evidence cost. A local ignored cache/package or exact-pinned
+  configuration change with a one-command rollback is low complexity: implement
+  it directly in the active issue and run one focused smoke. Do not create a
+  separate canary, ADR, staging branch, or review round without a concrete
+  irreversible, security, data, protocol, or cross-system risk.
 - Promotion is explicit: refresh the recorded delivery base, audit prototype gaps,
   invalidate provisional evidence, recompute targets, and run production gates.
   Both profiles retain issue/worktree, contribution, security, process, and

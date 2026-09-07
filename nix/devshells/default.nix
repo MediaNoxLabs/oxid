@@ -197,8 +197,10 @@ NODE
             done < <(node -e '
               const fs = require("fs");
               const settings = JSON.parse(fs.readFileSync(".pi/settings.json", "utf8"));
-              for (const spec of settings.packages ?? []) {
+              for (const entry of settings.packages ?? []) {
+                const spec = typeof entry === "string" ? entry : entry?.source;
                 if (typeof spec !== "string" || !spec.startsWith("npm:")) continue;
+                if (typeof entry === "object" && entry.autoload === false) continue;
                 const ref = spec.slice(4);
                 const at = ref.startsWith("@") ? ref.indexOf("@", 1) : ref.indexOf("@");
                 const name = at === -1 ? ref : ref.slice(0, at);

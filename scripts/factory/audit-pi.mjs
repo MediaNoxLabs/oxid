@@ -13,15 +13,16 @@ const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.ur
 const EXPECTED_PACKAGES = new Map([
   ["dev-loops", "0.9.0"],
   ["pi-subagents", "0.42.1"],
-  ["@input-output-hk/agent-review-pi", "0.5.0"],
+  ["typebox", "1.3.9"],
+  ["pi-taskflow", "0.2.10"],
+  ["@input-output-hk/agent-review-pi", "0.6.0"],
 ]);
 const TASKFLOW_SUPPRESSION = Object.freeze({
   source: "npm:pi-taskflow@0.2.10",
-  autoload: false,
-  extensions: ["!**"],
-  skills: ["!**"],
-  prompts: ["!**"],
-  themes: ["!**"],
+  extensions: [],
+  skills: [],
+  prompts: [],
+  themes: [],
 });
 const EXPECTED_PROJECT_VALUES = Object.freeze({
   "compaction.enabled": true,
@@ -384,10 +385,6 @@ export async function auditPi({
   }));
   for (const [name, expected] of EXPECTED_PACKAGES) {
     if (configuredPackages.get(name)?.version !== expected) packageProblems.push(`${name}: expected exact pin ${expected}`);
-  }
-  const reviewEntry = configuredPackages.get("@input-output-hk/agent-review-pi")?.entry;
-  if (typeof reviewEntry !== "object" || JSON.stringify(reviewEntry.skills) !== "[]") {
-    packageProblems.push("agent-review-pi: bundled invalid skill must be suppressed in favor of the tracked compatibility skill");
   }
   const taskflowEntry = configuredPackages.get("pi-taskflow")?.entry;
   if (JSON.stringify(taskflowEntry) !== JSON.stringify(TASKFLOW_SUPPRESSION)) {
