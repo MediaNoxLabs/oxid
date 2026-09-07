@@ -21,6 +21,7 @@ import { normalizeDevLoopsArgs, resolvePinnedCoreModulePath, runDevLoops } from 
 import { runResolveTrackerLocalSpec } from "../../scripts/github/resolve-tracker-local-spec.mjs";
 import { assertNoPreflightBypass, inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
 import { runBranchGuard } from "../../scripts/loop/pre-commit-branch-guard.mjs";
+import { runDetectChangeScope } from "../../scripts/loop/detect-change-scope.mjs";
 import { enforceFactoryAdmissionForCreation, normalizeLinkedWorktreeContext, normalizeWorktreeArgs, resolveRepositoryWorktreePath, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
 import { assertReviewedWorktreePin, oxidConsumerProvision } from "../../scripts/loop/ensure-worktree-consumer.mjs";
 import {
@@ -743,6 +744,36 @@ test("tracked branch guard delegates matching and mismatched branches to the exa
   await assert.rejects(
     runBranchGuard(["--expected-branch", "issue-150"], { cwd: fixture.worktree }),
     /reviewed dev-loops branch guard is unavailable/u,
+  );
+});
+
+test("tracked change-scope wrapper delegates arguments and failure to the exact pinned package", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const helper = path.join(fixture.packageRoot, "scripts", "loop", "detect-change-scope.mjs");
+  await writeFile(helper, "process.stdout.write(JSON.stringify({argv:process.argv.slice(2),cwd:process.cwd()}));\n");
+  const stdout = [];
+  const stderr = [];
+  const stdoutSink = new Writable({ write(chunk, _encoding, callback) { stdout.push(chunk.toString()); callback(); } });
+  const stderrSink = new Writable({ write(chunk, _encoding, callback) { stderr.push(chunk.toString()); callback(); } });
+
+  assert.equal(await runDetectChangeScope(["--base", "HEAD", "--head", "HEAD"], {
+    cwd: fixture.worktree,
+    stdout: stdoutSink,
+    stderr: stderrSink,
+  }), 0);
+  assert.deepEqual(JSON.parse(stdout.join("")), {
+    argv: ["--base", "HEAD", "--head", "HEAD"],
+    cwd: fixture.worktree,
+  });
+  assert.equal(stderr.join(""), "");
+
+  await writeFile(helper, "process.exitCode = 7;\n");
+  assert.equal(await runDetectChangeScope([], { cwd: fixture.worktree }), 7);
+  await rm(helper);
+  await assert.rejects(
+    runDetectChangeScope([], { cwd: fixture.worktree }),
+    /reviewed dev-loops change-scope helper is unavailable/u,
   );
 });
 
