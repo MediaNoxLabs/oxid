@@ -105,7 +105,7 @@ NODE
 
 review_package_json="$review_package_root/package.json"
 if [[ ! -f "$review_package_json" ]]; then
-  echo "missing exact project @input-output-hk/agent-review-pi@0.5.0" >&2
+  echo "missing exact project @input-output-hk/agent-review-pi@0.6.0" >&2
   echo "enter nix develop with a GitHub token that can read packages" >&2
   exit 1
 fi
@@ -117,7 +117,7 @@ const packagePath = process.argv[2];
 const manifest = JSON.parse(fs.readFileSync(packagePath, "utf8"));
 const expected = {
   name: "@input-output-hk/agent-review-pi",
-  version: "0.5.0",
+  version: "0.6.0",
   extension: "./dist/extension.js",
   skill: "./skills",
 };
@@ -148,8 +148,10 @@ extension.registerTools({
 const expected = [
   "labels_bootstrap",
   "pr_approve_dep_upgrade",
+  "pr_create_followup",
   "pr_expedite",
   "pr_request_review",
+  "pr_self_review",
   "pr_stabilize",
   "pr_watch",
   "review_claim",
@@ -165,11 +167,32 @@ if (JSON.stringify(registered) !== JSON.stringify(expected)) {
 }
 NODE
 
-pi_rpc_output="$({
+pi_rpc_stderr="$(mktemp "${TMPDIR:-/tmp}/oxid-pi-smoke.XXXXXX")"
+trap 'rm -f "$pi_rpc_stderr"' EXIT
+if ! pi_rpc_output="$({
   printf '%s\n' '{"type":"get_commands"}'
-} | pi --approve --offline --mode rpc --no-session)"
+} | pi --approve --offline --mode rpc --no-session 2>"$pi_rpc_stderr")"; then
+  echo "Pi offline RPC startup failed:" >&2
+  sed -n '1,20p' "$pi_rpc_stderr" >&2
+  exit 1
+fi
+if grep -F "Failed to load skill" "$pi_rpc_stderr" >/dev/null; then
+  echo "Pi rejected skill metadata during startup:" >&2
+  grep -F "Failed to load skill" "$pi_rpc_stderr" >&2
+  exit 1
+fi
 
-loader_path="$repo_root/.pi/skills/agent-review/SKILL.md"
+if jq -s -e '
+  map(select(.type == "response" and .command == "get_commands"))[0]
+  | .data.commands
+  | any(.name == "tf" or .name == "skill:taskflow")
+' <<<"$pi_rpc_output" >/dev/null; then
+  echo "unsafe inherited taskflow resources are active; project suppression did not take effect" >&2
+  echo "do not start Pi: detached peer resolution, nested progress, and descendant cancellation are unverified" >&2
+  exit 1
+fi
+
+loader_path="$repo_root/.pi/npm/node_modules/@input-output-hk/agent-review-pi/skills/agent-review/SKILL.md"
 if ! jq -s -e --arg loader_path "$loader_path" '
   map(select(.type == "response" and .command == "get_commands"))[0]
   | .data.commands
@@ -179,8 +202,8 @@ if ! jq -s -e --arg loader_path "$loader_path" '
       and .sourceInfo.path == $loader_path
     )
 ' <<<"$pi_rpc_output" >/dev/null; then
-  echo "Pi did not expose the tracked agent-review compatibility skill" >&2
+  echo "Pi did not expose the bundled agent-review 0.6.0 skill" >&2
   exit 1
 fi
 
-echo "Pi devshell smoke passed: pi $pi_version, $expected_provider/$expected_model, agent-review-pi 0.5.0 extension and skill available."
+echo "Pi devshell smoke passed: pi $pi_version, $expected_provider/$expected_model, agent-review-pi 0.6.0 extension and bundled skill available; unsafe taskflow resources suppressed."

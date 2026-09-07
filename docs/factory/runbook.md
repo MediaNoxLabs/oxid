@@ -18,8 +18,9 @@ routes through a coordination server.
 | `pi-coding-agent` | Nix-pinned | immutable nixpkgs input in `flake.lock`; executable supplied by `devShells.default` |
 | `dev-loops` | `0.9.0` | `.pi/settings.json` → project-local `.pi/npm` |
 | `pi-subagents` | `0.42.1` | same |
-| `@input-output-hk/agent-review-pi` | `0.5.0` | same, **GitHub Packages — needs a token** |
-| `agent-review` loader skill | repository | `.pi/skills/agent-review/SKILL.md` |
+| `pi-taskflow` | `0.2.10` | installed as an `agent-review-pi` peer; all runtime resources disabled |
+| `typebox` | `1.3.9` | exact `agent-review-pi` peer |
+| `@input-output-hk/agent-review-pi` | `0.6.0` | same, **GitHub Packages — needs a token** |
 
 The devshell's `shellHook` reads `.pi/settings.json`, compares each exact pin
 against the common checkout's `.pi/npm/node_modules/<pkg>/package.json`, and
@@ -44,13 +45,12 @@ export GH_TOKEN="$(gh auth token)"   # if your gh login carries read:packages
 
 Never write that token into repository configuration or diagnostics.
 
-The pinned `agent-review-pi` extension registers correctly, but its `0.5.0`
-skill frontmatter contains an unquoted YAML colon. Pi `0.84.0` therefore omits
-the bundled skill from runtime discovery. The tracked `agent-review` loader is
-a narrow compatibility shim: it checks the exact package version, then tells Pi
-to read and follow the package's complete skill. It does not copy or change the
-review policy. Remove it only after a reviewed package update exposes the
-bundled skill directly.
+`agent-review-pi@0.6.0` fixes its bundled skill metadata. The smoke requires its
+complete explicit `typebox@1.3.9` and `pi-taskflow@0.2.10` peer closure, all 13
+native review tools, and the bundled skill through the pinned Pi runtime. The
+taskflow package is installed only to satisfy that peer contract; project
+filters disable all of its runtime resources because detached orchestration is
+not safe for Oxid's dev-loop topology.
 
 Validate shell entry, the exact private package, all native review-tool
 registrations, and runtime skill discovery without an LLM call or GitHub
@@ -357,5 +357,6 @@ in a diff.
   install.
 - Wiring `.pi/settings.json`'s `skills` key once a repository skill tree exists;
   it is absent today, so there is nothing to point at.
-- Canarying `pi-subagents@0.58.0` under issue #195 and
-  `agent-review-pi@0.6.0` under issue #196.
+- Upgrading `pi-subagents` under issue #195 and `dev-loops` under its dedicated
+  compatibility issue. Do not combine either orchestration upgrade with feature
+  delivery.

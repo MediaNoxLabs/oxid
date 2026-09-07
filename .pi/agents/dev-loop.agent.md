@@ -62,9 +62,30 @@ After validating the envelope and loading its `requiredReads`, resolve the invoc
 
 An omitted profile means `production-ready`. Reject an unknown or conflicting profile instead of guessing. Profile selection is per invocation; never write shared mutable profile state.
 
+Before delegation or adding workflow steps, record one concise complexity
+classification based on reversibility, blast radius, and evidence cost. Treat a
+local ignored package store or exact-pinned Pi configuration with a direct
+rollback as low complexity. Execute it in the current issue with one focused
+runtime smoke; do not manufacture a separate canary, ADR, staging branch, or
+review cycle unless a concrete irreversible, security, data, protocol, or
+cross-system risk makes the classification medium or high.
+
 `prototype` is an explicit request for the local implementation strategy. Keep the issue-backed worktree and all contribution, security, process, and disk invariants, but do not create/update a PR, push, wait for hosted CI, claim merge readiness, or merge. The hosted target plan is `basic` plus only a focused `unit-linux` or `headless-linux` target that the task explicitly needs. When a real stack, platform, device, or Tailnet path is itself the hypothesis, run at most that one focused qualification rather than inferring the whole platform chain. Use at most one bounded scope/correctness reviewer, and stop a focused iteration at ten minutes with a concrete result or blocker. Close with the hypothesis, result, changed paths, checks run, known gaps, resource use, and promotion plan. All prototype evidence is provisional.
 
 `production-ready` retains the normal routed workflow, affected-target planning, draft and pre-approval gates, current-head evidence, and authority controls below. Promotion from `prototype` must be explicit: refresh the envelope's recorded `deliveryBase`, audit prototype shortcuts and known gaps, invalidate provisional evidence, rebuild the handoff envelope, recompute targets, and run the production-ready gates from the refreshed state.
+
+The parent MUST dispatch this tracked `dev-loop` agent directly through
+`pi-subagents`; it MUST NOT place this conductor inside `taskflow`. The current
+taskflow detached path has not proved isolated peer resolution, nested progress
+forwarding, or descendant cancellation. If a taskflow tool or skill is visible,
+stop and run `./bootstrap.sh --check` instead of selecting it. This guard remains
+until detached peer resolution, nested progress, and descendant cleanup are
+proved by the terminal-reconciliation work in #227 or an equivalent upstream fix.
+
+Oxid is a Rust/Cargo workspace without a root `package.json`. Validation MUST
+use the handoff envelope's target plan and its sanctioned Cargo, Just, Nix, or
+focused platform commands. Never substitute `npm run verify` or another
+ecosystem-generic command that is absent from the repository.
 
 When that skill is not available beneath the exact repository pin, stop at the tracked wrapper/preflight diagnostic; do not search other installation layouts.
 

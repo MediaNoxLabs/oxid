@@ -82,9 +82,18 @@ Follow [the productive loop](docs/factory/productive-loop.md):
   reviewer, no push/PR/hosted-CI wait, and no merge-readiness claim.
 - `/dev-loop production-ready issue <n>` selects the normal affected-target,
   draft, CI, and pre-approval loop. It is the default when no profile is named.
+- Dispatch the tracked `dev-loop` agent directly through `pi-subagents`. Never
+  wrap `/dev-loop` in `taskflow`: the current detached runner cannot prove its
+  peer closure, nested progress, or descendant cancellation in this project.
 - Routine work uses a 70% quality target and one automatic review round; all
   mandatory acceptance, correctness, security, provenance, and required-CI
   evidence still must be complete.
+- Before adding process, classify solution complexity from reversibility, blast
+  radius, and evidence cost. A local ignored cache/package or exact-pinned
+  configuration change with a one-command rollback is low complexity: implement
+  it directly in the active issue and run one focused smoke. Do not create a
+  separate canary, ADR, staging branch, or review round without a concrete
+  irreversible, security, data, protocol, or cross-system risk.
 - Promotion is explicit: refresh the recorded delivery base, audit prototype gaps,
   invalidate provisional evidence, recompute targets, and run production gates.
   Both profiles retain issue/worktree, contribution, security, process, and
@@ -143,6 +152,10 @@ node scripts/ci/target-plan.mjs \
   --event pull_request \
   --delivery-profile production-ready
 ```
+
+Oxid is a Cargo workspace and has no root `package.json`. Never invent a
+generic `npm run verify` fallback. Execute the target planner's Cargo/Just/Nix
+commands and only the focused platform command selected for the changed paths.
 
 - L0 `basic`: policy, formatting, architecture, lint, and production compilation
   within five minutes; non-Rust changes avoid the Rust/Nix closure.

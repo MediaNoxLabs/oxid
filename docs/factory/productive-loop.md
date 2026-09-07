@@ -30,6 +30,25 @@ An SLO miss is a process finding. Do not answer it by adding retries, reviewers,
 or a second implementation path. Record which phase consumed the time and fix
 that phase.
 
+## Reversibility-first complexity check
+
+Before execution, state one short complexity classification using three facts:
+reversibility, blast radius, and evidence cost. Choose the lowest class supported
+by evidence:
+
+- **Low:** local or ignored state, an exact pin/config edit, no durable data or
+  external policy change, and a direct rollback. Implement in the current issue
+  and run one focused smoke.
+- **Medium:** checked-in behavior or CI routing with a bounded repository blast
+  radius and ordinary PR rollback. Use the affected target plan and one review.
+- **High:** credentials, security/branch policy, durable data migration, release,
+  protocol/custody semantics, or coordinated cross-system change. Add the
+  specific evidence or approval that the identified risk requires.
+
+Do not promote a low-complexity change merely because tooling calls it an
+upgrade. A separate canary issue, ADR, staging branch, extra reviewer, or full
+platform matrix requires a named risk that the focused smoke cannot falsify.
+
 ## Two delivery profiles
 
 Profile selection is explicit and local to each Pi invocation, so independent
@@ -97,7 +116,8 @@ ledger and PR comment without blocking a clean verdict.
 
 ## One candidate, two checkpoints
 
-1. Resolve exactly one delivery base. Product work uses its criteria-backed
+1. Record the reversibility-first complexity class, then resolve exactly one
+   delivery base. Product work uses its criteria-backed
    `origin/milestone-<x.y.z>`; factory work may use `origin/develop`. Start
    from that fetched ref in a dedicated worktree. Run
    `node scripts/worktree-lifecycle.mjs audit` before creating another.

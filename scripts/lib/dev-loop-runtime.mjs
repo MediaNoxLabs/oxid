@@ -132,13 +132,18 @@ const EXACT_NPM_PIN = new RegExp(`^npm:((?:@[A-Za-z0-9_.-]+/)?[A-Za-z0-9_.-]+)@(
 function parseExactNpmPins(settings) {
   const packages = settings?.packages;
   if (!Array.isArray(packages)) throw new Error(".pi/settings.json packages must be an array");
-  return packages.map((entry) => {
-    if (typeof entry !== "string" || !entry.startsWith("npm:")) {
+  return packages.flatMap((entry) => {
+    const source = typeof entry === "string" ? entry : entry?.source;
+    if (typeof source !== "string" || !source.startsWith("npm:")) {
       throw new Error("every repository Pi package must be an exact npm semantic-version pin");
     }
-    const match = entry.match(EXACT_NPM_PIN);
-    if (!match) throw new Error(`repository Pi package must use an exact npm semantic-version pin: ${entry}`);
-    return { name: match[1], version: match[2], spec: entry };
+    const match = source.match(EXACT_NPM_PIN);
+    if (!match) throw new Error(`repository Pi package must use an exact npm semantic-version pin: ${source}`);
+    // autoload:false entries are project-local deltas over inherited global
+    // packages. They constrain effective resources but do not claim that the
+    // package is installed in the repository-owned store.
+    if (typeof entry === "object" && entry.autoload === false) return [];
+    return [{ name: match[1], version: match[2], spec: source }];
   });
 }
 
