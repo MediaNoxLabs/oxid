@@ -1698,6 +1698,54 @@ textarea:focus-visible {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.developer-tool-list {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.developer-tool {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.developer-tool h2,
+.developer-tool p {
+  margin: 0;
+}
+
+.developer-tool p {
+  margin: var(--space-2) 0;
+  color: var(--text-soft);
+  line-height: 1.45;
+}
+
+.proof-benchmark-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.proof-benchmark-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.proof-benchmark-row small {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.proof-benchmark-row .secondary-button {
+  min-width: 4.75rem;
+}
+
 .developer-capability-summary {
   display: grid;
   gap: var(--space-3);
@@ -2975,6 +3023,17 @@ select:focus-visible {
 
   .diagnostic-grid {
     grid-template-columns: 1fr;
+  }
+
+  .developer-tool,
+  .proof-benchmark-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .developer-tool .secondary-button,
+  .proof-benchmark-row .secondary-button {
+    width: 100%;
   }
 
   .settings-card {

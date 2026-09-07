@@ -408,6 +408,110 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
     }
 }
 
+#[cfg(feature = "ui-profile-dev")]
+#[component]
+pub(super) fn DeveloperDiagnosticsPage() -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut diagnostic_state = use_signal(|| LocalDiagnosticsPageState::Loading);
+    let mut show_warnings = use_signal(|| true);
+    let mut show_errors = use_signal(|| true);
+    let mut event_query = use_signal(String::new);
+    let mut clear_confirmation = use_signal(|| false);
+    let load_services = services.clone();
+    use_effect(move || {
+        let get = load_services.get_diagnostic_snapshot();
+        spawn(async move {
+            diagnostic_state.set(load_diagnostic_snapshot(get).await);
+        });
+    });
+
+    let projection = project_diagnostics(&diagnostic_state.read());
+    let events = project_event_log(
+        &diagnostic_state.read(),
+        show_warnings(),
+        show_errors(),
+        &event_query(),
+    );
+    let refresh_services = services.clone();
+    let clear_services = services.clone();
+    let mut refresh_state = diagnostic_state;
+    let mut clear_state = diagnostic_state;
+    rsx! {
+        section { class: "page-heading",
+            p { class: "eyebrow", "Development tool" }
+            h1 { "Event log" }
+            p { "Bounded, payload-free events for this process only. Telemetry is off." }
+        }
+        section { class: "surface-card diagnostic-event-log", aria_label: "Recent diagnostic events",
+            div { class: "button-row",
+                button {
+                    class: "secondary-button",
+                    r#type: "button",
+                    onclick: move |_| {
+                        let get = refresh_services.get_diagnostic_snapshot();
+                        refresh_state.set(LocalDiagnosticsPageState::Loading);
+                        spawn(async move { refresh_state.set(load_diagnostic_snapshot(get).await); });
+                    },
+                    "Refresh"
+                }
+                button {
+                    class: "secondary-button",
+                    r#type: "button",
+                    onclick: move |_| clear_confirmation.set(true),
+                    "Clear local events"
+                }
+            }
+            if clear_confirmation() {
+                div { class: "surface-card", role: "alertdialog", aria_label: "Confirm clearing local diagnostic events",
+                    h2 { "Clear retained events?" }
+                    p { "This removes the process-local event ring. It cannot be undone." }
+                    div { class: "button-row",
+                        button {
+                            class: "danger-action",
+                            r#type: "button",
+                            onclick: move |_| {
+                                let clear = clear_services.clear_diagnostics();
+                                let get = clear_services.get_diagnostic_snapshot();
+                                clear_confirmation.set(false);
+                                clear_state.set(LocalDiagnosticsPageState::Loading);
+                                spawn(async move { clear_state.set(clear_diagnostics_and_reload(clear, get).await); });
+                            },
+                            "Clear now"
+                        }
+                        button { class: "secondary-button", r#type: "button", onclick: move |_| clear_confirmation.set(false), "Keep events" }
+                    }
+                }
+            }
+            CapabilityStatus { name: "Bounded event ring", state: projection.summary, ready: projection.ready }
+            div { class: "diagnostic-event-filters",
+                label { class: "confirmation-check",
+                    input { r#type: "checkbox", checked: show_warnings(), onchange: move |event| show_warnings.set(event.checked()) }
+                    span { "Warnings" }
+                }
+                label { class: "confirmation-check",
+                    input { r#type: "checkbox", checked: show_errors(), onchange: move |event| show_errors.set(event.checked()) }
+                    span { "Errors" }
+                }
+            }
+            label { class: "network-field",
+                span { "Search fixed event codes" }
+                input { r#type: "search", value: "{event_query}", placeholder: "midnight.dust", oninput: move |event| event_query.set(event.value()) }
+            }
+            if events.is_empty() && projection.ready {
+                p { class: "field-hint", "No retained events match these filters." }
+            }
+            div { class: "diagnostic-grid",
+                for event in events {
+                    article { class: "capability-row", key: "developer-diagnostic-event-{event.sequence}",
+                        span { class: "capability-dot queued" }
+                        div { strong { "{event.code}" } p { "#{event.sequence} · {event.severity}" } }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[component]
 fn CapabilityStatus(name: &'static str, state: String, ready: bool) -> Element {
     rsx! {
