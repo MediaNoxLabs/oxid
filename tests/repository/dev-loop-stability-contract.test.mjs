@@ -20,6 +20,7 @@ import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-
 import { normalizeDevLoopsArgs, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
 import { runResolveTrackerLocalSpec } from "../../scripts/github/resolve-tracker-local-spec.mjs";
 import { assertNoPreflightBypass, inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
+import { runBranchGuard } from "../../scripts/loop/pre-commit-branch-guard.mjs";
 import { enforceFactoryAdmissionForCreation, normalizeLinkedWorktreeContext, normalizeWorktreeArgs, resolveRepositoryWorktreePath, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
 import { assertReviewedWorktreePin, oxidConsumerProvision } from "../../scripts/loop/ensure-worktree-consumer.mjs";
 import {
@@ -162,6 +163,15 @@ async function makeFixture() {
     '}',
   ].join("\n"));
   await writeFile(path.join(packageRoot, "scripts", "_core-helpers.mjs"), 'export function formatCliError(error) { return error.message; }\n');
+  await writeFile(path.join(packageRoot, "scripts", "loop", "pre-commit-branch-guard.mjs"), [
+    'import { execFileSync } from "node:child_process";',
+    'const index = process.argv.indexOf("--expected-branch");',
+    'const expected = index >= 0 ? process.argv[index + 1] : "";',
+    'const current = execFileSync("git", ["branch", "--show-current"], { encoding: "utf8" }).trim();',
+    'const ok = expected === current;',
+    'process[ok ? "stdout" : "stderr"].write(`${JSON.stringify({ ok, branch: current, expected })}\\n`);',
+    'process.exitCode = ok ? 0 : 1;',
+  ].join("\n"));
   await writeFile(path.join(packageRoot, "agents", "developer.agent.md"), [
     "---", "name: developer", "description: fixture", "tools: read, search, execute, bash, edit, write", "---", "fixture",
   ].join("\n"));
@@ -602,6 +612,10 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   assert.match(devLoop, /run_draft_gate[\s\S]*requireCi: false/);
   assert.match(devLoop, /MUST NOT place this conductor inside `taskflow`/u);
   assert.match(devLoop, /Never substitute `npm run verify`/u);
+  assert.match(devLoop, /shell parser diagnostic emitted before the named helper starts/u);
+  assert.match(devLoop, /correct\s+the command once within the existing turn budget/u);
+  assert.match(devLoop, /Never revert valid scoped\s+work solely/u);
+  assert.match(devLoop, /Missing\s+helpers,\s+pin mismatches,\s+admission failures,\s+helper-originated nonzero exits,[\s\S]*remain fail-closed/u);
   assert.match(devLoop, /stop on every other contradiction/);
   assert.doesNotMatch(devLoop, /review-routing\.mjs|~\/.pi|npm root -g|require\.resolve\(['"]dev-loops|<dev-loops-package-root>\/cli\/index\.mjs/);
   const review = await read(".pi/agents/review.agent.md");
@@ -704,6 +718,32 @@ test("repository wrappers force only the public PR-creation and managed-worktree
   assert.doesNotThrow(() => assertReviewedWorktreePin("0.9.0"));
   assert.throws(() => assertReviewedWorktreePin("0.9.1"), /supports only reviewed dev-loops@0\.9\.0/);
   assert.notStrictEqual(oxidConsumerProvision(), oxidConsumerProvision());
+});
+
+test("tracked branch guard delegates matching and mismatched branches to the exact pinned package", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const invoke = async (expected) => {
+    const stdout = [];
+    const stderr = [];
+    const stdoutSink = new Writable({ write(chunk, _encoding, callback) { stdout.push(chunk.toString()); callback(); } });
+    const stderrSink = new Writable({ write(chunk, _encoding, callback) { stderr.push(chunk.toString()); callback(); } });
+    const code = await runBranchGuard([
+      "--expected-branch", expected, "--require-worktree", "--block-main-checkout",
+    ], { cwd: fixture.worktree, stdout: stdoutSink, stderr: stderrSink });
+    return { code, stdout: stdout.join(""), stderr: stderr.join("") };
+  };
+
+  assert.equal((await invoke("issue-150")).code, 0);
+  const mismatch = await invoke("fix/issue-317");
+  assert.equal(mismatch.code, 1);
+  assert.match(mismatch.stderr, /"ok":false/u);
+
+  await rm(path.join(fixture.packageRoot, "scripts", "loop", "pre-commit-branch-guard.mjs"));
+  await assert.rejects(
+    runBranchGuard(["--expected-branch", "issue-150"], { cwd: fixture.worktree }),
+    /reviewed dev-loops branch guard is unavailable/u,
+  );
 });
 
 test("repository recovery path stays aligned with the real pinned dev-loops core", async (t) => {
@@ -888,13 +928,20 @@ async function makeEnvelopeGitFixture(t) {
   const worktrees = {
     issue150: path.join(namespace, "issue-150"),
     issue151: path.join(namespace, "issue-151"),
+    issue158: path.join(namespace, "issue-158"),
     pr153: path.join(namespace, "pr-153"),
     phase150: path.join(namespace, "phase-150-issue-150"),
     phase151: path.join(namespace, "phase-151-other"),
   };
   for (const [branch, target] of Object.entries(worktrees)) {
-    execFileSync("git", ["worktree", "add", "--quiet", "-b", `fixture-${branch}`, target], { cwd: root });
+    const branchName = branch === "issue158" ? "test/issue-158" : `fixture-${branch}`;
+    execFileSync("git", ["worktree", "add", "--quiet", "-b", branchName, target], { cwd: root });
   }
+  execFileSync(
+    "git",
+    ["config", "branch.test/issue-158.oxidDeliveryBase", "origin/develop"],
+    { cwd: root },
+  );
   return { parent, root: await realpath(root), namespace, worktrees };
 }
 
@@ -922,6 +969,28 @@ test("handoff envelope cwd normalization uses owned canonical Git topology", asy
   assert.equal((await normalizeHandoffEnvelopeCwd(
     validEnvelope(pr, "ignored"), resolve(fixture.worktrees.pr153), handoffCore,
   )).cwd, fixture.worktrees.pr153);
+  const issuePr = { kind: "pr", repo: "owner/repo", pr: 321 };
+  const issuePrHead = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: fixture.worktrees.issue158,
+    encoding: "utf8",
+  }).trim();
+  const resolveIssuePrHead = async () => ({
+    state: "OPEN",
+    headRefName: "test/issue-158",
+    headRefOid: issuePrHead,
+  });
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope(issuePr, "ignored"),
+    resolve(fixture.worktrees.issue158),
+    handoffCore,
+    { resolvePrHead: resolveIssuePrHead },
+  )).cwd, fixture.worktrees.issue158);
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope(issuePr, fixture.worktrees.issue158),
+    resolve(fixture.root),
+    handoffCore,
+    { resolvePrHead: resolveIssuePrHead },
+  )).cwd, fixture.worktrees.issue158);
   assert.equal((await normalizeHandoffEnvelopeCwd(
     validEnvelope(phase, "ignored"), resolve(fixture.worktrees.issue150), handoffCore,
   )).cwd, fixture.worktrees.issue150);
@@ -934,8 +1003,28 @@ test("handoff envelope cwd normalization uses owned canonical Git topology", asy
     /disagrees with resolver target/,
   );
   await assert.rejects(
-    normalizeHandoffEnvelopeCwd(validEnvelope(pr, "ignored"), resolve(fixture.worktrees.issue150), handoffCore),
+    normalizeHandoffEnvelopeCwd(
+      validEnvelope(pr, "ignored"),
+      resolve(fixture.worktrees.issue150),
+      handoffCore,
+      { resolvePrHead: async () => null },
+    ),
     /disagrees with resolver target/,
+  );
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(
+      validEnvelope(issuePr, "ignored"),
+      resolve(fixture.worktrees.issue158),
+      handoffCore,
+      {
+        resolvePrHead: async () => ({
+          state: "OPEN",
+          headRefName: "test/issue-158",
+          headRefOid: "f".repeat(40),
+        }),
+      },
+    ),
+    /does not match hosted PR #321 head/,
   );
   await assert.rejects(
     normalizeHandoffEnvelopeCwd(validEnvelope({ ...phase, issue: 151, phase: "other" }, "ignored"), resolve(fixture.worktrees.phase150), handoffCore),

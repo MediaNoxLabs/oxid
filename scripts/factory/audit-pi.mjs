@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -404,6 +404,24 @@ export async function auditPi({
   checks.push(check("tracked-agent-budgets", agentProblems.length ? "fail" : "pass",
     agentProblems.length ? "One or more tracked agents are unbounded" : "Every tracked agent has a bounded runtime and turn budget",
     agentProblems.length ? agentProblems : undefined));
+
+  const helperProblems = [];
+  for (const relative of [
+    "scripts/loop/pre-flight-gate.mjs",
+    "scripts/loop/pre-commit-branch-guard.mjs",
+    "scripts/loop/ensure-worktree.mjs",
+  ]) {
+    try {
+      accessSync(path.join(repoRoot, relative), fsConstants.R_OK | fsConstants.X_OK);
+    } catch (error) {
+      helperProblems.push(`${relative}: ${error.message}`);
+    }
+  }
+  checks.push(check("local-implementation-helpers", helperProblems.length ? "fail" : "pass",
+    helperProblems.length
+      ? "One or more required local-implementation helper routes are unavailable"
+      : "Required local-implementation helper routes are tracked and executable",
+    helperProblems.length ? helperProblems : undefined));
 
   const effectiveUserPolicy = userPolicyResult ?? await checkUserPolicy({ env });
   checks.push(check("user-subagent-policy", effectiveUserPolicy.ok ? "pass" : "fail",

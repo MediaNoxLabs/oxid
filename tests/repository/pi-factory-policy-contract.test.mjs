@@ -162,6 +162,14 @@ test("the handoff wrapper makes prototype local and production-ready the default
   );
 });
 
+test("supervisor policy preserves verified work after pre-helper shell syntax errors", async () => {
+  const policy = await readFile(path.join(repoRoot, "AGENT.md"), "utf8");
+  assert.match(policy, /shell parser error that[\s\S]*before an agent-generated command starts its named helper/u);
+  assert.match(policy, /allow one corrected invocation within\s+the existing budget/u);
+  assert.match(policy, /Never discard verified work solely because of malformed shell\s+quoting/u);
+  assert.match(policy, /Missing\s+helpers,\s+pin\/admission[\s\S]*still stop\s+fail-closed/u);
+});
+
 test("unavailable lifecycle helper uses conservative fresh-checkout capacity", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "oxid-admission-unavailable-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -355,6 +363,7 @@ test("read-only Pi audit recognizes tracked configuration controls", async () =>
     "package-pins",
     "pi-runtime",
     "tracked-agent-budgets",
+    "local-implementation-helpers",
     "user-subagent-policy",
     "dev-loop-bounds",
     "delivery-profiles",
