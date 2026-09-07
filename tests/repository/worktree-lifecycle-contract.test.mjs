@@ -7,6 +7,7 @@ import {
   githubMergeQuery,
   githubRepositoryFromRemote,
   indexGithubMergeProofs,
+  indexRetiredPromotionAncestryProofs,
   loadGithubMergeEvidence,
   parseGithubMergeResponse,
   parseWorktrees,
@@ -150,6 +151,43 @@ test("retired integration proof requires the exact full-tree promotion", () => {
     ...options,
     mergeCommitIsInPromotion: () => false,
   }).proofs.size, 0);
+});
+
+test("retired integration ancestry reconciles only commits contained by the exact promotion", () => {
+  const contained = "a".repeat(40);
+  const unrelated = "b".repeat(40);
+  const promotionHead = "c".repeat(40);
+  const promotionMerge = "d".repeat(40);
+  const promotion = {
+    number: 258,
+    state: "MERGED",
+    baseRefName: "develop",
+    headRefName: "integration",
+    headRefOid: promotionHead,
+    mergedAt: "2026-09-03T15:06:49Z",
+    mergeCommit: { oid: promotionMerge },
+  };
+  const result = indexRetiredPromotionAncestryProofs([contained, unrelated], [promotion], {
+    mergeCommitIsIntegrated: (candidate) => candidate === promotionMerge,
+    promotionPreservesTree: (source, target) => source === promotionHead && target === promotionMerge,
+    headIsInPromotion: (candidate, finalHead) => candidate === contained && finalHead === promotionHead,
+  });
+  assert.equal(result.proofs.get(contained), "retired-integration-ancestor:via-pr:258");
+  assert.equal(result.proofs.has(unrelated), false);
+
+  for (const invalid of [
+    { ...promotion, number: 257 },
+    { ...promotion, state: "OPEN" },
+    { ...promotion, baseRefName: "main" },
+    { ...promotion, headRefName: "other" },
+  ]) {
+    assert.equal(indexRetiredPromotionAncestryProofs([contained], [invalid], {
+      mergeCommitIsIntegrated: () => true,
+      promotionPreservesTree: () => true,
+      headIsInPromotion: () => true,
+    }).proofs.size, 0);
+  }
+  assert.throws(() => indexRetiredPromotionAncestryProofs(["main"], []), /exact commit heads/);
 });
 
 test("duplicate exact-head GitHub merge proofs fail closed", () => {

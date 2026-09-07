@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, realpathSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,20 @@ function run(command, args, options = {}) {
     maxBuffer: 8 * 1024 * 1024,
     ...options,
   }).trim();
+}
+
+function executableFromPath(name, env) {
+  for (const directory of String(env.PATH ?? "").split(path.delimiter)) {
+    if (directory.length === 0) continue;
+    const candidate = path.join(directory, name);
+    try {
+      accessSync(candidate, fsConstants.X_OK);
+      return realpathSync(candidate);
+    } catch {
+      // Continue through PATH exactly as process lookup would.
+    }
+  }
+  return null;
 }
 
 function resolveGitLayout(repoRoot) {
@@ -145,24 +159,12 @@ function inspectOperationalState(repoRoot) {
       cwd: repoRoot,
       timeout: 60_000,
     }));
-    if (!Array.isArray(lifecycle) || lifecycle.some((item) => !item || typeof item.merged !== "boolean"
+    if (!Array.isArray(lifecycle) || lifecycle.some((item) => !item || typeof item.clean !== "boolean"
+      || typeof item.merged !== "boolean"
       || !Number.isFinite(item.targetGiB) || item.targetGiB < 0 || typeof item.removableAfterSevenDays !== "boolean")) {
       throw new Error("lifecycle audit returned an invalid JSON contract");
     }
-    const nonPrimary = lifecycle.slice(1);
-    const active = nonPrimary.filter((item) => !item.merged);
-    const targetGiB = lifecycle.reduce((sum, item) => sum + (Number(item.targetGiB) || 0), 0);
-    const removable = nonPrimary.filter((item) => item.removableAfterSevenDays).length;
-    const worktreeStatus = active.length <= 2 ? "pass" : "fail";
-    const diskStatus = targetGiB <= 100 ? "pass" : targetGiB <= 200 ? "warn" : "fail";
-    return [
-      check("worktree-admission", worktreeStatus,
-        `${active.length} active and ${lifecycle.length} registered worktrees in this Git common checkout; green active limit is 2`,
-        { active: active.length, registered: lifecycle.length, removable }, "operational"),
-      check("worktree-target-storage", diskStatus,
-        `${targetGiB.toFixed(1)} GiB in worktree-local target directories`,
-        { targetGiB, greenMaximumGiB: 100, amberMaximumGiB: 200 }, "operational"),
-    ];
+    return lifecycleCapacityChecks(lifecycle);
   } catch (error) {
     try {
       const worktrees = run("git", ["worktree", "list", "--porcelain"], { cwd: repoRoot })
@@ -192,6 +194,26 @@ function inspectOperationalState(repoRoot) {
         undefined, "operational")];
     }
   }
+}
+
+export function lifecycleCapacityChecks(lifecycle) {
+  if (!Array.isArray(lifecycle) || lifecycle.length === 0) {
+    throw new Error("lifecycle audit must contain the primary checkout");
+  }
+  const nonPrimary = lifecycle.slice(1);
+  const active = nonPrimary.filter((item) => !item.merged || !item.clean);
+  const targetGiB = lifecycle.reduce((sum, item) => sum + (Number(item.targetGiB) || 0), 0);
+  const removable = nonPrimary.filter((item) => item.removableAfterSevenDays).length;
+  const worktreeStatus = active.length <= 2 ? "pass" : "fail";
+  const diskStatus = targetGiB <= 100 ? "pass" : targetGiB <= 200 ? "warn" : "fail";
+  return [
+    check("worktree-admission", worktreeStatus,
+      `${active.length} active and ${lifecycle.length} registered worktrees in this Git common checkout; green active limit is 2`,
+      { active: active.length, registered: lifecycle.length, removable }, "operational"),
+    check("worktree-target-storage", diskStatus,
+      `${targetGiB.toFixed(1)} GiB in worktree-local target directories`,
+      { targetGiB, greenMaximumGiB: 100, amberMaximumGiB: 200 }, "operational"),
+  ];
 }
 
 async function inspectMetrics(repoRoot) {
@@ -319,6 +341,7 @@ export async function auditPi({
   includeOperational = true,
   env = process.env,
   piVersion = undefined,
+  piExecutable = undefined,
   userPolicyResult = undefined,
 } = {}) {
   const checks = [];
@@ -369,14 +392,24 @@ export async function auditPi({
   }
 
   let effectivePiVersion = piVersion;
+  let effectivePiExecutable = piExecutable;
   if (effectivePiVersion === undefined) {
-    try { effectivePiVersion = run("pi", ["--version"], { cwd: repoRoot }); } catch { effectivePiVersion = null; }
+    try { effectivePiVersion = run("pi", ["--version"], { cwd: repoRoot, env }); } catch { effectivePiVersion = null; }
+  }
+  if (effectivePiExecutable === undefined) {
+    effectivePiExecutable = executableFromPath("pi", env);
   }
   const validPiVersion = typeof effectivePiVersion === "string" && /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(effectivePiVersion);
-  checks.push(check("pi-runtime", validPiVersion ? "pass" : "fail",
-    validPiVersion
+  const nixPinnedPi = typeof effectivePiExecutable === "string"
+    && /^\/nix\/store\/[a-z0-9]{32}-[^/]+\/bin\/pi$/u.test(effectivePiExecutable);
+  checks.push(check("pi-runtime", validPiVersion && nixPinnedPi ? "pass" : "fail",
+    validPiVersion && nixPinnedPi
       ? `Nix-pinned Pi ${effectivePiVersion} is active`
-      : `The Pi executable is unavailable or reported an invalid version: ${effectivePiVersion ?? "unavailable"}`));
+      : "Pi must be the versioned executable supplied by the pinned Nix development shell",
+    validPiVersion && nixPinnedPi ? undefined : {
+      versionValid: validPiVersion,
+      nixStoreExecutable: nixPinnedPi,
+    }));
 
   const agentProblems = [];
   const agentDir = path.join(repoRoot, ".pi", "agents");
