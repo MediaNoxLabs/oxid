@@ -405,6 +405,24 @@ export async function auditPi({
     agentProblems.length ? "One or more tracked agents are unbounded" : "Every tracked agent has a bounded runtime and turn budget",
     agentProblems.length ? agentProblems : undefined));
 
+  const helperProblems = [];
+  for (const relative of [
+    "scripts/loop/pre-flight-gate.mjs",
+    "scripts/loop/pre-commit-branch-guard.mjs",
+    "scripts/loop/ensure-worktree.mjs",
+  ]) {
+    try {
+      accessSync(path.join(repoRoot, relative), fsConstants.R_OK | fsConstants.X_OK);
+    } catch (error) {
+      helperProblems.push(`${relative}: ${error.message}`);
+    }
+  }
+  checks.push(check("local-implementation-helpers", helperProblems.length ? "fail" : "pass",
+    helperProblems.length
+      ? "One or more required local-implementation helper routes are unavailable"
+      : "Required local-implementation helper routes are tracked and executable",
+    helperProblems.length ? helperProblems : undefined));
+
   const effectiveUserPolicy = userPolicyResult ?? await checkUserPolicy({ env });
   checks.push(check("user-subagent-policy", effectiveUserPolicy.ok ? "pass" : "fail",
     effectiveUserPolicy.ok ? "Effective pi-subagents concurrency, spawn, turn, token, and artifact policy is aligned" : "Effective user pi-subagents policy is not aligned",
