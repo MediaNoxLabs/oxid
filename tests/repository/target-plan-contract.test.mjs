@@ -8,10 +8,71 @@ import {
   HOSTED_TARGETS,
   HostedTarget,
   Profile,
+  classifyOwnershipMapChanges,
   classifyAreas,
   makeTargetPlan,
   resolveProfile,
 } from "../../scripts/ci/target-plan.mjs";
+
+const ownershipMap = (crates, schemaVersion = 1) => JSON.stringify({ schemaVersion, crates });
+
+const crate = (name, capabilityOwners = []) => ({
+  name,
+  sourceRoot: `crates/${name}/src`,
+  facadeFiles: [`crates/${name}/src/lib.rs`],
+  facadeMaximumPhysicalLines: 1,
+  facadeMaximumPhysicalLinesByPath: { [`crates/${name}/src/lib.rs`]: 1 },
+  capabilityOwners: capabilityOwners.map((owner) => ({
+    name: owner.name,
+    modulePathPrefixes: owner.modulePathPrefixes ?? [`crates/${name}/src/${owner.name}`],
+  })),
+  exclusions: [],
+  temporaryExceptions: [],
+});
+
+test("ownership-map changes inherit the affected crate's CI lane", () => {
+  const before = ownershipMap([
+    crate("oxid-ui-dioxus", [{ name: "labels" }]),
+    crate("oxid-composition", [{ name: "profiles" }]),
+  ]);
+  const uiOnly = ownershipMap([
+    crate("oxid-ui-dioxus", [{ name: "labels" }, { name: "presentation" }]),
+    crate("oxid-composition", [{ name: "profiles" }]),
+  ]);
+  const sharedCore = ownershipMap([
+    crate("oxid-ui-dioxus", [{ name: "labels" }]),
+    crate("oxid-composition", [{ name: "profiles" }, { name: "wiring" }]),
+  ]);
+
+  assert.deepEqual(classifyOwnershipMapChanges(before, uiOnly), ["ui"]);
+  assert.deepEqual(classifyOwnershipMapChanges(before, sharedCore), ["core"]);
+  assert.deepEqual(
+    makeTargetPlan([
+      "crates/ui-dioxus/src/presentation.rs",
+      "docs/site/src/presentation.md",
+      "scripts/architecture/capability-facades.json",
+    ], { ownershipAreas: classifyOwnershipMapChanges(before, uiOnly) }).targets,
+    [HostedTarget.BASIC, HostedTarget.UNIT_LINUX, HostedTarget.UI_LINUX],
+  );
+});
+
+test("ownership-map changes fail closed for malformed or mixed ownership", () => {
+  const before = ownershipMap([crate("oxid-ui-dioxus")]);
+  const mixed = ownershipMap([crate("oxid-ui-dioxus", [{ name: "labels" }]), crate("oxid-composition")]);
+
+  assert.deepEqual(classifyOwnershipMapChanges(before, "not JSON"), ["core"]);
+  assert.deepEqual(classifyOwnershipMapChanges(before, ownershipMap([crate("oxid-ui-dioxus")], 2)), ["core"]);
+  const invalidOwner = JSON.parse(before);
+  invalidOwner.crates[0].capabilityOwners = [{ name: "presentation" }];
+  assert.deepEqual(classifyOwnershipMapChanges(before, JSON.stringify(invalidOwner)), ["core"]);
+  assert.deepEqual(classifyOwnershipMapChanges(before, mixed), ["core", "ui"]);
+  assert.deepEqual(
+    makeTargetPlan(["scripts/architecture/capability-facades.json"], {
+      ownershipAreas: classifyOwnershipMapChanges(before, mixed),
+    }).targets,
+    [HostedTarget.BASIC, HostedTarget.UNIT_LINUX, HostedTarget.HEADLESS_LINUX, HostedTarget.UI_LINUX],
+  );
+});
 
 test("automatic profiles distinguish feature, milestone promotion, and release flows", () => {
   assert.equal(resolveProfile("auto", "pull_request", "develop"), Profile.FEATURE);
