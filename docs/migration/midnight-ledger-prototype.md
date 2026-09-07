@@ -75,6 +75,15 @@ process-local and contain only circuit size, row/hash counts, timings,
 verification state, and proof size. They are neither persisted nor emitted to
 the diagnostic event ring.
 
+While this page is mounted, development desktop, Linux, and Android artifacts
+also sample only the hosting process's resident memory and CPU every 500 ms.
+The UI shows current RSS, current-process CPU, and the page-session RSS peak;
+it never exposes a PID, executable path, command line, or system-wide process
+list, and it never persists or forwards samples to diagnostics. Unsupported
+targets show an explicit unavailable state. Per-run cards separate the primary
+key-generation, proving, and verification timings from secondary circuit facts
+so measurements remain readable on a phone-width viewport.
+
 The first run may download public proving parameters from
 `srs.midnight.network` into the app-private cache. CI validates construction,
 feature isolation, and low-cost model shapes only: it never downloads proving

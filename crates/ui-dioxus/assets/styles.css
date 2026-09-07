@@ -1741,15 +1741,46 @@ textarea:focus-visible {
 
 .proof-benchmark-list {
   display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.proof-resource-monitor {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-2);
+  margin: var(--space-4) 0;
+}
+
+.proof-resource-monitor div {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.proof-resource-monitor dt,
+.proof-benchmark-timings dt,
+.proof-benchmark-facts dt {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.proof-resource-monitor dd {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  font-size: var(--font-body);
+  font-weight: 850;
 }
 
 .proof-benchmark-row.capability-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: start;
-  gap: var(--space-3);
-  padding: var(--space-3);
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-4);
 }
 
 .proof-benchmark-row small {
@@ -1759,23 +1790,41 @@ textarea:focus-visible {
   line-height: 1.4;
 }
 
-.proof-benchmark-metrics {
+.proof-benchmark-outcome {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-caption);
+  font-weight: 750;
+}
+
+.proof-benchmark-outcome.verified {
+  color: var(--positive);
+}
+
+.proof-benchmark-outcome.warning {
+  color: var(--warning);
+}
+
+.proof-benchmark-timings,
+.proof-benchmark-facts {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-2) var(--space-3);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
   margin: var(--space-3) 0 0;
 }
 
-.proof-benchmark-metrics div {
+.proof-benchmark-timings div,
+.proof-benchmark-facts div {
   min-width: 0;
 }
 
-.proof-benchmark-metrics dt {
-  color: var(--text-muted);
-  font-size: var(--font-caption);
+.proof-benchmark-timings div {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--surface-3);
 }
 
-.proof-benchmark-metrics dd {
+.proof-benchmark-timings dd,
+.proof-benchmark-facts dd {
   margin: var(--space-1) 0 0;
   overflow-wrap: anywhere;
   color: var(--text-strong);
@@ -1783,8 +1832,41 @@ textarea:focus-visible {
   font-size: var(--font-caption);
 }
 
-.proof-benchmark-row .secondary-button {
-  min-width: 4.75rem;
+.proof-benchmark-facts {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+.proof-benchmark-run-button {
+  min-width: 6rem;
+  min-height: 3rem;
+  padding: 0 var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-2));
+  color: var(--accent);
+  font: inherit;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.proof-benchmark-run-button:hover:not(:disabled),
+.proof-benchmark-run-button:focus-visible {
+  background: color-mix(in srgb, var(--accent) 24%, var(--surface-2));
+  transform: translateY(-1px);
+}
+
+.proof-benchmark-run-button:disabled {
+  border-color: var(--line);
+  background: var(--surface-4);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  transform: none;
+}
+
+.proof-benchmark-sweep-button {
+  min-height: 3.2rem;
 }
 
 .developer-capability-summary {
@@ -3083,14 +3165,19 @@ select:focus-visible {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .proof-benchmark-row .secondary-button {
+  .proof-benchmark-row .proof-benchmark-run-button {
     grid-column: 2;
     justify-self: start;
     width: auto;
   }
 
-  .proof-benchmark-metrics {
+  .proof-resource-monitor,
+  .proof-benchmark-timings {
     grid-template-columns: 1fr;
+  }
+
+  .proof-benchmark-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .settings-card {
