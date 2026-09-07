@@ -20,6 +20,7 @@ import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-
 import { normalizeDevLoopsArgs, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
 import { runResolveTrackerLocalSpec } from "../../scripts/github/resolve-tracker-local-spec.mjs";
 import { assertNoPreflightBypass, inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
+import { runBranchGuard } from "../../scripts/loop/pre-commit-branch-guard.mjs";
 import { enforceFactoryAdmissionForCreation, normalizeLinkedWorktreeContext, normalizeWorktreeArgs, resolveRepositoryWorktreePath, runEnsureWorktree } from "../../scripts/loop/ensure-worktree.mjs";
 import { assertReviewedWorktreePin, oxidConsumerProvision } from "../../scripts/loop/ensure-worktree-consumer.mjs";
 import {
@@ -162,6 +163,15 @@ async function makeFixture() {
     '}',
   ].join("\n"));
   await writeFile(path.join(packageRoot, "scripts", "_core-helpers.mjs"), 'export function formatCliError(error) { return error.message; }\n');
+  await writeFile(path.join(packageRoot, "scripts", "loop", "pre-commit-branch-guard.mjs"), [
+    'import { execFileSync } from "node:child_process";',
+    'const index = process.argv.indexOf("--expected-branch");',
+    'const expected = index >= 0 ? process.argv[index + 1] : "";',
+    'const current = execFileSync("git", ["branch", "--show-current"], { encoding: "utf8" }).trim();',
+    'const ok = expected === current;',
+    'process[ok ? "stdout" : "stderr"].write(`${JSON.stringify({ ok, branch: current, expected })}\\n`);',
+    'process.exitCode = ok ? 0 : 1;',
+  ].join("\n"));
   await writeFile(path.join(packageRoot, "agents", "developer.agent.md"), [
     "---", "name: developer", "description: fixture", "tools: read, search, execute, bash, edit, write", "---", "fixture",
   ].join("\n"));
@@ -704,6 +714,32 @@ test("repository wrappers force only the public PR-creation and managed-worktree
   assert.doesNotThrow(() => assertReviewedWorktreePin("0.9.0"));
   assert.throws(() => assertReviewedWorktreePin("0.9.1"), /supports only reviewed dev-loops@0\.9\.0/);
   assert.notStrictEqual(oxidConsumerProvision(), oxidConsumerProvision());
+});
+
+test("tracked branch guard delegates matching and mismatched branches to the exact pinned package", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const invoke = async (expected) => {
+    const stdout = [];
+    const stderr = [];
+    const stdoutSink = new Writable({ write(chunk, _encoding, callback) { stdout.push(chunk.toString()); callback(); } });
+    const stderrSink = new Writable({ write(chunk, _encoding, callback) { stderr.push(chunk.toString()); callback(); } });
+    const code = await runBranchGuard([
+      "--expected-branch", expected, "--require-worktree", "--block-main-checkout",
+    ], { cwd: fixture.worktree, stdout: stdoutSink, stderr: stderrSink });
+    return { code, stdout: stdout.join(""), stderr: stderr.join("") };
+  };
+
+  assert.equal((await invoke("issue-150")).code, 0);
+  const mismatch = await invoke("fix/issue-317");
+  assert.equal(mismatch.code, 1);
+  assert.match(mismatch.stderr, /"ok":false/u);
+
+  await rm(path.join(fixture.packageRoot, "scripts", "loop", "pre-commit-branch-guard.mjs"));
+  await assert.rejects(
+    runBranchGuard(["--expected-branch", "issue-150"], { cwd: fixture.worktree }),
+    /reviewed dev-loops branch guard is unavailable/u,
+  );
 });
 
 test("repository recovery path stays aligned with the real pinned dev-loops core", async (t) => {

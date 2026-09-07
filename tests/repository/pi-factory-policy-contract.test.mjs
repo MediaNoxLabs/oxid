@@ -369,6 +369,7 @@ test("read-only Pi audit recognizes tracked configuration controls", async () =>
     "package-pins",
     "pi-runtime",
     "tracked-agent-budgets",
+    "local-implementation-helpers",
     "user-subagent-policy",
     "dev-loop-bounds",
     "delivery-profiles",
