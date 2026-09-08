@@ -2,6 +2,14 @@
 
 use super::*;
 
+#[derive(Clone, PartialEq)]
+enum DidJourney {
+    Inventory,
+    Create,
+    Resolve,
+    Detail(String),
+}
+
 #[component]
 pub(super) fn DidsPage(
     active_profile: WalletProfileView,
@@ -10,7 +18,7 @@ pub(super) fn DidsPage(
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| DidPageState::Loading);
     let mut did_input = use_signal(String::new);
-    let mut selected_did = use_signal(|| None::<String>);
+    let mut journey = use_signal(|| DidJourney::Inventory);
     let mut did_creation = use_signal(|| DidCreationState::Ready);
     let mut did_creation_notice = use_signal(|| None::<String>);
     let mut did_publication_busy = use_signal(|| false);
@@ -53,6 +61,7 @@ pub(super) fn DidsPage(
         .as_ref()
         .is_some_and(|request| request.kind == IdentityRequestKind::SelfIssuedAuthentication);
     let state_snapshot = state.read().clone();
+    let active_journey = journey();
     match state_snapshot {
         DidPageState::Loading => rsx! {
             section { class: "page-heading",
@@ -115,13 +124,19 @@ pub(super) fn DidsPage(
             let issuance_did_ready = active_managed_did.is_some();
             let publication_service = services.publish_did.clone();
             let publication_profile = profile_id.clone();
-            let standalone_authentication_request = services.standalone_self_issued_request();
+            let login_request = services.standalone_self_issued_request();
             rsx! {
                 section { class: "page-heading",
                     p { class: "eyebrow", "Decentralized identity" }
                     h1 { "Your DIDs" }
                     p { "Create, resolve, update, sign with, and deactivate standards-shaped did:midnight documents under the active profile." }
                 }
+                div { class: "action-row",
+                    button { class: "primary-action", r#type: "button", onclick: move |_| journey.set(DidJourney::Create), "Create a DID" }
+                    button { class: "secondary-action", r#type: "button", onclick: move |_| journey.set(DidJourney::Resolve), "Resolve DID" }
+                }
+                if active_journey == DidJourney::Create {
+                    button { class: "secondary-action", r#type: "button", onclick: move |_| journey.set(DidJourney::Inventory), "Back to DID inventory" }
                 article { class: "surface-card did-resolver-card",
                     p { class: "card-eyebrow", "Managed identity" }
                     h2 { "Create DID" }
@@ -227,7 +242,7 @@ pub(super) fn DidsPage(
                     if let (Some(service), Some(did)) = (publication_service, active_managed_did) {
                         div { class: "did-resolver-card",
                             h3 { "Tailnet demo bootstrap" }
-                            p { class: "form-hint", "Make this DID's public document available to the current test issuer so it can verify holder proofs. This sends no private keys or credentials and does not publish the DID on chain." }
+                            p { class: "form-hint", "Make this DID's public document available to the configured test issuer so it can verify holder proofs. This sends no private keys or credentials and does not publish the DID on chain." }
                             button {
                                 class: "secondary-action",
                                 r#type: "button",
@@ -254,7 +269,7 @@ pub(super) fn DidsPage(
                                         did_publication_busy.set(false);
                                         match result {
                                             Ok(Ok(())) => did_publication_notice.set(Some(
-                                                "Public DID document is available to the current test issuer. You can accept its credential offer now.".to_owned(),
+                                                "Public DID document is available to the configured test issuer. You can accept its credential offer now.".to_owned(),
                                             )),
                                             Ok(Err(error)) => did_publication_notice
                                                 .set(Some(did_operation_message(error))),
@@ -271,6 +286,7 @@ pub(super) fn DidsPage(
                         }
                     }
                 }
+                }
                 if is_authentication_request {
                     article { class: "surface-card did-resolver-card",
                     p { class: "card-eyebrow", "SIOPv2 draft 13" }
@@ -286,7 +302,7 @@ pub(super) fn DidsPage(
                         value: "{authentication_input}",
                         oninput: move |event| authentication_input.set(event.value()),
                     }
-                    if let Some(request) = standalone_authentication_request {
+                    if let Some(request) = login_request {
                         button {
                             class: "secondary-action",
                             r#type: "button",
@@ -297,7 +313,7 @@ pub(super) fn DidsPage(
                                 authentication_consent.set(false);
                                 authentication_notice.set(Some("Login request loaded. Preview it before authenticating.".to_owned()));
                             },
-                            "Use standalone login request"
+                            "Use login request"
                         }
                     }
                     button {
@@ -354,7 +370,7 @@ pub(super) fn DidsPage(
                                         code { title: "{preview.verifier}", "{preview.verifier}" }
                                         div { class: "consent-trust",
                                             span { class: "status-pill warning", "Unverified endpoint" }
-                                            p { "Standalone mode has no production trust-registry or verified-domain signal." }
+                                            p { "This development profile has no production trust-registry or verified-domain signal." }
                                         }
                                     }
                                     li { class: "consent-question",
@@ -481,6 +497,8 @@ pub(super) fn DidsPage(
                     }
                 }
                 }
+                if active_journey == DidJourney::Resolve {
+                    button { class: "secondary-action", r#type: "button", onclick: move |_| journey.set(DidJourney::Inventory), "Back to DID inventory" }
                 article { class: "surface-card did-resolver-card",
                     p { class: "card-eyebrow", "Resolve a DID" }
                     label { r#for: "did-identifier", "Midnight DID" }
@@ -494,7 +512,7 @@ pub(super) fn DidsPage(
                     button {
                         class: "secondary-action", r#type: "button", disabled: resolving || creating_did,
                         onclick: move |_| did_input.set(STANDALONE_DID_FIXTURE.to_owned()),
-                        "Load standalone example DID"
+                        "Load example DID"
                     }
                     button {
                         class: "primary-action", r#type: "button", disabled: !can_resolve,
@@ -526,6 +544,7 @@ pub(super) fn DidsPage(
                     if let Some(error) = operation_error {
                         p { class: "field-error", role: "alert", "{error}" }
                     }
+                }
                 }
                 if records.is_empty() {
                     article { class: "empty-state surface-card",
@@ -578,10 +597,13 @@ pub(super) fn DidsPage(
                                         }
                                         button {
                                             class: "secondary-action", r#type: "button",
-                                            aria_expanded: selected_did().as_deref() == Some(did.as_str()),
-                                            onclick: { let did = did.clone(); move |_| selected_did.set(Some(did.clone())) },
+                                            aria_expanded: active_journey == DidJourney::Detail(did.clone()),
+                                            onclick: { let did = did.clone(); move |_| journey.set(DidJourney::Detail(did.clone())) },
                                             "Open DID details"
                                         }
+                                        if active_journey == DidJourney::Detail(did.clone()) {
+                                            p { class: "card-eyebrow", "DID detail" }
+                                            button { class: "secondary-action", r#type: "button", onclick: move |_| journey.set(DidJourney::Inventory), "Back to DID inventory" }
                                         {
                                             let managed_did = did.clone();
                                             let retained = records.clone();
@@ -643,6 +665,7 @@ pub(super) fn DidsPage(
                                             },
                                             "Forget from profile"
                                         }
+                                        }
                                     }
                                 }
                             }
@@ -669,5 +692,9 @@ mod tests {
         assert!(source.contains("is_authentication_request"));
         assert!(!production_source.contains("Create a standalone DID"));
         assert!(source.contains("if is_authentication_request"));
+        assert!(source.contains("if active_journey == DidJourney::Create"));
+        assert!(source.contains("if active_journey == DidJourney::Resolve"));
+        assert!(source.contains("DidJourney::Detail(did.clone())"));
+        assert!(!production_source.contains("\"Standalone"));
     }
 }
