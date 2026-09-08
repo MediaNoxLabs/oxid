@@ -2008,7 +2008,6 @@ enum CredentialPageState {
     Loading,
     Ready {
         credentials: Vec<CredentialView>,
-        receiving: bool,
         operation_error: Option<String>,
         reverification_applied: bool,
     },
@@ -2587,7 +2586,6 @@ enum DemoBootstrapAction {
     Protection,
     Account,
     ManagedDid,
-    InboxFixture,
     SimulatedFunding,
     CredentialOffer,
     LoginRequest,
@@ -2602,7 +2600,6 @@ impl DemoBootstrapAction {
             Self::Protection => "Initialize or unlock wallet",
             Self::Account => "Derive Midnight account",
             Self::ManagedDid => "Create managed DID",
-            Self::InboxFixture => "Receive inbox fixture",
             Self::SimulatedFunding => "Load simulated funding",
             Self::CredentialOffer => "Review credential offer",
             Self::LoginRequest => "Review login request",
@@ -2619,12 +2616,11 @@ impl DemoBootstrapAction {
 }
 
 #[cfg(feature = "ui-profile-demo")]
-const DEMO_BOOTSTRAP_ACTIONS: [DemoBootstrapAction; 9] = [
+const DEMO_BOOTSTRAP_ACTIONS: [DemoBootstrapAction; 8] = [
     DemoBootstrapAction::Profile,
     DemoBootstrapAction::Protection,
     DemoBootstrapAction::Account,
     DemoBootstrapAction::ManagedDid,
-    DemoBootstrapAction::InboxFixture,
     DemoBootstrapAction::SimulatedFunding,
     DemoBootstrapAction::CredentialOffer,
     DemoBootstrapAction::LoginRequest,
@@ -2632,12 +2628,11 @@ const DEMO_BOOTSTRAP_ACTIONS: [DemoBootstrapAction; 9] = [
 ];
 
 #[cfg(feature = "ui-profile-demo")]
-const DEMO_SAFE_SETUP_ACTIONS: [DemoBootstrapAction; 6] = [
+const DEMO_SAFE_SETUP_ACTIONS: [DemoBootstrapAction; 5] = [
     DemoBootstrapAction::Profile,
     DemoBootstrapAction::Protection,
     DemoBootstrapAction::Account,
     DemoBootstrapAction::ManagedDid,
-    DemoBootstrapAction::InboxFixture,
     DemoBootstrapAction::SimulatedFunding,
 ];
 
@@ -2935,25 +2930,6 @@ async fn execute_demo_data_action(
             })
             .await
             .map_err(|error| error.to_string())?
-        }
-        DemoBootstrapAction::InboxFixture => {
-            let profile = require_demo_profile(profile)?;
-            let operation_profile = profile.clone();
-            let service = services.receive_credential();
-            run_ui_future(async move {
-                service
-                    .execute(CredentialProfileQuery {
-                        profile_id: operation_profile.id,
-                    })
-                    .await
-                    .map_err(|error| error.to_string())
-            })
-            .await
-            .map_err(|error| error.to_string())??;
-            Ok(DemoActionOutcome {
-                profile,
-                detail: "Verified and upserted the public standalone inbox fixture.".to_owned(),
-            })
         }
         DemoBootstrapAction::SimulatedFunding => {
             let profile = require_demo_profile(profile)?;
@@ -8166,7 +8142,6 @@ fn load_credential_page(services: &WalletUiServices, profile_id: &str) -> Creden
             |error| CredentialPageState::Failed(credential_operation_message(error)),
             |credentials| CredentialPageState::Ready {
                 credentials,
-                receiving: false,
                 operation_error: None,
                 reverification_applied: false,
             },
@@ -8835,7 +8810,6 @@ fn credential_page_after_change(
     };
     CredentialPageState::Ready {
         credentials,
-        receiving: false,
         operation_error,
         reverification_applied,
     }
@@ -9305,13 +9279,9 @@ fn CredentialsPage(
         },
         CredentialPageState::Ready {
             credentials,
-            receiving,
             operation_error,
             reverification_applied,
         } => {
-            let receive_service = services.receive_credential();
-            let receive_profile = profile_id.clone();
-            let retained = credentials.clone();
             let demo_offer = services.standalone_credential_offer();
             let credential_review_escape_visible = credential_review_escape_is_visible(
                 &pending_identity_request.read(),
@@ -9884,39 +9854,6 @@ fn CredentialsPage(
                         "{CREDENTIAL_REVERIFICATION_APPLIED_MARKER}"
                     }
                 }
-                if cfg!(feature = "ui-profile-dev") {
-                    article { class: "surface-card credential-receive-card",
-                        p { class: "card-eyebrow", "Developer fixture" }
-                        h2 { "Receive a standalone test credential" }
-                        p { class: "form-hint", "This bypasses OpenID4VCI and exists only in the explicit developer profile." }
-                        button {
-                            class: "primary-action", r#type: "button", disabled: receiving,
-                            onclick: move |_| {
-                                state.set(CredentialPageState::Ready { credentials: retained.clone(), receiving: true, operation_error: None, reverification_applied: false });
-                                let service = receive_service.clone();
-                                let profile_id = receive_profile.clone();
-                                let mut next = retained.clone();
-                                spawn(async move {
-                                    match run_ui_future(async move {
-                                        service.execute(CredentialProfileQuery { profile_id }).await
-                                    })
-                                    .await
-                                    {
-                                        Ok(Ok(credential)) => {
-                                            next.retain(|existing| existing.id != credential.id);
-                                            next.push(credential);
-                                            next.sort_by(|left, right| left.id.cmp(&right.id));
-                                            state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None, reverification_applied: false });
-                                        }
-                                        Ok(Err(error)) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(credential_operation_message(error)), reverification_applied: false }),
-                                        Err(error) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(error.to_string()), reverification_applied: false }),
-                                    }
-                                });
-                            },
-                            if receiving { "Receiving and verifying…" } else { "Receive standalone credential" }
-                        }
-                    }
-                }
                 if let Some(error) = operation_error.as_deref() {
                     p {
                         class: "field-error credential-operation-error",
@@ -9930,13 +9867,7 @@ fn CredentialsPage(
                     article { class: "empty-state surface-card",
                         span { class: "empty-state__mark", aria_hidden: "true", "◇" }
                         h2 { "No credentials yet" }
-                        p {
-                            if cfg!(feature = "ui-profile-dev") {
-                                "Scan an offer or use the developer fixture to add a test credential."
-                            } else {
-                                "Scan a credential offer to review and add your first credential."
-                            }
-                        }
+                        p { "Scan a credential offer to review and add your first credential." }
                         span { class: "status-pill", "Profile scoped" }
                     }
                 } else {
@@ -10826,12 +10757,28 @@ mod tests {
     #[cfg(feature = "ui-profile-demo")]
     #[test]
     fn demo_profile_has_a_closed_order_and_three_explicit_review_boundaries() {
-        assert_eq!(DEMO_BOOTSTRAP_ACTIONS.len(), 9);
-        assert_eq!(DEMO_SAFE_SETUP_ACTIONS.len(), 6);
-        assert_eq!(DEMO_SAFE_SETUP_ACTIONS[0], DemoBootstrapAction::Profile);
         assert_eq!(
-            DEMO_SAFE_SETUP_ACTIONS[5],
-            DemoBootstrapAction::SimulatedFunding
+            DEMO_SAFE_SETUP_ACTIONS,
+            [
+                DemoBootstrapAction::Profile,
+                DemoBootstrapAction::Protection,
+                DemoBootstrapAction::Account,
+                DemoBootstrapAction::ManagedDid,
+                DemoBootstrapAction::SimulatedFunding,
+            ]
+        );
+        assert_eq!(
+            DEMO_BOOTSTRAP_ACTIONS,
+            [
+                DemoBootstrapAction::Profile,
+                DemoBootstrapAction::Protection,
+                DemoBootstrapAction::Account,
+                DemoBootstrapAction::ManagedDid,
+                DemoBootstrapAction::SimulatedFunding,
+                DemoBootstrapAction::CredentialOffer,
+                DemoBootstrapAction::LoginRequest,
+                DemoBootstrapAction::PresentationRequest,
+            ]
         );
         assert_eq!(
             DEMO_BOOTSTRAP_ACTIONS
@@ -10887,7 +10834,7 @@ mod tests {
             "review".to_owned(),
         );
         state.update(
-            DemoBootstrapAction::InboxFixture,
+            DemoBootstrapAction::SimulatedFunding,
             DemoActionPhase::Failed,
             "retry".to_owned(),
         );
@@ -10901,7 +10848,7 @@ mod tests {
             DemoActionPhase::ReviewRequired
         );
         assert_eq!(
-            state.progress(DemoBootstrapAction::InboxFixture).phase,
+            state.progress(DemoBootstrapAction::SimulatedFunding).phase,
             DemoActionPhase::Failed
         );
         assert!(
