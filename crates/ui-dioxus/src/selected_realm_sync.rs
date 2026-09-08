@@ -110,10 +110,20 @@ pub(super) fn selected_realm_provenance(realm: &SelectedWalletRealmSyncView) -> 
             account.chain,
             ui::account_source(&account.source).to_lowercase(),
         ),
-        family => format!(
-            "Selected realm · {} source",
-            family.state_name().replace('_', " ")
-        ),
+        family => format!("Selected realm · {} source", realm_family_source(family)),
+    }
+}
+
+const fn realm_family_source<T>(family: &WalletRealmFamilyView<T>) -> &'static str {
+    match family {
+        WalletRealmFamilyView::Ready(_) => "ready",
+        WalletRealmFamilyView::Busy => "syncing",
+        WalletRealmFamilyView::NotFound => "wallet not active",
+        WalletRealmFamilyView::Unsupported => "unsupported",
+        WalletRealmFamilyView::ProtectionNotInitialized => "protection not initialized",
+        WalletRealmFamilyView::ProtectionLocked => "protection locked",
+        WalletRealmFamilyView::Unavailable => "unavailable",
+        WalletRealmFamilyView::InvalidData => "invalid data",
     }
 }
 
