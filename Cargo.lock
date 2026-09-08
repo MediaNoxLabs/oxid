@@ -5984,6 +5984,7 @@ dependencies = [
  "oxid-adapter-backup-complete",
  "oxid-adapter-backup-document-mobile",
  "oxid-adapter-backup-portable",
+ "oxid-adapter-custody-software",
  "oxid-adapter-deployment-profile",
  "oxid-adapter-diagnostics-memory",
  "oxid-adapter-did-midnight",

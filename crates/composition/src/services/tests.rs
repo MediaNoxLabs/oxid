@@ -16,6 +16,13 @@ fn composition_exposes_every_application_capability() {
     drop(services.unlock_wallet());
     drop(services.lock_wallet());
     assert!(services.wallet_root_recovery().is_none());
+    let onboarding = services
+        .wallet_onboarding()
+        .expect("simulated Midnight network supports private onboarding");
+    assert_eq!(onboarding.network_id(), "undeployed");
+    drop(onboarding.prepare());
+    drop(onboarding.complete());
+    drop(onboarding.cancel());
     drop(services.export_portable_wallet_backup());
     drop(services.recover_portable_wallet_backup());
     drop(services.export_complete_wallet_backup());

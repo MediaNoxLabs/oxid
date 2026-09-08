@@ -29,6 +29,7 @@ use super::standalone_genesis::{public_profile_protection, public_standalone_net
 use super::wiring::{
     compose_with_adapters, compose_with_adapters_and_credential_profile,
     compose_with_adapters_and_presentation, compose_with_adapters_and_protection,
+    with_wallet_onboarding,
 };
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
 use oxid_adapter_storage_dev::DevelopmentWalletSecurity;
@@ -92,12 +93,19 @@ pub(super) fn compose_headless_with_credential_profile(
     #[cfg(not(target_arch = "wasm32"))]
     let midnight = Arc::new(midnight);
     let services = compose_with_adapters_and_credential_profile(
-        profiles,
-        security,
-        midnight,
+        Arc::clone(&profiles),
+        Arc::clone(&security),
+        Arc::clone(&midnight),
         credential_presentation,
         credential_profile,
         |security| security,
+    );
+    let services = with_wallet_onboarding(
+        services,
+        profiles,
+        security,
+        midnight,
+        "undeployed".to_owned(),
     );
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -311,13 +319,20 @@ where
         + 'static,
     F: FnOnce(Arc<DevelopmentWalletSecurity<SystemClock, N>>) -> Arc<dyn WalletProtectionPort>,
 {
+    let network_id = config.indexer().network_id().as_str().to_owned();
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let midnight = Arc::new(
         protected_standalone_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))
             .with_profile_association_repository(profiles.clone()),
     );
+    let services = compose_with_adapters_and_protection(
+        Arc::clone(&profiles),
+        Arc::clone(&security),
+        Arc::clone(&midnight),
+        protection_for_security,
+    );
     with_passport_vault_state_source(
-        compose_with_adapters_and_protection(profiles, security, midnight, protection_for_security),
+        with_wallet_onboarding(services, profiles, security, midnight, network_id),
         passport_vault_state_source,
     )
 }

@@ -21,6 +21,7 @@ use oxid_adapter_backup_complete::{FileRecoveryJournal, UnavailableRecoveryJourn
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_backup_document_mobile::NativePortableWalletBackupDocuments;
 use oxid_adapter_backup_portable::PortableCustodyVaultPort;
+use oxid_adapter_custody_software::Bip39WalletMnemonic;
 use oxid_adapter_diagnostics_memory::InMemoryDiagnosticStore;
 use oxid_adapter_did_midnight::{StandaloneDidLifecycle, StandaloneDidResolver};
 use oxid_adapter_identity_ingress::StrictIdentityRequestRouter;
@@ -162,9 +163,10 @@ use oxid_wallet_application::{
     WalletAccountService, WalletBackupReceiptRepository, WalletBackupReceiptService,
     WalletDustRegistrationService, WalletDustSyncPort, WalletDustSyncService,
     WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
-    WalletNetworkService, WalletPortableBackupPort, WalletPortableBackupService,
-    WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
-    WalletProtectionService, WalletShieldedSyncPort, WalletShieldedSyncService,
+    WalletNetworkService, WalletOnboardingService, WalletPortableBackupPort,
+    WalletPortableBackupService, WalletProfileAssociationRepository, WalletProfileRepository,
+    WalletProtectionPort, WalletProtectionService, WalletRootRecoveryPort,
+    WalletRootRecoveryService, WalletShieldedSyncPort, WalletShieldedSyncService,
     WalletTransactionPort, WalletTransactionService,
 };
 
@@ -214,6 +216,38 @@ pub(super) fn complete_wallet_recovery_journal() -> Arc<dyn RecoveryJournalPort>
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub(super) fn complete_wallet_recovery_journal() -> Arc<dyn RecoveryJournalPort> {
     Arc::new(InMemoryRecoveryJournal::default())
+}
+
+/// Adds private-wallet onboarding only after the caller has selected the exact
+/// network bound by its profile composition.
+pub(super) fn with_wallet_onboarding<R, S, M>(
+    services: ApplicationServices,
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    network_id: String,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
+    S: WalletProtectionPort + WalletRootRecoveryPort + 'static,
+    M: WalletNetworkPort + WalletAccountDerivationPort + 'static,
+{
+    let Ok(recovery) =
+        WalletRootRecoveryService::new(repository, security, midnight, network_id.clone())
+    else {
+        return services;
+    };
+    let onboarding = Arc::new(WalletOnboardingService::new(
+        Arc::new(OsRandom),
+        Arc::new(Bip39WalletMnemonic),
+        Arc::new(recovery),
+    ));
+    services.with_wallet_onboarding(super::services::WalletOnboardingCapability::new(
+        network_id,
+        onboarding.clone(),
+        onboarding.clone(),
+        onboarding,
+    ))
 }
 
 pub(super) fn compose_with_adapters<R, S, M>(
@@ -1024,6 +1058,7 @@ where
         unlock_wallet,
         lock_wallet,
         wallet_root_recovery: None,
+        wallet_onboarding: None,
         export_portable_wallet_backup,
         recover_portable_wallet_backup,
         export_complete_wallet_backup,

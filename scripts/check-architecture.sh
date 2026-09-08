@@ -191,7 +191,7 @@ check_workspace_dependencies oxid-ui-dioxus \
   oxid-protocol-application oxid-wallet-application
 check_workspace_dependencies oxid-composition \
   oxid-adapter-backup-complete oxid-adapter-backup-document-mobile \
-  oxid-adapter-backup-portable oxid-adapter-deployment-profile \
+  oxid-adapter-backup-portable oxid-adapter-custody-software oxid-adapter-deployment-profile \
   oxid-adapter-diagnostics-memory \
   oxid-adapter-did-midnight oxid-adapter-identity-ingress \
   oxid-adapter-openid4vci oxid-adapter-siopv2 \

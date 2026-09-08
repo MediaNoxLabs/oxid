@@ -44,6 +44,7 @@ fn production_facing_composition_fails_closed_without_native_custody() {
 
     assert_eq!(status.state_name(), "Unavailable");
     assert_eq!(status.protection_name(), "Not connected");
+    assert!(services.wallet_onboarding().is_none());
     assert_eq!(
         services
             .get_wallet_account()

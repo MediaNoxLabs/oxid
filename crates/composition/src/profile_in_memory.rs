@@ -13,7 +13,7 @@ use super::passport_vault::PassportVaultRepositoryComposition;
 #[cfg(not(target_arch = "wasm32"))]
 use super::passport_vault::with_simulated_passport_vault_calls;
 use super::services::ApplicationServices;
-use super::wiring::compose_with_identity_adapters;
+use super::wiring::{compose_with_identity_adapters, with_wallet_onboarding};
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
 use oxid_adapter_storage_dev::DevelopmentWalletSecurity;
 use oxid_adapter_storage_memory::{
@@ -75,9 +75,9 @@ pub(super) fn compose_in_memory_with_presentation(
     let did_lifecycle_port: Arc<dyn DidLifecyclePort> = did_lifecycle.clone();
     let did_jubjub_challenge_signing: Arc<dyn DidJubjubChallengeSigningPort> = did_lifecycle;
     let services = compose_with_identity_adapters(
-        profiles,
-        security,
-        midnight,
+        Arc::clone(&profiles),
+        Arc::clone(&security),
+        Arc::clone(&midnight),
         IdentityAdapters {
             did_repository: Arc::new(InMemoryDidRecordRepository::new()),
             did_resolver: Arc::new(StandaloneDidResolver),
@@ -100,6 +100,13 @@ pub(super) fn compose_in_memory_with_presentation(
         },
         PassportVaultRepositoryComposition::process_local(),
         |security| security,
+    );
+    let services = with_wallet_onboarding(
+        services,
+        profiles,
+        security,
+        midnight,
+        "undeployed".to_owned(),
     );
     #[cfg(not(target_arch = "wasm32"))]
     {

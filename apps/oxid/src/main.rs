@@ -393,6 +393,16 @@ fn main() {
             application.portable_wallet_backup_documents(),
         ),
     );
+    let wallet_security = if let Some(capability) = application.wallet_onboarding() {
+        wallet_security.with_onboarding(oxid_ui_dioxus::WalletOnboardingUiServices::new(
+            capability.network_id().to_owned(),
+            capability.prepare(),
+            capability.complete(),
+            capability.cancel(),
+        ))
+    } else {
+        wallet_security
+    };
     #[cfg(feature = "preprod-observation")]
     let wallet_security = {
         let capability = application
