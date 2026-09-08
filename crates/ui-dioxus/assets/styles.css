@@ -92,6 +92,36 @@ button {
   text-transform: uppercase;
 }
 
+.developer-profile-banner__copy {
+  display: grid;
+  flex: 1 1 16rem;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.developer-profile-banner__dismiss {
+  display: grid;
+  flex: 0 0 auto;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--warning) 48%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--font-title);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.developer-profile-banner__dismiss:hover,
+.developer-profile-banner__dismiss:focus-visible {
+  border-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 20%, transparent);
+}
+
 .demo-profile-banner__action {
   min-height: 2rem;
   padding: var(--space-1) var(--space-3);

@@ -10,6 +10,7 @@ mod brand;
 mod deployment_profile;
 #[cfg(feature = "desktop-test-click-driver")]
 mod desktop_test_driver;
+mod developer_notices;
 #[cfg(feature = "ui-profile-dev")]
 mod developer_tools;
 mod diagnostics;
@@ -33,6 +34,9 @@ use assets_page::{wallet_account_activation_available, wallet_write_actions_avai
 pub use brand::{BrandProfile, SecurityCopySnapshot, security_copy_snapshot};
 #[cfg(feature = "standalone-deployment-profile")]
 use deployment_profile::DeploymentProfileCard;
+use developer_notices::{
+    DeveloperProfileBanner, PublicStandaloneGenesisBanner, SessionNoticeState,
+};
 pub use diagnostics::DiagnosticsUiServices;
 use dids::DidsPage;
 #[cfg(feature = "ui-profile-dev")]
@@ -3472,24 +3476,6 @@ const fn identity_request_admits_new_link(
     !request_waiting && !manual_credential_review_locked
 }
 
-#[cfg(feature = "ui-profile-dev")]
-fn developer_profile_banner() -> Element {
-    rsx! {
-        aside {
-            class: "developer-profile-banner",
-            role: "status",
-            "data-ui-profile": "OXID_UI_PROFILE_DEVELOPMENT",
-            strong { "Developer profile" }
-            span { "Standalone composition · public capability facts only · telemetry off" }
-        }
-    }
-}
-
-#[cfg(not(feature = "ui-profile-dev"))]
-fn developer_profile_banner() -> Element {
-    rsx! {}
-}
-
 #[cfg(feature = "public-standalone-genesis")]
 const PUBLIC_STANDALONE_GENESIS_MARKER: &str = "OXID_PUBLIC_STANDALONE_GENESIS_WALLET";
 #[cfg(feature = "public-standalone-genesis")]
@@ -3531,24 +3517,6 @@ fn public_fixture_name_conflicts(profiles: &[WalletProfileView], candidate: &str
     }
 }
 
-#[cfg(feature = "public-standalone-genesis")]
-fn public_standalone_genesis_banner() -> Element {
-    rsx! {
-        aside {
-            class: "developer-profile-banner",
-            role: "alert",
-            "data-wallet-authority": PUBLIC_STANDALONE_GENESIS_MARKER,
-            strong { "Public genesis wallet capability" }
-            span { "Only the unique “Oxid Demo Wallet” profile can use shared, publicly spendable test authority; other profiles remain random. No privacy or ownership is implied." }
-        }
-    }
-}
-
-#[cfg(not(feature = "public-standalone-genesis"))]
-fn public_standalone_genesis_banner() -> Element {
-    rsx! {}
-}
-
 /// Brand-agnostic Dioxus incoming adapter and mobile-first application shell.
 #[cfg(not(target_os = "android"))]
 #[component]
@@ -3565,6 +3533,8 @@ fn WalletApp() -> Element {
     let mut profile_session = use_signal(|| ProfileSessionState::Loading);
     let mut navigation = use_signal(RouteStack::default);
     let mut profile_menu_open = use_signal(|| false);
+    let developer_notice_state = use_signal(SessionNoticeState::default);
+    let public_genesis_notice_state = use_signal(SessionNoticeState::default);
     #[cfg(feature = "ui-profile-demo")]
     let demo_drawer_open = use_signal(|| false);
     #[cfg(feature = "ui-profile-demo")]
@@ -3706,8 +3676,8 @@ fn WalletApp() -> Element {
             div {
                 aria_hidden: if demo_gateway_hidden { "true" } else { "false" },
                 inert: html_boolean_attribute(demo_gateway_inert),
-                {developer_profile_banner()}
-                {public_standalone_genesis_banner()}
+                DeveloperProfileBanner { state: developer_notice_state }
+                PublicStandaloneGenesisBanner { state: public_genesis_notice_state }
                 {demo_gateway_banner}
                 ProfileGateway {
                     state: session,
@@ -3804,8 +3774,8 @@ fn WalletApp() -> Element {
             "data-secret-mode": if secret_mode_state().masked { "masked" } else { "revealed" },
             aria_hidden: if demo_shell_hidden { "true" } else { "false" },
             inert: html_boolean_attribute(demo_shell_inert),
-            {developer_profile_banner()}
-            {public_standalone_genesis_banner()}
+            DeveloperProfileBanner { state: developer_notice_state }
+            PublicStandaloneGenesisBanner { state: public_genesis_notice_state }
             {demo_shell_banner}
             header { class: "app-header",
                 button {
