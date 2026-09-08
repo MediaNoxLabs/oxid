@@ -10,6 +10,7 @@ pub(super) fn DidsPage(
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| DidPageState::Loading);
     let mut did_input = use_signal(String::new);
+    let mut selected_did = use_signal(|| None::<String>);
     let mut did_creation = use_signal(|| DidCreationState::Ready);
     let mut did_creation_notice = use_signal(|| None::<String>);
     let mut did_publication_busy = use_signal(|| false);
@@ -47,6 +48,10 @@ pub(super) fn DidsPage(
         });
     });
 
+    let is_authentication_request = pending_identity_request
+        .read()
+        .as_ref()
+        .is_some_and(|request| request.kind == IdentityRequestKind::SelfIssuedAuthentication);
     let state_snapshot = state.read().clone();
     match state_snapshot {
         DidPageState::Loading => rsx! {
@@ -119,7 +124,7 @@ pub(super) fn DidsPage(
                 }
                 article { class: "surface-card did-resolver-card",
                     p { class: "card-eyebrow", "Managed identity" }
-                    h2 { "Create a standalone DID" }
+                    h2 { "Create DID" }
                     p { class: "form-hint", "Creates protected Ed25519 authentication, P-256 assertion, and Jubjub holder-binding keys. Only the public DID document is persisted." }
                     if creation == DidCreationState::Ready {
                         button {
@@ -151,7 +156,7 @@ pub(super) fn DidsPage(
                                             updated.sort_by(|left, right| left.document.id.cmp(&right.document.id));
                                             state.set(DidPageState::Ready { records: updated, resolving: false, operation_error: None });
                                             did_creation.set(DidCreationState::Created);
-                                            did_creation_notice.set(Some("Standalone DID created. Review it below before creating another DID.".to_owned()));
+                                            did_creation_notice.set(Some("DID created. Review it below before creating another DID.".to_owned()));
                                         }
                                         Ok(Err(error)) => {
                                             did_creation.set(DidCreationState::Failed);
@@ -164,7 +169,7 @@ pub(super) fn DidsPage(
                                     }
                                 });
                             },
-                            "Create standalone DID"
+                            "Create DID"
                         }
                     } else if creation == DidCreationState::Creating {
                         p {
@@ -182,7 +187,7 @@ pub(super) fn DidsPage(
                                 onclick: move |_| {
                                     let mut creation = did_creation.write();
                                     if confirm_another_did_creation_value(&mut creation) {
-                                        did_creation_notice.set(Some("Ready to create another standalone DID.".to_owned()));
+                                        did_creation_notice.set(Some("Ready to create another DID.".to_owned()));
                                     }
                                 },
                                 "Confirm create another DID"
@@ -266,8 +271,9 @@ pub(super) fn DidsPage(
                         }
                     }
                 }
-                article { class: "surface-card did-resolver-card",
-                    p { class: "card-eyebrow", "SIOPv2 draft 13 · standalone" }
+                if is_authentication_request {
+                    article { class: "surface-card did-resolver-card",
+                    p { class: "card-eyebrow", "SIOPv2 draft 13" }
                     h2 { "Authenticate with a DID" }
                     p { class: "form-hint", "Preview the verifier and purpose before consent. This flow proves control of a managed DID; it does not disclose a credential. Nonce, state, and the signed ID token remain inside the protocol adapter." }
                     label { r#for: "self-issued-authentication-request", "Authentication request URI" }
@@ -289,7 +295,7 @@ pub(super) fn DidsPage(
                                 authentication_input.set(request.clone());
                                 prepared_authentication.set(None);
                                 authentication_consent.set(false);
-                                authentication_notice.set(Some("Standalone login request loaded. Preview it before authenticating.".to_owned()));
+                                authentication_notice.set(Some("Login request loaded. Preview it before authenticating.".to_owned()));
                             },
                             "Use standalone login request"
                         }
@@ -474,6 +480,7 @@ pub(super) fn DidsPage(
                         p { class: "form-hint", role: "status", "{message}" }
                     }
                 }
+                }
                 article { class: "surface-card did-resolver-card",
                     p { class: "card-eyebrow", "Resolve a DID" }
                     label { r#for: "did-identifier", "Midnight DID" }
@@ -569,6 +576,12 @@ pub(super) fn DidsPage(
                                                 }
                                             }
                                         }
+                                        button {
+                                            class: "secondary-action", r#type: "button",
+                                            aria_expanded: selected_did().as_deref() == Some(did.as_str()),
+                                            onclick: { let did = did.clone(); move |_| selected_did.set(Some(did.clone())) },
+                                            "Open DID details"
+                                        }
                                         {
                                             let managed_did = did.clone();
                                             let retained = records.clone();
@@ -638,5 +651,23 @@ pub(super) fn DidsPage(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn did_inventory_keeps_secondary_journeys_out_of_the_landing_surface() {
+        let source = include_str!("dids.rs");
+        let production_source = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+        assert!(source.contains("Open DID details"));
+        assert!(source.contains("Create DID"));
+        assert!(source.contains("Resolve DID"));
+        assert!(source.contains("is_authentication_request"));
+        assert!(!production_source.contains("Create a standalone DID"));
+        assert!(source.contains("if is_authentication_request"));
     }
 }
