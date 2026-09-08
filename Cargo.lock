@@ -5651,6 +5651,7 @@ dependencies = [
  "anyhow",
  "bech32",
  "futures",
+ "futures-timer",
  "hex",
  "midnight-base-crypto",
  "midnight-coin-structure",

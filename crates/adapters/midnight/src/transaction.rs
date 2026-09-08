@@ -328,6 +328,7 @@ enum MidnightSubmissionPhase {
     Working,
     CancellationRequested,
     Broadcasting,
+    Terminal,
 }
 
 pub(crate) struct MidnightSubmissionControl {
@@ -363,6 +364,9 @@ impl MidnightSubmissionControl {
             }
             MidnightSubmissionPhase::CancellationRequested => Ok(()),
             MidnightSubmissionPhase::Broadcasting => {
+                Err(WalletTransactionPortError::SubmissionCancellationUnsafe)
+            }
+            MidnightSubmissionPhase::Terminal => {
                 Err(WalletTransactionPortError::SubmissionCancellationUnsafe)
             }
         }
@@ -407,6 +411,9 @@ impl MidnightSubmissionControl {
             MidnightSubmissionPhase::Broadcasting => {
                 Err(WalletTransactionPortError::SubmissionInProgress)
             }
+            MidnightSubmissionPhase::Terminal => {
+                Err(WalletTransactionPortError::SubmissionOutcomeUnknown)
+            }
         }
     }
 
@@ -423,6 +430,7 @@ impl MidnightSubmissionControl {
                 WalletTransactionSubmissionState::CancellationRequested
             }
             MidnightSubmissionPhase::Broadcasting => WalletTransactionSubmissionState::Broadcasting,
+            MidnightSubmissionPhase::Terminal => WalletTransactionSubmissionState::OutcomeUnknown,
         })
     }
 
@@ -441,7 +449,66 @@ impl MidnightSubmissionControl {
             MidnightSubmissionPhase::Broadcasting => {
                 MidnightContractCallSubmissionState::Broadcasting
             }
+            MidnightSubmissionPhase::Terminal => {
+                MidnightContractCallSubmissionState::OutcomeUnknown
+            }
         })
+    }
+
+    /// Records an unknown outcome and prevents a late worker from beginning or
+    /// finalizing the same attempt. A pre-broadcast timeout has no journal
+    /// entry to update; a broadcast attempt is durably retained for
+    /// reconciliation.
+    pub(crate) fn mark_outcome_unknown(&self) -> Result<(), WalletTransactionPortError> {
+        let mut phase = self
+            .phase
+            .lock()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?;
+        if *phase == MidnightSubmissionPhase::Broadcasting {
+            let mut entry = self
+                .journal
+                .load(&self.attempt.profile_id, &self.attempt.draft_id)
+                .map_err(map_submission_store_error)?
+                .ok_or(WalletTransactionPortError::InvalidData)?;
+            entry.state = StoredSubmissionState::OutcomeUnknown;
+            entry.block_hash = None;
+            entry.block_height = None;
+            self.journal
+                .save(&entry)
+                .map_err(map_submission_store_error)?;
+        }
+        *phase = MidnightSubmissionPhase::Terminal;
+        Ok(())
+    }
+
+    /// Finalizes only an active broadcast. Once a waiter has timed out, its
+    /// terminal unknown state wins over any later worker result.
+    pub(crate) fn mark_terminal_if_broadcasting(
+        &self,
+        state: StoredSubmissionState,
+        block_hash: Option<[u8; 32]>,
+        block_height: Option<u64>,
+    ) -> Result<bool, WalletTransactionPortError> {
+        let mut phase = self
+            .phase
+            .lock()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?;
+        if *phase != MidnightSubmissionPhase::Broadcasting {
+            return Ok(false);
+        }
+        let mut entry = self
+            .journal
+            .load(&self.attempt.profile_id, &self.attempt.draft_id)
+            .map_err(map_submission_store_error)?
+            .ok_or(WalletTransactionPortError::InvalidData)?;
+        entry.state = state;
+        entry.block_hash = block_hash;
+        entry.block_height = block_height;
+        self.journal
+            .save(&entry)
+            .map_err(map_submission_store_error)?;
+        *phase = MidnightSubmissionPhase::Terminal;
+        Ok(true)
     }
 
     pub(crate) fn mark_terminal(
@@ -3556,6 +3623,61 @@ mod tests {
 
     fn profile() -> WalletProfileId {
         WalletProfileId::parse("profile_test").expect("profile is valid")
+    }
+
+    #[test]
+    fn late_worker_completion_cannot_overwrite_unknown_outcome() {
+        let profile_id = profile();
+        let draft_id =
+            WalletTransactionDraftId::parse("late_completion").expect("draft identifier is valid");
+        let journal =
+            Arc::new(crate::submission_journal::MemoryMidnightSubmissionJournalStore::default());
+        let control = MidnightSubmissionControl::new(
+            MidnightSubmissionAttempt {
+                profile_id: profile_id.clone(),
+                network_id: network_id("undeployed").expect("network is valid"),
+                draft_id: draft_id.clone(),
+                planning_fingerprint: [1; 32],
+                expires_at: UnixTimestampMillis::new(2_000),
+                updated_at: UnixTimestampMillis::new(1_000),
+            },
+            journal.clone(),
+        );
+
+        control
+            .begin_broadcast(
+                42,
+                [2; 32],
+                [3; 32],
+                WalletTransferSubmissionMode::Simulated,
+            )
+            .expect("broadcast starts");
+        control
+            .mark_outcome_unknown()
+            .expect("waiter marks ambiguous broadcast unknown");
+
+        assert!(
+            !control
+                .mark_terminal_if_broadcasting(
+                    StoredSubmissionState::Included,
+                    Some([4; 32]),
+                    Some(4)
+                )
+                .expect("late worker completion is ignored")
+        );
+        assert_eq!(
+            control
+                .public_state()
+                .expect("in-memory outcome is readable"),
+            WalletTransactionSubmissionState::OutcomeUnknown
+        );
+        let entry = journal
+            .load(&profile_id, &draft_id)
+            .expect("journal is readable")
+            .expect("broadcast journal entry exists");
+        assert_eq!(entry.state, StoredSubmissionState::OutcomeUnknown);
+        assert_eq!(entry.block_hash, None);
+        assert_eq!(entry.block_height, None);
     }
 
     fn request(expires_at: u64) -> PrepareWalletTransferRequest {
