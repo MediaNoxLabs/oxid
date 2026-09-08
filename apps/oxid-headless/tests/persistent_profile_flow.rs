@@ -135,7 +135,7 @@ fn wait_for_shielded_sync(process: &mut ProcessHarness, prefix: &str) -> Value {
 }
 
 const LIVE_ADDRESS: &str =
-    "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
+    "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
 const NIGHT_TOKEN_TYPE: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 const FOREIGN_ZSWAP_OUTPUT: &str = "6d69646e696768743a6576656e745b76395d3a0400a90200000000000000000000000000000000000000000000000000000000000000000000000001c4ef4c0723d6e09b1cac903d1a717274bd2c0633cb9c3cf69047ce5655dc2be9017fe874ddd951049b65bb24127764920e85d04bd1ff724d390d4022b83a6157ed0000000000000000000000000000000000000000000000000000000000000000140019d316b8bc931a9fb308370cc43c6bf7fed9e484a5a7e961ec4b68fd9524e6020100";
 
@@ -222,7 +222,7 @@ fn spawn_indexer_fixture(
                 .as_str()
                 .expect("subscription address should be a string")
                 .to_owned();
-            assert!(subscribed_address.starts_with("mn_addr_devnet1"));
+            assert!(subscribed_address.starts_with("mn_addr_undeployed1"));
             assert_eq!(
                 subscribe["payload"]["variables"]["transactionId"],
                 expected_transaction_id
@@ -1454,7 +1454,7 @@ fn executable_accepts_private_checkpoints_only_for_supported_live_stacks() {
     let process = ProcessHarness::spawn_with_environment(
         &store.path,
         &[
-            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            ("OXID_MIDNIGHT_NETWORK_ID", "undeployed"),
             (
                 "OXID_MIDNIGHT_INDEXER_WS_URL",
                 "ws://127.0.0.1:18088/api/v1/graphql/ws",
@@ -1475,7 +1475,7 @@ fn executable_accepts_private_checkpoints_only_for_supported_live_stacks() {
     let process = ProcessHarness::spawn_with_environment(
         &store.path,
         &[
-            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            ("OXID_MIDNIGHT_NETWORK_ID", "undeployed"),
             (
                 "OXID_MIDNIGHT_INDEXER_WS_URL",
                 "ws://127.0.0.1:18088/api/v1/graphql/ws",
@@ -1518,7 +1518,7 @@ fn executable_rebuilds_resumes_and_refreshes_a_live_shielded_checkpoint() {
     let mut process = ProcessHarness::spawn_with_environment(
         &store.path,
         &[
-            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            ("OXID_MIDNIGHT_NETWORK_ID", "undeployed"),
             ("OXID_MIDNIGHT_INDEXER_WS_URL", &endpoint),
             ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
             ("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH", shielded_path_text),
@@ -1846,7 +1846,7 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
     assert!(
         networks["result"]["networks"]
             .as_array()
-            .is_some_and(|items| items.len() == 7)
+            .is_some_and(|items| items.len() == 4)
     );
 
     let before_initialize = process.request(json!({
@@ -2117,7 +2117,7 @@ fn executable_derives_and_syncs_a_live_account_without_secret_input() {
     let mut process = ProcessHarness::spawn_with_environment(
         &store.path,
         &[
-            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            ("OXID_MIDNIGHT_NETWORK_ID", "undeployed"),
             ("OXID_MIDNIGHT_INDEXER_WS_URL", endpoint.as_str()),
             ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
         ],
@@ -2167,7 +2167,7 @@ fn executable_derives_and_syncs_a_live_account_without_secret_input() {
         .as_str()
         .expect("derived live address should be returned")
         .to_owned();
-    assert!(derived_address.starts_with("mn_addr_devnet1"));
+    assert!(derived_address.starts_with("mn_addr_undeployed1"));
 
     let before = process.request(json!({
         "protocol": "oxid.headless.v1",
@@ -2175,7 +2175,7 @@ fn executable_derives_and_syncs_a_live_account_without_secret_input() {
         "method": "wallet.account.get",
         "params": {}
     }));
-    assert_eq!(before["result"]["account"]["networkId"], "devnet");
+    assert_eq!(before["result"]["account"]["networkId"], "undeployed");
     assert_eq!(before["result"]["account"]["source"], "live");
     assert_eq!(before["result"]["account"]["sync"]["state"], "never_synced");
     assert_eq!(
@@ -2253,7 +2253,7 @@ fn executable_does_not_restore_a_public_account_checkpoint_without_custody() {
     let mut first = ProcessHarness::spawn_with_environment(
         &store.path,
         &[
-            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            ("OXID_MIDNIGHT_NETWORK_ID", "undeployed"),
             ("OXID_MIDNIGHT_INDEXER_WS_URL", first_endpoint.as_str()),
             ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
             ("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH", checkpoint),
@@ -2319,7 +2319,7 @@ fn executable_does_not_restore_a_public_account_checkpoint_without_custody() {
     let mut second = ProcessHarness::spawn_with_environment(
         &store.path,
         &[
-            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            ("OXID_MIDNIGHT_NETWORK_ID", "undeployed"),
             ("OXID_MIDNIGHT_INDEXER_WS_URL", first_endpoint.as_str()),
             ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
             ("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH", checkpoint),
