@@ -14,7 +14,9 @@ not.
 - One review agent is the routine default and one automatic review/fix round is
   the limit. A second opinion requires high risk, a disputed finding, or an
   explicit owner request.
-- Only one PR candidate is auto-driven remotely by each parent session.
+- Only one PR candidate is auto-driven remotely by each parent session. One
+  top-level supervisor invocation dispatches one child and returns after its
+  terminal checkpoint; it never auto-resumes or launches a CI-only child.
 - Keep at most two active managed delivery worktrees per Git common checkout
   on a host. An experiment may use a temporary third worktree only when its
   owner and deletion date are recorded.

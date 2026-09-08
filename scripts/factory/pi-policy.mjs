@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 export const TRACKED_POLICY_PATH = path.join(repoRoot, ".pi", "subagent-policy.json");
+const OBSOLETE_POLICY_KEYS = Object.freeze(["turnBudget"]);
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -69,6 +70,9 @@ export async function checkUserPolicy({ env = process.env } = {}) {
   const configPath = resolveUserSubagentConfigPath(env);
   const current = await readJson(configPath, { missing: {} });
   const mismatches = policyMismatches(current, policy);
+  for (const key of OBSOLETE_POLICY_KEYS) {
+    if (Object.hasOwn(current, key)) mismatches.push({ field: key, expected: null, actual: current[key] });
+  }
   return { ok: mismatches.length === 0, configPath, mismatches };
 }
 
@@ -78,7 +82,9 @@ export async function applyUserPolicy({ env = process.env, execute = false } = {
   const configPath = resolveUserSubagentConfigPath(env);
   const current = await readJson(configPath, { missing: {} });
   const next = mergePolicy(current, policy);
-  if (policyMismatches(current, policy).length === 0) {
+  for (const key of OBSOLETE_POLICY_KEYS) delete next[key];
+  if (policyMismatches(current, policy).length === 0
+    && OBSOLETE_POLICY_KEYS.every((key) => !Object.hasOwn(current, key))) {
     return { changed: false, configPath, backupPath: null };
   }
 

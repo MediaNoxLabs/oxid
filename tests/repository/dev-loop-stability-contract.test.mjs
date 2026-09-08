@@ -219,7 +219,7 @@ test("Pi smoke resolution reuses every exact common-checkout package from a link
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
 
   const pins = [
-    ["pi-subagents", "0.42.1"],
+    ["pi-subagents", "0.66.0"],
     ["@input-output-hk/agent-review-pi", "0.5.0"],
   ];
   const settings = {
@@ -368,12 +368,12 @@ test("preflight scans all installed pinned package agents and content-invalidate
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
   const settingsPath = path.join(fixture.root, ".pi", "settings.json");
   const settings = JSON.parse(await readFile(settingsPath, "utf8"));
-  settings.packages.push("npm:pi-subagents@0.42.1", "npm:@input-output-hk/agent-review-pi@0.5.0");
+  settings.packages.push("npm:pi-subagents@0.66.0", "npm:@input-output-hk/agent-review-pi@0.5.0");
   await writeFile(settingsPath, JSON.stringify(settings));
   const piSubagents = path.join(fixture.root, ".pi", "npm", "node_modules", "pi-subagents");
   const reviewPackage = path.join(fixture.root, ".pi", "npm", "node_modules", "@input-output-hk", "agent-review-pi");
   for (const [root, name, version] of [
-    [piSubagents, "pi-subagents", "0.42.1"],
+    [piSubagents, "pi-subagents", "0.66.0"],
     [reviewPackage, "@input-output-hk/agent-review-pi", "0.5.0"],
   ]) {
     await mkdir(path.join(root, "agents"), { recursive: true });
@@ -614,7 +614,7 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   assert.match(devLoop, /MUST NOT place this conductor inside `taskflow`/u);
   assert.match(devLoop, /Never substitute `npm run verify`/u);
   assert.match(devLoop, /shell parser diagnostic emitted before the named helper starts/u);
-  assert.match(devLoop, /correct\s+the command once within the existing turn budget/u);
+  assert.match(devLoop, /correct\s+the command once within the existing bounded attempt/u);
   assert.match(devLoop, /Never revert valid scoped\s+work solely/u);
   assert.match(devLoop, /Missing\s+helpers,\s+pin mismatches,\s+admission failures,\s+helper-originated nonzero exits,[\s\S]*remain fail-closed/u);
   assert.match(devLoop, /stop on every other contradiction/);

@@ -17,7 +17,7 @@ routes through a coordination server.
 | --- | --- | --- |
 | `pi-coding-agent` | Nix-pinned | immutable nixpkgs input in `flake.lock`; executable supplied by `devShells.default` |
 | `dev-loops` | `0.9.0` | `.pi/settings.json` → project-local `.pi/npm` |
-| `pi-subagents` | `0.42.1` | same |
+| `pi-subagents` | `0.66.0` | same |
 | `pi-taskflow` | `0.2.10` | installed as an `agent-review-pi` peer; all runtime resources disabled |
 | `typebox` | `1.3.9` | exact `agent-review-pi` peer |
 | `@input-output-hk/agent-review-pi` | `0.6.0` | same, **GitHub Packages — needs a token** |
@@ -51,6 +51,13 @@ native review tools, and the bundled skill through the pinned Pi runtime. The
 taskflow package is installed only to satisfy that peer contract; project
 filters disable all of its runtime resources because detached orchestration is
 not safe for Oxid's dev-loop topology.
+
+`pi-subagents@0.66.0` no longer enforces the historical `turnBudget` field.
+Oxid therefore removes that inert key, uses a fail-closed `toolBudget`, and caps
+each parent session and run at one child. The token budget remains visible and
+prevents additional launches, while the tool and wall-clock limits bound the
+active child itself. The external supervisor—not another child—owns CI waiting,
+review triage, merge, cleanup, and any explicit retry.
 
 Validate shell entry, the exact private package, all native review-tool
 registrations, and runtime skill discovery without an LLM call or GitHub
@@ -108,8 +115,9 @@ is one for routine work; `roles` is the pool it is drawn from. Low-signal
 refinement stops after one quiet round instead of spending another round to
 rediscover the same result.
 
-**Sub-agent delegation** is foreground by default, caps concurrency at two,
-session spawns at eight, and requires explicit async intent. It ships builtins
+**Sub-agent delegation** is foreground by default, caps concurrency at two
+across independent parents, permits one child per parent invocation, and
+requires explicit async intent. It ships builtins
 including `scout` (codebase recon),
 `researcher` (external facts with sources), `worker` (implementation),
 `reviewer` (review and small fixes), `oracle` (second opinion, edits nothing),
@@ -184,7 +192,7 @@ over a YAML lint.
 
 **`doctor` reports 3/4 and that is expected.** The warning is *"Subagent command
 available"*, because `doctor` looks for a standalone `subagent` executable while
-`pi-subagents@0.42.1` exposes the capability as a Pi extension. **Do not add a
+`pi-subagents@0.66.0` exposes the capability as a Pi extension. **Do not add a
 dummy binary to make the check pass** — it would make a real absence
 undetectable later. The check that matters is `gates` parsing.
 
@@ -281,6 +289,10 @@ in a diff.
   Another parent may own another issue worktree locally or on a different host.
   Batch accepted findings locally and push a coherent candidate instead of
   invalidating CI and exact-head evidence after every small edit.
+- **Dispatch one child per top-level invocation.** Return after its terminal
+  checkpoint. Hosted-CI watch, review triage, merge, closeout, and every
+  explicit retry belong to the external supervisor and must not cause the
+  parent to launch a continuation child automatically.
 - **Recover after the one-hour conductor bound.** A Pi timeout does not delete
   the issue branch, managed worktree, draft PR, or private metrics. Re-run the
   startup resolver for the same issue, reuse its canonical worktree, verify the

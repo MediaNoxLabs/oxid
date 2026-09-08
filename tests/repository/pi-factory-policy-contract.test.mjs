@@ -18,15 +18,20 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../
 
 test("tracked Pi policy uses balanced Codex defaults and exact package pins", async () => {
   const settings = JSON.parse(await readFile(path.join(repoRoot, ".pi", "settings.json"), "utf8"));
+  const subagentPolicy = JSON.parse(await readFile(path.join(repoRoot, ".pi", "subagent-policy.json"), "utf8"));
   assert.match(settings.defaultProvider, /^[a-z0-9-]+$/u);
   assert.match(settings.defaultModel, /^[a-z0-9.-]+$/u);
   assert.match(settings.defaultThinkingLevel, /^(?:off|minimal|low|medium|high|xhigh|max)$/u);
   assert.equal(settings.retry.maxRetries, 1);
   assert.equal(settings.retry.provider.timeoutMs, 600000);
   assert.equal(settings.retry.provider.maxRetries, 0);
+  assert.equal(subagentPolicy.maxSubagentSpawnsPerSession, 1);
+  assert.equal(subagentPolicy.maxSubagentSpawnsPerRun, 1);
+  assert.deepEqual(subagentPolicy.toolBudget, { soft: 40, hard: 60, block: "*" });
+  assert.equal(Object.hasOwn(subagentPolicy, "turnBudget"), false);
   assert.deepEqual(settings.packages, [
     "npm:dev-loops@0.9.0",
-    "npm:pi-subagents@0.42.1",
+    "npm:pi-subagents@0.66.0",
     "npm:typebox@1.3.9",
     {
       source: "npm:pi-taskflow@0.2.10",
@@ -208,7 +213,10 @@ test("config-only audit rejects admission enforcement instead of reporting false
 test("user subagent policy merge is bounded and preserves unrelated settings", () => {
   const policy = {
     maxSubagentDepth: 2,
+    maxSubagentSpawnsPerSession: 1,
+    maxSubagentSpawnsPerRun: 1,
     parallel: { maxTasks: 2, concurrency: 2 },
+    toolBudget: { soft: 40, hard: 60, block: "*" },
     usageBudget: { tokens: { soft: 120000, hard: 200000 } },
   };
   const merged = mergePolicy({ unrelated: true, parallel: { legacy: "preserved", concurrency: 9 } }, policy);
@@ -216,13 +224,21 @@ test("user subagent policy merge is bounded and preserves unrelated settings", (
     unrelated: true,
     parallel: { legacy: "preserved", maxTasks: 2, concurrency: 2 },
     maxSubagentDepth: 2,
+    maxSubagentSpawnsPerSession: 1,
+    maxSubagentSpawnsPerRun: 1,
+    toolBudget: { soft: 40, hard: 60, block: "*" },
     usageBudget: { tokens: { soft: 120000, hard: 200000 } },
   });
   assert.deepEqual(policyMismatches(merged, policy), []);
   assert.deepEqual(policyMismatches({}, policy).map((item) => item.field), [
     "maxSubagentDepth",
+    "maxSubagentSpawnsPerSession",
+    "maxSubagentSpawnsPerRun",
     "parallel.maxTasks",
     "parallel.concurrency",
+    "toolBudget.soft",
+    "toolBudget.hard",
+    "toolBudget.block",
     "usageBudget.tokens.soft",
     "usageBudget.tokens.hard",
   ]);
@@ -305,7 +321,11 @@ test("user policy apply is explicit, atomic, private, and preserves existing key
   assert.equal(aligned.changed, false);
   assert.equal(aligned.backupPath, null);
 
-  const existing = { unrelated: { preserved: true }, parallel: { concurrency: 99 } };
+  const existing = {
+    unrelated: { preserved: true },
+    parallel: { concurrency: 99 },
+    turnBudget: { maxTurns: 16, graceTurns: 1 },
+  };
   await writeFile(configPath, `${JSON.stringify(existing)}\n`);
   await chmod(configPath, 0o644);
   const updated = await applyUserPolicy({ env, execute: true });
@@ -313,7 +333,9 @@ test("user policy apply is explicit, atomic, private, and preserves existing key
   assert.equal((await stat(configPath)).mode & 0o777, 0o600);
   assert.equal((await stat(updated.backupPath)).mode & 0o777, 0o600);
   assert.deepEqual(JSON.parse(await readFile(updated.backupPath, "utf8")), existing);
-  assert.equal(JSON.parse(await readFile(configPath, "utf8")).unrelated.preserved, true);
+  const applied = JSON.parse(await readFile(configPath, "utf8"));
+  assert.equal(applied.unrelated.preserved, true);
+  assert.equal(Object.hasOwn(applied, "turnBudget"), false);
 
   await writeFile(configPath, `${JSON.stringify(existing)}\n`);
   const repeated = await applyUserPolicy({ env, execute: true });

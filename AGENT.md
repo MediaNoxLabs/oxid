@@ -85,6 +85,10 @@ Follow [the productive loop](docs/factory/productive-loop.md):
 - Dispatch the tracked `dev-loop` agent directly through `pi-subagents`. Never
   wrap `/dev-loop` in `taskflow`: the current detached runner cannot prove its
   peer closure, nested progress, or descendant cancellation in this project.
+- One top-level supervisor invocation dispatches exactly one `dev-loop` child
+  and exits after that child's terminal checkpoint. It never automatically
+  resumes, retries, or dispatches a CI-only child. The external supervisor owns
+  every explicit retry, hosted-CI watch, review triage, merge, and closeout.
 - Routine work uses a 70% quality target and one automatic review round; all
   mandatory acceptance, correctness, security, provenance, and required-CI
   evidence still must be complete.

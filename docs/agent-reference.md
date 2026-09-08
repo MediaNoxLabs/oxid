@@ -2012,7 +2012,7 @@ or `ci(harness): add Rust quality gates`. The scope is mandatory and must come
 from `docs/factory/contribution-policy.md`.
 
 `dev-loops@0.9.0 doctor` currently reports 3/4 from a plain shell because it
-looks for a standalone `subagent` executable. `pi-subagents@0.42.1` exposes
+looks for a standalone `subagent` executable. `pi-subagents@0.66.0` exposes
 `subagent` as an in-process Pi tool instead. Confirm that the pinned package is
 installed and `dev-loops gates` parses successfully; do not add a dummy binary
 to silence the shell probe.

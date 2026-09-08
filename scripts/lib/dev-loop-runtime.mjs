@@ -349,7 +349,7 @@ function assertSupportedProjectSettings(settings) {
   }
   if (subagents.agentOverrides !== undefined) {
     throw new Error(
-      "tracked agentOverrides are forbidden for tool repair: pi-subagents 0.42.1 does not replace a custom agent's frontmatter tools; use tracked .pi/agents shadows",
+      "tracked agentOverrides are forbidden for tool repair: a custom agent's frontmatter tools remain authoritative; use tracked .pi/agents shadows",
     );
   }
 }

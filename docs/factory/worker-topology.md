@@ -97,6 +97,12 @@ cloud worker can overwrite. Factory, harness, CI, documentation, dependency,
 and governance sessions select `origin/develop`; product sessions select the
 one milestone recorded by their work item.
 
+Each top-level supervised Pi invocation launches exactly one tracked child and
+returns at that child's terminal checkpoint. The external supervisor watches
+hosted CI and owns review triage, merge, cleanup, and any explicit retry. These
+operations never justify an automatic continuation child or a fresh hidden
+budget inside the original invocation.
+
 ## Cloud workers
 
 A cloud worker is possible when it has an isolated checkout, Nix, Git/GitHub
