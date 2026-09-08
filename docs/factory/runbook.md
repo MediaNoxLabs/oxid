@@ -56,8 +56,11 @@ not safe for Oxid's dev-loop topology.
 Oxid therefore removes that inert key, uses a fail-closed `toolBudget`, and caps
 each parent session and run at one child. The token budget remains visible and
 prevents additional launches, while the tool and wall-clock limits bound the
-active child itself. The external supervisor—not another child—owns CI waiting,
-review triage, merge, cleanup, and any explicit retry.
+active child itself. An external supervisor should normally bypass the extra
+parent/child hop and invoke Pi as the sole issue worker. The one-child policy
+remains the safe interactive-Pi path. In both cases the external supervisor—not
+another child—owns CI waiting, review triage, merge, cleanup, and any explicit
+retry.
 
 Validate shell entry, the exact private package, all native review-tool
 registrations, and runtime skill discovery without an LLM call or GitHub
@@ -99,6 +102,21 @@ Some Pi extension versions interpret a short override such as
 `gpt-5.6-terra` as `openai/gpt-5.6-terra`, bypassing the configured Codex
 account and failing before the child starts. Omitting the override safely uses
 the tracked default.
+
+For unattended supervised delivery, invoke Pi directly with one cohesive
+prompt and its absolute managed worktree as the current directory:
+
+```bash
+./bootstrap.sh --pi --provider openai-codex \
+  --model gpt-5.6-terra --thinking medium --mode text --print \
+  --name direct-issue-N '<one issue, acceptance, focused checks, signed push, draft PR; stop before hosted CI>'
+```
+
+The prompt must prohibit subagent/taskflow dispatch and assign review, hosted
+CI, merge, metrics, and cleanup to the external supervisor. A terminal or
+transport failure never deletes valid edits: inspect the worktree, record the
+failure, and either supervise the existing diff to a checkpoint or authorize
+one fresh bounded run. Do not silently resume the dead process.
 
 `--configure-git` copies the tracked contribution dispatchers into stable,
 private Git-common state and sets only repository-local OpenPGP signing
@@ -296,10 +314,11 @@ in a diff.
   Another parent may own another issue worktree locally or on a different host.
   Batch accepted findings locally and push a coherent candidate instead of
   invalidating CI and exact-head evidence after every small edit.
-- **Dispatch one child per top-level invocation.** Return after its terminal
-  checkpoint. Hosted-CI watch, review triage, merge, closeout, and every
-  explicit retry belong to the external supervisor and must not cause the
-  parent to launch a continuation child automatically.
+- **Prefer one direct Pi worker per external-supervisor invocation.** This is
+  the normal automated path and must not spawn a nested child. For an
+  interactive Pi operator, dispatch at most one child and return after its
+  terminal checkpoint. Hosted-CI watch, review triage, merge, metrics,
+  closeout, and every explicit retry belong to the external supervisor.
 - **Recover after the one-hour conductor bound.** A Pi timeout does not delete
   the issue branch, managed worktree, draft PR, or private metrics. Re-run the
   startup resolver for the same issue, reuse its canonical worktree, verify the

@@ -100,11 +100,13 @@ cloud worker can overwrite. Factory, harness, CI, documentation, dependency,
 and governance sessions select `origin/develop`; product sessions select the
 one milestone recorded by their work item.
 
-Each top-level supervised Pi invocation launches exactly one tracked child and
-returns at that child's terminal checkpoint. The external supervisor watches
-hosted CI and owns review triage, merge, cleanup, and any explicit retry. These
-operations never justify an automatic continuation child or a fresh hidden
-budget inside the original invocation.
+An external supervisor normally launches Pi directly as the one issue worker;
+that Pi process must not launch a nested child. An interactive human-owned Pi
+session may instead launch exactly one tracked child and return at that child's
+terminal checkpoint. The external supervisor watches hosted CI and owns review
+triage, merge, metrics, cleanup, and any explicit retry. These operations never
+justify an automatic continuation child or a fresh hidden budget inside the
+original invocation.
 
 ## Cloud workers
 

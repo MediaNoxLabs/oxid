@@ -82,13 +82,20 @@ Follow [the productive loop](docs/factory/productive-loop.md):
   reviewer, no push/PR/hosted-CI wait, and no merge-readiness claim.
 - `/dev-loop production-ready issue <n>` selects the normal affected-target,
   draft, CI, and pre-approval loop. It is the default when no profile is named.
-- Dispatch the tracked `dev-loop` agent directly through `pi-subagents`. Never
-  wrap `/dev-loop` in `taskflow`: the current detached runner cannot prove its
-  peer closure, nested progress, or descendant cancellation in this project.
-- One top-level supervisor invocation dispatches exactly one `dev-loop` child
-  and exits after that child's terminal checkpoint. It never automatically
-  resumes, retries, or dispatches a CI-only child. The external supervisor owns
-  every explicit retry, hosted-CI watch, review triage, merge, and closeout.
+- An external supervisor starts Pi itself as the sole issue worker. Give that
+  direct worker one canonical worktree, one issue, the acceptance profile, and
+  a stop-before-CI checkpoint; do not ask it to launch another agent. This
+  avoids paying twice to load the repository contract.
+- A human working interactively inside Pi may dispatch the tracked `dev-loop`
+  agent through `pi-subagents`. Never wrap `/dev-loop` in `taskflow`. That
+  top-level invocation launches exactly one child and exits after its terminal
+  checkpoint; it never automatically resumes or launches a CI-only child.
+- The external supervisor owns every explicit retry, hosted-CI watch, review
+  triage, merge, metrics, and closeout for both topologies.
+- Route routine repository delivery to `openai-codex/gpt-5.6-terra`. Reserve
+  `gpt-5.6-sol` for a concrete architecture or hard-reasoning need; use Luna
+  for bounded scouting or small documentation changes, not repository-wide
+  implementation.
 - Routine work uses a 70% quality target and one automatic review round; all
   mandatory acceptance, correctness, security, provenance, and required-CI
   evidence still must be complete.
