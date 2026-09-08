@@ -1087,6 +1087,52 @@ textarea:focus-visible {
   color: var(--accent);
 }
 
+.utility-icon-button {
+  display: inline-grid;
+  width: 2.75rem;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.utility-icon-button--danger {
+  border-color: color-mix(in srgb, var(--critical) 42%, transparent);
+  background: color-mix(in srgb, var(--critical) 10%, transparent);
+  color: var(--critical);
+}
+
+.utility-icon-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.utility-icon-button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 3px;
+}
+
+.utility-icon-button__icon {
+  display: inline-grid;
+  width: 1.375rem;
+  height: 1.375rem;
+  place-items: center;
+}
+
+.utility-icon-button__icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.utility-icon-button__icon--loading {
+  animation: spin calc(var(--motion-slow) * 2.5) linear infinite;
+}
+
 .account-sync-action {
   width: 100%;
   margin-top: var(--space-4);
@@ -1696,6 +1742,12 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
+}
+
+.diagnostic-event-controls {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
 }
 
 .credential-delete-confirmation {
