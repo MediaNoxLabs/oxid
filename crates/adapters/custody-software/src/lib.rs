@@ -10,17 +10,64 @@
 #![forbid(unsafe_code)]
 
 use bip32::{ChildNumber, XPrv};
+use bip39::{Language, Mnemonic};
 use ed25519_dalek::{Signer as _, SigningKey as Ed25519SigningKey};
 use k256::schnorr::{SigningKey as Secp256k1SchnorrSigningKey, signature::Signer as _};
 use oxid_wallet_application::{
-    WalletHdPath, WalletJubjubChallengeDeriver, WalletJubjubChallengeSignature,
-    WalletSecurityPortError,
+    BIP39_WALLET_SEED_BYTES, CreatedWalletMnemonic, WalletHdPath, WalletJubjubChallengeDeriver,
+    WalletJubjubChallengeSignature, WalletMnemonicPort, WalletMnemonicPortError,
+    WalletRecoveryPhrase, WalletRootSeed, WalletSecurityPortError,
 };
 use oxid_wallet_domain::{PublicKeyEncoding, WalletKeyAlgorithm, WalletPublicKey, WalletSignature};
 use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
 use zeroize::Zeroizing;
 
 mod jubjub_schnorr;
+
+const BIP39_RECOVERY_WORDS: usize = 24;
+
+/// BIP-39 codec kept outside the application core. It accepts only canonical
+/// English 24-word phrases and returns the complete 64-byte seed in a typed
+/// protected-custody container.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Bip39WalletMnemonic;
+
+impl WalletMnemonicPort for Bip39WalletMnemonic {
+    fn create_from_entropy(
+        &self,
+        entropy: &[u8; oxid_wallet_application::WALLET_ONBOARDING_ENTROPY_BYTES],
+    ) -> Result<CreatedWalletMnemonic, WalletMnemonicPortError> {
+        let mnemonic = Mnemonic::from_entropy_in(Language::English, entropy)
+            .map_err(|_| WalletMnemonicPortError::InvalidPhrase)?;
+        Ok(CreatedWalletMnemonic {
+            phrase: WalletRecoveryPhrase::new(mnemonic.to_string()),
+            root: root_from_mnemonic(&mnemonic),
+        })
+    }
+
+    fn restore_phrase(
+        &self,
+        phrase: &WalletRecoveryPhrase,
+    ) -> Result<WalletRootSeed, WalletMnemonicPortError> {
+        if phrase.expose_for_onboarding().split(' ').count() != BIP39_RECOVERY_WORDS {
+            return Err(WalletMnemonicPortError::InvalidWordCount);
+        }
+        let mnemonic =
+            Mnemonic::parse_in_normalized(Language::English, phrase.expose_for_onboarding())
+                .map_err(|_| WalletMnemonicPortError::InvalidPhrase)?;
+        if mnemonic.to_string() != phrase.expose_for_onboarding() {
+            return Err(WalletMnemonicPortError::PhraseNotNormalized);
+        }
+        Ok(root_from_mnemonic(&mnemonic))
+    }
+}
+
+fn root_from_mnemonic(mnemonic: &Mnemonic) -> WalletRootSeed {
+    let seed = Zeroizing::new(mnemonic.to_seed_normalized(""));
+    let mut root = Zeroizing::new([0_u8; BIP39_WALLET_SEED_BYTES]);
+    root.copy_from_slice(seed.as_ref());
+    WalletRootSeed::from_bip39_seed(*root)
+}
 
 /// Reconstructs the safe public key for one transient software secret.
 pub fn public_key_from_secret(
@@ -298,6 +345,57 @@ mod tests {
             .expect("valid Midnight path");
             let derived = derive_bip32_secret(&seed, &path).expect("role derivation");
             assert_eq!(hex::encode(*derived), expected, "role {role}");
+        }
+    }
+
+    #[test]
+    fn bip39_codec_matches_the_public_zero_entropy_vector() {
+        const PHRASE: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+        const SEED_HEX: &str = "408b285c123836004f4b8842c89324c1f01382450c0d439af345ba7fc49acf705489c6fc77dbd4e3dc1dd8cc6bc9f043db8ada1e243c4a0eafb290d399480840";
+        let codec = Bip39WalletMnemonic;
+        let created = codec
+            .create_from_entropy(&[0_u8; 32])
+            .expect("public 256-bit entropy vector");
+
+        assert_eq!(created.phrase.expose_for_onboarding(), PHRASE);
+        assert_eq!(created.root.expose_for_protected_use().len(), 64);
+        assert_eq!(
+            hex::encode(created.root.expose_for_protected_use()),
+            SEED_HEX
+        );
+        let restored = codec
+            .restore_phrase(&WalletRecoveryPhrase::new(PHRASE.to_owned()))
+            .expect("public recovery vector");
+        assert_eq!(
+            restored.expose_for_protected_use(),
+            created.root.expose_for_protected_use()
+        );
+    }
+
+    #[test]
+    fn bip39_codec_rejects_wrong_word_count_checksum_and_spacing() {
+        const PHRASE: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+        let codec = Bip39WalletMnemonic;
+        let cases = [
+            (
+                "abandon abandon abandon".to_owned(),
+                WalletMnemonicPortError::InvalidWordCount,
+            ),
+            (
+                PHRASE.replace(" art", " abandon"),
+                WalletMnemonicPortError::InvalidPhrase,
+            ),
+            (
+                PHRASE.replace(' ', "  "),
+                WalletMnemonicPortError::InvalidWordCount,
+            ),
+        ];
+        for (phrase, expected) in cases {
+            let error = codec
+                .restore_phrase(&WalletRecoveryPhrase::new(phrase))
+                .expect_err("invalid phrase");
+            assert_eq!(error, expected);
+            assert!(!error.to_string().contains("abandon"));
         }
     }
 }
