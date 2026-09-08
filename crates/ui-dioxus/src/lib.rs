@@ -8005,7 +8005,7 @@ fn ManagedDidControls(
     rsx! {
         details { class: "did-manager",
             summary { "Manage this DID" }
-            p { class: "form-hint", "Standalone operations use protected, process-local keys. Public DID records persist; development key custody does not survive an app restart." }
+            p { class: "form-hint", "DID operations use protected, process-local keys. Public DID records persist; development key custody does not survive an app restart." }
             label { r#for: "did-operation-{did}", "Operation" }
             select {
                 id: "did-operation-{did}",

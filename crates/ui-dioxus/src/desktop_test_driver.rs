@@ -59,7 +59,8 @@ return await (async () => {
     phase = "manage-identities";
     await click("Manage identities");
     phase = "create-did";
-    await click("Create standalone DID");
+    await click("Create a DID");
+    await click("Create DID");
     phase = "did-ready";
     await wait(() => hasText("A protected managed DID is ready for credential issuance."));
     return "ok";
