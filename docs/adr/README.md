@@ -129,6 +129,7 @@ ADR status and delivery state answer different questions:
 | [0103](0103-compose-portal-final-for-physical-android.md) Compose Portal Final for physical Android | Accepted | ADR-0039/0097/0102; issue #124; Portal `integration@22ae536` | Compile-gated physical Android issuance, encrypted restart/reverification, runtime-discovered device and tailnet identity, and receipt-exact temporary HTTPS cleanup |
 | [0104](0104-regrow-incoming-adapters-behind-capability-facades.md) Regrow oversized adapters behind capability façades | Accepted | §§3, 6, 13–14, 18–19; issue #145 | Headless, desktop Dioxus, and composition are decomposed behind checked façades; Midnight remains the final ordered root, and no crate extraction is authorized |
 | [0105](0105-recover-owner-midnight-roots-for-preprod-observation.md) Recover owner Midnight roots for PreProd observation | Accepted | §§3–8, 12–13, 16–18, 21; ADR-0071/0074/0090/0098; issue #244 | Opt-in mobile recovery installs one owner-entered root into empty native custody, binds it to signed/genesis-authenticated PreProd, derives account 0/address 0, and exposes balance sync without write controls |
+| [0106](0106-bind-wallet-profiles-to-one-network.md) Bind each wallet profile to one concrete network | Proposed | §§1, 3–8, 12–13, 16–18, 21; issues #335/#337/#340 | Defines the proposed `network profile -> wallet -> typed assets` aggregate, no global asset store, route/genesis checks, atomic quick switching, and an explicit migration from multi-network associations |
 
 ## Current boundaries
 
@@ -532,3 +533,12 @@ fixes account derivation to account 0/address 0, and reuses the existing
 NIGHT/shielded/DUST sync projection while omitting every write control. Normal
 artifacts, runtime environments, logs, diagnostics, URLs, and public profile
 metadata remain unable to carry the root or select this deployment.
+
+ADR-0106 proposes replacing mutable multi-network profile associations with a
+single concrete network and wallet per profile. Midnight is the only current
+network type; native network ID plus authenticated genesis distinguishes realms,
+while loopback and Tailnet remain replaceable routes. All current tokens, NFTs,
+contracts/apps, DIDs, credentials, and derived activity stay typed and scoped
+to that profile; no global asset store is introduced. The top-left profile
+circle becomes an atomic quick switcher, and ambiguous legacy records require a
+lossless migration review instead of guessed assignment.

@@ -9,7 +9,7 @@
   ADR-0105 selects the reviewed signed PreProd profile only in an opt-in
   observation build; no production trust root, issuer/verifier transport, or
   deployment is selected by the default application
-- Amended by: ADR-0105
+- Amended by: ADR-0105 and ADR-0106
 
 ## Context
 
