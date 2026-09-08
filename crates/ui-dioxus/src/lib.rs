@@ -17,6 +17,7 @@ mod dids;
 mod labels;
 mod passport_vault;
 mod profile_guard;
+mod profile_quick_switcher;
 #[cfg(feature = "proof-benchmark")]
 mod proof_benchmark;
 #[cfg(feature = "preprod-observation")]
@@ -154,6 +155,7 @@ use diagnostics::DeveloperDiagnosticsPage;
 use diagnostics::DiagnosticsPage;
 use labels as ui;
 use passport_vault::PassportVaultPage;
+use profile_quick_switcher::{ProfileQuickSwitcher, profile_switch_is_allowed};
 
 const BASE_STYLES: &str = include_str!("../assets/styles.css");
 const DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL: &str = "Protected DUST registration";
@@ -2305,7 +2307,6 @@ struct HomePageProjection {
     account: Box<WalletAccountView>,
     security: WalletSecurityStatusView,
     backup_receipt: HomeResource<Option<WalletBackupReceiptView>>,
-    shielded: HomeResource<WalletShieldedSyncView>,
     credentials: HomeResource<Vec<CredentialView>>,
     vault: HomeResource<Box<PassportVaultView>>,
 }
@@ -2489,6 +2490,10 @@ struct SecretModeController {
 }
 
 impl SecretModeController {
+    fn is_masked(self) -> bool {
+        (self.state)().masked
+    }
+
     fn rearm(mut self) {
         let mut state = (self.state)();
         state.rearm();
@@ -3680,21 +3685,6 @@ fn WalletApp() -> Element {
     let home_router = services.route_identity_request();
     let navigation_scanner = services.qr_scanner();
     let navigation_router = services.route_identity_request();
-    #[cfg(feature = "ui-profile-dev")]
-    let developer_profile_shortcut = rsx! {
-        button {
-            class: "profile-sheet__item",
-            r#type: "button",
-            aria_label: "Open developer tools",
-            onclick: move |_| {
-                navigation.write().push(Route::Developer);
-                profile_menu_open.set(false);
-            },
-            "Developer tools"
-        }
-    };
-    #[cfg(not(feature = "ui-profile-dev"))]
-    let developer_profile_shortcut = rsx! {};
     #[cfg(feature = "ui-profile-demo")]
     let demo_shell_banner = demo_profile_banner(demo_drawer_open);
     #[cfg(not(feature = "ui-profile-demo"))]
@@ -3739,9 +3729,9 @@ fn WalletApp() -> Element {
                 button {
                     class: if *profile_menu_open.read() { "profile-shortcut active" } else { "profile-shortcut" },
                     r#type: "button",
-                    aria_label: "Open current profile settings",
+                    aria_label: "Current profile {active_profile.display_name}; switch profile",
                     aria_expanded: if *profile_menu_open.read() { "true" } else { "false" },
-                    title: "Current profile settings",
+                    title: "Switch profile",
                     onclick: move |_| {
                         let next = !*profile_menu_open.read();
                         profile_menu_open.set(next);
@@ -3782,7 +3772,7 @@ fn WalletApp() -> Element {
             }
 
             if *profile_menu_open.read() {
-                nav { class: "profile-sheet", aria_label: "Profile and settings",
+                nav { class: "profile-sheet", aria_label: "Switch wallet profile",
                     div { class: "profile-sheet__identity",
                         span { class: "profile-avatar", aria_hidden: "true", "{profile_monogram}" }
                         div {
@@ -3790,35 +3780,16 @@ fn WalletApp() -> Element {
                             small { "Active wallet profile" }
                         }
                     }
-                    button {
-                        class: "profile-sheet__item",
-                        r#type: "button",
-                        aria_label: "Open wallet profiles",
-                        onclick: move |_| {
-                            navigation.write().push(Route::Profile);
+                    ProfileQuickSwitcher {
+                        active_profile: active_profile.clone(),
+                        switching_allowed: profile_switch_is_allowed(active_route),
+                        on_selected: move |profile| {
+                            secret_mode.rearm();
+                            profile_session.set(ProfileSessionState::Active(profile));
+                            navigation.write().select_primary(PrimaryDestination::Home);
                             profile_menu_open.set(false);
                         },
-                        "Wallet profiles"
                     }
-                    button {
-                        class: "profile-sheet__item",
-                        r#type: "button",
-                        aria_label: "Open settings",
-                        onclick: move |_| {
-                            navigation.write().push(Route::Settings);
-                            profile_menu_open.set(false);
-                        },
-                        "Settings & backup"
-                    }
-                    button {
-                        class: "profile-sheet__item",
-                        r#type: "button",
-                        aria_label: if secret_mode_state().masked { "Show private values for 30 seconds" } else { "Hide private values" },
-                        aria_pressed: if secret_mode_state().masked { "true" } else { "false" },
-                        onclick: move |_| secret_mode.toggle(),
-                        if secret_mode_state().masked { "Show balances for 30 seconds" } else { "Hide balances now" }
-                    }
-                    {developer_profile_shortcut}
                     button {
                         class: "profile-sheet__dismiss",
                         r#type: "button",
@@ -3852,6 +3823,7 @@ fn WalletApp() -> Element {
                 match content_route {
                     Route::Home => rsx! {
                         HomePage {
+                            key: "{active_profile.id}",
                             active_profile: active_profile.clone(),
                             scan_busy: identity_scan_busy(),
                             on_select_primary: move |destination| {
@@ -3927,12 +3899,17 @@ fn WalletApp() -> Element {
                             },
                             on_open_profile: move |_| navigation.write().push(Route::Profile),
                             on_open_diagnostics: move |_| navigation.write().push(Route::Diagnostics),
+                            on_open_developer: move |_| {
+                                #[cfg(feature = "ui-profile-dev")]
+                                navigation.write().push(Route::Developer);
+                            },
                         }
                     },
                     Route::Profile => rsx! {
                         ProfilePage {
                             active_profile: active_profile.clone(),
                             on_selected: move |profile| {
+                                secret_mode.rearm();
                                 profile_session.set(ProfileSessionState::Active(profile));
                                 navigation.write().select_primary(PrimaryDestination::Home);
                             },
@@ -4777,16 +4754,13 @@ fn HomePage(
     match state.read().clone() {
         HomePageState::Loading => rsx! {
             section { class: "home-hero home-hero--loading", role: "status", aria_busy: "true",
-                p { class: "eyebrow", "Your wallet" }
-                div { class: "home-hero__number-row",
-                    h1 { "…" }
-                    span { "NIGHT" }
-                }
-                p { class: "home-hero__hint", "Loading your wallet overview…" }
+                p { class: "eyebrow", "Current realm" }
+                h1 { class: "home-hero__realm-title", "Loading network…" }
+                p { class: "home-hero__hint", "Preparing {active_profile.display_name} without carrying values across profiles." }
             }
             HomeQuickActions { scan_busy, on_select_primary, on_receive, on_scan }
             section { class: "home-card-stack", aria_label: "Loading wallet products", aria_busy: "true",
-                for label in ["NIGHT account", "Shielded account", "Newest document", "Passport Vault"] {
+                for label in ["Wallet", "Newest document", "Passport Vault"] {
                     article { class: "home-card home-card--loading", key: "{label}",
                         p { class: "card-eyebrow", "{label}" }
                         span { class: "loading-mark", aria_hidden: "true" }
@@ -4805,14 +4779,11 @@ fn HomePage(
         HomePageState::Failed => rsx! {
             section { class: "home-hero home-hero--unavailable",
                 div { class: "home-hero__heading-row",
-                    p { class: "eyebrow", "Your wallet" }
+                    p { class: "eyebrow", "Current realm" }
                     span { class: "status-pill warning", "Unavailable" }
                 }
-                div { class: "home-hero__number-row",
-                    h1 { "—" }
-                    span { "NIGHT" }
-                }
-                p { class: "home-hero__hint", "Wallet data could not be loaded safely." }
+                h1 { class: "home-hero__realm-title", "{active_profile.display_name}" }
+                p { class: "home-hero__hint", "The selected network context could not be loaded safely." }
             }
             HomeQuickActions { scan_busy, on_select_primary, on_receive, on_scan }
             article { class: "empty-state surface-card", role: "alert",
@@ -4842,16 +4813,14 @@ fn HomePage(
                 account,
                 security,
                 backup_receipt,
-                shielded,
                 credentials,
                 vault,
             } = *projection;
             rsx! {
-                HomeHero { account: (*account).clone() }
+                HomeHero { active_profile: active_profile.clone(), account: (*account).clone() }
                 HomeQuickActions { scan_busy, on_select_primary, on_receive, on_scan }
                 HomeProductStack {
                     account: (*account).clone(),
-                    shielded,
                     credentials,
                     vault,
                     on_select_primary,
@@ -4865,13 +4834,7 @@ fn HomePage(
 }
 
 #[component]
-fn HomeHero(account: WalletAccountView) -> Element {
-    let night = balance_for(&account, "NIGHT")
-        .map(|balance| ui::format_atomic_units(&balance.atomic_units, balance.decimals))
-        .unwrap_or_else(|| "—".to_owned());
-    let dust = balance_for(&account, "DUST")
-        .map(|balance| ui::format_atomic_units(&balance.atomic_units, balance.decimals))
-        .unwrap_or_else(|| "—".to_owned());
+fn HomeHero(active_profile: WalletProfileView, account: WalletAccountView) -> Element {
     let source = ui::account_source(&account.source);
     let freshness = ui::sync_state(&account.sync.state);
     let status_class = if matches!(
@@ -4886,21 +4849,15 @@ fn HomeHero(account: WalletAccountView) -> Element {
     rsx! {
         section { class: "home-hero",
             div { class: "home-hero__heading-row",
-                p { class: "eyebrow", "Your wallet" }
+                p { class: "eyebrow", "Current realm" }
                 span {
                     class: "{status_class}",
                     aria_label: "Account source {source}; freshness {freshness}",
                     "{source} · {freshness}"
                 }
             }
-            div { class: "home-hero__number-row",
-                h1 { class: "privacy-value", "{night}" }
-                span { "NIGHT" }
-            }
-            div { class: "dust-pill",
-                strong { class: "privacy-value", "{dust}" }
-                span { "DUST" }
-            }
+            h1 { class: "home-hero__realm-title", "{account.network_name}" }
+            p { class: "home-hero__profile", "{active_profile.display_name} · {account.chain}" }
             p { class: "home-hero__hint", "{ui::account_source_note(&account.source)}" }
         }
     }
@@ -5229,23 +5186,20 @@ fn grouped_address_preview(value: &str) -> String {
 #[component]
 fn HomeProductStack(
     account: WalletAccountView,
-    shielded: HomeResource<WalletShieldedSyncView>,
     credentials: HomeResource<Vec<CredentialView>>,
     vault: HomeResource<Box<PassportVaultView>>,
     on_select_primary: EventHandler<PrimaryDestination>,
     on_open_vault: EventHandler<MouseEvent>,
 ) -> Element {
     let brand = consume_context::<BrandProfile>();
-    let night = balance_for(&account, "NIGHT")
-        .map(|balance| ui::format_asset_amount(&balance.atomic_units, balance.decimals, "NIGHT"))
-        .unwrap_or_else(|| "Balance unavailable".to_owned());
+    let (wallet_title, wallet_detail) = home_wallet_summary(&account);
 
     rsx! {
-        section { class: "home-section", aria_label: "Wallet products",
+        section { class: "home-section", aria_label: "Profile spaces",
             div { class: "home-section__heading",
                 div {
-                    p { class: "card-eyebrow", "Products" }
-                    h2 { "Everything in one place" }
+                    p { class: "card-eyebrow", "Profile spaces" }
+                    h2 { "Continue your work" }
                 }
                 small { "Swipe" }
             }
@@ -5253,29 +5207,11 @@ fn HomeProductStack(
                 button {
                     class: "home-card home-card--assets",
                     r#type: "button",
-                    aria_label: "Open Wallet NIGHT account",
+                    aria_label: "Open Wallet for {wallet_title}",
                     onclick: move |_| on_select_primary.call(PrimaryDestination::Wallet),
-                    p { class: "card-eyebrow", "NIGHT account" }
-                    strong { class: "home-card__value privacy-value", "{night}" }
-                    span { class: "home-card__detail", "{account.network_name} · {ui::sync_state(&account.sync.state)}" }
-                    span { class: "home-card__link", "Open Wallet →" }
-                }
-                button {
-                    class: "home-card home-card--shielded",
-                    r#type: "button",
-                    aria_label: "Open Wallet shielded account",
-                    onclick: move |_| on_select_primary.call(PrimaryDestination::Wallet),
-                    p { class: "card-eyebrow", "Shielded account" }
-                    match shielded {
-                        HomeResource::Ready(status) => rsx! {
-                            strong { class: "home-card__value privacy-value", "{home_shielded_value(&status)}" }
-                            span { class: "home-card__detail", "{home_shielded_detail(&status)}" }
-                        },
-                        HomeResource::Unavailable => rsx! {
-                            strong { class: "home-card__value", "Unavailable" }
-                            span { class: "home-card__detail", "Open Wallet to activate or retry protected sync." }
-                        },
-                    }
+                    p { class: "card-eyebrow", "Wallet" }
+                    strong { class: "home-card__value", "{wallet_title}" }
+                    span { class: "home-card__detail", "{wallet_detail}" }
                     span { class: "home-card__link", "Open Wallet →" }
                 }
                 button {
@@ -5289,7 +5225,7 @@ fn HomeProductStack(
                             if let Some(credential) = newest_credential(&credentials) {
                                 rsx! {
                                     strong { class: "home-card__value", "{credential.display_name}" }
-                                    span { class: "home-card__detail", "{ui::credential_format(&credential.format)} · {ui::verification_outcome(&credential.verification_outcome)}" }
+                                    span { class: "home-card__detail", "{account.network_name} · {ui::credential_format(&credential.format)} · {ui::verification_outcome(&credential.verification_outcome)}" }
                                 }
                             } else {
                                 rsx! {
@@ -5317,8 +5253,8 @@ fn HomeProductStack(
                                 let lock_count = vault.locks.len();
                                 let lock_label = if lock_count == 1 { "active lock" } else { "active locks" };
                                 rsx! {
-                                    strong { class: "home-card__value privacy-value", "{ui::format_night_amount(&vault.total_locked)}" }
-                                    span { class: "home-card__detail", "{lock_count} {lock_label} · {ui::vault_contract_source(&vault.source)}" }
+                                    strong { class: "home-card__value", "{lock_count} {lock_label}" }
+                                    span { class: "home-card__detail", "{ui::vault_contract_source(&vault.source)} · value details stay in Vault" }
                                 }
                             },
                             HomeResource::Unavailable => rsx! {
@@ -5332,6 +5268,17 @@ fn HomeProductStack(
             }
         }
     }
+}
+
+fn home_wallet_summary(account: &WalletAccountView) -> (String, String) {
+    (
+        account.network_name.clone(),
+        format!(
+            "{} · {}",
+            ui::sync_state(&account.sync.state),
+            ui::account_source(&account.source),
+        ),
+    )
 }
 
 #[component]
@@ -6990,12 +6937,6 @@ fn load_home_page(services: &WalletUiServices, profile_id: &str) -> HomePageStat
         } => (account, security),
         AccountPageState::Loading | AccountPageState::Failed(_) => return HomePageState::Failed,
     };
-    let shielded = services
-        .get_wallet_shielded_sync_status()
-        .execute(WalletShieldedSyncCommand {
-            profile_id: profile_id.to_owned(),
-        })
-        .map_or(HomeResource::Unavailable, HomeResource::Ready);
     let backup_receipt = services
         .get_wallet_backup_receipt
         .execute(WalletBackupReceiptCommand {
@@ -7019,7 +6960,6 @@ fn load_home_page(services: &WalletUiServices, profile_id: &str) -> HomePageStat
         account,
         security,
         backup_receipt,
-        shielded,
         credentials,
         vault,
     }))
@@ -7998,19 +7938,6 @@ fn non_native_shielded_balances(
         .balances
         .iter()
         .filter(|balance| balance.token_type_hex != NATIVE_SHIELDED_NIGHT_TOKEN_TYPE)
-}
-
-fn home_shielded_detail(status: &WalletShieldedSyncView) -> String {
-    let notes = status.owned_note_count.map_or_else(
-        || "Protected note count unavailable".to_owned(),
-        |count| {
-            format!(
-                "{count} protected note{}",
-                if count == 1 { "" } else { "s" }
-            )
-        },
-    );
-    format!("{notes} · {}", ui::sync_state(&status.state))
 }
 
 fn home_transaction_amount(transaction: &oxid_wallet_application::WalletTransactionView) -> String {
@@ -10244,6 +10171,7 @@ fn SettingsPage(
     on_root_recovered: EventHandler<WalletProfileView>,
     on_open_profile: EventHandler<MouseEvent>,
     on_open_diagnostics: EventHandler<MouseEvent>,
+    on_open_developer: EventHandler<MouseEvent>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let brand = consume_context::<BrandProfile>();
@@ -10773,6 +10701,28 @@ fn SettingsPage(
     let deployment_profile_card = rsx! { DeploymentProfileCard {} };
     #[cfg(not(feature = "standalone-deployment-profile"))]
     let deployment_profile_card = rsx! {};
+    #[cfg(feature = "ui-profile-dev")]
+    let developer_tools_card = rsx! {
+        article { class: "settings-card surface-card",
+            div {
+                p { class: "card-eyebrow", "Development" }
+                h2 { "Developer tools" }
+                p { "Open capability diagnostics, the proof benchmark, and other explicitly composed development surfaces." }
+            }
+            button {
+                class: "secondary-action",
+                r#type: "button",
+                aria_label: "Open developer tools",
+                onclick: move |event| on_open_developer.call(event),
+                "Open developer tools"
+            }
+        }
+    };
+    #[cfg(not(feature = "ui-profile-dev"))]
+    let developer_tools_card = {
+        let _ = on_open_developer;
+        rsx! {}
+    };
 
     rsx! {
         section { class: "page-heading",
@@ -10800,6 +10750,22 @@ fn SettingsPage(
         article { class: "settings-card surface-card",
             div {
                 p { class: "card-eyebrow", "Privacy" }
+                h2 { "Private values" }
+                p { "Sensitive values for {active_profile.display_name} are hidden by default. A reveal lasts 30 seconds and ends immediately when you switch profiles or leave and resume the app." }
+            }
+            button {
+                class: "secondary-action",
+                r#type: "button",
+                aria_label: if secret_mode.is_masked() { "Reveal private values for 30 seconds" } else { "Hide private values now" },
+                aria_pressed: if secret_mode.is_masked() { "false" } else { "true" },
+                onclick: move |_| secret_mode.toggle(),
+                if secret_mode.is_masked() { "Reveal for 30 seconds" } else { "Hide now" }
+            }
+        }
+        {developer_tools_card}
+        article { class: "settings-card surface-card",
+            div {
+                p { class: "card-eyebrow", "Data collection" }
                 h2 { "Local-first · telemetry off" }
                 p { "No analytics or remote-storage adapter is active. Development simulation is local and production chain/identity adapters remain explicit capabilities." }
             }
@@ -11790,6 +11756,44 @@ mod tests {
     }
 
     #[test]
+    fn profile_switching_is_bounded_to_the_home_root() {
+        assert!(profile_switch_is_allowed(Route::Home));
+        assert!(!profile_switch_is_allowed(Route::Receive));
+        assert!(!profile_switch_is_allowed(Route::Wallet));
+        assert!(!profile_switch_is_allowed(Route::CredentialRequest));
+        assert!(!profile_switch_is_allowed(Route::Settings));
+    }
+
+    #[test]
+    fn home_wallet_summary_is_realm_neutral() {
+        let networks = WalletNetworkListView {
+            selected_network_id: "undeployed".to_owned(),
+            networks: vec![oxid_wallet_application::WalletNetworkView {
+                chain: "midnight".to_owned(),
+                network_id: "undeployed".to_owned(),
+                display_name: "Standalone".to_owned(),
+                environment: "development".to_owned(),
+                selected: true,
+            }],
+        };
+        let mut account = protected_account_placeholder(&networks).expect("selected network");
+        account.balances = vec![oxid_wallet_application::WalletAssetBalanceView {
+            asset_id: "night".to_owned(),
+            symbol: "NIGHT".to_owned(),
+            decimals: 6,
+            atomic_units: "999000000".to_owned(),
+        }];
+
+        let (title, detail) = home_wallet_summary(&account);
+
+        assert_eq!(title, "Standalone");
+        assert!(detail.contains("Unavailable"));
+        assert!(!title.contains("NIGHT"));
+        assert!(!detail.contains("NIGHT"));
+        assert!(!detail.contains("999"));
+    }
+
+    #[test]
     fn home_selects_only_the_newest_public_credential_summary() {
         let credential = |id: &str, issued_at_ms| CredentialView {
             id: id.to_owned(),
@@ -12450,13 +12454,11 @@ mod tests {
 
         let unavailable = shielded_status("unavailable", None, None);
         assert_eq!(home_shielded_value(&unavailable), "—");
-        assert!(home_shielded_detail(&unavailable).contains(ui::sync_state("unavailable")));
 
         for incomplete in ["cached", "cancelled", "stalled"] {
             let mut status = shielded_status(incomplete, Some(2), Some(2));
             status.balances = funded.balances.clone();
             assert_eq!(home_shielded_value(&status), "1.5 NIGHT · last known");
-            assert!(home_shielded_detail(&status).contains(ui::sync_state(incomplete)));
         }
     }
 

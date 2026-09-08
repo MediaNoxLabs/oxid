@@ -178,6 +178,12 @@
           ]
         },
         {
+          "name": "profile-quick-switcher",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/profile_quick_switcher"
+          ]
+        },
+        {
           "name": "standalone-deployment-profile",
           "modulePathPrefixes": [
             "crates/ui-dioxus/src/deployment_profile"
