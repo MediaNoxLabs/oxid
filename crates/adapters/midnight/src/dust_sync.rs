@@ -1084,6 +1084,7 @@ mod tests {
             self.calls.fetch_add(1, Ordering::Relaxed);
             Box::pin(async {
                 Ok(ChainTip {
+                    height: 42,
                     timestamp: Timestamp::from_secs(1_700_000_000),
                     parameters: INITIAL_PARAMETERS,
                 })

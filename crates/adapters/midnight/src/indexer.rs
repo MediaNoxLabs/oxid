@@ -74,6 +74,7 @@ const NATIVE_NIGHT_TOKEN_TYPE: &str =
 pub struct MidnightIndexerConfig {
     network_id: ChainNetworkId,
     websocket_url: String,
+    http_url: Option<String>,
     unshielded_address: ChainAddress,
 }
 
@@ -100,8 +101,14 @@ impl MidnightIndexerConfig {
         Ok(Self {
             network_id,
             websocket_url,
+            http_url: None,
             unshielded_address,
         })
+    }
+
+    pub(crate) fn with_http_url(mut self, http_url: String) -> Self {
+        self.http_url = Some(http_url);
+        self
     }
 
     #[must_use]
@@ -112,6 +119,11 @@ impl MidnightIndexerConfig {
     #[must_use]
     pub fn websocket_url(&self) -> &str {
         &self.websocket_url
+    }
+
+    #[cfg(test)]
+    pub(crate) fn http_url(&self) -> Option<&str> {
+        self.http_url.as_deref()
     }
 
     #[must_use]
@@ -295,8 +307,10 @@ pub struct LiveMidnightAccountSource<C> {
 
 impl<C> LiveMidnightAccountSource<C> {
     pub(crate) fn new(config: MidnightIndexerConfig, clock: std::sync::Arc<C>) -> Self {
-        let transport =
-            std::sync::Arc::new(WebSocketMidnightIndexerTransport::new(config.websocket_url));
+        let transport = std::sync::Arc::new(WebSocketMidnightIndexerTransport::new(
+            config.websocket_url,
+            config.http_url,
+        ));
         Self::with_transport_and_checkpoints(
             config.network_id,
             config.unshielded_address,
@@ -311,8 +325,10 @@ impl<C> LiveMidnightAccountSource<C> {
         checkpoints: MidnightAccountCheckpointConfig,
         clock: std::sync::Arc<C>,
     ) -> Self {
-        let transport =
-            std::sync::Arc::new(WebSocketMidnightIndexerTransport::new(config.websocket_url));
+        let transport = std::sync::Arc::new(WebSocketMidnightIndexerTransport::new(
+            config.websocket_url,
+            config.http_url,
+        ));
         Self::with_transport_and_checkpoints(
             config.network_id,
             config.unshielded_address,
@@ -737,11 +753,15 @@ trait MidnightIndexerTransport: Send + Sync {
 
 struct WebSocketMidnightIndexerTransport {
     endpoint: String,
+    chain_tip_endpoint: Option<String>,
 }
 
 impl WebSocketMidnightIndexerTransport {
-    fn new(endpoint: String) -> Self {
-        Self { endpoint }
+    fn new(endpoint: String, chain_tip_endpoint: Option<String>) -> Self {
+        Self {
+            endpoint,
+            chain_tip_endpoint,
+        }
     }
 }
 
@@ -752,6 +772,7 @@ impl MidnightIndexerTransport for WebSocketMidnightIndexerTransport {
         checkpoint: Option<IndexerSnapshot>,
     ) -> BoxFuture<'a, Result<IndexerSnapshot, IndexerTransportError>> {
         let endpoint = self.endpoint.clone();
+        let chain_tip_endpoint = self.chain_tip_endpoint.clone();
         let address = address.to_owned();
         Box::pin(async move {
             let (sender, receiver) = oneshot::channel();
@@ -764,13 +785,41 @@ impl MidnightIndexerTransport for WebSocketMidnightIndexerTransport {
                         .build()
                         .map_err(|_| IndexerTransportError::Runtime)
                         .and_then(|runtime| {
-                            runtime.block_on(indexer_snapshot(&endpoint, &address, checkpoint))
+                            runtime.block_on(async {
+                                let mut snapshot =
+                                    indexer_snapshot(&endpoint, &address, checkpoint).await?;
+                                if let Some(endpoint) = chain_tip_endpoint {
+                                    let tip = super::submission::fetch_chain_tip(&endpoint)
+                                        .await
+                                        .map_err(map_chain_tip_error)?;
+                                    snapshot =
+                                        attach_authoritative_chain_tip(snapshot, tip.height)?;
+                                }
+                                Ok(snapshot)
+                            })
                         });
                     let _ = sender.send(result);
                 })
                 .map_err(|_| IndexerTransportError::Runtime)?;
             receiver.await.map_err(|_| IndexerTransportError::Runtime)?
         })
+    }
+}
+
+fn attach_authoritative_chain_tip(
+    mut snapshot: IndexerSnapshot,
+    height: u64,
+) -> Result<IndexerSnapshot, IndexerTransportError> {
+    snapshot.chain_tip_height = Some(height);
+    snapshot.validate_checkpoint()?;
+    Ok(snapshot)
+}
+
+const fn map_chain_tip_error(error: WalletTransactionPortError) -> IndexerTransportError {
+    match error {
+        WalletTransactionPortError::Timeout => IndexerTransportError::Timeout,
+        WalletTransactionPortError::Unavailable => IndexerTransportError::Connect,
+        _ => IndexerTransportError::InvalidData,
     }
 }
 
@@ -1093,12 +1142,11 @@ impl IndexerSnapshot {
                 validate_indexer_utxo(utxo)?;
             }
         }
-        let expected_tip = self
-            .transactions
-            .iter()
-            .map(|transaction| transaction.block_height)
-            .max();
-        if self.chain_tip_height != expected_tip {
+        if self.chain_tip_height.is_some_and(|chain_tip_height| {
+            self.transactions
+                .iter()
+                .any(|transaction| transaction.block_height > chain_tip_height)
+        }) {
             return Err(IndexerTransportError::InvalidData);
         }
         Ok(())
@@ -1217,15 +1265,14 @@ impl SnapshotAccumulator {
         if self.current_cursor < target_cursor {
             return Err(IndexerTransportError::Protocol);
         }
-        let chain_tip_height = self
-            .transactions
-            .values()
-            .map(|transaction| transaction.block_height)
-            .max();
         Ok(IndexerSnapshot {
             current_cursor: self.current_cursor,
             target_cursor,
-            chain_tip_height,
+            // The address-scoped subscription cannot establish the network
+            // height: an inactive wallet may have no matching transaction at
+            // all. The native transport attaches the authoritative indexer tip
+            // from its bounded HTTP query after this fold completes.
+            chain_tip_height: None,
             utxos: self.utxos.into_values().collect(),
             transactions: self.transactions.into_values().collect(),
         })
@@ -1787,6 +1834,17 @@ mod tests {
     }
 
     #[test]
+    fn authoritative_network_tip_is_independent_of_latest_wallet_transaction() {
+        let snapshot = attach_authoritative_chain_tip(live_snapshot(), 5_255)
+            .expect("network tip may be ahead of the wallet's latest transaction");
+        assert_eq!(snapshot.chain_tip_height, Some(5_255));
+        assert_eq!(
+            attach_authoritative_chain_tip(live_snapshot(), 76),
+            Err(IndexerTransportError::InvalidData)
+        );
+    }
+
+    #[test]
     fn configuration_rejects_routes_with_credentials_queries_and_wrong_address_networks() {
         let standalone_address = address();
         assert!(
@@ -1916,7 +1974,7 @@ mod tests {
         let snapshot = fold.finish().expect("fold is complete");
         assert!(snapshot.utxos.is_empty());
         assert_eq!(snapshot.current_cursor, 4);
-        assert_eq!(snapshot.chain_tip_height, Some(8));
+        assert!(snapshot.chain_tip_height.is_none());
         assert_eq!(snapshot.transactions.len(), 2);
     }
 
@@ -1945,7 +2003,7 @@ mod tests {
         let resumed = fold.finish().expect("delta fold should finish");
         assert_eq!(resumed.current_cursor, 12);
         assert_eq!(resumed.target_cursor, 12);
-        assert_eq!(resumed.chain_tip_height, Some(78));
+        assert!(resumed.chain_tip_height.is_none());
         assert_eq!(resumed.transactions.len(), 2);
         assert_eq!(
             resumed

@@ -127,6 +127,7 @@ impl MidnightStandaloneConfig {
                 .map_err(MidnightStandaloneConfigError::Indexer)?;
         let indexer_http_url = validate_http_url(indexer_http_url.as_ref(), false)
             .map_err(|_| MidnightStandaloneConfigError::InvalidIndexerHttpEndpoint)?;
+        let indexer = indexer.with_http_url(indexer_http_url.clone());
         let node_websocket_url =
             super::indexer::validate_websocket_url(node_websocket_url.as_ref())
                 .map_err(|_| MidnightStandaloneConfigError::InvalidNodeEndpoint)?;
@@ -154,6 +155,7 @@ impl MidnightStandaloneConfig {
                 .map_err(MidnightStandaloneConfigError::Indexer)?;
         let indexer_http_url = validate_http_url(indexer_http_url.as_ref(), false)
             .map_err(|_| MidnightStandaloneConfigError::InvalidIndexerHttpEndpoint)?;
+        let indexer = indexer.with_http_url(indexer_http_url.clone());
         let node_websocket_url =
             super::indexer::validate_websocket_url(node_websocket_url.as_ref())
                 .map_err(|_| MidnightStandaloneConfigError::InvalidNodeEndpoint)?;
@@ -606,6 +608,7 @@ fn ensure_dust_sync_active(
 }
 
 pub(crate) struct ChainTip {
+    pub(crate) height: u64,
     pub(crate) timestamp: Timestamp,
     pub(crate) parameters: LedgerParameters,
 }
@@ -679,6 +682,11 @@ fn decode_chain_tip(root: &Value) -> Result<ChainTip, WalletTransactionPortError
         .pointer("/data/block")
         .and_then(Value::as_object)
         .ok_or(WalletTransactionPortError::InvalidChainState)?;
+    let height = block
+        .get("height")
+        .and_then(Value::as_i64)
+        .and_then(|value| u64::try_from(value).ok())
+        .ok_or(WalletTransactionPortError::InvalidChainState)?;
     let timestamp_millis = block
         .get("timestamp")
         .and_then(Value::as_i64)
@@ -692,6 +700,7 @@ fn decode_chain_tip(root: &Value) -> Result<ChainTip, WalletTransactionPortError
     let parameters = midnight_serialize::tagged_deserialize(&parameters_bytes[..])
         .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
     Ok(ChainTip {
+        height,
         // Midnight indexer v4 exposes its DateTime scalar as Unix
         // milliseconds. The ledger Timestamp is second-granular.
         timestamp: Timestamp::from_secs(timestamp_millis / 1_000),
@@ -1968,6 +1977,10 @@ mod tests {
             value.indexer_http_url(),
             "http://127.0.0.1:8088/api/v1/graphql"
         );
+        assert_eq!(
+            value.indexer().http_url(),
+            Some("http://127.0.0.1:8088/api/v1/graphql")
+        );
         assert_eq!(value.node_websocket_url(), "ws://127.0.0.1:9944");
         assert!(matches!(
             value.proving(),
@@ -2078,6 +2091,7 @@ mod tests {
         let tip = decode_chain_tip(&json!({
             "data": {
                 "block": {
+                    "height": 5_255,
                     "timestamp": 1_750_000_000_123_i64,
                     "ledgerParameters": hex::encode(parameters)
                 }
@@ -2085,6 +2099,7 @@ mod tests {
         }))
         .expect("valid chain tip decodes");
 
+        assert_eq!(tip.height, 5_255);
         assert_eq!(tip.timestamp, Timestamp::from_secs(1_750_000_000));
         assert_eq!(tip.parameters, INITIAL_PARAMETERS);
     }
@@ -2093,10 +2108,10 @@ mod tests {
     fn chain_tip_decoder_rejects_missing_negative_and_malformed_fields() {
         for value in [
             json!({ "data": { "block": null } }),
-            json!({ "data": { "block": { "timestamp": -1, "ledgerParameters": "00" } } }),
-            json!({ "data": { "block": { "timestamp": 1 } } }),
-            json!({ "data": { "block": { "timestamp": 1, "ledgerParameters": "0" } } }),
-            json!({ "data": { "block": { "timestamp": 1, "ledgerParameters": "zz" } } }),
+            json!({ "data": { "block": { "height": 1, "timestamp": -1, "ledgerParameters": "00" } } }),
+            json!({ "data": { "block": { "height": 1, "timestamp": 1 } } }),
+            json!({ "data": { "block": { "height": 1, "timestamp": 1, "ledgerParameters": "0" } } }),
+            json!({ "data": { "block": { "height": 1, "timestamp": 1, "ledgerParameters": "zz" } } }),
         ] {
             assert_eq!(
                 decode_chain_tip(&value).err(),
@@ -2117,6 +2132,7 @@ mod tests {
         let body = serde_json::to_vec(&json!({
             "data": {
                 "block": {
+                    "height": 5_255,
                     "timestamp": 1_750_000_123_999_i64,
                     "ledgerParameters": format!("0x{}", hex::encode(parameters))
                 }
@@ -2126,6 +2142,7 @@ mod tests {
         validate_chain_tip_status(StatusCode::OK).expect("successful status is accepted");
         let tip = decode_chain_tip_body(&body).expect("bounded chain tip succeeds");
 
+        assert_eq!(tip.height, 5_255);
         assert_eq!(tip.timestamp, Timestamp::from_secs(1_750_000_123));
         assert_eq!(tip.parameters, INITIAL_PARAMETERS);
         let request = chain_tip_request("http://127.0.0.1:8088/api/v1/graphql")
