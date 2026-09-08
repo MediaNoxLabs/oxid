@@ -37,7 +37,8 @@ pub(super) fn DeveloperToolsHub(
         section { class: "developer-tool-list", aria_label: "Developer tools",
             DeveloperToolLink {
                 title: "Capability manifest",
-                purpose: "Review public composition facts and service availability.",
+                purpose: "See what this build can do and which operations are available.",
+                help: Some("An inventory of the operations included in this build and whether each one is ready. It helps developers understand how Oxid was composed; it does not grant permission, reveal wallet data, or confirm that a remote service is healthy right now."),
                 availability: format!("{ready} of {} methods ready", capabilities.len()),
                 action: "Open manifest",
                 on_open: on_open_manifest,
@@ -45,6 +46,7 @@ pub(super) fn DeveloperToolsHub(
             DeveloperToolLink {
                 title: "Proof benchmark",
                 purpose: "Run synthetic proofs and inspect process-local results.",
+                help: None,
                 availability: if cfg!(feature = "proof-benchmark") { "Available in this development build".to_owned() } else { "Not compiled into this build".to_owned() },
                 action: "Open benchmark",
                 on_open: on_open_benchmark,
@@ -52,6 +54,7 @@ pub(super) fn DeveloperToolsHub(
             DeveloperToolLink {
                 title: "Event log",
                 purpose: "Filter and clear bounded, payload-free diagnostic events.",
+                help: None,
                 availability: "Process-local · telemetry off".to_owned(),
                 action: "Open event log",
                 on_open: on_open_diagnostics,
@@ -64,15 +67,38 @@ pub(super) fn DeveloperToolsHub(
 fn DeveloperToolLink(
     title: &'static str,
     purpose: &'static str,
+    help: Option<&'static str>,
     availability: String,
     action: &'static str,
     on_open: EventHandler<MouseEvent>,
 ) -> Element {
+    let mut help_open = use_signal(|| false);
     rsx! {
         article { class: "developer-tool surface-card",
             div {
-                h2 { "{title}" }
+                div { class: "developer-tool__title-row",
+                    h2 { "{title}" }
+                    if help.is_some() {
+                        button {
+                            class: "developer-tool__help-button",
+                            r#type: "button",
+                            aria_label: "About {title}",
+                            aria_expanded: if *help_open.read() { "true" } else { "false" },
+                            title: "What is this?",
+                            onclick: move |_| {
+                                let next = !*help_open.read();
+                                help_open.set(next);
+                            },
+                            span { aria_hidden: "true", "?" }
+                        }
+                    }
+                }
                 p { "{purpose}" }
+                if *help_open.read() {
+                    if let Some(help) = help {
+                        p { class: "developer-tool__help-copy", role: "note", "{help}" }
+                    }
+                }
                 span { class: "status-pill", "{availability}" }
             }
             button { class: "secondary-button", r#type: "button", onclick: move |event| on_open.call(event), "{action}" }
@@ -112,7 +138,7 @@ pub(super) fn DeveloperCapabilitiesPage() -> Element {
             p { class: "eyebrow", "Standalone developer profile" }
             h1 { "Capability manifest" }
             p {
-                "Rendered from the same Oxid-owned manifest serialized by system.capabilities. Values are public composition facts; request payloads, identifiers, claims, endpoints, logs, and process telemetry are excluded."
+                "A read-only inventory of the operations included in this build and whether each one is available. It is rendered from the same Oxid-owned manifest serialized by system.capabilities; it does not grant permission or expose wallet data."
             }
         }
         section { class: "developer-capability-summary surface-card",

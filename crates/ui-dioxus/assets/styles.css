@@ -196,7 +196,6 @@ button {
 }
 
 .profile-shortcut:focus-visible,
-.privacy-toggle:focus-visible,
 .back-action:focus-visible,
 .demo-profile-banner__action:focus-visible,
 .profile-sheet__item:focus-visible,
@@ -302,7 +301,6 @@ textarea:focus-visible {
   display: grid;
   width: 2.65rem;
   height: 2.65rem;
-  justify-self: end;
   place-content: center;
   color: var(--accent);
 }
@@ -314,30 +312,10 @@ textarea:focus-visible {
   gap: var(--space-2);
 }
 
-.privacy-toggle {
-  display: grid;
+.app-header__spacer {
+  display: block;
   width: 2.65rem;
   height: 2.65rem;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-pill);
-  background: var(--surface-4);
-  color: var(--text-soft);
-  cursor: pointer;
-}
-
-.privacy-toggle.is-masked {
-  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface-4));
-  color: var(--accent);
-}
-
-.privacy-toggle span,
-.privacy-toggle svg {
-  display: block;
-  width: 1.25rem;
-  height: 1.25rem;
 }
 
 .profile-shortcut {
@@ -1716,10 +1694,49 @@ textarea:focus-visible {
   margin: 0;
 }
 
+.developer-tool__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.developer-tool__help-button {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--font-label);
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.developer-tool__help-button:hover,
+.developer-tool__help-button:focus-visible,
+.developer-tool__help-button[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
 .developer-tool p {
   margin: var(--space-2) 0;
   color: var(--text-soft);
   line-height: 1.45;
+}
+
+.developer-tool p.developer-tool__help-copy {
+  max-width: 54ch;
+  padding: var(--space-3);
+  border-left: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  color: var(--text-muted);
+  font-size: var(--font-caption);
 }
 
 .proof-benchmark-list {
@@ -1727,10 +1744,10 @@ textarea:focus-visible {
   gap: var(--space-2);
 }
 
-.proof-benchmark-row {
+.proof-benchmark-row.capability-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
   gap: var(--space-3);
   padding: var(--space-3);
 }
@@ -1740,6 +1757,30 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
   color: var(--text-muted);
   line-height: 1.4;
+}
+
+.proof-benchmark-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2) var(--space-3);
+  margin: var(--space-3) 0 0;
+}
+
+.proof-benchmark-metrics div {
+  min-width: 0;
+}
+
+.proof-benchmark-metrics dt {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.proof-benchmark-metrics dd {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: var(--font-caption);
 }
 
 .proof-benchmark-row .secondary-button {
@@ -3025,15 +3066,31 @@ select:focus-visible {
     grid-template-columns: 1fr;
   }
 
-  .developer-tool,
-  .proof-benchmark-row {
+  .developer-tool {
     grid-template-columns: 1fr;
     align-items: stretch;
   }
 
-  .developer-tool .secondary-button,
-  .proof-benchmark-row .secondary-button {
+  .developer-tool .secondary-button {
     width: 100%;
+  }
+
+  .proof-benchmark-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .proof-benchmark-row.capability-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .proof-benchmark-row .secondary-button {
+    grid-column: 2;
+    justify-self: start;
+    width: auto;
+  }
+
+  .proof-benchmark-metrics {
+    grid-template-columns: 1fr;
   }
 
   .settings-card {
