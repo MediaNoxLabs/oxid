@@ -22,7 +22,7 @@ use oxid_wallet_application::{
     WalletJubjubChallengeSignature, WalletJubjubChallengeSigningPort, WalletKeyDerivationPort,
     WalletKeyOperationPort, WalletPortableBackupPort, WalletPortableBackupPortError,
     WalletPortableRecoverySummary, WalletProtectionPort, WalletRecoverySecret,
-    WalletSecurityPortError,
+    WalletRootRecoveryPort, WalletRootSeed, WalletSecurityPortError,
 };
 use oxid_wallet_domain::{
     PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyDescriptor, WalletKeyReference,
@@ -79,7 +79,10 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
     where
         N: RandomPort,
     {
-        self.initialize_profile(profile_id, Some(root_seed))
+        self.initialize_profile(
+            profile_id,
+            Some(WalletRootSeed::from_raw_development(*root_seed)),
+        )
     }
 
     fn profiles(
@@ -119,7 +122,7 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
     fn initialize_profile(
         &self,
         profile_id: &WalletProfileId,
-        root_seed: Option<Zeroizing<[u8; 32]>>,
+        root_seed: Option<WalletRootSeed>,
     ) -> Result<WalletSecurityStatus, WalletSecurityPortError>
     where
         N: RandomPort,
@@ -135,7 +138,7 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
             self.random
                 .fill_bytes(root_seed.as_mut())
                 .map_err(|_| WalletSecurityPortError::Unavailable)?;
-            root_seed
+            WalletRootSeed::from_raw_development(*root_seed)
         };
         profiles.insert(
             profile_id.as_str().to_owned(),
@@ -257,7 +260,7 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
     }
 
     fn derive_material(
-        root_seed: &[u8; 32],
+        root_seed: &[u8],
         path: &WalletHdPath,
         algorithm: WalletKeyAlgorithm,
     ) -> Result<(DevelopmentKeyMaterial, WalletPublicKey), WalletSecurityPortError> {
@@ -279,11 +282,11 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
     }
 
     fn derive_secret(
-        root_seed: &[u8; 32],
+        root_seed: &[u8],
         path: &WalletHdPath,
     ) -> Result<Zeroizing<[u8; 32]>, WalletSecurityPortError> {
-        let mut extended = XPrv::new(root_seed.as_slice())
-            .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+        let mut extended =
+            XPrv::new(root_seed).map_err(|_| WalletSecurityPortError::InvalidOperation)?;
         for component in path.components() {
             let child = ChildNumber::new(component.index(), component.hardened())
                 .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
@@ -379,7 +382,7 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
         }
         Ok(DevelopmentProfile {
             state: WalletProtectionState::Unlocked,
-            root_seed: Zeroizing::new(*vault.root_seed()),
+            root_seed: vault.copy_root_seed_for_protected_import(),
             keys: restored_keys,
         })
     }
@@ -432,6 +435,20 @@ where
             .ok_or(WalletSecurityPortError::NotInitialized)?;
         profile.state = WalletProtectionState::Locked;
         Ok(development_status(profile.state))
+    }
+}
+
+impl<C, N> WalletRootRecoveryPort for DevelopmentWalletSecurity<C, N>
+where
+    C: ClockPort,
+    N: RandomPort,
+{
+    fn recover_root(
+        &self,
+        profile_id: &WalletProfileId,
+        root: WalletRootSeed,
+    ) -> Result<(), WalletSecurityPortError> {
+        self.initialize_profile(profile_id, Some(root)).map(|_| ())
     }
 }
 
@@ -611,8 +628,11 @@ where
         }
 
         let reference = self.new_reference(&profile.keys)?;
-        let (material, public_key) =
-            Self::derive_material(&profile.root_seed, &request.path, request.algorithm)?;
+        let (material, public_key) = Self::derive_material(
+            profile.root_seed.expose_for_protected_use(),
+            &request.path,
+            request.algorithm,
+        )?;
         let created_at = self
             .clock
             .now()
@@ -651,7 +671,7 @@ where
         let secret = {
             let profiles = self.profiles()?;
             let profile = Self::unlocked_profile(&profiles, profile_id)?;
-            Self::derive_secret(&profile.root_seed, path)?
+            Self::derive_secret(profile.root_seed.expose_for_protected_use(), path)?
         };
         operation(&secret)
     }
@@ -696,10 +716,10 @@ where
             .now()
             .map_err(|_| WalletPortableBackupPortError::Unavailable)?
             .value();
-        PortableCustodyVault::new(
+        PortableCustodyVault::new_with_root(
             profile_id.clone(),
             exported_at_millis,
-            *profile.root_seed,
+            profile.root_seed.copy_for_protected_import(),
             keys,
         )
     }
@@ -918,7 +938,7 @@ impl WalletPortableBackupPort for UnavailableWalletSecurity {
 
 struct DevelopmentProfile {
     state: WalletProtectionState,
-    root_seed: Zeroizing<[u8; 32]>,
+    root_seed: WalletRootSeed,
     keys: BTreeMap<String, StoredDevelopmentKey>,
 }
 
@@ -1039,8 +1059,18 @@ mod tests {
             .expect("initialize explicit fixture profile");
 
         let profiles = adapter.profiles().expect("profile state");
-        assert_eq!(*profiles[first.as_str()].root_seed, [17_u8; 32]);
-        assert_eq!(*profiles[second.as_str()].root_seed, expected);
+        assert_eq!(
+            profiles[first.as_str()]
+                .root_seed
+                .expose_for_protected_use(),
+            &[17_u8; 32]
+        );
+        assert_eq!(
+            profiles[second.as_str()]
+                .root_seed
+                .expose_for_protected_use(),
+            &expected
+        );
     }
 
     fn generate(

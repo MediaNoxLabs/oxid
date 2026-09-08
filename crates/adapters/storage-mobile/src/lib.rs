@@ -32,7 +32,8 @@ use oxid_wallet_application::{
     WalletJubjubChallengeDeriver, WalletJubjubChallengeSignature, WalletJubjubChallengeSigningPort,
     WalletKeyDerivationPort, WalletKeyOperationPort, WalletPortableBackupPort,
     WalletPortableBackupPortError, WalletPortableRecoverySummary, WalletProtectionPort,
-    WalletRecoverySecret, WalletRootRecoveryPort, WalletRootSeed, WalletSecurityPortError,
+    WalletRecoverySecret, WalletRootRecoveryPort, WalletRootSeed, WalletRootSeedKind,
+    WalletSecurityPortError,
 };
 use oxid_wallet_domain::{
     WalletKeyAlgorithm, WalletKeyDescriptor, WalletKeyLabel, WalletKeyPurpose, WalletKeyReference,
@@ -42,7 +43,8 @@ use oxid_wallet_domain::{
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize as _, Zeroizing};
 
-const VAULT_VERSION: u32 = 1;
+const LEGACY_VAULT_VERSION: u32 = 1;
+const VAULT_VERSION: u32 = 2;
 const MAX_VAULT_BYTES: usize = 512 * 1024;
 const MAX_KEYS: usize = 256;
 const KEY_REFERENCE_ATTEMPTS: usize = 8;
@@ -359,7 +361,7 @@ where
         let vault = MobileVault {
             version: VAULT_VERSION,
             profile_id: profile_id.as_str().to_owned(),
-            root_seed: *root_seed,
+            root: StoredWalletRoot::from_root(&WalletRootSeed::from_raw_development(*root_seed)),
             keys: Vec::new(),
         };
         let plaintext = encode_vault(&vault)?;
@@ -427,11 +429,10 @@ where
             }
         }
 
-        let root_seed = Zeroizing::new(root.copy_for_protected_import());
         let vault = MobileVault {
             version: VAULT_VERSION,
             profile_id: profile_id.as_str().to_owned(),
-            root_seed: *root_seed,
+            root: StoredWalletRoot::from_root(&root),
             keys: Vec::new(),
         };
         let plaintext = encode_vault(&vault)?;
@@ -496,7 +497,7 @@ where
         vault
             .keys
             .iter()
-            .map(|key| key.descriptor_with_root(&vault.root_seed))
+            .map(|key| key.descriptor_with_root(vault.root.as_bytes()))
             .collect()
     }
 
@@ -514,7 +515,7 @@ where
             .find(|key| key.reference == key_reference.as_str())
             .ok_or(WalletSecurityPortError::NotFound)?;
         let algorithm = parse_algorithm(&record.algorithm)?;
-        let secret = record.secret(&vault.root_seed)?;
+        let secret = record.secret(vault.root.as_bytes())?;
         sign_with_secret(algorithm, &secret, payload)
     }
 
@@ -559,7 +560,7 @@ where
                 && parse_algorithm(&existing.algorithm)? == request.algorithm
                 && parse_purpose(&existing.purpose)? == request.purpose
             {
-                return existing.descriptor_with_root(&vault.root_seed);
+                return existing.descriptor_with_root(vault.root.as_bytes());
             }
             return Err(WalletSecurityPortError::Conflict);
         }
@@ -584,7 +585,7 @@ where
             created_at_millis: created_at.value(),
             material: StoredKeyMaterial::Derived { path: stored_path },
         };
-        let descriptor = record.descriptor_with_root(&vault.root_seed)?;
+        let descriptor = record.descriptor_with_root(vault.root.as_bytes())?;
         vault.keys.push(record);
         self.save_vault(profile_id, &vault)?;
         Ok(descriptor)
@@ -605,7 +606,7 @@ where
     ) -> Result<(), WalletSecurityPortError> {
         let _gate = self.gate()?;
         let vault = self.load_vault(profile_id)?;
-        let secret = derive_bip32_secret(&vault.root_seed, path)?;
+        let secret = derive_bip32_secret(vault.root.as_bytes(), path)?;
         operation(&secret)
     }
 }
@@ -632,7 +633,7 @@ where
         if parse_algorithm(&record.algorithm)? != WalletKeyAlgorithm::Jubjub {
             return Err(WalletSecurityPortError::UnsupportedAlgorithm);
         }
-        let secret = record.secret(&vault.root_seed)?;
+        let secret = record.secret(vault.root.as_bytes())?;
         let mut nonce_seed = Zeroizing::new([0_u8; JUBJUB_COMPACT_BYTES]);
         self.random
             .fill_bytes(nonce_seed.as_mut())
@@ -760,13 +761,68 @@ where
 struct MobileVault {
     version: u32,
     profile_id: String,
+    root: StoredWalletRoot,
+    keys: Vec<StoredKey>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyMobileVault {
+    version: u32,
+    profile_id: String,
     root_seed: [u8; 32],
     keys: Vec<StoredKey>,
 }
 
-impl Drop for MobileVault {
+#[derive(Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "bytes",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+enum StoredWalletRoot {
+    RawDevelopment(Vec<u8>),
+    Bip39(Vec<u8>),
+}
+
+impl StoredWalletRoot {
+    fn from_root(root: &WalletRootSeed) -> Self {
+        match root.kind() {
+            WalletRootSeedKind::RawDevelopment => {
+                Self::RawDevelopment(root.expose_for_protected_use().to_vec())
+            }
+            WalletRootSeedKind::Bip39 => Self::Bip39(root.expose_for_protected_use().to_vec()),
+        }
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::RawDevelopment(bytes) | Self::Bip39(bytes) => bytes,
+        }
+    }
+
+    fn to_root(&self) -> Result<WalletRootSeed, WalletSecurityPortError> {
+        match self {
+            Self::RawDevelopment(bytes) => bytes
+                .as_slice()
+                .try_into()
+                .map(WalletRootSeed::from_raw_development)
+                .map_err(|_| WalletSecurityPortError::InvalidOperation),
+            Self::Bip39(bytes) => bytes
+                .as_slice()
+                .try_into()
+                .map(WalletRootSeed::from_bip39_seed)
+                .map_err(|_| WalletSecurityPortError::InvalidOperation),
+        }
+    }
+}
+
+impl Drop for StoredWalletRoot {
     fn drop(&mut self) {
-        self.root_seed.zeroize();
+        match self {
+            Self::RawDevelopment(bytes) | Self::Bip39(bytes) => bytes.zeroize(),
+        }
     }
 }
 
@@ -817,7 +873,7 @@ impl StoredKey {
         }
     }
 
-    fn secret(&self, root_seed: &[u8; 32]) -> Result<Zeroizing<[u8; 32]>, WalletSecurityPortError> {
+    fn secret(&self, root_seed: &[u8]) -> Result<Zeroizing<[u8; 32]>, WalletSecurityPortError> {
         match &self.material {
             StoredKeyMaterial::Generated { secret } => Ok(Zeroizing::new(*secret)),
             StoredKeyMaterial::Derived { .. } => derive_bip32_secret(
@@ -838,7 +894,7 @@ impl StoredKey {
 
     fn descriptor_with_root(
         &self,
-        root_seed: &[u8; 32],
+        root_seed: &[u8],
     ) -> Result<WalletKeyDescriptor, WalletSecurityPortError> {
         let algorithm = parse_algorithm(&self.algorithm)?;
         let secret = self.secret(root_seed)?;
@@ -871,8 +927,25 @@ fn decode_vault(
     if plaintext.is_empty() || plaintext.len() > MAX_VAULT_BYTES {
         return Err(WalletSecurityPortError::InvalidOperation);
     }
-    let vault: MobileVault =
-        serde_json::from_slice(plaintext).map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+    let vault: MobileVault = match serde_json::from_slice(plaintext) {
+        Ok(vault) => vault,
+        Err(_) => {
+            let mut legacy: LegacyMobileVault = serde_json::from_slice(plaintext)
+                .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+            if legacy.version != LEGACY_VAULT_VERSION {
+                legacy.root_seed.zeroize();
+                return Err(WalletSecurityPortError::InvalidOperation);
+            }
+            let root = StoredWalletRoot::RawDevelopment(legacy.root_seed.to_vec());
+            legacy.root_seed.zeroize();
+            MobileVault {
+                version: VAULT_VERSION,
+                profile_id: legacy.profile_id,
+                root,
+                keys: legacy.keys,
+            }
+        }
+    };
     validate_vault(profile_id, &vault)?;
     Ok(vault)
 }
@@ -887,6 +960,7 @@ fn validate_vault(
     {
         return Err(WalletSecurityPortError::InvalidOperation);
     }
+    drop(vault.root.to_root()?);
     let mut references = BTreeSet::new();
     let mut labels = BTreeSet::new();
     let mut paths = BTreeSet::new();
@@ -901,7 +975,7 @@ fn validate_vault(
             if algorithm != WalletKeyAlgorithm::Secp256k1Schnorr || !paths.insert(path) {
                 return Err(WalletSecurityPortError::InvalidOperation);
             }
-            key.descriptor_with_root(&vault.root_seed)?;
+            key.descriptor_with_root(vault.root.as_bytes())?;
         } else {
             key.descriptor()?;
         }
@@ -951,7 +1025,7 @@ fn mobile_vault_from_portable(
     let vault = MobileVault {
         version: VAULT_VERSION,
         profile_id: portable.profile_id().as_str().to_owned(),
-        root_seed: *portable.root_seed(),
+        root: StoredWalletRoot::from_root(&portable.copy_root_seed_for_protected_import()),
         keys,
     };
     validate_vault(portable.profile_id(), &vault).map_err(map_backup_security_error)?;
@@ -968,7 +1042,7 @@ fn portable_vault_from_mobile(
         .iter()
         .map(|stored| {
             let descriptor = stored
-                .descriptor_with_root(&vault.root_seed)
+                .descriptor_with_root(vault.root.as_bytes())
                 .map_err(map_backup_security_error)?;
             match &stored.material {
                 StoredKeyMaterial::Generated { secret } => {
@@ -984,10 +1058,10 @@ fn portable_vault_from_mobile(
             }
         })
         .collect::<Result<Vec<_>, WalletPortableBackupPortError>>()?;
-    PortableCustodyVault::new(
+    PortableCustodyVault::new_with_root(
         profile_id.clone(),
         exported_at_millis,
-        vault.root_seed,
+        vault.root.to_root().map_err(map_backup_security_error)?,
         keys,
     )
 }
@@ -1469,6 +1543,98 @@ mod tests {
             restarted.recover_root(&profile, recovery_root(0x42)),
             Err(WalletSecurityPortError::AlreadyInitialized)
         );
+    }
+
+    #[test]
+    fn complete_bip39_seed_survives_restart_and_uses_all_bytes() {
+        let backend = Arc::new(TestSealedVault::default());
+        let profile = WalletProfileId::parse("profile_bip39").expect("profile");
+        let first = adapter(Arc::clone(&backend));
+        let mut seed = [0_u8; 64];
+        for (index, byte) in seed.iter_mut().enumerate() {
+            *byte = u8::try_from(index).expect("fixture index fits");
+        }
+        first
+            .recover_root(&profile, WalletRootSeed::from_bip39_seed(seed))
+            .expect("complete seed is installed");
+        first.lock(&profile).expect("lock");
+
+        let restarted = adapter(Arc::clone(&backend));
+        let path = night_external_path();
+        let derived = restarted
+            .derive(
+                &profile,
+                DeriveProtectedKeyRequest {
+                    label: WalletKeyLabel::parse("Recovered NIGHT external").expect("label"),
+                    algorithm: WalletKeyAlgorithm::Secp256k1Schnorr,
+                    purpose: WalletKeyPurpose::Transaction,
+                    path: path.clone(),
+                },
+            )
+            .expect("derive after restart");
+        let complete = derive_bip32_secret(&seed, &path).expect("complete derivation");
+        let truncated = derive_bip32_secret(&seed[..32], &path).expect("truncated derivation");
+        assert_ne!(*complete, *truncated);
+        assert_eq!(
+            derived.public_key(),
+            &public_key_from_secret(WalletKeyAlgorithm::Secp256k1Schnorr, &complete)
+                .expect("expected public key")
+        );
+
+        let stored = backend.records.lock().expect("records");
+        let document: serde_json::Value =
+            serde_json::from_slice(&stored[profile.as_str()]).expect("current vault JSON");
+        assert_eq!(document["version"], VAULT_VERSION);
+        assert_eq!(document["root"]["kind"], "bip39");
+        assert_eq!(document["root"]["bytes"].as_array().map(Vec::len), Some(64));
+    }
+
+    #[test]
+    fn legacy_v1_vault_migrates_as_an_explicit_development_root() {
+        let backend = Arc::new(TestSealedVault::default());
+        let profile = WalletProfileId::parse("profile_legacy").expect("profile");
+        let legacy = serde_json::json!({
+            "version": LEGACY_VAULT_VERSION,
+            "profile_id": profile.as_str(),
+            "root_seed": vec![0x31_u8; 32],
+            "keys": [],
+        });
+        backend.records.lock().expect("records").insert(
+            profile.as_str().to_owned(),
+            serde_json::to_vec(&legacy).expect("legacy fixture"),
+        );
+        backend
+            .unlocked
+            .lock()
+            .expect("unlocked")
+            .insert(profile.as_str().to_owned());
+
+        let security = adapter(Arc::clone(&backend));
+        let path = night_external_path();
+        let derived = security
+            .derive(
+                &profile,
+                DeriveProtectedKeyRequest {
+                    label: WalletKeyLabel::parse("Legacy NIGHT external").expect("label"),
+                    algorithm: WalletKeyAlgorithm::Secp256k1Schnorr,
+                    purpose: WalletKeyPurpose::Transaction,
+                    path: path.clone(),
+                },
+            )
+            .expect("legacy vault derives");
+        let expected = derive_bip32_secret(&[0x31; 32], &path).expect("legacy derivation");
+        assert_eq!(
+            derived.public_key(),
+            &public_key_from_secret(WalletKeyAlgorithm::Secp256k1Schnorr, &expected)
+                .expect("expected public key")
+        );
+
+        let stored = backend.records.lock().expect("records");
+        let document: serde_json::Value =
+            serde_json::from_slice(&stored[profile.as_str()]).expect("migrated vault JSON");
+        assert_eq!(document["version"], VAULT_VERSION);
+        assert_eq!(document["root"]["kind"], "raw_development");
+        assert!(document.get("root_seed").is_none());
     }
 
     #[test]
