@@ -405,6 +405,15 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
         CapabilityView::new("wallet.sync.force", "ready")
             .text("mode", "standalone")
             .texts("sources", &["simulated", "live"]),
+        CapabilityView::new("wallet.realm.sync.status", "ready")
+            .text("mode", "standalone")
+            .text("scope", "selected_realm"),
+        CapabilityView::new("wallet.realm.sync.start", "ready")
+            .text("mode", "standalone")
+            .text("scope", "public_dust_shielded"),
+        CapabilityView::new("wallet.realm.sync.cancel", "ready")
+            .text("mode", "standalone")
+            .text("checkpoint", "private_families_resumable"),
         CapabilityView::new("wallet.dust.sync.status", "ready")
             .text("mode", "standalone")
             .texts("sources", &["simulated", "live", "cached", "unavailable"]),

@@ -30,6 +30,9 @@ fn composition_exposes_every_application_capability() {
     drop(services.derive_wallet_account());
     drop(services.get_wallet_account());
     drop(services.sync_wallet_account());
+    drop(services.sync_selected_wallet_realm());
+    drop(services.get_selected_wallet_realm_sync());
+    drop(services.cancel_selected_wallet_realm_sync());
     drop(services.get_wallet_dust_sync_status());
     drop(services.start_wallet_dust_sync());
     drop(services.cancel_wallet_dust_sync());
