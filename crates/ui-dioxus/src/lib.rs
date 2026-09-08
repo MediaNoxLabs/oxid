@@ -3060,7 +3060,7 @@ fn route_demo_review(
         DemoBootstrapAction::CredentialOffer => (
             services
                 .standalone_credential_offer()
-                .ok_or_else(|| "Standalone credential offer is unavailable.".to_owned())?,
+                .ok_or_else(|| "OID4VCI demo offer is unavailable.".to_owned())?,
             IdentityRequestKind::CredentialIssuance,
         ),
         DemoBootstrapAction::LoginRequest => (
@@ -9477,9 +9477,9 @@ fn CredentialsPage(
                                     offer_draft.set(CredentialOfferDraft::editable(offer.clone()));
                                     prepared_issuance.set(None);
                                     issuance_consent.set(false);
-                                    issuance_notice.set(Some("Standalone credential offer loaded. Preview it before accepting.".to_owned()));
+                                    issuance_notice.set(Some("OID4VCI demo offer loaded. Preview it before accepting.".to_owned()));
                                 },
-                                "Use standalone demo offer"
+                                "Use demo OID4VCI offer"
                             }
                         }
                         button {
