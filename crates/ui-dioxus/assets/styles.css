@@ -1807,6 +1807,49 @@ textarea:focus-visible {
   font-size: var(--font-caption);
 }
 
+.developer-section-nav {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(max-content, 1fr));
+  gap: var(--space-1);
+  margin: var(--space-3) 0 var(--space-1);
+  padding: var(--space-1);
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
+  scrollbar-width: none;
+}
+
+.developer-section-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.developer-section-nav__item {
+  min-width: 6.5rem;
+  min-height: 2.75rem;
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-caption);
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.developer-section-nav__item:hover,
+.developer-section-nav__item:focus-visible {
+  color: var(--text-strong);
+}
+
+.developer-section-nav__item.active {
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-3));
+  color: var(--accent);
+}
+
 .proof-benchmark-list {
   display: grid;
   gap: var(--space-3);
