@@ -5783,6 +5783,7 @@ dependencies = [
  "oxid-adapter-mobile-native",
  "oxid-foundation",
  "oxid-platform-ports",
+ "sysinfo",
 ]
 
 [[package]]

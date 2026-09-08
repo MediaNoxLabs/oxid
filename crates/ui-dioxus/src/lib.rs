@@ -72,6 +72,8 @@ use oxid_platform_ports::{
     IdentityLinkIngressError, IdentityLinkIngressPort, PublicReceiveAddress, PublicTextExportError,
     PublicTextExportPort, QrScanError, QrScannerPort, ScreenPrivacyPort,
 };
+#[cfg(feature = "proof-benchmark")]
+use oxid_platform_ports::{ProcessResourceSamplerPort, UnavailableProcessResourceSampler};
 use oxid_presentation_application::{
     AcceptCredentialPresentationCommand, AcceptCredentialPresentationUseCase,
     CancelCredentialPresentationCommand, CancelCredentialPresentationUseCase,
@@ -259,6 +261,8 @@ pub struct WalletUiServices {
     developer_capabilities: Vec<CapabilityView>,
     #[cfg(feature = "proof-benchmark")]
     proof_benchmark: Option<Arc<dyn RunProofBenchmarkUseCase>>,
+    #[cfg(feature = "proof-benchmark")]
+    process_resource_sampler: Arc<dyn ProcessResourceSamplerPort>,
     get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase>,
     clear_diagnostics: Arc<dyn ClearDiagnosticsUseCase>,
     qr_scanner: Arc<dyn QrScannerPort>,
@@ -1013,6 +1017,8 @@ impl WalletUiServices {
             developer_capabilities: Vec::new(),
             #[cfg(feature = "proof-benchmark")]
             proof_benchmark: None,
+            #[cfg(feature = "proof-benchmark")]
+            process_resource_sampler: Arc::new(UnavailableProcessResourceSampler),
             get_diagnostic_snapshot: diagnostics.get,
             clear_diagnostics: diagnostics.clear,
             qr_scanner: ingress.qr_scanner,
@@ -1159,8 +1165,10 @@ impl WalletUiServices {
     pub fn with_proof_benchmark(
         mut self,
         proof_benchmark: Arc<dyn RunProofBenchmarkUseCase>,
+        process_resource_sampler: Arc<dyn ProcessResourceSamplerPort>,
     ) -> Self {
         self.proof_benchmark = Some(proof_benchmark);
+        self.process_resource_sampler = process_resource_sampler;
         self
     }
 
@@ -1168,6 +1176,12 @@ impl WalletUiServices {
     #[must_use]
     pub fn proof_benchmark(&self) -> Option<Arc<dyn RunProofBenchmarkUseCase>> {
         self.proof_benchmark.as_ref().map(Arc::clone)
+    }
+
+    #[cfg(feature = "proof-benchmark")]
+    #[must_use]
+    pub fn process_resource_sampler(&self) -> Arc<dyn ProcessResourceSamplerPort> {
+        Arc::clone(&self.process_resource_sampler)
     }
 
     #[must_use]

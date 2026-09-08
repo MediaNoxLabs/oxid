@@ -44,7 +44,7 @@ pub use profile_mobile::*;
 pub use profile_preprod::*;
 pub use profile_production::*;
 #[cfg(all(feature = "proof-benchmark", not(target_arch = "wasm32")))]
-pub use proof_benchmark::compose_development_proof_benchmark;
+pub use proof_benchmark::*;
 pub use services::{ApplicationServices, WalletRootRecoveryCapability};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

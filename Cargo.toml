@@ -140,6 +140,7 @@ serde_arrays = { version = "=0.2.0" }
 serde_json = { version = "=1.0.151" }
 sha2 = { version = "=0.10.9", default-features = false }
 subtle = { version = "=2.6.1" }
+sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
 rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
 rustls-platform-verifier-05 = { package = "rustls-platform-verifier", version = "=0.5.3" }
 rustls-platform-verifier-07 = { package = "rustls-platform-verifier", version = "=0.7.0" }

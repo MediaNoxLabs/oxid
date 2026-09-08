@@ -2,7 +2,10 @@
 
 #![forbid(unsafe_code)]
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    sync::Mutex,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_mobile_native::{
@@ -12,9 +15,12 @@ use oxid_adapter_mobile_native::{
 };
 use oxid_foundation::UnixTimestampMillis;
 use oxid_platform_ports::{
-    ClockPort, PlatformError, PublicReceiveAddress, PublicTextExportError, PublicTextExportPort,
+    ClockPort, PlatformError, ProcessResourceSample, ProcessResourceSampleError,
+    ProcessResourceSamplerPort, PublicReceiveAddress, PublicTextExportError, PublicTextExportPort,
     RandomPort, ScreenPrivacyError, ScreenPrivacyPort,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, get_current_pid};
 
 /// Clock backed by the host system.
 #[derive(Clone, Copy, Debug, Default)]
@@ -71,6 +77,64 @@ impl ScreenPrivacyPort for NativeScreenPrivacy {
     fn set_protected(&self, protected: bool) -> Result<(), ScreenPrivacyError> {
         set_screen_privacy(protected)
     }
+}
+
+/// Current-process resource sampler for the opt-in development proof benchmark.
+///
+/// The first process refresh primes CPU accounting. Subsequent samples are
+/// meaningful when callers respect `sysinfo`'s minimum refresh interval; the
+/// UI polls at 500 milliseconds.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct SystemProcessResourceSampler {
+    pid: sysinfo::Pid,
+    system: Mutex<System>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl SystemProcessResourceSampler {
+    pub fn new() -> Result<Self, ProcessResourceSampleError> {
+        let pid = get_current_pid().map_err(|_| ProcessResourceSampleError::Unavailable)?;
+        let mut system = System::new();
+        refresh_current_process(&mut system, pid);
+        system
+            .process(pid)
+            .ok_or(ProcessResourceSampleError::Unavailable)?;
+        Ok(Self {
+            pid,
+            system: Mutex::new(system),
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ProcessResourceSamplerPort for SystemProcessResourceSampler {
+    fn sample(&self) -> Result<ProcessResourceSample, ProcessResourceSampleError> {
+        let mut system = self
+            .system
+            .lock()
+            .map_err(|_| ProcessResourceSampleError::Unavailable)?;
+        refresh_current_process(&mut system, self.pid);
+        let process = system
+            .process(self.pid)
+            .ok_or(ProcessResourceSampleError::Unavailable)?;
+        let cpu_usage = process.cpu_usage();
+        if !cpu_usage.is_finite() || cpu_usage.is_sign_negative() {
+            return Err(ProcessResourceSampleError::Unavailable);
+        }
+        let basis_points = (f64::from(cpu_usage) * 100.0)
+            .round()
+            .clamp(0.0, f64::from(u32::MAX)) as u32;
+        Ok(ProcessResourceSample::new(process.memory(), basis_points))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn refresh_current_process(system: &mut System, pid: sysinfo::Pid) {
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().with_memory().with_cpu(),
+    );
 }
 
 #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -181,5 +245,13 @@ mod tests {
             NativeScreenPrivacy.set_protected(false),
             Err(ScreenPrivacyError::Unavailable)
         );
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "ios")))]
+    #[test]
+    fn system_sampler_reports_only_the_current_process() {
+        let sampler = SystemProcessResourceSampler::new().expect("sampler should initialize");
+        let sample = sampler.sample().expect("current process should be sampled");
+        assert!(sample.resident_bytes() > 0);
     }
 }
