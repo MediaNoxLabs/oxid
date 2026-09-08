@@ -1095,7 +1095,7 @@ textarea:focus-visible {
   padding: 0;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
-  border-radius: 50%;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   color: var(--accent);
   cursor: pointer;
