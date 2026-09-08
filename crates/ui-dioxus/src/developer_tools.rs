@@ -6,6 +6,12 @@ use dioxus::prelude::*;
 use super::proof_benchmark::ProofBenchmarkPanel;
 use super::{Route, WalletUiServices};
 
+pub(super) const DEVELOPER_SECTIONS: [(Route, &str); 3] = [
+    (Route::DeveloperManifest, "Capabilities"),
+    (Route::DeveloperProofBenchmark, "Benchmark"),
+    (Route::DeveloperDiagnostics, "Event log"),
+];
+
 pub(super) const fn is_developer_route(route: Route) -> bool {
     matches!(
         route,
@@ -14,6 +20,30 @@ pub(super) const fn is_developer_route(route: Route) -> bool {
             | Route::DeveloperProofBenchmark
             | Route::DeveloperDiagnostics
     )
+}
+
+pub(super) const fn is_developer_section(route: Route) -> bool {
+    matches!(
+        route,
+        Route::DeveloperManifest | Route::DeveloperProofBenchmark | Route::DeveloperDiagnostics
+    )
+}
+
+#[component]
+pub(super) fn DeveloperSectionNav(current: Route, on_select: EventHandler<Route>) -> Element {
+    rsx! {
+        nav { class: "developer-section-nav", aria_label: "Developer tool sections",
+            for (route, label) in DEVELOPER_SECTIONS {
+                button {
+                    class: if current == route { "developer-section-nav__item active" } else { "developer-section-nav__item" },
+                    r#type: "button",
+                    aria_current: if current == route { "page" } else { "false" },
+                    onclick: move |_| on_select.call(route),
+                    "{label}"
+                }
+            }
+        }
+    }
 }
 
 #[component]
