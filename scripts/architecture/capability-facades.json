@@ -142,6 +142,12 @@
           ]
         },
         {
+          "name": "development-notices",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/developer_notices"
+          ]
+        },
+        {
           "name": "proof-benchmark",
           "modulePathPrefixes": [
             "crates/ui-dioxus/src/proof_benchmark"
