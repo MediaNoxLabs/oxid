@@ -16,7 +16,7 @@ use oxid_adapter_storage_dev::{DevelopmentWalletFixtureProtection, DevelopmentWa
 #[cfg(feature = "standalone-development")]
 use oxid_wallet_application::WalletProfileRepository;
 
-pub(super) const PUBLIC_STANDALONE_PROFILE_NAME: &str = "Oxid Demo Wallet";
+pub(super) const PUBLIC_STANDALONE_PROFILE_NAME: &str = "Demo Wallet";
 
 #[cfg(feature = "standalone-development")]
 #[derive(Clone, Copy)]

@@ -188,7 +188,7 @@ just android-demo
 ```
 
 The non-dismissible banner identifies fixture data. Its opt-in drawer can
-idempotently select or create the isolated `Oxid Demo Wallet` profile, leaving
+idempotently select or create the isolated `Demo Wallet` profile, leaving
 unrelated active profiles untouched, initialize or unlock standalone custody,
 derive account `0/0`, create a managed DID, and load funding only from the
 exact undeployed simulator. Offer, login, and presentation actions stop on

@@ -67,7 +67,7 @@ pub fn App() -> Element {
             main { role: "status", aria_busy: "true", "Preparing secure Android networking…" }
         },
         AndroidPlatformState::Failed => rsx! {
-            main { role: "alert", "Secure Android networking is unavailable. Restart Oxid to retry." }
+            main { role: "alert", "Secure Android networking is unavailable. Restart the app to retry." }
         },
     }
 }

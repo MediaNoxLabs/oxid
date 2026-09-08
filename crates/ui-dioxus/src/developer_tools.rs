@@ -68,7 +68,7 @@ pub(super) fn DeveloperToolsHub(
             DeveloperToolLink {
                 title: "Capability manifest",
                 purpose: "See what this build can do and which operations are available.",
-                help: Some("An inventory of the operations included in this build and whether each one is ready. It helps developers understand how Oxid was composed; it does not grant permission, reveal wallet data, or confirm that a remote service is healthy right now."),
+                help: Some("An inventory of the operations included in this build and whether each one is ready. It helps developers understand how the app was composed; it does not grant permission, reveal wallet data, or confirm that a remote service is healthy right now."),
                 availability: format!("{ready} of {} methods ready", capabilities.len()),
                 action: "Open manifest",
                 on_open: on_open_manifest,
@@ -168,7 +168,7 @@ pub(super) fn DeveloperCapabilitiesPage() -> Element {
             p { class: "eyebrow", "Standalone developer profile" }
             h1 { "Capability manifest" }
             p {
-                "A read-only inventory of the operations included in this build and whether each one is available. It is rendered from the same Oxid-owned manifest serialized by system.capabilities; it does not grant permission or expose wallet data."
+                "A read-only inventory of the operations included in this build and whether each one is available. It is rendered from the same app-owned manifest serialized by system.capabilities; it does not grant permission or expose wallet data."
             }
         }
         section { class: "developer-capability-summary surface-card",
