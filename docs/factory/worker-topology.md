@@ -84,6 +84,9 @@ The tracked default is `openai-codex/gpt-5.6-terra:medium`, not a provider
 lock. Pi accepts a deliberate session override, for example
 `./bootstrap.sh --pi --provider openai --model <model>`. The alternate provider
 must satisfy the same issue, evidence, commit-signing, and gate contract.
+For subagent overrides, use a provider-qualified model ID such as
+`openai-codex/gpt-5.6-terra`; a bare model name is ambiguous across providers.
+Prefer omitting the override when the tracked default is suitable.
 
 Each engineer supplies their own GitHub and model-provider authentication.
 `./bootstrap.sh --configure-pi` preserves unrelated Pi settings and never reads

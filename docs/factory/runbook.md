@@ -93,6 +93,13 @@ global-package config boundary, measured storage, and upgrade canaries. See
 [worker-topology.md](worker-topology.md) before starting a second local session
 or attaching a worker from another engineer or cloud host.
 
+When a supervisor overrides a child model, always pass the provider-qualified
+ID (for example, `openai-codex/gpt-5.6-terra`) rather than the short model name.
+Some Pi extension versions interpret a short override such as
+`gpt-5.6-terra` as `openai/gpt-5.6-terra`, bypassing the configured Codex
+account and failing before the child starts. Omitting the override safely uses
+the tracked default.
+
 `--configure-git` copies the tracked contribution dispatchers into stable,
 private Git-common state and sets only repository-local OpenPGP signing
 defaults. It requires an existing author identity and signing-key selection,
