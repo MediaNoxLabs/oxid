@@ -20,6 +20,7 @@ mod profile_guard;
 mod profile_quick_switcher;
 #[cfg(feature = "proof-benchmark")]
 mod proof_benchmark;
+mod selected_realm_sync;
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
 
@@ -100,44 +101,45 @@ use oxid_wallet_application::RunProofBenchmarkUseCase;
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationCommand, AuthorizeWalletDustRegistrationUseCase,
     AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase,
-    CancelWalletDustRegistrationSubmissionCommand, CancelWalletDustRegistrationSubmissionUseCase,
-    CancelWalletDustSyncUseCase, CancelWalletShieldedSyncUseCase,
-    CancelWalletTransferSubmissionUseCase, CompleteWalletRecoverySummary,
-    CreateWalletProfileCommand, CreateWalletProfileUseCase, DeriveWalletAccountCommand,
-    DeriveWalletAccountUseCase, EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY,
+    CancelSelectedWalletRealmSyncUseCase, CancelWalletDustRegistrationSubmissionCommand,
+    CancelWalletDustRegistrationSubmissionUseCase, CancelWalletDustSyncUseCase,
+    CancelWalletShieldedSyncUseCase, CancelWalletTransferSubmissionUseCase,
+    CompleteWalletRecoverySummary, CreateWalletProfileCommand, CreateWalletProfileUseCase,
+    DeriveWalletAccountCommand, DeriveWalletAccountUseCase, EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY,
     EXPORT_COMPLETE_WALLET_BACKUP_TITLE, ExportCompleteWalletBackupCommand,
-    ExportCompleteWalletBackupUseCase, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
-    GetWalletBackupReceiptUseCase, GetWalletDustRegistrationCommand,
-    GetWalletDustRegistrationStatusCommand, GetWalletDustRegistrationStatusUseCase,
-    GetWalletDustRegistrationUseCase, GetWalletDustSyncStatusUseCase,
-    GetWalletSecurityStatusUseCase, GetWalletShieldedSyncStatusUseCase,
-    GetWalletTransferDraftUseCase, GetWalletTransferSubmissionStatusUseCase,
-    InitializeWalletSecurityUseCase, ListWalletNetworksUseCase, ListWalletProfilesUseCase,
-    ListWalletTransferSubmissionsUseCase, LockWalletUseCase, MAX_WALLET_RECOVERY_SECRET_CHARACTERS,
-    PortableWalletBackupDocumentError, PortableWalletBackupDocumentKind,
-    PortableWalletBackupDocumentPort, PrepareShieldedWalletTransferCommand,
-    PrepareShieldedWalletTransferUseCase, PrepareWalletDustRegistrationCommand,
-    PrepareWalletDustRegistrationUseCase, PrepareWalletTransferCommand,
-    PrepareWalletTransferUseCase, RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY,
-    RECOVER_COMPLETE_WALLET_BACKUP_TITLE, RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY,
-    RECOVER_PORTABLE_WALLET_BACKUP_TITLE, ReconcileWalletDustRegistrationSubmissionCommand,
+    ExportCompleteWalletBackupUseCase, GetActiveWalletProfileUseCase,
+    GetSelectedWalletRealmSyncUseCase, GetWalletAccountUseCase, GetWalletBackupReceiptUseCase,
+    GetWalletDustRegistrationCommand, GetWalletDustRegistrationStatusCommand,
+    GetWalletDustRegistrationStatusUseCase, GetWalletDustRegistrationUseCase,
+    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
+    GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
+    GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
+    ListWalletNetworksUseCase, ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase,
+    LockWalletUseCase, MAX_WALLET_RECOVERY_SECRET_CHARACTERS, PortableWalletBackupDocumentError,
+    PortableWalletBackupDocumentKind, PortableWalletBackupDocumentPort,
+    PrepareShieldedWalletTransferCommand, PrepareShieldedWalletTransferUseCase,
+    PrepareWalletDustRegistrationCommand, PrepareWalletDustRegistrationUseCase,
+    PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
+    RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY, RECOVER_COMPLETE_WALLET_BACKUP_TITLE,
+    RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY, RECOVER_PORTABLE_WALLET_BACKUP_TITLE,
+    ReconcileWalletDustRegistrationSubmissionCommand,
     ReconcileWalletDustRegistrationSubmissionUseCase, ReconcileWalletTransferSubmissionUseCase,
     RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupCommand,
     RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupCommand,
     RecoverPortableWalletBackupUseCase, SelectWalletNetworkCommand, SelectWalletNetworkUseCase,
-    SelectWalletProfileCommand, SelectWalletProfileUseCase, SensitiveOperationConfirmation,
-    StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
-    SubmitWalletDustRegistrationCommand, SubmitWalletDustRegistrationUseCase,
-    SubmitWalletTransferCommand, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
-    UnlockWalletUseCase, WalletAccountError, WalletAccountPortError, WalletAccountQuery,
-    WalletAccountView, WalletAddressView, WalletBackupReceiptCommand, WalletBackupReceiptView,
+    SelectWalletProfileCommand, SelectWalletProfileUseCase, SelectedWalletRealmSyncCommand,
+    SelectedWalletRealmSyncView, SensitiveOperationConfirmation, StartWalletDustSyncUseCase,
+    StartWalletShieldedSyncUseCase, SubmitWalletDustRegistrationCommand,
+    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferCommand, SubmitWalletTransferUseCase,
+    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
+    WalletAccountError, WalletAccountPortError, WalletAccountQuery, WalletAccountView,
+    WalletAddressView, WalletBackupReceiptCommand, WalletBackupReceiptView,
     WalletDustRegistrationAssetView, WalletDustRegistrationPreviewView,
-    WalletDustRegistrationSubmissionStatusView, WalletDustSyncCommand, WalletDustSyncView,
-    WalletNetworkListView, WalletProfileSecurityCommand, WalletProfileView, WalletRecoverySecret,
-    WalletSecurityStatusView, WalletShieldedSyncCommand, WalletShieldedSyncView,
-    WalletSyncStatusView, WalletTransferDraftQuery, WalletTransferPreviewView,
-    WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
-    WalletTransferSubmissionView,
+    WalletDustRegistrationSubmissionStatusView, WalletDustSyncView, WalletNetworkListView,
+    WalletProfileSecurityCommand, WalletProfileView, WalletRealmFamilyView, WalletRecoverySecret,
+    WalletSecurityStatusView, WalletShieldedSyncView, WalletSyncStatusView,
+    WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionQuery,
+    WalletTransferSubmissionStatusView, WalletTransferSubmissionView,
 };
 #[cfg(feature = "preprod-observation")]
 use oxid_wallet_application::{
@@ -156,6 +158,18 @@ use diagnostics::DiagnosticsPage;
 use labels as ui;
 use passport_vault::PassportVaultPage;
 use profile_quick_switcher::{ProfileQuickSwitcher, profile_switch_is_allowed};
+use selected_realm_sync::{
+    AccountSyncCardState, dust_status_pill_class, load_account_sync_card,
+    non_native_shielded_balances, poll_account_sync, selected_realm_chain_tip,
+    selected_realm_dust_balance, selected_realm_dust_note, selected_realm_dust_state,
+    selected_realm_is_syncing, selected_realm_provenance, selected_realm_shielded_balance,
+    selected_realm_shielded_note, selected_realm_shielded_state, selected_realm_sync_progress,
+    selected_realm_sync_state,
+};
+#[cfg(test)]
+use selected_realm_sync::{
+    dust_progress_percent, dust_sync_note, shielded_progress_percent, shielded_sync_note,
+};
 
 const BASE_STYLES: &str = include_str!("../assets/styles.css");
 const DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL: &str = "Protected DUST registration";
@@ -293,6 +307,9 @@ pub struct WalletUiServices {
     derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
     get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
     sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+    sync_selected_wallet_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
+    get_selected_wallet_realm_sync: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+    cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
     get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
     start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase>,
     cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase>,
@@ -780,23 +797,45 @@ impl WalletSecurityUiServices {
 }
 
 /// Midnight account use cases consumed by the Assets page.
+pub struct WalletRealmSyncUiServices {
+    sync: Arc<dyn SyncSelectedWalletRealmUseCase>,
+    get: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+    cancel: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
+}
+
+impl WalletRealmSyncUiServices {
+    #[must_use]
+    pub const fn new(
+        sync: Arc<dyn SyncSelectedWalletRealmUseCase>,
+        get: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+        cancel: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
+    ) -> Self {
+        Self { sync, get, cancel }
+    }
+}
+
+/// Midnight account use cases consumed by the Assets page.
 pub struct WalletAccountUiServices {
     list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
     select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
     derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
     get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
     sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+    sync_selected_wallet_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
+    get_selected_wallet_realm_sync: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+    cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
     public_text_exporter: Arc<dyn PublicTextExportPort>,
 }
 
 impl WalletAccountUiServices {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
         select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
         derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
         get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
         sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+        realm_sync: WalletRealmSyncUiServices,
         public_text_exporter: Arc<dyn PublicTextExportPort>,
     ) -> Self {
         Self {
@@ -805,6 +844,9 @@ impl WalletAccountUiServices {
             derive_wallet_account,
             get_wallet_account,
             sync_wallet_account,
+            sync_selected_wallet_realm: realm_sync.sync,
+            get_selected_wallet_realm_sync: realm_sync.get,
+            cancel_selected_wallet_realm_sync: realm_sync.cancel,
             public_text_exporter,
         }
     }
@@ -1049,6 +1091,9 @@ impl WalletUiServices {
             derive_wallet_account: account.derive_wallet_account,
             get_wallet_account: account.get_wallet_account,
             sync_wallet_account: account.sync_wallet_account,
+            sync_selected_wallet_realm: account.sync_selected_wallet_realm,
+            get_selected_wallet_realm_sync: account.get_selected_wallet_realm_sync,
+            cancel_selected_wallet_realm_sync: account.cancel_selected_wallet_realm_sync,
             get_wallet_dust_sync_status: dust.get_wallet_dust_sync_status,
             start_wallet_dust_sync: dust.start_wallet_dust_sync,
             cancel_wallet_dust_sync: dust.cancel_wallet_dust_sync,
@@ -1284,6 +1329,23 @@ impl WalletUiServices {
     #[must_use]
     pub fn sync_wallet_account(&self) -> Arc<dyn SyncWalletAccountUseCase> {
         Arc::clone(&self.sync_wallet_account)
+    }
+
+    #[must_use]
+    pub fn sync_selected_wallet_realm(&self) -> Arc<dyn SyncSelectedWalletRealmUseCase> {
+        Arc::clone(&self.sync_selected_wallet_realm)
+    }
+
+    #[must_use]
+    pub fn get_selected_wallet_realm_sync(&self) -> Arc<dyn GetSelectedWalletRealmSyncUseCase> {
+        Arc::clone(&self.get_selected_wallet_realm_sync)
+    }
+
+    #[must_use]
+    pub fn cancel_selected_wallet_realm_sync(
+        &self,
+    ) -> Arc<dyn CancelSelectedWalletRealmSyncUseCase> {
+        Arc::clone(&self.cancel_selected_wallet_realm_sync)
     }
 
     #[must_use]
@@ -2324,18 +2386,6 @@ enum AccountOperation {
     Unlocking,
     Deriving,
     Syncing,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum AccountSyncCardState {
-    Loading,
-    Ready {
-        dust: WalletDustSyncView,
-        shielded: Box<WalletShieldedSyncView>,
-        action_busy: bool,
-        operation_error: Option<String>,
-    },
-    Failed(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -5684,25 +5734,28 @@ fn AccountSyncCard(
             }
         }
         AccountSyncCardState::Ready {
-            dust,
-            shielded,
+            realm,
             action_busy,
             operation_error,
         } => {
-            let syncing = dust.state == "syncing" || shielded.state == "syncing";
-            let overall_state = account_sync_state(&dust, &shielded);
-            let progress = account_sync_progress(&dust, &shielded);
-            let dust_balance = dust
-                .balance_atomic_units
-                .as_deref()
-                .map(|value| ui::format_atomic_units(value, ui::DUST_DECIMALS))
-                .unwrap_or_else(|| "—".to_owned());
-            let owned_notes = shielded
-                .owned_note_count
-                .map_or_else(|| "—".to_owned(), |count| count.to_string());
-            let shielded_night = home_shielded_value(&shielded);
-            let retained_dust = dust.clone();
-            let retained_shielded = shielded.clone();
+            let syncing = selected_realm_is_syncing(&realm);
+            let overall_state = selected_realm_sync_state(&realm);
+            let provenance = selected_realm_provenance(&realm);
+            let chain_tip = selected_realm_chain_tip(&realm);
+            let progress = selected_realm_sync_progress(&realm);
+            let dust_balance = selected_realm_dust_balance(&realm.dust);
+            let dust_state = selected_realm_dust_state(&realm.dust);
+            let dust_note = selected_realm_dust_note(&realm.dust);
+            let shielded_night = selected_realm_shielded_balance(&realm.shielded);
+            let shielded_state = selected_realm_shielded_state(&realm.shielded);
+            let shielded_note = selected_realm_shielded_note(&realm.shielded);
+            let owned_notes = match &realm.shielded {
+                WalletRealmFamilyView::Ready(status) => status
+                    .owned_note_count
+                    .map_or_else(|| "—".to_owned(), |count| count.to_string()),
+                _ => "—".to_owned(),
+            };
+            let retained_realm = realm.clone();
             let action_services = services.clone();
             let action_profile = profile_id.clone();
             let mut action_state = state;
@@ -5715,32 +5768,36 @@ fn AccountSyncCard(
                         }
                         span { class: "{dust_status_pill_class(overall_state)}", "{ui::sync_state(overall_state)}" }
                     }
+                    p { class: "account-sync-card__provenance", "{provenance}" }
+                    p { class: "account-sync-card__provenance", "{chain_tip}" }
                     p { "Refresh the public account, DUST balance, and shielded notes together. Each source retains its own authoritative status." }
                     div { class: "account-sync-card__rows",
                         div { class: "account-sync-card__row",
                             div {
-                                strong { class: "privacy-value", "{dust_balance} DUST" }
-                                small { "{dust_sync_note(&dust)}" }
+                                strong { class: "privacy-value", "{dust_balance}" }
+                                small { "{dust_note}" }
                             }
-                            span { class: "{dust_status_pill_class(&dust.state)}", "{ui::sync_state(&dust.state)}" }
+                            span { class: "{dust_status_pill_class(dust_state)}", "{ui::sync_state(dust_state)}" }
                         }
                         div { class: "account-sync-card__row",
                             div {
                                 strong { class: "privacy-value", "{shielded_night}" }
                                 small { "Shielded NIGHT · {owned_notes} protected notes" }
-                                small { "{shielded_sync_note(&shielded)}" }
+                                small { "{shielded_note}" }
                             }
-                            span { class: "{dust_status_pill_class(&shielded.state)}", "{ui::sync_state(&shielded.state)}" }
+                            span { class: "{dust_status_pill_class(shielded_state)}", "{ui::sync_state(shielded_state)}" }
                         }
                     }
-                    if non_native_shielded_balances(&shielded).next().is_some() {
-                        div { class: "activity-list", aria_label: "Shielded token balances",
-                            for balance in non_native_shielded_balances(&shielded) {
-                                div { class: "activity-row", key: "{balance.token_type_hex}",
-                                    span { class: "activity-row__mark", aria_hidden: "true", "◈" }
-                                    div {
-                                        strong { class: "privacy-value", "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}" }
-                                        small { title: "{balance.token_type_hex}", "Protected token" }
+                    if let WalletRealmFamilyView::Ready(shielded) = &realm.shielded {
+                        if non_native_shielded_balances(shielded).next().is_some() {
+                            div { class: "activity-list", aria_label: "Shielded token balances",
+                                for balance in non_native_shielded_balances(shielded) {
+                                    div { class: "activity-row", key: "{balance.token_type_hex}",
+                                        span { class: "activity-row__mark", aria_hidden: "true", "◈" }
+                                        div {
+                                            strong { class: "privacy-value", "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}" }
+                                            small { title: "{balance.token_type_hex}", "Protected token" }
+                                        }
                                     }
                                 }
                             }
@@ -5760,75 +5817,54 @@ fn AccountSyncCard(
                         disabled: action_busy || (!syncing && (!can_sync || account_unavailable)),
                         onclick: move |_| {
                             action_state.set(AccountSyncCardState::Ready {
-                                dust: retained_dust.clone(),
-                                shielded: retained_shielded.clone(),
+                                realm: retained_realm.clone(),
                                 action_busy: true,
                                 operation_error: None,
                             });
                             let services = action_services.clone();
                             let profile_id = action_profile.clone();
-                            let dust = retained_dust.clone();
-                            let shielded = retained_shielded.clone();
+                            let retained = retained_realm.clone();
                             spawn(async move {
-                                if !syncing {
-                                    let account_service = services.sync_wallet_account();
-                                    let account_profile = profile_id.clone();
-                                    match run_ui_future(async move {
-                                        account_service
-                                            .execute(WalletAccountQuery {
-                                                profile_id: account_profile,
-                                            })
-                                            .await
-                                    })
-                                    .await
-                                    {
-                                        Ok(Ok(account)) => on_account_updated.call(account),
-                                        Ok(Err(error)) => {
-                                            action_state.set(AccountSyncCardState::Ready {
-                                                dust,
-                                                shielded,
-                                                action_busy: false,
-                                                operation_error: Some(error.to_string()),
-                                            });
-                                            return;
-                                        }
-                                        Err(error) => {
-                                            action_state.set(AccountSyncCardState::Ready {
-                                                dust,
-                                                shielded,
-                                                action_busy: false,
-                                                operation_error: Some(error.to_string()),
-                                            });
-                                            return;
-                                        }
-                                    }
-                                }
-                                let worker_services = services.clone();
-                                let worker_profile = profile_id.clone();
-                                let result = run_ui_blocking(move || {
-                                    mutate_account_indexes(
-                                        &worker_services,
-                                        &worker_profile,
-                                        dust,
-                                        shielded,
-                                        syncing,
-                                    )
-                                })
-                                .await;
+                                let command = SelectedWalletRealmSyncCommand {
+                                    profile_id: profile_id.clone(),
+                                };
+                                let result = if syncing {
+                                    let service = services.cancel_selected_wallet_realm_sync();
+                                    run_ui_blocking(move || service.execute(command)).await
+                                } else {
+                                    let service = services.sync_selected_wallet_realm();
+                                    run_ui_future(async move { service.execute(command).await }).await
+                                };
                                 match result {
-                                    Ok((dust, shielded, operation_error)) => {
-                                        let should_poll = dust.state == "syncing" || shielded.state == "syncing";
+                                    Ok(Ok(updated)) => {
+                                        let should_poll = selected_realm_is_syncing(&updated);
+                                        if let WalletRealmFamilyView::Ready(account) = &updated.account {
+                                            on_account_updated.call(account.clone());
+                                        }
                                         action_state.set(AccountSyncCardState::Ready {
-                                            dust,
-                                            shielded,
+                                            realm: Box::new(updated),
                                             action_busy: false,
-                                            operation_error,
+                                            operation_error: None,
                                         });
                                         if should_poll {
-                                            poll_account_sync(services, profile_id, action_state);
+                                            poll_account_sync(
+                                                services,
+                                                profile_id,
+                                                action_state,
+                                                on_account_updated,
+                                            );
                                         }
                                     }
-                                    Err(error) => action_state.set(AccountSyncCardState::Failed(error.to_string())),
+                                    Ok(Err(error)) => action_state.set(AccountSyncCardState::Ready {
+                                        realm: retained,
+                                        action_busy: false,
+                                        operation_error: Some(error.to_string()),
+                                    }),
+                                    Err(error) => action_state.set(AccountSyncCardState::Ready {
+                                        realm: retained,
+                                        action_busy: false,
+                                        operation_error: Some(error.to_string()),
+                                    }),
                                 }
                             });
                         },
@@ -6651,232 +6687,6 @@ fn dust_registration_readiness_label(readiness: &str) -> &'static str {
     } else {
         "Not established"
     }
-}
-
-fn load_account_sync_card(services: &WalletUiServices, profile_id: &str) -> AccountSyncCardState {
-    let dust = services
-        .get_wallet_dust_sync_status()
-        .execute(WalletDustSyncCommand {
-            profile_id: profile_id.to_owned(),
-        })
-        .map_err(|error| error.to_string());
-    let shielded = services
-        .get_wallet_shielded_sync_status()
-        .execute(WalletShieldedSyncCommand {
-            profile_id: profile_id.to_owned(),
-        })
-        .map_err(|error| error.to_string());
-    match (dust, shielded) {
-        (Ok(dust), Ok(shielded)) => AccountSyncCardState::Ready {
-            dust,
-            shielded: Box::new(shielded),
-            action_busy: false,
-            operation_error: None,
-        },
-        (Err(dust), Err(shielded)) => {
-            AccountSyncCardState::Failed(format!("DUST: {dust}; shielded: {shielded}"))
-        }
-        (Err(error), Ok(_)) => AccountSyncCardState::Failed(format!("DUST: {error}")),
-        (Ok(_), Err(error)) => AccountSyncCardState::Failed(format!("Shielded: {error}")),
-    }
-}
-
-fn mutate_account_indexes(
-    services: &WalletUiServices,
-    profile_id: &str,
-    retained_dust: WalletDustSyncView,
-    retained_shielded: Box<WalletShieldedSyncView>,
-    cancel: bool,
-) -> (
-    WalletDustSyncView,
-    Box<WalletShieldedSyncView>,
-    Option<String>,
-) {
-    let dust_result = if (cancel && retained_dust.state == "syncing")
-        || (!cancel && retained_dust.state != "unavailable")
-    {
-        let command = WalletDustSyncCommand {
-            profile_id: profile_id.to_owned(),
-        };
-        if cancel {
-            services.cancel_wallet_dust_sync().execute(command)
-        } else {
-            services.start_wallet_dust_sync().execute(command)
-        }
-        .map_err(|error| error.to_string())
-    } else {
-        Ok(retained_dust.clone())
-    };
-    let shielded_result = if (cancel && retained_shielded.state == "syncing")
-        || (!cancel && retained_shielded.state != "unavailable")
-    {
-        let command = WalletShieldedSyncCommand {
-            profile_id: profile_id.to_owned(),
-        };
-        let result = if cancel {
-            services.cancel_wallet_shielded_sync().execute(command)
-        } else {
-            services.start_wallet_shielded_sync().execute(command)
-        };
-        result.map(Box::new).map_err(|error| error.to_string())
-    } else {
-        Ok(retained_shielded.clone())
-    };
-
-    let (dust, dust_error) = dust_result
-        .map(|status| (status, None))
-        .unwrap_or_else(|error| (retained_dust, Some(format!("DUST: {error}"))));
-    let (shielded, shielded_error) = shielded_result
-        .map(|status| (status, None))
-        .unwrap_or_else(|error| (retained_shielded, Some(format!("Shielded: {error}"))));
-    let operation_error = match (dust_error, shielded_error) {
-        (Some(dust), Some(shielded)) => Some(format!("{dust}; {shielded}")),
-        (Some(error), None) | (None, Some(error)) => Some(error),
-        (None, None) => None,
-    };
-    (dust, shielded, operation_error)
-}
-
-fn poll_account_sync(
-    services: WalletUiServices,
-    profile_id: String,
-    mut state: Signal<AccountSyncCardState>,
-) {
-    spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_millis(150)).await;
-            let worker_services = services.clone();
-            let worker_profile = profile_id.clone();
-            let result =
-                run_ui_blocking(move || load_account_sync_card(&worker_services, &worker_profile))
-                    .await;
-            match result {
-                Ok(AccountSyncCardState::Ready { dust, shielded, .. }) => {
-                    let complete = dust.state != "syncing" && shielded.state != "syncing";
-                    state.set(AccountSyncCardState::Ready {
-                        dust,
-                        shielded,
-                        action_busy: false,
-                        operation_error: None,
-                    });
-                    if complete {
-                        break;
-                    }
-                }
-                Ok(AccountSyncCardState::Failed(error)) => {
-                    state.set(AccountSyncCardState::Failed(error));
-                    break;
-                }
-                Ok(AccountSyncCardState::Loading) => {}
-                Err(error) => {
-                    state.set(AccountSyncCardState::Failed(error.to_string()));
-                    break;
-                }
-            }
-        }
-    });
-}
-
-fn account_sync_state<'a>(
-    dust: &'a WalletDustSyncView,
-    shielded: &'a WalletShieldedSyncView,
-) -> &'a str {
-    if dust.state == "syncing" || shielded.state == "syncing" {
-        "syncing"
-    } else if dust.state == "synced" && shielded.state == "synced" {
-        "synced"
-    } else if dust.state == "stalled" || shielded.state == "stalled" {
-        "stalled"
-    } else if dust.state == "cancelled" || shielded.state == "cancelled" {
-        "cancelled"
-    } else if dust.state == "cached" || shielded.state == "cached" {
-        "cached"
-    } else if dust.state == "unavailable" && shielded.state == "unavailable" {
-        "unavailable"
-    } else {
-        "never_synced"
-    }
-}
-
-fn account_sync_progress(
-    dust: &WalletDustSyncView,
-    shielded: &WalletShieldedSyncView,
-) -> Option<u64> {
-    let values = [
-        dust_progress_percent(dust),
-        shielded_progress_percent(shielded),
-    ];
-    let values = values.into_iter().flatten().collect::<Vec<_>>();
-    if values.is_empty() {
-        None
-    } else {
-        Some(values.iter().sum::<u64>() / u64::try_from(values.len()).ok()?)
-    }
-}
-
-fn dust_progress_percent(status: &WalletDustSyncView) -> Option<u64> {
-    let (current, target) = status.current_cursor.zip(status.target_cursor)?;
-    let completed = u128::from(current).checked_add(1)?;
-    let total = u128::from(target).checked_add(1)?;
-    let percent = completed.checked_mul(100)?.checked_div(total)?.min(100);
-    u64::try_from(percent).ok()
-}
-
-fn dust_sync_note(status: &WalletDustSyncView) -> String {
-    let detail = match status.state.as_str() {
-        "never_synced" => "DUST has not been indexed for this protected account.".to_owned(),
-        "syncing" => "Refreshing the protected DUST balance…".to_owned(),
-        "synced" => "DUST is synchronized.".to_owned(),
-        "cached" => "Showing a resumable cached DUST checkpoint; spending remains disabled until live catch-up.".to_owned(),
-        "cancelled" => "DUST synchronization was cancelled at a consistent checkpoint and can resume.".to_owned(),
-        "stalled" => "DUST synchronization stalled; the last consistent checkpoint is retained.".to_owned(),
-        _ => "DUST synchronization is not available in this composition.".to_owned(),
-    };
-    status.failure.as_ref().map_or(detail.clone(), |failure| {
-        format!("{detail} ({})", ui::sync_failure(failure))
-    })
-}
-
-fn dust_status_pill_class(state: &str) -> &'static str {
-    match state {
-        "synced" => "status-pill success",
-        "syncing" | "cached" => "status-pill warning",
-        _ => "status-pill",
-    }
-}
-
-fn shielded_progress_percent(status: &WalletShieldedSyncView) -> Option<u64> {
-    let (current, target) = status.current_cursor.zip(status.target_cursor)?;
-    let completed = u128::from(current).checked_add(1)?;
-    let total = u128::from(target).checked_add(1)?;
-    let percent = completed.checked_mul(100)?.checked_div(total)?.min(100);
-    u64::try_from(percent).ok()
-}
-
-fn shielded_sync_note(status: &WalletShieldedSyncView) -> String {
-    let detail = match status.state.as_str() {
-        "never_synced" => {
-            "Shielded notes have not been indexed for this protected account.".to_owned()
-        }
-        "syncing" => "Refreshing protected shielded notes…".to_owned(),
-        "synced" => "Shielded notes are synchronized.".to_owned(),
-        "cached" => {
-            "Showing a key-scoped cached shielded checkpoint; live catch-up is still required."
-                .to_owned()
-        }
-        "cancelled" => {
-            "Shielded synchronization was cancelled at a consistent checkpoint and can resume."
-                .to_owned()
-        }
-        "stalled" => {
-            "Shielded synchronization stalled; the last consistent checkpoint is retained."
-                .to_owned()
-        }
-        _ => "Shielded synchronization is not available in this composition.".to_owned(),
-    };
-    status.failure.as_ref().map_or(detail.clone(), |failure| {
-        format!("{detail} ({})", ui::sync_failure(failure))
-    })
 }
 
 fn load_account_page(services: &WalletUiServices, profile_id: &str) -> AccountPageState {
@@ -7929,15 +7739,6 @@ fn home_shielded_value(status: &WalletShieldedSyncView) -> String {
         return "—".to_owned();
     }
     ui::format_shielded_amount(NATIVE_SHIELDED_NIGHT_TOKEN_TYPE, "0")
-}
-
-fn non_native_shielded_balances(
-    status: &WalletShieldedSyncView,
-) -> impl Iterator<Item = &oxid_wallet_application::WalletShieldedTokenBalanceView> {
-    status
-        .balances
-        .iter()
-        .filter(|balance| balance.token_type_hex != NATIVE_SHIELDED_NIGHT_TOKEN_TYPE)
 }
 
 fn home_transaction_amount(transaction: &oxid_wallet_application::WalletTransactionView) -> String {
@@ -12414,6 +12215,35 @@ mod tests {
         }
     }
 
+    fn selected_realm_status(
+        account_state: &str,
+        dust: WalletDustSyncView,
+        shielded: WalletShieldedSyncView,
+    ) -> SelectedWalletRealmSyncView {
+        SelectedWalletRealmSyncView {
+            account: WalletRealmFamilyView::Ready(WalletAccountView {
+                chain: "midnight".to_owned(),
+                network_id: "undeployed".to_owned(),
+                network_name: "Standalone".to_owned(),
+                network_environment: "development".to_owned(),
+                account_id: Some("account_1".to_owned()),
+                source: "live".to_owned(),
+                addresses: Vec::new(),
+                balances: Vec::new(),
+                sync: WalletSyncStatusView {
+                    state: account_state.to_owned(),
+                    current_cursor: Some(2),
+                    target_cursor: Some(2),
+                    chain_tip_height: Some(5_255),
+                    updated_at_millis: Some(42),
+                },
+                transactions: Vec::new(),
+            }),
+            dust: WalletRealmFamilyView::Ready(dust),
+            shielded: WalletRealmFamilyView::Ready(shielded),
+        }
+    }
+
     #[test]
     fn shielded_progress_and_cached_copy_preserve_live_readiness() {
         assert_eq!(
@@ -12485,17 +12315,66 @@ mod tests {
     fn account_sync_card_combines_progress_without_event_count_copy() {
         let dust = dust_status("syncing", Some(0), Some(2));
         let shielded = shielded_status("syncing", Some(2), Some(2));
+        let realm = selected_realm_status("synced", dust.clone(), shielded.clone());
 
-        assert_eq!(account_sync_state(&dust, &shielded), "syncing");
-        assert_eq!(account_sync_progress(&dust, &shielded), Some(66));
+        assert_eq!(selected_realm_sync_state(&realm), "syncing");
+        assert_eq!(selected_realm_sync_progress(&realm), Some(66));
         assert!(!dust_sync_note(&dust).contains("event"));
         assert!(!shielded_sync_note(&shielded).contains("event"));
+        let synced = selected_realm_status(
+            "synced",
+            dust_status("synced", Some(2), Some(2)),
+            shielded_status("synced", Some(2), Some(2)),
+        );
+        assert_eq!(selected_realm_sync_state(&synced), "synced");
+    }
+
+    #[test]
+    fn selected_realm_copy_distinguishes_missing_dust_from_zero_and_unavailable() {
+        let mut missing = dust_status("synced", Some(2), Some(2));
+        missing.balance_atomic_units = None;
         assert_eq!(
-            account_sync_state(
-                &dust_status("synced", Some(2), Some(2)),
-                &shielded_status("synced", Some(2), Some(2)),
-            ),
-            "synced"
+            selected_realm_dust_balance(&WalletRealmFamilyView::Ready(missing.clone())),
+            "Not registered"
+        );
+        assert!(
+            selected_realm_dust_note(&WalletRealmFamilyView::Ready(missing))
+                .contains("No registered DUST state")
+        );
+
+        let mut zero = dust_status("synced", Some(2), Some(2));
+        zero.balance_atomic_units = Some("0".to_owned());
+        assert_eq!(
+            selected_realm_dust_balance(&WalletRealmFamilyView::Ready(zero)),
+            "0 DUST"
+        );
+        assert_eq!(
+            selected_realm_dust_balance(&WalletRealmFamilyView::Unavailable),
+            "Unavailable"
+        );
+    }
+
+    #[test]
+    fn selected_realm_provenance_is_public_and_endpoint_free() {
+        let realm = selected_realm_status(
+            "synced",
+            dust_status("synced", Some(2), Some(2)),
+            shielded_status("synced", Some(2), Some(2)),
+        );
+        assert_eq!(
+            selected_realm_provenance(&realm),
+            "Standalone · midnight · live source"
+        );
+        assert_eq!(selected_realm_chain_tip(&realm), "Indexer tip · block 5255");
+        assert!(!selected_realm_provenance(&realm).contains("http"));
+
+        let mut missing_tip = realm;
+        if let WalletRealmFamilyView::Ready(account) = &mut missing_tip.account {
+            account.sync.chain_tip_height = None;
+        }
+        assert_eq!(
+            selected_realm_chain_tip(&missing_tip),
+            "Indexer tip unavailable"
         );
     }
 

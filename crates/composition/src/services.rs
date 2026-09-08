@@ -51,11 +51,12 @@ use oxid_protocol_application::{
 };
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationUseCase, AuthorizeWalletTransferUseCase,
-    CancelWalletDustRegistrationSubmissionUseCase, CancelWalletDustSyncUseCase,
-    CancelWalletShieldedSyncUseCase, CancelWalletTransferSubmissionUseCase,
-    CreateWalletProfileUseCase, DeleteWalletKeyUseCase, DeriveWalletAccountUseCase,
-    ExportCompleteWalletBackupUseCase, ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase,
-    GetActiveWalletProfileUseCase, GetWalletAccountUseCase, GetWalletBackupReceiptUseCase,
+    CancelSelectedWalletRealmSyncUseCase, CancelWalletDustRegistrationSubmissionUseCase,
+    CancelWalletDustSyncUseCase, CancelWalletShieldedSyncUseCase,
+    CancelWalletTransferSubmissionUseCase, CreateWalletProfileUseCase, DeleteWalletKeyUseCase,
+    DeriveWalletAccountUseCase, ExportCompleteWalletBackupUseCase,
+    ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase, GetActiveWalletProfileUseCase,
+    GetSelectedWalletRealmSyncUseCase, GetWalletAccountUseCase, GetWalletBackupReceiptUseCase,
     GetWalletDustRegistrationStatusUseCase, GetWalletDustRegistrationUseCase,
     GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
     GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
@@ -68,8 +69,8 @@ use oxid_wallet_application::{
     RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupUseCase,
     RecoverWalletRootUseCase, SelectWalletNetworkUseCase, SelectWalletProfileUseCase,
     SignWalletDataUseCase, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
-    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
-    UnlockWalletUseCase,
+    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferUseCase,
+    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
 };
 
 /// Application capabilities shared by every incoming adapter.
@@ -117,6 +118,9 @@ pub struct ApplicationServices {
     pub(super) derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
     pub(super) get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
     pub(super) sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+    pub(super) sync_selected_wallet_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
+    pub(super) get_selected_wallet_realm_sync: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+    pub(super) cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
     pub(super) get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
     pub(super) start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase>,
     pub(super) cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase>,
@@ -433,6 +437,23 @@ impl ApplicationServices {
     #[must_use]
     pub fn sync_wallet_account(&self) -> Arc<dyn SyncWalletAccountUseCase> {
         Arc::clone(&self.sync_wallet_account)
+    }
+
+    #[must_use]
+    pub fn sync_selected_wallet_realm(&self) -> Arc<dyn SyncSelectedWalletRealmUseCase> {
+        Arc::clone(&self.sync_selected_wallet_realm)
+    }
+
+    #[must_use]
+    pub fn get_selected_wallet_realm_sync(&self) -> Arc<dyn GetSelectedWalletRealmSyncUseCase> {
+        Arc::clone(&self.get_selected_wallet_realm_sync)
+    }
+
+    #[must_use]
+    pub fn cancel_selected_wallet_realm_sync(
+        &self,
+    ) -> Arc<dyn CancelSelectedWalletRealmSyncUseCase> {
+        Arc::clone(&self.cancel_selected_wallet_realm_sync)
     }
 
     #[must_use]

@@ -417,6 +417,11 @@ fn main() {
             application.derive_wallet_account(),
             application.get_wallet_account(),
             application.sync_wallet_account(),
+            oxid_ui_dioxus::WalletRealmSyncUiServices::new(
+                application.sync_selected_wallet_realm(),
+                application.get_selected_wallet_realm_sync(),
+                application.cancel_selected_wallet_realm_sync(),
+            ),
             application.public_text_exporter(),
         ),
         oxid_ui_dioxus::WalletOperationalUiServices::new(

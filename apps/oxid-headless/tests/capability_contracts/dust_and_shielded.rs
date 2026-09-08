@@ -6,6 +6,60 @@ use serde_json::json;
 use super::support::execute_with_wallet;
 
 #[test]
+fn selected_realm_sync_projects_public_dust_and_shielded_outcomes_together() {
+    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let created = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"realm-create","method":"wallet.profile.create","params":{"displayName":"Realm flow"}}"#,
+    );
+    let profile_id = created[0]["result"]["profile"]["id"]
+        .as_str()
+        .expect("profile id is returned");
+    let setup = execute_with_wallet(
+        &wallet,
+        &format!(
+            "{}\n{}\n{}",
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "realm-select",
+                "method": "wallet.profile.select",
+                "params": { "profileId": profile_id }
+            }),
+            r#"{"protocol":"oxid.headless.v1","id":"realm-init","method":"wallet.security.initialize","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"realm-derive","method":"wallet.account.derive","params":{}}"#,
+        ),
+    );
+    assert!(setup.iter().all(|response| response["ok"] == true));
+
+    let responses = execute_with_wallet(
+        &wallet,
+        concat!(
+            r#"{"protocol":"oxid.headless.v1","id":"realm-start","method":"wallet.realm.sync.start","params":{}}"#,
+            "\n",
+            r#"{"protocol":"oxid.headless.v1","id":"realm-status","method":"wallet.realm.sync.status","params":{}}"#,
+            "\n",
+            r#"{"protocol":"oxid.headless.v1","id":"realm-cancel","method":"wallet.realm.sync.cancel","params":{}}"#,
+        ),
+    );
+
+    for response in &responses {
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["realmSync"]["account"]["state"], "ready");
+        assert!(response["result"]["realmSync"]["account"]["value"]["networkId"].is_string());
+        assert!(response["result"]["realmSync"]["dust"]["state"].is_string());
+        assert!(response["result"]["realmSync"]["shielded"]["state"].is_string());
+    }
+    assert_eq!(
+        responses[2]["result"]["realmSync"]["dust"]["value"]["state"],
+        "cancelled"
+    );
+    assert_eq!(
+        responses[2]["result"]["realmSync"]["shielded"]["value"]["state"],
+        "cancelled"
+    );
+}
+
+#[test]
 fn exposes_initial_resumed_current_and_cancelled_dust_flows() {
     let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
     let created = execute_with_wallet(

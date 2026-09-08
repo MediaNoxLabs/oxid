@@ -2194,7 +2194,11 @@ fn executable_derives_and_syncs_a_live_account_without_secret_input() {
     assert_eq!(connected["result"]["account"]["sync"]["state"], "synced");
     assert_eq!(connected["result"]["account"]["sync"]["currentCursor"], 2);
     assert_eq!(connected["result"]["account"]["sync"]["targetCursor"], 2);
-    assert_eq!(connected["result"]["account"]["sync"]["chainTipHeight"], 42);
+    assert_eq!(
+        connected["result"]["account"]["sync"]["chainTipHeight"],
+        Value::Null,
+        "a WebSocket-only indexer fixture must not present the latest wallet transaction as the authoritative network tip"
+    );
     assert_eq!(
         connected["result"]["account"]["balances"][0]["atomicUnits"],
         "2500000"

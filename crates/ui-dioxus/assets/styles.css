@@ -1072,6 +1072,12 @@ textarea:focus-visible {
   margin-top: var(--space-4);
 }
 
+.account-sync-card__provenance {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
 .account-sync-card__rows {
   display: grid;
   overflow: hidden;

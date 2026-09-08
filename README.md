@@ -332,7 +332,8 @@ The implemented account methods are `wallet.network.list`,
 `wallet.transaction.start_submission`, `wallet.transaction.submission_status`,
 `wallet.transaction.submission_history`, `wallet.transaction.reconcile_submission`,
 `wallet.transaction.cancel_submission`,
-`wallet.connect`, `wallet.sync.force`, `wallet.dust.sync.status`,
+`wallet.connect`, `wallet.sync.force`, `wallet.realm.sync.status`,
+`wallet.realm.sync.start`, `wallet.realm.sync.cancel`, `wallet.dust.sync.status`,
 `wallet.dust.sync.start`, `wallet.dust.sync.cancel`,
 `wallet.shielded.sync.status`, `wallet.shielded.sync.start`, and
 `wallet.shielded.sync.cancel`. The implemented identity methods are
