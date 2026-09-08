@@ -160,7 +160,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                 "Runs one synthetic proof at a time through k=21. Results live only in this process. First runs may download public proving parameters into the app-private cache."
             }
             p { class: "field-hint",
-                "k=18–21 can consume substantial memory, time, network, and disk. Oxid intentionally does not run high-k proofs in CI. Leaving this page does not cancel an admitted worker."
+                "k=18–21 can consume substantial memory, time, network, and disk. This build does not run high-k proofs in CI. Leaving this page does not cancel an admitted worker."
             }
             if let Some(sample) = resource_sample() {
                 dl { class: "proof-resource-monitor", aria_label: "Current process resource monitor",

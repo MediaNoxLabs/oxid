@@ -89,7 +89,7 @@ demo/status.sh
 
 ## Exercise the standalone capabilities
 
-1. In Oxid, create or select the unique **Oxid Demo Wallet** development
+1. In the app, create or select the unique **Demo Wallet** development
    profile and accept the visible public-genesis warning.
 2. Initialize its development protection and activate the Midnight account.
 3. Refresh deployment readiness and balances. The app should report the

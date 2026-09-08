@@ -149,7 +149,7 @@ TLS-terminated Tailscale Serve routes and the phone command embeds their current
 MagicDNS URLs only in the explicit `standalone-tailnet` development build. No
 personal IP, local password, or endpoint is committed. The profile is
 incompatible with native custody and is excluded from normal release artifacts.
-Choose **Use public demo wallet**, then create the uniquely named **Oxid Demo
+Choose **Use public demo wallet**, then create the uniquely named **Demo
 Wallet** profile in either live standalone build. This explicit action opts in
 to the chain's shared public genesis wallet; the ordinary form still defaults
 to **My wallet** with random custody. Duplicate fixture names fail closed and

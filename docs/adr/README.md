@@ -259,7 +259,7 @@ unknown composition labels fail to `unavailable`. The developer profile has a
 persistent build banner, cannot compile with normal composition, and a normal
 release binary must not contain its marker.
 ADR-0096 adds the separate presentation-only demo profile. Its drawer first
-selects or creates the named `Oxid Demo Wallet`, leaving unrelated active
+selects or creates the named `Demo Wallet`, leaving unrelated active
 profiles untouched, then uses the existing custody, derivation, DID,
 credential-inbox, account-sync, and
 strict identity-routing boundaries; the funding step admits only the exact

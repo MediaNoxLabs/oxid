@@ -2637,7 +2637,7 @@ const DEMO_PROFILE_MARKER: &str = "OXID_UI_PROFILE_DEMO";
 #[cfg(feature = "ui-profile-demo")]
 const DEMO_DRAWER_MARKER: &str = "OXID_DEMO_BOOTSTRAP_DRAWER";
 #[cfg(feature = "ui-profile-demo")]
-const DEMO_PROFILE_NAME: &str = "Oxid Demo Wallet";
+const DEMO_PROFILE_NAME: &str = "Demo Wallet";
 
 #[cfg(feature = "ui-profile-demo")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3479,7 +3479,7 @@ const fn identity_request_admits_new_link(
 #[cfg(feature = "public-standalone-genesis")]
 const PUBLIC_STANDALONE_GENESIS_MARKER: &str = "OXID_PUBLIC_STANDALONE_GENESIS_WALLET";
 #[cfg(feature = "public-standalone-genesis")]
-const PUBLIC_STANDALONE_PROFILE_NAME: &str = "Oxid Demo Wallet";
+const PUBLIC_STANDALONE_PROFILE_NAME: &str = "Demo Wallet";
 
 fn profile_creation_default_name() -> String {
     "My wallet".to_owned()
@@ -12027,9 +12027,10 @@ mod tests {
             &profiles,
             PUBLIC_STANDALONE_PROFILE_NAME
         ));
-        assert!(public_fixture_name_conflicts(
+        assert!(public_fixture_name_conflicts(&profiles, "  Demo Wallet  "));
+        assert!(!public_fixture_name_conflicts(
             &profiles,
-            "  Oxid Demo Wallet  "
+            "Oxid Demo Wallet"
         ));
         assert!(!public_fixture_name_conflicts(&profiles, "Another wallet"));
         assert_eq!(
