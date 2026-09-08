@@ -148,6 +148,12 @@
           ]
         },
         {
+          "name": "header-menu",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/header_menu"
+          ]
+        },
+        {
           "name": "proof-benchmark",
           "modulePathPrefixes": [
             "crates/ui-dioxus/src/proof_benchmark"

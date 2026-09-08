@@ -226,11 +226,13 @@ button {
 }
 
 .profile-shortcut:focus-visible,
+.global-menu-trigger:focus-visible,
 .back-action:focus-visible,
 .demo-profile-banner__action:focus-visible,
 .profile-sheet__item:focus-visible,
 .profile-sheet__profile:focus-visible,
 .profile-sheet__dismiss:focus-visible,
+.global-menu__item:focus-visible,
 .bottom-nav__item:focus-visible,
 .bottom-nav__scan:focus-visible,
 .home-quick-action:focus-visible,
@@ -343,16 +345,16 @@ textarea:focus-visible {
   gap: var(--space-2);
 }
 
-.app-header__spacer {
-  display: block;
-  width: 2.65rem;
-  height: 2.65rem;
+.profile-shortcut,
+.global-menu-trigger {
+  width: 2.75rem;
+  min-width: 2.75rem;
+  height: 2.75rem;
+  min-height: 2.75rem;
 }
 
 .profile-shortcut {
   display: grid;
-  width: 2.65rem;
-  height: 2.65rem;
   justify-self: start;
   place-items: center;
   border: 1px solid var(--line);
@@ -364,10 +366,23 @@ textarea:focus-visible {
   font-weight: 800;
 }
 
+.global-menu-trigger {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-4);
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: var(--font-caption);
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
 .back-action {
   display: inline-flex;
   min-width: 4.75rem;
-  min-height: 2.65rem;
+  min-height: 2.75rem;
   align-items: center;
   justify-content: center;
   justify-self: end;
@@ -384,6 +399,8 @@ textarea:focus-visible {
 
 .profile-shortcut.active,
 .profile-shortcut:hover,
+.global-menu-trigger.active,
+.global-menu-trigger:hover,
 .back-action:hover {
   border-color: color-mix(in srgb, var(--accent) 42%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
@@ -447,11 +464,11 @@ textarea:focus-visible {
   cursor: pointer;
 }
 
-.profile-sheet {
+.profile-sheet,
+.global-menu {
   position: fixed;
   z-index: 200;
   top: calc(4.75rem + env(safe-area-inset-top));
-  right: max(1rem, env(safe-area-inset-right));
   display: flex;
   width: min(18rem, calc(100vw - 2rem));
   flex-direction: column;
@@ -463,6 +480,55 @@ textarea:focus-visible {
   box-shadow: var(--shadow-sheet);
   backdrop-filter: blur(22px);
   -webkit-backdrop-filter: blur(22px);
+}
+
+.profile-sheet {
+  right: auto;
+  left: max(1rem, env(safe-area-inset-left));
+}
+
+.global-menu {
+  right: max(1rem, env(safe-area-inset-right));
+  left: auto;
+}
+
+.global-menu__heading {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.global-menu__item {
+  display: flex;
+  min-height: 2.75rem;
+  flex-direction: column;
+  justify-content: center;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 750;
+  text-align: left;
+}
+
+.global-menu__item small {
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  font-weight: 600;
+}
+
+.global-menu__item:hover {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  color: var(--accent);
 }
 
 .profile-sheet__identity {

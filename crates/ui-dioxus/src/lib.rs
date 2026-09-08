@@ -15,6 +15,7 @@ mod developer_notices;
 mod developer_tools;
 mod diagnostics;
 mod dids;
+mod header_menu;
 mod labels;
 mod passport_vault;
 mod profile_guard;
@@ -163,9 +164,10 @@ use developer_tools::{
 #[cfg(feature = "ui-profile-dev")]
 use diagnostics::DeveloperDiagnosticsPage;
 use diagnostics::DiagnosticsPage;
+use header_menu::{GlobalApplicationMenu, GlobalMenuAction, GlobalMenuTrigger, HeaderMenu};
 use labels as ui;
 use passport_vault::PassportVaultPage;
-use profile_quick_switcher::{ProfileQuickSwitcher, profile_switch_is_allowed};
+use profile_quick_switcher::{ProfileSwitcherMenu, profile_switch_is_allowed};
 use selected_realm_sync::{
     AccountSyncCardState, dust_status_pill_class, load_account_sync_card,
     non_native_shielded_balances, poll_account_sync, selected_realm_chain_tip,
@@ -1786,6 +1788,7 @@ enum Route {
     CredentialRequest,
     DidAuthenticationRequest,
     Settings,
+    BackupRecovery,
     Diagnostics,
     #[cfg(feature = "ui-profile-dev")]
     Developer,
@@ -1811,6 +1814,7 @@ impl Route {
             Self::CredentialRequest => "Review document request",
             Self::DidAuthenticationRequest => "Review login request",
             Self::Settings => "Settings",
+            Self::BackupRecovery => "Backup & recovery",
             Self::Diagnostics => "Diagnostics",
             #[cfg(feature = "ui-profile-dev")]
             Self::Developer => "Developer tools",
@@ -1836,6 +1840,7 @@ impl Route {
             | Self::CredentialRequest
             | Self::DidAuthenticationRequest
             | Self::Settings
+            | Self::BackupRecovery
             | Self::Diagnostics
             | Self::Profile => None,
             #[cfg(feature = "ui-profile-dev")]
@@ -2628,7 +2633,7 @@ impl SecretModeController {
 const fn route_forces_screen_privacy(route: Route) -> bool {
     matches!(
         route,
-        Route::Settings | Route::Documents | Route::CredentialRequest
+        Route::Settings | Route::BackupRecovery | Route::Documents | Route::CredentialRequest
     )
 }
 
@@ -3047,7 +3052,7 @@ fn route_demo_review(
     services: &WalletUiServices,
     pending_identity_request: &mut Signal<Option<PendingIdentityRequest>>,
     navigation: &mut Signal<RouteStack>,
-    profile_menu_open: &mut Signal<bool>,
+    header_menu: &mut Signal<HeaderMenu>,
     identity_ingress_notice: &mut Signal<Option<String>>,
 ) -> Result<String, String> {
     if pending_identity_request.read().is_some() {
@@ -3088,7 +3093,7 @@ fn route_demo_review(
     }
     pending_identity_request.set(Some(PendingIdentityRequest { kind, request_uri }));
     navigation.write().route_identity_request(kind);
-    profile_menu_open.set(false);
+    header_menu.set(HeaderMenu::Closed);
     identity_ingress_notice.set(Some(
         "Demo fixture loaded for review. Dismiss it without consent or continue on the existing review screen."
             .to_owned(),
@@ -3101,7 +3106,7 @@ fn route_demo_review(
 #[derive(Clone, Copy)]
 struct DemoActionSignals {
     navigation: Signal<RouteStack>,
-    profile_menu_open: Signal<bool>,
+    header_menu: Signal<HeaderMenu>,
     pending_identity_request: Signal<Option<PendingIdentityRequest>>,
     drawer_open: Signal<bool>,
     identity_ingress_notice: Signal<Option<String>>,
@@ -3128,7 +3133,7 @@ fn start_demo_action(
             &services,
             &mut signals.pending_identity_request,
             &mut signals.navigation,
-            &mut signals.profile_menu_open,
+            &mut signals.header_menu,
             &mut signals.identity_ingress_notice,
         );
         let mut next = state();
@@ -3239,7 +3244,7 @@ fn start_demo_full_setup(
             &services,
             &mut signals.pending_identity_request,
             &mut signals.navigation,
-            &mut signals.profile_menu_open,
+            &mut signals.header_menu,
             &mut signals.identity_ingress_notice,
         );
         let mut next = state();
@@ -3296,7 +3301,7 @@ fn demo_bootstrap_drawer(
 ) -> Element {
     let DemoActionSignals {
         navigation,
-        profile_menu_open,
+        header_menu,
         pending_identity_request,
         mut drawer_open,
         identity_ingress_notice,
@@ -3358,7 +3363,7 @@ fn demo_bootstrap_drawer(
                                 profile_session,
                                 DemoActionSignals {
                                     navigation,
-                                    profile_menu_open,
+                                    header_menu,
                                     pending_identity_request,
                                     drawer_open,
                                     identity_ingress_notice,
@@ -3431,7 +3436,7 @@ fn demo_bootstrap_drawer(
                                         profile_session,
                                         DemoActionSignals {
                                             navigation,
-                                            profile_menu_open,
+                                            header_menu,
                                             pending_identity_request,
                                             drawer_open,
                                             identity_ingress_notice,
@@ -3532,7 +3537,7 @@ fn WalletApp() -> Element {
     desktop_test_driver::use_desktop_test_driver();
     let mut profile_session = use_signal(|| ProfileSessionState::Loading);
     let mut navigation = use_signal(RouteStack::default);
-    let mut profile_menu_open = use_signal(|| false);
+    let mut header_menu = use_signal(HeaderMenu::default);
     let developer_notice_state = use_signal(SessionNoticeState::default);
     let public_genesis_notice_state = use_signal(SessionNoticeState::default);
     #[cfg(feature = "ui-profile-demo")]
@@ -3616,7 +3621,7 @@ fn WalletApp() -> Element {
                             pending_identity_request,
                             manual_credential_review_lock,
                             navigation,
-                            profile_menu_open,
+                            header_menu,
                             identity_ingress_notice,
                         );
                     }
@@ -3634,7 +3639,7 @@ fn WalletApp() -> Element {
                 pending_identity_request,
                 manual_credential_review_lock,
                 navigation,
-                profile_menu_open,
+                header_menu,
                 identity_ingress_notice,
             );
         }
@@ -3652,7 +3657,7 @@ fn WalletApp() -> Element {
         profile_session,
         DemoActionSignals {
             navigation,
-            profile_menu_open,
+            header_menu,
             pending_identity_request,
             drawer_open: demo_drawer_open,
             identity_ingress_notice,
@@ -3748,7 +3753,7 @@ fn WalletApp() -> Element {
         profile_session,
         DemoActionSignals {
             navigation,
-            profile_menu_open,
+            header_menu,
             pending_identity_request,
             drawer_open: demo_drawer_open,
             identity_ingress_notice,
@@ -3779,15 +3784,14 @@ fn WalletApp() -> Element {
             {demo_shell_banner}
             header { class: "app-header",
                 button {
-                    class: if *profile_menu_open.read() { "profile-shortcut active" } else { "profile-shortcut" },
+                    class: if header_menu() == HeaderMenu::ProfileSwitcher { "profile-shortcut active" } else { "profile-shortcut" },
                     r#type: "button",
-                    aria_label: "Current profile {active_profile.display_name}; switch profile",
-                    aria_expanded: if *profile_menu_open.read() { "true" } else { "false" },
-                    title: "Switch profile",
-                    onclick: move |_| {
-                        let next = !*profile_menu_open.read();
-                        profile_menu_open.set(next);
-                    },
+                    aria_label: "Switch wallet profile; current profile {active_profile.display_name}",
+                    aria_controls: "profile-switcher-menu",
+                    aria_expanded: if header_menu() == HeaderMenu::ProfileSwitcher { "true" } else { "false" },
+                    aria_haspopup: "menu",
+                    title: "Switch wallet profile",
+                    onclick: move |_| header_menu.set(header_menu().toggle_profile_switcher()),
                     "{profile_monogram}"
                 }
                 div { class: "app-header__title",
@@ -3802,13 +3806,15 @@ fn WalletApp() -> Element {
                             aria_label: "Go back",
                             onclick: move |_| {
                                 navigation.write().pop();
-                                profile_menu_open.set(false);
+                                header_menu.set(HeaderMenu::Closed);
                             },
                             span { aria_hidden: "true", "←" }
                             span { "Back" }
                         }
-                    } else {
-                        span { class: "app-header__spacer", aria_hidden: "true" }
+                    }
+                    GlobalMenuTrigger {
+                        open: header_menu() == HeaderMenu::Global,
+                        on_toggle: move |_| header_menu.set(header_menu().toggle_global()),
                     }
                 }
             }
@@ -3823,31 +3829,32 @@ fn WalletApp() -> Element {
                 }
             }
 
-            if *profile_menu_open.read() {
-                nav { class: "profile-sheet", aria_label: "Switch wallet profile",
-                    div { class: "profile-sheet__identity",
-                        span { class: "profile-avatar", aria_hidden: "true", "{profile_monogram}" }
-                        div {
-                            strong { "{active_profile.display_name}" }
-                            small { "Active wallet profile" }
+            if header_menu() == HeaderMenu::ProfileSwitcher {
+                ProfileSwitcherMenu {
+                    active_profile: active_profile.clone(),
+                    profile_monogram,
+                    switching_allowed: profile_switch_is_allowed(active_route),
+                    on_selected: move |profile| {
+                        secret_mode.rearm();
+                        profile_session.set(ProfileSessionState::Active(profile));
+                        navigation.write().select_primary(PrimaryDestination::Home);
+                        header_menu.set(HeaderMenu::Closed);
+                    },
+                    on_close: move |_| header_menu.set(HeaderMenu::Closed),
+                }
+            }
+
+            if header_menu() == HeaderMenu::Global {
+                GlobalApplicationMenu {
+                    secret_mode,
+                    on_action: move |action: GlobalMenuAction| {
+                        header_menu.set(HeaderMenu::Closed);
+                        if action == GlobalMenuAction::SessionPrivacy {
+                            secret_mode.toggle();
+                        } else if let Some(route) = action.route() {
+                            navigation.write().push(route);
                         }
-                    }
-                    ProfileQuickSwitcher {
-                        active_profile: active_profile.clone(),
-                        switching_allowed: profile_switch_is_allowed(active_route),
-                        on_selected: move |profile| {
-                            secret_mode.rearm();
-                            profile_session.set(ProfileSessionState::Active(profile));
-                            navigation.write().select_primary(PrimaryDestination::Home);
-                            profile_menu_open.set(false);
-                        },
-                    }
-                    button {
-                        class: "profile-sheet__dismiss",
-                        r#type: "button",
-                        onclick: move |_| profile_menu_open.set(false),
-                        "Close"
-                    }
+                    },
                 }
             }
 
@@ -3880,13 +3887,19 @@ fn WalletApp() -> Element {
                             scan_busy: identity_scan_busy(),
                             on_select_primary: move |destination| {
                                 navigation.write().select_primary(destination);
-                                profile_menu_open.set(false);
+                                header_menu.set(HeaderMenu::Closed);
                             },
-                            on_open_vault: move |_| navigation.write().push(Route::PassportVault),
-                            on_open_settings: move |_| navigation.write().push(Route::Settings),
+                            on_open_vault: move |_| {
+                                navigation.write().push(Route::PassportVault);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
+                            on_open_settings: move |_| {
+                                navigation.write().push(Route::Settings);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
                             on_receive: move |_| {
                                 navigation.write().push(Route::Receive);
-                                profile_menu_open.set(false);
+                                header_menu.set(HeaderMenu::Closed);
                             },
                             on_scan: move |_| {
                                 start_identity_scan(
@@ -3896,7 +3909,7 @@ fn WalletApp() -> Element {
                                     identity_ingress_notice,
                                     pending_identity_request,
                                     navigation,
-                                    profile_menu_open,
+                                    header_menu,
                                 );
                             },
                         }
@@ -3908,7 +3921,10 @@ fn WalletApp() -> Element {
                             active_profile: active_profile.clone(),
                             pending_identity_request,
                             manual_credential_review_lock,
-                            on_manage_identities: move |_| navigation.write().push(Route::ManageIdentities),
+                            on_manage_identities: move |_| {
+                                navigation.write().push(Route::ManageIdentities);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
                         }
                     },
                     Route::Activity => rsx! { ActivityPage { active_profile: active_profile.clone() } },
@@ -3930,9 +3946,18 @@ fn WalletApp() -> Element {
                     #[cfg(feature = "ui-profile-dev")]
                     Route::Developer => rsx! {
                         DeveloperToolsHub {
-                            on_open_manifest: move |_| navigation.write().push(Route::DeveloperManifest),
-                            on_open_benchmark: move |_| navigation.write().push(Route::DeveloperProofBenchmark),
-                            on_open_diagnostics: move |_| navigation.write().push(Route::DeveloperDiagnostics),
+                            on_open_manifest: move |_| {
+                                navigation.write().push(Route::DeveloperManifest);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
+                            on_open_benchmark: move |_| {
+                                navigation.write().push(Route::DeveloperProofBenchmark);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
+                            on_open_diagnostics: move |_| {
+                                navigation.write().push(Route::DeveloperDiagnostics);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
                         }
                     },
                     #[cfg(feature = "ui-profile-dev")]
@@ -3959,11 +3984,12 @@ fn WalletApp() -> Element {
                         }
                         DeveloperDiagnosticsPage {}
                     },
-                    Route::Settings => rsx! {
+                    Route::Settings | Route::BackupRecovery => rsx! {
                         SettingsPage {
                             active_profile: active_profile.clone(),
                             lifecycle_wake: identity_link_wake,
                             secret_mode,
+                            backup_only: content_route == Route::BackupRecovery,
                             on_root_recovered: move |_| {
                                 navigation.write().select_primary(PrimaryDestination::Wallet);
                             },
@@ -4000,7 +4026,7 @@ fn WalletApp() -> Element {
                                 active: is_active,
                                 on_select: move |destination| {
                                     navigation.write().select_primary(destination);
-                                    profile_menu_open.set(false);
+                                    header_menu.set(HeaderMenu::Closed);
                                 },
                             }
                         }
@@ -4023,7 +4049,7 @@ fn WalletApp() -> Element {
                                 identity_ingress_notice,
                                 pending_identity_request,
                                 navigation,
-                                profile_menu_open,
+                                header_menu,
                             );
                         }
                     },
@@ -4044,7 +4070,7 @@ fn WalletApp() -> Element {
                                 active: is_active,
                                 on_select: move |destination| {
                                     navigation.write().select_primary(destination);
-                                    profile_menu_open.set(false);
+                                    header_menu.set(HeaderMenu::Closed);
                                 },
                             }
                         }
@@ -4059,11 +4085,11 @@ fn WalletApp() -> Element {
                 masked: secret_mode_state().masked,
                 on_close: move |_| {
                     navigation.write().pop();
-                    profile_menu_open.set(false);
+                    header_menu.set(HeaderMenu::Closed);
                 },
                 on_open_wallet: move |_| {
                     navigation.write().select_primary(PrimaryDestination::Wallet);
-                    profile_menu_open.set(false);
+                    header_menu.set(HeaderMenu::Closed);
                 },
             }
         }
@@ -4104,14 +4130,14 @@ fn start_identity_scan(
     mut notice: Signal<Option<String>>,
     mut pending_request: Signal<Option<PendingIdentityRequest>>,
     mut navigation: Signal<RouteStack>,
-    mut profile_menu_open: Signal<bool>,
+    mut header_menu: Signal<HeaderMenu>,
 ) {
     if !identity_scan_is_admitted(busy(), pending_request.read().is_some()) {
         return;
     }
     busy.set(true);
     notice.set(None);
-    profile_menu_open.set(false);
+    header_menu.set(HeaderMenu::Closed);
     spawn(async move {
         match scanner.scan().await {
             Ok(payload) => {
@@ -8386,7 +8412,7 @@ fn route_pending_identity_link(
     mut pending_identity_request: Signal<Option<PendingIdentityRequest>>,
     manual_credential_review_lock: Signal<bool>,
     mut navigation: Signal<RouteStack>,
-    mut profile_menu_open: Signal<bool>,
+    mut header_menu: Signal<HeaderMenu>,
     mut notice: Signal<Option<String>>,
 ) {
     if !identity_request_admits_new_link(
@@ -8404,6 +8430,7 @@ fn route_pending_identity_link(
             return;
         }
     };
+    header_menu.set(HeaderMenu::Closed);
     let request_uri = link.into_inner();
     match services
         .route_identity_request()
@@ -8413,7 +8440,6 @@ fn route_pending_identity_link(
         Ok(kind) => {
             pending_identity_request.set(Some(PendingIdentityRequest { kind, request_uri }));
             navigation.write().route_identity_request(kind);
-            profile_menu_open.set(false);
             notice.set(Some(format!(
                 "App link recognized as {}. Review the request before consent.",
                 ui::identity_request_kind(kind)
@@ -9997,6 +10023,7 @@ fn SettingsPage(
     active_profile: WalletProfileView,
     lifecycle_wake: Signal<u64>,
     secret_mode: SecretModeController,
+    backup_only: bool,
     on_root_recovered: EventHandler<WalletProfileView>,
     on_open_profile: EventHandler<MouseEvent>,
     on_open_diagnostics: EventHandler<MouseEvent>,
@@ -10555,63 +10582,67 @@ fn SettingsPage(
 
     rsx! {
         section { class: "page-heading",
-            p { class: "eyebrow", "Local controls" }
-            h1 { "Settings" }
+            p { class: "eyebrow", if backup_only { "Wallet continuity" } else { "Local controls" } }
+            h1 { if backup_only { "Backup & recovery" } else { "Settings" } }
             p { "Security-sensitive settings appear only when their application ports and platform adapters are available." }
         }
-        article { class: "settings-card surface-card",
-            div {
-                p { class: "card-eyebrow", "Profile" }
-                h2 { "{active_profile.display_name}" }
-                p { "Public profile metadata and active selection are persisted. Seeds and keys are never part of this record." }
-            }
-            button {
-                class: "secondary-action",
-                r#type: "button",
-                onclick: move |event| on_open_profile.call(event),
-                "Open profile page"
+        if !backup_only {
+            article { class: "settings-card surface-card",
+                div {
+                    p { class: "card-eyebrow", "Profile" }
+                    h2 { "{active_profile.display_name}" }
+                    p { "Public profile metadata and active selection are persisted. Seeds and keys are never part of this record." }
+                }
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    onclick: move |event| on_open_profile.call(event),
+                    "Open profile page"
+                }
             }
         }
         {security_card}
         {root_recovery_card}
         {backup_card}
-        {deployment_profile_card}
-        article { class: "settings-card surface-card",
-            div {
-                p { class: "card-eyebrow", "Privacy" }
-                h2 { "Private values" }
-                p { "Sensitive values for {active_profile.display_name} are hidden by default. A reveal lasts 30 seconds and ends immediately when you switch profiles or leave and resume the app." }
+        if !backup_only {
+            {deployment_profile_card}
+            article { class: "settings-card surface-card",
+                div {
+                    p { class: "card-eyebrow", "Privacy" }
+                    h2 { "Private values" }
+                    p { "Sensitive values for {active_profile.display_name} are hidden by default. A reveal lasts 30 seconds and ends immediately when you switch profiles or leave and resume the app." }
+                }
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    aria_label: if secret_mode.is_masked() { "Reveal private values for 30 seconds" } else { "Hide private values now" },
+                    aria_pressed: if secret_mode.is_masked() { "false" } else { "true" },
+                    onclick: move |_| secret_mode.toggle(),
+                    if secret_mode.is_masked() { "Reveal for 30 seconds" } else { "Hide now" }
+                }
             }
-            button {
-                class: "secondary-action",
-                r#type: "button",
-                aria_label: if secret_mode.is_masked() { "Reveal private values for 30 seconds" } else { "Hide private values now" },
-                aria_pressed: if secret_mode.is_masked() { "false" } else { "true" },
-                onclick: move |_| secret_mode.toggle(),
-                if secret_mode.is_masked() { "Reveal for 30 seconds" } else { "Hide now" }
+            {developer_tools_card}
+            article { class: "settings-card surface-card",
+                div {
+                    p { class: "card-eyebrow", "Data collection" }
+                    h2 { "Local-first · telemetry off" }
+                    p { "No analytics or remote-storage adapter is active. Development simulation is local and production chain/identity adapters remain explicit capabilities." }
+                }
+                span { class: "status-pill success", "Enforced" }
             }
-        }
-        {developer_tools_card}
-        article { class: "settings-card surface-card",
-            div {
-                p { class: "card-eyebrow", "Data collection" }
-                h2 { "Local-first · telemetry off" }
-                p { "No analytics or remote-storage adapter is active. Development simulation is local and production chain/identity adapters remain explicit capabilities." }
-            }
-            span { class: "status-pill success", "Enforced" }
-        }
-        article { class: "settings-card surface-card",
-            div {
-                p { class: "card-eyebrow", "About" }
-                h2 { "Diagnostics" }
-                p { "Review composed capabilities and bounded local runtime health without exposing wallet payloads." }
-            }
-            button {
-                class: "secondary-action",
-                r#type: "button",
-                aria_label: "Open diagnostics",
-                onclick: move |event| on_open_diagnostics.call(event),
-                "Open diagnostics"
+            article { class: "settings-card surface-card",
+                div {
+                    p { class: "card-eyebrow", "About" }
+                    h2 { "Diagnostics" }
+                    p { "Review composed capabilities and bounded local runtime health without exposing wallet payloads." }
+                }
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    aria_label: "Open diagnostics",
+                    onclick: move |event| on_open_diagnostics.call(event),
+                    "Open diagnostics"
+                }
             }
         }
     }
@@ -11880,6 +11911,8 @@ mod tests {
     fn profile_remains_an_explicit_non_primary_route() {
         assert_eq!(Route::Profile.title(), "Wallet profiles");
         assert_eq!(Route::Profile.primary(), None);
+        assert_eq!(Route::BackupRecovery.title(), "Backup & recovery");
+        assert_eq!(Route::BackupRecovery.primary(), None);
         assert_eq!(Route::Receive.title(), "Receive");
         assert_eq!(Route::Receive.primary(), None);
     }
