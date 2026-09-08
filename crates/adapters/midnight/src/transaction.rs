@@ -3625,6 +3625,61 @@ mod tests {
         WalletProfileId::parse("profile_test").expect("profile is valid")
     }
 
+    #[test]
+    fn late_worker_completion_cannot_overwrite_unknown_outcome() {
+        let profile_id = profile();
+        let draft_id =
+            WalletTransactionDraftId::parse("late_completion").expect("draft identifier is valid");
+        let journal =
+            Arc::new(crate::submission_journal::MemoryMidnightSubmissionJournalStore::default());
+        let control = MidnightSubmissionControl::new(
+            MidnightSubmissionAttempt {
+                profile_id: profile_id.clone(),
+                network_id: network_id("undeployed").expect("network is valid"),
+                draft_id: draft_id.clone(),
+                planning_fingerprint: [1; 32],
+                expires_at: UnixTimestampMillis::new(2_000),
+                updated_at: UnixTimestampMillis::new(1_000),
+            },
+            journal.clone(),
+        );
+
+        control
+            .begin_broadcast(
+                42,
+                [2; 32],
+                [3; 32],
+                WalletTransferSubmissionMode::Simulated,
+            )
+            .expect("broadcast starts");
+        control
+            .mark_outcome_unknown()
+            .expect("waiter marks ambiguous broadcast unknown");
+
+        assert!(
+            !control
+                .mark_terminal_if_broadcasting(
+                    StoredSubmissionState::Included,
+                    Some([4; 32]),
+                    Some(4)
+                )
+                .expect("late worker completion is ignored")
+        );
+        assert_eq!(
+            control
+                .public_state()
+                .expect("in-memory outcome is readable"),
+            WalletTransactionSubmissionState::OutcomeUnknown
+        );
+        let entry = journal
+            .load(&profile_id, &draft_id)
+            .expect("journal is readable")
+            .expect("broadcast journal entry exists");
+        assert_eq!(entry.state, StoredSubmissionState::OutcomeUnknown);
+        assert_eq!(entry.block_hash, None);
+        assert_eq!(entry.block_height, None);
+    }
+
     fn request(expires_at: u64) -> PrepareWalletTransferRequest {
         let recipient = fixture_addresses(&network_id("undeployed").expect("network is valid"))
             .expect("fixture addresses encode")
