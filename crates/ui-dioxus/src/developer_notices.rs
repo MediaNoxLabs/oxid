@@ -72,7 +72,7 @@ pub(super) fn PublicStandaloneGenesisBanner(mut state: Signal<SessionNoticeState
             "data-wallet-authority": PUBLIC_STANDALONE_GENESIS_MARKER,
             div { class: "developer-profile-banner__copy",
                 strong { "Public genesis wallet capability" }
-                span { "Only the unique “Oxid Demo Wallet” profile can use shared, publicly spendable test authority; other profiles remain random. No privacy or ownership is implied." }
+                span { "Only the unique “Demo Wallet” profile can use shared, publicly spendable test authority; other profiles remain random. No privacy or ownership is implied." }
             }
             button {
                 class: "developer-profile-banner__dismiss",

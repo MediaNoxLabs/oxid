@@ -61,7 +61,7 @@ the live adapter discards any cached placeholder state.
 
 The explicitly named `public_genesis` live constructors supply the undeployed
 chain's public scalar-one genesis root only when development custody initializes
-the unique profile named `Oxid Demo Wallet`. Duplicate fixture names fail
+the unique profile named `Demo Wallet`. Duplicate fixture names fail
 closed, and every other profile uses OS randomness regardless of initialization
 order. This is intentionally public test authority, not protected wallet
 material: anyone can derive it and spend funds assigned to it. A typed
@@ -140,7 +140,7 @@ standard output before the actual `-list-avds` result.
 
 - A physical phone can use the same typed standalone adapters without a
   hard-coded personal address or a generic native/JavaScript command channel.
-- Only the unique `Oxid Demo Wallet` profile in an explicit public-genesis build
+- Only the unique `Demo Wallet` profile in an explicit public-genesis build
   is the shared public genesis wallet. It is suitable only for local demos and
   tests; it provides no privacy, ownership, or safe-funding guarantee. Duplicate
   fixture names fail closed; ordinary profiles remain OS-random.
