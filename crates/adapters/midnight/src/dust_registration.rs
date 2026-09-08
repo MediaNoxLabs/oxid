@@ -9,6 +9,8 @@ use std::{
     time::Duration,
 };
 
+use futures::future::{Either, select};
+use futures_timer::Delay;
 use midnight_base_crypto::{hash::HashOutput, schnorr::Signature, time::Timestamp};
 use midnight_coin_structure::coin::{NIGHT, UserAddress};
 use midnight_ledger::{
@@ -573,9 +575,11 @@ async fn await_registration_completion<T>(
     receiver: futures::channel::oneshot::Receiver<T>,
     deadline: Duration,
 ) -> Result<T, WalletDustRegistrationPortError> {
-    match tokio::time::timeout(deadline, receiver).await {
-        Ok(Ok(result)) => Ok(result),
-        Ok(Err(_)) | Err(_) => Err(WalletDustRegistrationPortError::SubmissionOutcomeUnknown),
+    match select(receiver, Delay::new(deadline)).await {
+        Either::Left((Ok(result), _)) => Ok(result),
+        Either::Left((Err(_), _)) | Either::Right((_, _)) => {
+            Err(WalletDustRegistrationPortError::SubmissionOutcomeUnknown)
+        }
     }
 }
 
@@ -1231,16 +1235,12 @@ mod tests {
 
     #[test]
     fn registration_completion_accepts_timely_worker_success_and_failure() {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .expect("runtime is available");
         let (success_sender, success_receiver) = oneshot::channel();
         success_sender
             .send(Ok::<_, WalletDustRegistrationPortError>(()))
             .expect("receiver exists");
         assert_eq!(
-            runtime.block_on(await_registration_completion(
+            futures::executor::block_on(await_registration_completion(
                 success_receiver,
                 Duration::ZERO
             )),
@@ -1254,7 +1254,7 @@ mod tests {
             ))
             .expect("receiver exists");
         assert_eq!(
-            runtime.block_on(await_registration_completion(
+            futures::executor::block_on(await_registration_completion(
                 failure_receiver,
                 Duration::ZERO
             )),
@@ -1264,13 +1264,9 @@ mod tests {
 
     #[test]
     fn registration_completion_timeout_reports_unknown_outcome() {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .expect("runtime is available");
         let (_sender, receiver) = oneshot::channel::<()>();
         assert_eq!(
-            runtime.block_on(await_registration_completion(receiver, Duration::ZERO)),
+            futures::executor::block_on(await_registration_completion(receiver, Duration::ZERO)),
             Err(WalletDustRegistrationPortError::SubmissionOutcomeUnknown)
         );
     }
