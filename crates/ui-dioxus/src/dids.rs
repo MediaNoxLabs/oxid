@@ -19,6 +19,7 @@ pub(super) fn DidsPage(
     let mut state = use_signal(|| DidPageState::Loading);
     let mut did_input = use_signal(String::new);
     let mut journey = use_signal(|| DidJourney::Inventory);
+    let mut selected_network = use_signal(|| None::<String>);
     let mut did_creation = use_signal(|| DidCreationState::Ready);
     let mut did_creation_notice = use_signal(|| None::<String>);
     let mut did_publication_busy = use_signal(|| false);
@@ -53,6 +54,24 @@ pub(super) fn DidsPage(
                     .await
                     .unwrap_or_else(|error| DidPageState::Failed(error.to_string())),
             );
+        });
+    });
+    let network_services = services.clone();
+    let network_profile = profile_id.clone();
+    use_effect(move || {
+        let services = network_services.clone();
+        let profile_id = network_profile.clone();
+        spawn(async move {
+            let network = run_ui_blocking(move || {
+                services
+                    .list_wallet_networks()
+                    .execute(WalletAccountQuery { profile_id })
+            })
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .map(|networks| networks.selected_network_id);
+            selected_network.set(network);
         });
     });
 
@@ -143,7 +162,7 @@ pub(super) fn DidsPage(
                     p { class: "form-hint", "Creates protected Ed25519 authentication, P-256 assertion, and Jubjub holder-binding keys. Only the public DID document is persisted." }
                     if creation == DidCreationState::Ready {
                         button {
-                            class: "primary-action", r#type: "button", disabled: resolving,
+                            class: "primary-action", r#type: "button", disabled: resolving || selected_network().is_none(),
                             onclick: move |_| {
                                 {
                                     let mut creation = did_creation.write();
@@ -152,6 +171,11 @@ pub(super) fn DidsPage(
                                     }
                                 }
                                 did_creation_notice.set(None);
+                                let Some(network) = selected_network() else {
+                                    did_creation.set(DidCreationState::Failed);
+                                    did_creation_notice.set(Some("The selected Midnight network is unavailable.".to_owned()));
+                                    return;
+                                };
                                 let service = create_services.create_did();
                                 let profile_id = create_profile.clone();
                                 let records = create_records.clone();
@@ -159,7 +183,7 @@ pub(super) fn DidsPage(
                                     let result = run_ui_blocking(move || {
                                         service.execute(CreateDidCommand {
                                             profile_id,
-                                            network: "undeployed".to_owned(),
+                                            network,
                                         })
                                     })
                                     .await;
@@ -696,5 +720,7 @@ mod tests {
         assert!(source.contains("if active_journey == DidJourney::Resolve"));
         assert!(source.contains("DidJourney::Detail(did.clone())"));
         assert!(!production_source.contains("\"Standalone"));
+        assert!(!production_source.contains("network: \"undeployed\""));
+        assert!(source.contains("selected_network"));
     }
 }
