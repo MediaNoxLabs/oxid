@@ -133,7 +133,7 @@ ADR status and delivery state answer different questions:
 | [0103](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0103-compose-portal-final-for-physical-android.md) Compose Portal Final for physical Android | Accepted | ADR-0039/0097/0102; issue #124; Portal `integration@22ae536` | Compile-gated physical Android issuance, encrypted restart/reverification, runtime-discovered device and tailnet identity, and receipt-exact temporary HTTPS cleanup |
 | [0104](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0104-regrow-incoming-adapters-behind-capability-facades.md) Regrow oversized adapters behind capability façades | Accepted | §§3, 6, 13–14, 18–19; issue #145 | Headless, desktop Dioxus, and composition are decomposed behind checked façades; Midnight remains the final ordered root, and no crate extraction is authorized |
 | [0105](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0105-recover-owner-midnight-roots-for-preprod-observation.md) Recover owner Midnight roots for PreProd observation | Accepted | §§3–8, 12–13, 16–18, 21; ADR-0071/0074/0090/0098; issue #244 | Opt-in mobile recovery installs one owner-entered root into empty native custody, binds it to signed/genesis-authenticated PreProd, derives account 0/address 0, and exposes balance sync without write controls |
-| [0106](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0106-adopt-seedless-ux-with-multi-factor-recovery.md) Adopt a seedless UX with multi-factor recovery | Proposed | Midnight Passport vision; ADR-0017/0074–0078/0090/0105; issues #359/#364 | Research compares passkey PRF, platform/cloud recovery, peer devices, MPC, guardian recovery, and account rotation; no provider or implementation is approved |
+| [0106](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0106-adopt-seedless-ux-with-multi-factor-recovery.md) Adopt a seedless UX with passkey recovery | Proposed | ADR-0017/0074–0078/0090/0105; issues #359/#364 | Research selects an Oxid-owned random-secret envelope with Apple/Google-synchronized passkeys and capability-detected PRF wrapping; advanced recovery and providers remain unapproved |
 
 ## Current boundaries
 
@@ -541,8 +541,9 @@ metadata remain unable to carry the root or select this deployment.
 ADR-0106 proposes a seedless user experience without making wallet roots
 predictable. Near-term HD-root assets keep a random root inside the existing
 authenticated envelope with independent device, passkey-PRF, and survivable
-recovery factors. The target Passport model replaces universal-root recovery
-with peer device authority, contract-level rotation, and reviewed BUSS/ANARKey
-guardian recovery. Platform cloud and managed MPC remain optional, disclosed
-profiles rather than sole recovery authority; no implementation is approved
-while the ADR is Proposed.
+recovery factors. Its deliberately small first slice uses WebAuthn Level
+2-compatible passkey authentication, Apple or Google passkey synchronization,
+and capability-detected Level 3 PRF to wrap—not derive—the random secret.
+Advanced share recovery, threshold signing, guardian recovery, and provider
+adoption remain separate decisions; no implementation is approved while the
+ADR is Proposed.
