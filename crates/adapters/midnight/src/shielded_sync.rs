@@ -1486,9 +1486,9 @@ mod tests {
     #[test]
     fn live_worker_refreshes_a_current_checkpoint_and_publishes_synced_state() {
         const ADDRESS: &str =
-            "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
+            "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
         let (endpoint, server) = current_checkpoint_server();
-        let config = MidnightIndexerConfig::new("devnet", endpoint, ADDRESS)
+        let config = MidnightIndexerConfig::new("undeployed", endpoint, ADDRESS)
             .expect("live fixture config is valid");
         let network = config.network_id().clone();
         let checkpoints = Arc::new(MemoryCheckpointStore {
@@ -1538,9 +1538,9 @@ mod tests {
     #[test]
     fn live_worker_panic_becomes_a_terminal_redacted_snapshot() {
         const ADDRESS: &str =
-            "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
+            "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
         let config =
-            MidnightIndexerConfig::new("devnet", "ws://127.0.0.1:9/api/v1/graphql/ws", ADDRESS)
+            MidnightIndexerConfig::new("undeployed", "ws://127.0.0.1:9/api/v1/graphql/ws", ADDRESS)
                 .expect("fixture config");
         let network = config.network_id().clone();
         let checkpoints: Arc<dyn MidnightShieldedCheckpointStore> =

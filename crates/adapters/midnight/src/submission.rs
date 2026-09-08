@@ -1630,12 +1630,12 @@ mod tests {
     use super::*;
 
     const ADDRESS: &str =
-        "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
+        "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
     type DustSubscriptionScenario = (u64, Vec<(u64, u64, String)>);
 
     fn config(proof: &str) -> Result<MidnightStandaloneConfig, MidnightStandaloneConfigError> {
         MidnightStandaloneConfig::new(
-            "devnet",
+            "undeployed",
             "ws://127.0.0.1:8088/api/v1/graphql/ws",
             "http://127.0.0.1:8088/api/v1/graphql",
             "ws://127.0.0.1:9944",
@@ -1972,7 +1972,7 @@ mod tests {
     #[test]
     fn standalone_routes_accept_loopback_http_proving() {
         let value = config("http://127.0.0.1:6300").expect("routes are valid");
-        assert_eq!(value.indexer().network_id().as_str(), "devnet");
+        assert_eq!(value.indexer().network_id().as_str(), "undeployed");
         assert_eq!(
             value.indexer_http_url(),
             "http://127.0.0.1:8088/api/v1/graphql"
@@ -2000,7 +2000,7 @@ mod tests {
             Err(MidnightStandaloneConfigError::InvalidProofEndpoint)
         );
         let bad_http = MidnightStandaloneConfig::new(
-            "devnet",
+            "undeployed",
             "ws://127.0.0.1:8088/graphql/ws",
             "ftp://127.0.0.1/graphql",
             "ws://127.0.0.1:9944",
@@ -2013,7 +2013,7 @@ mod tests {
             "Midnight indexer HTTP endpoint is invalid"
         );
         let bad_node = MidnightStandaloneConfig::new(
-            "devnet",
+            "undeployed",
             "ws://127.0.0.1:8088/graphql/ws",
             "http://127.0.0.1/graphql",
             "http://127.0.0.1:9944",

@@ -120,14 +120,14 @@ fn headless_process_portal_policy_accepts_only_the_canonical_standalone_bundle()
 #[test]
 fn standalone_live_configuration_is_all_or_nothing() {
     const ADDRESS: &str =
-        "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
+        "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
     assert!(matches!(
         parse_optional_midnight_config([None, None, None, None, None, None, None]),
         Ok(None)
     ));
     assert!(matches!(
         parse_optional_midnight_config([
-            Some("devnet".to_owned()),
+            Some("undeployed".to_owned()),
             Some("ws://127.0.0.1:8088/api/v1/graphql/ws".to_owned()),
             None,
             None,
@@ -139,7 +139,7 @@ fn standalone_live_configuration_is_all_or_nothing() {
     ));
     assert!(matches!(
         parse_optional_midnight_config([
-            Some("devnet".to_owned()),
+            Some("undeployed".to_owned()),
             Some("ws://127.0.0.1:8088/api/v1/graphql/ws".to_owned()),
             Some("http://127.0.0.1:8088/api/v1/graphql".to_owned()),
             Some("ws://127.0.0.1:9944".to_owned()),
@@ -152,7 +152,7 @@ fn standalone_live_configuration_is_all_or_nothing() {
     let local_cache = std::env::temp_dir().join("oxid-composition-proving-cache");
     assert!(matches!(
         parse_optional_midnight_config([
-            Some("devnet".to_owned()),
+            Some("undeployed".to_owned()),
             Some("ws://127.0.0.1:8088/api/v1/graphql/ws".to_owned()),
             Some("http://127.0.0.1:8088/api/v1/graphql".to_owned()),
             Some("ws://127.0.0.1:9944".to_owned()),

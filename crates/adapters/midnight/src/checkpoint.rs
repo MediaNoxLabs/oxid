@@ -405,7 +405,7 @@ mod tests {
     }
 
     fn network() -> ChainNetworkId {
-        ChainNetworkId::parse("devnet").expect("network fixture should be valid")
+        ChainNetworkId::parse("undeployed").expect("network fixture should be valid")
     }
 
     fn address() -> ChainAddress {
