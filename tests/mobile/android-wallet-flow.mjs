@@ -351,7 +351,7 @@ try {
     );
 
     await openDocuments();
-    await clickButton("Use standalone demo offer");
+    await clickButton("Use demo OID4VCI offer");
     await clickButton("Preview credential offer");
     await waitFor(
       "document.body.innerText.includes('Credential offer preview') && document.body.innerText.includes('Digital Passport')",
@@ -650,8 +650,8 @@ try {
       "document.body.innerText.includes('DID authentication succeeded and the standalone verifier independently validated the proof.')",
     );
     await openDocuments();
-    await waitForButton("Use standalone demo offer");
-    await clickButton("Use standalone demo offer");
+    await waitForButton("Use demo OID4VCI offer");
+    await clickButton("Use demo OID4VCI offer");
     await clickButton("Preview credential offer");
     await waitFor(
       "document.body.innerText.includes('Credential offer preview') && document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('Who is issuing it?') && document.body.innerText.includes('What will you receive?') && document.body.innerText.includes('Which identity receives it?') && document.body.innerText.includes('Why add it?') && document.body.innerText.includes('Unverified endpoint')",
@@ -677,7 +677,7 @@ try {
     // so the chooser is exercised with two distinct stored credentials.
     await evaluate("new Promise((resolve) => setTimeout(resolve, 1200))");
     await clickButton("Start another offer");
-    await clickButton("Use standalone demo offer");
+    await clickButton("Use demo OID4VCI offer");
     await clickButton("Preview credential offer");
     await waitFor(
       "document.body.innerText.includes('Credential offer preview')",

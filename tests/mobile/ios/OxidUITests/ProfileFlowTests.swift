@@ -297,7 +297,7 @@ final class ProfileFlowTests: XCTestCase {
         let credentials = application.buttons["Documents"]
         XCTAssertTrue(credentials.waitForExistence(timeout: 5))
         credentials.tap()
-        let demoOffer = application.buttons["Use standalone demo offer"]
+        let demoOffer = application.buttons["Use demo OID4VCI offer"]
         XCTAssertTrue(demoOffer.waitForExistence(timeout: 5))
         scrollTo(demoOffer, in: application)
         demoOffer.tap()
@@ -581,7 +581,7 @@ final class ProfileFlowTests: XCTestCase {
 
         application.buttons["Documents"].tap()
         let hadCredential = application.staticTexts["Valid"].waitForExistence(timeout: 2)
-        let demoOffer = application.buttons["Use standalone demo offer"]
+        let demoOffer = application.buttons["Use demo OID4VCI offer"]
         XCTAssertTrue(demoOffer.waitForExistence(timeout: 5))
         scrollTo(demoOffer, in: application)
         demoOffer.tap()

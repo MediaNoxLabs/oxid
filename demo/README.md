@@ -96,7 +96,7 @@ demo/status.sh
    `undeployed` Tailnet profile and independently ready indexer, node, and prover
    services before showing synchronized NIGHT, shielded, and DUST state.
 4. Under **Documents** → **Manage identities**, create an active standalone DID.
-5. For OpenID4VCI, load the standalone credential offer, preview the abstract
+5. For OpenID4VCI, load the OID4VCI demo offer, preview the abstract
    issuer and credential, confirm consent, and choose **Accept and issue
    credential**. Successful verification and encrypted import complete this
    flow; the direct credential inbox is only a lower-level diagnostic.
