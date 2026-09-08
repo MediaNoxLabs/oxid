@@ -821,6 +821,16 @@ impl WalletProtectionPort for UnavailableWalletSecurity {
     }
 }
 
+impl WalletRootRecoveryPort for UnavailableWalletSecurity {
+    fn recover_root(
+        &self,
+        _: &WalletProfileId,
+        _: WalletRootSeed,
+    ) -> Result<(), WalletSecurityPortError> {
+        Err(WalletSecurityPortError::Unavailable)
+    }
+}
+
 impl WalletKeyOperationPort for UnavailableWalletSecurity {
     fn generate(
         &self,

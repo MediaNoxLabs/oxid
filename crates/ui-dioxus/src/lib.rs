@@ -21,6 +21,7 @@ mod profile_quick_switcher;
 #[cfg(feature = "proof-benchmark")]
 mod proof_benchmark;
 mod selected_realm_sync;
+mod wallet_onboarding;
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
 
@@ -40,6 +41,7 @@ pub use passport_vault::{
     PassportVaultContractCallRecoveryUiServices, PassportVaultContractCallUiServices,
     PassportVaultUiServices,
 };
+use wallet_onboarding::{WalletOnboarding, WalletOnboardingIntent};
 #[cfg(feature = "preprod-observation")]
 use wallet_root_recovery::WalletRootRecoveryForm;
 
@@ -103,7 +105,8 @@ use oxid_wallet_application::{
     AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase,
     CancelSelectedWalletRealmSyncUseCase, CancelWalletDustRegistrationSubmissionCommand,
     CancelWalletDustRegistrationSubmissionUseCase, CancelWalletDustSyncUseCase,
-    CancelWalletShieldedSyncUseCase, CancelWalletTransferSubmissionUseCase,
+    CancelWalletOnboardingUseCase, CancelWalletShieldedSyncUseCase,
+    CancelWalletTransferSubmissionUseCase, CompleteWalletOnboardingUseCase,
     CompleteWalletRecoverySummary, CreateWalletProfileCommand, CreateWalletProfileUseCase,
     DeriveWalletAccountCommand, DeriveWalletAccountUseCase, EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY,
     EXPORT_COMPLETE_WALLET_BACKUP_TITLE, ExportCompleteWalletBackupCommand,
@@ -119,7 +122,7 @@ use oxid_wallet_application::{
     PortableWalletBackupDocumentKind, PortableWalletBackupDocumentPort,
     PrepareShieldedWalletTransferCommand, PrepareShieldedWalletTransferUseCase,
     PrepareWalletDustRegistrationCommand, PrepareWalletDustRegistrationUseCase,
-    PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
+    PrepareWalletOnboardingUseCase, PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
     RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY, RECOVER_COMPLETE_WALLET_BACKUP_TITLE,
     RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY, RECOVER_PORTABLE_WALLET_BACKUP_TITLE,
     ReconcileWalletDustRegistrationSubmissionCommand,
@@ -300,6 +303,7 @@ pub struct WalletUiServices {
     recover_portable_wallet_backup: Arc<dyn RecoverPortableWalletBackupUseCase>,
     export_complete_wallet_backup: Arc<dyn ExportCompleteWalletBackupUseCase>,
     recover_complete_wallet_backup: Arc<dyn RecoverCompleteWalletBackupUseCase>,
+    wallet_onboarding: Option<WalletOnboardingUiServices>,
     #[cfg(feature = "preprod-observation")]
     wallet_root_recovery: Option<WalletRootRecoveryUiServices>,
     list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
@@ -713,8 +717,35 @@ pub struct WalletSecurityUiServices {
     unlock_wallet: Arc<dyn UnlockWalletUseCase>,
     lock_wallet: Arc<dyn LockWalletUseCase>,
     backup: WalletBackupUiServices,
+    onboarding: Option<WalletOnboardingUiServices>,
     #[cfg(feature = "preprod-observation")]
     root_recovery: Option<WalletRootRecoveryUiServices>,
+}
+
+/// Secret-safe private-wallet onboarding supplied by composition.
+#[derive(Clone)]
+pub struct WalletOnboardingUiServices {
+    network_id: String,
+    prepare: Arc<dyn PrepareWalletOnboardingUseCase>,
+    complete: Arc<dyn CompleteWalletOnboardingUseCase>,
+    cancel: Arc<dyn CancelWalletOnboardingUseCase>,
+}
+
+impl WalletOnboardingUiServices {
+    #[must_use]
+    pub fn new(
+        network_id: String,
+        prepare: Arc<dyn PrepareWalletOnboardingUseCase>,
+        complete: Arc<dyn CompleteWalletOnboardingUseCase>,
+        cancel: Arc<dyn CancelWalletOnboardingUseCase>,
+    ) -> Self {
+        Self {
+            network_id,
+            prepare,
+            complete,
+            cancel,
+        }
+    }
 }
 
 /// Explicit owner-root recovery capability supplied only by an authenticated,
@@ -783,9 +814,16 @@ impl WalletSecurityUiServices {
             unlock_wallet,
             lock_wallet,
             backup,
+            onboarding: None,
             #[cfg(feature = "preprod-observation")]
             root_recovery: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_onboarding(mut self, onboarding: WalletOnboardingUiServices) -> Self {
+        self.onboarding = Some(onboarding);
+        self
     }
 
     #[cfg(feature = "preprod-observation")]
@@ -1084,6 +1122,7 @@ impl WalletUiServices {
             recover_portable_wallet_backup: security.backup.recover_custody,
             export_complete_wallet_backup: security.backup.export_complete,
             recover_complete_wallet_backup: security.backup.recover_complete,
+            wallet_onboarding: security.onboarding,
             #[cfg(feature = "preprod-observation")]
             wallet_root_recovery: security.root_recovery,
             list_wallet_networks: account.list_wallet_networks,
@@ -1910,14 +1949,18 @@ enum ProfileSessionState {
 enum OnboardingStep {
     Welcome,
     Create,
-    Protect(WalletProfileView),
-    Restore,
+    RestorePhraseProfile,
+    Private(WalletProfileView, WalletOnboardingIntent),
+    RestoreBackup,
+    #[cfg(feature = "public-standalone-genesis")]
+    SharedDeveloper(WalletProfileView),
     #[cfg(feature = "preprod-observation")]
     RecoverRootProfile,
     #[cfg(feature = "preprod-observation")]
     RecoverRoot(WalletProfileView),
 }
 
+#[cfg(feature = "public-standalone-genesis")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum OnboardingProtectionState {
     Idle,
@@ -4170,6 +4213,7 @@ fn ProfileGateway(
                 profiles,
                 active_profile_id: None,
                 onboarding: true,
+                allow_public_fixture: true,
                 on_selected,
             }
         },
@@ -4215,7 +4259,6 @@ fn OnboardingFlow(
     on_selected: EventHandler<WalletProfileView>,
     on_root_recovered: EventHandler<WalletProfileView>,
 ) -> Element {
-    #[cfg(feature = "preprod-observation")]
     let services = consume_context::<WalletUiServices>();
     let brand = consume_context::<BrandProfile>();
     let mut step = use_signal(|| OnboardingStep::Welcome);
@@ -4243,20 +4286,32 @@ fn OnboardingFlow(
             section { class: "page-heading onboarding-heading",
                 p { class: "eyebrow", "Welcome to {brand.product_name()}" }
                 h1 { "Your Midnight identity wallet" }
-                p { "Start a new wallet or restore one complete encrypted {brand.product_name()} backup." }
+                p { "Create a private wallet, restore its 24-word phrase, or recover one complete encrypted {brand.product_name()} backup." }
             }
             section { class: "profile-card surface-card onboarding-choice-card",
-                button {
-                    class: "primary-action",
-                    r#type: "button",
-                    onclick: move |_| step.set(OnboardingStep::Create),
-                    "Create new wallet"
+                if services.wallet_onboarding.is_some() {
+                    button {
+                        class: "primary-action",
+                        r#type: "button",
+                        onclick: move |_| step.set(OnboardingStep::Create),
+                        "Create private wallet"
+                    }
+                    button {
+                        class: "secondary-action",
+                        r#type: "button",
+                        onclick: move |_| step.set(OnboardingStep::RestorePhraseProfile),
+                        "Restore recovery phrase"
+                    }
+                } else {
+                    p { class: "form-hint", role: "status",
+                        "Select an authenticated Midnight network profile before creating or restoring a private wallet."
+                    }
                 }
                 button {
                     class: "secondary-action",
                     r#type: "button",
-                    onclick: move |_| step.set(OnboardingStep::Restore),
-                    "Restore from backup"
+                    onclick: move |_| step.set(OnboardingStep::RestoreBackup),
+                    "Restore complete backup"
                 }
                 {root_recovery_choice}
             }
@@ -4278,16 +4333,50 @@ fn OnboardingFlow(
                 profiles: Vec::new(),
                 active_profile_id: None,
                 onboarding: true,
-                on_selected: move |profile| step.set(OnboardingStep::Protect(profile)),
+                allow_public_fixture: true,
+                on_selected: move |profile| step.set(onboarding_step_for_created_profile(profile)),
             }
         },
-        OnboardingStep::Protect(profile) => rsx! {
+        OnboardingStep::RestorePhraseProfile => rsx! {
+            section { class: "page-heading onboarding-heading",
+                button {
+                    class: "text-action",
+                    r#type: "button",
+                    aria_label: "Back to onboarding choices",
+                    onclick: move |_| step.set(OnboardingStep::Welcome),
+                    "← Back"
+                }
+                p { class: "eyebrow", "Existing Midnight wallet" }
+                h1 { "Name this wallet" }
+                p { "Create an empty local profile before entering its recovery phrase." }
+            }
+            ProfileManager {
+                profiles: Vec::new(),
+                active_profile_id: None,
+                onboarding: true,
+                allow_public_fixture: false,
+                on_selected: move |profile| step.set(OnboardingStep::Private(
+                    profile,
+                    WalletOnboardingIntent::RestorePhrase,
+                )),
+            }
+        },
+        OnboardingStep::Private(profile, intent) => rsx! {
+            WalletOnboarding {
+                profile,
+                intent,
+                lifecycle_wake,
+                on_complete: move |profile| on_selected.call(profile),
+            }
+        },
+        #[cfg(feature = "public-standalone-genesis")]
+        OnboardingStep::SharedDeveloper(profile) => rsx! {
             OnboardingProtection {
                 profile,
                 on_continue: move |profile| on_selected.call(profile),
             }
         },
-        OnboardingStep::Restore => rsx! {
+        OnboardingStep::RestoreBackup => rsx! {
             section { class: "page-heading onboarding-heading",
                 button {
                     class: "text-action",
@@ -4322,6 +4411,7 @@ fn OnboardingFlow(
                 profiles: Vec::new(),
                 active_profile_id: None,
                 onboarding: true,
+                allow_public_fixture: false,
                 on_selected: move |profile| step.set(OnboardingStep::RecoverRoot(profile)),
             }
         },
@@ -4341,6 +4431,15 @@ fn OnboardingFlow(
     }
 }
 
+fn onboarding_step_for_created_profile(profile: WalletProfileView) -> OnboardingStep {
+    #[cfg(feature = "public-standalone-genesis")]
+    if profile.display_name == PUBLIC_STANDALONE_PROFILE_NAME {
+        return OnboardingStep::SharedDeveloper(profile);
+    }
+    OnboardingStep::Private(profile, WalletOnboardingIntent::Create)
+}
+
+#[cfg(feature = "public-standalone-genesis")]
 #[component]
 fn OnboardingProtection(
     profile: WalletProfileView,
@@ -4355,13 +4454,12 @@ fn OnboardingProtection(
         OnboardingProtectionState::Idle | OnboardingProtectionState::Working => None,
     };
     let protected_profile = profile.clone();
-    let skipped_profile = profile.clone();
 
     rsx! {
         section { class: "page-heading onboarding-heading",
-            p { class: "eyebrow", "Wallet created" }
-            h1 { "Protect this wallet" }
-            p { "Device protection authorizes sensitive wallet actions. You can enable it now or continue and configure it later in Settings." }
+            p { class: "eyebrow", "Shared developer wallet" }
+            h1 { "Enable public test authority" }
+            p { "This undeployed-network fixture is shared and publicly spendable. It provides no privacy or ownership and must never hold assets of value." }
         }
         section { class: "profile-card surface-card",
             div { class: "profile-row__identity",
@@ -4392,18 +4490,11 @@ fn OnboardingProtection(
                 },
                 if busy { "Enabling device protection…" } else { "Enable device protection" }
             }
-            button {
-                class: "secondary-action",
-                r#type: "button",
-                disabled: busy,
-                onclick: move |_| on_continue.call(skipped_profile.clone()),
-                "Skip for now"
-            }
             if let Some(message) = failure {
                 div { class: "result error", role: "alert",
                     strong { "Device protection was not enabled" }
                     p { "{message}" }
-                    p { "You can skip for now and retry from Settings." }
+                    p { "Retry only in the local or Tailnet developer profile." }
                 }
             }
         }
@@ -4573,6 +4664,7 @@ fn ProfileManager(
     profiles: Vec<WalletProfileView>,
     active_profile_id: Option<String>,
     onboarding: bool,
+    allow_public_fixture: bool,
     on_selected: EventHandler<WalletProfileView>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
@@ -4591,15 +4683,19 @@ fn ProfileManager(
     let public_fixture_choice = {
         let fixture_exists = public_fixture_profile_exists(&profile_list.read());
         let fixture_selected = display_name.read().trim() == PUBLIC_STANDALONE_PROFILE_NAME;
-        rsx! {
-            p { class: "form-hint", "For a disposable local demo, explicitly select the shared public wallet. Anyone can spend its funds." }
-            button {
-                class: "secondary-action",
-                r#type: "button",
-                disabled: busy || fixture_exists || fixture_selected,
-                onclick: move |_| display_name.set(PUBLIC_STANDALONE_PROFILE_NAME.to_owned()),
-                {public_fixture_choice_label(fixture_exists, fixture_selected)}
+        if allow_public_fixture {
+            rsx! {
+                p { class: "form-hint", "For a disposable local demo, explicitly select the shared public wallet. Anyone can spend its funds." }
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    disabled: busy || fixture_exists || fixture_selected,
+                    onclick: move |_| display_name.set(PUBLIC_STANDALONE_PROFILE_NAME.to_owned()),
+                    {public_fixture_choice_label(fixture_exists, fixture_selected)}
+                }
             }
+        } else {
+            rsx! {}
         }
     };
     #[cfg(not(feature = "public-standalone-genesis"))]
@@ -10560,6 +10656,7 @@ fn ProfilePage(
                 profiles: loaded,
                 active_profile_id: Some(active_profile.id),
                 onboarding: false,
+                allow_public_fixture: true,
                 on_selected,
             }
         },

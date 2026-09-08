@@ -171,6 +171,12 @@
           "crates/ui-dioxus/src/wallet_root_recovery"
         ]
       },
+      {
+        "name": "wallet-onboarding",
+        "modulePathPrefixes": [
+          "crates/ui-dioxus/src/wallet_onboarding"
+        ]
+      },
         {
           "name": "profile-guard",
           "modulePathPrefixes": [

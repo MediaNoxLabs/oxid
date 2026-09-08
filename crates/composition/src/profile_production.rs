@@ -25,6 +25,11 @@ use super::services::ApplicationServices;
 ))]
 use super::services::WalletRootRecoveryCapability;
 use super::wiring::compose_with_identity_adapters;
+#[cfg(all(
+    feature = "preprod-observation",
+    any(target_os = "ios", target_os = "android")
+))]
+use super::wiring::with_wallet_onboarding;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_platform_system::OsRandom;
 use oxid_adapter_platform_system::SystemClock;
@@ -212,6 +217,13 @@ pub fn compose_authenticated_production(
         any(target_os = "ios", target_os = "android")
     ))]
     {
+        let services = with_wallet_onboarding(
+            services,
+            Arc::clone(&profiles),
+            Arc::clone(&security),
+            Arc::clone(&midnight),
+            authenticated_network_id.clone(),
+        );
         let recovery: Arc<dyn RecoverWalletRootUseCase> = Arc::new(
             WalletRootRecoveryService::new(
                 Arc::clone(&profiles),

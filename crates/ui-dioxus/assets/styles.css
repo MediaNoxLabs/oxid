@@ -2955,6 +2955,25 @@ textarea:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
+.recovery-phrase {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--warning) 36%, transparent);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--warning) 7%, var(--surface-0));
+}
+
+.recovery-phrase code {
+  color: var(--text-strong);
+  font-family: var(--font-sans);
+  font-size: var(--font-body);
+  font-weight: 700;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+  user-select: none;
+}
+
 .credential-policy-summary {
   padding-left: var(--space-3);
   border-left: 2px solid color-mix(in srgb, var(--positive) 28%, transparent);

@@ -54,6 +54,7 @@ android-jni-exception-recovery-test = [
 [dependencies]
 oxid-adapter-backup-complete.workspace = true
 oxid-adapter-backup-portable.workspace = true
+oxid-adapter-custody-software.workspace = true
 oxid-adapter-did-midnight.workspace = true
 oxid-adapter-backup-document-mobile.workspace = true
 oxid-adapter-diagnostics-memory.workspace = true
