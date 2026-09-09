@@ -67,7 +67,7 @@ gates:
       - name: deslop
         enabled: false
     blockCleanOnFindingSeverities:
-      - must-fix
+      - high
     required: true
     # The draft gate checks direction before hosted CI has finished. Waiting
     # here made every correction invalidate and repeat both review and CI.
@@ -118,7 +118,7 @@ gates:
     # polish into the current PR; exact-head CI plus the triage receipt now own
     # final readiness.
     blockCleanOnFindingSeverities:
-      - must-fix
+      - high
     required: true
     requireCi: true
   # Streaming milestone delivery uses issue scope, exact-head CI, signed commits,

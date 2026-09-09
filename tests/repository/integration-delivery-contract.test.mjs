@@ -294,7 +294,7 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(config, /^  fanOut: 1$/m);
   assert.match(config, /^  lowSignal:\n    enabled: true\n    roundThreshold: 1\n    maxComments: 1$/m);
   assert.match(config, /^  maxFanoutReviewers: 1$/m);
-  assert.equal((config.match(/^    blockCleanOnFindingSeverities:\n      - must-fix$/gm) ?? []).length, 2);
+  assert.equal((config.match(/^    blockCleanOnFindingSeverities:\n      - high$/gm) ?? []).length, 2);
   assert.match(config, /^  requireFanoutEvidence: false$/m);
   assert.match(config, /^  requireFanoutProvenance: false$/m);
   const scan = await read(".github/workflows/scan.yml");

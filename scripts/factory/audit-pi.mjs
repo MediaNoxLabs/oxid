@@ -79,10 +79,14 @@ async function inspectDevLoopsLayer(repoRoot) {
         && refinement.stopOnLowSignal === true && refinement.lowSignalRoundThreshold === 1 && refinement.lowSignalMaxComments === 1
         ? [] : ["refinement: expected bounded fan-out, disabled Copilot, and 1/1 enabled low-signal policy"]),
       ...(JSON.stringify(draft.angles) === JSON.stringify(["correctness"])
-        && JSON.stringify(draft.mandatoryAngles) === JSON.stringify(["correctness"]) && draft.requireCi === false
+        && JSON.stringify(draft.mandatoryAngles) === JSON.stringify(["correctness"])
+        && JSON.stringify(draft.blockCleanOnFindingSeverities) === JSON.stringify(["high"])
+        && draft.requireCi === false
         ? [] : ["draft gate: expected only mandatory correctness with requireCi: false"]),
       ...(JSON.stringify(preApproval.angles) === JSON.stringify(["security"])
-        && JSON.stringify(preApproval.mandatoryAngles) === JSON.stringify(["security"]) && preApproval.requireCi === true
+        && JSON.stringify(preApproval.mandatoryAngles) === JSON.stringify(["security"])
+        && JSON.stringify(preApproval.blockCleanOnFindingSeverities) === JSON.stringify(["high"])
+        && preApproval.requireCi === true
         ? [] : ["pre-approval gate: expected only mandatory security with requireCi: true"]),
       ...(resolveFanoutMaxConcurrent(loaded.config) === 1
         ? [] : ["fan-out: expected maxConcurrent: 1"]),
@@ -522,8 +526,8 @@ export async function auditPi({
     /fanOut:\s*1/u,
     /maxFanoutReviewers:\s*1/u,
     /fanout:\s*\n\s*maxConcurrent:\s*1/u,
-    /draft:[\s\S]*?blockCleanOnFindingSeverities:\s*\n\s*- must-fix/u,
-    /preApproval:[\s\S]*?blockCleanOnFindingSeverities:\s*\n\s*- must-fix/u,
+    /draft:[\s\S]*?blockCleanOnFindingSeverities:\s*\n\s*- high/u,
+    /preApproval:[\s\S]*?blockCleanOnFindingSeverities:\s*\n\s*- high/u,
     /maxParallel:\s*1/u,
     /reDispatchMaxRetries:\s*0/u,
   ];
