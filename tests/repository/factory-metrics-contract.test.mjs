@@ -12,6 +12,11 @@ import {
   aggregateMetricRecords,
   auditMetricsDirectory,
   metricTemplate,
+  projectPublicMetricRecord,
+  renderPublicMetricComment,
+  parsePublicMetricComment,
+  collectPublicMetricRecords,
+  publishPublicMetricComment,
   runCli,
   validateMetricRecord,
   writeMetricRecord,
@@ -119,6 +124,75 @@ test("generated templates cannot turn unknown measurements into zero", () => {
     toolCalls: null,
     externalReviewRequired: false,
   });
+});
+
+test("public metrics projection is allow-listed, redacted, canonical, and rejects stale evidence", () => {
+  const nowMs = Date.parse("2026-08-28T00:32:00.000Z");
+  const payload = projectPublicMetricRecord(record(), { nowMs });
+  assert.deepEqual(Object.keys(payload), [
+    "schemaVersion", "repository", "issue", "pr", "headSha", "recordedAt", "phases", "validations", "review", "tokens", "attempts", "ci", "worktree", "routing",
+  ]);
+  assert.deepEqual(payload.tokens, { input: 100, output: 20, cacheRead: 10, cacheWrite: 0 });
+  const unavailable = projectPublicMetricRecord(record({
+    review: { sessions: null, turns: null, toolCalls: null, externalReviewRequired: false },
+    tokens: null,
+  }), { nowMs });
+  assert.deepEqual(unavailable.review, { sessions: null, turns: null, toolCalls: null, externalReviewRequired: false });
+  assert.equal(unavailable.tokens, null);
+  const comment = renderPublicMetricComment(record(), { nowMs });
+  assert.match(comment, /## Software Factory metrics/);
+  assert.match(comment, /100 input, 20 output, 10 cache-read/);
+  assert.match(comment, /Peak worktree\/target: 2\.0 KiB \/ 1\.0 KiB/);
+  assert.equal((comment.match(/oxid-factory-metrics:v1/g) ?? []).length, 1);
+  assert.deepEqual(parsePublicMetricComment(comment, { nowMs }), payload);
+  assert.throws(() => parsePublicMetricComment(`${comment}\n<!-- oxid-factory-metrics:v1 {} -->`, { nowMs }), /duplicate markers/);
+  assert.throws(() => parsePublicMetricComment(`<!-- oxid-factory-metrics:v1 ${"x".repeat(64 * 1024)} -->`, { nowMs }), /oversized/);
+  const secret = record();
+  secret.routing.areas = ["ghp_abcdefghijklmnopqrstuvwxyz"];
+  assert.throws(() => projectPublicMetricRecord(secret, { nowMs }), /secret/);
+  assert.throws(() => projectPublicMetricRecord(record(), { nowMs: nowMs + 25 * 60 * 60_000 }), /stale/);
+});
+
+test("public collection deduplicates read-only evidence and fails closed on ambiguity", () => {
+  const nowMs = Date.parse("2026-08-28T00:32:00.000Z");
+  const body = renderPublicMetricComment(record(), { nowMs });
+  const trusted = { body, user: { login: "oxid-bot" } };
+  const forged = { body, user: { login: "lookalike" } };
+  const options = { issue: 167, pr: 170, headSha: HEAD, ownerLogin: "oxid-bot", nowMs };
+  assert.deepEqual(collectPublicMetricRecords([forged, trusted], options), [projectPublicMetricRecord(record(), { nowMs })]);
+  assert.deepEqual(collectPublicMetricRecords([trusted], { ...options, pr: 171 }), []);
+  assert.throws(() => collectPublicMetricRecords([trusted, trusted], options), /ambiguous/);
+});
+
+test("public publication is PR-first, issue-fallback, exact-head idempotent, and nonblocking", async () => {
+  const nowMs = Date.parse("2026-08-28T00:32:00.000Z");
+  const calls = [];
+  const transport = {
+    async listComments(workItem) { calls.push(["list", workItem]); return []; },
+    async createComment(workItem, body) { calls.push(["create", workItem, body]); },
+    async updateComment(id, body) { calls.push(["update", id, body]); },
+  };
+  const created = await publishPublicMetricComment({ record: record(), issue: 167, ownerLogin: "oxid-bot", nowMs, ...transport });
+  assert.deepEqual(created.action, "created");
+  assert.equal(calls[0][1], 170);
+  const sameHead = { id: 9, user: { login: "oxid-bot" }, body: calls[1][2] };
+  const updated = await publishPublicMetricComment({ record: record(), issue: 167, ownerLogin: "oxid-bot", nowMs, ...transport, listComments: async () => [sameHead] });
+  assert.equal(updated.action, "updated");
+  const next = record({ headSha: "b".repeat(40) });
+  const newHead = await publishPublicMetricComment({ record: next, issue: 167, ownerLogin: "oxid-bot", nowMs, ...transport, listComments: async () => [sameHead] });
+  assert.equal(newHead.action, "updated");
+  const fallback = await publishPublicMetricComment({ record: record({ pr: null }), issue: 167, ownerLogin: "oxid-bot", nowMs, ...transport });
+  assert.equal(fallback.workItem, 167);
+  const failed = await publishPublicMetricComment({ record: record(), issue: 167, ownerLogin: "oxid-bot", nowMs, ...transport, createComment: async () => { throw new Error("offline"); } });
+  assert.deepEqual(failed, { ok: false, workItem: 170, error: "offline" });
+  let mutated = false;
+  const malformed = await publishPublicMetricComment({
+    record: record(), issue: 167, ownerLogin: "oxid-bot", nowMs, ...transport,
+    listComments: async () => null,
+    createComment: async () => { mutated = true; },
+  });
+  assert.equal(malformed.ok, false);
+  assert.equal(mutated, false);
 });
 
 test("records are written atomically with private mode and exact-head binding", async () => {

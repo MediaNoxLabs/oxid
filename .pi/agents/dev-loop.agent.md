@@ -90,8 +90,13 @@ One parent invocation MUST dispatch this agent exactly once and return after
 its terminal checkpoint. The parent MUST NOT automatically resume or replace
 the child when it reports incomplete work, opens a PR, or reaches hosted CI.
 The external supervisor owns every explicit retry, CI watch, review triage,
-merge, and worktree closeout. A follow-up invocation is a new measured decision,
-not an internal continuation of the original budget.
+merge, and worktree closeout. At the terminal checkpoint, every Pi worker MUST
+report only exact local counters it owns (sessions, turns, tool calls, and
+non-overlapping token buckets when exposed); it MUST report unavailable values
+as unavailable and never infer them. The persistent main/supervisor alone
+aggregates CI, elapsed duration, attempts, and disk facts, then publishes the
+validated exact-head metrics receipt. A follow-up invocation is a new measured
+decision, not an internal continuation of the original budget.
 
 Oxid is a Rust/Cargo workspace without a root `package.json`. Validation MUST
 use the handoff envelope's target plan and its sanctioned Cargo, Just, Nix, or
