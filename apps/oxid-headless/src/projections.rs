@@ -267,6 +267,8 @@ pub(super) fn transfer_preview_value(preview: &WalletTransferPreviewView) -> Val
         "state": preview.state,
         "proofRequired": preview.proof_required,
         "submissionReady": preview.submission_ready,
+        "reviewTitle": preview.review_title,
+        "reviewSummary": preview.review_summary,
         "custodyMode": "development_only"
     })
 }

@@ -130,6 +130,7 @@ ADR status and delivery state answer different questions:
 | [0104](0104-regrow-incoming-adapters-behind-capability-facades.md) Regrow oversized adapters behind capability façades | Accepted | §§3, 6, 13–14, 18–19; issue #145 | Headless, desktop Dioxus, and composition are decomposed behind checked façades; Midnight remains the final ordered root, and no crate extraction is authorized |
 | [0105](0105-recover-owner-midnight-roots-for-preprod-observation.md) Recover owner Midnight roots for PreProd observation | Accepted | §§3–8, 12–13, 16–18, 21; ADR-0071/0074/0090/0098; issue #244 | Opt-in mobile recovery installs one owner-entered root into empty native custody, binds it to signed/genesis-authenticated PreProd, derives account 0/address 0, and exposes balance sync without write controls |
 | [0106](0106-bind-wallet-profiles-to-one-network.md) Bind each wallet profile to one concrete network | Proposed | §§1, 3–8, 12–13, 16–18, 21; issues #335/#337/#340 | Defines the proposed `network profile -> wallet -> typed assets` aggregate, no global asset store, route/genesis checks, atomic quick switching, and an explicit migration from multi-network associations |
+| [0107](0107-bind-prepared-transfer-review-to-authorization.md) Bind prepared transfer review to authorization | Accepted | issue #108 | Transfer authorization consumes a single-use challenge bound by unambiguous encoding to every rendered prepared-preview semantic field; caller prose cannot reach the application boundary |
 
 ## Current boundaries
 

@@ -700,6 +700,13 @@ impl HeadlessWallet {
                 ));
             }
         };
+        // `oxid.headless.v1` retains the legacy confirmation object for wire
+        // compatibility. Validate its bounded shape here, then deliberately
+        // discard caller-authored prose before the application boundary.
+        let confirmation: SensitiveOperationConfirmation = params.confirmation.into();
+        if let Err(error) = validate_confirmation(&confirmation) {
+            return Dispatch::continue_with(sensitive_error(request.id, error));
+        }
         let profile_id = match self.active_profile_id(request.id.clone()) {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
@@ -711,7 +718,6 @@ impl HeadlessWallet {
                 profile_id,
                 draft_id: params.draft_id,
                 authorization_challenge: params.authorization_challenge,
-                confirmation: params.confirmation.into(),
             }) {
             Ok(preview) => Dispatch::continue_with(Response::success(
                 request.id,
