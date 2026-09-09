@@ -292,9 +292,9 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.doesNotMatch(preApprovalGate, /^      - external-review$/m);
   assert.match(draftGate, /^    requireCi: false$/m);
   assert.match(config, /^  fanOut: 1$/m);
-  assert.match(config, /^  stopOnLowSignal: true$/m);
+  assert.match(config, /^  lowSignal:\n    enabled: true\n    roundThreshold: 1\n    maxComments: 1$/m);
   assert.match(config, /^  maxFanoutReviewers: 1$/m);
-  assert.equal((config.match(/^    blockCleanOnFindingSeverities:\n      - must-fix$/gm) ?? []).length, 2);
+  assert.equal((config.match(/^    blockCleanOnFindingSeverities:\n      - high$/gm) ?? []).length, 2);
   assert.match(config, /^  requireFanoutEvidence: false$/m);
   assert.match(config, /^  requireFanoutProvenance: false$/m);
   const scan = await read(".github/workflows/scan.yml");
@@ -322,7 +322,8 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(config, /maxCopilotRounds: 0/);
   assert.match(config, /^  stopAt: \[\]$/m);
   assert.match(config, /^  humanMergeOnly: false$/m);
-  assert.match(config, /^    mandatoryAngles: \[\]$/m);
+  assert.equal((config.match(/^        mandatory: true$/gm) ?? []).length, 2);
+  assert.doesNotMatch(config, /^personas:/m);
   assert.match(config, /^  requireRetrospective: false$/m);
   assert.match(config, /^  maxParallel: 1$/m);
   assert.doesNotMatch(config, /humanHandoff|candidatesFrom:\s*\n\s*- codeowners/);
