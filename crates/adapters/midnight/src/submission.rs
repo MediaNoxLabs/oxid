@@ -141,6 +141,35 @@ impl MidnightStandaloneConfig {
         })
     }
 
+    /// Builds a deployment configuration before protected custody derives an
+    /// account. It intentionally retains no configuration receive address.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_without_unshielded_address(
+        network_id: impl Into<String>,
+        indexer_websocket_url: impl AsRef<str>,
+        indexer_http_url: impl AsRef<str>,
+        node_websocket_url: impl AsRef<str>,
+        proof_server_url: impl AsRef<str>,
+    ) -> Result<Self, MidnightStandaloneConfigError> {
+        let indexer =
+            MidnightIndexerConfig::without_unshielded_address(network_id, indexer_websocket_url)
+                .map_err(MidnightStandaloneConfigError::Indexer)?;
+        let indexer_http_url = validate_http_url(indexer_http_url.as_ref(), false)
+            .map_err(|_| MidnightStandaloneConfigError::InvalidIndexerHttpEndpoint)?;
+        let indexer = indexer.with_http_url(indexer_http_url.clone());
+        let node_websocket_url =
+            super::indexer::validate_websocket_url(node_websocket_url.as_ref())
+                .map_err(|_| MidnightStandaloneConfigError::InvalidNodeEndpoint)?;
+        let proof_server_url = validate_http_url(proof_server_url.as_ref(), true)
+            .map_err(|_| MidnightStandaloneConfigError::InvalidProofEndpoint)?;
+        Ok(Self {
+            indexer,
+            indexer_http_url,
+            node_websocket_url,
+            proving: MidnightProvingMode::Remote { proof_server_url },
+        })
+    }
+
     /// Builds a standalone configuration that keeps proof witnesses on-device.
     pub fn new_private(
         network_id: impl Into<String>,
@@ -1987,6 +2016,20 @@ mod tests {
             MidnightProvingMode::Remote { proof_server_url }
                 if proof_server_url == "http://127.0.0.1:6300/"
         ));
+    }
+
+    #[test]
+    fn deployment_configuration_needs_no_public_receive_address() {
+        let value = MidnightStandaloneConfig::new_without_unshielded_address(
+            "mainnet",
+            "wss://indexer.example.test/api/v4/graphql/ws",
+            "https://indexer.example.test/api/v4/graphql",
+            "wss://node.example.test",
+            "https://prover.example.test",
+        )
+        .expect("deployment routes are valid");
+
+        assert_eq!(value.indexer().network_id().as_str(), "mainnet");
     }
 
     #[test]
