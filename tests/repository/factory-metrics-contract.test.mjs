@@ -142,6 +142,7 @@ test("public metrics projection is allow-listed, redacted, canonical, and reject
   const comment = renderPublicMetricComment(record(), { nowMs });
   assert.match(comment, /## Software Factory metrics/);
   assert.match(comment, /100 input, 20 output, 10 cache-read/);
+  assert.match(comment, /Peak worktree\/target: 2\.0 KiB \/ 1\.0 KiB/);
   assert.equal((comment.match(/oxid-factory-metrics:v1/g) ?? []).length, 1);
   assert.deepEqual(parsePublicMetricComment(comment, { nowMs }), payload);
   assert.throws(() => parsePublicMetricComment(`${comment}\n<!-- oxid-factory-metrics:v1 {} -->`, { nowMs }), /duplicate markers/);

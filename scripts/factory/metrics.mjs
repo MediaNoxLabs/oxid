@@ -611,7 +611,13 @@ export function renderPublicMetricComment(record, options = {}) {
     const minutes = Math.floor(seconds / 60);
     return minutes === 0 ? `${seconds}s` : `${minutes}m${String(seconds % 60).padStart(2, "0")}s`;
   };
-  const bytes = (value) => value === null ? "unavailable" : `${(value / 1024 ** 3).toFixed(1)} GiB`;
+  const bytes = (value) => {
+    if (value === null) return "unavailable";
+    for (const [unit, scale] of [["GiB", 1024 ** 3], ["MiB", 1024 ** 2], ["KiB", 1024]]) {
+      if (value >= scale) return `${(value / scale).toFixed(1)} ${unit}`;
+    }
+    return `${value} B`;
+  };
   const checkSummary = payload.ci.checks.length === 0
     ? "unavailable"
     : payload.ci.checks.map((check) => `${check.name} ${duration(check.durationMs)}`).join(", ");
