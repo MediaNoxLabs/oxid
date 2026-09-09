@@ -7,11 +7,11 @@ systemPromptMode: append
 inheritProjectContext: true
 user-invocable: false
 timeoutMs: 600000
-turnBudget: {"maxTurns":6,"graceTurns":1}
+toolBudget: {"soft":16,"hard":24,"block":"*"}
 ---
 <!-- SPDX-License-Identifier: MIT -->
-<!-- Derived from dev-loops@0.9.0 agents/refiner.agent.md (Copyright (c) 2026 mfittko). -->
-<!-- Upstream-SHA256: 8563349bbf77d799b8c2db78696124799262ac3ceff8b14784002ccea6daae11; repository deltas are tools, tracked entrypoints, and read-only context rules. -->
+<!-- Derived from dev-loops@1.0.2 agents/refiner.agent.md (Copyright (c) 2026 mfittko). -->
+<!-- Upstream-SHA256: 4ddb1e1bb1d091d9d825e95818829e7565e5429e85cfc1426be5b09d0eae66b1; repository deltas are tools, tracked entrypoints, and read-only context rules. -->
 You are a focused phase-refinement agent. Your job is to strengthen one already-selected phase at a time before implementation begins.
 
 ## Purpose

@@ -105,6 +105,39 @@ record. Validation
 entries use bounded labels such as `repository-contract`, never raw commands
 or output.
 
+## Scrapeable PR and issue delivery receipt
+
+The private v1 record remains authoritative. The supervisor may project a fresh,
+valid record to a deliberately smaller allow-list and publish a human summary
+followed by **exactly one** canonical hidden `oxid-factory-metrics:v1` payload.
+The payload includes exact non-overlapping token buckets when known and excludes
+timestamps other than `recordedAt`; it is
+validated again before it is rendered. It is keyed by repository, issue, and
+exact head SHA. The updater uses the PR's issue-comment thread when a PR is
+known, otherwise the issue thread, and updates its single owned delivery
+comment, including when the exact head changes. Duplicate, malformed, oversized,
+secret-bearing, stale, or ambiguous comment evidence is rejected rather than
+merged or guessed. Collection is read-only and deduplicates only unambiguous
+identities authored by the expected authenticated publisher; lookalike comments
+from other accounts are ignored. Network/comment failures are emitted as visible `ok: false` results
+but do not invalidate already-complete delivery evidence.
+
+```bash
+node scripts/factory/metrics.mjs publish \
+  --record /private/path/outside-the-checkout/metrics.json \
+  --repo MediaNoxLabs/oxid --issue <n> --pr <n>
+
+node scripts/factory/metrics.mjs collect \
+  --repo MediaNoxLabs/oxid --issue <n> --pr <n> --head <exact-sha>
+```
+
+At its terminal checkpoint every Pi worker reports only exact local counters
+that it owns (for example its own sessions, turns, tool calls, and exact
+non-overlapping token buckets); unavailable values remain `null`. The persistent
+main/supervisor alone aggregates CI, elapsed duration, attempts, and disk facts
+and publishes the receipt. It must never infer an unavailable counter from a
+transcript, comment, elapsed time, or another worker's aggregate.
+
 The Quality Steward or periodic supervisor runs this weekly, after a harness
 incident, and before monthly tuning:
 

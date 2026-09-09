@@ -88,6 +88,94 @@ const AREA_PATTERNS = Object.freeze({
 });
 
 const BASIC_ONLY_AREAS = new Set(["docs", "harness", "ci"]);
+const OWNERSHIP_MAP_PATH = "scripts/architecture/capability-facades.json";
+const OWNERSHIP_CRATE_AREAS = new Map([
+  ["oxid-ui-dioxus", "ui"],
+  ["oxid-headless", "headless"],
+]);
+const OWNERSHIP_MAP_KEYS = ["crates", "schemaVersion"];
+const OWNERSHIP_CRATE_KEYS = [
+  "capabilityOwners",
+  "exclusions",
+  "facadeFiles",
+  "facadeMaximumPhysicalLines",
+  "facadeMaximumPhysicalLinesByPath",
+  "name",
+  "sourceRoot",
+  "temporaryExceptions",
+];
+
+function hasExactKeys(value, keys) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(keys);
+}
+
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.length > 0;
+}
+
+function hasUniqueStrings(values) {
+  return values.every(isNonEmptyString) && new Set(values).size === values.length;
+}
+
+function hasValidOwnershipEntries(crate) {
+  const ownerNames = [];
+  for (const owner of crate.capabilityOwners) {
+    if (!hasExactKeys(owner, ["modulePathPrefixes", "name"])
+      || !isNonEmptyString(owner.name) || !Array.isArray(owner.modulePathPrefixes)
+      || owner.modulePathPrefixes.length === 0 || !hasUniqueStrings(owner.modulePathPrefixes)) return false;
+    ownerNames.push(owner.name);
+  }
+  if (!hasUniqueStrings(ownerNames)) return false;
+
+  const exclusionPaths = [];
+  for (const exclusion of crate.exclusions) {
+    if (!hasExactKeys(exclusion, ["classification", "path"])
+      || !["fixture", "generated"].includes(exclusion.classification)
+      || !isNonEmptyString(exclusion.path)) return false;
+    exclusionPaths.push(exclusion.path);
+  }
+  if (!hasUniqueStrings(exclusionPaths)) return false;
+
+  const exceptionPaths = [];
+  for (const exception of crate.temporaryExceptions) {
+    if (!hasExactKeys(exception, ["expiresOn", "extraLineCeiling", "issue", "paths", "reason"])
+      || !Array.isArray(exception.paths) || exception.paths.length === 0
+      || !hasUniqueStrings(exception.paths)
+      || !Number.isSafeInteger(exception.extraLineCeiling) || exception.extraLineCeiling <= 0
+      || !isNonEmptyString(exception.issue) || !isNonEmptyString(exception.reason)
+      || typeof exception.expiresOn !== "string"
+      || !/^\d{4}-\d{2}-\d{2}$/u.test(exception.expiresOn)) return false;
+    exceptionPaths.push(...exception.paths);
+  }
+  return hasUniqueStrings(exceptionPaths);
+}
+
+function isOwnershipMap(document) {
+  if (!hasExactKeys(document, OWNERSHIP_MAP_KEYS) || document.schemaVersion !== 1
+    || !Array.isArray(document.crates) || document.crates.length === 0) return false;
+
+  const names = new Set();
+  const sourceRoots = new Set();
+  return document.crates.every((crate) => {
+    if (!hasExactKeys(crate, OWNERSHIP_CRATE_KEYS) || !isNonEmptyString(crate.name)
+      || names.has(crate.name) || !isNonEmptyString(crate.sourceRoot) || sourceRoots.has(crate.sourceRoot)
+      || !Array.isArray(crate.facadeFiles) || crate.facadeFiles.length === 0
+      || !hasUniqueStrings(crate.facadeFiles)
+      || !Number.isSafeInteger(crate.facadeMaximumPhysicalLines) || crate.facadeMaximumPhysicalLines < 0
+      || !hasExactKeys(crate.facadeMaximumPhysicalLinesByPath, crate.facadeFiles.slice().sort())
+      || !Object.values(crate.facadeMaximumPhysicalLinesByPath).every(
+        (limit) => Number.isSafeInteger(limit) && limit >= 0,
+      )
+      || Object.values(crate.facadeMaximumPhysicalLinesByPath).reduce((sum, limit) => sum + limit, 0)
+        !== crate.facadeMaximumPhysicalLines
+      || !Array.isArray(crate.capabilityOwners) || !Array.isArray(crate.exclusions)
+      || !Array.isArray(crate.temporaryExceptions) || !hasValidOwnershipEntries(crate)) return false;
+    names.add(crate.name);
+    sourceRoots.add(crate.sourceRoot);
+    return true;
+  });
+}
 
 function normalizePath(candidate) {
   return candidate.replaceAll("\\", "/").replace(/^\.\//, "");
@@ -97,11 +185,15 @@ function matchesAny(candidate, patterns) {
   return patterns.some((pattern) => pattern.test(candidate));
 }
 
-export function classifyAreas(paths) {
+export function classifyAreas(paths, { ownershipAreas } = {}) {
   const changed = [...new Set(paths.map(normalizePath).filter(Boolean))];
   const areas = new Set();
 
   for (const candidate of changed) {
+    if (candidate === OWNERSHIP_MAP_PATH && ownershipAreas !== undefined) {
+      ownershipAreas.forEach((area) => areas.add(area));
+      continue;
+    }
     const matches = Object.entries(AREA_PATTERNS)
       .filter(([, patterns]) => matchesAny(candidate, patterns))
       .map(([area]) => area);
@@ -127,6 +219,37 @@ export function classifyAreas(paths) {
   }
 
   return [...areas].sort();
+}
+
+export function classifyOwnershipMapChanges(beforeText, afterText) {
+  let before;
+  let after;
+  try {
+    before = JSON.parse(beforeText);
+    after = JSON.parse(afterText);
+  } catch {
+    return ["core"];
+  }
+
+  const crateMap = (document) => {
+    if (!isOwnershipMap(document)) return null;
+    const crates = new Map();
+    for (const crate of document.crates) {
+      if (!crate || typeof crate.name !== "string" || crates.has(crate.name)) return null;
+      crates.set(crate.name, JSON.stringify(crate));
+    }
+    return crates;
+  };
+  const beforeCrates = crateMap(before);
+  const afterCrates = crateMap(after);
+  if (!beforeCrates || !afterCrates) return ["core"];
+
+  const changedCrates = new Set([...beforeCrates.keys(), ...afterCrates.keys()].filter(
+    (name) => beforeCrates.get(name) !== afterCrates.get(name),
+  ));
+  if (changedCrates.size === 0) return beforeText === afterText ? [] : ["core"];
+
+  return [...new Set([...changedCrates].map((name) => OWNERSHIP_CRATE_AREAS.get(name) ?? "core"))].sort();
 }
 
 function featureTargets(areas) {
@@ -161,6 +284,7 @@ export function makeTargetPlan(paths, {
   profile = Profile.FEATURE,
   deliveryProfile = DeliveryProfile.PRODUCTION_READY,
   extraTargets = [],
+  ownershipAreas,
 } = {}) {
   if (!Object.values(Profile).includes(profile)) throw new Error(`unknown CI profile: ${profile}`);
   if (!Object.values(DeliveryProfile).includes(deliveryProfile)) {
@@ -172,7 +296,7 @@ export function makeTargetPlan(paths, {
 
   const normalizedPaths = [...new Set(paths.map(normalizePath).filter(Boolean))];
   const diffAvailable = normalizedPaths.length > 0;
-  const areas = diffAvailable ? classifyAreas(normalizedPaths) : ["unknown"];
+  const areas = diffAvailable ? classifyAreas(normalizedPaths, { ownershipAreas }) : ["unknown"];
   const targets = deliveryProfile === DeliveryProfile.PROTOTYPE
     ? new Set([HostedTarget.BASIC])
     : !diffAvailable || profile !== Profile.FEATURE
@@ -222,6 +346,20 @@ function changedPaths(base, head, cwd) {
   }
 }
 
+function ownershipMapAreas(paths, base, head, cwd) {
+  if (!paths.includes(OWNERSHIP_MAP_PATH)) return undefined;
+  try {
+    const readMap = (ref) => execFileSync("git", ["show", `${ref}:${OWNERSHIP_MAP_PATH}`], {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    return classifyOwnershipMapChanges(readMap(base), readMap(head));
+  } catch {
+    return ["core"];
+  }
+}
+
 export function resolveProfile(requested, eventName, baseBranch = "", refName = "", headBranch = "") {
   if (requested && requested !== "auto") return requested;
   if (eventName === "pull_request") {
@@ -261,11 +399,14 @@ export function run(argv = process.argv.slice(2), { cwd = process.cwd(), stdout 
     readOption(argv, "--head-branch"),
   );
   const deliveryProfile = readOption(argv, "--delivery-profile") ?? DeliveryProfile.PRODUCTION_READY;
-  const paths = changedPaths(readOption(argv, "--base"), readOption(argv, "--head"), cwd);
+  const base = readOption(argv, "--base");
+  const head = readOption(argv, "--head");
+  const paths = changedPaths(base, head, cwd);
   const plan = makeTargetPlan(paths ?? [], {
     profile,
     deliveryProfile,
     extraTargets: parseTargets(readOption(argv, "--targets")),
+    ownershipAreas: paths ? ownershipMapAreas(paths, base, head, cwd) : undefined,
   });
   const format = readOption(argv, "--format") ?? "summary";
 

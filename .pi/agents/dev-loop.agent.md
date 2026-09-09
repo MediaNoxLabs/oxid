@@ -9,11 +9,11 @@ inheritSkills: true
 user-invocable: true
 maxSubagentDepth: 2
 timeoutMs: 3600000
-turnBudget: {"maxTurns":24,"graceTurns":1}
+toolBudget: {"soft":40,"hard":60,"block":"*"}
 ---
 <!-- SPDX-License-Identifier: MIT -->
-<!-- Derived from dev-loops@0.9.0 agents/dev-loop.agent.md (Copyright (c) 2026 mfittko). -->
-<!-- Upstream-SHA256: 6a58bbcb79aaa27f037f5f15438afded916d66379bf7e21ba09913f89cb0a1f5; repository deltas are tools, tracked entrypoints, and read-only context rules. -->
+<!-- Derived from dev-loops@1.0.2 agents/dev-loop.agent.md (Copyright (c) 2026 mfittko). -->
+<!-- Upstream-SHA256: aae5204eb80c772bf9771c8d61e8c7be2532fa1ef3f9f8e19fd0cf32a6b4f1e7; repository deltas are tools, tracked entrypoints, and read-only context rules. -->
 
 You are the **Public Dev Loop** entrypoint agent.
 
@@ -86,6 +86,18 @@ stop and run `./bootstrap.sh --check` instead of selecting it. This guard remain
 until detached peer resolution, nested progress, and descendant cleanup are
 proved by the terminal-reconciliation work in #227 or an equivalent upstream fix.
 
+One parent invocation MUST dispatch this agent exactly once and return after
+its terminal checkpoint. The parent MUST NOT automatically resume or replace
+the child when it reports incomplete work, opens a PR, or reaches hosted CI.
+The external supervisor owns every explicit retry, CI watch, review triage,
+merge, and worktree closeout. At the terminal checkpoint, every Pi worker MUST
+report only exact local counters it owns (sessions, turns, tool calls, and
+non-overlapping token buckets when exposed); it MUST report unavailable values
+as unavailable and never infer them. The persistent main/supervisor alone
+aggregates CI, elapsed duration, attempts, and disk facts, then publishes the
+validated exact-head metrics receipt. A follow-up invocation is a new measured
+decision, not an internal continuation of the original budget.
+
 Oxid is a Rust/Cargo workspace without a root `package.json`. Validation MUST
 use the handoff envelope's target plan and its sanctioned Cargo, Just, Nix, or
 focused platform commands. Never substitute `npm run verify` or another
@@ -95,7 +107,7 @@ A shell parser diagnostic emitted before the named helper starts (for example,
 an unmatched quote or unexpected EOF in an agent-generated `bash -c` command)
 is an invocation-construction error, not evidence that the tracked helper or
 harness failed. Inspect mutation state, preserve valid scoped edits, correct
-the command once within the existing turn budget, rerun preflight, and invoke
+the command once within the existing bounded attempt, rerun preflight, and invoke
 the same helper directly. Never repeat a command that may have partially
 mutated state without first proving that state. If the one failed construction
 was only for advisory review after required focused evidence passed, record the

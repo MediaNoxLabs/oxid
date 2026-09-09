@@ -5,18 +5,26 @@ import { execFileSync } from "node:child_process";
 import { accessSync, constants as fsConstants, existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { resolvePinnedCoreModulePath } from "../dev-loops.mjs";
+import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
 import { checkUserPolicy } from "./pi-policy.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const EXPECTED_PACKAGES = new Map([
-  ["dev-loops", "0.9.0"],
-  ["pi-subagents", "0.42.1"],
+  ["dev-loops", "1.0.2"],
+  ["pi-subagents", "0.66.0"],
+  ["@playwright/test", "1.60.0"],
+  ["@axe-core/playwright", "4.10.0"],
   ["typebox", "1.3.9"],
   ["pi-taskflow", "0.2.10"],
   ["@input-output-hk/agent-review-pi", "0.6.0"],
 ]);
+const DEV_LOOPS_RESOURCE_POLICY = Object.freeze({
+  source: "npm:dev-loops@1.0.2",
+  extensions: [],
+});
 const TASKFLOW_SUPPRESSION = Object.freeze({
   source: "npm:pi-taskflow@0.2.10",
   extensions: [],
@@ -43,6 +51,56 @@ function getAtPath(object, dotted) {
 
 function check(id, status, summary, details = undefined, category = "configuration") {
   return { id, status, category, summary, ...(details === undefined ? {} : { details }) };
+}
+
+async function inspectDevLoopsLayer(repoRoot) {
+  let resolved;
+  try {
+    resolved = await resolveDevLoopsPackageRoot({ cwd: repoRoot });
+  } catch (error) {
+    return check(
+      "dev-loop-effective-config",
+      "warn",
+      "Effective .devloops validation awaits the exact installed Pi package",
+      [error.message],
+      "runtime",
+    );
+  }
+  try {
+    const handoffModulePath = await resolvePinnedCoreModulePath(resolved.packageRoot);
+    const configModulePath = path.resolve(path.dirname(handoffModulePath), "..", "config", "config.mjs");
+    const { loadDevLoopConfig, resolveFanoutMaxConcurrent, resolveGateConfig, resolveRefinement } = await import(
+      pathToFileURL(configModulePath).href
+    );
+    const loaded = await loadDevLoopConfig({ repoRoot });
+    const refinement = resolveRefinement(loaded.config);
+    const draft = resolveGateConfig(loaded.config, "draft");
+    const preApproval = resolveGateConfig(loaded.config, "preApproval");
+    const problems = [
+      ...loaded.errors.map((error) => `${error.layer}: ${error.message}`),
+      ...(loaded.config.strategy === "local-first" ? [] : [`strategy: expected local-first, found ${JSON.stringify(loaded.config.strategy)}`]),
+      ...(refinement.fanOut === 1 && refinement.maxCopilotRounds === 0
+        && refinement.stopOnLowSignal === true && refinement.lowSignalRoundThreshold === 1 && refinement.lowSignalMaxComments === 1
+        ? [] : ["refinement: expected bounded fan-out, disabled Copilot, and 1/1 enabled low-signal policy"]),
+      ...(JSON.stringify(draft.angles) === JSON.stringify(["correctness"])
+        && JSON.stringify(draft.mandatoryAngles) === JSON.stringify(["correctness"])
+        && JSON.stringify(draft.blockCleanOnFindingSeverities) === JSON.stringify(["high"])
+        && draft.requireCi === false
+        ? [] : ["draft gate: expected only mandatory correctness with requireCi: false"]),
+      ...(JSON.stringify(preApproval.angles) === JSON.stringify(["security"])
+        && JSON.stringify(preApproval.mandatoryAngles) === JSON.stringify(["security"])
+        && JSON.stringify(preApproval.blockCleanOnFindingSeverities) === JSON.stringify(["high"])
+        && preApproval.requireCi === true
+        ? [] : ["pre-approval gate: expected only mandatory security with requireCi: true"]),
+      ...(resolveFanoutMaxConcurrent(loaded.config) === 1
+        ? [] : ["fan-out: expected maxConcurrent: 1"]),
+    ];
+    return check("dev-loop-effective-config", problems.length ? "fail" : "pass",
+      problems.length ? "Repository .devloops was rejected or its effective bounded gate policy drifted" : "Repository .devloops loaded and resolves to the bounded gate policy",
+      problems.length ? problems : undefined);
+  } catch (error) {
+    return check("dev-loop-effective-config", "fail", "Repository .devloops could not be loaded through the pinned config loader", [error.message]);
+  }
 }
 
 function run(command, args, options = {}) {
@@ -113,15 +171,18 @@ function validateAgentBudget(file, fields) {
     problems.push(`${file}: timeoutMs must be 60000..3600000`);
   }
   try {
-    const budget = JSON.parse(fields.turnBudget ?? "null");
-    if (!budget || !Number.isInteger(budget.maxTurns) || budget.maxTurns < 1 || budget.maxTurns > 32) {
-      problems.push(`${file}: turnBudget.maxTurns must be 1..32`);
+    const budget = JSON.parse(fields.toolBudget ?? "null");
+    if (!budget || !Number.isInteger(budget.soft) || budget.soft < 1 || budget.soft > 64) {
+      problems.push(`${file}: toolBudget.soft must be 1..64`);
     }
-    if (!Number.isInteger(budget?.graceTurns) || budget.graceTurns < 0 || budget.graceTurns > 2) {
-      problems.push(`${file}: turnBudget.graceTurns must be 0..2`);
+    if (!Number.isInteger(budget?.hard) || budget.hard < budget.soft || budget.hard > 96) {
+      problems.push(`${file}: toolBudget.hard must be >= soft and <= 96`);
+    }
+    if (budget?.block !== "*") {
+      problems.push(`${file}: toolBudget.block must be \"*\"`);
     }
   } catch {
-    problems.push(`${file}: turnBudget must be valid JSON`);
+    problems.push(`${file}: toolBudget must be valid JSON`);
   }
   if (file === "dev-loop.agent.md" && Number(fields.maxSubagentDepth) !== 2) {
     problems.push(`${file}: maxSubagentDepth must be 2`);
@@ -363,6 +424,10 @@ export async function auditPi({
   for (const [name, expected] of EXPECTED_PACKAGES) {
     if (configuredPackages.get(name)?.version !== expected) packageProblems.push(`${name}: expected exact pin ${expected}`);
   }
+  const devLoopsEntry = configuredPackages.get("dev-loops")?.entry;
+  if (JSON.stringify(devLoopsEntry) !== JSON.stringify(DEV_LOOPS_RESOURCE_POLICY)) {
+    packageProblems.push("dev-loops: package extension must be suppressed so session_start cannot overwrite tracked project agents");
+  }
   const taskflowEntry = configuredPackages.get("pi-taskflow")?.entry;
   if (JSON.stringify(taskflowEntry) !== JSON.stringify(TASKFLOW_SUPPRESSION)) {
     packageProblems.push("pi-taskflow: inherited extension and skills must be fully suppressed until #301 and #196 pass");
@@ -402,7 +467,7 @@ export async function auditPi({
     }
   }
   checks.push(check("tracked-agent-budgets", agentProblems.length ? "fail" : "pass",
-    agentProblems.length ? "One or more tracked agents are unbounded" : "Every tracked agent has a bounded runtime and turn budget",
+    agentProblems.length ? "One or more tracked agents are unbounded" : "Every tracked agent has a bounded runtime and tool budget",
     agentProblems.length ? agentProblems : undefined));
 
   const helperProblems = [];
@@ -425,7 +490,7 @@ export async function auditPi({
 
   const effectiveUserPolicy = userPolicyResult ?? await checkUserPolicy({ env });
   checks.push(check("user-subagent-policy", effectiveUserPolicy.ok ? "pass" : "fail",
-    effectiveUserPolicy.ok ? "Effective pi-subagents concurrency, spawn, turn, token, and artifact policy is aligned" : "Effective user pi-subagents policy is not aligned",
+    effectiveUserPolicy.ok ? "Effective pi-subagents concurrency, spawn, tool, token, and artifact policy is aligned" : "Effective user pi-subagents policy is not aligned",
     effectiveUserPolicy.ok ? { configPath: effectiveUserPolicy.configPath } : {
       configPath: effectiveUserPolicy.configPath,
       mismatches: effectiveUserPolicy.mismatches.map((item) => item.field),
@@ -435,8 +500,9 @@ export async function auditPi({
   const devloopBounds = [
     /fanOut:\s*1/u,
     /maxFanoutReviewers:\s*1/u,
-    /draft:[\s\S]*?blockCleanOnFindingSeverities:\s*\n\s*- must-fix/u,
-    /preApproval:[\s\S]*?blockCleanOnFindingSeverities:\s*\n\s*- must-fix/u,
+    /fanout:\s*\n\s*maxConcurrent:\s*1/u,
+    /draft:[\s\S]*?blockCleanOnFindingSeverities:\s*\n\s*- high/u,
+    /preApproval:[\s\S]*?blockCleanOnFindingSeverities:\s*\n\s*- high/u,
     /maxParallel:\s*1/u,
     /reDispatchMaxRetries:\s*0/u,
   ];
@@ -444,6 +510,7 @@ export async function auditPi({
     devloopBounds.every((pattern) => pattern.test(devloops))
       ? "Dev-loop review, queue, retry, and develop merge concurrency are bounded"
       : "One or more dev-loop constitutional bounds are missing"));
+  checks.push(await inspectDevLoopsLayer(repoRoot));
 
   checks.push(await inspectDeliveryProfiles(repoRoot));
 

@@ -38,14 +38,14 @@ target and the child is retargeted there after its parent lands. `main`, another
 milestone, or an arbitrary branch can never be used as a stack base.
 
 The public wrapper accepts only the global option forms supported by the exact
-`dev-loops@0.9.0` pin (`--repo`, `--cwd`, `--config`, `--jq`, `--silent`/`-s`,
+`dev-loops@1.0.2` pin (`--repo`, `--cwd`, `--config`, `--jq`, `--silent`/`-s`,
 and `--json`) before the route. Unknown leading options fail closed. A pin
 upgrade must update the shared parser and contract tests before new option
 shapes are accepted. These wrappers do not rewrite raw `gh` or direct package
 scripts; repository rules and contributor policy remain authoritative there.
 
 The repository selects `subagents.projectRootResolution: "git-root"` for the
-exact `pi-subagents@0.42.1` pin and uses tracked
+exact `pi-subagents@0.66.0` pin and uses tracked
 `.pi/agents/*.agent.md` project shadows because a custom agent's frontmatter
 owns its tool list. A pinned-runtime smoke test confirms project precedence
 when the local Pi installation is present; public CI tests the repository
@@ -134,7 +134,7 @@ checkout topology fails before an envelope is emitted.
 
 A canonical absent target derived from the main checkout remains a prospective
 path under the common root. `loop watch-ci` is
-delegated unchanged to `dev-loops@0.9.0`; this repository does not intercept CI
+delegated unchanged to `dev-loops@1.0.2`; this repository does not intercept CI
 selection.
 Obsolete-attempt selection is an upstream/pin residual because a local watcher
 cannot safely duplicate expected-check rollup, pagination, suite/attempt
@@ -300,17 +300,17 @@ continues to fail closed on CLI or account incompatibility.
 | --- | --- | --- |
 | Effective repository agent tool allowlists match installed Pi tools before model execution | Repository pin contract enforced; live-runtime mismatch advisory | The tracked pre-flight wrapper fails closed against exact pinned package/manifests and selected `dev-loop` tools. `.pi/extensions/dev-loop-preflight.ts` reports live `getAllTools()`/`getActiveTools()` mismatch but Pi 0.84 cannot hard-cancel these hooks. |
 | Project-local package discovery works at root and linked worktrees | Landed in this slice | The bounded tracked resolver and wrappers above |
-| Timeout, deadline, `usageBudget`, turn, tool, and control budgets survive resume exactly | Pin-upgrade / upstream-owned | Closed/completed [pi-subagents #985](https://github.com/nicobailon/pi-subagents/issues/985) documents adjacent persisted turn-budget recovery and was fixed by merged [PR #987](https://github.com/nicobailon/pi-subagents/pull/987). The pinned [v0.42.1 async-resume source](https://github.com/nicobailon/pi-subagents/blob/v0.42.1/src/runs/background/async-resume.ts) remains repository authority pending a separately tested upgrade. |
+| Timeout, deadline, `usageBudget`, tool, and control budgets survive resume exactly | Package upgraded / repository smoke green | Issue #195 upgrades to 0.66.0. That release removes the historical turn-budget launch field, so Oxid uses one child per session/run plus fail-closed tool and wall-clock budgets. The former [v0.42.1 async-resume source](https://github.com/nicobailon/pi-subagents/blob/v0.42.1/src/runs/background/async-resume.ts) remains historical evidence, and closed [#985](https://github.com/nicobailon/pi-subagents/issues/985) documents the prior recovery defect. |
 | Provider payload compaction/checkpointing and streamed-mutation retry idempotency | Deferred / **upstream-only** | No exact upstream issue was established during this bounded slice. File a minimal upstream reproduction before claiming a fix; no repository wrapper can safely reconstruct provider stream state. |
 | The issue's explicit milestone or `develop` target is the worktree, PR, diff, and evidence base | Landed in this slice | `scripts/loop/ensure-worktree.mjs`, `scripts/dev-loops.mjs`, and the Claude runner |
 | Unavailable Copilot review has a bounded independent current-head Claude route | Landed, policy right-sized by issue #161 | Hosted Copilot stays disabled; the tracked Claude runner is manually invoked for high-risk work, an owner request, or a disputed finding rather than every ordinary gate. |
 | Valid nested reviewer output cannot be overturned by a late unavailable-tool diagnostic | Deferred / upstream-owned | Closed/completed [pi-subagents #1434](https://github.com/nicobailon/pi-subagents/issues/1434) documents the adjacent final-return serialization failure and was fixed by merged [PR #1448](https://github.com/nicobailon/pi-subagents/pull/1448). The late-diagnostic case still needs its own minimal reproduction and a separately tested repository pin upgrade. |
 | Supported GitHub CLI behavior is deterministic | Landed in this slice | Nix pin plus REST behavior probe and timeline resolver |
-| dev-loops and pi-subagents share authenticated acceptance provenance | Upstream / pin-upgrade only | This slice records explicit local attestational facts and does not claim reviewer authentication. Closed/completed #1434 and #1460 document adjacent defects fixed upstream by merged PRs #1448 and #1461; neither establishes shared authenticated provenance in pinned v0.42.1. |
+| dev-loops and pi-subagents share authenticated acceptance provenance | Upstream only | This slice records explicit local attestational facts and does not claim reviewer authentication. Closed/completed #1434 and #1460 document adjacent defects fixed upstream by merged PRs #1448 and #1461; the 0.66.0 pin upgrade does not itself establish shared authenticated provenance. |
 | Reproduction coverage | Repository-owned paths landed | Repository tests cover Pi 0.84 runner/provider hook behavior with a local fake provider, current provider-time tool activation/deactivation, root/future tool scopes, content-bound cache invalidation, package roots, issue/PR nested-worktree reuse/refusal, tracked preflight resolution, conventional help, gh old/new/malformed versions, integration normalization, REST normalization, Claude invocation/result contracts, policy, and docs. CI attempt selection, evidence repair, routing contradictions, resume, provider Request-aborted/WebSocket state, and upstream finalization stay upstream/pin-owned. |
 | Bounded issue-backed canary through PR/CI/merge checkpoint | Deferred operational validation | Run only after the repository slice is committed and every current-head gate is available; merge and board mutations remain orchestrator-owned. |
 
-The exact pinned-runtime resume gap is visible in the v0.42.1 recovery
+The former pinned-runtime resume gap is visible in the v0.42.1 recovery
 descriptor allowlist: it preserves the absolute deadline, initial turn/tool
 budgets, and control configuration, but carries no `usageBudget`. Closed/completed
 [issue #985](https://github.com/nicobailon/pi-subagents/issues/985) documented
@@ -322,8 +322,9 @@ the workflow final-return serialization failure and was fixed by merged PR
 #1448. The preserved upstream evidence includes the observed workflow failure
 `return[0].status ... undefined`; it is not reinterpreted as a repository-local
 success. These are distinct invariants. Their upstream completion does not
-change the repository's pinned v0.42.1 behavior; only a separately tested pin
-upgrade can do that.
+change the historical v0.42.1 behavior. Issue #195 adopts 0.66.0 directly and
+replaces its removed turn limit with enforceable one-child, tool, and runtime
+bounds; cumulative cross-invocation accounting remains tracked by #227.
 
 Do not patch, modify, or vendor installed `.pi/npm` packages to close an
 upstream/pin-upgrade row. Do not convert a successful side effect into a passed
