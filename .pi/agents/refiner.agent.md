@@ -7,7 +7,7 @@ systemPromptMode: append
 inheritProjectContext: true
 user-invocable: false
 timeoutMs: 600000
-turnBudget: {"maxTurns":6,"graceTurns":1}
+toolBudget: {"soft":16,"hard":24,"block":"*"}
 ---
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Derived from dev-loops@0.9.0 agents/refiner.agent.md (Copyright (c) 2026 mfittko). -->

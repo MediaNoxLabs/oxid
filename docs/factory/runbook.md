@@ -17,7 +17,7 @@ routes through a coordination server.
 | --- | --- | --- |
 | `pi-coding-agent` | Nix-pinned | immutable nixpkgs input in `flake.lock`; executable supplied by `devShells.default` |
 | `dev-loops` | `0.9.0` | `.pi/settings.json` → project-local `.pi/npm` |
-| `pi-subagents` | `0.42.1` | same |
+| `pi-subagents` | `0.66.0` | same |
 | `pi-taskflow` | `0.2.10` | installed as an `agent-review-pi` peer; all runtime resources disabled |
 | `typebox` | `1.3.9` | exact `agent-review-pi` peer |
 | `@input-output-hk/agent-review-pi` | `0.6.0` | same, **GitHub Packages — needs a token** |
@@ -51,6 +51,16 @@ native review tools, and the bundled skill through the pinned Pi runtime. The
 taskflow package is installed only to satisfy that peer contract; project
 filters disable all of its runtime resources because detached orchestration is
 not safe for Oxid's dev-loop topology.
+
+`pi-subagents@0.66.0` no longer enforces the historical `turnBudget` field.
+Oxid therefore removes that inert key, uses a fail-closed `toolBudget`, and caps
+each parent session and run at one child. The token budget remains visible and
+prevents additional launches, while the tool and wall-clock limits bound the
+active child itself. An external supervisor should normally bypass the extra
+parent/child hop and invoke Pi as the sole issue worker. The one-child policy
+remains the safe interactive-Pi path. In both cases the external supervisor—not
+another child—owns CI waiting, review triage, merge, cleanup, and any explicit
+retry.
 
 Validate shell entry, the exact private package, all native review-tool
 registrations, and runtime skill discovery without an LLM call or GitHub
@@ -86,6 +96,28 @@ global-package config boundary, measured storage, and upgrade canaries. See
 [worker-topology.md](worker-topology.md) before starting a second local session
 or attaching a worker from another engineer or cloud host.
 
+When a supervisor overrides a child model, always pass the provider-qualified
+ID (for example, `openai-codex/gpt-5.6-terra`) rather than the short model name.
+Some Pi extension versions interpret a short override such as
+`gpt-5.6-terra` as `openai/gpt-5.6-terra`, bypassing the configured Codex
+account and failing before the child starts. Omitting the override safely uses
+the tracked default.
+
+For unattended supervised delivery, invoke Pi directly with one cohesive
+prompt and its absolute managed worktree as the current directory:
+
+```bash
+./bootstrap.sh --pi --provider openai-codex \
+  --model gpt-5.6-terra --thinking medium --mode text --print \
+  --name direct-issue-N '<one issue, acceptance, focused checks, signed push, draft PR; stop before hosted CI>'
+```
+
+The prompt must prohibit subagent/taskflow dispatch and assign review, hosted
+CI, merge, metrics, and cleanup to the external supervisor. A terminal or
+transport failure never deletes valid edits: inspect the worktree, record the
+failure, and either supervise the existing diff to a checkpoint or authorize
+one fresh bounded run. Do not silently resume the dead process.
+
 `--configure-git` copies the tracked contribution dispatchers into stable,
 private Git-common state and sets only repository-local OpenPGP signing
 defaults. It requires an existing author identity and signing-key selection,
@@ -108,8 +140,9 @@ is one for routine work; `roles` is the pool it is drawn from. Low-signal
 refinement stops after one quiet round instead of spending another round to
 rediscover the same result.
 
-**Sub-agent delegation** is foreground by default, caps concurrency at two,
-session spawns at eight, and requires explicit async intent. It ships builtins
+**Sub-agent delegation** is foreground by default, caps concurrency at two
+across independent parents, permits one child per parent invocation, and
+requires explicit async intent. It ships builtins
 including `scout` (codebase recon),
 `researcher` (external facts with sources), `worker` (implementation),
 `reviewer` (review and small fixes), `oracle` (second opinion, edits nothing),
@@ -184,7 +217,7 @@ over a YAML lint.
 
 **`doctor` reports 3/4 and that is expected.** The warning is *"Subagent command
 available"*, because `doctor` looks for a standalone `subagent` executable while
-`pi-subagents@0.42.1` exposes the capability as a Pi extension. **Do not add a
+`pi-subagents@0.66.0` exposes the capability as a Pi extension. **Do not add a
 dummy binary to make the check pass** — it would make a real absence
 undetectable later. The check that matters is `gates` parsing.
 
@@ -281,6 +314,11 @@ in a diff.
   Another parent may own another issue worktree locally or on a different host.
   Batch accepted findings locally and push a coherent candidate instead of
   invalidating CI and exact-head evidence after every small edit.
+- **Prefer one direct Pi worker per external-supervisor invocation.** This is
+  the normal automated path and must not spawn a nested child. For an
+  interactive Pi operator, dispatch at most one child and return after its
+  terminal checkpoint. Hosted-CI watch, review triage, merge, metrics,
+  closeout, and every explicit retry belong to the external supervisor.
 - **Recover after the one-hour conductor bound.** A Pi timeout does not delete
   the issue branch, managed worktree, draft PR, or private metrics. Re-run the
   startup resolver for the same issue, reuse its canonical worktree, verify the

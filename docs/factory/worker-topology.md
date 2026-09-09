@@ -84,6 +84,9 @@ The tracked default is `openai-codex/gpt-5.6-terra:medium`, not a provider
 lock. Pi accepts a deliberate session override, for example
 `./bootstrap.sh --pi --provider openai --model <model>`. The alternate provider
 must satisfy the same issue, evidence, commit-signing, and gate contract.
+For subagent overrides, use a provider-qualified model ID such as
+`openai-codex/gpt-5.6-terra`; a bare model name is ambiguous across providers.
+Prefer omitting the override when the tracked default is suitable.
 
 Each engineer supplies their own GitHub and model-provider authentication.
 `./bootstrap.sh --configure-pi` preserves unrelated Pi settings and never reads
@@ -96,6 +99,14 @@ item. Never store a mutable host-wide “active milestone” that another Pi or
 cloud worker can overwrite. Factory, harness, CI, documentation, dependency,
 and governance sessions select `origin/develop`; product sessions select the
 one milestone recorded by their work item.
+
+An external supervisor normally launches Pi directly as the one issue worker;
+that Pi process must not launch a nested child. An interactive human-owned Pi
+session may instead launch exactly one tracked child and return at that child's
+terminal checkpoint. The external supervisor watches hosted CI and owns review
+triage, merge, metrics, cleanup, and any explicit retry. These operations never
+justify an automatic continuation child or a fresh hidden budget inside the
+original invocation.
 
 ## Cloud workers
 

@@ -83,23 +83,24 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 const root = process.argv[2];
-const [types, agents, turnBudget] = await Promise.all([
+const [types, agents, toolBudget] = await Promise.all([
   readFile(path.join(root, "src", "shared", "types.ts"), "utf8"),
   readFile(path.join(root, "src", "agents", "agents.ts"), "utf8"),
-  readFile(path.join(root, "src", "runs", "shared", "turn-budget.ts"), "utf8"),
+  readFile(path.join(root, "src", "runs", "shared", "tool-budget.ts"), "utf8"),
 ]);
 for (const field of [
   "asyncByDefault", "forceTopLevelAsync", "maxSubagentDepth",
-  "maxSubagentSpawnsPerSession", "glo" + "balConcurrencyLimit", "turnBudget",
-  "usageBudget", "parallel", "chain", "dynamicFanout", "maxItems", "artifactDir",
+  "maxSubagentSpawnsPerSession", "maxSubagentSpawnsPerRun",
+  "glo" + "balConcurrencyLimit", "toolBudget", "usageBudget", "parallel",
+  "chain", "dynamicFanout", "maxItems", "artifactDir",
 ]) {
   if (!types.includes(`${field}?`)) throw new Error(`pi-subagents schema does not declare ${field}`);
 }
-for (const field of ["frontmatter.timeoutMs", "frontmatter.turnBudget", "frontmatter.maxSubagentDepth"]) {
+for (const field of ["frontmatter.timeoutMs", "frontmatter.toolBudget", "frontmatter.maxSubagentDepth"]) {
   if (!agents.includes(field)) throw new Error(`pi-subagents agent parser does not consume ${field}`);
 }
-for (const field of ["maxTurns", "graceTurns"]) {
-  if (!turnBudget.includes(field)) throw new Error(`pi-subagents turn budget does not consume ${field}`);
+for (const field of ["soft", "hard", "block"]) {
+  if (!toolBudget.includes(field)) throw new Error(`pi-subagents tool budget does not consume ${field}`);
 }
 NODE
 
