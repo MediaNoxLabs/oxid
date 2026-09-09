@@ -5,10 +5,10 @@ import { execFileSync } from "node:child_process";
 import { accessSync, constants as fsConstants, existsSync, realpathSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { loadDevLoopConfig, resolveFanoutMaxConcurrent, resolveGateConfig, resolveRefinement } from "../../.pi/npm/node_modules/@dev-loops/core/src/config/config.mjs";
-
+import { resolvePinnedCoreModulePath } from "../dev-loops.mjs";
+import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
 import { checkUserPolicy } from "./pi-policy.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -50,7 +50,24 @@ function check(id, status, summary, details = undefined, category = "configurati
 }
 
 async function inspectDevLoopsLayer(repoRoot) {
+  let resolved;
   try {
+    resolved = await resolveDevLoopsPackageRoot({ cwd: repoRoot });
+  } catch (error) {
+    return check(
+      "dev-loop-effective-config",
+      "warn",
+      "Effective .devloops validation awaits the exact installed Pi package",
+      [error.message],
+      "runtime",
+    );
+  }
+  try {
+    const handoffModulePath = await resolvePinnedCoreModulePath(resolved.packageRoot);
+    const configModulePath = path.resolve(path.dirname(handoffModulePath), "..", "config", "config.mjs");
+    const { loadDevLoopConfig, resolveFanoutMaxConcurrent, resolveGateConfig, resolveRefinement } = await import(
+      pathToFileURL(configModulePath).href
+    );
     const loaded = await loadDevLoopConfig({ repoRoot });
     const refinement = resolveRefinement(loaded.config);
     const draft = resolveGateConfig(loaded.config, "draft");
