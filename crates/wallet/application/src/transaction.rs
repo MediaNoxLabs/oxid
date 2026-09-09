@@ -233,7 +233,6 @@ pub struct AuthorizeWalletTransferCommand {
     pub profile_id: String,
     pub draft_id: String,
     pub authorization_challenge: String,
-    pub confirmation: SensitiveOperationConfirmation,
 }
 
 /// Incoming request for proving and submitting one authorized transfer.
@@ -285,6 +284,9 @@ pub struct WalletTransferPreviewView {
     pub state: String,
     pub proof_required: bool,
     pub submission_ready: bool,
+    /// Trusted, stable review copy derived only from the retained preview.
+    pub review_title: String,
+    pub review_summary: String,
 }
 
 impl From<&WalletTransferPreview> for WalletTransferPreviewView {
@@ -305,7 +307,57 @@ impl From<&WalletTransferPreview> for WalletTransferPreviewView {
             state: draft_state_name(preview.state()).to_owned(),
             proof_required: !matches!(preview.state(), WalletTransactionDraftState::Submitted),
             submission_ready: matches!(preview.state(), WalletTransactionDraftState::Authorized),
+            review_title: format!(
+                "Authorize {} transfer",
+                preview.amount().asset().symbol().as_str()
+            ),
+            review_summary: format!(
+                "Send {} {} to {} ({}) on {}; change {} {}; fee {}; inputs {}; expires at {}.",
+                display_atomic_units(
+                    preview.amount().atomic_units(),
+                    preview.amount().asset().decimals(),
+                ),
+                preview.amount().asset().symbol().as_str(),
+                preview.recipient().value(),
+                address_kind_name(preview.recipient().kind()),
+                preview.network_id().as_str(),
+                display_atomic_units(
+                    preview.change().atomic_units(),
+                    preview.change().asset().decimals(),
+                ),
+                preview.change().asset().symbol().as_str(),
+                preview.fee().map_or_else(
+                    || fee_state_name(preview.fee_state()).replace('_', " "),
+                    |fee| format!(
+                        "{} {}",
+                        display_atomic_units(fee.atomic_units(), fee.asset().decimals()),
+                        fee.asset().symbol().as_str(),
+                    ),
+                ),
+                preview.input_count(),
+                preview.expires_at().value(),
+            ),
         }
+    }
+}
+
+fn display_atomic_units(atomic_units: u128, decimals: u8) -> String {
+    if decimals == 0 {
+        return atomic_units.to_string();
+    }
+    let digits = atomic_units.to_string();
+    let decimals = usize::from(decimals);
+    let padded = if digits.len() <= decimals {
+        format!("{}{}", "0".repeat(decimals + 1 - digits.len()), digits)
+    } else {
+        digits
+    };
+    let split = padded.len() - decimals;
+    let fraction = padded[split..].trim_end_matches('0');
+    if fraction.is_empty() {
+        padded[..split].to_owned()
+    } else {
+        format!("{}.{}", &padded[..split], fraction)
     }
 }
 
@@ -626,7 +678,6 @@ where
         &self,
         command: AuthorizeWalletTransferCommand,
     ) -> Result<WalletTransferPreviewView, WalletTransactionError> {
-        validate_confirmation(&command.confirmation).map_err(map_confirmation_error)?;
         let profile_id = WalletProfileId::parse(command.profile_id)
             .map_err(WalletTransactionError::InvalidProfileIdentifier)?;
         let draft_id = WalletTransactionDraftId::parse(command.draft_id)
@@ -1077,14 +1128,6 @@ mod tests {
         )
     }
 
-    fn confirmation(confirmed: bool) -> SensitiveOperationConfirmation {
-        SensitiveOperationConfirmation {
-            title: "Authorize NIGHT transfer".to_owned(),
-            summary: "Send 1 NIGHT on Standalone; DUST fee balancing remains pending".to_owned(),
-            confirmed,
-        }
-    }
-
     #[test]
     fn transaction_port_failures_have_stable_safe_messages() {
         let cases = [
@@ -1212,6 +1255,11 @@ mod tests {
         assert_eq!(result.fee_state, "requires_balancing");
         assert!(result.proof_required);
         assert!(!result.submission_ready);
+        assert_eq!(result.review_title, "Authorize NIGHT transfer");
+        assert_eq!(
+            result.review_summary,
+            "Send 1 NIGHT to mn_addr_undeployed1recipient (unshielded) on undeployed; change 4 NIGHT; fee requires balancing; inputs 1; expires at 1700003600000."
+        );
     }
 
     #[test]
@@ -1292,30 +1340,6 @@ mod tests {
     }
 
     #[test]
-    fn authorization_requires_confirmation_before_adapter_use() {
-        let transactions = Arc::new(RecordingTransactions::default());
-        let service =
-            WalletTransactionService::new(Arc::clone(&transactions), Arc::new(FixedClock));
-        let command = AuthorizeWalletTransferCommand {
-            profile_id: "profile_test".to_owned(),
-            draft_id: "txdraft_test".to_owned(),
-            authorization_challenge: "txauth_test".to_owned(),
-            confirmation: confirmation(false),
-        };
-        assert_eq!(
-            AuthorizeWalletTransferUseCase::execute(&service, command),
-            Err(WalletTransactionError::ConfirmationRequired)
-        );
-        assert_eq!(
-            *transactions
-                .authorize_calls
-                .lock()
-                .expect("counter is available"),
-            0
-        );
-    }
-
-    #[test]
     fn confirmed_authorization_returns_only_safe_status() {
         let service = service();
         let result = AuthorizeWalletTransferUseCase::execute(
@@ -1324,12 +1348,19 @@ mod tests {
                 profile_id: "profile_test".to_owned(),
                 draft_id: "txdraft_test".to_owned(),
                 authorization_challenge: "txauth_test".to_owned(),
-                confirmation: confirmation(true),
             },
         )
         .expect("authorization succeeds");
         assert_eq!(result.state, "authorized");
         assert!(result.submission_ready);
+    }
+
+    fn confirmation(confirmed: bool) -> SensitiveOperationConfirmation {
+        SensitiveOperationConfirmation {
+            title: "Submit NIGHT transfer".to_owned(),
+            summary: "Submit exact authorized transfer".to_owned(),
+            confirmed,
+        }
     }
 
     #[test]

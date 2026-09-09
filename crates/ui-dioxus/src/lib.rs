@@ -7330,8 +7330,8 @@ fn SendTransferPanel(
             let amount_label = format_transfer_asset(&preview.amount);
             let change_label = format_transfer_asset(&preview.change);
             let recipient_label = truncate_middle(&preview.recipient_address, 18, 8);
-            let summary = transfer_review_summary(&preview);
-            let confirmation = authorize_transfer_confirmation(&preview);
+            let summary = preview.review_summary.clone();
+            let review_title = preview.review_title.clone();
             let draft_id = preview.draft_id.clone();
             let challenge = preview.authorization_challenge.clone();
             if confirmation_open() {
@@ -7341,7 +7341,7 @@ fn SendTransferPanel(
                         aria_label: "Confirm NIGHT transfer",
                         p { class: "card-eyebrow", "Confirm transfer" }
                         p { class: "privacy-consent-exemption", "Details shown for authorization." }
-                        h2 { "Authorize {amount_label}?" }
+                        h2 { "{review_title}" }
                         p { class: "confirm-sheet__summary", "{summary}" }
                         div { class: "confirm-sheet__recipient",
                             span { "Recipient" }
@@ -7367,7 +7367,6 @@ fn SendTransferPanel(
                                         profile_id: profile_id.clone(),
                                         draft_id: draft_id.clone(),
                                         authorization_challenge: challenge.clone(),
-                                        confirmation: confirmation.clone(),
                                     };
                                     let retained_preview = preview.clone();
                                     panel.set(TransferPanelState::Authorizing(preview.clone()));
@@ -7399,7 +7398,7 @@ fn SendTransferPanel(
                     article { class: "surface-card transfer-card review-card", aria_label: "Review NIGHT transfer",
                         p { class: "card-eyebrow", "Review transfer" }
                         p { class: "privacy-consent-exemption", "Details shown for authorization." }
-                        h2 { "Does this look right?" }
+                        h2 { "{review_title}" }
                         p { class: "send-wizard__summary", "{summary}" }
                         details { class: "transfer-details",
                             summary { "Details" }
@@ -7768,22 +7767,6 @@ fn transfer_failure_note(recovery: TransferRecovery, product_name: &str) -> Stri
         TransferRecovery::ReconcileUnknown => {
             security_copy_snapshot(product_name).submission_ambiguity_warning
         }
-    }
-}
-
-fn authorize_transfer_confirmation(
-    preview: &WalletTransferPreviewView,
-) -> SensitiveOperationConfirmation {
-    SensitiveOperationConfirmation {
-        title: "Authorize NIGHT transfer".to_owned(),
-        summary: format!(
-            "Send {} as a {} transfer to {} on {}; DUST fee balancing and proving remain pending",
-            format_transfer_asset(&preview.amount),
-            ui::transfer_privacy(&preview.recipient_kind).to_lowercase(),
-            truncate_middle(&preview.recipient_address, 18, 8),
-            ui::midnight_network(&preview.network_id),
-        ),
-        confirmed: true,
     }
 }
 
@@ -11811,6 +11794,8 @@ mod tests {
             state: "prepared".to_owned(),
             proof_required: true,
             submission_ready: false,
+            review_title: "Authorize NIGHT transfer".to_owned(),
+            review_summary: "Trusted application-derived review summary.".to_owned(),
         }
     }
 
@@ -11824,6 +11809,12 @@ mod tests {
 
     #[test]
     fn send_review_summary_uses_only_the_exact_preview() {
+        let preview = transfer_preview("shielded");
+        assert_eq!(preview.review_title, "Authorize NIGHT transfer");
+        assert_eq!(
+            preview.review_summary,
+            "Trusted application-derived review summary."
+        );
         assert_eq!(
             transfer_review_summary(&transfer_preview("shielded")),
             "Send 12.5 NIGHT privately to mn_addr_test on Standalone development."
