@@ -169,6 +169,7 @@ if (JSON.stringify(registered) !== JSON.stringify(expected)) {
 NODE
 
 pi_rpc_stderr="$(mktemp "${TMPDIR:-/tmp}/oxid-pi-smoke.XXXXXX")"
+agent_hashes_before="$(git hash-object .pi/agents/*.agent.md)"
 trap 'rm -f "$pi_rpc_stderr"' EXIT
 if ! pi_rpc_output="$({
   printf '%s\n' '{"type":"get_commands"}'
@@ -180,6 +181,14 @@ fi
 if grep -F "Failed to load skill" "$pi_rpc_stderr" >/dev/null; then
   echo "Pi rejected skill metadata during startup:" >&2
   grep -F "Failed to load skill" "$pi_rpc_stderr" >&2
+  exit 1
+fi
+
+agent_hashes_after="$(git hash-object .pi/agents/*.agent.md)"
+if [[ "$agent_hashes_after" != "$agent_hashes_before" ]]; then
+  echo "Pi startup modified tracked project agent shadows:" >&2
+  git diff --name-only -- .pi/agents >&2
+  echo "suppress package extensions that rewrite consumer-owned policy before starting Pi" >&2
   exit 1
 fi
 

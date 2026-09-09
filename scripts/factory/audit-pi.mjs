@@ -21,6 +21,10 @@ const EXPECTED_PACKAGES = new Map([
   ["pi-taskflow", "0.2.10"],
   ["@input-output-hk/agent-review-pi", "0.6.0"],
 ]);
+const DEV_LOOPS_RESOURCE_POLICY = Object.freeze({
+  source: "npm:dev-loops@1.0.2",
+  extensions: [],
+});
 const TASKFLOW_SUPPRESSION = Object.freeze({
   source: "npm:pi-taskflow@0.2.10",
   extensions: [],
@@ -419,6 +423,10 @@ export async function auditPi({
   }));
   for (const [name, expected] of EXPECTED_PACKAGES) {
     if (configuredPackages.get(name)?.version !== expected) packageProblems.push(`${name}: expected exact pin ${expected}`);
+  }
+  const devLoopsEntry = configuredPackages.get("dev-loops")?.entry;
+  if (JSON.stringify(devLoopsEntry) !== JSON.stringify(DEV_LOOPS_RESOURCE_POLICY)) {
+    packageProblems.push("dev-loops: package extension must be suppressed so session_start cannot overwrite tracked project agents");
   }
   const taskflowEntry = configuredPackages.get("pi-taskflow")?.entry;
   if (JSON.stringify(taskflowEntry) !== JSON.stringify(TASKFLOW_SUPPRESSION)) {

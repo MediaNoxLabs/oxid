@@ -47,7 +47,7 @@ the startup audit rejects formats outside that tracked contract.
 | --- | --- | --- |
 | Devshell Pi | Nix-pinned; `./bootstrap.sh --check` passed | healthy |
 | Direct host Pi | outside Nix | unsupported path; use `./bootstrap.sh --pi` |
-| Project packages | `dev-loops@1.0.2`, `pi-subagents@0.66.0`, `agent-review-pi@0.6.0` plus exact peers | exact pins installed |
+| Project packages | `dev-loops@1.0.2` (CLI/skills/agents; mutating extension filtered), `pi-subagents@0.66.0`, `agent-review-pi@0.6.0` plus exact peers | exact pins installed |
 | npm production audit | 0 reported vulnerabilities | healthy at audit time |
 | Common Pi package store | one shared store per Git common checkout | healthy |
 | Registered worktrees | above the active green limit | red; exact counts remain private operational telemetry |
@@ -73,6 +73,14 @@ The owner-aware reconciliation of remaining dirty/unmerged state is tracked by
 | `agent-review-pi` | `0.6.0` | `0.6.0` | adopted with exact peers by [#301](https://github.com/MediaNoxLabs/oxid/issues/301) |
 | `pi-taskflow` | `0.2.10` | `0.3.0-beta.1.2` | peer only; runtime resources disabled |
 | `typebox` | `1.3.9` | `1.3.28` | minimum compatible exact peer; retain |
+
+The `dev-loops@1.0.2` Pi extension is deliberately filtered while its exact
+CLI, skills, and agent sources remain installed. Its `session_start` handler
+overwrites an existing consumer `.pi/agents/` directory with generic packaged
+agents. Oxid owns policy-bearing compatibility shadows at that path, so loading
+the extension would erase runtime/tool budgets and delivery-profile handoff
+rules immediately before model dispatch. A real offline Pi RPC startup must
+leave every tracked agent hash unchanged.
 
 The `pi-subagents` releases between the pin and 0.66.0 contain fixes directly
 related to recovered/detached runs, budget/timeout terminal classification,
