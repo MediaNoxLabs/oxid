@@ -12,8 +12,8 @@ timeoutMs: 3600000
 toolBudget: {"soft":40,"hard":60,"block":"*"}
 ---
 <!-- SPDX-License-Identifier: MIT -->
-<!-- Derived from dev-loops@0.9.0 agents/dev-loop.agent.md (Copyright (c) 2026 mfittko). -->
-<!-- Upstream-SHA256: 6a58bbcb79aaa27f037f5f15438afded916d66379bf7e21ba09913f89cb0a1f5; repository deltas are tools, tracked entrypoints, and read-only context rules. -->
+<!-- Derived from dev-loops@1.0.2 agents/dev-loop.agent.md (Copyright (c) 2026 mfittko). -->
+<!-- Upstream-SHA256: aae5204eb80c772bf9771c8d61e8c7be2532fa1ef3f9f8e19fd0cf32a6b4f1e7; repository deltas are tools, tracked entrypoints, and read-only context rules. -->
 
 You are the **Public Dev Loop** entrypoint agent.
 

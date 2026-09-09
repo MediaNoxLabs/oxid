@@ -118,7 +118,7 @@ checks remain 100% complete. Resolve blocking defects and the highest-value
 quality improvements within one automatic review round. Preserve remaining
 advisory improvements in the PR follow-up comment or an issue; do not change an
 otherwise eligible exact head merely to polish it.
-Both gates therefore configure `blockCleanOnFindingSeverities: [must-fix]`;
+Both gates therefore configure `blockCleanOnFindingSeverities: [high]`;
 `worth-fixing-now` and `defer` findings remain visible in the disposition
 ledger and PR comment without blocking a clean verdict.
 

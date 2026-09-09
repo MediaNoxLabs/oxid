@@ -30,7 +30,9 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.deepEqual(subagentPolicy.toolBudget, { soft: 40, hard: 60, block: "*" });
   assert.equal(Object.hasOwn(subagentPolicy, "turnBudget"), false);
   assert.deepEqual(settings.packages, [
-    "npm:dev-loops@0.9.0",
+    "npm:dev-loops@1.0.2",
+    "npm:@playwright/test@1.60.0",
+    "npm:@axe-core/playwright@4.10.0",
     "npm:pi-subagents@0.66.0",
     "npm:typebox@1.3.9",
     {
@@ -58,6 +60,17 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(bootstrap, /readonly nix_daemon_profile_bin="\/nix\/var\/nix\/profiles\/default\/bin"/u);
   assert.ok(discoverNix >= 0 && prependNix > discoverNix && rejectMissingNix > prependNix);
   assert.match(devshell, /typeof entry === "string" \? entry : entry\?\.source/u);
+});
+
+test("repository dev-loops layer uses the bounded 1.0.2 schema", async () => {
+  const config = await readFile(path.join(repoRoot, ".devloops"), "utf8");
+  assert.match(config, /^strategy: local-first$/m);
+  assert.match(config, /^  lowSignal:\n    enabled: true\n    roundThreshold: 1\n    maxComments: 1$/m);
+  assert.match(config, /^  fanout:\n    maxConcurrent: 1$/m);
+  assert.equal((config.match(/^        mandatory: true$/gm) ?? []).length, 2);
+  assert.doesNotMatch(config, /^\s+mandatoryAngles:/m);
+  assert.doesNotMatch(config, /^personas:/m);
+  assert.doesNotMatch(config, /^\s+(?:stopOnLowSignal|lowSignalRoundThreshold|lowSignalMaxComments):/m);
 });
 
 test("delivery profiles keep prototype evidence local and promotion explicit", async () => {

@@ -4,8 +4,7 @@ version: 1
 # Stated explicitly rather than inherited. Oxid's spec-of-record is the pull
 # request plus its ADRs, and every gate here posts findings onto the PR, so the
 # local-first routing is the one that matches where review evidence lives.
-strategy:
-  default: local-first
+strategy: local-first
 
 refinement:
   # One refinement pass is the routine default. A second opinion is an explicit
@@ -13,33 +12,113 @@ refinement:
   fanOut: 1
   mode: parallel
   maxCopilotRounds: 0
-  stopOnLowSignal: true
-  lowSignalRoundThreshold: 1
-  lowSignalMaxComments: 1
+  lowSignal:
+    enabled: true
+    roundThreshold: 1
+    maxComments: 1
   roles:
     - correctness
 
 gates:
   draft:
+    # Angle lists merge by name with upstream defaults. Explicitly suppress
+    # every shipped draft angle except correctness.
     angles:
-      - correctness
-    mandatoryAngles: []
+      - name: scope
+        enabled: false
+      - name: coverage
+        enabled: false
+      - name: correctness
+        mandatory: true
+      - name: ci-guard
+        enabled: false
+      - name: contract-surface
+        enabled: false
+      - name: link-check
+        enabled: false
+      - name: config-drift
+        enabled: false
+      - name: gate-evidence
+        enabled: false
+      - name: no-op
+        enabled: false
+      - name: input-validation
+        enabled: false
+      - name: threat-model
+        enabled: false
+      - name: packaging-runtime
+        enabled: false
+      - name: state-concurrency
+        enabled: false
+      - name: renderer-security
+        enabled: false
+      - name: determinism
+        enabled: false
+      - name: pr-comments
+        enabled: false
+      - name: contradiction-lens
+        enabled: false
+      - name: code-conformance
+        enabled: false
+      - name: semantic-drift
+        enabled: false
+      - name: pr-description
+        enabled: false
+      - name: deslop
+        enabled: false
     blockCleanOnFindingSeverities:
-      - must-fix
+      - high
     required: true
     # The draft gate checks direction before hosted CI has finished. Waiting
     # here made every correction invalidate and repeat both review and CI.
     requireCi: false
   preApproval:
+    # Angle lists merge by name with upstream defaults. Explicitly suppress
+    # every shipped pre-approval angle and retain only the security review.
     angles:
-      - security
+      - name: dry
+        enabled: false
+      - name: kiss
+        enabled: false
+      - name: yagni
+        enabled: false
+      - name: srp
+        enabled: false
+      - name: soc
+        enabled: false
+      - name: deep
+        enabled: false
+      - name: ocp
+        enabled: false
+      - name: lsp
+        enabled: false
+      - name: isp
+        enabled: false
+      - name: dip
+        enabled: false
+      - name: docs
+        enabled: false
+      - name: pr-checklist
+        enabled: false
+      - name: contradiction-lens
+        enabled: false
+      - name: correctness-final
+        enabled: false
+      - name: ui-validation
+        enabled: false
+      - name: security
+        mandatory: true
+        persona: review
+        prompt: >-
+          Review secret and identifier exposure, unsafe key boundaries, input
+          validation, storage claims, dependency risk, and GitHub workflow safety.
+          Report concrete findings with file and line references.
     # The draft description gate owns the increment contract. A global
     # all-checkbox matrix turned optional evidence into a blocker and forced
     # polish into the current PR; exact-head CI plus the triage receipt now own
     # final readiness.
-    mandatoryAngles: []
     blockCleanOnFindingSeverities:
-      - must-fix
+      - high
     required: true
     requireCi: true
   # Streaming milestone delivery uses issue scope, exact-head CI, signed commits,
@@ -49,17 +128,12 @@ gates:
   requireFanoutEvidence: false
   requireFanoutProvenance: false
   maxFanoutReviewers: 1
+  # This is the active fan-out concurrency cap; maxFanoutReviewers above is
+  # retained for the pinned compatibility surface.
+  fanout:
+    maxConcurrent: 1
   postFindingsComments: true
   rejectForeignAngles: true
-
-personas:
-  security:
-    persona: review
-    prompt: >-
-      Review secret and identifier exposure, unsafe key boundaries, input
-      validation, storage claims, dependency risk, and GitHub workflow safety.
-      Report concrete findings with file and line references.
-    defaultModel: null
 
 # Automated merge is available only through scripts/github/merge-milestone-pr.mjs.
 # Develop, main, milestone lifecycle, releases, settings, tags, and ADR
@@ -99,7 +173,7 @@ queue:
 #
 # models: — `.pi/settings.json` now supplies the balanced routine parent and
 #   subagent default. Per-role `models.conductor` / `models.roles` remains
-#   absent because dev-loops@0.9.0 documents no accepted identifier schema;
+#   absent because dev-loops@1.0.2 documents no accepted identifier schema;
 #   do not invent a value that can fail only after dispatch. Canary a future
 #   documented package surface before adding role-specific overrides.
 #

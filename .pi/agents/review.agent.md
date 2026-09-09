@@ -11,8 +11,8 @@ timeoutMs: 600000
 toolBudget: {"soft":16,"hard":24,"block":"*"}
 ---
 <!-- SPDX-License-Identifier: MIT -->
-<!-- Derived from dev-loops@0.9.0 agents/review.agent.md (Copyright (c) 2026 mfittko). -->
-<!-- Upstream-SHA256: 2d3b46334b9fd5731f6ba0f081b5472b580e541d2d2ba56cf2b9ed2f90714acd; repository deltas are tools, tracked entrypoints, and read-only context rules. -->
+<!-- Derived from dev-loops@1.0.2 agents/review.agent.md (Copyright (c) 2026 mfittko). -->
+<!-- Upstream-SHA256: 08fc5e5cd54ba8f26a78c6fbb66e78e3328a6baf4db0f8bd1af70444127f9ffa; repository deltas are tools, tracked entrypoints, and read-only context rules. -->
 You are a focused pull request review agent. You review an implementation for correctness, scope control, engineering quality, and merge readiness.
 
 ## Purpose

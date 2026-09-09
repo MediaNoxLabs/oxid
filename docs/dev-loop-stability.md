@@ -38,7 +38,7 @@ target and the child is retargeted there after its parent lands. `main`, another
 milestone, or an arbitrary branch can never be used as a stack base.
 
 The public wrapper accepts only the global option forms supported by the exact
-`dev-loops@0.9.0` pin (`--repo`, `--cwd`, `--config`, `--jq`, `--silent`/`-s`,
+`dev-loops@1.0.2` pin (`--repo`, `--cwd`, `--config`, `--jq`, `--silent`/`-s`,
 and `--json`) before the route. Unknown leading options fail closed. A pin
 upgrade must update the shared parser and contract tests before new option
 shapes are accepted. These wrappers do not rewrite raw `gh` or direct package
@@ -134,7 +134,7 @@ checkout topology fails before an envelope is emitted.
 
 A canonical absent target derived from the main checkout remains a prospective
 path under the common root. `loop watch-ci` is
-delegated unchanged to `dev-loops@0.9.0`; this repository does not intercept CI
+delegated unchanged to `dev-loops@1.0.2`; this repository does not intercept CI
 selection.
 Obsolete-attempt selection is an upstream/pin residual because a local watcher
 cannot safely duplicate expected-check rollup, pagination, suite/attempt

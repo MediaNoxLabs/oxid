@@ -25,7 +25,7 @@ PERFORMANCE OF THIS SOFTWARE.
 ## dev-loops agent compatibility shadows
 
 The tracked `.pi/agents/*.agent.md` compatibility shadows are derived from
-`dev-loops@0.9.0` agent manifests, with repository-specific tool allowlists,
+`dev-loops@1.0.2` agent manifests, with repository-specific tool allowlists,
 entrypoints, and read-only context rules. The source package is distributed
 under the MIT License:
 

@@ -123,7 +123,7 @@ async function makeFixture() {
   await writeFile(path.join(root, ".gitignore"), "/.pi/npm\n/tmp/\n");
   await writeFile(path.join(root, ".devloops"), "version: 1\n");
   await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({
-    packages: ["npm:dev-loops@0.9.0"],
+    packages: ["npm:dev-loops@1.0.2"],
     subagents: { projectRootResolution: "git-root" },
   }));
   await writeFile(path.join(root, ".pi", "agents", "developer.agent.md"), [
@@ -141,7 +141,7 @@ async function makeFixture() {
 
   await mkdir(path.join(root, ".pi", "npm", "node_modules", "dev-loops", "agents"), { recursive: true });
   const packageRoot = path.join(root, ".pi", "npm", "node_modules", "dev-loops");
-  await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.9.0" }));
+  await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "1.0.2" }));
   await mkdir(path.join(packageRoot, "cli"));
   await writeFile(path.join(packageRoot, "cli", "index.mjs"), 'process.stdout.write("dev-loop-out\\n"); process.stderr.write("dev-loop-err\\n");\n');
   await mkdir(path.join(packageRoot, "scripts", "loop"), { recursive: true });
@@ -186,7 +186,7 @@ test("project-local dev-loops resolution is exact from roots and linked worktree
   for (const cwd of [fixture.root, fixture.worktree]) {
     const resolved = await resolveDevLoopsPackageRoot({ cwd });
     assert.equal(await realpath(resolved.packageRoot), await realpath(fixture.packageRoot));
-    assert.equal(resolved.version, "0.9.0");
+    assert.equal(resolved.version, "1.0.2");
     assert.equal(resolved.source, cwd === fixture.root ? "git-root" : "git-common-root");
   }
 });
@@ -223,7 +223,7 @@ test("Pi smoke resolution reuses every exact common-checkout package from a link
     ["@input-output-hk/agent-review-pi", "0.5.0"],
   ];
   const settings = {
-    packages: ["npm:dev-loops@0.9.0", ...pins.map(([name, version]) => `npm:${name}@${version}`)],
+    packages: ["npm:dev-loops@1.0.2", ...pins.map(([name, version]) => `npm:${name}@${version}`)],
     subagents: { projectRootResolution: "git-root" },
   };
   for (const settingsRoot of [fixture.root, fixture.worktree]) {
@@ -265,7 +265,7 @@ test("package resolution rejects mismatched identities and symlink escapes", asy
   await writeFile(manifest, JSON.stringify({ name: "dev-loops", version: "9.9.9" }));
   await assert.rejects(
     resolveDevLoopsPackageRoot({ cwd: fixture.root }),
-    /candidate checkout\/package closure mismatch: expected dev-loops@0\.9\.0.*do not overwrite a shared closure used by another session/s,
+    /candidate checkout\/package closure mismatch: expected dev-loops@1\.0\.2.*do not overwrite a shared closure used by another session/s,
   );
 
   await rm(fixture.packageRoot, { recursive: true, force: true });
@@ -273,7 +273,7 @@ test("package resolution rejects mismatched identities and symlink escapes", asy
   t.after(() => rm(outside, { recursive: true, force: true }));
   await mkdir(path.join(outside, "cli"));
   await writeFile(path.join(outside, "cli", "index.mjs"), "");
-  await writeFile(path.join(outside, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.9.0" }));
+  await writeFile(path.join(outside, "package.json"), JSON.stringify({ name: "dev-loops", version: "1.0.2" }));
   await symlink(outside, fixture.packageRoot, "dir");
   await assert.rejects(resolveDevLoopsPackageRoot({ cwd: fixture.root }), /escapes allowed project roots/);
 });
@@ -287,7 +287,7 @@ test("linked milestone checkout rejects a shared package pin from a newer branch
 
   await assert.rejects(
     resolveDevLoopsPackageRoot({ cwd: fixture.worktree }),
-    /candidate checkout\/package closure mismatch: expected dev-loops@0\.8\.0.*found dev-loops@0\.9\.0 from git-common-root.*Align the delivery branch/s,
+    /candidate checkout\/package closure mismatch: expected dev-loops@0\.8\.0.*found dev-loops@1\.0\.2 from git-common-root.*Align the delivery branch/s,
   );
 });
 
@@ -493,7 +493,7 @@ test("tracked extension is idempotent and truthfully advisory on invalid allowli
     on: (event, handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
   };
   const runtime = {
-    resolve: async () => { throw new Error("missing exact dev-loops@0.9.0"); },
+    resolve: async () => { throw new Error("missing exact dev-loops@1.0.2"); },
   };
   registerDevLoopPreflight(pi, runtime);
   registerDevLoopPreflight(pi, runtime);
@@ -573,28 +573,39 @@ test("Nix-pinned Pi runner cannot hard-cancel a local fake provider through thes
 
 test("tracked project agents shadow every incompatible packaged dev-loops manifest", async () => {
   const upstreamDigests = {
-    "dev-loop": "6a58bbcb79aaa27f037f5f15438afded916d66379bf7e21ba09913f89cb0a1f5",
-    developer: "aaecd8859df4b561fbd46f5c05fe893b37f249e7ea52abd631dfe20de5b1fa90",
+    "dev-loop": "aae5204eb80c772bf9771c8d61e8c7be2532fa1ef3f9f8e19fd0cf32a6b4f1e7",
+    developer: "5da2b3c888df2971a64084f1d61ccf61a89abe2eb57a2a1e32fbc3c2e4e9912a",
     docs: "eefeace5309224ef13fd271321b6137330a29bd2e973eb9a575bd4e4bc375912",
-    fixer: "be0b42b4c280fac6912c13a066250280b746ecbb047f5adcfbe4c2b6f187cbe3",
+    fixer: "5f2eb2127761713f29c34ef2c25abd6163ab364efe6613f141136ab38916b1b4",
     quality: "d52480ced74b3c695eb15f8d04da292d18300ed5f4eb29bab4f4011b82de28ec",
-    refiner: "8563349bbf77d799b8c2db78696124799262ac3ceff8b14784002ccea6daae11",
-    review: "2d3b46334b9fd5731f6ba0f081b5472b580e541d2d2ba56cf2b9ed2f90714acd",
+    refiner: "4ddb1e1bb1d091d9d825e95818829e7565e5429e85cfc1426be5b09d0eae66b1",
+    review: "08fc5e5cd54ba8f26a78c6fbb66e78e3328a6baf4db0f8bd1af70444127f9ffa",
+    judge: "81eb1dedae382591ed0a46d0e79ae557bf0b0a9baf64955bfe5d5cbf8f4d297d",
+  };
+  const upstreamPins = {
+    "dev-loop": "1.0.2",
+    developer: "1.0.2",
+    docs: "0.9.0",
+    fixer: "1.0.2",
+    quality: "0.9.0",
+    refiner: "1.0.2",
+    review: "1.0.2",
+    judge: "1.0.2",
   };
   const extensionFiles = (await readdir(path.join(repoRoot, ".pi", "extensions"))).filter((file) => file.startsWith("dev-loop-preflight"));
   assert.deepEqual(extensionFiles, ["dev-loop-preflight.ts"], "only the thin Pi registrar is auto-loaded");
   const settings = JSON.parse(await read(".pi/settings.json"));
-  assert.equal(settings.packages.includes("npm:dev-loops@0.9.0"), true);
+  assert.equal(settings.packages.includes("npm:dev-loops@1.0.2"), true);
   assert.equal(settings.subagents.projectRootResolution, "git-root");
   assert.equal(settings.subagents.agentOverrides, undefined);
-  for (const name of ["dev-loop", "developer", "docs", "fixer", "quality", "refiner", "review"]) {
+  for (const name of ["dev-loop", "developer", "docs", "fixer", "judge", "quality", "refiner", "review"]) {
     const source = await read(`.pi/agents/${name}.agent.md`);
     const toolsLine = source.split(/\r?\n/).find((line) => line.startsWith("tools:"));
     assert.ok(toolsLine, `${name} has a tracked project shadow`);
     const tools = toolsLine.slice("tools:".length).split(",").map((tool) => tool.trim());
     assert.equal(tools.some((tool) => legacyTools.has(tool)), false, `${name} has no legacy tool alias`);
     assert.match(source, /SPDX-License-Identifier: MIT/, `${name} preserves the upstream derived-content license`);
-    assert.match(source, new RegExp(`Derived from dev-loops@0\\.9\\.0 agents/${name}\\.agent\\.md`), `${name} binds its source pin`);
+    assert.match(source, new RegExp(`Derived from dev-loops@${upstreamPins[name].replaceAll(".", "\\.")} agents/${name}\\.agent\\.md`), `${name} binds its source pin`);
     assert.match(source, new RegExp(`Upstream-SHA256: ${upstreamDigests[name]}`), `${name} binds exact upstream source bytes`);
     assert.doesNotMatch(source, /\]\(\.\.\/npm\/node_modules\//, `${name} has no link into an untracked package tree`);
     try {
@@ -652,7 +663,7 @@ test("pinned pi-subagents runtime applies git-root project-agent precedence", as
     const jiti = createJiti(import.meta.url, { interopDefault: true });
     const { discoverAgents } = await jiti.import(${JSON.stringify(agentsPath)});
     const result = discoverAgents(${JSON.stringify(repoRoot)}, "both");
-    const names = ["dev-loop", "developer", "docs", "fixer", "quality", "refiner", "review"];
+    const names = ["dev-loop", "developer", "docs", "fixer", "judge", "quality", "refiner", "review"];
     process.stdout.write(JSON.stringify(names.map((name) => {
       const agent = result.agents.find((candidate) => candidate.name === name);
       return { name, source: agent?.source, tools: agent?.tools };
@@ -670,9 +681,9 @@ test("pinned core resolution accepts bounded hoisted and nested package layouts"
   t.after(() => rm(root, { recursive: true, force: true }));
   const packageRoot = path.join(root, "node_modules", "dev-loops");
   await mkdir(packageRoot, { recursive: true });
-  await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.9.0" }));
+  await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "1.0.2" }));
 
-  async function installCore(coreRoot, version = "0.9.0") {
+  async function installCore(coreRoot, version = "1.0.2") {
     const moduleRoot = path.join(coreRoot, "src", "loop");
     await mkdir(moduleRoot, { recursive: true });
     await writeFile(path.join(coreRoot, "package.json"), JSON.stringify({ name: "@dev-loops/core", version }));
@@ -690,7 +701,7 @@ test("pinned core resolution accepts bounded hoisted and nested package layouts"
   assert.equal(await resolvePinnedCoreModulePath(packageRoot), nestedModule);
 
   await writeFile(path.join(nestedRoot, "package.json"), JSON.stringify({ name: "@dev-loops/core", version: "0.9.1" }));
-  await assert.rejects(resolvePinnedCoreModulePath(packageRoot), /expected @dev-loops\/core@0\.9\.0/);
+  await assert.rejects(resolvePinnedCoreModulePath(packageRoot), /expected @dev-loops\/core@1\.0\.2/);
 });
 
 test("repository wrappers force only the public PR-creation and managed-worktree routes", () => {
@@ -710,14 +721,14 @@ test("repository wrappers force only the public PR-creation and managed-worktree
   assert.deepEqual(normalizeDevLoopsArgs(["queue", "add", "--title", "pr", "create"]), ["queue", "add", "--title", "pr", "create"]);
   assert.deepEqual(normalizeDevLoopsArgs(["--jq", ".ok", "pr", "create", "--delivery-base", "milestone-1.0.0"]), ["--jq", ".ok", "pr", "create", "--base", "milestone-1.0.0"]);
   assert.throws(() => normalizeDevLoopsArgs(["--silent", "pr", "create", "--base", "main", "--delivery-base", "develop"]), /delivery target develop or a conventional issue branch/);
-  assert.throws(() => normalizeDevLoopsArgs(["--future-global", "pr", "create", "--base", "main"]), /unsupported leading dev-loops@0\.9\.0 option/);
+  assert.throws(() => normalizeDevLoopsArgs(["--future-global", "pr", "create", "--base", "main"]), /unsupported leading dev-loops@1\.0\.2 option/);
   assert.throws(() => normalizeDevLoopsArgs(["pr", "create-draft", "--base=integration", "--delivery-base", "milestone-0.4.0"]), /delivery target milestone-0\.4\.0 or a conventional issue branch/);
   assert.throws(() => normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150"]), /--delivery-base is required/);
   assert.throws(() => normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150", "--delivery-base", "milestone-0.4.0"]), /--branch is required/);
   assert.deepEqual(normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150", "--branch", "feat/issue-150", "--delivery-base", "milestone-0.4.0"]), ["--repo-root", "/repo", "--issue", "150", "--branch", "feat/issue-150", "--base", "origin/milestone-0.4.0"]);
   assert.throws(() => normalizeWorktreeArgs(["--repo-root", "/repo", "--issue", "150", "--branch", "feat/issue-150", "--base", "origin/main", "--delivery-base", "develop"]), /must use origin\/develop/);
-  assert.doesNotThrow(() => assertReviewedWorktreePin("0.9.0"));
-  assert.throws(() => assertReviewedWorktreePin("0.9.1"), /supports only reviewed dev-loops@0\.9\.0/);
+  assert.doesNotThrow(() => assertReviewedWorktreePin("1.0.2"));
+  assert.throws(() => assertReviewedWorktreePin("0.9.1"), /supports only reviewed dev-loops@1\.0\.2/);
   assert.notStrictEqual(oxidConsumerProvision(), oxidConsumerProvision());
 });
 
@@ -1151,7 +1162,7 @@ async function installPinnedEnvelopeFixture(root, { nestedCore = false } = {}) {
   await mkdir(path.join(packageRoot, "skills", "docs"), { recursive: true });
   await mkdir(path.join(packageRoot, "skills", "local-implementation"), { recursive: true });
   await mkdir(coreRoot, { recursive: true });
-  await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.9.0" }));
+  await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "1.0.2" }));
   await writeFile(path.join(packageRoot, "cli", "index.mjs"), "");
   await writeFile(path.join(packageRoot, "scripts", "loop", "build-handoff-envelope.mjs"), [
     'import { readFile } from "node:fs/promises";',
@@ -1244,7 +1255,7 @@ async function installPinnedEnvelopeFixture(root, { nestedCore = false } = {}) {
   await writeFile(path.join(packageRoot, "scripts", "_core-helpers.mjs"), [
     'export function formatCliError(error) { return error instanceof Error ? error.message : String(error); }',
   ].join("\n"));
-  await writeFile(path.join(corePackageRoot, "package.json"), JSON.stringify({ name: "@dev-loops/core", version: "0.9.0" }));
+  await writeFile(path.join(corePackageRoot, "package.json"), JSON.stringify({ name: "@dev-loops/core", version: "1.0.2" }));
   await writeFile(path.join(coreRoot, "handoff-envelope.mjs"), [
     'import path from "node:path";',
     'export const WORKTREE_NAMESPACE = path.join("tmp", "worktrees", "dev-loops");',
@@ -1278,7 +1289,7 @@ async function makeProspectiveEnvelopeRouteFixture(t, blockedAncestor) {
   const input = "resolver.json";
   t.after(() => rm(parent, { recursive: true, force: true }));
   await mkdir(path.join(root, ".pi"), { recursive: true });
-  await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:dev-loops@0.9.0"] }));
+  await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:dev-loops@1.0.2"] }));
   await writeEnvelopeDeliveryProfiles(root);
   await writeFile(path.join(root, ".devloops"), "version: 1\n");
   execFileSync("git", ["init", "--quiet"], { cwd: root });
@@ -1339,7 +1350,7 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
   const issueTarget = path.join(root, "tmp", "worktrees", "dev-loops", "issue-150");
   t.after(() => rm(parent, { recursive: true, force: true }));
   await mkdir(path.join(root, ".pi"), { recursive: true });
-  await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:dev-loops@0.9.0"] }));
+  await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:dev-loops@1.0.2"] }));
   await writeEnvelopeDeliveryProfiles(root);
   await writeFile(path.join(root, ".devloops"), "version: 1\nrefinement:\n  maxCopilotRounds: 9\n");
   execFileSync("git", ["init", "--quiet"], { cwd: root });
@@ -1541,7 +1552,7 @@ test("tracked pre-flight wrapper reports Pi child dispatch availability determin
   if (repositoryCheck.ok) {
     assert.match(repositoryCheck.resolved.source, /^git-(?:root|common-root)$/);
   } else {
-    assert.match(repositoryCheck.message, /missing exact dev-loops@0\.9\.0; checked only/);
+    assert.match(repositoryCheck.message, /missing exact dev-loops@1\.0\.2; checked only/);
   }
 });
 
@@ -2615,12 +2626,13 @@ test("routine gates stay bounded and preserve the explicit high-risk review rout
     assert.doesNotMatch(block, /^\s+- external-review$/m);
   }
   assert.match(config, /^  maxFanoutReviewers: 1$/m);
-  assert.equal((config.match(/^    blockCleanOnFindingSeverities:\n      - must-fix$/gm) ?? []).length, 2);
+  assert.equal((config.match(/^    blockCleanOnFindingSeverities:\n      - high$/gm) ?? []).length, 2);
   assert.match(config, /^  requireFanoutEvidence: false$/m);
   assert.match(config, /^  requireFanoutProvenance: false$/m);
   assert.match(config, /^  stopAt: \[\]$/m);
   assert.match(config, /^  humanMergeOnly: false$/m);
-  assert.match(config, /^    mandatoryAngles: \[\]$/m);
+  assert.equal((config.match(/^        mandatory: true$/gm) ?? []).length, 2);
+  assert.doesNotMatch(config, /^personas:/m);
   assert.match(await read("docs/dev-loop-stability.md"), /manually\s+invoke the reviewer once/i);
 });
 

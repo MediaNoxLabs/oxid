@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Argument shapes supported by the exact dev-loops@0.9.0 repository pin.
+ * Argument shapes supported by the exact dev-loops@1.0.2 repository pin.
  * A pin upgrade must update this table and its contract tests before wrappers
  * accept newly introduced global options.
  */
@@ -40,7 +40,7 @@ export function pinnedPublicRoute(args) {
       continue;
     }
     if (argument.startsWith("-")) {
-      throw new Error(`unsupported leading dev-loops@0.9.0 option: ${argument}; update the pinned wrapper contract before a pin upgrade`);
+      throw new Error(`unsupported leading dev-loops@1.0.2 option: ${argument}; update the pinned wrapper contract before a pin upgrade`);
     }
     return { category: argument, command: args[index + 1] };
   }

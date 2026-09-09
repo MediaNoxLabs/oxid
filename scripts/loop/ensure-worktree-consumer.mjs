@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
 
-export const REVIEWED_WORKTREE_PIN = "0.9.0";
+export const REVIEWED_WORKTREE_PIN = "1.0.2";
 
 export function assertReviewedWorktreePin(version) {
   if (version !== REVIEWED_WORKTREE_PIN) {
