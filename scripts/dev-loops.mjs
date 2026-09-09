@@ -229,12 +229,30 @@ async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
   }
 }
 
+export function resolveOxidCompatibilityRoute(args) {
+  if (args[0] === "gate" && args[1] === "size-budget") {
+    return async (routeArgs, runtime) => {
+      const { main } = await import("./loop/oxid-size-budget.mjs");
+      return main(routeArgs, runtime);
+    };
+  }
+  if (args[0] === "pr" && args[1] === "ready-for-review") {
+    return async (routeArgs, runtime) => {
+      const { main } = await import("./github/ready-for-review.mjs");
+      return main(routeArgs, runtime);
+    };
+  }
+  return null;
+}
+
 export async function runDevLoops(argv = process.argv.slice(2), {
   cwd = process.cwd(),
   stdout = process.stdout,
   stderr = process.stderr,
 } = {}) {
   const args = normalizeDevLoopsArgs(argv);
+  const compatibilityRoute = resolveOxidCompatibilityRoute(args);
+  if (compatibilityRoute) return compatibilityRoute(args.slice(2), { repoRoot: cwd, stdout, stderr });
   const resolved = await resolveDevLoopsPackageRoot({ cwd });
   const envelopeArgs = buildEnvelopeArgs(args);
   if (envelopeArgs) return runBuildEnvelope(envelopeArgs, { cwd, stdout, stderr, resolved });
