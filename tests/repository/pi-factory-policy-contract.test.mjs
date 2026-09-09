@@ -30,7 +30,9 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.deepEqual(subagentPolicy.toolBudget, { soft: 40, hard: 60, block: "*" });
   assert.equal(Object.hasOwn(subagentPolicy, "turnBudget"), false);
   assert.deepEqual(settings.packages, [
-    "npm:dev-loops@0.9.0",
+    "npm:dev-loops@1.0.2",
+    "npm:@playwright/test@1.60.0",
+    "npm:@axe-core/playwright@4.10.0",
     "npm:pi-subagents@0.66.0",
     "npm:typebox@1.3.9",
     {

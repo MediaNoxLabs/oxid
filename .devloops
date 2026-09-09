@@ -99,7 +99,7 @@ queue:
 #
 # models: — `.pi/settings.json` now supplies the balanced routine parent and
 #   subagent default. Per-role `models.conductor` / `models.roles` remains
-#   absent because dev-loops@0.9.0 documents no accepted identifier schema;
+#   absent because dev-loops@1.0.2 documents no accepted identifier schema;
 #   do not invent a value that can fail only after dispatch. Canary a future
 #   documented package surface before adding role-specific overrides.
 #

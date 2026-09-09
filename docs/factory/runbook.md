@@ -16,7 +16,7 @@ routes through a coordination server.
 | Piece | Version | Source |
 | --- | --- | --- |
 | `pi-coding-agent` | Nix-pinned | immutable nixpkgs input in `flake.lock`; executable supplied by `devShells.default` |
-| `dev-loops` | `0.9.0` | `.pi/settings.json` → project-local `.pi/npm` |
+| `dev-loops` | `1.0.2` | `.pi/settings.json` → project-local `.pi/npm` |
 | `pi-subagents` | `0.66.0` | same |
 | `pi-taskflow` | `0.2.10` | installed as an `agent-review-pi` peer; all runtime resources disabled |
 | `typebox` | `1.3.9` | exact `agent-review-pi` peer |
@@ -278,7 +278,7 @@ undetectable later. The check that matters is `gates` parsing.
 
 **`models:` is deliberately absent.** Per-role model assignment
 (`models.conductor`, `models.roles`) is the mechanism behind the factory's
-provider-agnostic goal, but `dev-loops@0.9.0` documents no accepted identifier
+provider-agnostic goal, but `dev-loops@1.0.2` documents no accepted identifier
 schema for that field.
 
 The project-level Pi parent and subagent defaults are instead pinned to
