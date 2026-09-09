@@ -2,7 +2,7 @@
 
 # Pi runtime and package audit
 
-Audit date: 2026-08-29. Tracking issue: [#194](https://github.com/MediaNoxLabs/oxid/issues/194).
+Audit date: 2026-09-09. Tracking issues: [#194](https://github.com/MediaNoxLabs/oxid/issues/194) and [#195](https://github.com/MediaNoxLabs/oxid/issues/195).
 
 ## Outcome
 
@@ -17,14 +17,27 @@ grammar.
 The repository policy now defaults routine work to
 `openai-codex/gpt-5.6-terra:medium`, permits one Pi retry, caps an individual
 provider request at ten minutes, and makes compaction explicit. Tracked agents
-have role-sized wall-clock and turn budgets. The user-level subagent policy
-caps concurrency at two, session spawns at eight, recursion at two levels, and
-reported child usage at a 120k soft / 200k hard token envelope. Async execution
-requires an explicit request. These are starting bounds, not permanent
-performance targets; tune them only from retained metrics.
+have role-sized wall-clock and tool budgets. The user-level subagent policy
+caps concurrency at two across independent Pi parents, permits exactly one
+child launch in each parent session/run, limits each child to 60 tool calls
+with a soft nudge at 40, retains recursion at two levels for one bounded
+reviewer, and reports child usage against an 80k soft / 120k hard token
+envelope. The package's token ceiling gates later launches but does not
+interrupt an active model response, so the one-child rule, tool budget, and
+wall-clock deadline are the enforceable stop controls. Async execution requires
+an explicit request. Tune these starting bounds only from retained metrics.
+
+The first supervised product runs established a cheaper default topology:
+external supervisors invoke Pi directly as the sole issue worker. A nested
+parent and child both loaded the repository contract and one 25-turn child
+reached its ceiling before editing; the equivalent direct worker reached the
+implementation. Terra completed routine repository changes more reliably than
+Luna, while Sol was useful but materially more expensive. The tracked default
+therefore stays Terra; Sol requires a concrete hard-reasoning need and Luna is
+limited to bounded scouting or small documentation work.
 
 Agent budget frontmatter intentionally uses a small machine-readable grammar:
-`timeoutMs` and `maxSubagentDepth` are top-level integers, while `turnBudget` is
+`timeoutMs` and `maxSubagentDepth` are top-level integers, while `toolBudget` is
 an inline JSON object. Do not convert these controls to YAML block mappings;
 the startup audit rejects formats outside that tracked contract.
 
@@ -56,7 +69,7 @@ The owner-aware reconciliation of remaining dirty/unmerged state is tracked by
 | --- | --- | --- | --- |
 | `pi-coding-agent` | `0.84.0` via Nix | `0.85.1` on npm | retain Nix pin while package peers target 0.84 |
 | `dev-loops` | `0.9.0` | `1.0.1` | major update in [#303](https://github.com/MediaNoxLabs/oxid/issues/303) |
-| `pi-subagents` | `0.42.1` | `0.66.0` | orchestration update in [#195](https://github.com/MediaNoxLabs/oxid/issues/195) |
+| `pi-subagents` | `0.66.0` | `0.66.0` | adopted directly in [#195](https://github.com/MediaNoxLabs/oxid/issues/195) |
 | `agent-review-pi` | `0.6.0` | `0.6.0` | adopted with exact peers by [#301](https://github.com/MediaNoxLabs/oxid/issues/301) |
 | `pi-taskflow` | `0.2.10` | `0.3.0-beta.1.2` | peer only; runtime resources disabled |
 | `typebox` | `1.3.9` | `1.3.28` | minimum compatible exact peer; retain |
@@ -64,8 +77,9 @@ The owner-aware reconciliation of remaining dirty/unmerged state is tracked by
 The `pi-subagents` releases between the pin and 0.66.0 contain fixes directly
 related to recovered/detached runs, budget/timeout terminal classification,
 smaller child context, exact model failures, and Codex priority propagation.
-That makes an upgrade valuable and too risky to bundle with this review-package
-fix. `agent-review-pi@0.6.0` is small enough to verify here: its exact peer
+Issue #195 adopts that local, recoverable upgrade directly with one focused
+smoke rather than a separate migration canary. `agent-review-pi@0.6.0` is small
+enough to verify here: its exact peer
 closure reports zero npm vulnerabilities, its 13 native tools register, and its
 corrected bundled skill loads through Pi RPC. The former compatibility loader
 is removed.
@@ -124,10 +138,10 @@ through the pinned shell:
 `./bootstrap.sh --check` also verifies that the parent/subagent default model
 is present in the Nix-pinned Pi model catalog. This is a catalog canary without
 making a billed provider request. The same smoke reads the exact
-`pi-subagents` pin's `ExtensionConfig`, agent-frontmatter parser, and turn-budget
+`pi-subagents` pin's `ExtensionConfig`, agent-frontmatter parser, and tool-budget
 validator before the offline Pi RPC load. Those installed package sources are
 the schema authority for every key written from `.pi/subagent-policy.json` and
-for `timeoutMs` / `turnBudget` in tracked agents; the repository copy is not
+for `timeoutMs` / `toolBudget` in tracked agents; the repository copy is not
 treated as self-authenticating evidence.
 
 `--configure-pi` changes only

@@ -14,7 +14,10 @@ not.
 - One review agent is the routine default and one automatic review/fix round is
   the limit. A second opinion requires high risk, a disputed finding, or an
   explicit owner request.
-- Only one PR candidate is auto-driven remotely by each parent session.
+- Only one PR candidate is auto-driven remotely by each parent session. An
+  external supervisor should run Pi directly as the sole issue worker and stop
+  it before hosted CI. An interactive Pi operator may instead dispatch one
+  tracked child. Neither topology auto-resumes or launches a CI-only child.
 - Keep at most two active managed delivery worktrees per Git common checkout
   on a host. An experiment may use a temporary third worktree only when its
   owner and deletion date are recorded.
@@ -29,6 +32,11 @@ not.
 An SLO miss is a process finding. Do not answer it by adding retries, reviewers,
 or a second implementation path. Record which phase consumed the time and fix
 that phase.
+
+Default routing is Terra for routine repository delivery, Sol only for a
+specific architecture or difficult-reasoning need, and Luna for bounded
+scouting or small documentation edits. A smaller model that exhausts its turn
+budget loading contracts is not cheaper than a capable worker that finishes.
 
 ## Reversibility-first complexity check
 

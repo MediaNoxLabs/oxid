@@ -12,7 +12,7 @@ import { checkUserPolicy } from "./pi-policy.mjs";
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const EXPECTED_PACKAGES = new Map([
   ["dev-loops", "0.9.0"],
-  ["pi-subagents", "0.42.1"],
+  ["pi-subagents", "0.66.0"],
   ["typebox", "1.3.9"],
   ["pi-taskflow", "0.2.10"],
   ["@input-output-hk/agent-review-pi", "0.6.0"],
@@ -113,15 +113,18 @@ function validateAgentBudget(file, fields) {
     problems.push(`${file}: timeoutMs must be 60000..3600000`);
   }
   try {
-    const budget = JSON.parse(fields.turnBudget ?? "null");
-    if (!budget || !Number.isInteger(budget.maxTurns) || budget.maxTurns < 1 || budget.maxTurns > 32) {
-      problems.push(`${file}: turnBudget.maxTurns must be 1..32`);
+    const budget = JSON.parse(fields.toolBudget ?? "null");
+    if (!budget || !Number.isInteger(budget.soft) || budget.soft < 1 || budget.soft > 64) {
+      problems.push(`${file}: toolBudget.soft must be 1..64`);
     }
-    if (!Number.isInteger(budget?.graceTurns) || budget.graceTurns < 0 || budget.graceTurns > 2) {
-      problems.push(`${file}: turnBudget.graceTurns must be 0..2`);
+    if (!Number.isInteger(budget?.hard) || budget.hard < budget.soft || budget.hard > 96) {
+      problems.push(`${file}: toolBudget.hard must be >= soft and <= 96`);
+    }
+    if (budget?.block !== "*") {
+      problems.push(`${file}: toolBudget.block must be \"*\"`);
     }
   } catch {
-    problems.push(`${file}: turnBudget must be valid JSON`);
+    problems.push(`${file}: toolBudget must be valid JSON`);
   }
   if (file === "dev-loop.agent.md" && Number(fields.maxSubagentDepth) !== 2) {
     problems.push(`${file}: maxSubagentDepth must be 2`);
@@ -402,7 +405,7 @@ export async function auditPi({
     }
   }
   checks.push(check("tracked-agent-budgets", agentProblems.length ? "fail" : "pass",
-    agentProblems.length ? "One or more tracked agents are unbounded" : "Every tracked agent has a bounded runtime and turn budget",
+    agentProblems.length ? "One or more tracked agents are unbounded" : "Every tracked agent has a bounded runtime and tool budget",
     agentProblems.length ? agentProblems : undefined));
 
   const helperProblems = [];
@@ -425,7 +428,7 @@ export async function auditPi({
 
   const effectiveUserPolicy = userPolicyResult ?? await checkUserPolicy({ env });
   checks.push(check("user-subagent-policy", effectiveUserPolicy.ok ? "pass" : "fail",
-    effectiveUserPolicy.ok ? "Effective pi-subagents concurrency, spawn, turn, token, and artifact policy is aligned" : "Effective user pi-subagents policy is not aligned",
+    effectiveUserPolicy.ok ? "Effective pi-subagents concurrency, spawn, tool, token, and artifact policy is aligned" : "Effective user pi-subagents policy is not aligned",
     effectiveUserPolicy.ok ? { configPath: effectiveUserPolicy.configPath } : {
       configPath: effectiveUserPolicy.configPath,
       mismatches: effectiveUserPolicy.mismatches.map((item) => item.field),
