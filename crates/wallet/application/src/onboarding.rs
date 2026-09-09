@@ -28,6 +28,29 @@ pub const COMPLETE_WALLET_ONBOARDING_SUMMARY: &str =
     "I saved the 24-word recovery phrase and authorize this wallet to install its root.";
 pub const WALLET_ONBOARDING_ENTROPY_BYTES: usize = 32;
 const WALLET_ONBOARDING_CEREMONY_ID_BYTES: usize = 16;
+
+/// Payload-free, one-use authorization for displaying a newly created phrase.
+/// Implementations must obtain fresh user presence and never accept caller prose.
+pub trait WalletOnboardingAuthorizationPort: Send + Sync {
+    fn authorize_recovery_phrase_reveal(&self) -> Result<(), WalletOnboardingAuthorizationError>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletOnboardingAuthorizationError {
+    Denied,
+    Unavailable,
+}
+
+impl fmt::Display for WalletOnboardingAuthorizationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Denied => "device authorization was not completed",
+            Self::Unavailable => "device authorization is unavailable",
+        })
+    }
+}
+
+impl Error for WalletOnboardingAuthorizationError {}
 const MAX_PENDING_WALLET_ONBOARDINGS: usize = 8;
 
 /// Recovery text crossing only the authenticated onboarding boundary.
@@ -199,6 +222,7 @@ pub enum WalletOnboardingError {
     InvalidProfileIdentifier(OpaqueIdError),
     Randomness(PlatformError),
     InvalidMnemonic,
+    UserPresence(WalletOnboardingAuthorizationError),
     MnemonicMustBeNormalized,
     MnemonicMustContainTwentyFourWords,
     CeremonyAlreadyPending,
@@ -217,6 +241,7 @@ impl fmt::Display for WalletOnboardingError {
             Self::InvalidProfileIdentifier(_) => "wallet profile identifier is invalid",
             Self::Randomness(_) => "secure wallet randomness is unavailable",
             Self::InvalidMnemonic => "recovery phrase is not a valid English BIP-39 phrase",
+            Self::UserPresence(error) => return error.fmt(formatter),
             Self::MnemonicMustBeNormalized => {
                 "recovery phrase must use normalized lowercase words separated by one space"
             }
@@ -249,30 +274,33 @@ struct PendingWalletOnboarding {
 /// Process-local coordinator. Pending roots intentionally disappear on restart;
 /// callers must restart the ceremony and native custody still refuses a second
 /// root if the previous completion reached durable installation.
-pub struct WalletOnboardingService<N, M, R> {
+pub struct WalletOnboardingService<N, M, R, A> {
     random: Arc<N>,
     mnemonics: Arc<M>,
     recovery: Arc<R>,
+    authorization: Arc<A>,
     pending: Mutex<BTreeMap<WalletProfileId, PendingWalletOnboarding>>,
 }
 
-impl<N, M, R> WalletOnboardingService<N, M, R> {
+impl<N, M, R, A> WalletOnboardingService<N, M, R, A> {
     #[must_use]
-    pub fn new(random: Arc<N>, mnemonics: Arc<M>, recovery: Arc<R>) -> Self {
+    pub fn new(random: Arc<N>, mnemonics: Arc<M>, recovery: Arc<R>, authorization: Arc<A>) -> Self {
         Self {
             random,
             mnemonics,
             recovery,
+            authorization,
             pending: Mutex::new(BTreeMap::new()),
         }
     }
 }
 
-impl<N, M, R> PrepareWalletOnboardingUseCase for WalletOnboardingService<N, M, R>
+impl<N, M, R, A> PrepareWalletOnboardingUseCase for WalletOnboardingService<N, M, R, A>
 where
     N: RandomPort + 'static,
     M: WalletMnemonicPort + 'static,
     R: RecoverWalletRootUseCase + 'static,
+    A: WalletOnboardingAuthorizationPort + 'static,
 {
     fn execute(
         &self,
@@ -295,6 +323,9 @@ where
 
         let (root, created_recovery_phrase) = match command.mode {
             WalletOnboardingMode::CreateNew => {
+                self.authorization
+                    .authorize_recovery_phrase_reveal()
+                    .map_err(WalletOnboardingError::UserPresence)?;
                 let mut entropy = SecretEntropy::default();
                 self.random
                     .fill_bytes(&mut entropy.0)
@@ -349,11 +380,12 @@ where
     }
 }
 
-impl<N, M, R> CompleteWalletOnboardingUseCase for WalletOnboardingService<N, M, R>
+impl<N, M, R, A> CompleteWalletOnboardingUseCase for WalletOnboardingService<N, M, R, A>
 where
     N: RandomPort + 'static,
     M: WalletMnemonicPort + 'static,
     R: RecoverWalletRootUseCase + 'static,
+    A: WalletOnboardingAuthorizationPort + 'static,
 {
     fn execute(
         &self,
@@ -400,11 +432,12 @@ where
     }
 }
 
-impl<N, M, R> CancelWalletOnboardingUseCase for WalletOnboardingService<N, M, R>
+impl<N, M, R, A> CancelWalletOnboardingUseCase for WalletOnboardingService<N, M, R, A>
 where
     N: RandomPort + 'static,
     M: WalletMnemonicPort + 'static,
     R: RecoverWalletRootUseCase + 'static,
+    A: WalletOnboardingAuthorizationPort + 'static,
 {
     fn execute(&self, command: CancelWalletOnboardingCommand) -> Result<(), WalletOnboardingError> {
         let profile_id = WalletProfileId::parse(command.profile_id)
@@ -527,6 +560,25 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct RecordingAuthorization {
+        denied: Mutex<bool>,
+        calls: Mutex<usize>,
+    }
+
+    impl WalletOnboardingAuthorizationPort for RecordingAuthorization {
+        fn authorize_recovery_phrase_reveal(
+            &self,
+        ) -> Result<(), WalletOnboardingAuthorizationError> {
+            *self.calls.lock().expect("calls") += 1;
+            if *self.denied.lock().expect("denied") {
+                Err(WalletOnboardingAuthorizationError::Denied)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[derive(Default)]
     struct RecordingRecovery {
         roots: Mutex<Vec<(WalletRootSeedKind, Vec<u8>)>>,
         fail: Mutex<bool>,
@@ -557,10 +609,17 @@ mod tests {
     }
 
     fn service() -> (
-        WalletOnboardingService<FixedRandom, TestMnemonic, RecordingRecovery>,
+        WalletOnboardingService<
+            FixedRandom,
+            TestMnemonic,
+            RecordingRecovery,
+            RecordingAuthorization,
+        >,
         Arc<RecordingRecovery>,
+        Arc<RecordingAuthorization>,
     ) {
         let recovery = Arc::new(RecordingRecovery::default());
+        let authorization = Arc::new(RecordingAuthorization::default());
         (
             WalletOnboardingService::new(
                 Arc::new(FixedRandom {
@@ -568,8 +627,10 @@ mod tests {
                 }),
                 Arc::new(TestMnemonic),
                 Arc::clone(&recovery),
+                Arc::clone(&authorization),
             ),
             recovery,
+            authorization,
         )
     }
 
@@ -592,7 +653,7 @@ mod tests {
 
     #[test]
     fn create_uses_public_256_bit_vector_and_installs_full_seed_after_acknowledgement() {
-        let (service, recovery) = service();
+        let (service, recovery, _) = service();
         let prepared = prepare_create(&service);
         let phrase = prepared
             .created_recovery_phrase
@@ -621,7 +682,7 @@ mod tests {
 
     #[test]
     fn restore_requires_exact_normalized_checksum_valid_twenty_four_words() {
-        let (service, _) = service();
+        let (service, _, _) = service();
         let invalid_phrases = [
             (
                 "abandon abandon abandon".to_owned(),
@@ -654,7 +715,7 @@ mod tests {
 
     #[test]
     fn restored_public_phrase_uses_the_same_complete_bip39_seed() {
-        let (service, recovery) = service();
+        let (service, recovery, _) = service();
         let prepared = PrepareWalletOnboardingUseCase::execute(
             &service,
             PrepareWalletOnboardingCommand {
@@ -689,7 +750,7 @@ mod tests {
 
     #[test]
     fn acknowledgement_and_confirmation_gate_completion_without_exposing_root() {
-        let (service, recovery) = service();
+        let (service, recovery, _) = service();
         let prepared = prepare_create(&service);
         let command = |acknowledged, confirmed| CompleteWalletOnboardingCommand {
             profile_id: "profile_onboarding".to_owned(),
@@ -715,7 +776,7 @@ mod tests {
 
     #[test]
     fn duplicate_cancel_suspend_and_failed_recovery_are_fail_closed() {
-        let (service, recovery) = service();
+        let (service, recovery, _) = service();
         let first = prepare_create(&service);
         assert!(matches!(
             PrepareWalletOnboardingUseCase::execute(
@@ -782,7 +843,7 @@ mod tests {
 
     #[test]
     fn restart_discards_pending_root_and_requires_a_fresh_ceremony() {
-        let (service, recovery) = service();
+        let (service, recovery, authorization) = service();
         let prepared = prepare_create(&service);
         drop(service);
         let restarted = WalletOnboardingService::new(
@@ -791,6 +852,7 @@ mod tests {
             }),
             Arc::new(TestMnemonic),
             Arc::clone(&recovery),
+            Arc::clone(&authorization),
         );
 
         assert_eq!(
@@ -806,6 +868,26 @@ mod tests {
             Err(WalletOnboardingError::CeremonyNotFound)
         );
         assert!(recovery.roots.lock().expect("roots").is_empty());
+    }
+
+    #[test]
+    fn denied_presence_never_prepares_or_exposes_a_phrase() {
+        let (service, recovery, authorization) = service();
+        *authorization.denied.lock().expect("denied") = true;
+        assert!(matches!(
+            PrepareWalletOnboardingUseCase::execute(
+                &service,
+                PrepareWalletOnboardingCommand {
+                    profile_id: "profile_onboarding".to_owned(),
+                    mode: WalletOnboardingMode::CreateNew,
+                },
+            ),
+            Err(WalletOnboardingError::UserPresence(
+                WalletOnboardingAuthorizationError::Denied
+            ))
+        ));
+        assert!(recovery.roots.lock().expect("roots").is_empty());
+        assert_eq!(*authorization.calls.lock().expect("calls"), 1);
     }
 
     #[test]
