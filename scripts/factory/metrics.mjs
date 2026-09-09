@@ -20,6 +20,12 @@ const MAX_RECORD_FILES = 10_000;
 const MAX_SECRET_SCAN_DEPTH = 8;
 const MAX_FUTURE_SKEW_MS = 5 * 60_000;
 const RETENTION_MS = 90 * 24 * 60 * 60_000;
+export const PUBLIC_METRICS_MARKER = "oxid-factory-metrics:v1";
+export const MAX_PUBLIC_METRIC_AGE_MS = 24 * 60 * 60_000;
+const MAX_PUBLIC_COMMENT_BYTES = 64 * 1024;
+const PUBLIC_METRIC_KEYS = Object.freeze([
+  "schemaVersion", "repository", "issue", "pr", "headSha", "recordedAt", "phases", "validations", "review", "tokens", "attempts", "ci", "worktree", "routing",
+]);
 const SECRET_VALUE = /(?:github_pat_|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|\bBearer\s+\S+|openid-credential-offer:\/\/|credential_offer(?:_uri)?=|\bdid:[a-z0-9]+:[A-Za-z0-9._:%-]+)/i;
 const SAFE_NAME = /^[a-z0-9][a-z0-9._:-]{0,63}$/;
 export const METRIC_KEYS = Object.freeze({
@@ -544,6 +550,147 @@ export async function writeMetricRecord(record, { outputDir, currentHead, replac
   return destination;
 }
 
+function publicProjection(record) {
+  return Object.fromEntries(PUBLIC_METRIC_KEYS.map((key) => [key, structuredClone(record[key])]));
+}
+
+function assertPublicMetricShape(payload, { nowMs = Date.now(), maxAgeMs = MAX_PUBLIC_METRIC_AGE_MS } = {}) {
+  const source = objectAt(payload, "$", PUBLIC_METRIC_KEYS, []);
+  if (!source) throw new Error("public metric payload must be an object");
+  const keys = Object.keys(payload);
+  if (keys.length !== PUBLIC_METRIC_KEYS.length || PUBLIC_METRIC_KEYS.some((key) => !keys.includes(key))) {
+    throw new Error("public metric payload has missing or unknown fields");
+  }
+  const recordedAt = Date.parse(payload.recordedAt);
+  if (typeof payload.recordedAt !== "string" || !Number.isFinite(recordedAt) || new Date(recordedAt).toISOString() !== payload.recordedAt) {
+    throw new Error("public metric payload recordedAt is malformed");
+  }
+  if (recordedAt > nowMs + MAX_FUTURE_SKEW_MS || nowMs - recordedAt > maxAgeMs) throw new Error("public metric payload is stale");
+  const completedAt = new Date(recordedAt).toISOString();
+  const startedAt = new Date(recordedAt - payload.phases?.totalElapsedMs).toISOString();
+  const privateCandidate = {
+    ...payload, startedAt, completedAt,
+  };
+  const validation = validateMetricRecord(privateCandidate, { nowMs });
+  if (!validation.ok) throw new Error(`public metric payload rejected: ${validation.errors[0].path} ${validation.errors[0].message}`);
+  return payload;
+}
+
+/** Build the only scrapeable form of a private v1 record. */
+export function projectPublicMetricRecord(record, options = {}) {
+  const validation = validateMetricRecord(record, options);
+  if (!validation.ok) throw new Error(`private metric record rejected: ${validation.errors[0].path} ${validation.errors[0].message}`);
+  const payload = publicProjection(validation.record);
+  return assertPublicMetricShape(payload, options);
+}
+
+export function parsePublicMetricComment(body, options = {}) {
+  if (typeof body !== "string") return null;
+  if (Buffer.byteLength(body, "utf8") > MAX_PUBLIC_COMMENT_BYTES) {
+    if (body.includes(PUBLIC_METRICS_MARKER)) throw new Error("public metrics comment is oversized");
+    return null;
+  }
+  const matches = [...body.matchAll(new RegExp(`<!--\\s*${PUBLIC_METRICS_MARKER}\\s+(.+?)\\s*-->`, "gs"))];
+  if (matches.length === 0) return null;
+  if (matches.length !== 1) throw new Error("public metrics comment has duplicate markers");
+  let payload;
+  try {
+    payload = JSON.parse(matches[0][1]);
+  } catch {
+    throw new Error("public metrics comment has malformed payload");
+  }
+  if (matches[0][1] !== JSON.stringify(payload)) throw new Error("public metrics comment payload is not canonical");
+  return assertPublicMetricShape(payload, options);
+}
+
+export function renderPublicMetricComment(record, options = {}) {
+  const payload = projectPublicMetricRecord(record, options);
+  const duration = (milliseconds) => {
+    if (milliseconds === null) return "unavailable";
+    const seconds = Math.round(milliseconds / 1_000);
+    const minutes = Math.floor(seconds / 60);
+    return minutes === 0 ? `${seconds}s` : `${minutes}m${String(seconds % 60).padStart(2, "0")}s`;
+  };
+  const bytes = (value) => value === null ? "unavailable" : `${(value / 1024 ** 3).toFixed(1)} GiB`;
+  const checkSummary = payload.ci.checks.length === 0
+    ? "unavailable"
+    : payload.ci.checks.map((check) => `${check.name} ${duration(check.durationMs)}`).join(", ");
+  const tokenSummary = payload.tokens === null
+    ? "unavailable"
+    : `${payload.tokens.input.toLocaleString("en-US")} input, ${payload.tokens.output.toLocaleString("en-US")} output, ${payload.tokens.cacheRead.toLocaleString("en-US")} cache-read, ${payload.tokens.cacheWrite.toLocaleString("en-US")} cache-write`;
+  const outcome = payload.ci.failedChecks > 0 || payload.validations.some((entry) => entry.outcome === "failed")
+    ? "failed"
+    : payload.ci.canceledRuns > 0 || payload.validations.some((entry) => entry.outcome === "canceled") ? "canceled" : "delivered";
+  const body = `## Software Factory metrics
+
+- Outcome: ${outcome}; exact head \`${payload.headSha}\`
+- Total elapsed: ${duration(payload.phases.totalElapsedMs)}; development ${duration(payload.phases.developmentMs)}, review ${duration(payload.phases.reviewMs)}, validation ${duration(payload.phases.validationMs)}
+- Hosted CI critical path: ${duration(payload.ci.wallTimeMs)}; selected checks: ${checkSummary}
+- Profile and targets: ${payload.routing.profile} / ${payload.routing.targets.join(", ")}
+- Pi usage: ${tokenSummary}; ${payload.review.toolCalls ?? "unavailable"} tool calls across ${payload.review.sessions ?? "unavailable"} sessions
+- Peak worktree/target: ${bytes(payload.worktree.peakWorktreeBytes)} / ${bytes(payload.worktree.peakTargetBytes)}
+- Attempts: ${payload.attempts.failed} failed, ${payload.attempts.canceled} canceled, ${payload.attempts.pushesAfterFirstCi} post-initial-CI pushes
+
+<!-- ${PUBLIC_METRICS_MARKER} ${JSON.stringify(payload)} -->`;
+  if (Buffer.byteLength(body, "utf8") > MAX_PUBLIC_COMMENT_BYTES) throw new Error("public metrics comment is oversized");
+  return body;
+}
+
+/** Read-only comment collector. Duplicate identity evidence is deliberately ambiguous. */
+export function collectPublicMetricRecords(comments, { repository = METRICS_REPOSITORY, issue, pr, headSha, ownerLogin, ...options } = {}) {
+  if (repository !== METRICS_REPOSITORY || !Number.isSafeInteger(issue) || issue < 1 || !/^[0-9a-f]{40}$/.test(headSha ?? "")) {
+    throw new Error("collection requires the authoritative repository, issue, and exact head");
+  }
+  if (typeof ownerLogin !== "string" || !ownerLogin) throw new Error("collection requires the expected publisher login");
+  if (!Array.isArray(comments) || comments.length > MAX_RECORD_FILES) throw new Error("comment evidence is unavailable or oversized");
+  const records = [];
+  const identities = new Set();
+  const validationOptions = { ...options, maxAgeMs: options.maxAgeMs ?? Number.MAX_SAFE_INTEGER };
+  for (const comment of comments) {
+    if (comment?.user?.login !== ownerLogin) continue;
+    const payload = parsePublicMetricComment(comment?.body, validationOptions);
+    if (!payload) continue;
+    if (payload.repository !== repository || payload.issue !== issue || payload.headSha !== headSha
+      || (pr !== undefined && payload.pr !== pr)) continue;
+    assertPublicMetricShape(payload, validationOptions);
+    const identity = `${payload.repository}/${payload.issue}/${payload.pr ?? "none"}/${payload.headSha}`;
+    if (identities.has(identity)) throw new Error("public metric evidence is ambiguous");
+    identities.add(identity);
+    records.push(payload);
+  }
+  return records;
+}
+
+/**
+ * Upsert the caller-owned exact-head comment. Transport is injected so collection
+ * remains testable and callers can surface (rather than hide) a failed publication.
+ */
+export async function publishPublicMetricComment({ record, issue, pr = record?.pr, headSha = record?.headSha, ownerLogin, listComments, createComment, updateComment, ...options }) {
+  const payload = projectPublicMetricRecord(record, options);
+  if (payload.issue !== issue || payload.headSha !== headSha) throw new Error("publication requires the record work item and exact head");
+  if (payload.pr !== pr) throw new Error("publication requires the PR identity from the authoritative record");
+  if (!Number.isSafeInteger(issue) || issue < 1 || (pr !== null && (!Number.isSafeInteger(pr) || pr < 1))) throw new Error("publication requires an issue and optional PR");
+  if (typeof ownerLogin !== "string" || !ownerLogin) throw new Error("publication requires the authenticated owner login");
+  if (typeof listComments !== "function" || typeof createComment !== "function" || typeof updateComment !== "function") throw new Error("publication transport is unavailable");
+  const workItem = pr ?? issue; // GitHub PRs share the issue-comment endpoint.
+  const body = renderPublicMetricComment(record, options);
+  try {
+    const comments = await listComments(workItem);
+    if (!Array.isArray(comments)) throw new Error("public metric comment evidence is unavailable");
+    const owned = comments.filter((comment) => comment?.user?.login === ownerLogin);
+    const matches = owned.filter((comment) => {
+      const parsed = parsePublicMetricComment(comment?.body, { ...options, maxAgeMs: Number.MAX_SAFE_INTEGER });
+      return parsed?.repository === payload.repository && parsed.issue === issue;
+    });
+    if (matches.length > 1) throw new Error("public metric evidence is ambiguous");
+    if (matches.length === 1) await updateComment(matches[0].id, body);
+    else await createComment(workItem, body);
+    return { ok: true, action: matches.length === 1 ? "updated" : "created", workItem, payload };
+  } catch (cause) {
+    return { ok: false, workItem, error: cause instanceof Error ? cause.message : "public metrics publication failed" };
+  }
+}
+
 export function metricTemplate({ issue, pr = null, headSha, now = new Date().toISOString(), draft = true }) {
   const measured = draft ? null : 0;
   return {
@@ -569,6 +716,8 @@ export function metricTemplate({ issue, pr = null, headSha, now = new Date().toI
 const USAGE = `Usage:
   node scripts/factory/metrics.mjs template --issue N [--pr N] --head SHA
   node scripts/factory/metrics.mjs write --record FILE [--output-dir DIR] [--replace]
+  node scripts/factory/metrics.mjs publish --record FILE --issue N --repo MediaNoxLabs/oxid [--pr N]
+  node scripts/factory/metrics.mjs collect --issue N --head SHA --repo MediaNoxLabs/oxid [--pr N]
   node scripts/factory/metrics.mjs audit [--input-dir DIR] [--json]
 
 The default private store is <git-common-dir>/oxid-factory/metrics-v1. Audit is
@@ -580,6 +729,7 @@ function cliOptions(argv) {
     options: {
       issue: { type: "string" }, pr: { type: "string" }, head: { type: "string" }, record: { type: "string" },
       "output-dir": { type: "string" }, "input-dir": { type: "string" }, replace: { type: "boolean" },
+      repo: { type: "string" },
       json: { type: "boolean" }, help: { type: "boolean", short: "h" },
     },
     allowPositionals: true,
@@ -657,6 +807,54 @@ export async function runCli(argv = process.argv.slice(2), { cwd = process.cwd()
     if (worktreeState) throw new Error("write requires a clean checkout so the record is unambiguously bound to HEAD");
     const destination = await writeMetricRecord(record, { outputDir, currentHead, replace: values.replace === true });
     stdout.write(`${JSON.stringify({ ok: true, file: path.basename(destination) })}\n`);
+    return 0;
+  }
+  if (command === "publish") {
+    rejectUnusedOptions(values, ["record", "repo", "issue", "pr"]);
+    if (!values.record || values.repo !== METRICS_REPOSITORY) throw new Error("publish requires --record FILE and the authoritative --repo");
+    const issue = Number(values.issue);
+    const requestedPr = values.pr === undefined ? undefined : Number(values.pr);
+    if (!Number.isSafeInteger(issue) || issue < 1 || (requestedPr !== undefined && (!Number.isSafeInteger(requestedPr) || requestedPr < 1))) throw new Error("publish requires a positive --issue and optional --pr");
+    const privatePaths = repositoryPrivatePaths(cwd);
+    const recordPath = path.resolve(cwd, values.record);
+    requireOutsideWorktree(canonicalProspectivePath(recordPath), "--record", privatePaths);
+    const record = JSON.parse(await readBoundedRegularFile(recordPath));
+    const currentHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
+    if (record.headSha !== currentHead) throw new Error("publish requires a record bound to the current exact head");
+    projectPublicMetricRecord(record);
+    const pr = requestedPr ?? record.pr;
+    try {
+    if (pr !== null) {
+      const prData = JSON.parse(execFileSync("gh", ["pr", "view", String(pr), "--repo", values.repo, "--json", "headRefOid"], { encoding: "utf8" }));
+      if (prData?.headRefOid !== currentHead) throw new Error("publish refuses stale PR-head evidence");
+    }
+    const ownerLogin = execFileSync("gh", ["api", "user", "--jq", ".login"], { encoding: "utf8" }).trim();
+    const ghComments = async (workItem) => JSON.parse(execFileSync("gh", ["api", `repos/${values.repo}/issues/${workItem}/comments`, "--paginate", "--slurp"], { encoding: "utf8" })).flat();
+    const result = await publishPublicMetricComment({
+      record, issue, pr, ownerLogin,
+      listComments: ghComments,
+      createComment: async (workItem, body) => { execFileSync("gh", ["api", "--method", "POST", `repos/${values.repo}/issues/${workItem}/comments`, "-f", `body=${body}`], { encoding: "utf8" }); },
+      updateComment: async (id, body) => { execFileSync("gh", ["api", "--method", "PATCH", `repos/${values.repo}/issues/comments/${id}`, "-f", `body=${body}`], { encoding: "utf8" }); },
+    });
+    stdout.write(`${JSON.stringify(result)}\n`);
+    return 0; // Publication failure is visible but never blocks delivery.
+    } catch (cause) {
+      stdout.write(`${JSON.stringify({ ok: false, workItem: pr ?? issue, error: cause instanceof Error ? cause.message : "public metrics publication failed" })}\n`);
+      return 0;
+    }
+  }
+  if (command === "collect") {
+    rejectUnusedOptions(values, ["repo", "issue", "pr", "head", "json"]);
+    if (values.repo !== METRICS_REPOSITORY) throw new Error("collect requires the authoritative --repo");
+    const issue = Number(values.issue);
+    const pr = values.pr === undefined ? null : Number(values.pr);
+    if (!Number.isSafeInteger(issue) || issue < 1 || (pr !== null && (!Number.isSafeInteger(pr) || pr < 1))) throw new Error("collect requires a positive --issue and optional --pr");
+    if (!/^[0-9a-f]{40}$/.test(values.head ?? "")) throw new Error("collect requires an exact lowercase --head SHA");
+    const workItem = pr ?? issue;
+    const ownerLogin = execFileSync("gh", ["api", "user", "--jq", ".login"], { encoding: "utf8" }).trim();
+    const comments = JSON.parse(execFileSync("gh", ["api", `repos/${values.repo}/issues/${workItem}/comments`, "--paginate", "--slurp"], { encoding: "utf8" })).flat();
+    const records = collectPublicMetricRecords(comments, { repository: values.repo, issue, pr, headSha: values.head, ownerLogin, maxAgeMs: Number.MAX_SAFE_INTEGER });
+    stdout.write(`${JSON.stringify({ ok: true, workItem, records })}\n`);
     return 0;
   }
   if (command === "audit") {

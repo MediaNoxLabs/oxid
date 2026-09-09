@@ -352,7 +352,11 @@ in a diff.
   so in-flight work can be recovered.
 - **Leave one private metrics record per issue/PR/head.** Generate a closed v1
   template, replace every required `null`/empty target with measured values,
-  and atomically store it. An untouched template is invalid. Audit is
+  and atomically store it. The persistent supervisor may publish its validated
+  allow-listed projection as one human summary plus exactly one
+  `oxid-factory-metrics:v1` hidden payload, PR-first with issue fallback;
+  rejected/stale/ambiguous evidence never becomes a comment, while a transport
+  failure remains a visible nonblocking result. An untouched template is invalid. Audit is
   read-only and returns aggregate median/p90, per-check queue/execution timing,
   SLO/retention findings, duplicate identities, overflow markers, and malformed
   or missing-field counts without a model call:
