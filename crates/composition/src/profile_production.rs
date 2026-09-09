@@ -10,7 +10,7 @@ use oxid_adapter_midnight::unavailable_midnight_wallet;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_midnight::{
     MidnightStandaloneConfig, authenticate_midnight_chain_identity,
-    configuration_placeholder_address, protected_standalone_midnight_wallet,
+    protected_standalone_midnight_wallet,
 };
 
 use super::identity::{
@@ -118,15 +118,12 @@ pub async fn authenticate_production_deployment(
     profile: AuthenticatedDeploymentProfile,
 ) -> Result<AuthenticatedProductionDeployment, ProductionDeploymentCompositionError> {
     let midnight = profile.midnight();
-    let placeholder = configuration_placeholder_address(midnight.network_id())
-        .map_err(|_| ProductionDeploymentCompositionError::InvalidMidnightProfile)?;
-    let config = MidnightStandaloneConfig::new(
+    let config = MidnightStandaloneConfig::new_without_unshielded_address(
         midnight.network_id(),
         midnight.indexer_websocket_url(),
         midnight.indexer_http_url(),
         midnight.node_websocket_url(),
         midnight.proof_server_url(),
-        placeholder.value(),
     )
     .map_err(|_| ProductionDeploymentCompositionError::InvalidMidnightProfile)?;
     authenticate_midnight_chain_identity(midnight.node_websocket_url(), midnight.genesis_hash())

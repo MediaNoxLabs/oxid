@@ -75,7 +75,6 @@ pub struct MidnightIndexerConfig {
     network_id: ChainNetworkId,
     websocket_url: String,
     http_url: Option<String>,
-    unshielded_address: ChainAddress,
 }
 
 impl MidnightIndexerConfig {
@@ -95,14 +94,32 @@ impl MidnightIndexerConfig {
         }
 
         let websocket_url = validate_websocket_url(websocket_url.as_ref())?;
-        let unshielded_address =
-            validate_unshielded_address(&network_id, unshielded_address.as_ref())?;
+        validate_unshielded_address(&network_id, unshielded_address.as_ref())?;
 
         Ok(Self {
             network_id,
             websocket_url,
             http_url: None,
-            unshielded_address,
+        })
+    }
+
+    pub(crate) fn without_unshielded_address(
+        network_id: impl Into<String>,
+        websocket_url: impl AsRef<str>,
+    ) -> Result<Self, MidnightIndexerConfigError> {
+        let network_id = ChainNetworkId::parse(network_id.into())
+            .map_err(|_| MidnightIndexerConfigError::InvalidNetwork)?;
+        if network_by_id(&network_id)
+            .map_err(|_| MidnightIndexerConfigError::InvalidNetwork)?
+            .is_none()
+        {
+            return Err(MidnightIndexerConfigError::InvalidNetwork);
+        }
+
+        Ok(Self {
+            network_id,
+            websocket_url: validate_websocket_url(websocket_url.as_ref())?,
+            http_url: None,
         })
     }
 
@@ -124,11 +141,6 @@ impl MidnightIndexerConfig {
     #[cfg(test)]
     pub(crate) fn http_url(&self) -> Option<&str> {
         self.http_url.as_deref()
-    }
-
-    #[must_use]
-    pub const fn unshielded_address(&self) -> &ChainAddress {
-        &self.unshielded_address
     }
 }
 
@@ -313,7 +325,6 @@ impl<C> LiveMidnightAccountSource<C> {
         ));
         Self::with_transport_and_checkpoints(
             config.network_id,
-            config.unshielded_address,
             clock,
             transport,
             std::sync::Arc::new(UnavailableMidnightAccountCheckpointStore),
@@ -331,7 +342,6 @@ impl<C> LiveMidnightAccountSource<C> {
         ));
         Self::with_transport_and_checkpoints(
             config.network_id,
-            config.unshielded_address,
             clock,
             transport,
             std::sync::Arc::new(JsonMidnightAccountCheckpointStore::new(checkpoints)),
@@ -347,7 +357,6 @@ impl<C> LiveMidnightAccountSource<C> {
     ) -> Self {
         Self::with_transport_and_checkpoints(
             network_id,
-            _address,
             clock,
             transport,
             std::sync::Arc::new(UnavailableMidnightAccountCheckpointStore),
@@ -356,7 +365,6 @@ impl<C> LiveMidnightAccountSource<C> {
 
     fn with_transport_and_checkpoints(
         network_id: ChainNetworkId,
-        _address: ChainAddress,
         clock: std::sync::Arc<C>,
         transport: std::sync::Arc<dyn MidnightIndexerTransport>,
         checkpoints: std::sync::Arc<dyn MidnightAccountCheckpointStore>,
@@ -2389,7 +2397,6 @@ mod tests {
         });
         let source = LiveMidnightAccountSource::with_transport_and_checkpoints(
             network().id().clone(),
-            address(),
             Arc::new(FixedClock),
             transport.clone(),
             checkpoints,

@@ -80,19 +80,7 @@ pub use transaction::{
 #[cfg(not(target_arch = "wasm32"))]
 pub fn standalone_configuration_placeholder_address() -> Result<ChainAddress, WalletAccountPortError>
 {
-    configuration_placeholder_address(DEFAULT_NETWORK_ID)
-}
-
-/// Returns one public address vector for validating a build-authenticated
-/// deployment profile before protected custody derives the owned account.
-///
-/// The returned value proves neither ownership nor funding and is discarded
-/// as soon as a profile binds its protected derived account.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn configuration_placeholder_address(
-    network_id_value: &str,
-) -> Result<ChainAddress, WalletAccountPortError> {
-    let network = network_id(network_id_value)?;
+    let network = network_id(DEFAULT_NETWORK_ID)?;
     fixture_addresses(&network)?
         .into_iter()
         .find(|address| address.kind() == ChainAddressKind::Unshielded)
@@ -2216,17 +2204,27 @@ mod tests {
     }
 
     #[test]
-    fn configuration_placeholder_is_network_valid_transport_input() {
-        for network in ["mainnet", "preprod", "preview", "undeployed"] {
-            let address = configuration_placeholder_address(network)
-                .expect("transport configuration address");
+    fn standalone_configuration_placeholder_cannot_select_a_value_bearing_network() {
+        let address = standalone_configuration_placeholder_address()
+            .expect("the undeployed public placeholder is valid");
+        for network in ["mainnet", "preprod", "preview"] {
+            assert_eq!(
+                MidnightIndexerConfig::new(
+                    network,
+                    "wss://indexer.example.invalid/api/v4/graphql/ws",
+                    address.value(),
+                ),
+                Err(MidnightIndexerConfigError::AddressNetworkMismatch)
+            );
+        }
+        assert_eq!(
             MidnightIndexerConfig::new(
-                network,
+                "testnet",
                 "wss://indexer.example.invalid/api/v4/graphql/ws",
                 address.value(),
-            )
-            .expect("network-valid transport configuration");
-        }
+            ),
+            Err(MidnightIndexerConfigError::InvalidNetwork)
+        );
     }
 
     #[test]
