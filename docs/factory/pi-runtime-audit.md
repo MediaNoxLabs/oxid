@@ -47,7 +47,7 @@ the startup audit rejects formats outside that tracked contract.
 | --- | --- | --- |
 | Devshell Pi | Nix-pinned; `./bootstrap.sh --check` passed | healthy |
 | Direct host Pi | outside Nix | unsupported path; use `./bootstrap.sh --pi` |
-| Project packages | `dev-loops@1.0.2`, `pi-subagents@0.42.1`, `agent-review-pi@0.6.0` plus exact peers | exact pins installed |
+| Project packages | `dev-loops@1.0.2`, `pi-subagents@0.66.0`, `agent-review-pi@0.6.0` plus exact peers | exact pins installed |
 | npm production audit | 0 reported vulnerabilities | healthy at audit time |
 | Common Pi package store | one shared store per Git common checkout | healthy |
 | Registered worktrees | above the active green limit | red; exact counts remain private operational telemetry |
@@ -68,7 +68,7 @@ The owner-aware reconciliation of remaining dirty/unmerged state is tracked by
 | Package | Pin | Available at audit | Decision |
 | --- | --- | --- | --- |
 | `pi-coding-agent` | `0.84.0` via Nix | `0.85.1` on npm | retain Nix pin while package peers target 0.84 |
-| `dev-loops` | `1.0.2` | `1.0.1` | major update in [#303](https://github.com/MediaNoxLabs/oxid/issues/303) |
+| `dev-loops` | `1.0.2` | `1.0.2` | major update in [#303](https://github.com/MediaNoxLabs/oxid/issues/303) |
 | `pi-subagents` | `0.66.0` | `0.66.0` | adopted directly in [#195](https://github.com/MediaNoxLabs/oxid/issues/195) |
 | `agent-review-pi` | `0.6.0` | `0.6.0` | adopted with exact peers by [#301](https://github.com/MediaNoxLabs/oxid/issues/301) |
 | `pi-taskflow` | `0.2.10` | `0.3.0-beta.1.2` | peer only; runtime resources disabled |
