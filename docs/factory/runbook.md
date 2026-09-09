@@ -212,8 +212,10 @@ explicit delivery-base wrappers, exact-head Claude command, and the explicit
 upstream-only gap table.
 
 `gates` is the authoritative dev-loop config validator — it exercises the real loader,
-so a `.devloops` that `gates` parses is a `.devloops` that will run. Prefer it
-over a YAML lint.
+so a `.devloops` that `gates` parses is a `.devloops` that will run. The
+repository layer disables every inherited angle by name except mandatory
+`correctness` at draft and mandatory `security` at pre-approval; this prevents
+an upstream default expansion. Prefer it over a YAML lint.
 
 **`doctor` reports 3/4 and that is expected.** The warning is *"Subagent command
 available"*, because `doctor` looks for a standalone `subagent` executable while
@@ -287,7 +289,9 @@ without inventing an unvalidated dev-loops field. Explicit session and agent
 overrides remain available. Add per-role dev-loops values only after a package
 canary proves the schema and identifiers before dispatch.
 
-`personas.*.defaultModel` remains `null` for the same reason.
+The security persona and prompt live directly on the canonical
+`gates.preApproval.angles` security entry; no top-level `personas` layer is
+accepted by the pinned loader.
 
 ## Why there is no `worktree:` section
 

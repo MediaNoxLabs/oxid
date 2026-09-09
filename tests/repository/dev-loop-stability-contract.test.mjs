@@ -2631,7 +2631,8 @@ test("routine gates stay bounded and preserve the explicit high-risk review rout
   assert.match(config, /^  requireFanoutProvenance: false$/m);
   assert.match(config, /^  stopAt: \[\]$/m);
   assert.match(config, /^  humanMergeOnly: false$/m);
-  assert.match(config, /^    mandatoryAngles: \[\]$/m);
+  assert.equal((config.match(/^        mandatory: true$/gm) ?? []).length, 2);
+  assert.doesNotMatch(config, /^personas:/m);
   assert.match(await read("docs/dev-loop-stability.md"), /manually\s+invoke the reviewer once/i);
 });
 

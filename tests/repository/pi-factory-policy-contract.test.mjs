@@ -13,6 +13,7 @@ import { auditPi, auditWorktreeAdmission, lifecycleCapacityChecks } from "../../
 import { applyUserPolicy, mergePolicy, policyMismatches } from "../../scripts/factory/pi-policy.mjs";
 import { FACTORY_STATE_LABELS, syncFactoryLabels } from "../../scripts/github/sync-factory-labels.mjs";
 import { applyDeliveryProfile, extractDeliveryProfileArgs } from "../../scripts/dev-loops.mjs";
+import { loadDevLoopConfig, resolveFanoutMaxConcurrent, resolveGateConfig, resolveRefinement } from "../../.pi/npm/node_modules/@dev-loops/core/src/config/config.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -55,6 +56,29 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(smoke, /Failed to load skill/u);
   assert.match(bootstrap, /bash scripts\/check-pi-devshell\.sh/u);
   assert.match(devshell, /typeof entry === "string" \? entry : entry\?\.source/u);
+});
+
+test("pinned dev-loops loader accepts the repository layer and resolves only bounded gates", async () => {
+  const loaded = await loadDevLoopConfig({ repoRoot });
+  assert.deepEqual(loaded.errors, [], "the repository .devloops layer must not be rejected");
+  assert.equal(loaded.config.strategy, "local-first");
+  assert.deepEqual(resolveRefinement(loaded.config), {
+    fanOut: 1,
+    mode: "parallel",
+    roles: ["correctness"],
+    maxCopilotRounds: 0,
+    stopOnLowSignal: true,
+    lowSignalRoundThreshold: 1,
+    lowSignalMaxComments: 1,
+    preApprovalRequireCi: true,
+  });
+  assert.deepEqual(resolveGateConfig(loaded.config, "draft").angles, ["correctness"]);
+  assert.deepEqual(resolveGateConfig(loaded.config, "draft").mandatoryAngles, ["correctness"]);
+  assert.equal(resolveGateConfig(loaded.config, "draft").requireCi, false);
+  assert.deepEqual(resolveGateConfig(loaded.config, "preApproval").angles, ["security"]);
+  assert.deepEqual(resolveGateConfig(loaded.config, "preApproval").mandatoryAngles, ["security"]);
+  assert.equal(resolveGateConfig(loaded.config, "preApproval").requireCi, true);
+  assert.equal(resolveFanoutMaxConcurrent(loaded.config), 1);
 });
 
 test("delivery profiles keep prototype evidence local and promotion explicit", async () => {

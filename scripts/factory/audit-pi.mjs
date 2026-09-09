@@ -7,6 +7,8 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { loadDevLoopConfig, resolveFanoutMaxConcurrent, resolveGateConfig, resolveRefinement } from "../../.pi/npm/node_modules/@dev-loops/core/src/config/config.mjs";
+
 import { checkUserPolicy } from "./pi-policy.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -45,6 +47,35 @@ function getAtPath(object, dotted) {
 
 function check(id, status, summary, details = undefined, category = "configuration") {
   return { id, status, category, summary, ...(details === undefined ? {} : { details }) };
+}
+
+async function inspectDevLoopsLayer(repoRoot) {
+  try {
+    const loaded = await loadDevLoopConfig({ repoRoot });
+    const refinement = resolveRefinement(loaded.config);
+    const draft = resolveGateConfig(loaded.config, "draft");
+    const preApproval = resolveGateConfig(loaded.config, "preApproval");
+    const problems = [
+      ...loaded.errors.map((error) => `${error.layer}: ${error.message}`),
+      ...(loaded.config.strategy === "local-first" ? [] : [`strategy: expected local-first, found ${JSON.stringify(loaded.config.strategy)}`]),
+      ...(refinement.fanOut === 1 && refinement.maxCopilotRounds === 0
+        && refinement.stopOnLowSignal === true && refinement.lowSignalRoundThreshold === 1 && refinement.lowSignalMaxComments === 1
+        ? [] : ["refinement: expected bounded fan-out, disabled Copilot, and 1/1 enabled low-signal policy"]),
+      ...(JSON.stringify(draft.angles) === JSON.stringify(["correctness"])
+        && JSON.stringify(draft.mandatoryAngles) === JSON.stringify(["correctness"]) && draft.requireCi === false
+        ? [] : ["draft gate: expected only mandatory correctness with requireCi: false"]),
+      ...(JSON.stringify(preApproval.angles) === JSON.stringify(["security"])
+        && JSON.stringify(preApproval.mandatoryAngles) === JSON.stringify(["security"]) && preApproval.requireCi === true
+        ? [] : ["pre-approval gate: expected only mandatory security with requireCi: true"]),
+      ...(resolveFanoutMaxConcurrent(loaded.config) === 1
+        ? [] : ["fan-out: expected maxConcurrent: 1"]),
+    ];
+    return check("dev-loop-effective-config", problems.length ? "fail" : "pass",
+      problems.length ? "Repository .devloops was rejected or its effective bounded gate policy drifted" : "Repository .devloops loaded and resolves to the bounded gate policy",
+      problems.length ? problems : undefined);
+  } catch (error) {
+    return check("dev-loop-effective-config", "fail", "Repository .devloops could not be loaded through the pinned config loader", [error.message]);
+  }
 }
 
 function run(command, args, options = {}) {
@@ -473,6 +504,7 @@ export async function auditPi({
   const devloopBounds = [
     /fanOut:\s*1/u,
     /maxFanoutReviewers:\s*1/u,
+    /fanout:\s*\n\s*maxConcurrent:\s*1/u,
     /draft:[\s\S]*?blockCleanOnFindingSeverities:\s*\n\s*- must-fix/u,
     /preApproval:[\s\S]*?blockCleanOnFindingSeverities:\s*\n\s*- must-fix/u,
     /maxParallel:\s*1/u,
@@ -482,6 +514,7 @@ export async function auditPi({
     devloopBounds.every((pattern) => pattern.test(devloops))
       ? "Dev-loop review, queue, retry, and develop merge concurrency are bounded"
       : "One or more dev-loop constitutional bounds are missing"));
+  checks.push(await inspectDevLoopsLayer(repoRoot));
 
   checks.push(await inspectDeliveryProfiles(repoRoot));
 
