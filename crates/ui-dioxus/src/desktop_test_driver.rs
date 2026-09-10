@@ -38,12 +38,13 @@ return await (async () => {
   const hasText = (value) => text(document.body).includes(value);
   let phase = "create-wallet";
   try {
-    await click("Create new wallet");
+    await click("Create private wallet");
     phase = "profile-name";
     const input = await wait(() => document.querySelector("#profile-name"));
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
     setter.call(input, "Oxid Desktop Test");
     input.dispatchEvent(new Event("input", { bubbles: true }));
+    await click("Use public demo wallet");
     phase = "create-profile";
     await click("Create and continue");
     phase = "protect-wallet";

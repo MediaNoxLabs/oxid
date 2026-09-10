@@ -83,15 +83,15 @@ async function click(label) {
 async function ensureProfile() {
   await waitFor("Boolean(document.body)", "document body");
   await waitFor(
-    `Boolean(${button("Create new wallet")}
+    `Boolean(${button("Create private wallet")}
       || ${button("Create and continue")}
       || ${button("Skip for now")}
       || ${button("Scan")})`,
     "onboarding or composed wallet action",
     60_000,
   );
-  if (await evaluate(`Boolean(${button("Create new wallet")})`)) {
-    await click("Create new wallet");
+  if (await evaluate(`Boolean(${button("Create private wallet")})`)) {
+    await click("Create private wallet");
     await waitFor(`Boolean(${button("Create and continue")})`, "wallet-name step");
   }
   if (await evaluate(`Boolean(${button("Create and continue")})`)) {

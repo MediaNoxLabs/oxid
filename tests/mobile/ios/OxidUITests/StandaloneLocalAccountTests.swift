@@ -12,7 +12,7 @@ final class StandaloneLocalAccountTests: XCTestCase {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         application.launch()
 
-        let createWallet = application.buttons["Create new wallet"]
+        let createWallet = application.buttons["Create private wallet"]
         XCTAssertTrue(createWallet.waitForExistence(timeout: 15))
         createWallet.tap()
         application.buttons["Create and continue"].tap()

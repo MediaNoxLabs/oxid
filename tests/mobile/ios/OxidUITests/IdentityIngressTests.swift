@@ -10,7 +10,7 @@ final class IdentityIngressTests: XCTestCase {
     @MainActor
     private func ensureProfile(in application: XCUIApplication) {
         application.launch()
-        let createWallet = application.buttons["Create new wallet"]
+        let createWallet = application.buttons["Create private wallet"]
         if createWallet.waitForExistence(timeout: 5) {
             createWallet.tap()
             application.buttons["Create and continue"].tap()

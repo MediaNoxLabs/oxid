@@ -35,7 +35,7 @@ final class ProfileFlowTests: XCTestCase {
     @MainActor
     private func ensureProfile(in application: XCUIApplication) {
         application.launch()
-        let createWallet = application.buttons["Create new wallet"]
+        let createWallet = application.buttons["Create private wallet"]
         if createWallet.waitForExistence(timeout: 5) {
             createWallet.tap()
             application.buttons["Create and continue"].tap()
@@ -106,10 +106,10 @@ final class ProfileFlowTests: XCTestCase {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         application.launch()
 
-        XCTAssertTrue(application.buttons["Create new wallet"].waitForExistence(timeout: 15))
+        XCTAssertTrue(application.buttons["Create private wallet"].waitForExistence(timeout: 15))
         XCTAssertTrue(application.buttons["Restore from backup"].exists)
         XCTAssertFalse(application.buttons["Create and continue"].exists)
-        application.buttons["Create new wallet"].tap()
+        application.buttons["Create private wallet"].tap()
         XCTAssertTrue(application.buttons["Create and continue"].waitForExistence(timeout: 10))
         application.buttons["Create and continue"].tap()
         XCTAssertTrue(application.staticTexts["Protect this wallet"].waitForExistence(timeout: 10))
@@ -252,7 +252,7 @@ final class ProfileFlowTests: XCTestCase {
         let manageIdentities = application.buttons["Manage identities"]
         XCTAssertTrue(manageIdentities.waitForExistence(timeout: 5))
         manageIdentities.tap()
-        let createDid = application.buttons["Create standalone DID"]
+        let createDid = application.buttons["Create a DID"]
         XCTAssertTrue(createDid.waitForExistence(timeout: 5))
         createDid.tap()
         XCTAssertTrue(application.staticTexts["standalone-1"].waitForExistence(timeout: 10))
@@ -535,7 +535,7 @@ final class ProfileFlowTests: XCTestCase {
         if !application.descendants(matching: .any)["Manage this DID"]
             .waitForExistence(timeout: 2)
         {
-            let createDid = application.buttons["Create standalone DID"]
+            let createDid = application.buttons["Create a DID"]
             XCTAssertTrue(createDid.waitForExistence(timeout: 5))
             createDid.tap()
             XCTAssertTrue(application.staticTexts["standalone-1"].waitForExistence(timeout: 10))
@@ -673,7 +673,7 @@ final class ProfileFlowTests: XCTestCase {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         application.launch()
 
-        let createWallet = application.buttons["Create new wallet"]
+        let createWallet = application.buttons["Create private wallet"]
         if createWallet.waitForExistence(timeout: 5) {
             createWallet.tap()
             application.buttons["Create and continue"].tap()

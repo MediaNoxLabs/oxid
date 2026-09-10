@@ -133,13 +133,13 @@ async function openWallet() {
 
 async function createFreshProfile() {
   await waitFor(
-    `Boolean(${buttonExpression("Create new wallet")}) || Boolean(${buttonExpression("Wallet")})`,
+    `Boolean(${buttonExpression("Create private wallet")}) || Boolean(${buttonExpression("Wallet")})`,
     "first-run or restored profile readiness",
     30_000,
   );
-  const createAvailable = await evaluate(`Boolean(${buttonExpression("Create new wallet")})`);
+  const createAvailable = await evaluate(`Boolean(${buttonExpression("Create private wallet")})`);
   if (!createAvailable) return;
-  await clickButton("Create new wallet");
+  await clickButton("Create private wallet");
   await clickButton("Create and continue");
   await clickButton("Skip for now");
 }
@@ -343,7 +343,7 @@ try {
     await waitForButton("Use my receive address", 90_000);
 
     await openIdentities();
-    await clickButton("Create standalone DID");
+    await clickButton("Create a DID");
     await waitFor(
       "document.body.innerText.includes('standalone-1') && document.body.innerText.includes('Manage this DID')",
       "managed DID for complete backup",
@@ -598,8 +598,8 @@ try {
         && document.body.innerText.includes("5 NIGHT"),
     }))()`);
     await openIdentities();
-    await waitForButton("Create standalone DID");
-    await clickButton("Create standalone DID");
+    await waitForButton("Create a DID");
+    await clickButton("Create a DID");
     await waitFor(
       "document.body.innerText.includes('standalone-1') && document.body.innerText.includes('Manage this DID')",
       "created managed standalone DID",
@@ -958,7 +958,7 @@ try {
     }
     process.stdout.write(`${JSON.stringify(restored)}\n`);
   } else if (mode === "native-authorize") {
-    const createProfile = await evaluate(`Boolean(${buttonExpression("Create new wallet")})`);
+    const createProfile = await evaluate(`Boolean(${buttonExpression("Create private wallet")})`);
     if (createProfile) await createFreshProfile();
     await openWallet();
     await waitFor(
