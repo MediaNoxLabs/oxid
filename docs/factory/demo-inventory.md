@@ -73,6 +73,31 @@ diagnostic, not public-network or production acceptance. It records freshness
 states rather than a balance assertion because the public-genesis development
 state is mutable.
 
+## Development proof and local diagnostics slice
+
+`development-proof-benchmark-desktop` is an on-demand desktop diagnostic that
+runs exactly one operator-selected k=1 proof. Its explicit development build
+may fetch public proving parameters into an app-private temporary cache. The
+operator owns network approval, disk budget, and cache retention. The native
+panel permits ordinary k=1–17 controls, but this bounded scenario does not run
+a sweep. k=18–21 remain a separate visible-consent resource risk requiring an
+owner-invoked resource receipt. Public RSS/CPU is truthfully unavailable because
+no reviewed public sampler exists. A verified process-local timing report is
+diagnostic evidence, not a performance baseline, release gate, or acceptance.
+
+`bounded-local-diagnostics-headless` deterministically demonstrates the closed
+snapshot and exact-confirmation clear contract. `bounded-local-diagnostics-desktop`
+separately demonstrates the rendered counts, newest-first rows, Warning/Error
+filters, fixed-code search, and cancel/confirm clear controls; an empty ring is
+a valid state. Both expose diagnostic support information, not acceptance
+evidence. Events are bounded, payload-free, fixed-code, explicitly clearable,
+and process-local. They are neither persisted nor uploaded, do not receive
+benchmark telemetry, and must never be represented as a durable support journal.
+
+No simulator or physical-device target is claimed for this slice. Desktop and
+headless diagnostics do not establish native custody, device resources, release
+readiness, or physical acceptance.
+
 ## Holder-DID bootstrap boundary
 
 The physical Android Tailnet Portal scenario composes user-visible creation of
