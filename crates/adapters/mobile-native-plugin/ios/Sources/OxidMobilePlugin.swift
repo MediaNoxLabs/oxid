@@ -357,10 +357,14 @@ private final class CustodyCoordinator {
               request.utf8.count <= maximumPayloadBytes * 2,
               let data = request.data(using: .utf8),
               let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let operation = body["operation"] as? String,
-              let profileId = body["profile_id"] as? String else {
+              let operation = body["operation"] as? String else {
             return json(status: "invalid")
         }
+        if operation == "authorize_recovery_phrase_reveal" {
+            guard Set(body.keys) == ["operation"] else { return json(status: "invalid") }
+            return authorizeRecoveryPhraseReveal()
+        }
+        guard let profileId = body["profile_id"] as? String else { return json(status: "invalid") }
         let expected: Set<String>
         switch operation {
         case "initialize", "save":
@@ -392,6 +396,29 @@ private final class CustodyCoordinator {
         default:
             return json(status: "invalid")
         }
+    }
+
+    func authorizeRecoveryPhraseReveal() -> String {
+        let context = LAContext()
+        var capabilityError: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &capabilityError) else {
+            return json(status: "unavailable")
+        }
+        let completed = DispatchSemaphore(value: 0)
+        var accepted = false
+        context.evaluatePolicy(
+            .deviceOwnerAuthentication,
+            localizedReason: "Confirm to reveal your new wallet recovery phrase"
+        ) { success, _ in
+            accepted = success
+            completed.signal()
+        }
+        guard completed.wait(timeout: .now() + 65) == .success, accepted else {
+            context.invalidate()
+            return json(status: "authorization_denied")
+        }
+        context.invalidate()
+        return json(status: "succeeded")
     }
 
     func inspect(profileId: String) -> String {

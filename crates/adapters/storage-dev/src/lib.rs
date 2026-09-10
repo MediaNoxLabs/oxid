@@ -20,9 +20,10 @@ use oxid_wallet_application::{
     DeriveProtectedKeyRequest, GenerateProtectedKeyRequest, JUBJUB_COMPACT_BYTES,
     PortableWalletBackup, WalletDerivedSecretUsePort, WalletHdPath, WalletJubjubChallengeDeriver,
     WalletJubjubChallengeSignature, WalletJubjubChallengeSigningPort, WalletKeyDerivationPort,
-    WalletKeyOperationPort, WalletPortableBackupPort, WalletPortableBackupPortError,
-    WalletPortableRecoverySummary, WalletProtectionPort, WalletRecoverySecret,
-    WalletRootRecoveryPort, WalletRootSeed, WalletSecurityPortError,
+    WalletKeyOperationPort, WalletOnboardingAuthorizationError, WalletOnboardingAuthorizationPort,
+    WalletPortableBackupPort, WalletPortableBackupPortError, WalletPortableRecoverySummary,
+    WalletProtectionPort, WalletRecoverySecret, WalletRootRecoveryPort, WalletRootSeed,
+    WalletSecurityPortError,
 };
 use oxid_wallet_domain::{
     PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyDescriptor, WalletKeyReference,
@@ -43,6 +44,17 @@ const KEY_REFERENCE_ATTEMPTS: usize = 8;
 const P256_SCALAR_ATTEMPTS: usize = 128;
 const SECP256K1_SCALAR_ATTEMPTS: usize = 128;
 const JUBJUB_SEED_ATTEMPTS: usize = 128;
+
+/// Explicit non-production desktop policy. It deliberately does not claim
+/// native user presence; production desktop composition remains unavailable.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DevelopmentWalletOnboardingAuthorization;
+
+impl WalletOnboardingAuthorizationPort for DevelopmentWalletOnboardingAuthorization {
+    fn authorize_recovery_phrase_reveal(&self) -> Result<(), WalletOnboardingAuthorizationError> {
+        Ok(())
+    }
+}
 
 /// Explicitly insecure, process-local adapter for tests and headless flows.
 ///

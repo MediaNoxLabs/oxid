@@ -30,10 +30,10 @@ use oxid_wallet_application::{
     DeriveProtectedKeyRequest, GenerateProtectedKeyRequest, JUBJUB_COMPACT_BYTES,
     PortableWalletBackup, WalletDerivedSecretUsePort, WalletHdPath, WalletHdPathComponent,
     WalletJubjubChallengeDeriver, WalletJubjubChallengeSignature, WalletJubjubChallengeSigningPort,
-    WalletKeyDerivationPort, WalletKeyOperationPort, WalletPortableBackupPort,
-    WalletPortableBackupPortError, WalletPortableRecoverySummary, WalletProtectionPort,
-    WalletRecoverySecret, WalletRootRecoveryPort, WalletRootSeed, WalletRootSeedKind,
-    WalletSecurityPortError,
+    WalletKeyDerivationPort, WalletKeyOperationPort, WalletOnboardingAuthorizationError,
+    WalletOnboardingAuthorizationPort, WalletPortableBackupPort, WalletPortableBackupPortError,
+    WalletPortableRecoverySummary, WalletProtectionPort, WalletRecoverySecret,
+    WalletRootRecoveryPort, WalletRootSeed, WalletRootSeedKind, WalletSecurityPortError,
 };
 use oxid_wallet_domain::{
     WalletKeyAlgorithm, WalletKeyDescriptor, WalletKeyLabel, WalletKeyPurpose, WalletKeyReference,
@@ -108,6 +108,39 @@ pub trait SealedVaultPort: Send + Sync {
 /// Bridge-backed sealed vault for iOS and Android.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativeMobileSealedVault;
+
+/// Native-only authorization adapter for the phrase-reveal ceremony. The
+/// bridge operation is payload-free and owns its fixed platform prompt text.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeMobileWalletOnboardingAuthorization;
+
+impl WalletOnboardingAuthorizationPort for NativeMobileWalletOnboardingAuthorization {
+    fn authorize_recovery_phrase_reveal(&self) -> Result<(), WalletOnboardingAuthorizationError> {
+        #[cfg(any(target_os = "ios", target_os = "android"))]
+        {
+            let response = oxid_adapter_mobile_native::authorize_recovery_phrase_reveal_json()
+                .map_err(|error| match error {
+                    oxid_adapter_mobile_native::NativeBridgeError::Unavailable => {
+                        WalletOnboardingAuthorizationError::Unavailable
+                    }
+                    oxid_adapter_mobile_native::NativeBridgeError::Failed => {
+                        WalletOnboardingAuthorizationError::Denied
+                    }
+                })?;
+            let response = parse_native_response(response)
+                .map_err(|_| WalletOnboardingAuthorizationError::Denied)?;
+            return match response.status.as_str() {
+                "succeeded" if response.protection.is_none() && response.payload.is_none() => {
+                    Ok(())
+                }
+                "unavailable" => Err(WalletOnboardingAuthorizationError::Unavailable),
+                _ => Err(WalletOnboardingAuthorizationError::Denied),
+            };
+        }
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
+        Err(WalletOnboardingAuthorizationError::Unavailable)
+    }
+}
 
 impl SealedVaultPort for NativeMobileSealedVault {
     fn inspect(&self, profile_id: &WalletProfileId) -> Result<SealedVaultState, SealedVaultError> {

@@ -37,6 +37,10 @@ fn ceremony_id(state: &WalletOnboardingState) -> Option<String> {
     }
 }
 
+fn lifecycle_generation_is_current(started: u64, current: u64) -> bool {
+    started == current
+}
+
 #[component]
 pub(crate) fn WalletOnboarding(
     profile: WalletProfileView,
@@ -90,6 +94,7 @@ pub(crate) fn WalletOnboarding(
     let profile_for_complete = profile.clone();
     let profile_id_for_cancel = profile.id.clone();
     let cancel_after_failure = onboarding.cancel.clone();
+    let cancel_after_stale_prepare = onboarding.cancel.clone();
     let cancel_from_button = onboarding.cancel.clone();
     let heading = match intent {
         WalletOnboardingIntent::Create => "Create private wallet",
@@ -123,7 +128,7 @@ pub(crate) fn WalletOnboarding(
         section { class: "page-heading onboarding-heading",
             p { class: "eyebrow", "Midnight · {onboarding.network_id}" }
             h1 { "{heading}" }
-            p { "The phrase stays in this ceremony and is never written to profile metadata, logs, analytics, or clipboard storage." }
+            p { "A fresh device authorization is required before a new phrase can appear. The phrase stays in this ceremony and is never written to profile metadata, logs, analytics, or clipboard storage." }
         }
         section { class: "profile-card surface-card complete-recovery-card",
             strong { "{profile.display_name}" }
@@ -189,16 +194,39 @@ pub(crate) fn WalletOnboarding(
                         };
                         let prepare = onboarding.prepare.clone();
                         let profile_id = profile_for_prepare.id.clone();
+                        let profile_id_for_stale_prepare = profile_id.clone();
+                        let cancel_stale_prepare = cancel_after_stale_prepare.clone();
+                        let lifecycle_generation = lifecycle_wake();
+                        let lifecycle_wake_for_prepare = lifecycle_wake;
                         state.set(WalletOnboardingState::Working);
                         spawn(async move {
                             let result = run_ui_blocking(move || {
                                 prepare.execute(PrepareWalletOnboardingCommand { profile_id, mode })
                             })
                             .await;
+                            let lifecycle_is_current = lifecycle_generation_is_current(
+                                lifecycle_generation,
+                                lifecycle_wake_for_prepare(),
+                            );
                             match result {
-                                Ok(Ok(prepared)) => state.set(WalletOnboardingState::Prepared(prepared)),
-                                Ok(Err(error)) => state.set(WalletOnboardingState::Failed(error.to_string())),
-                                Err(error) => state.set(WalletOnboardingState::Failed(error.to_string())),
+                                Ok(Ok(prepared)) if lifecycle_is_current => {
+                                    state.set(WalletOnboardingState::Prepared(prepared));
+                                }
+                                Ok(Ok(prepared)) => {
+                                    let _ = cancel_stale_prepare.execute(
+                                        CancelWalletOnboardingCommand {
+                                            profile_id: profile_id_for_stale_prepare,
+                                            ceremony_id: prepared.ceremony_id,
+                                        },
+                                    );
+                                }
+                                Ok(Err(error)) if lifecycle_is_current => {
+                                    state.set(WalletOnboardingState::Failed(error.to_string()));
+                                }
+                                Err(error) if lifecycle_is_current => {
+                                    state.set(WalletOnboardingState::Failed(error.to_string()));
+                                }
+                                Ok(Err(_)) | Err(_) => {}
                             }
                         });
                     },
@@ -220,6 +248,8 @@ pub(crate) fn WalletOnboarding(
                         let profile_id = profile.id.clone();
                         let profile_id_for_failure = profile_id.clone();
                         let ceremony_id_for_failure = ceremony_id.clone();
+                        let lifecycle_generation = lifecycle_wake();
+                        let lifecycle_wake_for_completion = lifecycle_wake;
                         state.set(WalletOnboardingState::Completing);
                         spawn(async move {
                             let result = run_ui_blocking(move || {
@@ -235,21 +265,30 @@ pub(crate) fn WalletOnboarding(
                                 })
                             })
                             .await;
+                            let lifecycle_is_current = lifecycle_generation_is_current(
+                                lifecycle_generation,
+                                lifecycle_wake_for_completion(),
+                            );
                             match result {
-                                Ok(Ok(_)) => on_complete.call(profile),
+                                Ok(Ok(_)) if lifecycle_is_current => on_complete.call(profile),
+                                Ok(Ok(_)) => {}
                                 Ok(Err(error)) => {
                                     let _ = cancel.execute(CancelWalletOnboardingCommand {
                                         profile_id: profile_id_for_failure.clone(),
                                         ceremony_id: ceremony_id_for_failure.clone(),
                                     });
-                                    state.set(WalletOnboardingState::Failed(error.to_string()));
+                                    if lifecycle_is_current {
+                                        state.set(WalletOnboardingState::Failed(error.to_string()));
+                                    }
                                 }
                                 Err(error) => {
                                     let _ = cancel.execute(CancelWalletOnboardingCommand {
                                         profile_id: profile_id_for_failure,
                                         ceremony_id: ceremony_id_for_failure,
                                     });
-                                    state.set(WalletOnboardingState::Failed(error.to_string()));
+                                    if lifecycle_is_current {
+                                        state.set(WalletOnboardingState::Failed(error.to_string()));
+                                    }
                                 }
                             }
                         });
@@ -288,6 +327,12 @@ mod tests {
         let state = WalletOnboardingState::Working;
         assert!(matches!(state, WalletOnboardingState::Working));
         assert!(ceremony_id(&state).is_none());
+    }
+
+    #[test]
+    fn lifecycle_generation_rejects_late_ui_updates() {
+        assert!(lifecycle_generation_is_current(7, 7));
+        assert!(!lifecycle_generation_is_current(7, 8));
     }
 
     #[test]

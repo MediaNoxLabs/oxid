@@ -38,6 +38,10 @@ use oxid_adapter_openid4vp::{CredentialDisclosureCandidateSource, StandaloneOpen
 use oxid_adapter_passport_vault::NativePassportVaultContractStateDecoder;
 use oxid_adapter_passport_vault::StandalonePassportVaultCredential;
 use oxid_adapter_siopv2::{DidSelfIssuedIdentityProof, StandaloneSiopV2Verifier};
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+use oxid_adapter_storage_dev::DevelopmentWalletOnboardingAuthorization;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use oxid_adapter_storage_mobile::NativeMobileWalletOnboardingAuthorization;
 
 use super::identity::{
     CredentialIssuanceComposition, CredentialPresentationComposition, HeadlessCredentialProfile,
@@ -237,10 +241,15 @@ where
     else {
         return services;
     };
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let authorization = Arc::new(NativeMobileWalletOnboardingAuthorization);
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let authorization = Arc::new(DevelopmentWalletOnboardingAuthorization);
     let onboarding = Arc::new(WalletOnboardingService::new(
         Arc::new(OsRandom),
         Arc::new(Bip39WalletMnemonic),
         Arc::new(recovery),
+        authorization,
     ));
     services.with_wallet_onboarding(super::services::WalletOnboardingCapability::new(
         network_id,

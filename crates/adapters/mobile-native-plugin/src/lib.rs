@@ -4,9 +4,9 @@
 
 #[cfg(any(target_os = "android", test))]
 use serde::Deserialize;
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 use serde::Serialize;
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 use zeroize::Zeroizing;
 
 /// Payload-free failure from the repository-owned native bridge.
@@ -172,6 +172,18 @@ fn backup_export_request(
         .map_err(|_| NativeBridgeError::Failed)
 }
 
+/// Starts one fresh native authorization for a recovery-phrase screen. No
+/// profile, secret, or caller-controlled reason crosses this operation.
+#[cfg(target_os = "ios")]
+pub fn authorize_recovery_phrase_reveal_json() -> Result<String, NativeBridgeError> {
+    call_ios_custody("authorize_recovery_phrase_reveal", "", None, None)
+}
+
+#[cfg(target_os = "android")]
+pub fn authorize_recovery_phrase_reveal_json() -> Result<String, NativeBridgeError> {
+    call_android_custody("authorize_recovery_phrase_reveal", "", None, None)
+}
+
 #[cfg(target_os = "ios")]
 pub fn inspect_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
     call_ios_custody("inspect", profile_id, None, None)
@@ -238,10 +250,11 @@ pub fn lock_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> 
     call_android_custody("lock", profile_id, None, None)
 }
 
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 #[derive(Serialize)]
 struct NativeCustodyRequest<'a> {
     operation: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
     profile_id: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     payload: Option<&'a str>,
@@ -249,7 +262,7 @@ struct NativeCustodyRequest<'a> {
     reason: Option<&'a str>,
 }
 
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 fn custody_request(
     operation: &str,
     profile_id: &str,
@@ -492,6 +505,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_phrase_authorization_accepts_only_the_payload_free_operation() {
+        let ios = include_str!("../ios/Sources/OxidMobilePlugin.swift");
+        assert!(ios.contains("operation == \"authorize_recovery_phrase_reveal\""));
+        assert!(ios.contains("Set(body.keys) == [\"operation\"]"));
+        assert!(ios.contains("Confirm to reveal your new wallet recovery phrase"));
+
+        let android =
+            include_str!("../android/src/main/kotlin/io/medianox/oxid/mobile/OxidMobilePlugin.kt");
+        assert!(android.contains("operation == \"authorize_recovery_phrase_reveal\""));
+        assert!(android.contains("setOf(\"operation\")"));
+        assert!(
+            android.contains("Confirm the device credential to reveal your new recovery phrase")
+        );
+    }
+
+    #[test]
     fn android_plugin_packages_the_pinned_platform_verifier_component() {
         let gradle = include_str!("../android/build.gradle.kts");
         assert!(gradle.contains("rustlsPlatformVerifierMavenPath()"));
@@ -499,6 +528,16 @@ mod tests {
         assert!(gradle.contains("implementation(\"rustls:rustls-platform-verifier:0.1.1\")"));
         assert!(
             include_str!("../android/consumer-rules.pro").contains("org.rustls.platformverifier")
+        );
+    }
+
+    #[test]
+    fn recovery_phrase_authorization_request_is_payload_free() {
+        let request =
+            custody_request("authorize_recovery_phrase_reveal", "", None, None).expect("request");
+        assert_eq!(
+            request.as_str(),
+            "{\"operation\":\"authorize_recovery_phrase_reveal\"}"
         );
     }
 
