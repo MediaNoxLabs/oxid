@@ -12,6 +12,7 @@ import { applyRepositoryAcceptance, resolveHandoffRequiredReads } from "./lib/ha
 import { runManagedChild } from "./lib/managed-child-process.mjs";
 import { resolveDevLoopsPackageRoot } from "./lib/dev-loop-runtime.mjs";
 import { enforceSingleBase, pinnedPublicRoute, readLongOptionValues } from "./lib/pinned-dev-loops-args.mjs";
+import { runEnsureWorktree } from "./loop/ensure-worktree.mjs";
 
 const DELIVERY_PROFILE_OPTION = "--delivery-profile";
 
@@ -35,21 +36,23 @@ export function normalizeDevLoopsArgs(argv) {
   const args = [...argv];
   const route = pinnedPublicRoute(args);
   const isPrCreate = route.category === "pr" && (route.command === "create" || route.command === "create-draft");
+  const isRemoteRefRoute = (route.category === "loop" && route.command === "ensure-worktree")
+    || (route.category === "gate" && route.command === "size-budget");
   const isEnvelope = route.category === "loop" && route.command === "build-envelope";
   if (isEnvelope) return args;
   const hasBase = readLongOptionValues(args, "--base").length > 0;
   const selected = extractDeliveryTargetOption(args, { required: isPrCreate || hasBase });
   if (!selected.target) return selected.args;
   if (isPrCreate) return bindPrBase(selected.args, selected.target);
-  return enforceSingleBase(selected.args, selected.target.branch, {
-    addWhenMissing: false,
+  return enforceSingleBase(selected.args, isRemoteRefRoute ? selected.target.remoteRef : selected.target.branch, {
+    addWhenMissing: isRemoteRefRoute,
     label: "repository dev-loops operations",
   });
 }
 
-function buildEnvelopeArgs(args) {
+function routedCommandArgs(args, expectedCategory, expectedCommand) {
   const route = pinnedPublicRoute(args);
-  if (route.category !== "loop" || route.command !== "build-envelope") return null;
+  if (route.category !== expectedCategory || route.command !== expectedCommand) return null;
   let categoryIndex = 0;
   while (categoryIndex < args.length) {
     const argument = args[categoryIndex];
@@ -65,6 +68,10 @@ function buildEnvelopeArgs(args) {
   }
   const leading = args.slice(0, categoryIndex).filter((argument) => argument !== "--json");
   return [...leading, ...args.slice(categoryIndex + 2)];
+}
+
+function buildEnvelopeArgs(args) {
+  return routedCommandArgs(args, "loop", "build-envelope");
 }
 
 export function extractDeliveryProfileArgs(args) {
@@ -234,6 +241,14 @@ export async function runDevLoops(argv = process.argv.slice(2), {
   stdout = process.stdout,
   stderr = process.stderr,
 } = {}) {
+  const route = argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")
+    ? {}
+    : pinnedPublicRoute(argv);
+  // Worktree lifecycle is repository-owned so its consumer provisioning and
+  // branch-local delivery metadata remain coupled to the same operation.
+  if (route.category === "loop" && route.command === "ensure-worktree") {
+    return runEnsureWorktree(routedCommandArgs(argv, "loop", "ensure-worktree"), { cwd, stdout, stderr });
+  }
   const args = normalizeDevLoopsArgs(argv);
   const resolved = await resolveDevLoopsPackageRoot({ cwd });
   const envelopeArgs = buildEnvelopeArgs(args);
