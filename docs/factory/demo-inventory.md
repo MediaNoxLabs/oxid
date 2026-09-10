@@ -61,3 +61,63 @@ acceptance and uses the existing native-custody build/deploy/run launcher.
 Physical iOS deployment remains explicitly unsupported. The scenario covers
 denial, one-shot root installation, duplicate rejection, and lifecycle clearing;
 automated, privacy-preserving physical-device evidence remains a planned gap.
+
+## Standalone asset-sync slice
+
+`standalone-profile-asset-synchronization` covers only the shipped explicit
+standalone-development composition: its fixed `undeployed` network identity,
+compile-time `local` (loopback) or `tailnet` route class, and independent
+public NIGHT, DUST, and shielded synchronization states. Local simulator runs
+are diagnostic. The physical Android Tailnet lane is also a development-route
+diagnostic, not public-network or production acceptance. It records freshness
+states rather than a balance assertion because the public-genesis development
+state is mutable.
+
+## Holder-DID bootstrap boundary
+
+The physical Android Tailnet Portal scenario composes user-visible creation of
+one managed undeployed holder DID with the separate explicit action that makes
+only its public resolution result available to the receipt-scoped test issuer.
+It does not claim a separate DID demo, Midnight on-chain publication,
+production discovery, native-custody acceptance, or durable public acceptance.
+The existing optional manual Portal lifecycle is non-evidence and retains its
+paired stop boundary.
+
+There is no inventory demo for generic standalone DID resolve, sign, update, or
+deactivate: their headless lifecycle contract is in-memory, while the broad
+Android/iOS profile smokes combine unrelated simulated journeys and do not have
+a separate receipt-scoped public demonstration. Those remain follow-up gaps,
+not acceptance evidence; milestone acceptance remains tracked by issue #291.
+
+## Portal Final issuance slice
+
+`portal-final-digital-passport-issuance` records the complete user-visible
+Portal Digital Passport journey: explicit offer review and consent, managed DID
+authentication, separate Jubjub binding, strict verification, encrypted storage,
+restart, listing, and fresh reverification. Its evidence is deliberately split:
+controlled localhost headless/native desktop is **preflight**, packaged iOS
+Simulator and Android QEMU are **diagnostic**, and physical Android Tailnet is
+also a **development diagnostic**. None is production trust/discovery, live KYC,
+native-custody, release, public-network, node, or proof-server acceptance.
+
+The mocked-Smocker headless run supports the desktop UI preflight but never
+substitutes for a rendered journey. Virtual targets never substitute for the
+physical Android lane. The optional physical browser/QR lifecycle remains an
+owner demo, not evidence. All reuse their existing receipt-scoped runbooks and
+cleanup; a pre-existing standalone baseline remains with its owner.
+
+### Credential-protocol no-demo dispositions
+
+- The deterministic standalone OID4VCI API is shipped and covered by headless
+  and mobile contracts, but has no separate receipt-scoped user-visible runbook;
+  it is not a demo apart from the Portal Final journey.
+- SIOPv2 DID authentication is shipped with deterministic headless/mobile flows,
+  but lacks a dedicated hygienic scenario/runbook and target-specific evidence;
+  no demo is claimed ahead of issue #291's milestone acceptance work.
+- Default OpenID4VP prepares matching and consent but fails closed at
+  `proof_unavailable`; its partial API is not a presentation demo. The explicit
+  headless/native-proving path and experimental mobile proving composition lack
+  a reusable receipt-scoped user-visible runbook, while physical resource and
+  native-custody acceptance remain open under issues #27 and #291.
+- The historical incompatible Portal fixtures are negative parser regression
+  evidence only, not positive issuance evidence.
