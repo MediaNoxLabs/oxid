@@ -31,6 +31,65 @@ test("inventory validates the recovery native-presence scenario and renders only
   assert.match(unsupported, /physical iOS signing and deployment are unavailable/i);
 });
 
+test("inventory keeps standalone asset synchronization diagnostic and route-scoped", () => {
+  const inventory = loadInventory();
+  const scenario = inventory.scenarios.find(({ id }) => id === "standalone-profile-asset-synchronization");
+  assert.equal(scenario.evidenceClass, "diagnostic");
+  assert.equal(scenario.cadence, "on-demand");
+  assert.deepEqual(scenario.orderedUseCaseIds, [
+    "select-compile-time-standalone-profile",
+    "synchronize-profile-scoped-midnight-assets",
+  ]);
+  const local = renderPreparationBrief(inventory, scenario.id, "android-emulator");
+  assert.match(local, /Target: android-emulator \(supported; diagnostic\)/u);
+  assert.match(local, /just android-standalone-local-smoke/u);
+  assert.match(local, /Loopback transport is not Tailnet routing or a public network/u);
+  const tailnet = renderPreparationBrief(inventory, scenario.id, "android-physical");
+  assert.match(tailnet, /Target: android-physical \(supported; diagnostic\)/u);
+  assert.match(tailnet, /just android-phone/u);
+  assert.match(tailnet, /not production or public-network acceptance/i);
+  assert.doesNotMatch(tailnet, /stable public NIGHT, DUST, or shielded balances/i);
+});
+
+test("inventory composes holder-DID bootstrap into the existing physical diagnostic lane", () => {
+  const inventory = loadInventory();
+  const scenario = inventory.scenarios.find(({ id }) => id === "portal-final-issuance-physical-tailnet");
+  assert.equal(scenario.evidenceClass, "diagnostic");
+  assert.deepEqual(scenario.orderedUseCaseIds, [
+    "bootstrap-managed-holder-did-for-test-issuer",
+    "issue-and-protect-portal-digital-passport",
+  ]);
+  const brief = renderPreparationBrief(inventory, scenario.id);
+  assert.match(brief, /Target: android-physical \(supported; diagnostic\)/u);
+  assert.match(brief, /just android-portal-tailnet-physical-smoke/u);
+  assert.match(brief, /development diagnostic/i);
+  assert.match(scenario.testMapping.planned, /in-memory/i);
+  assert.match(scenario.testMapping.planned, /resolve, sign, update, or deactivate/i);
+});
+
+test("inventory keeps Portal Final issuance evidence target-scoped", () => {
+  const inventory = loadInventory();
+  const useCase = inventory.useCases.find(({ id }) => id === "issue-and-protect-portal-digital-passport");
+  assert.deepEqual(useCase.scenarioIds, [
+    "portal-final-issuance-localhost",
+    "portal-final-issuance-virtual-mobile",
+    "portal-final-issuance-physical-tailnet",
+  ]);
+  const localhost = renderPreparationBrief(inventory, "portal-final-issuance-localhost", "headless-development");
+  assert.match(localhost, /Target: headless-development \(supported; preflight\)/u);
+  assert.match(localhost, /just portal-headless-e2e/u);
+  assert.match(localhost, /not a rendered UI, device, production, release, node, or proof-server claim/u);
+  const virtual = renderPreparationBrief(inventory, "portal-final-issuance-virtual-mobile", "android-emulator");
+  assert.match(virtual, /Target: android-emulator \(supported; diagnostic\)/u);
+  assert.match(virtual, /just android-portal-exact-sequence-avd/u);
+  assert.match(virtual, /cannot substitute for physical Android acceptance/u);
+  const physical = renderPreparationBrief(inventory, "portal-final-issuance-physical-tailnet");
+  assert.match(physical, /Target: android-physical \(supported; diagnostic\)/u);
+  assert.match(physical, /just android-portal-tailnet-physical-smoke/u);
+  assert.match(physical, /not production, release, native-custody, live-KYC, or public-network acceptance/u);
+  assert.match(physical, /restores its exact prior Serve baseline/u);
+});
+
 test("validator rejects broken references, unsafe operations, and invalid evidence contracts", () => {
   const valid = loadInventory();
   const cases = [
