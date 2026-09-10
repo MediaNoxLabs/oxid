@@ -51,6 +51,50 @@ test("inventory keeps standalone asset synchronization diagnostic and route-scop
   assert.doesNotMatch(tailnet, /stable public NIGHT, DUST, or shielded balances/i);
 });
 
+test("inventory splits a bounded low-k proof from headless and rendered local diagnostics", async () => {
+  const inventory = loadInventory();
+  const proof = inventory.scenarios.find(({ id }) => id === "development-proof-benchmark-desktop");
+  assert.equal(proof.evidenceClass, "diagnostic");
+  assert.equal(proof.defaultTargetId, "desktop-development");
+  assert.deepEqual(proof.orderedUseCaseIds, ["bound-development-proof-benchmark"]);
+  const proofBrief = renderPreparationBrief(inventory, proof.id);
+  assert.match(proofBrief, /Target: desktop-development \(supported; diagnostic\)/u);
+  assert.match(proofBrief, /just desktop-proof-benchmark-run/u);
+  assert.match(proofBrief, /Circuit k=1/u);
+  assert.match(proofBrief, /no reviewed public sampler exists/u);
+  assert.match(proofBrief, /not a performance budget/u);
+  assert.doesNotMatch(proofBrief, /Target: android-emulator/u);
+
+  const headless = inventory.scenarios.find(({ id }) => id === "bounded-local-diagnostics-headless");
+  assert.equal(headless.evidenceClass, "preflight");
+  assert.equal(headless.defaultTargetId, "headless-development");
+  const headlessBrief = renderPreparationBrief(inventory, headless.id);
+  assert.match(headlessBrief, /just headless/u);
+  assert.match(headlessBrief, /CLEAR_LOCAL_DIAGNOSTICS/u);
+  assert.match(headlessBrief, /payloadsRetained is false/u);
+
+  const desktop = inventory.scenarios.find(({ id }) => id === "bounded-local-diagnostics-desktop");
+  assert.equal(desktop.evidenceClass, "diagnostic");
+  assert.equal(desktop.defaultTargetId, "desktop-development");
+  const desktopBrief = renderPreparationBrief(inventory, desktop.id);
+  assert.match(desktopBrief, /Warning and Error filters/u);
+  assert.match(desktopBrief, /durable support journal/u);
+  const demo = inventory.demos.find(({ id }) => id === "developer-proof-and-local-diagnostics");
+  assert.deepEqual(demo.targetIds, ["headless-development", "desktop-development"]);
+  assert.deepEqual(demo.scenarioIds, [
+    "development-proof-benchmark-desktop",
+    "bounded-local-diagnostics-headless",
+    "bounded-local-diagnostics-desktop",
+  ]);
+  const justfile = await readFile(path.join(repoRoot, "Justfile"), "utf8");
+  assert.match(justfile, /desktop-proof-benchmark-build:\n\s+cargo build -p oxid-app --no-default-features --features desktop,developer-proof-benchmark/u);
+  assert.match(justfile, /desktop-proof-benchmark-run:\n\s+cargo run -p oxid-app --no-default-features --features desktop,developer-proof-benchmark/u);
+  const documentation = await readFile(path.join(repoRoot, "docs/factory/demo-inventory.md"), "utf8");
+  assert.match(documentation, /runs exactly one operator-selected k=1 proof/u);
+  assert.match(documentation, /no reviewed\s+public sampler exists/u);
+  assert.match(documentation, /durable support journal/u);
+});
+
 test("inventory composes holder-DID bootstrap into the existing physical diagnostic lane", () => {
   const inventory = loadInventory();
   const scenario = inventory.scenarios.find(({ id }) => id === "portal-final-issuance-physical-tailnet");
