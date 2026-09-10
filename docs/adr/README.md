@@ -131,6 +131,7 @@ ADR status and delivery state answer different questions:
 | [0105](0105-recover-owner-midnight-roots-for-preprod-observation.md) Recover owner Midnight roots for PreProd observation | Accepted | §§3–8, 12–13, 16–18, 21; ADR-0071/0074/0090/0098; issue #244 | Opt-in mobile recovery installs one owner-entered root into empty native custody, binds it to signed/genesis-authenticated PreProd, derives account 0/address 0, and exposes balance sync without write controls |
 | [0106](0106-bind-wallet-profiles-to-one-network.md) Bind each wallet profile to one concrete network | Proposed | §§1, 3–8, 12–13, 16–18, 21; issues #335/#337/#340 | Defines the proposed `network profile -> wallet -> typed assets` aggregate, no global asset store, route/genesis checks, atomic quick switching, and an explicit migration from multi-network associations |
 | [0107](0107-bind-prepared-transfer-review-to-authorization.md) Bind prepared transfer review to authorization | Accepted | issue #108 | Transfer authorization consumes a single-use challenge bound by unambiguous encoding to every rendered prepared-preview semantic field; caller prose cannot reach the application boundary |
+| [0108](0108-adopt-seedless-ux-with-multi-factor-recovery.md) Adopt a seedless UX with passkey recovery | Proposed | ADR-0017/0074–0078/0090/0105; issues #359/#364 | Research selects an Oxid-owned random-secret envelope with Apple/Google-synchronized passkeys and capability-detected PRF wrapping; advanced recovery and providers remain unapproved |
 
 ## Current boundaries
 
@@ -543,3 +544,13 @@ contracts/apps, DIDs, credentials, and derived activity stay typed and scoped
 to that profile; no global asset store is introduced. The top-left profile
 circle becomes an atomic quick switcher, and ambiguous legacy records require a
 lossless migration review instead of guessed assignment.
+
+ADR-0108 proposes a seedless user experience without making wallet roots
+predictable. Near-term HD-root assets keep a random root inside the existing
+authenticated envelope with independent device, passkey-PRF, and survivable
+recovery factors. Its deliberately small first slice uses WebAuthn Level
+2-compatible passkey authentication, Apple or Google passkey synchronization,
+and capability-detected Level 3 PRF to wrap—not derive—the random secret.
+Advanced share recovery, threshold signing, guardian recovery, and provider
+adoption remain separate decisions; no implementation is approved while the
+ADR is Proposed.

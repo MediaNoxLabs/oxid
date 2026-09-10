@@ -150,8 +150,8 @@ async function makeFixture() {
     'import path from "node:path";',
     'function value(argv, name) { const index = argv.indexOf(name); if (index >= 0) return argv[index + 1]; const prefix = `${name}=`; return argv.find((arg) => arg.startsWith(prefix))?.slice(prefix.length); }',
     'async function genericProvision({ worktreePath }) { process.stderr.write("[provision-worktree] WARN fixture generic provisioning ran\\n"); await mkdir(path.join(worktreePath, "node_modules", "@dev-loops"), { recursive: true }); return { ok: true, actions: [{ mode: "link" }], summary: { copied: 0, linked: 1, skipped: 0, rejected: 0, warnings: 1 } }; }',
-    'export function parseEnsureWorktreeCliArgs(argv) { const help = argv.includes("--help") || argv.includes("-h"); const repoRoot = value(argv, "--repo-root"); if (!help && !repoRoot) throw new Error("Missing required --repo-root"); return { help, repoRoot, issue: Number(value(argv, "--issue")), pr: Number(value(argv, "--pr")), branch: value(argv, "--branch"), base: value(argv, "--base"), jq: value(argv, "--jq"), silent: argv.includes("--silent") || argv.includes("-s") }; }',
-    'export async function ensureWorktree(options, { provision = genericProvision } = {}) { if (options.branch === "conflict") throw new Error("fixture branch conflict"); const kind = Number.isInteger(options.issue) && options.issue > 0 ? "issue" : "pr"; const number = kind === "issue" ? options.issue : options.pr; const worktreePath = path.join(options.repoRoot, "tmp", "worktrees", "dev-loops", `${kind}-${number}`); const provisionResult = await provision({ worktreePath, repoRoot: options.repoRoot }); if (options.branch === "trailing") await new Promise((resolve) => setTimeout(() => { process.stdout.write("worktree-out\\n"); process.stderr.write("worktree-err\\n"); resolve(); }, 10)); return { ok: true, path: worktreePath, created: false, reused: true, provision: provisionResult }; }',
+    'export function parseEnsureWorktreeCliArgs(argv) { const help = argv.includes("--help") || argv.includes("-h"); if (argv.includes("loop") || argv.includes("ensure-worktree")) throw new Error("Unknown argument: loop"); const repoRoot = value(argv, "--repo-root"); if (!help && !repoRoot) throw new Error("Missing required --repo-root"); return { help, repoRoot, issue: Number(value(argv, "--issue")), pr: Number(value(argv, "--pr")), branch: value(argv, "--branch"), base: value(argv, "--base"), jq: value(argv, "--jq"), silent: argv.includes("--silent") || argv.includes("-s") }; }',
+    'export async function ensureWorktree(options, { provision = genericProvision } = {}) { if (options.branch === "conflict") throw new Error("fixture branch conflict"); const kind = Number.isInteger(options.issue) && options.issue > 0 ? "issue" : "pr"; const number = kind === "issue" ? options.issue : options.pr; const worktreePath = path.join(options.repoRoot, "tmp", "worktrees", "dev-loops", `${kind}-${number}`); const provisionResult = await provision({ worktreePath, repoRoot: options.repoRoot }); if (options.branch === "trailing") await new Promise((resolve) => setTimeout(() => { process.stdout.write("worktree-out\\n"); process.stderr.write("worktree-err\\n"); resolve(); }, 10)); return { ok: true, path: worktreePath, base: options.base, created: false, reused: true, provision: provisionResult }; }',
     'export async function runCli(_argv, { stdout }) { stdout.write("fixture help\\n"); }',
   ].join("\n"));
   await mkdir(path.join(packageRoot, "scripts", "lib"), { recursive: true });
@@ -714,6 +714,12 @@ test("repository wrappers force only the public PR-creation and managed-worktree
   assert.throws(() => normalizeDevLoopsArgs(["pr", "create", "--head", "topic"]), /--delivery-base is required/);
   assert.deepEqual(normalizeDevLoopsArgs(["pr", "create", "--head", "topic", "--delivery-base", "milestone-0.4.0"]), ["pr", "create", "--head", "topic", "--base", "milestone-0.4.0"]);
   assert.deepEqual(normalizeDevLoopsArgs(["--silent", "pr", "create-draft", "--head", "topic", "--delivery-base=origin/milestone-0.5.0"]), ["--silent", "pr", "create-draft", "--head", "topic", "--base", "milestone-0.5.0"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["loop", "ensure-worktree", "--base", "origin/develop", "--delivery-base", "develop"]), ["loop", "ensure-worktree", "--base", "origin/develop"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["loop", "ensure-worktree", "--delivery-base=origin/milestone-0.5.0"]), ["loop", "ensure-worktree", "--base", "origin/milestone-0.5.0"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["gate", "size-budget", "--base", "origin/develop", "--delivery-base", "develop"]), ["gate", "size-budget", "--base", "origin/develop"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["gate", "size-budget", "--delivery-base", "milestone-0.4.0"]), ["gate", "size-budget", "--base", "origin/milestone-0.4.0"]);
+  assert.throws(() => normalizeDevLoopsArgs(["loop", "ensure-worktree", "--base", "develop", "--delivery-base", "develop"]), /must use origin\/develop/);
+  assert.throws(() => normalizeDevLoopsArgs(["gate", "size-budget", "--base", "milestone-0.4.0", "--delivery-base", "milestone-0.4.0"]), /must use origin\/milestone-0\.4\.0/);
   assert.deepEqual(normalizeDevLoopsArgs(["-s", "pr", "create", "--head", "topic", "--delivery-base", "develop"]), ["-s", "pr", "create", "--head", "topic", "--base", "develop"]);
   assert.deepEqual(normalizeDevLoopsArgs(["--repo", "MediaNoxLabs/oxid", "pr", "create", "--head", "topic", "--delivery-base", "origin/develop"]), ["--repo", "MediaNoxLabs/oxid", "pr", "create", "--head", "topic", "--base", "develop"]);
   assert.deepEqual(normalizeDevLoopsArgs(["pr", "create", "--head", "feat/issue-280", "--base", "docs/issue-279", "--delivery-base", "develop"]), ["pr", "create", "--head", "feat/issue-280", "--base", "docs/issue-279"]);
@@ -1562,6 +1568,7 @@ test("tracked pre-flight wrapper reports Pi child dispatch availability determin
 test("repository wrapper executes conventional help and delegates watch-ci unchanged", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  execFileSync("git", ["update-ref", "refs/remotes/origin/develop", "HEAD"], { cwd: fixture.root, stdio: "ignore" });
   const cli = path.join(fixture.packageRoot, "cli", "index.mjs");
   await writeFile(cli, "process.stdout.write(JSON.stringify(process.argv.slice(2)) + '\\n');\n");
   const output = [];
@@ -1588,6 +1595,45 @@ test("repository wrappers await child close and preserve trailing output", async
   assert.match(output.join(""), /dev-loop-err/);
   assert.match(output.join(""), /worktree-out/);
   assert.match(output.join(""), /worktree-err/);
+});
+
+test("managed worktree routes use remote refs and persist delivery metadata on create and reuse", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  await writeFile(path.join(fixture.root, ".devloops"), "dirty primary\n");
+  execFileSync("git", ["branch", "develop"], { cwd: fixture.root, stdio: "ignore" });
+  const localDevelop = execFileSync("git", ["rev-parse", "develop"], { cwd: fixture.root, encoding: "utf8" }).trim();
+  const remoteDevelop = execFileSync("git", [
+    "-c", "user.name=Oxid Test", "-c", "user.email=oxid-test@example.invalid",
+    "commit-tree", `${localDevelop}^{tree}`, "-p", localDevelop, "-m", "remote develop advance",
+  ], { cwd: fixture.root, encoding: "utf8" }).trim();
+  execFileSync("git", ["update-ref", "refs/remotes/origin/develop", remoteDevelop], { cwd: fixture.root, stdio: "ignore" });
+  assert.notEqual(localDevelop, remoteDevelop);
+  assert.notEqual(execFileSync("git", ["status", "--porcelain", "--", ".devloops"], {
+    cwd: fixture.root, encoding: "utf8",
+  }), "");
+  const output = [];
+  const sink = new Writable({ write(chunk, _encoding, callback) { output.push(chunk.toString()); callback(); } });
+  const args = ["loop", "ensure-worktree", "--repo-root", fixture.root, "--issue", "150", "--branch", "issue-150", "--delivery-base", "develop"];
+
+  assert.equal(await runDevLoops(args, { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
+  const first = JSON.parse(output.join("").trim().split("\n").at(-1));
+  assert.equal(first.base, "origin/develop");
+  assert.equal(execFileSync("git", ["config", "--local", "--get", "branch.issue-150.oxidDeliveryBase"], {
+    cwd: fixture.root, encoding: "utf8",
+  }).trim(), "origin/develop");
+
+  output.length = 0;
+  assert.equal(await runDevLoops(args, { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
+  assert.equal(JSON.parse(output.join("").trim().split("\n").at(-1)).base, "origin/develop");
+  assert.equal(execFileSync("git", ["config", "--local", "--get-all", "branch.issue-150.oxidDeliveryBase"], {
+    cwd: fixture.root, encoding: "utf8",
+  }).trim(), "origin/develop");
+
+  await assert.rejects(
+    runDevLoops([...args.slice(0, -1), "milestone-0.4.0"], { cwd: fixture.root, stdout: sink, stderr: sink }),
+    (error) => /is immutable/u.test(error.message),
+  );
 });
 
 test("GitHub compatibility enforces the supported CLI floor and REST capabilities", async (t) => {

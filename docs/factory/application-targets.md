@@ -23,6 +23,19 @@ commands accept the same environment variables as the existing launchers, such
 as `OXID_ANDROID_DEVICE`, `OXID_IOS_DEVICE`, `OXID_UI_PROFILE`,
 `OXID_MOBILE_CUSTODY`, and `OXID_STANDALONE_NETWORK_PROFILE`.
 
+The opt-in native proof benchmark has its own development-only desktop pair:
+
+```bash
+just desktop-proof-benchmark-build
+just desktop-proof-benchmark-run
+```
+
+These commands select `desktop,developer-proof-benchmark` explicitly and do not
+produce a mobile artifact receipt or a release build. The run command starts
+the UI but never starts a proof by itself. Follow the bounded scenario rendered
+by `node scripts/demo-inventory.mjs prepare development-proof-benchmark-desktop`
+before choosing a circuit.
+
 ## Build once, deploy repeatedly
 
 ```bash

@@ -514,17 +514,15 @@ where
         )
         .ok()
         .flatten();
-    let mut persist_progress = |progress: &DustSyncProgress| {
+    let mut persist_progress = |progress: &DustSyncProgress<'_>| {
         if let Ok(updated_at) = clock.now() {
-            let _ = checkpoints.save(
+            let _ = checkpoints.save_state(
                 config.indexer.network_id(),
                 &dust_public_key,
-                &StoredDustCheckpoint {
-                    current_cursor: progress.current_cursor,
-                    target_cursor: progress.target_cursor,
-                    updated_at,
-                    state: progress.state.clone(),
-                },
+                progress.current_cursor,
+                progress.target_cursor,
+                updated_at,
+                progress.state,
             );
         }
         Ok(())
@@ -544,15 +542,13 @@ where
         return Err(WalletTransactionPortError::InvalidChainState);
     }
     if let Ok(updated_at) = clock.now() {
-        let _ = checkpoints.save(
+        let _ = checkpoints.save_state(
             config.indexer.network_id(),
             &dust_public_key,
-            &StoredDustCheckpoint {
-                current_cursor: synchronized.current_cursor,
-                target_cursor: synchronized.target_cursor,
-                updated_at,
-                state: dust_state.clone(),
-            },
+            synchronized.current_cursor,
+            synchronized.target_cursor,
+            updated_at,
+            &dust_state,
         );
     }
     let current_time = if chain_tip.timestamp > dust_state.sync_time {
@@ -745,7 +741,7 @@ async fn synchronize_dust(
     checkpoint: Option<StoredDustCheckpoint>,
 ) -> Result<DustSynchronization, WalletTransactionPortError> {
     let cancellation = AtomicBool::new(false);
-    let mut ignore_progress = |_: &DustSyncProgress| Ok(());
+    let mut ignore_progress = |_: &DustSyncProgress<'_>| Ok(());
     synchronize_dust_controlled(
         endpoint,
         dust_key,
@@ -763,7 +759,7 @@ pub(crate) async fn synchronize_dust_controlled(
     parameters: DustParameters,
     checkpoint: Option<StoredDustCheckpoint>,
     cancellation: &AtomicBool,
-    observe: &mut dyn FnMut(&DustSyncProgress) -> Result<(), WalletTransactionPortError>,
+    observe: &mut dyn FnMut(&DustSyncProgress<'_>) -> Result<(), WalletTransactionPortError>,
 ) -> Result<DustSynchronization, WalletTransactionPortError> {
     ensure_submission_active(cancellation)?;
     let (mut state, starting_cursor, starting_target) = checkpoint.map_or_else(
@@ -985,10 +981,11 @@ pub(crate) async fn synchronize_dust_controlled(
                     });
                 }
                 observe(&DustSyncProgress {
-                    state: state.clone(),
+                    state: &state,
                     current_cursor,
                     target_cursor,
                     events_processed: 0,
+                    segment_complete: true,
                 })?;
                 ensure_dust_sync_active(cancellation, started_at)?;
                 return Ok(DustSynchronization {
@@ -1022,10 +1019,11 @@ pub(crate) async fn synchronize_dust_controlled(
                     let current_cursor =
                         batch_last_id.ok_or(WalletTransactionPortError::InvalidChainState)?;
                     observe(&DustSyncProgress {
-                        state: state.clone(),
+                        state: &state,
                         current_cursor,
                         target_cursor,
                         events_processed: replayed_events,
+                        segment_complete: current_cursor == segment_cursor,
                     })?;
                     durable_cursor = Some(current_cursor);
                 }
@@ -1047,10 +1045,11 @@ pub(crate) async fn synchronize_dust_controlled(
                     let current_cursor =
                         batch_last_id.ok_or(WalletTransactionPortError::InvalidChainState)?;
                     observe(&DustSyncProgress {
-                        state: state.clone(),
+                        state: &state,
                         current_cursor,
                         target_cursor,
                         events_processed: replayed_events,
+                        segment_complete: current_cursor == segment_cursor,
                     })?;
                     durable_cursor = Some(current_cursor);
                 }
@@ -1066,10 +1065,11 @@ pub(crate) async fn synchronize_dust_controlled(
                 let current_cursor =
                     batch_last_id.ok_or(WalletTransactionPortError::InvalidChainState)?;
                 observe(&DustSyncProgress {
-                    state: state.clone(),
+                    state: &state,
                     current_cursor,
                     target_cursor,
                     events_processed: replayed_events,
+                    segment_complete: true,
                 })?;
                 durable_cursor = Some(current_cursor);
             }
@@ -1103,7 +1103,7 @@ async fn synchronize_dust_with_fallback(
     checkpoint: Option<StoredDustCheckpoint>,
 ) -> Result<DustSynchronization, WalletTransactionPortError> {
     let cancellation = AtomicBool::new(false);
-    let mut ignore_progress = |_: &DustSyncProgress| Ok(());
+    let mut ignore_progress = |_: &DustSyncProgress<'_>| Ok(());
     synchronize_dust_with_control(
         endpoint,
         dust_key,
@@ -1121,13 +1121,13 @@ pub(crate) async fn synchronize_dust_with_control(
     parameters: DustParameters,
     checkpoint: Option<StoredDustCheckpoint>,
     cancellation: &AtomicBool,
-    observe: &mut dyn FnMut(&DustSyncProgress) -> Result<(), WalletTransactionPortError>,
+    observe: &mut dyn FnMut(&DustSyncProgress<'_>) -> Result<(), WalletTransactionPortError>,
 ) -> Result<DustSynchronization, WalletTransactionPortError> {
     let had_checkpoint = checkpoint.is_some();
     let mut emitted_progress = false;
     let mut observer_failed = false;
     let result = {
-        let mut tracking_observer = |progress: &DustSyncProgress| {
+        let mut tracking_observer = |progress: &DustSyncProgress<'_>| {
             let result = observe(progress);
             if result.is_ok() {
                 emitted_progress = true;
@@ -1164,11 +1164,14 @@ pub(crate) struct DustSynchronization {
     pub(crate) events_processed: usize,
 }
 
-pub(crate) struct DustSyncProgress {
-    pub(crate) state: DustLocalState<DefaultDB>,
+pub(crate) struct DustSyncProgress<'state> {
+    pub(crate) state: &'state DustLocalState<DefaultDB>,
     pub(crate) current_cursor: u64,
     pub(crate) target_cursor: u64,
     pub(crate) events_processed: usize,
+    /// Public balance/status projection is bounded to a closed receive
+    /// segment; durable checkpoint observers still run for every replay batch.
+    pub(crate) segment_complete: bool,
 }
 
 struct DecodedDustEvent {
@@ -2411,6 +2414,7 @@ mod tests {
                         progress.current_cursor,
                         progress.target_cursor,
                         progress.events_processed,
+                        progress.segment_complete,
                     ));
                     Ok(())
                 },
@@ -2425,11 +2429,21 @@ mod tests {
         );
         for (batch_index, progress) in observed[..observed.len() - 1].iter().enumerate() {
             let expected = ((batch_index + 1) * DUST_REPLAY_BATCH_EVENTS) as u64;
-            assert_eq!(*progress, (expected, final_cursor, expected as usize));
+            let segment_complete =
+                batch_index + 1 == MAX_DUST_RECEIVE_SEGMENT_EVENTS / DUST_REPLAY_BATCH_EVENTS;
+            assert_eq!(
+                *progress,
+                (expected, final_cursor, expected as usize, segment_complete)
+            );
         }
         assert_eq!(
             observed.last(),
-            Some(&(final_cursor, final_cursor, final_cursor as usize))
+            Some(&(final_cursor, final_cursor, final_cursor as usize, true))
+        );
+        assert_eq!(
+            observed.iter().filter(|progress| progress.3).count(),
+            2,
+            "expensive public projections stay at closed-segment boundaries"
         );
         assert_eq!(synchronized.current_cursor, final_cursor);
         assert_eq!(synchronized.target_cursor, final_cursor);

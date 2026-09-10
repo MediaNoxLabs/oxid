@@ -207,6 +207,15 @@ review.
 
 ## Running a loop
 
+Delivery targets have two intentional representations. Git worktree creation and
+read-only diff/size checks compare against the fetched remote-tracking ref
+(`origin/develop` or `origin/milestone-<x.y.z>`), so they do not accidentally
+use a stale local branch. GitHub PR create/edit routes instead receive the bare
+branch name (`develop` or `milestone-<x.y.z>`) required by GitHub; a stacked PR
+may use a validated conventional issue branch as its temporary `--base`.
+The repository wrappers keep these forms separate and record the selected remote
+ref in `branch.<name>.oxidDeliveryBase` for pre-push verification.
+
 ```bash
 node scripts/dev-loops.mjs doctor    # environment readiness
 node scripts/dev-loops.mjs gates     # resolve and print every configured angle

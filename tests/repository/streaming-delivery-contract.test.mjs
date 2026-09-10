@@ -151,4 +151,6 @@ test("milestone merge implementation pins squash execution to the audited head",
   assert.doesNotMatch(source, /--admin/);
   assert.match(source, /currentTriageReceipt/);
   assert.match(source, /assertIssueTarget/);
+  assert.match(source, /closeout-pr/);
+  assert.match(source, /result\.headSha/);
 });

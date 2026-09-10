@@ -21,7 +21,9 @@ construction) and the gaps the 2026-08 independent review closed or scheduled.
 
 The executable [CI target matrix](../../factory/ci-target-matrix.md) maps these
 layers to change areas, runner dependencies, branch profiles, parallel lanes,
-and hard time budgets. A skipped unrelated lane is intentional only when the
+and hard time budgets. The [demo inventory](../../factory/demo-inventory.md)
+links each scenario to explicit automated, manual, or planned coverage and its
+evidence cadence. A skipped unrelated lane is intentional only when the
 planner records it; missing diff information fails closed to the full public
 hosted set.
 

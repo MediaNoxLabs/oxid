@@ -42,6 +42,12 @@ desktop-build:
 desktop-run:
     cargo run -p oxid-app
 
+desktop-proof-benchmark-build:
+    cargo build -p oxid-app --no-default-features --features desktop,developer-proof-benchmark
+
+desktop-proof-benchmark-run:
+    cargo run -p oxid-app --no-default-features --features desktop,developer-proof-benchmark
+
 headless:
     cargo run -p oxid-headless
 

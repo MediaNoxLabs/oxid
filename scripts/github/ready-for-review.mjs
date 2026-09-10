@@ -4,11 +4,12 @@
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
-const packageRoot = (await resolveDevLoopsPackageRoot({ cwd: process.cwd() })).packageRoot;
-const { main: upstreamMain } = await import(pathToFileURL(path.join(packageRoot, "scripts/github/ready-for-review.mjs")).href);
 import { evaluateOxidPrSizeBudget } from "../loop/oxid-size-budget.mjs";
 
 export async function main(argv = process.argv.slice(2), runtime = {}) {
+  const repoRoot = runtime.repoRoot ?? process.cwd();
+  const packageRoot = (await resolveDevLoopsPackageRoot({ cwd: repoRoot })).packageRoot;
+  const { main: upstreamMain } = await import(pathToFileURL(path.join(packageRoot, "scripts/github/ready-for-review.mjs")).href);
   return upstreamMain(argv, { ...runtime, evaluatePrSizeBudget: runtime.evaluatePrSizeBudget ?? evaluateOxidPrSizeBudget });
 }
 
