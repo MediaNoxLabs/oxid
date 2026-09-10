@@ -44,6 +44,20 @@ with file/line references and classify them against the blocking contract;
 they never edit the branch. A bounded non-critical finding is advisory once
 its follow-up issue and visible PR mapping are recorded.
 
+### Product Manager
+Maintains the validated [demo inventory](demo-inventory.md) as capabilities ship.
+Duties:
+
+- Assess each delivered or planned capability for stable use-case membership and
+  record a justified no-demo impact when it has none.
+- Compose ordered scenarios and product demos with explicit targets,
+  dependencies, health/cleanup, evidence cadence, test mapping, manual steps,
+  and expected outcomes.
+- Preserve truthful unsupported, planned, diagnostic, and acceptance labels;
+  the repository renderer never executes commands, while an explicit user
+  `/scenario prepare` request authorizes only the bounded preparation described
+  by `AGENT.md` and resource-ownership policy.
+
 ### Quality Steward
 A standing role, independent of any single work item. Duties:
 
@@ -67,6 +81,7 @@ in which order concurrent trains promote.
 | Action | Who may do it |
 | --- | --- |
 | Create/refine/order work items and assign one delivery target | Planner, Quality Steward |
+| Maintain validated product use cases, scenarios, and demos | Product Manager through a normal factory work item |
 | Claim work, push a `<type>/issue-<number>` branch, open a draft PR | Implementer holding a valid lease |
 | Post gate findings | Reviewers |
 | Merge an exact-head green issue PR to its declared `milestone-<x.y.z>` | Authorized factory worker through the guarded milestone wrapper |

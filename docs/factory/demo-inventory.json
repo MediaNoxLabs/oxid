@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "evidenceClasses": ["preflight", "diagnostic", "acceptance", "planned"],
+  "cadences": ["per-change", "weekly", "on-demand", "before-release", "manual"],
+  "products": [
+    {
+      "id": "oxid-wallet",
+      "name": "Oxid identity wallet",
+      "targetIds": ["desktop-development", "android-physical", "android-emulator", "ios-simulator", "ios-physical"],
+      "demoIds": ["secure-wallet-recovery"]
+    }
+  ],
+  "targets": [
+    {"id": "desktop-development", "platform": "desktop", "support": "development-only", "note": "Fast UI and application preflight; it cannot prove native user presence."},
+    {"id": "android-physical", "platform": "android", "support": "manual-acceptance", "note": "Supported exact-artifact build, deploy, and run target; physical Android is authoritative for native presence."},
+    {"id": "android-emulator", "platform": "android", "support": "diagnostic-only", "note": "Disposable-emulator automation is diagnostic and never substitutes for physical acceptance."},
+    {"id": "ios-simulator", "platform": "ios", "support": "diagnostic-only", "note": "Supported simulator build/deploy/run target; LocalAuthentication behavior is diagnostic rather than physical evidence."},
+    {"id": "ios-physical", "platform": "ios", "support": "unsupported", "note": "Physical iOS signing, provisioning, and deployment are not implemented by this repository."}
+  ],
+  "dependencies": [
+    {
+      "id": "android-physical-device", "kind": "device", "mutable": true, "owner": "demo operator",
+      "preparationCommandIds": ["android-device-status"], "healthCheckIds": ["android-device-connected"], "cleanupCommandIds": ["android-physical-cleanup"],
+      "note": "Use one unlocked, authorized physical Android device. Never persist its identifier in public evidence."
+    },
+    {
+      "id": "android-disposable-emulator", "kind": "simulator", "mutable": true, "owner": "native-custody diagnostic harness",
+      "preparationCommandIds": [], "healthCheckIds": [], "cleanupCommandIds": ["android-emulator-cleanup"],
+      "note": "The existing harness owns its disposable credential, app data, forwarded port, and cleanup trap."
+    },
+    {
+      "id": "ios-disposable-simulator", "kind": "simulator", "mutable": true, "owner": "native-custody diagnostic harness",
+      "preparationCommandIds": [], "healthCheckIds": [], "cleanupCommandIds": ["ios-simulator-cleanup"],
+      "note": "The existing simulator harness owns the app lifecycle and its scoped cleanup."
+    }
+  ],
+  "commands": [
+    {"id": "desktop-build", "phase": "build", "command": "just desktop-build", "reference": "docs/factory/application-targets.md", "expectedOutcome": "Desktop development artifact builds successfully."},
+    {"id": "desktop-run", "phase": "run", "command": "just desktop-run", "reference": "docs/factory/application-targets.md", "expectedOutcome": "Desktop development application starts for a non-production UI preflight."},
+    {"id": "desktop-stop", "phase": "cleanup", "status": "manual", "reference": "docs/factory/demo-inventory.md", "expectedOutcome": "Operator stops the foreground desktop process without deleting unrelated state."},
+    {"id": "android-device-status", "phase": "preparation", "command": "adb devices", "reference": "docs/factory/application-targets.md", "expectedOutcome": "Exactly one intended, unlocked, authorized physical Android device is available; its identifier stays operator-private."},
+    {"id": "android-device-health", "phase": "status", "command": "adb devices", "reference": "docs/factory/application-targets.md", "expectedOutcome": "The intended physical Android device remains connected and authorized; its identifier stays operator-private."},
+    {"id": "android-native-build", "phase": "build", "command": "just android-build", "environment": {"OXID_MOBILE_CUSTODY": "native"}, "reference": "docs/factory/application-targets.md", "expectedOutcome": "A native-custody APK and exact-source private receipt are created for the selected device ABI."},
+    {"id": "android-native-deploy", "phase": "deploy", "command": "just android-deploy", "environment": {"OXID_MOBILE_CUSTODY": "native"}, "reference": "docs/factory/application-targets.md", "expectedOutcome": "The receipt-verified native-custody APK is installed without rebuilding or launching."},
+    {"id": "android-native-run", "phase": "run", "command": "just android-run", "environment": {"OXID_MOBILE_CUSTODY": "native"}, "reference": "docs/factory/application-targets.md", "expectedOutcome": "The exact native-custody APK is built, installed, launched, and remains running."},
+    {"id": "android-native-custody-diagnostic", "phase": "run", "command": "just android-native-custody-smoke", "reference": "scripts/test-android-native-custody.sh", "expectedOutcome": "The disposable emulator exercises native custody and owns its credential and app cleanup."},
+    {"id": "ios-native-custody-diagnostic", "phase": "run", "command": "just ios-native-custody-smoke", "reference": "scripts/test-ios-native-custody.sh", "expectedOutcome": "The iOS Simulator exercises native custody under its existing diagnostic harness."},
+    {"id": "android-physical-cleanup", "phase": "cleanup", "status": "manual", "reference": "docs/factory/demo-inventory.md", "expectedOutcome": "After feedback, the operator explicitly authorizes app-data removal if desired and confirms no wallet-root input remains visible."},
+    {"id": "android-emulator-cleanup", "phase": "cleanup", "status": "delegated", "reference": "scripts/test-android-native-custody.sh", "expectedOutcome": "The harness trap clears only its emulator app state, test credential, and forwarded port."},
+    {"id": "ios-simulator-cleanup", "phase": "cleanup", "status": "delegated", "reference": "scripts/test-ios-native-custody.sh", "expectedOutcome": "The harness performs only its scoped simulator cleanup."},
+    {"id": "ios-physical-deploy-unsupported", "phase": "deploy", "status": "unsupported", "reference": "docs/factory/application-targets.md", "expectedOutcome": "The preparation brief reports that physical iOS signing and deployment are unavailable instead of inventing a command."}
+  ],
+  "healthChecks": [
+    {"id": "android-device-connected", "dependencyId": "android-physical-device", "commandId": "android-device-health", "expectedOutcome": "One intended physical Android device is connected and authorized; an emulator is not acceptance evidence."}
+  ],
+  "useCases": [
+    {
+      "id": "recover-existing-midnight-wallet-root",
+      "outcome": "An owner-supplied Midnight wallet root is installed into an empty protected profile only after explicit confirmation and fresh device-owner authorization.",
+      "sourceReferences": ["docs/adr/0071-wrap-mobile-custody-with-device-user-presence.md", "crates/wallet/application/src/root_recovery.rs", "crates/ui-dioxus/src/wallet_root_recovery.rs"],
+      "scenarioIds": ["wallet-root-recovery-native-presence"]
+    },
+    {
+      "id": "reject-stale-or-duplicate-root-recovery",
+      "outcome": "The wallet clears owner input across lifecycle changes and rejects a second root import into initialized custody.",
+      "sourceReferences": ["crates/wallet/application/src/root_recovery.rs", "crates/adapters/storage-mobile/src/lib.rs", "crates/ui-dioxus/src/wallet_root_recovery.rs"],
+      "scenarioIds": ["wallet-root-recovery-native-presence"]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "wallet-root-recovery-native-presence",
+      "title": "Recover an existing Midnight wallet root behind native user presence",
+      "productId": "oxid-wallet",
+      "defaultTargetId": "android-physical",
+      "orderedUseCaseIds": ["recover-existing-midnight-wallet-root", "reject-stale-or-duplicate-root-recovery"],
+      "targetPlans": [
+        {
+          "targetId": "desktop-development", "status": "supported", "evidenceClass": "preflight", "dependencyIds": [],
+          "commandIds": {"preparation": [], "build": ["desktop-build"], "deploy": [], "run": ["desktop-run"], "status": [], "cleanup": ["desktop-stop"]},
+          "healthCheckIds": [], "note": "Use only to inspect recovery navigation, validation, and lifecycle clearing; desktop authorization is explicitly non-production."
+        },
+        {
+          "targetId": "android-physical", "status": "supported", "evidenceClass": "acceptance", "dependencyIds": ["android-physical-device"],
+          "commandIds": {"preparation": ["android-device-status"], "build": ["android-native-build"], "deploy": ["android-native-deploy"], "run": ["android-native-run"], "status": ["android-device-health"], "cleanup": ["android-physical-cleanup"]},
+          "healthCheckIds": ["android-device-connected"], "note": "Preferred demo target. Use run as the one-command path, or build then deploy when reusing an exact artifact; do not execute both paths redundantly."
+        },
+        {
+          "targetId": "android-emulator", "status": "supported", "evidenceClass": "diagnostic", "dependencyIds": ["android-disposable-emulator"],
+          "commandIds": {"preparation": [], "build": [], "deploy": [], "run": ["android-native-custody-diagnostic"], "status": [], "cleanup": ["android-emulator-cleanup"]},
+          "healthCheckIds": [], "note": "Run only on a disposable emulator; the harness changes the device PIN and refuses physical devices."
+        },
+        {
+          "targetId": "ios-simulator", "status": "supported", "evidenceClass": "diagnostic", "dependencyIds": ["ios-disposable-simulator"],
+          "commandIds": {"preparation": [], "build": [], "deploy": [], "run": ["ios-native-custody-diagnostic"], "status": [], "cleanup": ["ios-simulator-cleanup"]},
+          "healthCheckIds": [], "note": "Useful for diagnosis on macOS, but simulator LocalAuthentication is not physical Face ID evidence."
+        },
+        {
+          "targetId": "ios-physical", "status": "unsupported", "evidenceClass": "planned", "dependencyIds": [],
+          "commandIds": {"preparation": [], "build": [], "deploy": ["ios-physical-deploy-unsupported"], "run": [], "status": [], "cleanup": []},
+          "healthCheckIds": [], "note": "Do not claim or attempt physical iOS deployment until signing, provisioning, and device policy are implemented."
+        }
+      ],
+      "manualSteps": [
+        "On physical Android, select recovery for an empty PreProd profile, enter a non-production 64-character lowercase hexadecimal root, confirm the operation, and deny native authorization. Confirm recovery fails without creating an account and the root field is cleared.",
+        "Enter the non-production root again, approve with the configured device credential or biometric, and confirm account 0/address 0 is ready or is reported as separately retryable.",
+        "Attempt recovery again for the initialized profile. Confirm the wallet refuses to replace or merge custody before consuming another root.",
+        "While owner input is present, background and resume the app or cancel recovery. Confirm the root and confirmation are cleared before another attempt."
+      ],
+      "expectedOutcomes": ["Denial installs no root and remains safely retryable.", "Approval installs the root only into empty protected custody and derives the canonical account independently.", "Initialized custody rejects a duplicate import.", "Lifecycle changes clear owner input and confirmation."],
+      "evidenceClass": "acceptance",
+      "cadence": "before-release",
+      "testMapping": {
+        "status": "partial",
+        "automated": ["crates/wallet/application/src/root_recovery.rs::authorization_denial_is_retryable_but_duplicate_import_is_rejected", "crates/adapters/storage-mobile/src/lib.rs::owner_root_recovery_is_one_shot_authorized_and_survives_restart", "just android-native-custody-smoke", "just ios-native-custody-smoke"],
+        "manual": "Physical Android executes the four root-recovery acceptance steps; desktop is preflight and simulators are diagnostic.",
+        "planned": "Automate receipt-scoped physical Android evidence only after its device-input and privacy boundary is reviewed."
+      }
+    }
+  ],
+  "demos": [
+    {
+      "id": "secure-wallet-recovery", "productId": "oxid-wallet", "audience": "product owner and release operator",
+      "scenarioIds": ["wallet-root-recovery-native-presence"],
+      "targetIds": ["desktop-development", "android-physical", "android-emulator", "ios-simulator", "ios-physical"],
+      "expectedOutcome": "Oxid demonstrates one-shot root recovery behind a truthful native-presence boundary, with physical Android acceptance and clearly limited preflight and diagnostic targets."
+    }
+  ]
+}

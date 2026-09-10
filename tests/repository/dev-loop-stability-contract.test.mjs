@@ -595,7 +595,10 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   const extensionFiles = (await readdir(path.join(repoRoot, ".pi", "extensions"))).filter((file) => file.startsWith("dev-loop-preflight"));
   assert.deepEqual(extensionFiles, ["dev-loop-preflight.ts"], "only the thin Pi registrar is auto-loaded");
   const settings = JSON.parse(await read(".pi/settings.json"));
-  assert.equal(settings.packages.includes("npm:dev-loops@1.0.2"), true);
+  assert.deepEqual(settings.packages.find((entry) => entry?.source === "npm:dev-loops@1.0.2"), {
+    source: "npm:dev-loops@1.0.2",
+    extensions: [],
+  });
   assert.equal(settings.subagents.projectRootResolution, "git-root");
   assert.equal(settings.subagents.agentOverrides, undefined);
   for (const name of ["dev-loop", "developer", "docs", "fixer", "judge", "quality", "refiner", "review"]) {

@@ -30,7 +30,10 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.deepEqual(subagentPolicy.toolBudget, { soft: 40, hard: 60, block: "*" });
   assert.equal(Object.hasOwn(subagentPolicy, "turnBudget"), false);
   assert.deepEqual(settings.packages, [
-    "npm:dev-loops@1.0.2",
+    {
+      source: "npm:dev-loops@1.0.2",
+      extensions: [],
+    },
     "npm:@playwright/test@1.60.0",
     "npm:@axe-core/playwright@4.10.0",
     "npm:pi-subagents@0.66.0",
@@ -53,6 +56,8 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(smoke, /skill:taskflow/u);
   assert.match(smoke, /unsafe inherited taskflow resources are active/u);
   assert.match(smoke, /Failed to load skill/u);
+  assert.match(smoke, /Pi startup modified tracked project agent shadows/u);
+  assert.match(smoke, /Pi did not expose the tracked scenario and use-case commands/u);
   assert.match(bootstrap, /bash scripts\/check-pi-devshell\.sh/u);
   assert.match(devshell, /typeof entry === "string" \? entry : entry\?\.source/u);
 });

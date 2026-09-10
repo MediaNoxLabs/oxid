@@ -169,6 +169,7 @@ if (JSON.stringify(registered) !== JSON.stringify(expected)) {
 NODE
 
 pi_rpc_stderr="$(mktemp "${TMPDIR:-/tmp}/oxid-pi-smoke.XXXXXX")"
+agent_hashes_before="$(git hash-object .pi/agents/*.agent.md)"
 trap 'rm -f "$pi_rpc_stderr"' EXIT
 if ! pi_rpc_output="$({
   printf '%s\n' '{"type":"get_commands"}'
@@ -183,6 +184,14 @@ if grep -F "Failed to load skill" "$pi_rpc_stderr" >/dev/null; then
   exit 1
 fi
 
+agent_hashes_after="$(git hash-object .pi/agents/*.agent.md)"
+if [[ "$agent_hashes_after" != "$agent_hashes_before" ]]; then
+  echo "Pi startup modified tracked project agent shadows:" >&2
+  git diff --name-only -- .pi/agents >&2
+  echo "suppress package extensions that rewrite consumer-owned policy before starting Pi" >&2
+  exit 1
+fi
+
 if jq -s -e '
   map(select(.type == "response" and .command == "get_commands"))[0]
   | .data.commands
@@ -190,6 +199,15 @@ if jq -s -e '
 ' <<<"$pi_rpc_output" >/dev/null; then
   echo "unsafe inherited taskflow resources are active; project suppression did not take effect" >&2
   echo "do not start Pi: detached peer resolution, nested progress, and descendant cancellation are unverified" >&2
+  exit 1
+fi
+
+if ! jq -s -e '
+  map(select(.type == "response" and .command == "get_commands"))[0]
+  | .data.commands
+  | (any(.name == "scenario")) and (any(.name == "use-case"))
+' <<<"$pi_rpc_output" >/dev/null; then
+  echo "Pi did not expose the tracked scenario and use-case commands" >&2
   exit 1
 fi
 

@@ -18,7 +18,10 @@
     }
   },
   "packages": [
-    "npm:dev-loops@1.0.2",
+    {
+      "source": "npm:dev-loops@1.0.2",
+      "extensions": []
+    },
     "npm:@playwright/test@1.60.0",
     "npm:@axe-core/playwright@4.10.0",
     "npm:pi-subagents@0.66.0",
