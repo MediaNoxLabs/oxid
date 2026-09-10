@@ -8,6 +8,11 @@ owner-invoked development demo, not CI, production, or release evidence.
 Identity systems remain abstract protocol actors. No issuer, verifier, relying
 party, or companion repository is fetched or managed by this kit.
 
+Runnable product journeys are indexed separately in the validated
+[`docs/factory/demo-inventory.md`](../docs/factory/demo-inventory.md). This
+Tailnet kit remains one owner-invoked development demo, not an inventory command
+executor or evidence for unrelated scenarios.
+
 ## Protocol and transport boundaries
 
 Tailscale is a private transport boundary, not an issuer/verifier trust anchor

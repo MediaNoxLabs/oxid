@@ -129,7 +129,12 @@ ledger and PR comment without blocking a clean verdict.
    `origin/milestone-<x.y.z>`; factory work may use `origin/develop`. Start
    from that fetched ref in a dedicated worktree. Run
    `node scripts/worktree-lifecycle.mjs audit` before creating another.
-2. Make a bounded change and run the narrowest meaningful local test.
+2. Make a bounded change and run the narrowest meaningful local test. During
+   planning and closeout, the Product Manager updates
+   `docs/factory/demo-inventory.json` for demo-affecting capability changes, or
+   records a justified no-demo impact. The inventory CLI is read-only; an
+   explicit `/scenario prepare` request delegates bounded preparation to the
+   active agent under the existing authority and resource-ownership rules.
 3. Run the draft gate for scope and correctness. It does not wait for hosted
    CI. Repair blocking findings together. Record bounded non-critical findings
    as linked follow-up issues instead of extending the current iteration.
