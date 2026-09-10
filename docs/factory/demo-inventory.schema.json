@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://medianoxlabs.github.io/oxid/demo-inventory-v1.schema.json",
+  "title": "Oxid use-case, scenario, and demo inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "evidenceClasses", "cadences", "products", "targets", "dependencies", "commands", "healthChecks", "useCases", "scenarios", "demos"],
+  "properties": {
+    "version": {"const": 1},
+    "evidenceClasses": {"const": ["preflight", "diagnostic", "acceptance", "planned"]},
+    "cadences": {"const": ["per-change", "weekly", "on-demand", "before-release", "manual"]},
+    "products": {"type": "array", "items": {"$ref": "#/$defs/product"}},
+    "targets": {"type": "array", "items": {"$ref": "#/$defs/target"}},
+    "dependencies": {"type": "array", "items": {"$ref": "#/$defs/dependency"}},
+    "commands": {"type": "array", "items": {"$ref": "#/$defs/command"}},
+    "healthChecks": {"type": "array", "items": {"$ref": "#/$defs/healthCheck"}},
+    "useCases": {"type": "array", "items": {"$ref": "#/$defs/useCase"}},
+    "scenarios": {"type": "array", "items": {"$ref": "#/$defs/scenario"}},
+    "demos": {"type": "array", "items": {"$ref": "#/$defs/demo"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "text": {"type": "string", "minLength": 1},
+    "idArray": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
+    "product": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "name", "targetIds", "demoIds"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "name": {"$ref": "#/$defs/text"}, "targetIds": {"$ref": "#/$defs/idArray"}, "demoIds": {"$ref": "#/$defs/idArray"}}
+    },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "platform", "support", "note"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "platform": {"$ref": "#/$defs/text"}, "support": {"enum": ["development-only", "manual-acceptance", "diagnostic-only", "unsupported"]}, "note": {"$ref": "#/$defs/text"}}
+    },
+    "dependency": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "kind", "mutable", "owner", "preparationCommandIds", "healthCheckIds", "cleanupCommandIds", "note"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "kind": {"enum": ["device", "simulator", "service", "network", "tool"]}, "mutable": {"type": "boolean"}, "owner": {"$ref": "#/$defs/text"},
+        "preparationCommandIds": {"$ref": "#/$defs/idArray"}, "healthCheckIds": {"$ref": "#/$defs/idArray"}, "cleanupCommandIds": {"$ref": "#/$defs/idArray"}, "note": {"$ref": "#/$defs/text"}
+      }
+    },
+    "environment": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "OXID_MOBILE_CUSTODY": {"enum": ["development", "native"]},
+        "OXID_UI_PROFILE": {"enum": ["user", "dev", "demo"]},
+        "OXID_STANDALONE_NETWORK_PROFILE": {"enum": ["simulated", "local", "tailnet"]}
+      }
+    },
+    "command": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "phase", "reference", "expectedOutcome"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "phase": {"enum": ["preparation", "build", "deploy", "run", "status", "cleanup"]},
+        "command": {"$ref": "#/$defs/text"},
+        "status": {"enum": ["unsupported", "manual", "delegated"]},
+        "environment": {"$ref": "#/$defs/environment"},
+        "reference": {"$ref": "#/$defs/text"},
+        "expectedOutcome": {"$ref": "#/$defs/text"}
+      },
+      "oneOf": [{"required": ["command"], "not": {"required": ["status"]}}, {"required": ["status"], "not": {"anyOf": [{"required": ["command"]}, {"required": ["environment"]}]}}]
+    },
+    "healthCheck": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "dependencyId", "commandId", "expectedOutcome"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "dependencyId": {"$ref": "#/$defs/id"}, "commandId": {"$ref": "#/$defs/id"}, "expectedOutcome": {"$ref": "#/$defs/text"}}
+    },
+    "useCase": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "outcome", "sourceReferences", "scenarioIds"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "outcome": {"$ref": "#/$defs/text"},
+        "sourceReferences": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/text"}, "uniqueItems": true},
+        "scenarioIds": {"$ref": "#/$defs/idArray"}
+      }
+    },
+    "commandIds": {
+      "type": "object", "additionalProperties": false,
+      "required": ["preparation", "build", "deploy", "run", "status", "cleanup"],
+      "properties": {
+        "preparation": {"$ref": "#/$defs/idArray"}, "build": {"$ref": "#/$defs/idArray"}, "deploy": {"$ref": "#/$defs/idArray"},
+        "run": {"$ref": "#/$defs/idArray"}, "status": {"$ref": "#/$defs/idArray"}, "cleanup": {"$ref": "#/$defs/idArray"}
+      }
+    },
+    "targetPlan": {
+      "type": "object", "additionalProperties": false,
+      "required": ["targetId", "status", "evidenceClass", "dependencyIds", "commandIds", "healthCheckIds", "note"],
+      "properties": {
+        "targetId": {"$ref": "#/$defs/id"}, "status": {"enum": ["supported", "unsupported"]},
+        "evidenceClass": {"enum": ["preflight", "diagnostic", "acceptance", "planned"]},
+        "dependencyIds": {"$ref": "#/$defs/idArray"}, "commandIds": {"$ref": "#/$defs/commandIds"},
+        "healthCheckIds": {"$ref": "#/$defs/idArray"}, "note": {"$ref": "#/$defs/text"}
+      }
+    },
+    "testMapping": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "automated", "manual", "planned"],
+      "properties": {
+        "status": {"enum": ["automated", "manual", "partial", "planned"]},
+        "automated": {"type": "array", "items": {"$ref": "#/$defs/text"}, "uniqueItems": true},
+        "manual": {"$ref": "#/$defs/text"}, "planned": {"$ref": "#/$defs/text"}
+      }
+    },
+    "scenario": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "title", "productId", "defaultTargetId", "orderedUseCaseIds", "targetPlans", "manualSteps", "expectedOutcomes", "evidenceClass", "cadence", "testMapping"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "title": {"$ref": "#/$defs/text"}, "productId": {"$ref": "#/$defs/id"}, "defaultTargetId": {"$ref": "#/$defs/id"},
+        "orderedUseCaseIds": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
+        "targetPlans": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/targetPlan"}},
+        "manualSteps": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/text"}},
+        "expectedOutcomes": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/text"}},
+        "evidenceClass": {"enum": ["preflight", "diagnostic", "acceptance", "planned"]},
+        "cadence": {"enum": ["per-change", "weekly", "on-demand", "before-release", "manual"]},
+        "testMapping": {"$ref": "#/$defs/testMapping"}
+      }
+    },
+    "demo": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "productId", "audience", "scenarioIds", "targetIds", "expectedOutcome"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "productId": {"$ref": "#/$defs/id"}, "audience": {"$ref": "#/$defs/text"},
+        "scenarioIds": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
+        "targetIds": {"$ref": "#/$defs/idArray"}, "expectedOutcome": {"$ref": "#/$defs/text"}
+      }
+    }
+  }
+}

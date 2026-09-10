@@ -131,6 +131,10 @@ Follow [the productive loop](docs/factory/productive-loop.md):
 7. At merge, post the exact-head `review-triage.mjs` receipt and use the guarded
    milestone-only wrapper for an eligible product increment, or hand a
    `develop`/`main` promotion to a human.
+8. After a PR merge, the supervisor records final metrics, leaves the merged
+   worktree, and runs `worktree-lifecycle.mjs closeout-pr` with the exact PR,
+   path, and head. A dirty, locked, non-canonical, mismatched, or current
+   checkout is preserved and reported; unrelated worktrees are never swept.
 
 Automatic review is capped at one routine reviewer. Low-signal refinement
 stops. Do not add reviewers, retries, retrospective work, or a second gate to
@@ -211,6 +215,14 @@ hermetic flake check remain backstops.
 - Audit before cleanup with `node scripts/worktree-lifecycle.mjs audit`.
   Mutating commands require one exact path, expected head SHA, and `--execute`.
   Never bulk-delete based on a branch name or a gone upstream alone.
+- A clean unintegrated worktree may be retired only through the explicit
+  owner-approved archive command. It must retain the exact commit under a
+  private `refs/oxid-archive/worktrees/<sha>` ref and a mode-0600 receipt; an
+  archive is preservation, never evidence that the work was delivered.
+- The supervisor owns merged-PR closeout. From outside the selected checkout,
+  run `node scripts/worktree-lifecycle.mjs closeout-pr --pr <n> --path
+  <absolute-path> --expect-head <sha> --execute`; the command revalidates exact
+  hosted merge evidence and refuses current, locked, or ambiguous state.
 
 ## Maintaining instructions
 

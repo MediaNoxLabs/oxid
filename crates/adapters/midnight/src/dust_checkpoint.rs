@@ -90,11 +90,16 @@ pub(crate) trait MidnightDustCheckpointStore: Send + Sync {
         parameters: DustParameters,
     ) -> Result<Option<StoredDustCheckpoint>, DustCheckpointStoreError>;
 
-    fn save(
+    /// Persists a replay boundary without requiring the synchronization loop
+    /// to clone the complete ledger state before dispatching to the store.
+    fn save_state(
         &self,
         network_id: &ChainNetworkId,
         public_key: &DustPublicKey,
-        checkpoint: &StoredDustCheckpoint,
+        current_cursor: u64,
+        target_cursor: u64,
+        updated_at: UnixTimestampMillis,
+        state: &DustLocalState<DefaultDB>,
     ) -> Result<(), DustCheckpointStoreError>;
 }
 
@@ -118,11 +123,14 @@ impl MidnightDustCheckpointStore for UnavailableMidnightDustCheckpointStore {
         Ok(None)
     }
 
-    fn save(
+    fn save_state(
         &self,
         _: &ChainNetworkId,
         _: &DustPublicKey,
-        _: &StoredDustCheckpoint,
+        _: u64,
+        _: u64,
+        _: UnixTimestampMillis,
+        _: &DustLocalState<DefaultDB>,
     ) -> Result<(), DustCheckpointStoreError> {
         Ok(())
     }
@@ -275,13 +283,16 @@ impl MidnightDustCheckpointStore for BinaryMidnightDustCheckpointStore {
             }))
     }
 
-    fn save(
+    fn save_state(
         &self,
         network_id: &ChainNetworkId,
         public_key: &DustPublicKey,
-        checkpoint: &StoredDustCheckpoint,
+        current_cursor: u64,
+        target_cursor: u64,
+        updated_at: UnixTimestampMillis,
+        state: &DustLocalState<DefaultDB>,
     ) -> Result<(), DustCheckpointStoreError> {
-        validate_checkpoint(checkpoint)?;
+        validate_checkpoint_cursors(current_cursor, target_cursor)?;
         let _guard = self
             .access
             .lock()
@@ -290,11 +301,11 @@ impl MidnightDustCheckpointStore for BinaryMidnightDustCheckpointStore {
         let replacement = DustCheckpointRecord {
             network_id: network_id.as_str().to_owned(),
             public_key_fingerprint,
-            parameters_fingerprint: parameters_fingerprint(&checkpoint.state.params)?,
-            current_cursor: checkpoint.current_cursor,
-            target_cursor: checkpoint.target_cursor,
-            updated_at_millis: checkpoint.updated_at.value(),
-            state: checkpoint.state.clone(),
+            parameters_fingerprint: parameters_fingerprint(&state.params)?,
+            current_cursor,
+            target_cursor,
+            updated_at_millis: updated_at.value(),
+            state: state.clone(),
         };
         let mut records = match self.load_document() {
             Ok(records) => records,
@@ -455,8 +466,11 @@ fn validate_records(records: &[DustCheckpointRecord]) -> Result<(), DustCheckpoi
     Ok(())
 }
 
-fn validate_checkpoint(checkpoint: &StoredDustCheckpoint) -> Result<(), DustCheckpointStoreError> {
-    if checkpoint.current_cursor > checkpoint.target_cursor {
+fn validate_checkpoint_cursors(
+    current_cursor: u64,
+    target_cursor: u64,
+) -> Result<(), DustCheckpointStoreError> {
+    if current_cursor > target_cursor {
         return Err(DustCheckpointStoreError::InvalidData);
     }
     Ok(())
@@ -636,6 +650,22 @@ mod tests {
         bytes
     }
 
+    fn save_checkpoint(
+        store: &dyn MidnightDustCheckpointStore,
+        network_id: &ChainNetworkId,
+        key: &DustPublicKey,
+        checkpoint: &StoredDustCheckpoint,
+    ) -> Result<(), DustCheckpointStoreError> {
+        store.save_state(
+            network_id,
+            key,
+            checkpoint.current_cursor,
+            checkpoint.target_cursor,
+            checkpoint.updated_at,
+            &checkpoint.state,
+        )
+    }
+
     #[test]
     fn configuration_requires_a_normalized_absolute_file_path() {
         assert_eq!(
@@ -656,9 +686,7 @@ mod tests {
         let key = public_key(7);
         let expected = checkpoint(INITIAL_PARAMETERS.dust);
 
-        store
-            .save(&network("undeployed"), &key, &expected)
-            .expect("checkpoint saves");
+        save_checkpoint(&store, &network("undeployed"), &key, &expected).expect("checkpoint saves");
         let restored = store
             .load(&network("undeployed"), &key, INITIAL_PARAMETERS.dust)
             .expect("checkpoint loads")
@@ -679,7 +707,7 @@ mod tests {
                 .load(
                     &network("undeployed"),
                     &public_key(8),
-                    INITIAL_PARAMETERS.dust,
+                    INITIAL_PARAMETERS.dust
                 )
                 .expect("wrong key remains a clean miss")
                 .is_none()
@@ -713,8 +741,7 @@ mod tests {
         let store = BinaryMidnightDustCheckpointStore::new(config.clone());
         let mut incomplete = checkpoint(INITIAL_PARAMETERS.dust);
         incomplete.target_cursor = 43;
-        store
-            .save(&network("undeployed"), &public_key(7), &incomplete)
+        save_checkpoint(&store, &network("undeployed"), &public_key(7), &incomplete)
             .expect("partial checkpoint remains resumable");
         assert_eq!(
             store
@@ -737,18 +764,18 @@ mod tests {
                 .load(
                     &network("undeployed"),
                     &public_key(7),
-                    INITIAL_PARAMETERS.dust,
+                    INITIAL_PARAMETERS.dust
                 )
                 .err(),
             Some(DustCheckpointStoreError::InvalidData)
         );
-        store
-            .save(
-                &network("undeployed"),
-                &public_key(7),
-                &checkpoint(INITIAL_PARAMETERS.dust),
-            )
-            .expect("valid live state replaces malformed regular data");
+        save_checkpoint(
+            &store,
+            &network("undeployed"),
+            &public_key(7),
+            &checkpoint(INITIAL_PARAMETERS.dust),
+        )
+        .expect("valid live state replaces malformed regular data");
 
         let file = fs::OpenOptions::new()
             .write(true)
@@ -761,7 +788,7 @@ mod tests {
                 .load(
                     &network("undeployed"),
                     &public_key(7),
-                    INITIAL_PARAMETERS.dust,
+                    INITIAL_PARAMETERS.dust
                 )
                 .err(),
             Some(DustCheckpointStoreError::InvalidData)
@@ -784,7 +811,7 @@ mod tests {
                 .load(
                     &network("undeployed"),
                     &public_key(7),
-                    INITIAL_PARAMETERS.dust,
+                    INITIAL_PARAMETERS.dust
                 )
                 .err(),
             Some(DustCheckpointStoreError::InvalidData)
@@ -793,13 +820,13 @@ mod tests {
         fs::set_permissions(&directory.0, fs::Permissions::from_mode(0o755))
             .expect("directory permissions change");
         assert_eq!(
-            store
-                .save(
-                    &network("undeployed"),
-                    &public_key(7),
-                    &checkpoint(INITIAL_PARAMETERS.dust),
-                )
-                .err(),
+            save_checkpoint(
+                &store,
+                &network("undeployed"),
+                &public_key(7),
+                &checkpoint(INITIAL_PARAMETERS.dust),
+            )
+            .err(),
             Some(DustCheckpointStoreError::InvalidData)
         );
     }

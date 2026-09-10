@@ -9,7 +9,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { createDeliveryBranchRewriteSink } from "../../scripts/loop/pre-flight-gate.mjs";
-import { auditPi, auditWorktreeAdmission } from "../../scripts/factory/audit-pi.mjs";
+import { auditPi, auditWorktreeAdmission, lifecycleCapacityChecks } from "../../scripts/factory/audit-pi.mjs";
 import { applyUserPolicy, mergePolicy, policyMismatches } from "../../scripts/factory/pi-policy.mjs";
 import { FACTORY_STATE_LABELS, syncFactoryLabels } from "../../scripts/github/sync-factory-labels.mjs";
 import { applyDeliveryProfile, extractDeliveryProfileArgs } from "../../scripts/dev-loops.mjs";
@@ -57,6 +57,7 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(smoke, /unsafe inherited taskflow resources are active/u);
   assert.match(smoke, /Pi startup modified tracked project agent shadows/u);
   assert.match(smoke, /Failed to load skill/u);
+  assert.match(smoke, /Pi did not expose the tracked scenario and use-case commands/u);
   assert.match(bootstrap, /bash scripts\/check-pi-devshell\.sh/u);
   const discoverNix = bootstrap.indexOf('[[ -x "$nix_daemon_profile_bin/nix" ]]');
   const prependNix = bootstrap.indexOf('export PATH="$nix_daemon_profile_bin:$PATH"');
@@ -209,6 +210,19 @@ test("unavailable lifecycle helper uses conservative fresh-checkout capacity", a
     { id: "worktree-target-storage", status: "pass" },
   ]);
   assert.match(result.checks[0].summary, /conservative fallback/u);
+});
+
+test("worktree admission retains dirty delivered heads as active", () => {
+  const lifecycle = [
+    { clean: true, merged: true, targetGiB: 1, removableAfterSevenDays: false },
+    { clean: true, merged: true, targetGiB: 2, removableAfterSevenDays: true },
+    { clean: false, merged: true, targetGiB: 3, removableAfterSevenDays: false },
+    { clean: true, merged: false, targetGiB: 4, removableAfterSevenDays: false },
+  ];
+  const [admission, storage] = lifecycleCapacityChecks(lifecycle);
+  assert.equal(admission.status, "pass");
+  assert.deepEqual(admission.details, { active: 2, registered: 4, removable: 1 });
+  assert.equal(storage.details.targetGiB, 10);
 });
 
 test("config-only audit rejects admission enforcement instead of reporting false red", () => {
@@ -397,6 +411,7 @@ test("read-only Pi audit recognizes tracked configuration controls", async () =>
     repoRoot,
     includeOperational: false,
     piVersion: "0.84.0",
+    piExecutable: `/nix/store/${"a".repeat(32)}-pi-coding-agent-0.84.0/bin/pi`,
     userPolicyResult: { ok: true, configPath: "/private/policy.json", mismatches: [] },
   });
   assert.equal(result.operationalChecked, false);
@@ -414,6 +429,19 @@ test("read-only Pi audit recognizes tracked configuration controls", async () =>
   ]) {
     assert.equal(byId.get(id)?.status, "pass", `${id}: ${byId.get(id)?.summary}`);
   }
+});
+
+test("Pi audit rejects an unpinned host executable even when its version is valid", async () => {
+  const result = await auditPi({
+    repoRoot,
+    includeOperational: false,
+    piVersion: "0.84.0",
+    piExecutable: "/opt/homebrew/bin/pi",
+    userPolicyResult: { ok: true, configPath: "/private/policy.json", mismatches: [] },
+  });
+  const runtime = result.checks.find((entry) => entry.id === "pi-runtime");
+  assert.equal(runtime?.status, "fail");
+  assert.deepEqual(runtime?.details, { versionValid: true, nixStoreExecutable: false });
 });
 
 test("factory topology permits isolated multi-host workers without sharing mutation lanes", async () => {

@@ -30,6 +30,43 @@ function optionValue(args, name) {
   return values[0];
 }
 
+function recordedDeliveryBaseValues(repoRoot, branch) {
+  const key = `branch.${branch}.oxidDeliveryBase`;
+  try {
+    const output = execFileSync("git", ["-C", repoRoot, "config", "--local", "--get-all", key], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const lines = output.split(/\r?\n/u);
+    if (lines.at(-1) === "") lines.pop();
+    return lines;
+  } catch (error) {
+    if (error.status === 1) return [];
+    throw error;
+  }
+}
+
+function assertRecordedDeliveryBase(repoRoot, branch, remoteRef) {
+  const key = `branch.${branch}.oxidDeliveryBase`;
+  const values = recordedDeliveryBaseValues(repoRoot, branch);
+  if (values.length > 1 || (values.length === 1 && values[0] !== remoteRef)) {
+    throw new Error(`${key} is immutable; recorded ${values.join(", ") || "<empty>"}, requested ${remoteRef}`);
+  }
+  return values;
+}
+
+/** Keep the branch-local delivery target stable across worktree reuse. */
+export function ensureRecordedDeliveryBase(repoRoot, branch, remoteRef) {
+  const key = `branch.${branch}.oxidDeliveryBase`;
+  const values = assertRecordedDeliveryBase(repoRoot, branch, remoteRef);
+  if (values.length === 0) {
+    execFileSync("git", ["-C", repoRoot, "config", "--local", key, remoteRef], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  }
+  return remoteRef;
+}
+
 function selectorValue(args) {
   const issue = optionValue(args, "--issue");
   const pr = optionValue(args, "--pr");
@@ -127,6 +164,12 @@ export async function runEnsureWorktree(argv = process.argv.slice(2), {
   const selected = extractDeliveryTargetOption(argv, { required: !argv.includes("--help") && !argv.includes("-h") });
   const args = normalizeLinkedWorktreeContext(normalizeWorktreeArgs(argv));
   await enforceFactoryAdmissionForCreation(args, { admissionAudit });
+  const branch = optionValue(args, "--branch");
+  const repoRoot = optionValue(args, "--repo-root");
+  if (selected.target && branch && repoRoot) {
+    const canonicalRoot = realpathSync(path.resolve(repoRoot));
+    assertRecordedDeliveryBase(canonicalRoot, branch, selected.target.remoteRef);
+  }
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "ensure-worktree-consumer.mjs");
   const code = await runManagedChild(process.execPath, [script, ...args], {
     cwd,
@@ -134,12 +177,8 @@ export async function runEnsureWorktree(argv = process.argv.slice(2), {
     stderr,
     label: "ensure-worktree",
   });
-  const branch = optionValue(args, "--branch");
-  const repoRoot = optionValue(args, "--repo-root");
   if (code === 0 && selected.target && branch && repoRoot) {
-    execFileSync("git", ["-C", repoRoot, "config", "--local", `branch.${branch}.oxidDeliveryBase`, selected.target.remoteRef], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    ensureRecordedDeliveryBase(repoRoot, branch, selected.target.remoteRef);
   }
   return code;
 }

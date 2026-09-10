@@ -1,0 +1,280 @@
+{
+  "version": 1,
+  "evidenceClasses": ["preflight", "diagnostic", "acceptance", "planned"],
+  "cadences": ["per-change", "weekly", "on-demand", "before-release", "manual"],
+  "products": [
+    {
+      "id": "oxid-wallet",
+      "name": "Oxid identity wallet",
+      "targetIds": ["headless-development", "desktop-development", "android-physical", "android-emulator", "ios-simulator", "ios-physical"],
+      "demoIds": ["secure-wallet-recovery", "standalone-wallet-asset-sync", "developer-proof-and-local-diagnostics", "portal-final-digital-passport-issuance"]
+    }
+  ],
+  "targets": [
+    {"id": "headless-development", "platform": "headless", "support": "development-only", "note": "Controlled headless development preflight can prove protocol and protected-store boundaries but is not a rendered user-interface or device claim."},
+    {"id": "desktop-development", "platform": "desktop", "support": "development-only", "note": "Fast UI and application preflight; it cannot prove native user presence."},
+    {"id": "android-physical", "platform": "android", "support": "manual-acceptance", "note": "Supported exact-artifact build, deploy, and run target; physical Android is authoritative for native presence."},
+    {"id": "android-emulator", "platform": "android", "support": "diagnostic-only", "note": "Disposable-emulator automation is diagnostic and never substitutes for physical acceptance."},
+    {"id": "ios-simulator", "platform": "ios", "support": "diagnostic-only", "note": "Supported simulator build/deploy/run target; LocalAuthentication behavior is diagnostic rather than physical evidence."},
+    {"id": "ios-physical", "platform": "ios", "support": "unsupported", "note": "Physical iOS signing, provisioning, and deployment are not implemented by this repository."}
+  ],
+  "dependencies": [
+    {
+      "id": "android-physical-device", "kind": "device", "mutable": true, "owner": "demo operator",
+      "preparationCommandIds": ["android-device-status"], "healthCheckIds": ["android-device-connected"], "cleanupCommandIds": ["android-physical-cleanup"],
+      "note": "Use one unlocked, authorized physical Android device. Never persist its identifier in public evidence."
+    },
+    {
+      "id": "android-disposable-emulator", "kind": "simulator", "mutable": true, "owner": "native-custody diagnostic harness",
+      "preparationCommandIds": [], "healthCheckIds": [], "cleanupCommandIds": ["android-emulator-cleanup"],
+      "note": "The existing harness owns its disposable credential, app data, forwarded port, and cleanup trap."
+    },
+    {
+      "id": "ios-disposable-simulator", "kind": "simulator", "mutable": true, "owner": "native-custody diagnostic harness",
+      "preparationCommandIds": [], "healthCheckIds": [], "cleanupCommandIds": ["ios-simulator-cleanup"],
+      "note": "The existing simulator harness owns the app lifecycle and its scoped cleanup."
+    },
+    {"id": "standalone-local-stack","kind": "service","mutable": true,"owner": "demo operator","preparationCommandIds": ["standalone-local-up"],"healthCheckIds": ["standalone-local-ready"],"cleanupCommandIds": ["standalone-stack-cleanup"],"note": "Repository-owned node, indexer, and proof-server containers bind only to loopback; the operator owns start and paired cleanup."},
+    {"id": "standalone-tailnet-stack","kind": "network","mutable": true,"owner": "demo operator","preparationCommandIds": ["standalone-tailnet-up"],"healthCheckIds": ["standalone-tailnet-ready"],"cleanupCommandIds": ["standalone-stack-cleanup"],"note": "The same repository-owned stack is exposed only through Oxid-owned temporary Tailscale Serve routes; it is development routing, not a public Midnight deployment."},
+    {"id": "portal-local-consumer-harness", "kind": "service", "mutable": true, "owner": "Portal owner-invoked harness", "preparationCommandIds": [], "healthCheckIds": [], "cleanupCommandIds": ["portal-local-cleanup-delegated"], "note": "The Portal headless, desktop, and virtual-mobile harnesses own only their receipt-scoped Portal consumer state and clean it before publishing closed evidence; they never own the standalone baseline."},
+    {"id": "portal-tailnet-consumer-harness", "kind": "network", "mutable": true, "owner": "Portal owner-invoked harness", "preparationCommandIds": [], "healthCheckIds": [], "cleanupCommandIds": ["portal-tailnet-cleanup-delegated"], "note": "The physical Android harness owns only its receipt-scoped Portal resources and temporary Serve additions, restoring the exact prior Serve baseline; it never resets Tailnet or owns unrelated routes."},
+    {"id": "desktop-proof-parameter-cache", "kind": "network", "mutable": true, "owner": "demo operator", "preparationCommandIds": [], "healthCheckIds": [], "cleanupCommandIds": ["desktop-proof-cache-review"], "note": "A first proof may fetch public parameters from srs.midnight.network into the app-private temporary benchmark cache. The operator owns network approval, disk budget, retention, and exact-cache cleanup."}
+  ],
+  "commands": [
+    {"id": "desktop-build", "phase": "build", "command": "just desktop-build", "reference": "docs/factory/application-targets.md", "expectedOutcome": "Desktop development artifact builds successfully."},
+    {"id": "desktop-run", "phase": "run", "command": "just desktop-run", "reference": "docs/factory/application-targets.md", "expectedOutcome": "Desktop development application starts for a non-production UI preflight."},
+    {"id": "desktop-stop", "phase": "cleanup", "status": "manual", "reference": "docs/factory/demo-inventory.md", "expectedOutcome": "Operator stops the foreground desktop process without deleting unrelated state."},
+    {"id": "desktop-proof-benchmark-build", "phase": "build", "command": "just desktop-proof-benchmark-build", "reference": "docs/migration/midnight-ledger-prototype.md", "expectedOutcome": "The native desktop development artifact is built with the explicit proof-benchmark feature and without release-profile claims."},
+    {"id": "desktop-proof-benchmark-run", "phase": "run", "command": "just desktop-proof-benchmark-run", "reference": "docs/migration/midnight-ledger-prototype.md", "expectedOutcome": "The desktop developer profile opens with the single-worker proof controls; no proof starts until the operator selects Run."},
+    {"id": "desktop-proof-cache-review", "phase": "cleanup", "status": "manual", "reference": "docs/migration/midnight-ledger-prototype.md", "expectedOutcome": "The operator either retains the public proving-parameter cache for reuse or explicitly removes only the app-private benchmark cache after the foreground app stops."},
+    {"id": "headless-diagnostics-run", "phase": "run", "command": "just headless", "reference": "apps/oxid-headless/tests/capability_contracts/system.rs", "expectedOutcome": "The headless process accepts bounded diagnostics snapshot and confirmed-clear requests over its versioned NDJSON interface."},
+    {"id": "headless-stop", "phase": "cleanup", "status": "manual", "reference": "docs/factory/demo-inventory.md", "expectedOutcome": "The operator stops the foreground headless process; its process-local diagnostic ring disappears without deleting unrelated state."},
+
+    {"id": "android-device-status", "phase": "preparation", "command": "adb devices", "reference": "docs/factory/application-targets.md", "expectedOutcome": "Exactly one intended, unlocked, authorized physical Android device is available; its identifier stays operator-private."},
+    {"id": "android-device-health", "phase": "status", "command": "adb devices", "reference": "docs/factory/application-targets.md", "expectedOutcome": "The intended physical Android device remains connected and authorized; its identifier stays operator-private."},
+    {"id": "android-native-build", "phase": "build", "command": "just android-build", "environment": {"OXID_MOBILE_CUSTODY": "native"}, "reference": "docs/factory/application-targets.md", "expectedOutcome": "A native-custody APK and exact-source private receipt are created for the selected device ABI."},
+    {"id": "android-native-deploy", "phase": "deploy", "command": "just android-deploy", "environment": {"OXID_MOBILE_CUSTODY": "native"}, "reference": "docs/factory/application-targets.md", "expectedOutcome": "The receipt-verified native-custody APK is installed without rebuilding or launching."},
+    {"id": "android-native-run", "phase": "run", "command": "just android-run", "environment": {"OXID_MOBILE_CUSTODY": "native"}, "reference": "docs/factory/application-targets.md", "expectedOutcome": "The exact native-custody APK is built, installed, launched, and remains running."},
+    {"id": "android-native-custody-diagnostic", "phase": "run", "command": "just android-native-custody-smoke", "reference": "scripts/test-android-native-custody.sh", "expectedOutcome": "The disposable emulator exercises native custody and owns its credential and app cleanup."},
+    {"id": "ios-native-custody-diagnostic", "phase": "run", "command": "just ios-native-custody-smoke", "reference": "scripts/test-ios-native-custody.sh", "expectedOutcome": "The iOS Simulator exercises native custody under its existing diagnostic harness."},
+    {"id": "android-physical-cleanup", "phase": "cleanup", "status": "manual", "reference": "docs/factory/demo-inventory.md", "expectedOutcome": "After feedback, the operator explicitly authorizes app-data removal if desired; no device data is deleted automatically."},
+    {"id": "android-emulator-cleanup", "phase": "cleanup", "status": "delegated", "reference": "scripts/test-android-native-custody.sh", "expectedOutcome": "The harness trap clears only its emulator app state, test credential, and forwarded port."},
+    {"id": "ios-simulator-cleanup", "phase": "cleanup", "status": "delegated", "reference": "scripts/test-ios-native-custody.sh", "expectedOutcome": "The harness performs only its scoped simulator cleanup."},
+    {"id": "ios-physical-deploy-unsupported", "phase": "deploy", "status": "unsupported", "reference": "docs/factory/application-targets.md", "expectedOutcome": "The preparation brief reports that physical iOS signing and deployment are unavailable instead of inventing a command."},
+    {"id": "standalone-local-up","phase": "preparation","command": "just standalone-up","reference": "scripts/standalone-up.sh","expectedOutcome": "The repository-owned standalone node, indexer, and proof server are ready on loopback after bounded node/indexer readiness."},
+    {"id": "standalone-tailnet-up","phase": "preparation","command": "just standalone-phone-up","reference": "scripts/standalone-up.sh","expectedOutcome": "The repository-owned standalone stack and only its owned TLS Tailscale Serve routes are ready for a compile-time phone profile."},
+    {"id": "standalone-local-status","phase": "status","command": "just standalone-status","reference": "scripts/standalone-status.sh","expectedOutcome": "Exactly the owned local standalone services are healthy and the indexer is within its bounded node-height lag."},
+    {"id": "standalone-tailnet-status","phase": "status","command": "./scripts/standalone-status.sh phone","reference": "scripts/standalone-status.sh","expectedOutcome": "Exactly the owned standalone services and required TLS Tailscale Serve listeners are ready; no peer or endpoint is disclosed."},
+    {"id": "standalone-stack-cleanup","phase": "cleanup","status": "manual","reference": "docs/factory/portal-macos-laptop.md","expectedOutcome": "Only the session that proved an empty pre-run standalone baseline may run just standalone-down; a pre-existing or ambiguous stack remains with its owner."},
+    {"id": "android-standalone-local-diagnostic","phase": "run","command": "just android-standalone-local-smoke","reference": "scripts/test-android-standalone-local.sh","expectedOutcome": "A disposable Android emulator creates a protected account against the local standalone stack and verifies live-source account state and both receive rails."},
+    {"id": "ios-standalone-local-diagnostic","phase": "run","command": "just ios-standalone-local-smoke","reference": "scripts/test-ios-standalone-local.sh","expectedOutcome": "An iOS Simulator creates a protected account against the local standalone stack and verifies live-source account state and both receive rails."},
+    {"id": "android-standalone-tailnet-manual","phase": "run","command": "just android-phone","reference": "scripts/run-android-tailnet.sh","expectedOutcome": "One authorized physical Android device runs the compile-time Tailnet development profile selected from the host MagicDNS identity."},
+    {"id": "portal-headless-local-preflight", "phase": "run", "command": "just portal-headless-e2e", "reference": "docs/adr/0102-admit-pinned-portal-final-in-headless-development.md", "expectedOutcome": "The authenticated local Lace/Smocker harness routes a Final offer, rejects before consent, accepts once, verifies and encrypts a Digital Passport, restarts, and reverifies without retaining protocol material."},
+    {"id": "portal-desktop-local-preflight", "phase": "run", "command": "just portal-macos-laptop-e2e", "reference": "docs/factory/portal-macos-laptop.md", "expectedOutcome": "The owner-invoked local headless-plus-native desktop lane proves the bounded Final issuance journey with closed exact-head evidence."},
+    {"id": "portal-ios-simulator-diagnostic", "phase": "run", "command": "just ios-portal-exact-sequence-simulator", "reference": "docs/factory/portal-mobile-simulators.md", "expectedOutcome": "A receipt-bound iOS Simulator runs the packaged Final issuance, encrypted restart, and fresh reverification journey as virtual diagnostic evidence."},
+    {"id": "portal-android-emulator-diagnostic", "phase": "run", "command": "just android-portal-exact-sequence-avd", "reference": "docs/factory/portal-mobile-simulators.md", "expectedOutcome": "The explicit repository-owned Android QEMU AVD runs the packaged Final issuance, encrypted restart, and fresh reverification journey as virtual diagnostic evidence."},
+    {"id": "portal-android-tailnet-diagnostic", "phase": "run", "command": "just android-portal-tailnet-physical-smoke", "reference": "docs/factory/portal-android-tailnet-physical.md", "expectedOutcome": "One authorized physical Android device runs the receipt-scoped Tailnet Final issuance, encrypted restart, and fresh reverification journey, restoring owned Portal and Serve state."},
+    {"id": "portal-local-cleanup-delegated", "phase": "cleanup", "status": "delegated", "reference": "docs/factory/portal-macos-laptop.md", "expectedOutcome": "The local Portal harness removes only receipt-proven Portal consumer state and preserves the standalone baseline for its owner."},
+    {"id": "portal-tailnet-cleanup-delegated", "phase": "cleanup", "status": "delegated", "reference": "docs/factory/portal-android-tailnet-physical.md", "expectedOutcome": "The physical harness removes only receipt-proven Portal state and restores its exact prior Serve baseline; ambiguous state is preserved for review."}
+  ],
+  "healthChecks": [
+    {"id": "android-device-connected", "dependencyId": "android-physical-device", "commandId": "android-device-health", "expectedOutcome": "One intended physical Android device is connected and authorized; an emulator is not acceptance evidence."},
+    {"id": "standalone-local-ready","dependencyId": "standalone-local-stack","commandId": "standalone-local-status","expectedOutcome": "The owned loopback stack is healthy and indexer replay is within the bounded readiness lag."},
+    {"id": "standalone-tailnet-ready","dependencyId": "standalone-tailnet-stack","commandId": "standalone-tailnet-status","expectedOutcome": "The owned stack and its TLS Serve routes are ready without treating Tailnet reachability as public-network authority."}
+  ],
+  "useCases": [
+    {
+      "id": "recover-existing-midnight-wallet-root",
+      "outcome": "An owner-supplied Midnight wallet root is installed into an empty protected profile only after explicit confirmation and fresh device-owner authorization.",
+      "sourceReferences": ["docs/adr/0071-wrap-mobile-custody-with-device-user-presence.md", "crates/wallet/application/src/root_recovery.rs", "crates/ui-dioxus/src/wallet_root_recovery.rs"],
+      "scenarioIds": ["wallet-root-recovery-native-presence"]
+    },
+    {
+      "id": "reject-stale-or-duplicate-root-recovery",
+      "outcome": "The wallet clears owner input across lifecycle changes and rejects a second root import into initialized custody.",
+      "sourceReferences": ["crates/wallet/application/src/root_recovery.rs", "crates/adapters/storage-mobile/src/lib.rs", "crates/ui-dioxus/src/wallet_root_recovery.rs"],
+      "scenarioIds": ["wallet-root-recovery-native-presence"]
+    },
+    {
+      "id": "bound-development-proof-benchmark",
+      "outcome": "A native development-only panel admits one synthetic proof worker at a time for k=1 through k=21, defaults its sweep to k=17, and requires visible acknowledgement before k=18 through k=21 resource risk.",
+      "sourceReferences": ["crates/wallet/application/src/proof_benchmark.rs", "crates/adapters/midnight/src/proof_benchmark.rs", "crates/ui-dioxus/src/proof_benchmark.rs", "docs/migration/midnight-ledger-prototype.md"],
+      "scenarioIds": ["development-proof-benchmark-desktop"]
+    },
+    {
+      "id": "inspect-payload-free-local-diagnostic-events",
+      "outcome": "A bounded newest-first event ring exposes only fixed codes and severity labels, can be explicitly cleared, and remains process-local rather than a durable support journal.",
+      "sourceReferences": ["crates/ui-dioxus/src/diagnostics.rs", "docs/adr/0080-bound-secret-safe-runtime-diagnostics.md", "docs/migration/midnight-ledger-prototype.md"],
+      "scenarioIds": ["bounded-local-diagnostics-headless", "bounded-local-diagnostics-desktop"]
+    },
+    {"id": "select-compile-time-standalone-profile","outcome": "An explicitly selected development build binds the reserved public-demo profile to the undeployed Midnight network and either loopback or authenticated Tailnet routes; it cannot pick routes at runtime or represent a public deployment.","sourceReferences": ["docs/adr/0097-build-standalone-phone-routes-at-compile-time.md","crates/composition/src/profile_mobile.rs","crates/ui-dioxus/src/deployment_profile.rs"],"scenarioIds": ["standalone-profile-asset-synchronization"]},
+    {"id": "synchronize-profile-scoped-midnight-assets","outcome": "The active protected profile can refresh public NIGHT and independently synchronize DUST and shielded state; only successful live catch-up is live/spend-ready, while cached, cancelled, stalled, or failed state remains truthful display/resume information.","sourceReferences": ["docs/adr/0090-compose-onboarding-backup-receipts-and-account-sync.md","docs/adr/0032-expose-resumable-dust-sync-sessions.md","crates/wallet/application/src/dust.rs","crates/wallet/application/src/shielded.rs"],"scenarioIds": ["standalone-profile-asset-synchronization"]},
+    {"id": "bootstrap-managed-holder-did-for-test-issuer","outcome": "A physical Android development lane can create a managed undeployed holder DID and, by an explicit action, share only its public DID Resolution Result with the receipt-scoped test issuer for holder-proof verification.","sourceReferences": ["docs/adr/0037-manage-standalone-midnight-dids-with-opaque-custody.md","docs/adr/0103-compose-portal-final-for-physical-android.md","crates/ui-dioxus/src/dids.rs","docs/factory/portal-android-tailnet-physical.md"],"scenarioIds": ["portal-final-issuance-physical-tailnet"]},
+    {"id": "issue-and-protect-portal-digital-passport", "outcome": "After explicit offer review and consent, a managed holder authenticates and separately binds a Digital Passport that Oxid verifies, encrypts, lists after restart, and freshly reverifies without exposing protocol secrets.", "sourceReferences": ["docs/adr/0039-accept-pre-authorized-openid4vci-offers.md", "docs/adr/0102-admit-pinned-portal-final-in-headless-development.md", "docs/adr/0103-compose-portal-final-for-physical-android.md", "docs/factory/portal-macos-laptop.md", "docs/factory/portal-mobile-simulators.md", "docs/factory/portal-android-tailnet-physical.md"], "scenarioIds": ["portal-final-issuance-localhost", "portal-final-issuance-virtual-mobile", "portal-final-issuance-physical-tailnet"]}
+  ],
+  "scenarios": [
+    {
+      "id": "wallet-root-recovery-native-presence",
+      "title": "Recover an existing Midnight wallet root behind native user presence",
+      "productId": "oxid-wallet",
+      "defaultTargetId": "android-physical",
+      "orderedUseCaseIds": ["recover-existing-midnight-wallet-root", "reject-stale-or-duplicate-root-recovery"],
+      "targetPlans": [
+        {
+          "targetId": "desktop-development", "status": "supported", "evidenceClass": "preflight", "dependencyIds": [],
+          "commandIds": {"preparation": [], "build": ["desktop-build"], "deploy": [], "run": ["desktop-run"], "status": [], "cleanup": ["desktop-stop"]},
+          "healthCheckIds": [], "note": "Use only to inspect recovery navigation, validation, and lifecycle clearing; desktop authorization is explicitly non-production."
+        },
+        {
+          "targetId": "android-physical", "status": "supported", "evidenceClass": "acceptance", "dependencyIds": ["android-physical-device"],
+          "commandIds": {"preparation": ["android-device-status"], "build": ["android-native-build"], "deploy": ["android-native-deploy"], "run": ["android-native-run"], "status": ["android-device-health"], "cleanup": ["android-physical-cleanup"]},
+          "healthCheckIds": ["android-device-connected"], "note": "Preferred demo target. Use run as the one-command path, or build then deploy when reusing an exact artifact; do not execute both paths redundantly."
+        },
+        {
+          "targetId": "android-emulator", "status": "supported", "evidenceClass": "diagnostic", "dependencyIds": ["android-disposable-emulator"],
+          "commandIds": {"preparation": [], "build": [], "deploy": [], "run": ["android-native-custody-diagnostic"], "status": [], "cleanup": ["android-emulator-cleanup"]},
+          "healthCheckIds": [], "note": "Run only on a disposable emulator; the harness changes the device PIN and refuses physical devices."
+        },
+        {
+          "targetId": "ios-simulator", "status": "supported", "evidenceClass": "diagnostic", "dependencyIds": ["ios-disposable-simulator"],
+          "commandIds": {"preparation": [], "build": [], "deploy": [], "run": ["ios-native-custody-diagnostic"], "status": [], "cleanup": ["ios-simulator-cleanup"]},
+          "healthCheckIds": [], "note": "Useful for diagnosis on macOS, but simulator LocalAuthentication is not physical Face ID evidence."
+        },
+        {
+          "targetId": "ios-physical", "status": "unsupported", "evidenceClass": "planned", "dependencyIds": [],
+          "commandIds": {"preparation": [], "build": [], "deploy": ["ios-physical-deploy-unsupported"], "run": [], "status": [], "cleanup": []},
+          "healthCheckIds": [], "note": "Do not claim or attempt physical iOS deployment until signing, provisioning, and device policy are implemented."
+        }
+      ],
+      "manualSteps": [
+        "On physical Android, select recovery for an empty PreProd profile, enter a non-production 64-character lowercase hexadecimal root, confirm the operation, and deny native authorization. Confirm recovery fails without creating an account and the root field is cleared.",
+        "Enter the non-production root again, approve with the configured device credential or biometric, and confirm account 0/address 0 is ready or is reported as separately retryable.",
+        "Attempt recovery again for the initialized profile. Confirm the wallet refuses to replace or merge custody before consuming another root.",
+        "While owner input is present, background and resume the app or cancel recovery. Confirm the root and confirmation are cleared before another attempt."
+      ],
+      "expectedOutcomes": ["Denial installs no root and remains safely retryable.", "Approval installs the root only into empty protected custody and derives the canonical account independently.", "Initialized custody rejects a duplicate import.", "Lifecycle changes clear owner input and confirmation."],
+      "evidenceClass": "acceptance",
+      "cadence": "before-release",
+      "testMapping": {
+        "status": "partial",
+        "automated": ["crates/wallet/application/src/root_recovery.rs::authorization_denial_is_retryable_but_duplicate_import_is_rejected", "crates/adapters/storage-mobile/src/lib.rs::owner_root_recovery_is_one_shot_authorized_and_survives_restart", "just android-native-custody-smoke", "just ios-native-custody-smoke"],
+        "manual": "Physical Android executes the four root-recovery acceptance steps; desktop is preflight and simulators are diagnostic.",
+        "planned": "Automate receipt-scoped physical Android evidence only after its device-input and privacy boundary is reviewed."
+      }
+    },
+    {"id": "standalone-profile-asset-synchronization","title": "Synchronize a development-only standalone Midnight profile","productId": "oxid-wallet","defaultTargetId": "android-emulator","orderedUseCaseIds": ["select-compile-time-standalone-profile","synchronize-profile-scoped-midnight-assets"],"targetPlans": [{"targetId": "android-emulator","status": "supported","evidenceClass": "diagnostic","dependencyIds": ["standalone-local-stack"],"commandIds": {"preparation": [],"build": [],"deploy": [],"run": ["android-standalone-local-diagnostic"],"status": ["standalone-local-status"],"cleanup": ["standalone-stack-cleanup"]},"healthCheckIds": ["standalone-local-ready"],"note": "The diagnostic harness owns an emulator-only localhost composition and its scoped app-data/port cleanup. Loopback transport is not Tailnet routing or a public network."},{"targetId": "ios-simulator","status": "supported","evidenceClass": "diagnostic","dependencyIds": ["standalone-local-stack"],"commandIds": {"preparation": [],"build": [],"deploy": [],"run": ["ios-standalone-local-diagnostic"],"status": ["standalone-local-status"],"cleanup": ["standalone-stack-cleanup"]},"healthCheckIds": ["standalone-local-ready"],"note": "The simulator reaches the same loopback-only standalone composition. Its result is diagnostic and does not establish physical-device or public-network behavior."},{"targetId": "android-physical","status": "supported","evidenceClass": "diagnostic","dependencyIds": ["android-physical-device","standalone-tailnet-stack"],"commandIds": {"preparation": ["android-device-status"],"build": [],"deploy": [],"run": ["android-standalone-tailnet-manual"],"status": ["android-device-health","standalone-tailnet-status"],"cleanup": ["android-physical-cleanup","standalone-stack-cleanup"]},"healthCheckIds": ["android-device-connected","standalone-tailnet-ready"],"note": "Physical Android is a manual development-route diagnostic only: the launcher selects one host MagicDNS identity at build time and rejects emulator routing. Tailnet TLS does not make this a public Midnight network or production acceptance."}],"manualSteps": ["For a supported local target, use the reviewed standalone-local diagnostic harness; it creates a fresh protected profile and verifies only that the account reaches Live/Synced live-source state with unshielded and shielded receive rails.","For the physical Android Tailnet diagnostic, the operator first authorizes one device and the owned Tailnet stack, then launches the reviewed compile-time profile. In Settings, confirm the closed deployment card reports undeployed and route class tailnet without revealing or selecting an endpoint.","In Wallet, select the explicitly offered public demo wallet only when demonstrating its public development authority, activate its protected account, and use Sync now. Confirm public NIGHT refresh, DUST synchronization, and shielded synchronization remain independently truthful rather than inferring one from another.","Record only the closed freshness/result states. Do not claim a particular NIGHT, DUST, shielded-note, or shielded-token balance: the public-genesis development state is mutable and the scenario neither funds nor spends it.","Stop the owned standalone stack and, on physical Android, follow the existing operator-authorized app-data cleanup boundary."],"expectedOutcomes": ["The selected build reports only the fixed undeployed network and its compiled local or Tailnet route class; no runtime picker, endpoint disclosure, or public-deployment claim appears.","A successful account refresh and each successful DUST/shielded session report live-source state independently. Cached, cancelled, stalled, unavailable, or failed sessions are not promoted to live or spend-ready.","Both receive-address rails can be present after protected account activation, but their presence and any displayed values do not prove current balances, funding, settlement, or production authority.","Localhost and Tailnet runs remain development diagnostics; the physical Tailnet route is not production or public-network acceptance evidence."],"evidenceClass": "diagnostic","cadence": "on-demand","testMapping": {"status": "partial","automated": ["just android-standalone-local-smoke","just ios-standalone-local-smoke","tests/mobile/ios/OxidUITests/StandaloneLocalAccountTests.swift::testSynchronizesProtectedAccountFromLocalStandaloneStack","crates/composition/src/profile_mobile.rs::tailnet_profile_rejects_personal_ip_routes"],"manual": "Physical Android Tailnet routing and the independent visible NIGHT/DUST/shielded freshness states require the bounded manual steps; no device identifier, Tailnet name, route, credential, or balance is retained as evidence.","planned": "No automated physical Android Tailnet asset-sync receipt exists, and no scenario claims a public Midnight deployment or funded-balance acceptance."}},
+    {"id": "portal-final-issuance-localhost", "title": "Issue and protect a Portal Digital Passport on controlled localhost", "productId": "oxid-wallet", "defaultTargetId": "headless-development", "orderedUseCaseIds": ["issue-and-protect-portal-digital-passport"], "targetPlans": [{"targetId": "headless-development", "status": "supported", "evidenceClass": "preflight", "dependencyIds": ["standalone-local-stack", "portal-local-consumer-harness"], "commandIds": {"preparation": ["standalone-local-up"], "build": [], "deploy": [], "run": ["portal-headless-local-preflight"], "status": ["standalone-local-status"], "cleanup": ["portal-local-cleanup-delegated", "standalone-stack-cleanup"]}, "healthCheckIds": ["standalone-local-ready"], "note": "The authenticated Lace Rust issuer uses supported in-stack Smocker and loopback-only standalone routes. This mocked-KYC headless preflight is not a rendered UI, device, production, release, node, or proof-server claim."}, {"targetId": "desktop-development", "status": "supported", "evidenceClass": "preflight", "dependencyIds": ["standalone-local-stack", "portal-local-consumer-harness"], "commandIds": {"preparation": ["standalone-local-up"], "build": [], "deploy": [], "run": ["portal-desktop-local-preflight"], "status": ["standalone-local-status"], "cleanup": ["portal-local-cleanup-delegated", "standalone-stack-cleanup"]}, "healthCheckIds": ["standalone-local-ready"], "note": "The owner-invoked native Dioxus lane follows headless prequalification on loopback. It is local UI preflight, not mobile, physical-device, Tailnet, production, release, node, or proof-server evidence."}], "manualSteps": ["Use only the owner-safe localhost runbook and its baseline/cleanup boundary; do not treat a mocked Smocker KYC decision as live KYC or external-provider evidence.", "In the native desktop lane, scan the supplied one-shot offer, preview it, refuse once before consent, then use a fresh offer to consent and issue once. Confirm the validated Digital Passport is listed after restart and fresh reverification without copying claims or protocol artifacts.", "Record only the runbook's closed exact-head evidence and leave a pre-existing standalone stack to its owner."], "expectedOutcomes": ["Before explicit consent, the issuer token, nonce, and credential endpoints remain uncalled; acceptance uses managed authentication and a separate managed Jubjub binding.", "Only a credential that passes strict verification is encrypted and restored for listing and fresh reverification after restart.", "This target proves controlled localhost development behavior only; mocked KYC, local issuer routing, and app-observed indexer synchronization are not production, real-person KYC, physical-device, node, or proof-server acceptance."], "evidenceClass": "preflight", "cadence": "on-demand", "testMapping": {"status": "partial", "automated": ["just portal-headless-e2e", "just portal-macos-laptop-e2e", "apps/oxid-headless/tests/portal_live_flow.rs::lace_portal_mock_flow_issues_to_same_headless_process_and_restores"], "manual": "The desktop rendered journey follows docs/factory/portal-macos-laptop.md; headless output is supporting protocol/store preflight, not a user-interface substitution.", "planned": "No localhost run establishes production trust/discovery, live DIDIT, real-person KYC, native custody, mobile behavior, or direct Oxid node/proof-server interaction."}},
+    {"id": "portal-final-issuance-virtual-mobile", "title": "Issue and protect a Portal Digital Passport on packaged virtual mobile", "productId": "oxid-wallet", "defaultTargetId": "ios-simulator", "orderedUseCaseIds": ["issue-and-protect-portal-digital-passport"], "targetPlans": [{"targetId": "ios-simulator", "status": "supported", "evidenceClass": "diagnostic", "dependencyIds": ["standalone-local-stack", "portal-local-consumer-harness", "ios-disposable-simulator"], "commandIds": {"preparation": ["standalone-local-up"], "build": [], "deploy": [], "run": ["portal-ios-simulator-diagnostic"], "status": ["standalone-local-status"], "cleanup": ["portal-local-cleanup-delegated", "ios-simulator-cleanup", "standalone-stack-cleanup"]}, "healthCheckIds": ["standalone-local-ready"], "note": "A newly created receipt-bound iOS Simulator uses loopback-only Portal routing. It is virtual diagnostic evidence, never physical-device, camera, Tailnet, native-custody, release, or production evidence."}, {"targetId": "android-emulator", "status": "supported", "evidenceClass": "diagnostic", "dependencyIds": ["standalone-local-stack", "portal-local-consumer-harness", "android-disposable-emulator"], "commandIds": {"preparation": ["standalone-local-up"], "build": [], "deploy": [], "run": ["portal-android-emulator-diagnostic"], "status": ["standalone-local-status"], "cleanup": ["portal-local-cleanup-delegated", "android-emulator-cleanup", "standalone-stack-cleanup"]}, "healthCheckIds": ["standalone-local-ready"], "note": "Only the explicit repository-owned QEMU AVD and receipt-recorded reverse mappings are admitted. This is virtual diagnostic evidence and cannot substitute for physical Android acceptance."}], "manualSteps": ["Run the simulator-free contracts and the existing official virtual-mobile owner command with explicit reviewed selectors; never select a physical or mixed ADB target.", "Observe cold/warm routing, review/refusal, malformed/unavailable/timeout/error handling, explicit issuance, encrypted restart, listing, and fresh reverification only through the closed evidence produced after exact cleanup.", "Do not reuse an armed offer or retain identifiers, URLs, claims, credentials, capabilities, logs, or virtual-device facts outside the runbook's redacted evidence."], "expectedOutcomes": ["Each packaged virtual target retains the strict offer-review and consent boundary, then verifies and encrypts one Digital Passport before restart restoration and fresh reverification.", "The iOS Simulator and Android QEMU results are separate diagnostic evidence; neither proves camera, physical-device, Tailnet, native custody, release, or production behavior.", "Receipt-scoped cleanup restores only the harness's simulator/AVD, Portal, port, and app state boundaries before evidence publication."], "evidenceClass": "diagnostic", "cadence": "on-demand", "testMapping": {"status": "partial", "automated": ["just portal-virtual-mobile-evidence-contract", "just ios-portal-exact-sequence-simulator", "just android-portal-exact-sequence-avd", "tests/mobile/android-portal-flow.mjs::issue"], "manual": "The owner supplies reviewed iOS runtime/device-type and Android QEMU AVD selectors as documented; virtual results remain diagnostic.", "planned": "Virtual runs do not prove physical Android ingress/custody or iOS physical deployment, and they do not promote mocked KYC or localhost routing to production acceptance."}},
+    {"id": "portal-final-issuance-physical-tailnet", "title": "Issue and protect a Portal Digital Passport on physical Android Tailnet", "productId": "oxid-wallet", "defaultTargetId": "android-physical", "orderedUseCaseIds": ["bootstrap-managed-holder-did-for-test-issuer", "issue-and-protect-portal-digital-passport"], "targetPlans": [{"targetId": "android-physical", "status": "supported", "evidenceClass": "diagnostic", "dependencyIds": ["android-physical-device", "standalone-tailnet-stack", "portal-tailnet-consumer-harness"], "commandIds": {"preparation": ["android-device-status", "standalone-tailnet-up"], "build": [], "deploy": [], "run": ["portal-android-tailnet-diagnostic"], "status": ["android-device-health", "standalone-tailnet-status"], "cleanup": ["portal-tailnet-cleanup-delegated", "android-physical-cleanup", "standalone-stack-cleanup"]}, "healthCheckIds": ["android-device-connected", "standalone-tailnet-ready"], "note": "One authorized non-QEMU Android device uses a temporary receipt-scoped Tailscale HTTPS Serve profile. Its physical-device conformance result remains development diagnostic evidence, not production, release, native-custody, live-KYC, or public-network acceptance."}], "manualSteps": ["Use the existing physical Android Tailnet runbook with exactly one authorized non-QEMU device and a healthy owner-approved standalone stack; do not disclose the device, Tailnet, offer, capability, credential, or endpoint.", "Before accepting an offer, create a managed holder DID and explicitly publish only its public resolution result to the receipt-scoped test issuer; this is not an on-chain publication.", "Let the harness prove warm/cold ingress, refusal before consent, bounded protocol failures, explicit acceptance, encrypted storage, process restart, listing, and fresh reverification; use the optional browser QR lifecycle only as its documented non-evidence owner demo.", "Require receipt-scoped cleanup to restore the exact Serve baseline and preserve ambiguous state for owner review. App-data removal remains explicitly operator-authorized."], "expectedOutcomes": ["The holder bootstrap requires explicit user action and shares no private key or credential.", "The physical Android harness proves the strict Final issuance journey with managed authentication, distinct Jubjub binding, verified encrypted persistence, restart restoration, and fresh reverification.", "The result is distinct from localhost and virtual-mobile evidence but remains a development diagnostic: it does not prove production trust/discovery, live KYC, native custody, release readiness, public Midnight authority, or durable public acceptance.", "Only redacted closed evidence may be published after exact receipt-scoped Portal/Serve cleanup."], "evidenceClass": "diagnostic", "cadence": "on-demand", "testMapping": {"status": "partial", "automated": ["just android-portal-tailnet-physical-smoke", "tests/mobile/android-portal-flow.mjs::prepare-holder", "tests/mobile/android-portal-flow.mjs::issue", "docs/adr/0103-compose-portal-final-for-physical-android.md"], "manual": "An authorized operator follows docs/factory/portal-android-tailnet-physical.md; the optional QR browser demonstration is explicitly non-evidence.", "planned": "No separate receipt-scoped demo covers generic DID resolve, sign, update, or deactivate; existing lifecycle contracts are in-memory. Physical evidence remains development conformance only, while native-custody persistence, production/release acceptance, live KYC, public DID publication, and physical iOS remain outside this scenario."}},
+    {
+      "id": "development-proof-benchmark-desktop",
+      "title": "Run a bounded native development proof benchmark",
+      "productId": "oxid-wallet",
+      "defaultTargetId": "desktop-development",
+      "orderedUseCaseIds": ["bound-development-proof-benchmark"],
+      "targetPlans": [
+        {
+          "targetId": "desktop-development", "status": "supported", "evidenceClass": "diagnostic", "dependencyIds": ["desktop-proof-parameter-cache"],
+          "commandIds": {"preparation": [], "build": ["desktop-proof-benchmark-build"], "deploy": [], "run": ["desktop-proof-benchmark-run"], "status": [], "cleanup": ["desktop-stop", "desktop-proof-cache-review"]},
+          "healthCheckIds": [], "note": "Native desktop is the only reviewed inventory target. The scenario admits one operator-selected low-k proof, not a sweep, high-k run, public resource sample, simulator result, or physical-device measurement."
+        }
+      ],
+      "manualSteps": [
+        "Approve the possible download of public proving parameters and the temporary-cache disk budget, then use the reviewed build and run commands. Confirm the panel labels itself development-only and shows process RSS/CPU as unavailable because no reviewed public sampler exists.",
+        "Select Circuit k=1 and choose Run once. Wait for a completed report containing realized k, measured rows and hashes, key-generation time, proving time, verification time, and proof bytes; record no endpoint, cache path, identifier, or proof bytes.",
+        "Do not use Run sequential sweep in this bounded demo. The default sweep ends at k=17, but ordinary-k sweeps and every k=18 through k=21 run require a separate resource decision; high-k also requires the visible acknowledgement and an owner-invoked resource receipt.",
+        "Stop the foreground desktop process. Retain the public parameter cache for reuse by default, or explicitly remove only the app-private benchmark cache when disk policy requires it."
+      ],
+      "expectedOutcomes": [
+        "Exactly one admitted worker produces a locally verified k=1 synthetic-proof report, while the UI remains responsive and a second worker cannot be admitted concurrently.",
+        "The result is process-local diagnostic measurement, not a performance budget, regression baseline, release gate, public resource sample, or acceptance claim.",
+        "High-k remains separately acknowledged and owner-receipted; no simulator, physical-device, thermal, battery, native-custody, or release evidence is established."
+      ],
+      "evidenceClass": "diagnostic",
+      "cadence": "on-demand",
+      "testMapping": {
+        "status": "partial",
+        "automated": ["crates/wallet/application/src/proof_benchmark.rs::public_range_matches_the_owner_requested_mobile_envelope", "crates/adapters/midnight/src/proof_benchmark.rs::admission_is_process_wide_and_released_by_worker_guard", "crates/ui-dioxus/src/proof_benchmark.rs::safe_default_sweep_is_bounded_at_k17", "crates/ui-dioxus/src/proof_benchmark.rs::high_k_requires_explicit_resource_acknowledgement", "crates/ui-dioxus/src/proof_benchmark.rs::only_active_worker_stages_disable_new_runs"],
+        "manual": "An authorized desktop operator runs only k=1 and inspects the verified process-local result; no simulator or physical-device lane is claimed.",
+        "planned": "There is no receipt-scoped performance, public resource-sampling, high-k, simulator, physical Android, or physical iOS demonstration. A real-device high-k measurement needs a separate owner resource receipt and remains evidence rather than a merge or acceptance gate."
+      }
+    },
+    {
+      "id": "bounded-local-diagnostics-headless",
+      "title": "Inspect and clear payload-free diagnostics through the headless API",
+      "productId": "oxid-wallet",
+      "defaultTargetId": "headless-development",
+      "orderedUseCaseIds": ["inspect-payload-free-local-diagnostic-events"],
+      "targetPlans": [
+        {
+          "targetId": "headless-development", "status": "supported", "evidenceClass": "preflight", "dependencyIds": [],
+          "commandIds": {"preparation": [], "build": [], "deploy": [], "run": ["headless-diagnostics-run"], "status": [], "cleanup": ["headless-stop"]},
+          "healthCheckIds": [], "note": "Headless NDJSON gives deterministic protocol evidence for one process. It is not a rendered UI, persistent log, telemetry stream, or device claim."
+        }
+      ],
+      "manualSteps": [
+        "Start the headless target and submit one deliberately invalid, fixed, non-sensitive line so the process records headless.request.rejected without echoing the input.",
+        "Submit system.diagnostics.snapshot with empty parameters. Confirm the newest event exposes only sequence, fixed code, and severity, and that payloadsRetained is false.",
+        "Submit system.diagnostics.clear only with confirmed=true and intent=CLEAR_LOCAL_DIAGNOSTICS, then take another snapshot and confirm the retained count is zero.",
+        "Stop the foreground process; do not retain the transient output as a user activity history or durable support journal."
+      ],
+      "expectedOutcomes": [
+        "The snapshot reports bounded retained, total, and evicted counts plus closed code/severity values without echoing the rejected input.",
+        "Clear fails closed without the exact confirmation and empties only the current process ring when authorized.",
+        "Process exit removes all diagnostic state; no persistence, upload, arbitrary field, timestamp, endpoint, or benchmark telemetry is implied."
+      ],
+      "evidenceClass": "preflight",
+      "cadence": "on-demand",
+      "testMapping": {
+        "status": "automated",
+        "automated": ["apps/oxid-headless/tests/capability_contracts/system.rs::diagnostics_retain_only_closed_codes_and_clear_with_exact_confirmation"],
+        "manual": "The operator may repeat the same fixed non-sensitive NDJSON sequence; the automated contract is the authoritative preflight.",
+        "planned": "This scenario intentionally does not provide persistent support storage or a rendered mobile/desktop claim."
+      }
+    },
+    {
+      "id": "bounded-local-diagnostics-desktop",
+      "title": "Inspect the bounded local diagnostics screen",
+      "productId": "oxid-wallet",
+      "defaultTargetId": "desktop-development",
+      "orderedUseCaseIds": ["inspect-payload-free-local-diagnostic-events"],
+      "targetPlans": [
+        {
+          "targetId": "desktop-development", "status": "supported", "evidenceClass": "diagnostic", "dependencyIds": [],
+          "commandIds": {"preparation": [], "build": ["desktop-build"], "deploy": [], "run": ["desktop-run"], "status": [], "cleanup": ["desktop-stop"]},
+          "healthCheckIds": [], "note": "Desktop renders the user-facing filters and clear confirmation. Empty process state is valid; this target does not manufacture failures or claim device behavior."
+        }
+      ],
+      "manualSteps": [
+        "Open Settings, choose Diagnostics, and confirm the page describes telemetry as off and the ring as payload-free and process-local.",
+        "Inspect retained, total, evicted, and capacity counts, Warning and Error filters, fixed-code search, and newest-first rows. An empty ring is a valid clean state.",
+        "If events exist, search only a fixed code and exercise the filters. Open Clear local events, cancel once, then explicitly confirm clearing and verify the empty state.",
+        "Stop the foreground desktop process; never treat visible rows or screenshots as persisted user activity, benchmark telemetry, or a durable support journal."
+      ],
+      "expectedOutcomes": [
+        "The screen exposes only bounded counts, fixed codes, severity labels, sequence order, filters, and explicit clearing.",
+        "Unknown search text cannot project arbitrary payloads, and canceling the clear confirmation preserves the ring.",
+        "The desktop result is diagnostic UI evidence only; it does not establish mobile, release, native-custody, or durable-support behavior."
+      ],
+      "evidenceClass": "diagnostic",
+      "cadence": "on-demand",
+      "testMapping": {
+        "status": "partial",
+        "automated": ["crates/ui-dioxus/src/diagnostics.rs::event_log_is_newest_first_and_filters_closed_labels", "crates/ui-dioxus/src/diagnostics.rs::event_search_never_projects_unknown_payload_text", "crates/ui-dioxus/src/diagnostics.rs::clear_uses_exact_command_before_reloading"],
+        "manual": "Desktop inspection covers rendered controls and empty or populated presentation without claiming device evidence.",
+        "planned": "No simulator or physical-device diagnostics-screen receipt is currently claimed."
+      }
+    }
+  ],
+  "demos": [
+    {
+      "id": "secure-wallet-recovery", "productId": "oxid-wallet", "audience": "product owner and release operator",
+      "scenarioIds": ["wallet-root-recovery-native-presence"],
+      "targetIds": ["desktop-development", "android-physical", "android-emulator", "ios-simulator", "ios-physical"],
+      "expectedOutcome": "Oxid demonstrates one-shot root recovery behind a truthful native-presence boundary, with physical Android acceptance and clearly limited preflight and diagnostic targets."
+    },
+    {"id": "standalone-wallet-asset-sync","productId": "oxid-wallet","audience": "product owner and development operator","scenarioIds": ["standalone-profile-asset-synchronization"],"targetIds": ["android-emulator","ios-simulator","android-physical"],"expectedOutcome": "Oxid demonstrates development-only profile-scoped Midnight asset synchronization with explicit localhost versus Tailnet route boundaries and no claim of stable public NIGHT, DUST, or shielded balances."},
+    {"id": "developer-proof-and-local-diagnostics", "productId": "oxid-wallet", "audience": "development operator", "scenarioIds": ["development-proof-benchmark-desktop", "bounded-local-diagnostics-headless", "bounded-local-diagnostics-desktop"], "targetIds": ["headless-development", "desktop-development"], "expectedOutcome": "Oxid demonstrates one bounded low-k native proof plus deterministic and rendered payload-free local diagnostics, while high-k device-resource evidence and durable support storage remain explicit non-claims."},
+    {"id": "portal-final-digital-passport-issuance", "productId": "oxid-wallet", "audience": "development operator and product owner", "scenarioIds": ["portal-final-issuance-localhost", "portal-final-issuance-virtual-mobile", "portal-final-issuance-physical-tailnet"], "targetIds": ["headless-development", "desktop-development", "ios-simulator", "android-emulator", "android-physical"], "expectedOutcome": "Oxid demonstrates the bounded Final Portal Digital Passport journey from review and explicit consent through verified encrypted storage, restart, and fresh reverification, while keeping localhost, virtual mobile, and physical Android Tailnet evidence distinct and development-only."}
+  ]
+}

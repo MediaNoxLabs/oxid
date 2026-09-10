@@ -129,7 +129,12 @@ ledger and PR comment without blocking a clean verdict.
    `origin/milestone-<x.y.z>`; factory work may use `origin/develop`. Start
    from that fetched ref in a dedicated worktree. Run
    `node scripts/worktree-lifecycle.mjs audit` before creating another.
-2. Make a bounded change and run the narrowest meaningful local test.
+2. Make a bounded change and run the narrowest meaningful local test. During
+   planning and closeout, the Product Manager updates
+   `docs/factory/demo-inventory.json` for demo-affecting capability changes, or
+   records a justified no-demo impact. The inventory CLI is read-only; an
+   explicit `/scenario prepare` request delegates bounded preparation to the
+   active agent under the existing authority and resource-ownership rules.
 3. Run the draft gate for scope and correctness. It does not wait for hosted
    CI. Repair blocking findings together. Record bounded non-critical findings
    as linked follow-up issues instead of extending the current iteration.
@@ -205,6 +210,22 @@ node scripts/worktree-lifecycle.mjs audit
 node scripts/worktree-lifecycle.mjs audit --json
 ```
 
+After a PR is merged, its supervisor records the final metric/closeout receipt,
+changes to another checkout, and closes the exact merged worktree immediately:
+
+```bash
+node scripts/worktree-lifecycle.mjs closeout-pr \
+  --pr <number> --path /absolute/managed/worktree \
+  --expect-head <merged-pr-head-sha> --execute
+```
+
+This is an exact PR closeout, not a sweep. The command re-reads the hosted
+merged PR and requires an exact head, branch, and canonical managed path. It
+refuses the primary checkout, its current working directory, dirty or locked
+worktrees, and all unavailable or mismatched evidence. Other Codex Desktop and
+Pi sessions may retain their worktrees; their mere presence or age is not
+cleanup authority.
+
 Mutation is intentionally awkward and single-target. It requires an exact
 registered path, the expected head, and `--execute`. Worktree removal also
 requires a clean head already integrated into its recorded milestone or
@@ -217,9 +238,13 @@ in the `mergeProof` field. The retired `integration` branch has one explicit
 exception for its full-tree promotion in PR #258: both the historical PR and
 promotion are fetched by exact identity, the former merge must be an ancestor
 of the promoted head, the promoted and merged trees must match, and the latter
-merge must be integrated into current `origin/develop`. No other historical
-base receives transitive trust. `audit` remains mutation-free but is no longer purely
-local: non-ancestor heads make bounded read-only `git ls-remote` and authenticated
+merge must be integrated into current `origin/develop`. A clean retained commit
+that is itself an ancestor of PR #258's exact head is also reconciled for
+admission; this is retention and cleanup evidence only, not delivery or merge
+authority. Dirty worktrees remain active even when their committed head is
+delivered because untracked owner work is outside the promotion proof. No other
+historical base receives transitive trust. `audit` remains mutation-free but is
+no longer purely local: non-ancestor heads make bounded read-only `git ls-remote` and authenticated
 `gh api graphql` calls. Without network access, a logged-in `gh`, or a current
 local delivery ref, those heads report `unavailable`; direct ancestry and the
 rest of the inventory remain usable. The human table appends `proof` as its last
@@ -237,6 +262,24 @@ node scripts/worktree-lifecycle.mjs remove \
 
 Never bulk-delete worktrees based only on branch names or “gone” upstreams.
 Preserve dirty/untracked files and open PR heads first.
+
+When an old clean worktree contains a unique or superseded head that must be
+preserved but must not be represented as delivered, archive it explicitly:
+
+```bash
+node scripts/worktree-lifecycle.mjs archive \
+  --path /absolute/worktree --expect-head <sha> \
+  --issue <number> --disposition owner-preserved \
+  --older-than-days 7 --owner-approved --execute
+```
+
+The only dispositions are `owner-preserved`, `superseded`, and
+`integrated-equivalent`. The command refuses the primary checkout, dirty or
+recent worktrees, already-integrated heads, missing owner approval, and
+non-issue-backed archives. Before removal it creates an exact private
+`refs/oxid-archive/worktrees/<sha>` ref and a mode-0600 receipt under the Git
+common directory. This keeps the commit recoverable without claiming merge or
+acceptance; restoring or deleting an archive remains a separate owner action.
 
 ## Failure and cancellation rules
 

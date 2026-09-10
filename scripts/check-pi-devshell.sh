@@ -202,6 +202,15 @@ if jq -s -e '
   exit 1
 fi
 
+if ! jq -s -e '
+  map(select(.type == "response" and .command == "get_commands"))[0]
+  | .data.commands
+  | (any(.name == "scenario")) and (any(.name == "use-case"))
+' <<<"$pi_rpc_output" >/dev/null; then
+  echo "Pi did not expose the tracked scenario and use-case commands" >&2
+  exit 1
+fi
+
 loader_path="$repo_root/.pi/npm/node_modules/@input-output-hk/agent-review-pi/skills/agent-review/SKILL.md"
 if ! jq -s -e --arg loader_path "$loader_path" '
   map(select(.type == "response" and .command == "get_commands"))[0]

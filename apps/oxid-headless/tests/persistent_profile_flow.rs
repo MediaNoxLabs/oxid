@@ -482,6 +482,152 @@ struct TestStore {
     path: PathBuf,
 }
 
+// Keep this boundary structural: public values may coincidentally contain words
+// associated with secrets, but the derived-account schema must never represent
+// secret-bearing fields.
+fn assert_public_derived_account(account: &Value) {
+    let account = account
+        .as_object()
+        .expect("derived account should be a JSON object");
+    assert_eq!(
+        account.len(),
+        8,
+        "derived account must not expose extra fields"
+    );
+    for field in [
+        "networkId",
+        "accountId",
+        "accountIndex",
+        "addressIndex",
+        "receiveAddress",
+        "addresses",
+        "transactionKeyRef",
+        "custodyMode",
+    ] {
+        assert!(
+            account.contains_key(field),
+            "derived account must expose {field}"
+        );
+    }
+    let network_id = account["networkId"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .expect("network id should be non-empty public metadata");
+    let account_index = account["accountIndex"]
+        .as_u64()
+        .expect("account index should be public numeric metadata");
+    let address_index = account["addressIndex"]
+        .as_u64()
+        .expect("address index should be public numeric metadata");
+    assert_eq!(
+        account["accountId"],
+        format!("midnight_account_{account_index}_{address_index}"),
+        "account id should encode only its public coordinates"
+    );
+    assert!(
+        account["transactionKeyRef"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("key_") && value.len() > 4),
+        "transaction key reference should remain opaque public metadata"
+    );
+    assert_eq!(account["custodyMode"], "development_only");
+
+    let assert_public_address = |address: &Value| {
+        let address = address
+            .as_object()
+            .expect("derived account address should be a JSON object");
+        assert_eq!(address.len(), 2, "address must not expose extra fields");
+        let expected_prefix = match address["kind"].as_str() {
+            Some("unshielded") => format!("mn_addr_{network_id}1"),
+            Some("shielded") => format!("mn_shield-addr_{network_id}1"),
+            _ => panic!("derived account should expose only supported public address kinds"),
+        };
+        assert!(
+            address["value"]
+                .as_str()
+                .is_some_and(|value| value.starts_with(&expected_prefix)),
+            "address should contain only the public network-qualified encoding"
+        );
+    };
+    assert_public_address(&account["receiveAddress"]);
+    let addresses = account["addresses"]
+        .as_array()
+        .expect("derived account addresses should be an array");
+    assert!(
+        !addresses.is_empty(),
+        "derived account should expose an address"
+    );
+    for address in addresses {
+        assert_public_address(address);
+    }
+}
+
+#[test]
+fn derived_account_secret_boundary_allows_public_seed_substrings_and_rejects_secret_fields() {
+    let public_account = json!({
+        "networkId": "undeployed",
+        "accountId": "midnight_account_0_0",
+        "accountIndex": 0,
+        "addressIndex": 0,
+        "receiveAddress": { "kind": "unshielded", "value": "mn_addr_undeployed1public_seed_value" },
+        "addresses": [{ "kind": "unshielded", "value": "mn_addr_undeployed1public_seed_value" }],
+        "transactionKeyRef": "key_ref_public",
+        "custodyMode": "development_only"
+    });
+
+    assert_public_derived_account(&public_account);
+
+    for forbidden_field in [
+        "seed",
+        "privateKey",
+        "privateMaterial",
+        "proof",
+        "token",
+        "credential",
+        "capability",
+    ] {
+        let mut secret_bearing_account = public_account.clone();
+        secret_bearing_account[forbidden_field] = json!("must-not-be-serialized");
+        assert!(
+            std::panic::catch_unwind(|| {
+                assert_public_derived_account(&secret_bearing_account);
+            })
+            .is_err()
+        );
+    }
+
+    for (field, secret_value) in [
+        ("networkId", "secret-network-material"),
+        ("accountId", "secret-account-material"),
+        ("transactionKeyRef", "secret-private-key-material"),
+        ("custodyMode", "secret-custody-material"),
+    ] {
+        let mut secret_bearing_account = public_account.clone();
+        secret_bearing_account[field] = json!(secret_value);
+        assert!(
+            std::panic::catch_unwind(|| {
+                assert_public_derived_account(&secret_bearing_account);
+            })
+            .is_err()
+        );
+    }
+
+    for address_path in ["receiveAddress", "addresses"] {
+        let mut secret_bearing_account = public_account.clone();
+        if address_path == "receiveAddress" {
+            secret_bearing_account[address_path]["value"] = json!("secret-address-material");
+        } else {
+            secret_bearing_account[address_path][0]["value"] = json!("secret-address-material");
+        }
+        assert!(
+            std::panic::catch_unwind(|| {
+                assert_public_derived_account(&secret_bearing_account);
+            })
+            .is_err()
+        );
+    }
+}
+
 impl TestStore {
     fn new() -> Self {
         let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -1889,8 +2035,7 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
         .expect("opaque transaction key reference should be returned")
         .to_owned();
     assert!(derived_address.starts_with("mn_addr_undeployed1"));
-    assert!(!derived.to_string().contains("seed"));
-    assert!(!derived.to_string().contains("private"));
+    assert_public_derived_account(&derived["result"]["account"]);
 
     let repeated = process.request(json!({
         "protocol": "oxid.headless.v1",

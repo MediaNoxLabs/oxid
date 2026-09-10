@@ -9,12 +9,16 @@ import { pathToFileURL } from "node:url";
 import path from "node:path";
 import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
 
-const packageRoot = (await resolveDevLoopsPackageRoot({ cwd: process.cwd() })).packageRoot;
-const upstreamSizeBudget = await import(pathToFileURL(path.join(packageRoot, "scripts/loop/check-size-budget.mjs")).href);
-const { computeSizeBudget, parseNumstatZ, parseCheckSizeBudgetCliArgs, runCli: runUpstreamSizeBudgetCli } = upstreamSizeBudget;
-const { loadDevLoopConfig } = await import(pathToFileURL(path.join(packageRoot, "../@dev-loops/core/src/config/config.mjs")).href);
-const { DIFF_ISOLATION_FLAGS, gitEnvWithoutDirOverrides } = await import(pathToFileURL(path.join(packageRoot, "scripts/github/write-gate-context.mjs")).href);
-const { emitResult } = await import(pathToFileURL(path.join(packageRoot, "scripts/lib/jq-output.mjs")).href);
+async function loadUpstreamSizeBudget(repoRoot) {
+  const packageRoot = (await resolveDevLoopsPackageRoot({ cwd: repoRoot })).packageRoot;
+  const [sizeBudget, config, gateContext, output] = await Promise.all([
+    import(pathToFileURL(path.join(packageRoot, "scripts/loop/check-size-budget.mjs")).href),
+    import(pathToFileURL(path.join(packageRoot, "../@dev-loops/core/src/config/config.mjs")).href),
+    import(pathToFileURL(path.join(packageRoot, "scripts/github/write-gate-context.mjs")).href),
+    import(pathToFileURL(path.join(packageRoot, "scripts/lib/jq-output.mjs")).href),
+  ]);
+  return { ...sizeBudget, ...config, ...gateContext, ...output };
+}
 
 const SOURCE_EXTENSIONS = new Set([".rs", ".kt", ".swift"]);
 const EXCLUDED_NAMES = new Set([".devloops", "cargo.lock", "cargo.toml", "deny.toml", "flake.lock", "justfile", "rust-toolchain.toml"]);
@@ -54,7 +58,10 @@ function translateTierPatterns(sizeConfig) {
   };
 }
 
-export function computeOxidSizeBudget({ numstatOutput = "", sizeConfig = {}, configErrors = [], ...rest } = {}) {
+export async function computeOxidSizeBudget({
+  numstatOutput = "", sizeConfig = {}, configErrors = [], repoRoot = process.cwd(), ...rest
+} = {}) {
+  const { computeSizeBudget, parseNumstatZ } = await loadUpstreamSizeBudget(repoRoot);
   const translated = parseNumstatZ(numstatOutput)
     .map((file) => `${file.added}\t${file.deleted}\t${translateNativePath(file.path)}\0`)
     .join("");
@@ -64,6 +71,7 @@ export function computeOxidSizeBudget({ numstatOutput = "", sizeConfig = {}, con
 }
 
 export async function evaluateOxidPrSizeBudget({ base, head = "HEAD", repoRoot = process.cwd(), waived = false, approvedBy = null } = {}) {
+  const { DIFF_ISOLATION_FLAGS, gitEnvWithoutDirOverrides, loadDevLoopConfig } = await loadUpstreamSizeBudget(repoRoot);
   const range = `${base}...${head}`;
   const git = (args) => execFileSync("git", [...DIFF_ISOLATION_FLAGS, ...args], {
     cwd: repoRoot,
@@ -74,11 +82,11 @@ export async function evaluateOxidPrSizeBudget({ base, head = "HEAD", repoRoot =
   });
   const { config, errors } = await loadDevLoopConfig({ repoRoot });
   try {
-    return computeOxidSizeBudget({
+    return await computeOxidSizeBudget({
       nameStatusOutput: git(["diff", "--no-ext-diff", "--name-status", range]),
       diffOutput: git(["diff", "--no-ext-diff", range]),
       numstatOutput: git(["diff", "--no-ext-diff", "--numstat", "-z", range]),
-      sizeConfig: config?.gates?.size ?? {}, configErrors: errors, waived, approvedBy,
+      sizeConfig: config?.gates?.size ?? {}, configErrors: errors, waived, approvedBy, repoRoot,
     });
   } catch (error) {
     throw new Error(`git diff against --base ${JSON.stringify(base)} failed: ${error?.message ?? error}`);
@@ -86,6 +94,7 @@ export async function evaluateOxidPrSizeBudget({ base, head = "HEAD", repoRoot =
 }
 
 export async function main(argv = process.argv.slice(2), { repoRoot = process.cwd() } = {}) {
+  const { parseCheckSizeBudgetCliArgs, runCli: runUpstreamSizeBudgetCli, emitResult } = await loadUpstreamSizeBudget(repoRoot);
   const options = parseCheckSizeBudgetCliArgs(argv);
   if (options.help) {
     await runUpstreamSizeBudgetCli(argv, { repoRoot });

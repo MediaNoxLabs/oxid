@@ -30,9 +30,7 @@ use oxid_wallet_domain::{
 
 use crate::{
     BIP44_PURPOSE, DUST_INDEX, DUST_ROLE, MIDNIGHT_COIN_TYPE, SPECKS_PER_DUST,
-    dust_checkpoint::{
-        DustCheckpointStoreError, MidnightDustCheckpointStore, StoredDustCheckpoint,
-    },
+    dust_checkpoint::{DustCheckpointStoreError, MidnightDustCheckpointStore},
     submission::{
         ChainTip, DustSyncProgress, MidnightStandaloneConfig, ensure_submission_active,
         fetch_chain_tip, synchronize_dust_with_control,
@@ -605,21 +603,22 @@ where
                 state_time
             }
         };
-        let mut observe = |progress: &DustSyncProgress| {
+        let mut observe = |progress: &DustSyncProgress<'_>| {
             ensure_submission_active(cancellation)?;
             let updated_at = now(clock).map_err(map_dust_to_transaction_error)?;
             checkpoints
-                .save(
+                .save_state(
                     &key.1,
                     &public_key,
-                    &StoredDustCheckpoint {
-                        current_cursor: progress.current_cursor,
-                        target_cursor: progress.target_cursor,
-                        updated_at,
-                        state: progress.state.clone(),
-                    },
+                    progress.current_cursor,
+                    progress.target_cursor,
+                    updated_at,
+                    progress.state,
                 )
                 .map_err(map_checkpoint_error)?;
+            if !progress.segment_complete {
+                return Ok(());
+            }
             let status = progress_snapshot(
                 &key.1,
                 WalletDustSyncState::Syncing,
@@ -944,7 +943,9 @@ mod tests {
     use futures::{SinkExt as _, StreamExt as _};
     use midnight_base_crypto::{hash::HashOutput, time::Timestamp};
     use midnight_ledger::{
-        dust::{DustGenerationInfo, InitialNonce, QualifiedDustOutput, dust_first_nonce},
+        dust::{
+            DustGenerationInfo, DustLocalState, InitialNonce, QualifiedDustOutput, dust_first_nonce,
+        },
         events::{Event, EventDetails, EventSource},
         structure::{INITIAL_PARAMETERS, STARS_PER_NIGHT, TransactionHash},
     };
@@ -961,6 +962,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::dust_checkpoint::StoredDustCheckpoint;
 
     struct FixedClock;
 
@@ -1056,16 +1058,24 @@ mod tests {
                 })
         }
 
-        fn save(
+        fn save_state(
             &self,
             _: &ChainNetworkId,
             _: &DustPublicKey,
-            checkpoint: &StoredDustCheckpoint,
+            current_cursor: u64,
+            target_cursor: u64,
+            updated_at: UnixTimestampMillis,
+            state: &DustLocalState<DefaultDB>,
         ) -> Result<(), DustCheckpointStoreError> {
             *self
                 .checkpoint
                 .lock()
-                .map_err(|_| DustCheckpointStoreError::Unavailable)? = Some(checkpoint.clone());
+                .map_err(|_| DustCheckpointStoreError::Unavailable)? = Some(StoredDustCheckpoint {
+                current_cursor,
+                target_cursor,
+                updated_at,
+                state: state.clone(),
+            });
             self.saves.fetch_add(1, Ordering::Relaxed);
             Ok(())
         }
