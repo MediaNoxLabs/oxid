@@ -3808,7 +3808,11 @@ fn WalletApp() -> Element {
                     }
                 }
                 div { class: "app-header__title",
-                    strong { role: "heading", aria_level: "1", "{active_route.title()}" }
+                    if active_route == Route::Diagnostics {
+                        strong { role: "heading", aria_level: "1", "{active_route.title()}" }
+                    } else {
+                        strong { "{active_route.title()}" }
+                    }
                     small { "{brand.product_name()} {brand.tagline()}" }
                 }
                 div { class: "app-header__actions",
