@@ -139,80 +139,92 @@
         buildInputs = linuxLibraries;
 
         shellHook = ''
-          export RUST_SRC_PATH=${pkgs.rustPlatform.rustLibSrc}
-          export LLVM_COV=${pkgs.llvmPackages.llvm}/bin/llvm-cov
-          export LLVM_PROFDATA=${pkgs.llvmPackages.llvm}/bin/llvm-profdata
-          export COMPACT_DIRECTORY=${midnightDidPackages.compact-toolchain}
-          export OXID_PRESENTATION_ARTIFACTS_DIR=${self'.packages.presentation-compact-artifacts}
-          export OXID_PASSPORT_VAULT_ARTIFACTS_DIR=${self'.packages.passport-vault-compact-artifacts}
-          export OXID_PASSPORT_VAULT_COMPOSER=${self'.packages.passport-vault-call-composer}/bin/oxid-passport-vault-call-composer
-          # Keep one bounded compiler cache across worktrees. Worktree targets
-          # remain isolated for correctness and can be deleted after delivery.
-          export RUSTC_WRAPPER=${pkgs.sccache}/bin/sccache
-          export SCCACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/oxid-sccache"
-          export SCCACHE_CACHE_SIZE="''${SCCACHE_CACHE_SIZE:-10G}"
-          ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
-            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath linuxLibraries}:''${LD_LIBRARY_PATH:-}
-          ''}
+                    export RUST_SRC_PATH=${pkgs.rustPlatform.rustLibSrc}
+                    export LLVM_COV=${pkgs.llvmPackages.llvm}/bin/llvm-cov
+                    export LLVM_PROFDATA=${pkgs.llvmPackages.llvm}/bin/llvm-profdata
+                    export COMPACT_DIRECTORY=${midnightDidPackages.compact-toolchain}
+                    export OXID_PRESENTATION_ARTIFACTS_DIR=${self'.packages.presentation-compact-artifacts}
+                    export OXID_PASSPORT_VAULT_ARTIFACTS_DIR=${self'.packages.passport-vault-compact-artifacts}
+                    export OXID_PASSPORT_VAULT_COMPOSER=${self'.packages.passport-vault-call-composer}/bin/oxid-passport-vault-call-composer
+                    # Keep only runtime state in the Git common directory. PI_CODING_AGENT_DIR
+                    # remains user-scoped because it owns authentication and user policy;
+                    # sessions and pi-subagents lifecycle state are checkout-scoped instead.
+                    # This Git-common-dir path survives the per-entry nix-shell TMPDIR and
+                    # is private to the local checkout owner, while remaining shared by
+                    # its linked worktrees.
+                    pi_common_git_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
+                    pi_runtime_state_dir="$pi_common_git_dir/oxid-factory/pi-runtime-v1"
+                    export PI_CODING_AGENT_SESSION_DIR="$pi_runtime_state_dir/sessions"
+                    export PI_SUBAGENTS_TEMP_ROOT="$pi_runtime_state_dir/subagents"
+                    mkdir -p "$pi_runtime_state_dir" "$PI_CODING_AGENT_SESSION_DIR" "$PI_SUBAGENTS_TEMP_ROOT"
+                    chmod 700 "$pi_runtime_state_dir" "$PI_CODING_AGENT_SESSION_DIR" "$PI_SUBAGENTS_TEMP_ROOT"
+                    # Keep one bounded compiler cache across worktrees. Worktree targets
+                    # remain isolated for correctness and can be deleted after delivery.
+                    export RUSTC_WRAPPER=${pkgs.sccache}/bin/sccache
+                    export SCCACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/oxid-sccache"
+                    export SCCACHE_CACHE_SIZE="''${SCCACHE_CACHE_SIZE:-10G}"
+                    ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+                      export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath linuxLibraries}:''${LD_LIBRARY_PATH:-}
+                    ''}
 
-          # Provision pinned project-local Pi packages. Public packages install
-          # without credentials; the optional review package is attempted only
-          # when a GitHub token is already available in the user's environment.
-          # CI never needs Pi tooling, and this block performs network package
-          # installs, so continuous-integration shells skip it entirely.
-          if [ -z "''${CI:-}" ] && [ -f .pi/settings.json ]; then
-            pi_checkout_root="$(node --input-type=module <<'NODE'
-              import { ensureSharedPiPackageStore } from "./scripts/lib/dev-loop-runtime.mjs";
-              const prepared = await ensureSharedPiPackageStore({ cwd: process.cwd() });
-              process.stdout.write(prepared.commonRoot);
-NODE
-            )" || exit 1
-            if [ -z "''${GITHUB_TOKEN:-}" ]; then
-              if [ -n "''${GH_TOKEN:-}" ]; then
-                export GITHUB_TOKEN="''${GH_TOKEN}"
-              elif [ -n "''${GH_TOKENS:-}" ]; then
-                export GITHUB_TOKEN="''${GH_TOKENS}"
-              fi
-            fi
+                    # Provision pinned project-local Pi packages. Public packages install
+                    # without credentials; the optional review package is attempted only
+                    # when a GitHub token is already available in the user's environment.
+                    # CI never needs Pi tooling, and this block performs network package
+                    # installs, so continuous-integration shells skip it entirely.
+                    if [ -z "''${CI:-}" ] && [ -f .pi/settings.json ]; then
+                      pi_checkout_root="$(node --input-type=module <<'NODE'
+                        import { ensureSharedPiPackageStore } from "./scripts/lib/dev-loop-runtime.mjs";
+                        const prepared = await ensureSharedPiPackageStore({ cwd: process.cwd() });
+                        process.stdout.write(prepared.commonRoot);
+          NODE
+                      )" || exit 1
+                      if [ -z "''${GITHUB_TOKEN:-}" ]; then
+                        if [ -n "''${GH_TOKEN:-}" ]; then
+                          export GITHUB_TOKEN="''${GH_TOKEN}"
+                        elif [ -n "''${GH_TOKENS:-}" ]; then
+                          export GITHUB_TOKEN="''${GH_TOKENS}"
+                        fi
+                      fi
 
-            while IFS=$'\t' read -r pi_spec pi_package pi_version; do
-              [ -n "$pi_spec" ] || continue
-              pi_package_json="$pi_checkout_root/.pi/npm/node_modules/$pi_package/package.json"
-              pi_installed_version=""
-              if [ -f "$pi_package_json" ]; then
-                pi_installed_version="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version ?? "")' "$pi_package_json")"
-              fi
+                      while IFS=$'\t' read -r pi_spec pi_package pi_version; do
+                        [ -n "$pi_spec" ] || continue
+                        pi_package_json="$pi_checkout_root/.pi/npm/node_modules/$pi_package/package.json"
+                        pi_installed_version=""
+                        if [ -f "$pi_package_json" ]; then
+                          pi_installed_version="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version ?? "")' "$pi_package_json")"
+                        fi
 
-              if [ -n "$pi_installed_version" ] && { [ -z "$pi_version" ] || [ "$pi_installed_version" = "$pi_version" ]; }; then
-                continue
-              fi
+                        if [ -n "$pi_installed_version" ] && { [ -z "$pi_version" ] || [ "$pi_installed_version" = "$pi_version" ]; }; then
+                          continue
+                        fi
 
-              if [ "$pi_package" = "@input-output-hk/agent-review-pi" ] && [ -z "''${GITHUB_TOKEN:-}" ]; then
-                echo "Skipping optional Pi package $pi_spec (set GITHUB_TOKEN, GH_TOKEN, or GH_TOKENS to install it)."
-                continue
-              fi
+                        if [ "$pi_package" = "@input-output-hk/agent-review-pi" ] && [ -z "''${GITHUB_TOKEN:-}" ]; then
+                          echo "Skipping optional Pi package $pi_spec (set GITHUB_TOKEN, GH_TOKEN, or GH_TOKENS to install it)."
+                          continue
+                        fi
 
-              echo "Installing project-local Pi package $pi_spec..."
-              (cd "$pi_checkout_root" && pi install "$pi_spec" --local --approve </dev/null)
-            done < <(node -e '
-              const fs = require("fs");
-              const settings = JSON.parse(fs.readFileSync(".pi/settings.json", "utf8"));
-              for (const entry of settings.packages ?? []) {
-                const spec = typeof entry === "string" ? entry : entry?.source;
-                if (typeof spec !== "string" || !spec.startsWith("npm:")) continue;
-                if (typeof entry === "object" && entry.autoload === false) continue;
-                const ref = spec.slice(4);
-                const at = ref.startsWith("@") ? ref.indexOf("@", 1) : ref.indexOf("@");
-                const name = at === -1 ? ref : ref.slice(0, at);
-                const version = at === -1 ? "" : ref.slice(at + 1);
-                console.log([spec, name, version].join("\t"));
-              }
-            ')
-            # Exact pins were reconciled above. Keep Pi startup itself offline
-            # so it cannot race that authority or retry an unavailable optional
-            # private package. Operators can explicitly unset this for package maintenance.
-            export PI_OFFLINE="''${PI_OFFLINE:-1}"
-          fi
+                        echo "Installing project-local Pi package $pi_spec..."
+                        (cd "$pi_checkout_root" && pi install "$pi_spec" --local --approve </dev/null)
+                      done < <(node -e '
+                        const fs = require("fs");
+                        const settings = JSON.parse(fs.readFileSync(".pi/settings.json", "utf8"));
+                        for (const entry of settings.packages ?? []) {
+                          const spec = typeof entry === "string" ? entry : entry?.source;
+                          if (typeof spec !== "string" || !spec.startsWith("npm:")) continue;
+                          if (typeof entry === "object" && entry.autoload === false) continue;
+                          const ref = spec.slice(4);
+                          const at = ref.startsWith("@") ? ref.indexOf("@", 1) : ref.indexOf("@");
+                          const name = at === -1 ? ref : ref.slice(0, at);
+                          const version = at === -1 ? "" : ref.slice(at + 1);
+                          console.log([spec, name, version].join("\t"));
+                        }
+                      ')
+                      # Exact pins were reconciled above. Keep Pi startup itself offline
+                      # so it cannot race that authority or retry an unavailable optional
+                      # private package. Operators can explicitly unset this for package maintenance.
+                      export PI_OFFLINE="''${PI_OFFLINE:-1}"
+                    fi
         '';
       };
     };

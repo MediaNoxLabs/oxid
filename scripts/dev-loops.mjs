@@ -15,6 +15,7 @@ import { enforceSingleBase, pinnedPublicRoute, readLongOptionValues } from "./li
 import { runEnsureWorktree } from "./loop/ensure-worktree.mjs";
 
 const DELIVERY_PROFILE_OPTION = "--delivery-profile";
+const PRE_MUTATION_ASSESSMENT_OPTION = "--pre-mutation-assessment";
 
 function bindPrBase(args, target) {
   const bases = readLongOptionValues(args, "--base");
@@ -98,11 +99,78 @@ export function extractDeliveryProfileArgs(args) {
   return { args: forwarded, requested };
 }
 
+export function extractPreMutationAssessmentArgs(args) {
+  const forwarded = [];
+  let assessment;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    let value;
+    if (argument === PRE_MUTATION_ASSESSMENT_OPTION) {
+      if (assessment !== undefined) throw new Error(`${PRE_MUTATION_ASSESSMENT_OPTION} may be specified only once`);
+      value = args[index + 1];
+      if (!value || value.startsWith("--")) throw new Error(`${PRE_MUTATION_ASSESSMENT_OPTION} requires a JSON object`);
+      index += 1;
+    } else if (argument.startsWith(`${PRE_MUTATION_ASSESSMENT_OPTION}=`)) {
+      if (assessment !== undefined) throw new Error(`${PRE_MUTATION_ASSESSMENT_OPTION} may be specified only once`);
+      value = argument.slice(`${PRE_MUTATION_ASSESSMENT_OPTION}=`.length);
+      if (!value) throw new Error(`${PRE_MUTATION_ASSESSMENT_OPTION} requires a JSON object`);
+    } else {
+      forwarded.push(argument);
+      continue;
+    }
+    try {
+      assessment = JSON.parse(value);
+    } catch {
+      throw new Error(`${PRE_MUTATION_ASSESSMENT_OPTION} must be valid JSON`);
+    }
+    if (!assessment || Array.isArray(assessment) || typeof assessment !== "object") {
+      throw new Error(`${PRE_MUTATION_ASSESSMENT_OPTION} must be a JSON object`);
+    }
+  }
+  return { args: forwarded, assessment };
+}
+
 async function loadDeliveryProfile(repoRoot, requested) {
   const contract = JSON.parse(await readFile(path.join(repoRoot, ".pi", "delivery-profiles.json"), "utf8"));
   const profile = requested ?? contract.defaultProfile;
   if (!Object.hasOwn(contract.profiles ?? {}, profile)) throw new Error(`unknown delivery profile: ${profile}`);
   return { contract, profile };
+}
+
+export function selectPreMutationExecution(envelope, fastPath) {
+  const fallback = fastPath.fallbackReasons;
+  const assessment = envelope.preMutationAssessment;
+  if (!assessment || typeof assessment !== "object") {
+    return { executionProfile: "regular-production-ready", fallbackReason: fallback.missingAssessment };
+  }
+  if (assessment.tier === "T1" || assessment.t1 === true) {
+    return { executionProfile: "regular-production-ready", fallbackReason: fallback.t1 };
+  }
+  if (assessment.ambiguous === true) {
+    return { executionProfile: "regular-production-ready", fallbackReason: fallback.ambiguous };
+  }
+  if (assessment.dependency === true) {
+    return { executionProfile: "regular-production-ready", fallbackReason: fallback.dependency };
+  }
+  if (assessment.workflow === true) {
+    return { executionProfile: "regular-production-ready", fallbackReason: fallback.workflow };
+  }
+  if (assessment.release === true) {
+    return { executionProfile: "regular-production-ready", fallbackReason: fallback.release };
+  }
+  if (assessment.crossRepository === true) {
+    return { executionProfile: "regular-production-ready", fallbackReason: fallback.crossRepository };
+  }
+  if (assessment.refined !== fastPath.requiredAssessment.refined) {
+    return { executionProfile: "regular-production-ready", fallbackReason: fallback.notRefined };
+  }
+  if (assessment.risk !== fastPath.requiredAssessment.risk) {
+    return { executionProfile: "regular-production-ready", fallbackReason: fallback.riskTooHigh };
+  }
+  if (assessment.scope !== fastPath.requiredAssessment.scope) {
+    return { executionProfile: "regular-production-ready", fallbackReason: fallback.scopeTooLarge };
+  }
+  return { executionProfile: fastPath.executionProfile, fallbackReason: null };
 }
 
 export function applyDeliveryProfile(envelope, contract, profile, deliveryTarget) {
@@ -114,8 +182,30 @@ export function applyDeliveryProfile(envelope, contract, profile, deliveryTarget
     deliveryProfile: profile,
     requiredReads,
   };
-  if (profile === "production-ready") return routed;
+  if (profile === "production-ready") {
+    const fastPath = contract.profiles[profile].preMutationFastPath;
+    if (!fastPath) {
+      return { ...routed, executionProfile: "regular-production-ready", fallbackReason: "pre-mutation-fast-path-unconfigured" };
+    }
+    const selection = selectPreMutationExecution(envelope, fastPath);
+    return {
+      ...routed,
+      ...selection,
+      preMutationFastPath: {
+        maximumToolCallsBeforeOutcome: fastPath.maximumToolCallsBeforeOutcome,
+        readPolicy: fastPath.readPolicy,
+        preservedGates: fastPath.preservedGates,
+      },
+      terminalMetrics: fastPath.terminalMetrics,
+      nextAction: selection.executionProfile === fastPath.executionProfile
+        ? "Complete the scoped required reads, then make the first source mutation or return an evidence-backed blocker before 20 tool calls; retain every production-ready gate."
+        : routed.nextAction,
+    };
+  }
   if (profile !== "prototype") throw new Error(`unsupported delivery profile: ${profile}`);
+  if (Object.hasOwn(envelope, "preMutationAssessment")) {
+    throw new Error(`${PRE_MUTATION_ASSESSMENT_OPTION} is available only for production-ready delivery`);
+  }
   const issueBacked = envelope.target?.kind === "issue"
     || (envelope.target?.kind === "local_phase" && Number.isInteger(envelope.target.issue));
   if (!issueBacked) throw new Error("prototype delivery requires an issue-backed target");
@@ -186,18 +276,20 @@ async function loadPinnedEnvelopeModules(packageRoot) {
 async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
   const { cli, output, helpers, core } = await loadPinnedEnvelopeModules(resolved.packageRoot);
   let deliveryArgs;
+  let assessmentArgs;
   let deliveryTarget;
   try {
     const selected = extractDeliveryTargetOption(args, { required: !args.includes("--help") });
     deliveryTarget = selected.target;
     deliveryArgs = extractDeliveryProfileArgs(selected.args);
+    assessmentArgs = extractPreMutationAssessmentArgs(deliveryArgs.args);
   } catch (error) {
     stderr.write(`${helpers.formatCliError(error)}\n`);
     return 1;
   }
   let options;
   try {
-    options = cli.parseBuildHandoffEnvelopeCliArgs(deliveryArgs.args);
+    options = cli.parseBuildHandoffEnvelopeCliArgs(assessmentArgs.args);
   } catch (error) {
     stderr.write(`${helpers.formatCliError(error)}\n`);
     return 1;
@@ -205,12 +297,12 @@ async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
   if (options.help) {
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
-    await cli.runCli(deliveryArgs.args, {
+    await cli.runCli(assessmentArgs.args, {
       stdout,
       stderr,
       adapter: { getCwd: () => cwd, getRepoRoot: () => resolved.gitRoot },
     });
-    stdout.write("Repository options:\n  --delivery-base <origin/develop|origin/milestone-x.y.z>  Use the exact target recorded on the issue.\n  --delivery-profile <prototype|production-ready>  Select a bounded delivery profile (default: production-ready).\n");
+    stdout.write("Repository options:\n  --delivery-base <origin/develop|origin/milestone-x.y.z>  Use the exact target recorded on the issue.\n  --delivery-profile <prototype|production-ready>  Select a bounded delivery profile (default: production-ready).\n  --pre-mutation-assessment <json>  Deterministic refined/low-risk/small-scope assessment for the internal production-ready fast path.\n");
     const code = process.exitCode ?? 0;
     process.exitCode = previousExitCode;
     return code;
@@ -221,7 +313,10 @@ async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
     });
     const normalized = await normalizeHandoffEnvelopeCwd(candidate, resolved, core);
     const { contract, profile } = await loadDeliveryProfile(resolved.gitRoot, deliveryArgs.requested);
-    const profiled = applyDeliveryProfile(normalized, contract, profile, deliveryTarget);
+    const profiled = applyDeliveryProfile({
+      ...normalized,
+      ...(assessmentArgs.assessment === undefined ? {} : { preMutationAssessment: assessmentArgs.assessment }),
+    }, contract, profile, deliveryTarget);
     const repositoryAcceptance = applyRepositoryAcceptance(profiled);
     const envelope = await resolveHandoffRequiredReads(repositoryAcceptance, {
       repositoryRoot: repositoryAcceptance.cwd,

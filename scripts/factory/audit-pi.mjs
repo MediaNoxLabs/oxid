@@ -348,6 +348,23 @@ async function inspectDeliveryProfiles(repoRoot) {
       || production?.qualityBudget?.advisoryDisposition !== "follow-up") {
       problems.push("production-ready must preserve the 70 percent quality budget and complete mandatory invariants");
     }
+    const fastPath = production?.preMutationFastPath;
+    if (fastPath?.executionProfile !== "small-slice"
+      || fastPath?.maximumToolCallsBeforeOutcome !== 20
+      || fastPath?.readPolicy !== "envelope-required-reads-only"
+      || fastPath?.requiredAssessment?.refined !== true
+      || fastPath?.requiredAssessment?.risk !== "low"
+      || fastPath?.requiredAssessment?.scope !== "small") {
+      problems.push("production-ready fast path must be bounded to an explicit refined, low-risk, small-scope assessment");
+    }
+    if (JSON.stringify(fastPath?.preservedGates) !== JSON.stringify([
+      "branch-claim-checks", "scoped-required-reads", "focused-tests", "signed-dco-commit-policy",
+      "exact-head-review-evidence", "selected-hosted-ci", "merge-authority",
+    ]) || JSON.stringify(fastPath?.terminalMetrics) !== JSON.stringify([
+      "executionProfile", "timeToFirstMutation", "turns", "toolCalls", "providerTokenBuckets", "validations", "fallbackReason",
+    ])) {
+      problems.push("production-ready fast path must preserve every quality gate and report comparable terminal metrics");
+    }
 
     const promotion = profiles.promotion;
     if (promotion?.explicit !== true || promotion?.refreshBase !== "recorded-delivery-base"
@@ -375,6 +392,9 @@ async function inspectDeliveryProfiles(repoRoot) {
     }
     if (!devLoopAgent.includes("--delivery-base <target>")) {
       problems.push(".pi/agents/dev-loop.agent.md does not bind the issue target into the handoff envelope");
+    }
+    if (!devLoopAgent.includes("--pre-mutation-assessment")) {
+      problems.push(".pi/agents/dev-loop.agent.md does not bind the deterministic fast-path assessment into the handoff envelope");
     }
   } catch (error) {
     problems.push(error.message);
@@ -478,15 +498,16 @@ export async function auditPi({
   if (effectivePiExecutable === undefined) {
     effectivePiExecutable = executableFromPath("pi", env);
   }
-  const validPiVersion = typeof effectivePiVersion === "string" && /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(effectivePiVersion);
+  const exactPiVersion = effectivePiVersion === "0.85.1";
   const nixPinnedPi = typeof effectivePiExecutable === "string"
     && /^\/nix\/store\/[a-z0-9]{32}-[^/]+\/bin\/pi$/u.test(effectivePiExecutable);
-  checks.push(check("pi-runtime", validPiVersion && nixPinnedPi ? "pass" : "fail",
-    validPiVersion && nixPinnedPi
-      ? `Nix-pinned Pi ${effectivePiVersion} is active`
-      : "Pi must be the versioned executable supplied by the pinned Nix development shell",
-    validPiVersion && nixPinnedPi ? undefined : {
-      versionValid: validPiVersion,
+  checks.push(check("pi-runtime", exactPiVersion && nixPinnedPi ? "pass" : "fail",
+    exactPiVersion && nixPinnedPi
+      ? "Nix-pinned Pi 0.85.1 is active and can dispatch native detached children"
+      : "Pi 0.85.1 from the locked Nix development shell is required for native detached child dispatch",
+    exactPiVersion && nixPinnedPi ? undefined : {
+      expectedVersion: "0.85.1",
+      version: effectivePiVersion,
       nixStoreExecutable: nixPinnedPi,
     }));
 

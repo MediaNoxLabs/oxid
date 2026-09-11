@@ -67,7 +67,7 @@ The owner-aware reconciliation of remaining dirty/unmerged state is tracked by
 
 | Package | Pin | Available at audit | Decision |
 | --- | --- | --- | --- |
-| `pi-coding-agent` | `0.84.0` via Nix | `0.85.1` on npm | retain Nix pin while package peers target 0.84 |
+| `pi-coding-agent` | `0.85.1` via locked Nix | `0.85.1` | required compatible runtime for `pi-subagents@0.66.0` native detached children |
 | `dev-loops` | `1.0.2` | `1.0.2` | major update in [#303](https://github.com/MediaNoxLabs/oxid/issues/303) |
 | `pi-subagents` | `0.66.0` | `0.66.0` | adopted directly in [#195](https://github.com/MediaNoxLabs/oxid/issues/195) |
 | `agent-review-pi` | `0.6.0` | `0.6.0` | adopted with exact peers by [#301](https://github.com/MediaNoxLabs/oxid/issues/301) |
@@ -81,6 +81,19 @@ agents. Oxid owns policy-bearing compatibility shadows at that path, so loading
 the extension would erase runtime/tool budgets and delivery-profile handoff
 rules immediately before model dispatch. A real offline Pi RPC startup must
 leave every tracked agent hash unchanged.
+
+`pi-coding-agent@0.85.1` is locked through the Nix input and is the supported
+entrypoint for `pi-subagents@0.66.0`: its native child launcher receives the
+package context that the former standalone Nix `0.84.0` executable lacked.
+The devshell leaves `PI_CODING_AGENT_DIR` user-scoped so the existing Codex
+authentication and bounded user policy remain available. It roots
+`PI_CODING_AGENT_SESSION_DIR` and `PI_SUBAGENTS_TEMP_ROOT` at owner-private
+`<git-common-dir>/oxid-factory/pi-runtime-v1/` directories (mode 0700), so Pi
+sessions plus detached lifecycle/results survive exiting and re-entering
+`nix develop` and are shared only by that checkout's linked worktrees, never by
+the expiring Nix `TMPDIR`. The smoke rejects missing or misdirected runtime
+state and an incompatible Pi version with actionable diagnostics before native
+dispatch.
 
 The `pi-subagents` releases between the pin and 0.66.0 contain fixes directly
 related to recovered/detached runs, budget/timeout terminal classification,
@@ -96,9 +109,12 @@ The local migration changed the shared package store from roughly 70 MiB in the
 #158 preflight to 81,616 KiB with the complete 0.6.0 closure. A cold offline Pi
 RPC command inventory completed in 0.88 seconds. Read-only `whoami`, skill-list,
 and review-list calls succeeded; no review or label mutation was used as a
-package test. Rollback is one repository revert followed by shell entry with a
-package-read token: the shell hook reinstalls the reverted exact 0.5.0 pin, and
-the ignored newer peer files may remain inert until normal bounded cleanup.
+package test. Rollback is one command:
+`git revert "$(git log --format=%H --grep='^fix(harness): align Pi runtime' -1)"`.
+It restores the previous
+locked Nix input and its exact Pi runtime; re-entering `./bootstrap.sh` then
+reconstructs only that reverted closure. Owner-private session and async state
+is intentionally retained for recovery and is not part of rollback.
 
 ### Supervised taskflow canary (2026-09-07)
 
