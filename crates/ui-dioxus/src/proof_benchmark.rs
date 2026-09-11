@@ -101,12 +101,8 @@ fn high_resource_selected(max_k: u8) -> bool {
     max_k.clamp(PROOF_BENCHMARK_MIN_K, PROOF_BENCHMARK_MAX_K) >= PROOF_BENCHMARK_HIGH_RESOURCE_K
 }
 
-fn individual_high_resource_guidance_visible(
-    selected_k: Option<u8>,
-    row_k: u8,
-    acknowledged: bool,
-) -> bool {
-    selected_k == Some(row_k) && row_k >= PROOF_BENCHMARK_HIGH_RESOURCE_K && !acknowledged
+fn individual_high_resource_guidance_visible(selected_k: Option<u8>, row_k: u8) -> bool {
+    selected_k == Some(row_k) && row_k >= PROOF_BENCHMARK_HIGH_RESOURCE_K
 }
 
 fn resource_monitor_status(unavailable: bool) -> &'static str {
@@ -310,11 +306,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                         let outcome = result_snapshot.get(&k).copied();
                         let benchmark = Arc::clone(&benchmark);
                         let show_individual_high_resource_guidance =
-                            individual_high_resource_guidance_visible(
-                                individual_high_k_selected(),
-                                k,
-                                high_resource_acknowledged(),
-                            );
+                            individual_high_resource_guidance_visible(individual_high_k_selected(), k);
                         rsx! {
                             article { class: "proof-benchmark-row capability-row", key: "proof-k-{k}",
                                 span { class: if matches!(outcome, Some(BenchmarkOutcome::Completed(_))) { "capability-dot ready" } else { "capability-dot queued" } }
@@ -431,22 +423,9 @@ mod tests {
         assert!(!high_resource_selected(17));
         assert!(high_resource_selected(18));
         assert!(high_resource_selected(21));
-        assert!(!individual_high_resource_guidance_visible(None, 18, false));
-        assert!(!individual_high_resource_guidance_visible(
-            Some(18),
-            17,
-            false
-        ));
-        assert!(individual_high_resource_guidance_visible(
-            Some(18),
-            18,
-            false
-        ));
-        assert!(!individual_high_resource_guidance_visible(
-            Some(18),
-            18,
-            true
-        ));
+        assert!(!individual_high_resource_guidance_visible(None, 18));
+        assert!(!individual_high_resource_guidance_visible(Some(18), 17));
+        assert!(individual_high_resource_guidance_visible(Some(18), 18));
     }
 
     #[test]
