@@ -806,8 +806,14 @@ mod tests {
         assert!(styles.contains(".diagnostic-event-log__toolbar"));
         assert!(styles.contains("grid-template-columns: minmax(0, 1fr) auto;"));
         assert!(styles.contains("@media (max-width: 30rem)"));
-        assert!(styles.contains("width: 3rem;"));
-        assert!(styles.contains("min-height: 3rem;"));
+        let toolbar_targets = styles
+            .split(".diagnostic-event-controls .utility-icon-button {")
+            .nth(1)
+            .and_then(|suffix| suffix.split('}').next())
+            .expect("diagnostics toolbar touch-target rule");
+        assert!(toolbar_targets.contains("width: 3rem;"));
+        assert!(toolbar_targets.contains("min-width: 3rem;"));
+        assert!(toolbar_targets.contains("min-height: 3rem;"));
     }
 
     #[test]

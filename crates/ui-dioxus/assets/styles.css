@@ -1165,9 +1165,9 @@ textarea:focus-visible {
 
 .utility-icon-button {
   display: inline-grid;
-  width: 3rem;
-  min-width: 3rem;
-  min-height: 3rem;
+  width: 2.75rem;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
   padding: 0;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
@@ -2513,6 +2513,12 @@ textarea:focus-visible {
 
 .diagnostic-event-controls {
   flex: 0 0 auto;
+}
+
+.diagnostic-event-controls .utility-icon-button {
+  width: 3rem;
+  min-width: 3rem;
+  min-height: 3rem;
 }
 
 .diagnostic-event-filters {
