@@ -493,8 +493,8 @@ textarea:focus-visible {
 }
 
 .profile-sheet {
-  right: auto;
-  left: max(1rem, env(safe-area-inset-left));
+  right: max(1rem, env(safe-area-inset-right));
+  left: auto;
 }
 
 .global-menu {
