@@ -509,12 +509,12 @@ test("tracked extension is idempotent and truthfully advisory on invalid allowli
   await handlers.get("before_agent_start")[0]({}, ctx);
   await handlers.get("before_provider_request")[0]({}, ctx);
   assert.equal(notifications.length, 3);
-  assert.match(notifications[0].message, /hooks cannot cancel agent or provider execution/);
-  assert.match(notifications[1].message, /Advisory only.*no cancellation result/);
-  assert.match(notifications[2].message, /Advisory only.*errors are swallowed/);
+  assert.match(notifications[0].message, /hooks are advisory.*fail-closed repository gate/);
+  assert.match(notifications[1].message, /Advisory only.*no repository-authoritative cancellation result/);
+  assert.match(notifications[2].message, /Advisory only.*not the repository's fail-closed gate/);
 });
 
-test("Nix-pinned Pi runner cannot hard-cancel a local fake provider through these hooks", async (t) => {
+test("Nix-pinned Pi lifecycle hooks remain advisory beside the repository gate", async (t) => {
   const piRoot = await installedPiRoot(t);
   if (!piRoot) return;
   const [{ Agent }, { createAssistantMessageEventStream }, { fauxAssistantMessage }, extensions, { createEventBus }] = await Promise.all([
@@ -1287,7 +1287,28 @@ async function writeEnvelopeDeliveryProfiles(root) {
         sloSeconds: { firstFeedback: 180, focusedIteration: 600 },
         closeoutFields: ["hypothesis", "result", "knownGaps"],
       },
-      "production-ready": {},
+      "production-ready": {
+        preMutationFastPath: {
+          executionProfile: "small-slice",
+          maximumToolCallsBeforeOutcome: 20,
+          readPolicy: "envelope-required-reads-only",
+          requiredAssessment: { refined: true, risk: "low", scope: "small" },
+          fallbackReasons: {
+            missingAssessment: "missing-pre-mutation-assessment",
+            t1: "t1-risk",
+            ambiguous: "ambiguous-scope",
+            dependency: "dependency-work",
+            workflow: "workflow-change",
+            release: "release-work",
+            crossRepository: "cross-repository-work",
+            notRefined: "issue-not-refined",
+            riskTooHigh: "risk-not-low",
+            scopeTooLarge: "scope-not-small",
+          },
+          preservedGates: ["branch-claim-checks", "focused-tests", "selected-hosted-ci"],
+          terminalMetrics: ["executionProfile", "timeToFirstMutation", "toolCalls", "fallbackReason"],
+        },
+      },
     },
   }));
 }
@@ -1424,6 +1445,24 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
   assert.equal(envelope.maxCopilotRounds, 2);
   assert.ok(envelope.sanctionedCommands);
 
+  const fastPathResult = await run([
+    "loop", "build-envelope", `--input=${input}`,
+    "--delivery-base=develop",
+    "--pre-mutation-assessment", '{"refined":true,"risk":"low","scope":"small"}',
+  ]);
+  assert.equal(fastPathResult.code, 0, fastPathResult.err);
+  const fastPathEnvelope = JSON.parse(fastPathResult.out);
+  assert.equal(fastPathEnvelope.deliveryProfile, "production-ready");
+  assert.equal(fastPathEnvelope.executionProfile, "small-slice");
+  assert.equal(fastPathEnvelope.fallbackReason, null);
+  assert.equal(fastPathEnvelope.preMutationFastPath.maximumToolCallsBeforeOutcome, 20);
+  assert.deepEqual(fastPathEnvelope.preMutationAssessment, {
+    refined: true,
+    risk: "low",
+    scope: "small",
+  });
+  assert.match(fastPathEnvelope.nextAction, /first source mutation or return an evidence-backed blocker before 20 tool calls/u);
+
   const prototypeResult = await run([
     "loop", "build-envelope", `--input=${input}`, "--delivery-profile=prototype", "--delivery-base=develop",
   ]);
@@ -1435,6 +1474,12 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
   assert.equal(prototype.nextAction.includes("prototype hypothesis locally"), true);
   assert.deepEqual(prototype.stopRules, ["remote-mutation", "hosted-ci", "merge-readiness", "merge"]);
   assert.equal(Object.hasOwn(prototype, "gateConfig"), false);
+  const invalidPrototypeAssessment = await run([
+    "loop", "build-envelope", `--input=${input}`, "--delivery-profile=prototype", "--delivery-base=develop",
+    "--pre-mutation-assessment={\"refined\":true,\"risk\":\"low\",\"scope\":\"small\"}",
+  ]);
+  assert.equal(invalidPrototypeAssessment.code, 1);
+  assert.match(invalidPrototypeAssessment.err, /only for production-ready delivery/u);
 
   const trackerOut = [];
   const trackerCode = await runResolveTrackerLocalSpec(["--repo", "owner/repo", "--issue", "150"], {
@@ -1462,6 +1507,7 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
   assert.match(help.out, /Usage: build-handoff-envelope/);
   assert.match(help.out, /--delivery-base <origin\/develop\|origin\/milestone-x\.y\.z>/u);
   assert.match(help.out, /--delivery-profile <prototype\|production-ready>/u);
+  assert.match(help.out, /--pre-mutation-assessment <json>/u);
   const badJq = await run(["loop", "build-envelope", `--input=${input}`, "--jq", "unsupported", "--delivery-base", "milestone-0.4.0"]);
   assert.equal(badJq.code, 2);
   assert.match(badJq.err, /--jq/);
