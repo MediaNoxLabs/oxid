@@ -10915,9 +10915,11 @@ mod tests {
             .nth(1)
             .and_then(|styles| styles.split('}').next())
             .expect("phone-width benchmark row rule");
-        assert!(benchmark_row.contains("grid-template-columns: auto minmax(0, 1fr);"));
-        assert!(phone_rules.contains(".proof-benchmark-timings"));
-        assert!(phone_rules.contains("grid-template-columns: 1fr;"));
+        assert!(benchmark_row.contains("grid-template-columns: minmax(0, 1fr) auto auto;"));
+        assert!(phone_rules.contains("grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);"));
+        assert!(BASE_STYLES.contains("min-height: 3rem;"));
+        assert!(BASE_STYLES.contains(".proof-benchmark-list__header"));
+        assert!(BASE_STYLES.contains("position: sticky;"));
     }
 
     #[cfg(feature = "ui-profile-demo")]
