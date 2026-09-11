@@ -53,6 +53,10 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   const bootstrap = await readFile(path.join(repoRoot, "bootstrap.sh"), "utf8");
   const devshell = await readFile(path.join(repoRoot, "nix", "devshells", "default.nix"), "utf8");
   assert.match(smoke, /pi --list-models/u);
+  assert.match(smoke, /Pi 0\.85\.1 is required for native detached child dispatch/u);
+  assert.match(smoke, /PI_CODING_AGENT_SESSION_DIR/u);
+  assert.match(smoke, /PI_SUBAGENTS_TEMP_ROOT/u);
+  assert.match(smoke, /owner-private runtime state/u);
   assert.match(smoke, /skill:taskflow/u);
   assert.match(smoke, /unsafe inherited taskflow resources are active/u);
   assert.match(smoke, /Failed to load skill/u);
@@ -60,6 +64,10 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(smoke, /Pi did not expose the tracked scenario and use-case commands/u);
   assert.match(bootstrap, /bash scripts\/check-pi-devshell\.sh/u);
   assert.match(devshell, /typeof entry === "string" \? entry : entry\?\.source/u);
+  assert.match(devshell, /Git-common-dir path survives the per-entry nix-shell TMPDIR/u);
+  assert.match(devshell, /export PI_CODING_AGENT_SESSION_DIR/u);
+  assert.match(devshell, /export PI_SUBAGENTS_TEMP_ROOT/u);
+  assert.doesNotMatch(devshell, /export PI_CODING_AGENT_DIR/u);
 });
 
 test("repository dev-loops layer uses the bounded 1.0.2 schema", async () => {
@@ -405,8 +413,8 @@ test("read-only Pi audit recognizes tracked configuration controls", async () =>
   const result = await auditPi({
     repoRoot,
     includeOperational: false,
-    piVersion: "0.84.0",
-    piExecutable: `/nix/store/${"a".repeat(32)}-pi-coding-agent-0.84.0/bin/pi`,
+    piVersion: "0.85.1",
+    piExecutable: `/nix/store/${"a".repeat(32)}-pi-coding-agent-0.85.1/bin/pi`,
     userPolicyResult: { ok: true, configPath: "/private/policy.json", mismatches: [] },
   });
   assert.equal(result.operationalChecked, false);
@@ -430,13 +438,17 @@ test("Pi audit rejects an unpinned host executable even when its version is vali
   const result = await auditPi({
     repoRoot,
     includeOperational: false,
-    piVersion: "0.84.0",
+    piVersion: "0.85.1",
     piExecutable: "/opt/homebrew/bin/pi",
     userPolicyResult: { ok: true, configPath: "/private/policy.json", mismatches: [] },
   });
   const runtime = result.checks.find((entry) => entry.id === "pi-runtime");
   assert.equal(runtime?.status, "fail");
-  assert.deepEqual(runtime?.details, { versionValid: true, nixStoreExecutable: false });
+  assert.deepEqual(runtime?.details, {
+    expectedVersion: "0.85.1",
+    version: "0.85.1",
+    nixStoreExecutable: false,
+  });
 });
 
 test("factory topology permits isolated multi-host workers without sharing mutation lanes", async () => {
