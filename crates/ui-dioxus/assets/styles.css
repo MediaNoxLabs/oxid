@@ -219,7 +219,7 @@ button {
 
 .app-header {
   display: grid;
-  grid-template-columns: minmax(4.75rem, 1fr) auto minmax(4.75rem, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-4);
   min-height: 4rem;
@@ -263,7 +263,7 @@ textarea:focus-visible {
 }
 
 .app-header__title strong {
-  max-width: 12rem;
+  max-width: 100%;
   overflow: hidden;
   color: var(--text-strong);
   font-size: var(--font-title);
@@ -338,9 +338,18 @@ textarea:focus-visible {
   color: var(--accent);
 }
 
+.app-header__leading,
 .app-header__actions {
   display: flex;
   align-items: center;
+}
+
+.app-header__leading {
+  justify-self: start;
+  min-width: 3rem;
+}
+
+.app-header__actions {
   justify-self: end;
   gap: var(--space-2);
 }
@@ -381,8 +390,9 @@ textarea:focus-visible {
 
 .back-action {
   display: inline-flex;
-  min-width: 4.75rem;
-  min-height: 2.75rem;
+  width: 3rem;
+  min-width: 3rem;
+  min-height: 3rem;
   align-items: center;
   justify-content: center;
   justify-self: end;
@@ -3498,4 +3508,17 @@ select:focus-visible {
   .primary-action {
     transition: none;
   }
+}
+
+.back-action__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+[dir="rtl"] .back-action__icon {
+  transform: rotate(180deg);
 }

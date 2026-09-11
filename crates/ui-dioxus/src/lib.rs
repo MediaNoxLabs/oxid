@@ -3792,22 +3792,7 @@ fn WalletApp() -> Element {
             PublicStandaloneGenesisBanner { state: public_genesis_notice_state }
             {demo_shell_banner}
             header { class: "app-header",
-                button {
-                    class: if header_menu() == HeaderMenu::ProfileSwitcher { "profile-shortcut active" } else { "profile-shortcut" },
-                    r#type: "button",
-                    aria_label: "Switch wallet profile; current profile {active_profile.display_name}",
-                    aria_controls: "profile-switcher-menu",
-                    aria_expanded: if header_menu() == HeaderMenu::ProfileSwitcher { "true" } else { "false" },
-                    aria_haspopup: "menu",
-                    title: "Switch wallet profile",
-                    onclick: move |_| header_menu.set(header_menu().toggle_profile_switcher()),
-                    "{profile_monogram}"
-                }
-                div { class: "app-header__title",
-                    strong { "{active_route.title()}" }
-                    small { "{brand.product_name()} {brand.tagline()}" }
-                }
-                div { class: "app-header__actions",
+                div { class: "app-header__leading",
                     if can_go_back {
                         button {
                             class: "back-action",
@@ -3817,9 +3802,26 @@ fn WalletApp() -> Element {
                                 navigation.write().pop();
                                 header_menu.set(HeaderMenu::Closed);
                             },
-                            span { aria_hidden: "true", "←" }
-                            span { "Back" }
+                            span { class: "back-action__icon", aria_hidden: "true", "←" }
+                            span { class: "back-action__label", "Back" }
                         }
+                    }
+                }
+                div { class: "app-header__title",
+                    strong { "{active_route.title()}" }
+                    small { "{brand.product_name()} {brand.tagline()}" }
+                }
+                div { class: "app-header__actions",
+                    button {
+                        class: if header_menu() == HeaderMenu::ProfileSwitcher { "profile-shortcut active" } else { "profile-shortcut" },
+                        r#type: "button",
+                        aria_label: "Switch wallet profile; current profile {active_profile.display_name}",
+                        aria_controls: "profile-switcher-menu",
+                        aria_expanded: if header_menu() == HeaderMenu::ProfileSwitcher { "true" } else { "false" },
+                        aria_haspopup: "menu",
+                        title: "Switch wallet profile",
+                        onclick: move |_| header_menu.set(header_menu().toggle_profile_switcher()),
+                        "{profile_monogram}"
                     }
                     GlobalMenuTrigger {
                         open: header_menu() == HeaderMenu::Global,
