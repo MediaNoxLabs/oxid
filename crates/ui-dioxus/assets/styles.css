@@ -492,14 +492,14 @@ textarea:focus-visible {
   -webkit-backdrop-filter: blur(22px);
 }
 
-.profile-sheet {
-  right: max(1rem, env(safe-area-inset-right));
-  left: auto;
+.profile-sheet,
+.global-menu {
+  inset-inline-end: max(1rem, env(safe-area-inset-right));
 }
 
-.global-menu {
-  right: max(1rem, env(safe-area-inset-right));
-  left: auto;
+[dir="rtl"] .profile-sheet,
+[dir="rtl"] .global-menu {
+  inset-inline-end: max(1rem, env(safe-area-inset-left));
 }
 
 .global-menu__heading {

@@ -24,7 +24,8 @@ test("responsive application navigation keeps one accessible leading Back action
   assert.match(styles, /\.back-action \{[\s\S]*?width: 3rem;[\s\S]*?min-height: 3rem;/);
   assert.match(styles, /\.app-header__title strong \{[\s\S]*?max-width: 100%;[\s\S]*?text-overflow: ellipsis/);
   assert.match(styles, /\[dir="rtl"\] \.back-action__icon/);
-  assert.match(styles, /\.profile-sheet \{[\s\S]*?right: max\(1rem, env\(safe-area-inset-right\)\);[\s\S]*?left: auto;/);
+  assert.match(styles, /\.profile-sheet,[\s\S]*?\.global-menu \{[\s\S]*?inset-inline-end: max\(1rem, env\(safe-area-inset-right\)\)/);
+  assert.match(styles, /\[dir="rtl"\] \.profile-sheet,[\s\S]*?inset-inline-end: max\(1rem, env\(safe-area-inset-left\)\)/);
   assert.match(design, /390.*430.*768/s);
   assert.match(design, /48dp.*44pt/s);
 
