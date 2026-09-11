@@ -317,6 +317,19 @@ impl WalletTransferPreview {
         self.state
     }
 
+    /// Replaces the adapter-generated authorization challenge before the
+    /// prepared preview is retained.
+    #[must_use]
+    pub fn with_authorization_challenge(
+        &self,
+        authorization_challenge: WalletTransactionAuthorizationChallenge,
+    ) -> Self {
+        Self {
+            authorization_challenge,
+            ..self.clone()
+        }
+    }
+
     #[must_use]
     pub fn with_state(&self, state: WalletTransactionDraftState) -> Self {
         let mut updated = self.clone();

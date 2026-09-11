@@ -5,7 +5,8 @@ use std::sync::Arc;
 use dioxus::prelude::*;
 use oxid_diagnostics_application::{
     CLEAR_LOCAL_DIAGNOSTICS_INTENT, ClearDiagnosticsCommand, ClearDiagnosticsUseCase,
-    DiagnosticSeverity, DiagnosticSnapshotView, GetDiagnosticSnapshotUseCase,
+    DiagnosticEventSinkPort, DiagnosticSeverity, DiagnosticSnapshotView,
+    GetDiagnosticSnapshotUseCase,
 };
 use oxid_wallet_application::WalletProfileView;
 
@@ -15,17 +16,27 @@ use super::{AccountPageState, WalletUiServices, load_account_page, run_ui_blocki
 /// Process-local, payload-free diagnostic use cases consumed by the
 /// Diagnostics page.
 pub struct DiagnosticsUiServices {
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    pub(super) events: Arc<dyn DiagnosticEventSinkPort>,
     pub(super) get: Arc<dyn GetDiagnosticSnapshotUseCase>,
     pub(super) clear: Arc<dyn ClearDiagnosticsUseCase>,
 }
 
 impl DiagnosticsUiServices {
     #[must_use]
-    pub const fn new(
+    pub fn new(
+        events: Arc<dyn DiagnosticEventSinkPort>,
         get: Arc<dyn GetDiagnosticSnapshotUseCase>,
         clear: Arc<dyn ClearDiagnosticsUseCase>,
     ) -> Self {
-        Self { get, clear }
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
+        let _ = events;
+        Self {
+            #[cfg(any(target_os = "ios", target_os = "android"))]
+            events,
+            get,
+            clear,
+        }
     }
 }
 
@@ -294,35 +305,20 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
             p { class: "card-eyebrow", "Secret-safe runtime health" }
             h2 { "Process-local diagnostics" }
             p { "Telemetry is off. Events use fixed codes, retain no payloads, and disappear when this process exits." }
-            div { class: "button-row",
-                button {
-                    class: "secondary-button",
-                    r#type: "button",
-                    onclick: move |_| {
+            DiagnosticEventControls {
+                loading: matches!(*diagnostic_state.read(), LocalDiagnosticsPageState::Loading),
+                on_refresh: move |_| {
                         let get = refresh_services.get_diagnostic_snapshot();
                         refresh_state.set(LocalDiagnosticsPageState::Loading);
                         spawn(async move {
                             refresh_state.set(load_diagnostic_snapshot(get).await);
                         });
-                    },
-                    "Refresh"
-                }
-                button {
-                    class: "secondary-button",
-                    r#type: "button",
-                    onclick: move |_| clear_confirmation.set(true),
-                    "Clear local events"
-                }
+                },
+                on_clear: move |_| clear_confirmation.set(true),
             }
             if clear_confirmation() {
-                div { class: "surface-card", role: "alertdialog", aria_label: "Confirm clearing local diagnostic events",
-                    h2 { "Clear retained events?" }
-                    p { "This removes the process-local event ring. It cannot be undone." }
-                    div { class: "button-row",
-                        button {
-                            class: "danger-action",
-                            r#type: "button",
-                            onclick: move |_| {
+                ClearDiagnosticsConfirmation {
+                    on_confirm: move |_| {
                                 let clear = clear_services.clear_diagnostics();
                                 let get = clear_services.get_diagnostic_snapshot();
                                 clear_confirmation.set(false);
@@ -330,16 +326,8 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
                                 spawn(async move {
                                     clear_state.set(clear_diagnostics_and_reload(clear, get).await);
                                 });
-                            },
-                            "Clear now"
-                        }
-                        button {
-                            class: "secondary-button",
-                            r#type: "button",
-                            onclick: move |_| clear_confirmation.set(false),
-                            "Keep events"
-                        }
-                    }
+                    },
+                    on_cancel: move |_| clear_confirmation.set(false),
                 }
             }
             div { class: "diagnostic-grid",
@@ -408,6 +396,181 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
     }
 }
 
+#[cfg(feature = "ui-profile-dev")]
+#[component]
+pub(super) fn DeveloperDiagnosticsPage() -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut diagnostic_state = use_signal(|| LocalDiagnosticsPageState::Loading);
+    let mut show_warnings = use_signal(|| true);
+    let mut show_errors = use_signal(|| true);
+    let mut event_query = use_signal(String::new);
+    let mut clear_confirmation = use_signal(|| false);
+    let load_services = services.clone();
+    use_effect(move || {
+        let get = load_services.get_diagnostic_snapshot();
+        spawn(async move {
+            diagnostic_state.set(load_diagnostic_snapshot(get).await);
+        });
+    });
+
+    let projection = project_diagnostics(&diagnostic_state.read());
+    let events = project_event_log(
+        &diagnostic_state.read(),
+        show_warnings(),
+        show_errors(),
+        &event_query(),
+    );
+    let refresh_services = services.clone();
+    let clear_services = services.clone();
+    let mut refresh_state = diagnostic_state;
+    let mut clear_state = diagnostic_state;
+    rsx! {
+        section { class: "page-heading",
+            p { class: "eyebrow", "Development tool" }
+            h1 { "Event log" }
+            p { "Bounded, payload-free events for this process only. Telemetry is off." }
+        }
+        section { class: "surface-card diagnostic-event-log", aria_label: "Recent diagnostic events",
+            DiagnosticEventControls {
+                loading: matches!(*diagnostic_state.read(), LocalDiagnosticsPageState::Loading),
+                on_refresh: move |_| {
+                        let get = refresh_services.get_diagnostic_snapshot();
+                        refresh_state.set(LocalDiagnosticsPageState::Loading);
+                        spawn(async move { refresh_state.set(load_diagnostic_snapshot(get).await); });
+                },
+                on_clear: move |_| clear_confirmation.set(true),
+            }
+            if clear_confirmation() {
+                ClearDiagnosticsConfirmation {
+                    on_confirm: move |_| {
+                                let clear = clear_services.clear_diagnostics();
+                                let get = clear_services.get_diagnostic_snapshot();
+                                clear_confirmation.set(false);
+                                clear_state.set(LocalDiagnosticsPageState::Loading);
+                                spawn(async move { clear_state.set(clear_diagnostics_and_reload(clear, get).await); });
+                    },
+                    on_cancel: move |_| clear_confirmation.set(false),
+                }
+            }
+            CapabilityStatus { name: "Bounded event ring", state: projection.summary, ready: projection.ready }
+            div { class: "diagnostic-event-filters",
+                label { class: "confirmation-check",
+                    input { r#type: "checkbox", checked: show_warnings(), onchange: move |event| show_warnings.set(event.checked()) }
+                    span { "Warnings" }
+                }
+                label { class: "confirmation-check",
+                    input { r#type: "checkbox", checked: show_errors(), onchange: move |event| show_errors.set(event.checked()) }
+                    span { "Errors" }
+                }
+            }
+            label { class: "network-field",
+                span { "Search fixed event codes" }
+                input { r#type: "search", value: "{event_query}", placeholder: "midnight.dust", oninput: move |event| event_query.set(event.value()) }
+            }
+            if events.is_empty() && projection.ready {
+                p { class: "field-hint", "No retained events match these filters." }
+            }
+            div { class: "diagnostic-grid",
+                for event in events {
+                    article { class: "capability-row", key: "developer-diagnostic-event-{event.sequence}",
+                        span { class: "capability-dot queued" }
+                        div { strong { "{event.code}" } p { "#{event.sequence} · {event.severity}" } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UtilityIconButtonKind {
+    Refresh,
+    Clear,
+}
+
+impl UtilityIconButtonKind {
+    const fn aria_label(self) -> &'static str {
+        match self {
+            Self::Refresh => "Refresh diagnostic events",
+            Self::Clear => "Clear local diagnostic events",
+        }
+    }
+
+    const fn icon(self) -> &'static str {
+        match self {
+            Self::Refresh => LUCIDE_REFRESH_CW,
+            Self::Clear => LUCIDE_TRASH_2,
+        }
+    }
+
+    const fn class_name(self) -> &'static str {
+        match self {
+            Self::Refresh => "utility-icon-button",
+            Self::Clear => "utility-icon-button utility-icon-button--danger",
+        }
+    }
+}
+
+// Lucide's ISC notice is already reproduced in THIRD_PARTY_NOTICES.md.
+const LUCIDE_REFRESH_CW: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-15.5-6.2L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 15.5 6.2L21 16"/><path d="M16 16h5v5"/></svg>"#;
+const LUCIDE_TRASH_2: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>"#;
+
+#[component]
+fn DiagnosticEventControls(
+    loading: bool,
+    on_refresh: EventHandler<MouseEvent>,
+    on_clear: EventHandler<MouseEvent>,
+) -> Element {
+    rsx! {
+        div { class: "diagnostic-event-controls", aria_label: "Diagnostic event utilities",
+            UtilityIconButton { kind: UtilityIconButtonKind::Refresh, disabled: loading, loading, on_click: on_refresh }
+            UtilityIconButton { kind: UtilityIconButtonKind::Clear, disabled: loading, loading: false, on_click: on_clear }
+        }
+    }
+}
+
+#[component]
+fn UtilityIconButton(
+    kind: UtilityIconButtonKind,
+    disabled: bool,
+    loading: bool,
+    on_click: EventHandler<MouseEvent>,
+) -> Element {
+    let label = if loading {
+        "Refreshing diagnostic events"
+    } else {
+        kind.aria_label()
+    };
+    rsx! {
+        button {
+            class: "{kind.class_name()}",
+            r#type: "button",
+            aria_label: "{label}",
+            title: "{label}",
+            disabled,
+            onclick: move |event| on_click.call(event),
+            span { class: if loading { "utility-icon-button__icon utility-icon-button__icon--loading" } else { "utility-icon-button__icon" }, aria_hidden: "true", dangerous_inner_html: "{kind.icon()}" }
+        }
+    }
+}
+
+#[component]
+fn ClearDiagnosticsConfirmation(
+    on_confirm: EventHandler<MouseEvent>,
+    on_cancel: EventHandler<MouseEvent>,
+) -> Element {
+    rsx! {
+        div { class: "surface-card", role: "alertdialog", aria_label: "Confirm clearing local diagnostic events",
+            h2 { "Clear retained events?" }
+            p { "This removes the process-local event ring. It cannot be undone." }
+            div { class: "button-row",
+                button { class: "danger-action", r#type: "button", onclick: move |event| on_confirm.call(event), "Clear now" }
+                button { class: "secondary-button", r#type: "button", onclick: move |event| on_cancel.call(event), "Keep events" }
+            }
+        }
+    }
+}
+
 #[component]
 fn CapabilityStatus(name: &'static str, state: String, ready: bool) -> Element {
     rsx! {
@@ -440,6 +603,28 @@ mod tests {
                 "OpenID4VCI 1.0 · standalone-portal",
             )
         );
+    }
+
+    #[test]
+    fn utility_icon_controls_keep_familiar_actions_accessible_and_distinct() {
+        assert_eq!(
+            UtilityIconButtonKind::Refresh.aria_label(),
+            "Refresh diagnostic events"
+        );
+        assert_eq!(
+            UtilityIconButtonKind::Clear.aria_label(),
+            "Clear local diagnostic events"
+        );
+        assert_eq!(
+            UtilityIconButtonKind::Refresh.class_name(),
+            "utility-icon-button"
+        );
+        assert_eq!(
+            UtilityIconButtonKind::Clear.class_name(),
+            "utility-icon-button utility-icon-button--danger"
+        );
+        assert!(UtilityIconButtonKind::Refresh.icon().contains("<svg"));
+        assert!(UtilityIconButtonKind::Clear.icon().contains("<svg"));
     }
     use std::{
         collections::VecDeque,

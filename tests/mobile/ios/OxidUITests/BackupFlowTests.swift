@@ -143,8 +143,8 @@ final class BackupFlowTests: XCTestCase {
     @MainActor
     private func createCompleteWallet(in application: XCUIApplication) {
         application.launch()
-        XCTAssertTrue(application.buttons["Create new wallet"].waitForExistence(timeout: 15))
-        application.buttons["Create new wallet"].tap()
+        XCTAssertTrue(application.buttons["Create private wallet"].waitForExistence(timeout: 15))
+        application.buttons["Create private wallet"].tap()
         let create = application.buttons["Create and continue"]
         XCTAssertTrue(create.waitForExistence(timeout: 15))
         create.tap()
@@ -159,13 +159,13 @@ final class BackupFlowTests: XCTestCase {
 
         application.buttons["Documents"].tap()
         application.buttons["Manage identities"].tap()
-        let createDid = application.buttons["Create standalone DID"]
+        let createDid = application.buttons["Create a DID"]
         XCTAssertTrue(createDid.waitForExistence(timeout: 15))
         createDid.tap()
         XCTAssertTrue(application.staticTexts["standalone-1"].waitForExistence(timeout: 30))
 
         application.buttons["Documents"].tap()
-        let offer = application.buttons["Use standalone demo offer"]
+        let offer = application.buttons["Use demo OID4VCI offer"]
         XCTAssertTrue(offer.waitForExistence(timeout: 15))
         offer.tap()
         let preview = application.buttons["Preview credential offer"]
@@ -296,7 +296,7 @@ final class BackupFlowTests: XCTestCase {
             XCTFail("complete wallet recovery failed: \(message)")
         }
         XCTAssertTrue(home.exists)
-        XCTAssertFalse(application.buttons["Create new wallet"].exists)
+        XCTAssertFalse(application.buttons["Create private wallet"].exists)
         XCTAssertTrue(
             application.staticTexts["My wallet"]
                 .waitForExistence(timeout: 30)

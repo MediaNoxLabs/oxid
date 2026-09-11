@@ -11,7 +11,7 @@ final class NativeCustodyTests: XCTestCase {
     func testNativeCompositionUsesDeviceCustodyOrFailsClosed() throws {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         application.launch()
-        let createWallet = application.buttons["Create new wallet"]
+        let createWallet = application.buttons["Create private wallet"]
         if createWallet.waitForExistence(timeout: 5) {
             XCTAssertTrue(
                 application.buttons["Restore from backup"].exists,

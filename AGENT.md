@@ -62,6 +62,9 @@ freshness, and exact required contexts.
 - Never log, persist, upload, or expose secrets, seed material, private keys,
   witnesses, raw credentials, or sensitive identifiers unless an accepted ADR
   explicitly defines the protected boundary.
+- Remote callers never define the prose used to approve a sensitive wallet
+  operation. Trusted adapters render application-derived structured previews,
+  and one authorization challenge is bound to one exact preview and use.
 - Keep unsafe Rust isolated to already-reviewed platform adapter boundaries.
   New unsafe code requires explicit review and an ADR-level justification.
 - Preserve immutable dependency revisions, committed `Cargo.lock`, generated

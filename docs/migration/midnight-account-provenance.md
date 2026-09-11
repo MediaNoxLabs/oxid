@@ -169,6 +169,32 @@ and devnet address
 Oxid does not commit or expose the derived scalar; ordinary DTOs and headless
 responses contain only the public address and opaque key reference.
 
+Issue #356 makes root format part of the protected-custody contract. A raw
+32-byte development root and the complete 64-byte seed produced by BIP-39 are
+separate typed variants; neither is inferred from byte length. BIP-32 receives
+the entire selected variant. Mobile sealed vault schema 2 and portable custody
+envelope 4 write an authenticated `raw_development` or `bip39` discriminator;
+legacy sealed-vault schema 1 and portable envelope 1 remain readable only as
+the development variant. New complete-wallet envelopes use version 5 while
+versions 2 and 3 remain readable.
+
+The pinned Wallet SDK revision above delegates `HDWallet.fromSeed` to
+`@scure/bip32` 2.2.0 and derives
+`m/44'/2400'/0'/<role>/0`. For the public 64-byte input `00 01 ... 3f`, its
+non-secret account-0/index-0 child vectors are:
+
+| Role | Child private bytes used only as a public compatibility vector |
+| --- | --- |
+| NIGHT external (0) | `d6caad4d4cea1fbfa517e21987afd41f5a3e94d10ab2ede8f8ec4c406c7a7000` |
+| NIGHT internal (1) | `abebe407d95d10aadaf3f47a141983ac6260fe561bd645cb8ee95c224aebcf85` |
+| DUST (2) | `dc3c0d97c2226001ff9617200a479bed68c089ddf600a589cd807fbe4ab74f0e` |
+| Zswap (3) | `d6d8202aa9bc52d6f7080c9ae3d2ec0ac3e673e54e97545a98d2c3cdd34dd2df` |
+| Metadata (4) | `88ce6aaf3a695993487458ab0c4410a7d0a72b48703521289d65dd64d72d87c9` |
+
+These values are fixtures, not owner material, and must never be reused for a
+funded wallet. Tests also change only byte 63 and compare against the 32-byte
+prefix to prove that neither truncation nor suffix omission can pass.
+
 Issue #18 and ADR-0033 extend the same protected account with its public
 shielded receive rail. The Zswap child is borrowed at
 `m/44'/2400'/<account>'/3/0`; official `midnight-zswap` key derivation produces

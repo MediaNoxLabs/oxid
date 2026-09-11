@@ -51,25 +51,27 @@ use oxid_protocol_application::{
 };
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationUseCase, AuthorizeWalletTransferUseCase,
-    CancelWalletDustRegistrationSubmissionUseCase, CancelWalletDustSyncUseCase,
-    CancelWalletShieldedSyncUseCase, CancelWalletTransferSubmissionUseCase,
+    CancelSelectedWalletRealmSyncUseCase, CancelWalletDustRegistrationSubmissionUseCase,
+    CancelWalletDustSyncUseCase, CancelWalletOnboardingUseCase, CancelWalletShieldedSyncUseCase,
+    CancelWalletTransferSubmissionUseCase, CompleteWalletOnboardingUseCase,
     CreateWalletProfileUseCase, DeleteWalletKeyUseCase, DeriveWalletAccountUseCase,
     ExportCompleteWalletBackupUseCase, ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase,
-    GetActiveWalletProfileUseCase, GetWalletAccountUseCase, GetWalletBackupReceiptUseCase,
-    GetWalletDustRegistrationStatusUseCase, GetWalletDustRegistrationUseCase,
-    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
-    GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
-    GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
-    ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesUseCase,
-    ListWalletTransferSubmissionsUseCase, LockWalletUseCase, PortableWalletBackupDocumentPort,
-    PrepareShieldedWalletTransferUseCase, PrepareWalletDustRegistrationUseCase,
+    GetActiveWalletProfileUseCase, GetSelectedWalletRealmSyncUseCase, GetWalletAccountUseCase,
+    GetWalletBackupReceiptUseCase, GetWalletDustRegistrationStatusUseCase,
+    GetWalletDustRegistrationUseCase, GetWalletDustSyncStatusUseCase,
+    GetWalletSecurityStatusUseCase, GetWalletShieldedSyncStatusUseCase,
+    GetWalletTransferDraftUseCase, GetWalletTransferSubmissionStatusUseCase,
+    InitializeWalletSecurityUseCase, ListWalletKeysUseCase, ListWalletNetworksUseCase,
+    ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase, LockWalletUseCase,
+    PortableWalletBackupDocumentPort, PrepareShieldedWalletTransferUseCase,
+    PrepareWalletDustRegistrationUseCase, PrepareWalletOnboardingUseCase,
     PrepareWalletTransferUseCase, ReconcileWalletDustRegistrationSubmissionUseCase,
     ReconcileWalletTransferSubmissionUseCase, RecordWalletBackupReceiptUseCase,
     RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupUseCase,
     RecoverWalletRootUseCase, SelectWalletNetworkUseCase, SelectWalletProfileUseCase,
     SignWalletDataUseCase, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
-    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
-    UnlockWalletUseCase,
+    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferUseCase,
+    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
 };
 
 /// Application capabilities shared by every incoming adapter.
@@ -104,6 +106,7 @@ pub struct ApplicationServices {
     pub(super) unlock_wallet: Arc<dyn UnlockWalletUseCase>,
     pub(super) lock_wallet: Arc<dyn LockWalletUseCase>,
     pub(super) wallet_root_recovery: Option<WalletRootRecoveryCapability>,
+    pub(super) wallet_onboarding: Option<WalletOnboardingCapability>,
     pub(super) export_portable_wallet_backup: Arc<dyn ExportPortableWalletBackupUseCase>,
     pub(super) recover_portable_wallet_backup: Arc<dyn RecoverPortableWalletBackupUseCase>,
     pub(super) export_complete_wallet_backup: Arc<dyn ExportCompleteWalletBackupUseCase>,
@@ -117,6 +120,9 @@ pub struct ApplicationServices {
     pub(super) derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
     pub(super) get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
     pub(super) sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+    pub(super) sync_selected_wallet_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
+    pub(super) get_selected_wallet_realm_sync: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+    pub(super) cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
     pub(super) get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
     pub(super) start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase>,
     pub(super) cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase>,
@@ -202,6 +208,52 @@ pub struct ApplicationServices {
     pub(super) passport_vault_call_contract_address_hex: Option<&'static str>,
     pub(super) passport_vault_state_persistence: &'static str,
     pub(super) compact_presentation_proof_available: bool,
+}
+
+/// Private-wallet onboarding bound to the one network selected by composition.
+#[derive(Clone)]
+pub struct WalletOnboardingCapability {
+    network_id: String,
+    prepare: Arc<dyn PrepareWalletOnboardingUseCase>,
+    complete: Arc<dyn CompleteWalletOnboardingUseCase>,
+    cancel: Arc<dyn CancelWalletOnboardingUseCase>,
+}
+
+impl WalletOnboardingCapability {
+    #[must_use]
+    pub(super) fn new(
+        network_id: String,
+        prepare: Arc<dyn PrepareWalletOnboardingUseCase>,
+        complete: Arc<dyn CompleteWalletOnboardingUseCase>,
+        cancel: Arc<dyn CancelWalletOnboardingUseCase>,
+    ) -> Self {
+        Self {
+            network_id,
+            prepare,
+            complete,
+            cancel,
+        }
+    }
+
+    #[must_use]
+    pub fn network_id(&self) -> &str {
+        &self.network_id
+    }
+
+    #[must_use]
+    pub fn prepare(&self) -> Arc<dyn PrepareWalletOnboardingUseCase> {
+        Arc::clone(&self.prepare)
+    }
+
+    #[must_use]
+    pub fn complete(&self) -> Arc<dyn CompleteWalletOnboardingUseCase> {
+        Arc::clone(&self.complete)
+    }
+
+    #[must_use]
+    pub fn cancel(&self) -> Arc<dyn CancelWalletOnboardingUseCase> {
+        Arc::clone(&self.cancel)
+    }
 }
 
 /// Owner-root recovery is present only when composition authenticated one
@@ -358,6 +410,16 @@ impl ApplicationServices {
         self.wallet_root_recovery.clone()
     }
 
+    #[must_use]
+    pub fn wallet_onboarding(&self) -> Option<WalletOnboardingCapability> {
+        self.wallet_onboarding.clone()
+    }
+
+    pub(super) fn with_wallet_onboarding(mut self, capability: WalletOnboardingCapability) -> Self {
+        self.wallet_onboarding = Some(capability);
+        self
+    }
+
     #[cfg(all(
         feature = "preprod-observation",
         any(target_os = "ios", target_os = "android")
@@ -433,6 +495,23 @@ impl ApplicationServices {
     #[must_use]
     pub fn sync_wallet_account(&self) -> Arc<dyn SyncWalletAccountUseCase> {
         Arc::clone(&self.sync_wallet_account)
+    }
+
+    #[must_use]
+    pub fn sync_selected_wallet_realm(&self) -> Arc<dyn SyncSelectedWalletRealmUseCase> {
+        Arc::clone(&self.sync_selected_wallet_realm)
+    }
+
+    #[must_use]
+    pub fn get_selected_wallet_realm_sync(&self) -> Arc<dyn GetSelectedWalletRealmSyncUseCase> {
+        Arc::clone(&self.get_selected_wallet_realm_sync)
+    }
+
+    #[must_use]
+    pub fn cancel_selected_wallet_realm_sync(
+        &self,
+    ) -> Arc<dyn CancelSelectedWalletRealmSyncUseCase> {
+        Arc::clone(&self.cancel_selected_wallet_realm_sync)
     }
 
     #[must_use]

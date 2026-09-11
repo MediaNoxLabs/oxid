@@ -607,7 +607,7 @@ if rg -a -q 'OXID_UI_PROFILE_DEVELOPMENT' "$release_binary"; then
   exit 1
 fi
 if rg -a -q \
-  'OXID_UI_PROFILE_DEMO|OXID_DEMO_BOOTSTRAP_DRAWER|Oxid Demo Wallet|Run full demo setup' \
+  'OXID_UI_PROFILE_DEMO|OXID_DEMO_BOOTSTRAP_DRAWER|Demo Wallet|Run full demo setup' \
   "$release_binary"; then
   echo "normal release binary contains demo-profile code or fixture markers" >&2
   exit 1
@@ -625,7 +625,7 @@ if rg -a -q 'OXID_STANDALONE_PORTAL_PROFILE' "$release_binary"; then
   exit 1
 fi
 if rg -a -q \
-  'OXID_PUBLIC_STANDALONE_GENESIS_WALLET|Public genesis wallet capability|publicly spendable test authority|Oxid Demo Wallet' \
+  'OXID_PUBLIC_STANDALONE_GENESIS_WALLET|Public genesis wallet capability|publicly spendable test authority|Demo Wallet' \
   "$release_binary"; then
   echo "normal release binary contains the public standalone genesis warning or marker" >&2
   exit 1

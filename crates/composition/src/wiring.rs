@@ -21,6 +21,7 @@ use oxid_adapter_backup_complete::{FileRecoveryJournal, UnavailableRecoveryJourn
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_backup_document_mobile::NativePortableWalletBackupDocuments;
 use oxid_adapter_backup_portable::PortableCustodyVaultPort;
+use oxid_adapter_custody_software::Bip39WalletMnemonic;
 use oxid_adapter_diagnostics_memory::InMemoryDiagnosticStore;
 use oxid_adapter_did_midnight::{StandaloneDidLifecycle, StandaloneDidResolver};
 use oxid_adapter_identity_ingress::StrictIdentityRequestRouter;
@@ -37,6 +38,10 @@ use oxid_adapter_openid4vp::{CredentialDisclosureCandidateSource, StandaloneOpen
 use oxid_adapter_passport_vault::NativePassportVaultContractStateDecoder;
 use oxid_adapter_passport_vault::StandalonePassportVaultCredential;
 use oxid_adapter_siopv2::{DidSelfIssuedIdentityProof, StandaloneSiopV2Verifier};
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+use oxid_adapter_storage_dev::DevelopmentWalletOnboardingAuthorization;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use oxid_adapter_storage_mobile::NativeMobileWalletOnboardingAuthorization;
 
 use super::identity::{
     CredentialIssuanceComposition, CredentialPresentationComposition, HeadlessCredentialProfile,
@@ -138,32 +143,35 @@ use oxid_wallet_application::UnavailableWalletDustRegistrationPort;
 use oxid_wallet_application::WalletDustRegistrationPort;
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationUseCase, AuthorizeWalletTransferUseCase,
-    CancelWalletDustRegistrationSubmissionUseCase, CancelWalletDustSyncUseCase,
-    CancelWalletShieldedSyncUseCase, CancelWalletTransferSubmissionUseCase,
-    CompleteWalletBackupService, CreateWalletProfileService, DeleteWalletKeyUseCase,
-    DeriveWalletAccountUseCase, ExportCompleteWalletBackupUseCase,
+    CancelSelectedWalletRealmSyncUseCase, CancelWalletDustRegistrationSubmissionUseCase,
+    CancelWalletDustSyncUseCase, CancelWalletShieldedSyncUseCase,
+    CancelWalletTransferSubmissionUseCase, CompleteWalletBackupService, CreateWalletProfileService,
+    DeleteWalletKeyUseCase, DeriveWalletAccountUseCase, ExportCompleteWalletBackupUseCase,
     ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase, GetActiveWalletProfileService,
-    GetWalletAccountUseCase, GetWalletBackupReceiptUseCase, GetWalletDustRegistrationStatusUseCase,
-    GetWalletDustRegistrationUseCase, GetWalletDustSyncStatusUseCase,
-    GetWalletSecurityStatusUseCase, GetWalletShieldedSyncStatusUseCase,
-    GetWalletTransferDraftUseCase, GetWalletTransferSubmissionStatusUseCase,
-    InitializeWalletSecurityUseCase, ListWalletKeysUseCase, ListWalletNetworksUseCase,
-    ListWalletProfilesService, ListWalletTransferSubmissionsUseCase, LockWalletUseCase,
-    PortableWalletBackupDocumentPort, PrepareShieldedWalletTransferUseCase,
-    PrepareWalletDustRegistrationUseCase, PrepareWalletTransferUseCase,
-    ReconcileWalletDustRegistrationSubmissionUseCase, ReconcileWalletTransferSubmissionUseCase,
-    RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupUseCase,
-    RecoverPortableWalletBackupUseCase, SelectWalletNetworkUseCase, SelectWalletProfileService,
+    GetSelectedWalletRealmSyncUseCase, GetWalletAccountUseCase, GetWalletBackupReceiptUseCase,
+    GetWalletDustRegistrationStatusUseCase, GetWalletDustRegistrationUseCase,
+    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
+    GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
+    GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
+    ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesService,
+    ListWalletTransferSubmissionsUseCase, LockWalletUseCase, PortableWalletBackupDocumentPort,
+    PrepareShieldedWalletTransferUseCase, PrepareWalletDustRegistrationUseCase,
+    PrepareWalletTransferUseCase, ReconcileWalletDustRegistrationSubmissionUseCase,
+    ReconcileWalletTransferSubmissionUseCase, RecordWalletBackupReceiptUseCase,
+    RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupUseCase,
+    SelectWalletNetworkUseCase, SelectWalletProfileService, SelectedWalletRealmSyncService,
     SignWalletDataUseCase, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
-    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
-    UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
-    WalletAccountReadPort, WalletAccountService, WalletBackupReceiptRepository,
-    WalletBackupReceiptService, WalletDustRegistrationService, WalletDustSyncPort,
-    WalletDustSyncService, WalletJubjubChallengeSigningPort, WalletKeyOperationPort,
-    WalletKeyService, WalletNetworkPort, WalletNetworkService, WalletPortableBackupPort,
+    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferUseCase,
+    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
+    WalletAccountDerivationPort, WalletAccountDerivationService, WalletAccountReadPort,
+    WalletAccountService, WalletBackupReceiptRepository, WalletBackupReceiptService,
+    WalletDustRegistrationService, WalletDustSyncPort, WalletDustSyncService,
+    WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
+    WalletNetworkService, WalletOnboardingService, WalletPortableBackupPort,
     WalletPortableBackupService, WalletProfileAssociationRepository, WalletProfileRepository,
-    WalletProtectionPort, WalletProtectionService, WalletShieldedSyncPort,
-    WalletShieldedSyncService, WalletTransactionPort, WalletTransactionService,
+    WalletProtectionPort, WalletProtectionService, WalletRootRecoveryPort,
+    WalletRootRecoveryService, WalletShieldedSyncPort, WalletShieldedSyncService,
+    WalletTransactionPort, WalletTransactionService,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -212,6 +220,43 @@ pub(super) fn complete_wallet_recovery_journal() -> Arc<dyn RecoveryJournalPort>
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub(super) fn complete_wallet_recovery_journal() -> Arc<dyn RecoveryJournalPort> {
     Arc::new(InMemoryRecoveryJournal::default())
+}
+
+/// Adds private-wallet onboarding only after the caller has selected the exact
+/// network bound by its profile composition.
+pub(super) fn with_wallet_onboarding<R, S, M>(
+    services: ApplicationServices,
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    network_id: String,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
+    S: WalletProtectionPort + WalletRootRecoveryPort + 'static,
+    M: WalletNetworkPort + WalletAccountDerivationPort + 'static,
+{
+    let Ok(recovery) =
+        WalletRootRecoveryService::new(repository, security, midnight, network_id.clone())
+    else {
+        return services;
+    };
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let authorization = Arc::new(NativeMobileWalletOnboardingAuthorization);
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let authorization = Arc::new(DevelopmentWalletOnboardingAuthorization);
+    let onboarding = Arc::new(WalletOnboardingService::new(
+        Arc::new(OsRandom),
+        Arc::new(Bip39WalletMnemonic),
+        Arc::new(recovery),
+        authorization,
+    ));
+    services.with_wallet_onboarding(super::services::WalletOnboardingCapability::new(
+        network_id,
+        onboarding.clone(),
+        onboarding.clone(),
+        onboarding,
+    ))
 }
 
 pub(super) fn compose_with_adapters<R, S, M>(
@@ -593,6 +638,7 @@ where
     let accounts = Arc::new(WalletAccountService::new(Arc::clone(&midnight)));
     let dust = Arc::new(WalletDustSyncService::new(Arc::clone(&midnight)));
     let shielded = Arc::new(WalletShieldedSyncService::new(Arc::clone(&midnight)));
+    let selected_realm_sync = Arc::new(SelectedWalletRealmSyncService::new(Arc::clone(&midnight)));
     #[cfg(not(target_arch = "wasm32"))]
     let dust_registrations = Arc::new(WalletDustRegistrationService::new(
         Arc::clone(&midnight),
@@ -872,6 +918,12 @@ where
     let derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase> = account_derivation;
     let get_wallet_account: Arc<dyn GetWalletAccountUseCase> = accounts.clone();
     let sync_wallet_account: Arc<dyn SyncWalletAccountUseCase> = accounts;
+    let sync_selected_wallet_realm: Arc<dyn SyncSelectedWalletRealmUseCase> =
+        selected_realm_sync.clone();
+    let get_selected_wallet_realm_sync: Arc<dyn GetSelectedWalletRealmSyncUseCase> =
+        selected_realm_sync.clone();
+    let cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase> =
+        selected_realm_sync;
     let get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase> = dust.clone();
     let start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase> = dust.clone();
     let cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase> = dust;
@@ -1015,6 +1067,7 @@ where
         unlock_wallet,
         lock_wallet,
         wallet_root_recovery: None,
+        wallet_onboarding: None,
         export_portable_wallet_backup,
         recover_portable_wallet_backup,
         export_complete_wallet_backup,
@@ -1028,6 +1081,9 @@ where
         derive_wallet_account,
         get_wallet_account,
         sync_wallet_account,
+        sync_selected_wallet_realm,
+        get_selected_wallet_realm_sync,
+        cancel_selected_wallet_realm_sync,
         get_wallet_dust_sync_status,
         start_wallet_dust_sync,
         cancel_wallet_dust_sync,

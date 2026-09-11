@@ -135,7 +135,7 @@ fn wait_for_shielded_sync(process: &mut ProcessHarness, prefix: &str) -> Value {
 }
 
 const LIVE_ADDRESS: &str =
-    "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
+    "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
 const NIGHT_TOKEN_TYPE: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 const FOREIGN_ZSWAP_OUTPUT: &str = "6d69646e696768743a6576656e745b76395d3a0400a90200000000000000000000000000000000000000000000000000000000000000000000000001c4ef4c0723d6e09b1cac903d1a717274bd2c0633cb9c3cf69047ce5655dc2be9017fe874ddd951049b65bb24127764920e85d04bd1ff724d390d4022b83a6157ed0000000000000000000000000000000000000000000000000000000000000000140019d316b8bc931a9fb308370cc43c6bf7fed9e484a5a7e961ec4b68fd9524e6020100";
 
@@ -222,7 +222,7 @@ fn spawn_indexer_fixture(
                 .as_str()
                 .expect("subscription address should be a string")
                 .to_owned();
-            assert!(subscribed_address.starts_with("mn_addr_devnet1"));
+            assert!(subscribed_address.starts_with("mn_addr_undeployed1"));
             assert_eq!(
                 subscribe["payload"]["variables"]["transactionId"],
                 expected_transaction_id
@@ -1600,7 +1600,7 @@ fn executable_accepts_private_checkpoints_only_for_supported_live_stacks() {
     let process = ProcessHarness::spawn_with_environment(
         &store.path,
         &[
-            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            ("OXID_MIDNIGHT_NETWORK_ID", "undeployed"),
             (
                 "OXID_MIDNIGHT_INDEXER_WS_URL",
                 "ws://127.0.0.1:18088/api/v1/graphql/ws",
@@ -1621,7 +1621,7 @@ fn executable_accepts_private_checkpoints_only_for_supported_live_stacks() {
     let process = ProcessHarness::spawn_with_environment(
         &store.path,
         &[
-            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            ("OXID_MIDNIGHT_NETWORK_ID", "undeployed"),
             (
                 "OXID_MIDNIGHT_INDEXER_WS_URL",
                 "ws://127.0.0.1:18088/api/v1/graphql/ws",
@@ -1664,7 +1664,7 @@ fn executable_rebuilds_resumes_and_refreshes_a_live_shielded_checkpoint() {
     let mut process = ProcessHarness::spawn_with_environment(
         &store.path,
         &[
-            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            ("OXID_MIDNIGHT_NETWORK_ID", "undeployed"),
             ("OXID_MIDNIGHT_INDEXER_WS_URL", &endpoint),
             ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
             ("OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH", shielded_path_text),
@@ -1992,7 +1992,7 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
     assert!(
         networks["result"]["networks"]
             .as_array()
-            .is_some_and(|items| items.len() == 7)
+            .is_some_and(|items| items.len() == 4)
     );
 
     let before_initialize = process.request(json!({
@@ -2210,6 +2210,28 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
         "params": { "networkId": "preprod" }
     }));
     assert_eq!(preprod["result"]["selectedNetworkId"], "preprod");
+    let preprod_unbound = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "preprod-unbound-account",
+        "method": "wallet.account.get",
+        "params": {}
+    }));
+    assert_eq!(preprod_unbound["error"]["code"], "capability_unavailable");
+    let preprod_derived = process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "preprod-account-derive",
+        "method": "wallet.account.derive",
+        "params": { "accountIndex": 0, "addressIndex": 0 }
+    }));
+    assert_eq!(
+        preprod_derived["ok"], true,
+        "unexpected response: {preprod_derived}"
+    );
+    assert!(
+        preprod_derived["result"]["account"]["receiveAddress"]["value"]
+            .as_str()
+            .is_some_and(|address| address.starts_with("mn_addr_preprod1"))
+    );
     let preprod_address = process.request(json!({
         "protocol": "oxid.headless.v1",
         "id": "preprod-address",
@@ -2240,7 +2262,7 @@ fn executable_derives_and_syncs_a_live_account_without_secret_input() {
     let mut process = ProcessHarness::spawn_with_environment(
         &store.path,
         &[
-            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            ("OXID_MIDNIGHT_NETWORK_ID", "undeployed"),
             ("OXID_MIDNIGHT_INDEXER_WS_URL", endpoint.as_str()),
             ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
         ],
@@ -2270,10 +2292,7 @@ fn executable_derives_and_syncs_a_live_account_without_secret_input() {
         "method": "wallet.account.get",
         "params": {}
     }));
-    assert_eq!(
-        watch_only["result"]["account"]["addresses"][0]["value"],
-        LIVE_ADDRESS
-    );
+    assert_eq!(watch_only["error"]["code"], "capability_unavailable");
     assert_eq!(
         process.request(json!({
             "protocol": "oxid.headless.v1",
@@ -2293,7 +2312,7 @@ fn executable_derives_and_syncs_a_live_account_without_secret_input() {
         .as_str()
         .expect("derived live address should be returned")
         .to_owned();
-    assert!(derived_address.starts_with("mn_addr_devnet1"));
+    assert!(derived_address.starts_with("mn_addr_undeployed1"));
 
     let before = process.request(json!({
         "protocol": "oxid.headless.v1",
@@ -2301,7 +2320,7 @@ fn executable_derives_and_syncs_a_live_account_without_secret_input() {
         "method": "wallet.account.get",
         "params": {}
     }));
-    assert_eq!(before["result"]["account"]["networkId"], "devnet");
+    assert_eq!(before["result"]["account"]["networkId"], "undeployed");
     assert_eq!(before["result"]["account"]["source"], "live");
     assert_eq!(before["result"]["account"]["sync"]["state"], "never_synced");
     assert_eq!(
@@ -2320,7 +2339,11 @@ fn executable_derives_and_syncs_a_live_account_without_secret_input() {
     assert_eq!(connected["result"]["account"]["sync"]["state"], "synced");
     assert_eq!(connected["result"]["account"]["sync"]["currentCursor"], 2);
     assert_eq!(connected["result"]["account"]["sync"]["targetCursor"], 2);
-    assert_eq!(connected["result"]["account"]["sync"]["chainTipHeight"], 42);
+    assert_eq!(
+        connected["result"]["account"]["sync"]["chainTipHeight"],
+        Value::Null,
+        "a WebSocket-only indexer fixture must not present the latest wallet transaction as the authoritative network tip"
+    );
     assert_eq!(
         connected["result"]["account"]["balances"][0]["atomicUnits"],
         "2500000"
@@ -2364,7 +2387,7 @@ fn executable_derives_and_syncs_a_live_account_without_secret_input() {
 }
 
 #[test]
-fn executable_restores_resumes_and_stalls_a_public_account_checkpoint() {
+fn executable_does_not_restore_a_public_account_checkpoint_without_custody() {
     let store = TestStore::new();
     let checkpoint_path = store.root.join("midnight-account-checkpoints.json");
     let checkpoint = checkpoint_path
@@ -2375,7 +2398,7 @@ fn executable_restores_resumes_and_stalls_a_public_account_checkpoint() {
     let mut first = ProcessHarness::spawn_with_environment(
         &store.path,
         &[
-            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
+            ("OXID_MIDNIGHT_NETWORK_ID", "undeployed"),
             ("OXID_MIDNIGHT_INDEXER_WS_URL", first_endpoint.as_str()),
             ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
             ("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH", checkpoint),
@@ -2400,6 +2423,24 @@ fn executable_restores_resumes_and_stalls_a_public_account_checkpoint() {
         }))["ok"],
         true
     );
+    assert_eq!(
+        first.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": "checkpoint-security-initialize",
+            "method": "wallet.security.initialize",
+            "params": {}
+        }))["result"]["security"]["state"],
+        "unlocked"
+    );
+    assert_eq!(
+        first.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": "checkpoint-account-derive",
+            "method": "wallet.account.derive",
+            "params": {}
+        }))["ok"],
+        true
+    );
     let synchronized = first.request(json!({
         "protocol": "oxid.headless.v1",
         "id": "checkpoint-sync",
@@ -2420,12 +2461,11 @@ fn executable_restores_resumes_and_stalls_a_public_account_checkpoint() {
         .expect("initial indexer fixture should finish cleanly");
     assert!(checkpoint_path.is_file());
 
-    let (second_endpoint, second_server) = spawn_indexer_fixture(3, true);
     let mut second = ProcessHarness::spawn_with_environment(
         &store.path,
         &[
-            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
-            ("OXID_MIDNIGHT_INDEXER_WS_URL", second_endpoint.as_str()),
+            ("OXID_MIDNIGHT_NETWORK_ID", "undeployed"),
+            ("OXID_MIDNIGHT_INDEXER_WS_URL", first_endpoint.as_str()),
             ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
             ("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH", checkpoint),
         ],
@@ -2436,79 +2476,14 @@ fn executable_restores_resumes_and_stalls_a_public_account_checkpoint() {
         "method": "wallet.account.get",
         "params": {}
     }));
-    assert_eq!(restored["result"]["account"]["source"], "cached");
-    assert_eq!(restored["result"]["account"]["sync"]["state"], "synced");
-    assert_eq!(restored["result"]["account"]["sync"]["currentCursor"], 2);
-    assert_eq!(
-        restored["result"]["account"]["balances"][0]["atomicUnits"],
-        "2500000"
-    );
+    assert_eq!(restored["error"]["code"], "failed_precondition");
 
-    let resumed = second.request(json!({
+    let refused_sync = second.request(json!({
         "protocol": "oxid.headless.v1",
-        "id": "checkpoint-resume",
+        "id": "checkpoint-sync-without-custody",
         "method": "wallet.connect",
         "params": {}
     }));
-    assert_eq!(resumed["result"]["account"]["source"], "live");
-    assert_eq!(resumed["result"]["account"]["sync"]["currentCursor"], 3);
-    assert_eq!(resumed["result"]["account"]["sync"]["chainTipHeight"], 43);
-    assert_eq!(
-        resumed["result"]["account"]["balances"][0]["atomicUnits"],
-        "1000000"
-    );
-    assert_eq!(
-        resumed["result"]["account"]["transactions"]
-            .as_array()
-            .map(Vec::len),
-        Some(3)
-    );
+    assert_eq!(refused_sync["error"]["code"], "failed_precondition");
     second.quit();
-    second_server
-        .join()
-        .expect("incremental indexer fixture should finish cleanly");
-
-    let mut offline = ProcessHarness::spawn_with_environment(
-        &store.path,
-        &[
-            ("OXID_MIDNIGHT_NETWORK_ID", "devnet"),
-            ("OXID_MIDNIGHT_INDEXER_WS_URL", second_endpoint.as_str()),
-            ("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", LIVE_ADDRESS),
-            ("OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH", checkpoint),
-        ],
-    );
-    let offline_cached = offline.request(json!({
-        "protocol": "oxid.headless.v1",
-        "id": "checkpoint-offline-read",
-        "method": "wallet.balance.snapshot",
-        "params": {}
-    }));
-    assert_eq!(offline_cached["result"]["source"], "cached");
-    assert_eq!(offline_cached["result"]["sync"]["currentCursor"], 3);
-    assert_eq!(
-        offline_cached["result"]["balances"][0]["atomicUnits"],
-        "1000000"
-    );
-
-    let failed = offline.request(json!({
-        "protocol": "oxid.headless.v1",
-        "id": "checkpoint-offline-sync",
-        "method": "wallet.connect",
-        "params": {}
-    }));
-    assert_eq!(failed["error"]["code"], "capability_unavailable");
-    let stalled = offline.request(json!({
-        "protocol": "oxid.headless.v1",
-        "id": "checkpoint-stalled",
-        "method": "wallet.account.get",
-        "params": {}
-    }));
-    assert_eq!(stalled["result"]["account"]["source"], "cached");
-    assert_eq!(stalled["result"]["account"]["sync"]["state"], "stalled");
-    assert_eq!(stalled["result"]["account"]["sync"]["currentCursor"], 3);
-    assert_eq!(
-        stalled["result"]["account"]["balances"][0]["atomicUnits"],
-        "1000000"
-    );
-    offline.quit();
 }

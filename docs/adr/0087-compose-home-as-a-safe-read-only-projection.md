@@ -7,6 +7,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/dioxus-wallet/src/app.rs`
 - Tracking: issues #2, #65, and #79
 - Implementation state: Home projects existing safe account, security, shielded-sync, credential, and Passport Vault views while Wallet retains every operational control
+- Amended by: ADR-0106
 
 ## Context
 

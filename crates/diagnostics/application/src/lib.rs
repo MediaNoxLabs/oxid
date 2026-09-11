@@ -29,6 +29,7 @@ pub enum DiagnosticCode {
     MidnightTransferWorkerTerminated,
     MidnightTransferWorkerSpawnFailed,
     MidnightContractCallWorkerPanicked,
+    ScreenPrivacyActivationFailed,
 }
 
 impl DiagnosticCode {
@@ -49,6 +50,7 @@ impl DiagnosticCode {
             Self::MidnightTransferWorkerTerminated => "midnight.transfer.worker_terminated",
             Self::MidnightTransferWorkerSpawnFailed => "midnight.transfer.worker_spawn_failed",
             Self::MidnightContractCallWorkerPanicked => "midnight.vault_call.worker_panicked",
+            Self::ScreenPrivacyActivationFailed => "platform.screen_privacy.activation_failed",
         }
     }
 }
@@ -391,5 +393,9 @@ mod tests {
             "midnight.dust.sync.worker_panicked"
         );
         assert_eq!(DiagnosticSeverity::Error.as_str(), "error");
+        assert_eq!(
+            DiagnosticCode::ScreenPrivacyActivationFailed.as_str(),
+            "platform.screen_privacy.activation_failed"
+        );
     }
 }

@@ -207,7 +207,7 @@ fn every_checked_in_dispatch_name_routes_and_manifest_vocabulary_is_exact() {
     let dispatch_methods = vocabulary["dispatchMethods"]
         .as_array()
         .expect("dispatchMethods should be an array");
-    assert_eq!(dispatch_methods.len(), 107);
+    assert_eq!(dispatch_methods.len(), 110);
 
     let expected_dispatch = dispatch_methods
         .iter()

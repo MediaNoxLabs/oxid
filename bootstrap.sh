@@ -23,6 +23,10 @@ usage() {
     "-- to run one command inside the development shell."
 }
 
+readonly nix_daemon_profile_bin="/nix/var/nix/profiles/default/bin"
+if ! command -v nix >/dev/null 2>&1 && [[ -x "$nix_daemon_profile_bin/nix" ]]; then
+  export PATH="$nix_daemon_profile_bin:$PATH"
+fi
 if ! command -v nix >/dev/null 2>&1; then
   echo "Nix is required; install it with flakes enabled before bootstrapping Oxid." >&2
   exit 1

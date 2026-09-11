@@ -1,4 +1,4 @@
-# ADR-0106: Adopt a seedless UX with passkey recovery
+# ADR-0108: Adopt a seedless UX with passkey recovery
 
 - Status: Proposed
 - Date: 2026-09-08

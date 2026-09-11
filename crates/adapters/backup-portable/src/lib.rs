@@ -19,7 +19,7 @@ use oxid_foundation::UnixTimestampMillis;
 use oxid_platform_ports::RandomPort;
 use oxid_wallet_application::{
     PortableWalletBackup, WalletHdPath, WalletHdPathComponent, WalletPortableBackupPortError,
-    WalletRecoverySecret,
+    WalletRecoverySecret, WalletRootSeed, WalletRootSeedKind,
 };
 use oxid_wallet_domain::{
     PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyDescriptor, WalletKeyLabel, WalletKeyPurpose,
@@ -30,9 +30,11 @@ use subtle::ConstantTimeEq as _;
 use zeroize::{Zeroize as _, Zeroizing};
 
 const MAGIC: &[u8; 8] = b"OXIDBAK1";
-const CUSTODY_FORMAT_VERSION: u16 = 1;
+const LEGACY_CUSTODY_FORMAT_VERSION: u16 = 1;
 const LEGACY_COMPLETE_WALLET_FORMAT_VERSION: u16 = 2;
-const COMPLETE_WALLET_FORMAT_VERSION: u16 = 3;
+const LEGACY_COMPLETE_WALLET_FORMAT_VERSION_V3: u16 = 3;
+const CUSTODY_FORMAT_VERSION: u16 = 4;
+const COMPLETE_WALLET_FORMAT_VERSION: u16 = 5;
 const KDF_ARGON2ID: u8 = 1;
 const AEAD_XCHACHA20_POLY1305: u8 = 1;
 const LEGACY_ARGON2_POLICY: Argon2Policy = Argon2Policy {
@@ -65,10 +67,12 @@ struct Argon2Policy {
 
 const fn argon2_policy_for_format(format_version: u16) -> Option<Argon2Policy> {
     match format_version {
-        CUSTODY_FORMAT_VERSION | LEGACY_COMPLETE_WALLET_FORMAT_VERSION => {
-            Some(LEGACY_ARGON2_POLICY)
+        LEGACY_CUSTODY_FORMAT_VERSION
+        | LEGACY_COMPLETE_WALLET_FORMAT_VERSION
+        | CUSTODY_FORMAT_VERSION => Some(LEGACY_ARGON2_POLICY),
+        LEGACY_COMPLETE_WALLET_FORMAT_VERSION_V3 | COMPLETE_WALLET_FORMAT_VERSION => {
+            Some(COMPLETE_WALLET_ARGON2_POLICY)
         }
-        COMPLETE_WALLET_FORMAT_VERSION => Some(COMPLETE_WALLET_ARGON2_POLICY),
         _ => None,
     }
 }
@@ -161,7 +165,7 @@ impl fmt::Debug for PortableKeyMaterialRef<'_> {
 pub struct PortableCustodyVault {
     profile_id: WalletProfileId,
     exported_at_millis: u64,
-    root_seed: Zeroizing<[u8; 32]>,
+    root_seed: WalletRootSeed,
     keys: Vec<PortableCustodyKey>,
 }
 
@@ -172,7 +176,20 @@ impl PortableCustodyVault {
         root_seed: [u8; 32],
         keys: Vec<PortableCustodyKey>,
     ) -> Result<Self, WalletPortableBackupPortError> {
-        let root_seed = Zeroizing::new(root_seed);
+        Self::new_with_root(
+            profile_id,
+            exported_at_millis,
+            WalletRootSeed::from_raw_development(root_seed),
+            keys,
+        )
+    }
+
+    pub fn new_with_root(
+        profile_id: WalletProfileId,
+        exported_at_millis: u64,
+        root_seed: WalletRootSeed,
+        keys: Vec<PortableCustodyKey>,
+    ) -> Result<Self, WalletPortableBackupPortError> {
         if keys.len() > MAX_KEYS {
             return Err(WalletPortableBackupPortError::InvalidPackage);
         }
@@ -210,8 +227,18 @@ impl PortableCustodyVault {
     }
 
     #[must_use]
-    pub fn root_seed(&self) -> &[u8; 32] {
-        &self.root_seed
+    pub fn root_seed(&self) -> &[u8] {
+        self.root_seed.expose_for_protected_use()
+    }
+
+    #[must_use]
+    pub const fn root_seed_kind(&self) -> WalletRootSeedKind {
+        self.root_seed.kind()
+    }
+
+    #[must_use]
+    pub fn copy_root_seed_for_protected_import(&self) -> WalletRootSeed {
+        self.root_seed.copy_for_protected_import()
     }
 
     #[must_use]
@@ -224,6 +251,9 @@ impl PortableCustodyVault {
     #[must_use]
     pub fn matches_recovered_state(&self, other: &Self) -> bool {
         if self.profile_id != other.profile_id || self.keys.len() != other.keys.len() {
+            return false;
+        }
+        if self.root_seed_kind() != other.root_seed_kind() {
             return false;
         }
         let mut matches = self.root_seed().ct_eq(other.root_seed());
@@ -387,7 +417,11 @@ pub fn open_portable_custody(
     recovery_secret: &WalletRecoverySecret,
     expected_profile_id: &WalletProfileId,
 ) -> Result<PortableCustodyVault, WalletPortableBackupPortError> {
-    let plaintext = open_payload(backup, recovery_secret, &[CUSTODY_FORMAT_VERSION])?;
+    let plaintext = open_payload(
+        backup,
+        recovery_secret,
+        &[LEGACY_CUSTODY_FORMAT_VERSION, CUSTODY_FORMAT_VERSION],
+    )?;
     let vault = decode_custody(&plaintext)?;
     if vault.profile_id() != expected_profile_id {
         return Err(WalletPortableBackupPortError::WrongProfile);
@@ -425,6 +459,7 @@ pub fn open_complete_wallet_archive(
         recovery_secret,
         &[
             LEGACY_COMPLETE_WALLET_FORMAT_VERSION,
+            LEGACY_COMPLETE_WALLET_FORMAT_VERSION_V3,
             COMPLETE_WALLET_FORMAT_VERSION,
         ],
     )?;
@@ -768,13 +803,70 @@ fn decode_header(bytes: &[u8]) -> Result<DecodedHeader, WalletPortableBackupPort
 struct WireVault {
     profile_id: String,
     exported_at_millis: u64,
-    root_seed: [u8; 32],
+    root_seed: WireRootSeed,
     keys: Vec<WireKey>,
 }
 
-impl Drop for WireVault {
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum WireRootSeed {
+    Typed(TypedWireRootSeed),
+    Legacy([u8; 32]),
+}
+
+impl Drop for WireRootSeed {
     fn drop(&mut self) {
-        self.root_seed.zeroize();
+        match self {
+            Self::Typed(root) => root.bytes.zeroize(),
+            Self::Legacy(root) => root.zeroize(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TypedWireRootSeed {
+    kind: WireRootSeedKind,
+    bytes: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum WireRootSeedKind {
+    RawDevelopment,
+    Bip39,
+}
+
+impl WireRootSeed {
+    fn from_root(root: &WalletRootSeed) -> Self {
+        let kind = match root.kind() {
+            WalletRootSeedKind::RawDevelopment => WireRootSeedKind::RawDevelopment,
+            WalletRootSeedKind::Bip39 => WireRootSeedKind::Bip39,
+        };
+        Self::Typed(TypedWireRootSeed {
+            kind,
+            bytes: root.expose_for_protected_use().to_vec(),
+        })
+    }
+
+    fn to_root(&self) -> Result<WalletRootSeed, WalletPortableBackupPortError> {
+        match self {
+            Self::Legacy(root) => Ok(WalletRootSeed::from_raw_development(*root)),
+            Self::Typed(root) => match root.kind {
+                WireRootSeedKind::RawDevelopment => root
+                    .bytes
+                    .as_slice()
+                    .try_into()
+                    .map(WalletRootSeed::from_raw_development)
+                    .map_err(|_| WalletPortableBackupPortError::InvalidPackage),
+                WireRootSeedKind::Bip39 => root
+                    .bytes
+                    .as_slice()
+                    .try_into()
+                    .map(WalletRootSeed::from_bip39_seed)
+                    .map_err(|_| WalletPortableBackupPortError::InvalidPackage),
+            },
+        }
     }
 }
 
@@ -783,7 +875,7 @@ impl WireVault {
         Self {
             profile_id: vault.profile_id.as_str().to_owned(),
             exported_at_millis: vault.exported_at_millis,
-            root_seed: *vault.root_seed,
+            root_seed: WireRootSeed::from_root(&vault.root_seed),
             keys: vault.keys.iter().map(WireKey::from_key).collect(),
         }
     }
@@ -796,13 +888,18 @@ impl WireVault {
             .iter()
             .map(WireKey::to_key)
             .collect::<Result<Vec<_>, _>>()?;
-        PortableCustodyVault::new(profile_id, self.exported_at_millis, self.root_seed, keys)
-            .map_err(|error| match error {
-                WalletPortableBackupPortError::Conflict => {
-                    WalletPortableBackupPortError::InvalidPackage
-                }
-                other => other,
-            })
+        PortableCustodyVault::new_with_root(
+            profile_id,
+            self.exported_at_millis,
+            self.root_seed.to_root()?,
+            keys,
+        )
+        .map_err(|error| match error {
+            WalletPortableBackupPortError::Conflict => {
+                WalletPortableBackupPortError::InvalidPackage
+            }
+            other => other,
+        })
     }
 }
 
@@ -1095,6 +1192,54 @@ mod tests {
                 .expect_err("profile mismatch must fail"),
             WalletPortableBackupPortError::WrongProfile
         );
+    }
+
+    #[test]
+    fn complete_bip39_seed_round_trips_with_an_explicit_discriminator() {
+        let mut seed = [0_u8; 64];
+        for (index, byte) in seed.iter_mut().enumerate() {
+            *byte = u8::try_from(index).expect("fixture index fits");
+        }
+        let vault = PortableCustodyVault::new_with_root(
+            profile("profile_bip39"),
+            1_700_000_000_001,
+            WalletRootSeed::from_bip39_seed(seed),
+            Vec::new(),
+        )
+        .expect("typed vault");
+        let backup = seal_portable_custody(&vault, &secret(), &IncrementingRandom::new())
+            .expect("vault should encrypt");
+        assert_eq!(
+            u16::from_be_bytes([backup.as_bytes()[8], backup.as_bytes()[9]]),
+            CUSTODY_FORMAT_VERSION
+        );
+        let opened = open_portable_custody(&backup, &secret(), &profile("profile_bip39"))
+            .expect("vault should decrypt");
+        assert_eq!(opened.root_seed_kind(), WalletRootSeedKind::Bip39);
+        assert_eq!(opened.root_seed(), &seed);
+        assert!(!format!("{opened:?}").contains("00010203"));
+    }
+
+    #[test]
+    fn legacy_v1_custody_payload_remains_an_explicit_development_root() {
+        let plaintext = serde_json::to_vec(&serde_json::json!({
+            "profile_id": "profile_legacy",
+            "exported_at_millis": 1_700_000_000_001_u64,
+            "root_seed": vec![7_u8; 32],
+            "keys": [],
+        }))
+        .expect("legacy fixture");
+        let backup = seal_payload(
+            LEGACY_CUSTODY_FORMAT_VERSION,
+            &plaintext,
+            &secret(),
+            &IncrementingRandom::new(),
+        )
+        .expect("legacy envelope");
+        let opened = open_portable_custody(&backup, &secret(), &profile("profile_legacy"))
+            .expect("legacy custody remains readable");
+        assert_eq!(opened.root_seed_kind(), WalletRootSeedKind::RawDevelopment);
+        assert_eq!(opened.root_seed(), &[7; 32]);
     }
 
     #[test]

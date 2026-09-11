@@ -136,6 +136,24 @@
           ]
         },
         {
+          "name": "developer-tools",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/developer_tools"
+          ]
+        },
+        {
+          "name": "development-notices",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/developer_notices"
+          ]
+        },
+        {
+          "name": "header-menu",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/header_menu"
+          ]
+        },
+        {
           "name": "proof-benchmark",
           "modulePathPrefixes": [
             "crates/ui-dioxus/src/proof_benchmark"
@@ -165,10 +183,34 @@
           "crates/ui-dioxus/src/wallet_root_recovery"
         ]
       },
+      {
+        "name": "wallet-onboarding",
+        "modulePathPrefixes": [
+          "crates/ui-dioxus/src/wallet_onboarding"
+        ]
+      },
         {
           "name": "profile-guard",
           "modulePathPrefixes": [
             "crates/ui-dioxus/src/profile_guard"
+          ]
+        },
+        {
+          "name": "profile-quick-switcher",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/profile_quick_switcher"
+          ]
+        },
+        {
+          "name": "screen-privacy",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/screen_privacy"
+          ]
+        },
+        {
+          "name": "selected-realm-sync",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/selected_realm_sync"
           ]
         },
         {

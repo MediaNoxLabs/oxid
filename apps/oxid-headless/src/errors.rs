@@ -741,6 +741,9 @@ pub(super) fn invalid_empty_params(id: Option<String>, method: &'static str) -> 
         }
         "wallet.connect" => "wallet.connect does not accept parameters",
         "wallet.sync.force" => "wallet.sync.force does not accept parameters",
+        "wallet.realm.sync.status" => "wallet.realm.sync.status does not accept parameters",
+        "wallet.realm.sync.start" => "wallet.realm.sync.start does not accept parameters",
+        "wallet.realm.sync.cancel" => "wallet.realm.sync.cancel does not accept parameters",
         "wallet.dust.sync.status" => "wallet.dust.sync.status does not accept parameters",
         "wallet.dust.sync.start" => "wallet.dust.sync.start does not accept parameters",
         "wallet.dust.sync.cancel" => "wallet.dust.sync.cancel does not accept parameters",

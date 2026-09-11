@@ -686,9 +686,9 @@ mod tests {
         let key = public_key(7);
         let expected = checkpoint(INITIAL_PARAMETERS.dust);
 
-        save_checkpoint(&store, &network("devnet"), &key, &expected).expect("checkpoint saves");
+        save_checkpoint(&store, &network("undeployed"), &key, &expected).expect("checkpoint saves");
         let restored = store
-            .load(&network("devnet"), &key, INITIAL_PARAMETERS.dust)
+            .load(&network("undeployed"), &key, INITIAL_PARAMETERS.dust)
             .expect("checkpoint loads")
             .expect("matching checkpoint exists");
 
@@ -704,7 +704,11 @@ mod tests {
         );
         assert!(
             store
-                .load(&network("devnet"), &public_key(8), INITIAL_PARAMETERS.dust)
+                .load(
+                    &network("undeployed"),
+                    &public_key(8),
+                    INITIAL_PARAMETERS.dust
+                )
                 .expect("wrong key remains a clean miss")
                 .is_none()
         );
@@ -712,7 +716,7 @@ mod tests {
         changed_parameters.night_dust_ratio += 1;
         assert!(
             store
-                .load(&network("devnet"), &key, changed_parameters)
+                .load(&network("undeployed"), &key, changed_parameters)
                 .expect("changed parameters remain a clean miss")
                 .is_none()
         );
@@ -737,11 +741,11 @@ mod tests {
         let store = BinaryMidnightDustCheckpointStore::new(config.clone());
         let mut incomplete = checkpoint(INITIAL_PARAMETERS.dust);
         incomplete.target_cursor = 43;
-        save_checkpoint(&store, &network("devnet"), &public_key(7), &incomplete)
+        save_checkpoint(&store, &network("undeployed"), &public_key(7), &incomplete)
             .expect("partial checkpoint remains resumable");
         assert_eq!(
             store
-                .load_latest(&network("devnet"), &public_key(7))
+                .load_latest(&network("undeployed"), &public_key(7))
                 .expect("latest checkpoint loads")
                 .expect("partial checkpoint exists")
                 .target_cursor,
@@ -757,13 +761,17 @@ mod tests {
         .expect("fixture permissions are private");
         assert_eq!(
             store
-                .load(&network("devnet"), &public_key(7), INITIAL_PARAMETERS.dust)
+                .load(
+                    &network("undeployed"),
+                    &public_key(7),
+                    INITIAL_PARAMETERS.dust
+                )
                 .err(),
             Some(DustCheckpointStoreError::InvalidData)
         );
         save_checkpoint(
             &store,
-            &network("devnet"),
+            &network("undeployed"),
             &public_key(7),
             &checkpoint(INITIAL_PARAMETERS.dust),
         )
@@ -777,7 +785,11 @@ mod tests {
             .expect("oversized fixture is allocated sparsely");
         assert_eq!(
             store
-                .load(&network("devnet"), &public_key(7), INITIAL_PARAMETERS.dust)
+                .load(
+                    &network("undeployed"),
+                    &public_key(7),
+                    INITIAL_PARAMETERS.dust
+                )
                 .err(),
             Some(DustCheckpointStoreError::InvalidData)
         );
@@ -796,7 +808,11 @@ mod tests {
         let store = BinaryMidnightDustCheckpointStore::new(config.clone());
         assert_eq!(
             store
-                .load(&network("devnet"), &public_key(7), INITIAL_PARAMETERS.dust)
+                .load(
+                    &network("undeployed"),
+                    &public_key(7),
+                    INITIAL_PARAMETERS.dust
+                )
                 .err(),
             Some(DustCheckpointStoreError::InvalidData)
         );
@@ -806,7 +822,7 @@ mod tests {
         assert_eq!(
             save_checkpoint(
                 &store,
-                &network("devnet"),
+                &network("undeployed"),
                 &public_key(7),
                 &checkpoint(INITIAL_PARAMETERS.dust),
             )

@@ -10,13 +10,21 @@ mod brand;
 mod deployment_profile;
 #[cfg(feature = "desktop-test-click-driver")]
 mod desktop_test_driver;
+mod developer_notices;
+#[cfg(feature = "ui-profile-dev")]
+mod developer_tools;
 mod diagnostics;
 mod dids;
+mod header_menu;
 mod labels;
 mod passport_vault;
 mod profile_guard;
+mod profile_quick_switcher;
 #[cfg(feature = "proof-benchmark")]
 mod proof_benchmark;
+mod screen_privacy;
+mod selected_realm_sync;
+mod wallet_onboarding;
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
 
@@ -28,6 +36,9 @@ use assets_page::{wallet_account_activation_available, wallet_write_actions_avai
 pub use brand::{BrandProfile, SecurityCopySnapshot, security_copy_snapshot};
 #[cfg(feature = "standalone-deployment-profile")]
 use deployment_profile::DeploymentProfileCard;
+use developer_notices::{
+    DeveloperProfileBanner, PublicStandaloneGenesisBanner, SessionNoticeState,
+};
 pub use diagnostics::DiagnosticsUiServices;
 use dids::DidsPage;
 #[cfg(feature = "ui-profile-dev")]
@@ -36,6 +47,7 @@ pub use passport_vault::{
     PassportVaultContractCallRecoveryUiServices, PassportVaultContractCallUiServices,
     PassportVaultUiServices,
 };
+use wallet_onboarding::{WalletOnboarding, WalletOnboardingIntent};
 #[cfg(feature = "preprod-observation")]
 use wallet_root_recovery::WalletRootRecoveryForm;
 
@@ -52,6 +64,8 @@ use oxid_credential_application::{
     PreviewCredentialDisclosureUseCase, ReceiveCredentialUseCase, RevealCredentialClaimCommand,
     RevealCredentialClaimUseCase, ReverifyCredentialUseCase,
 };
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use oxid_diagnostics_application::DiagnosticEventSinkPort;
 use oxid_diagnostics_application::{ClearDiagnosticsUseCase, GetDiagnosticSnapshotUseCase};
 use oxid_identity_application::{
     CreateDidCommand, CreateDidUseCase, DeactivateDidCommand, DeactivateDidUseCase,
@@ -70,6 +84,8 @@ use oxid_platform_ports::{
     IdentityLinkIngressError, IdentityLinkIngressPort, PublicReceiveAddress, PublicTextExportError,
     PublicTextExportPort, QrScanError, QrScannerPort, ScreenPrivacyPort,
 };
+#[cfg(feature = "proof-benchmark")]
+use oxid_platform_ports::{ProcessResourceSamplerPort, UnavailableProcessResourceSampler};
 use oxid_presentation_application::{
     AcceptCredentialPresentationCommand, AcceptCredentialPresentationUseCase,
     CancelCredentialPresentationCommand, CancelCredentialPresentationUseCase,
@@ -95,44 +111,46 @@ use oxid_wallet_application::RunProofBenchmarkUseCase;
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationCommand, AuthorizeWalletDustRegistrationUseCase,
     AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase,
-    CancelWalletDustRegistrationSubmissionCommand, CancelWalletDustRegistrationSubmissionUseCase,
-    CancelWalletDustSyncUseCase, CancelWalletShieldedSyncUseCase,
-    CancelWalletTransferSubmissionUseCase, CompleteWalletRecoverySummary,
-    CreateWalletProfileCommand, CreateWalletProfileUseCase, DeriveWalletAccountCommand,
-    DeriveWalletAccountUseCase, EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY,
+    CancelSelectedWalletRealmSyncUseCase, CancelWalletDustRegistrationSubmissionCommand,
+    CancelWalletDustRegistrationSubmissionUseCase, CancelWalletDustSyncUseCase,
+    CancelWalletOnboardingUseCase, CancelWalletShieldedSyncUseCase,
+    CancelWalletTransferSubmissionUseCase, CompleteWalletOnboardingUseCase,
+    CompleteWalletRecoverySummary, CreateWalletProfileCommand, CreateWalletProfileUseCase,
+    DeriveWalletAccountCommand, DeriveWalletAccountUseCase, EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY,
     EXPORT_COMPLETE_WALLET_BACKUP_TITLE, ExportCompleteWalletBackupCommand,
-    ExportCompleteWalletBackupUseCase, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
-    GetWalletBackupReceiptUseCase, GetWalletDustRegistrationCommand,
-    GetWalletDustRegistrationStatusCommand, GetWalletDustRegistrationStatusUseCase,
-    GetWalletDustRegistrationUseCase, GetWalletDustSyncStatusUseCase,
-    GetWalletSecurityStatusUseCase, GetWalletShieldedSyncStatusUseCase,
-    GetWalletTransferDraftUseCase, GetWalletTransferSubmissionStatusUseCase,
-    InitializeWalletSecurityUseCase, ListWalletNetworksUseCase, ListWalletProfilesUseCase,
-    ListWalletTransferSubmissionsUseCase, LockWalletUseCase, MAX_WALLET_RECOVERY_SECRET_CHARACTERS,
-    PortableWalletBackupDocumentError, PortableWalletBackupDocumentKind,
-    PortableWalletBackupDocumentPort, PrepareShieldedWalletTransferCommand,
-    PrepareShieldedWalletTransferUseCase, PrepareWalletDustRegistrationCommand,
-    PrepareWalletDustRegistrationUseCase, PrepareWalletTransferCommand,
-    PrepareWalletTransferUseCase, RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY,
-    RECOVER_COMPLETE_WALLET_BACKUP_TITLE, RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY,
-    RECOVER_PORTABLE_WALLET_BACKUP_TITLE, ReconcileWalletDustRegistrationSubmissionCommand,
+    ExportCompleteWalletBackupUseCase, GetActiveWalletProfileUseCase,
+    GetSelectedWalletRealmSyncUseCase, GetWalletAccountUseCase, GetWalletBackupReceiptUseCase,
+    GetWalletDustRegistrationCommand, GetWalletDustRegistrationStatusCommand,
+    GetWalletDustRegistrationStatusUseCase, GetWalletDustRegistrationUseCase,
+    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
+    GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
+    GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
+    ListWalletNetworksUseCase, ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase,
+    LockWalletUseCase, MAX_WALLET_RECOVERY_SECRET_CHARACTERS, PortableWalletBackupDocumentError,
+    PortableWalletBackupDocumentKind, PortableWalletBackupDocumentPort,
+    PrepareShieldedWalletTransferCommand, PrepareShieldedWalletTransferUseCase,
+    PrepareWalletDustRegistrationCommand, PrepareWalletDustRegistrationUseCase,
+    PrepareWalletOnboardingUseCase, PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
+    RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY, RECOVER_COMPLETE_WALLET_BACKUP_TITLE,
+    RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY, RECOVER_PORTABLE_WALLET_BACKUP_TITLE,
+    ReconcileWalletDustRegistrationSubmissionCommand,
     ReconcileWalletDustRegistrationSubmissionUseCase, ReconcileWalletTransferSubmissionUseCase,
     RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupCommand,
     RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupCommand,
     RecoverPortableWalletBackupUseCase, SelectWalletNetworkCommand, SelectWalletNetworkUseCase,
-    SelectWalletProfileCommand, SelectWalletProfileUseCase, SensitiveOperationConfirmation,
-    StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
-    SubmitWalletDustRegistrationCommand, SubmitWalletDustRegistrationUseCase,
-    SubmitWalletTransferCommand, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
-    UnlockWalletUseCase, WalletAccountError, WalletAccountPortError, WalletAccountQuery,
-    WalletAccountView, WalletAddressView, WalletBackupReceiptCommand, WalletBackupReceiptView,
+    SelectWalletProfileCommand, SelectWalletProfileUseCase, SelectedWalletRealmSyncCommand,
+    SelectedWalletRealmSyncView, SensitiveOperationConfirmation, StartWalletDustSyncUseCase,
+    StartWalletShieldedSyncUseCase, SubmitWalletDustRegistrationCommand,
+    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferCommand, SubmitWalletTransferUseCase,
+    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
+    WalletAccountError, WalletAccountPortError, WalletAccountQuery, WalletAccountView,
+    WalletAddressView, WalletBackupReceiptCommand, WalletBackupReceiptView,
     WalletDustRegistrationAssetView, WalletDustRegistrationPreviewView,
-    WalletDustRegistrationSubmissionStatusView, WalletDustSyncCommand, WalletDustSyncView,
-    WalletNetworkListView, WalletProfileSecurityCommand, WalletProfileView, WalletRecoverySecret,
-    WalletSecurityStatusView, WalletShieldedSyncCommand, WalletShieldedSyncView,
-    WalletSyncStatusView, WalletTransferDraftQuery, WalletTransferPreviewView,
-    WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
-    WalletTransferSubmissionView,
+    WalletDustRegistrationSubmissionStatusView, WalletDustSyncView, WalletNetworkListView,
+    WalletProfileSecurityCommand, WalletProfileView, WalletRealmFamilyView, WalletRecoverySecret,
+    WalletSecurityStatusView, WalletShieldedSyncView, WalletSyncStatusView,
+    WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionQuery,
+    WalletTransferSubmissionStatusView, WalletTransferSubmissionView,
 };
 #[cfg(feature = "preprod-observation")]
 use oxid_wallet_application::{
@@ -141,11 +159,33 @@ use oxid_wallet_application::{
 };
 use zeroize::{Zeroize, Zeroizing};
 
+#[cfg(feature = "ui-profile-dev")]
+use developer_tools::{
+    DeveloperCapabilitiesPage, DeveloperProofBenchmarkPage, DeveloperSectionNav, DeveloperToolsHub,
+    is_developer_route, is_developer_section,
+};
+#[cfg(feature = "ui-profile-dev")]
+use diagnostics::DeveloperDiagnosticsPage;
 use diagnostics::DiagnosticsPage;
+use header_menu::{GlobalApplicationMenu, GlobalMenuAction, GlobalMenuTrigger, HeaderMenu};
 use labels as ui;
 use passport_vault::PassportVaultPage;
-#[cfg(feature = "proof-benchmark")]
-use proof_benchmark::ProofBenchmarkPanel;
+use profile_quick_switcher::{ProfileSwitcherMenu, profile_switch_is_allowed};
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use screen_privacy::protect_suspended_snapshot;
+use screen_privacy::route_forces_screen_privacy;
+use selected_realm_sync::{
+    AccountSyncCardState, dust_status_pill_class, load_account_sync_card,
+    non_native_shielded_balances, poll_account_sync, selected_realm_chain_tip,
+    selected_realm_dust_balance, selected_realm_dust_note, selected_realm_dust_state,
+    selected_realm_is_syncing, selected_realm_provenance, selected_realm_shielded_balance,
+    selected_realm_shielded_note, selected_realm_shielded_state, selected_realm_sync_progress,
+    selected_realm_sync_state,
+};
+#[cfg(test)]
+use selected_realm_sync::{
+    dust_progress_percent, dust_sync_note, shielded_progress_percent, shielded_sync_note,
+};
 
 const BASE_STYLES: &str = include_str!("../assets/styles.css");
 const DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL: &str = "Protected DUST registration";
@@ -253,6 +293,10 @@ pub struct WalletUiServices {
     developer_capabilities: Vec<CapabilityView>,
     #[cfg(feature = "proof-benchmark")]
     proof_benchmark: Option<Arc<dyn RunProofBenchmarkUseCase>>,
+    #[cfg(feature = "proof-benchmark")]
+    process_resource_sampler: Arc<dyn ProcessResourceSamplerPort>,
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    diagnostic_events: Arc<dyn DiagnosticEventSinkPort>,
     get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase>,
     clear_diagnostics: Arc<dyn ClearDiagnosticsUseCase>,
     qr_scanner: Arc<dyn QrScannerPort>,
@@ -274,6 +318,7 @@ pub struct WalletUiServices {
     recover_portable_wallet_backup: Arc<dyn RecoverPortableWalletBackupUseCase>,
     export_complete_wallet_backup: Arc<dyn ExportCompleteWalletBackupUseCase>,
     recover_complete_wallet_backup: Arc<dyn RecoverCompleteWalletBackupUseCase>,
+    wallet_onboarding: Option<WalletOnboardingUiServices>,
     #[cfg(feature = "preprod-observation")]
     wallet_root_recovery: Option<WalletRootRecoveryUiServices>,
     list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
@@ -281,6 +326,9 @@ pub struct WalletUiServices {
     derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
     get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
     sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+    sync_selected_wallet_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
+    get_selected_wallet_realm_sync: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+    cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
     get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
     start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase>,
     cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase>,
@@ -684,8 +732,35 @@ pub struct WalletSecurityUiServices {
     unlock_wallet: Arc<dyn UnlockWalletUseCase>,
     lock_wallet: Arc<dyn LockWalletUseCase>,
     backup: WalletBackupUiServices,
+    onboarding: Option<WalletOnboardingUiServices>,
     #[cfg(feature = "preprod-observation")]
     root_recovery: Option<WalletRootRecoveryUiServices>,
+}
+
+/// Secret-safe private-wallet onboarding supplied by composition.
+#[derive(Clone)]
+pub struct WalletOnboardingUiServices {
+    network_id: String,
+    prepare: Arc<dyn PrepareWalletOnboardingUseCase>,
+    complete: Arc<dyn CompleteWalletOnboardingUseCase>,
+    cancel: Arc<dyn CancelWalletOnboardingUseCase>,
+}
+
+impl WalletOnboardingUiServices {
+    #[must_use]
+    pub fn new(
+        network_id: String,
+        prepare: Arc<dyn PrepareWalletOnboardingUseCase>,
+        complete: Arc<dyn CompleteWalletOnboardingUseCase>,
+        cancel: Arc<dyn CancelWalletOnboardingUseCase>,
+    ) -> Self {
+        Self {
+            network_id,
+            prepare,
+            complete,
+            cancel,
+        }
+    }
 }
 
 /// Explicit owner-root recovery capability supplied only by an authenticated,
@@ -754,9 +829,16 @@ impl WalletSecurityUiServices {
             unlock_wallet,
             lock_wallet,
             backup,
+            onboarding: None,
             #[cfg(feature = "preprod-observation")]
             root_recovery: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_onboarding(mut self, onboarding: WalletOnboardingUiServices) -> Self {
+        self.onboarding = Some(onboarding);
+        self
     }
 
     #[cfg(feature = "preprod-observation")]
@@ -768,23 +850,45 @@ impl WalletSecurityUiServices {
 }
 
 /// Midnight account use cases consumed by the Assets page.
+pub struct WalletRealmSyncUiServices {
+    sync: Arc<dyn SyncSelectedWalletRealmUseCase>,
+    get: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+    cancel: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
+}
+
+impl WalletRealmSyncUiServices {
+    #[must_use]
+    pub const fn new(
+        sync: Arc<dyn SyncSelectedWalletRealmUseCase>,
+        get: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+        cancel: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
+    ) -> Self {
+        Self { sync, get, cancel }
+    }
+}
+
+/// Midnight account use cases consumed by the Assets page.
 pub struct WalletAccountUiServices {
     list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
     select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
     derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
     get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
     sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+    sync_selected_wallet_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
+    get_selected_wallet_realm_sync: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+    cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
     public_text_exporter: Arc<dyn PublicTextExportPort>,
 }
 
 impl WalletAccountUiServices {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
         select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
         derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
         get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
         sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+        realm_sync: WalletRealmSyncUiServices,
         public_text_exporter: Arc<dyn PublicTextExportPort>,
     ) -> Self {
         Self {
@@ -793,6 +897,9 @@ impl WalletAccountUiServices {
             derive_wallet_account,
             get_wallet_account,
             sync_wallet_account,
+            sync_selected_wallet_realm: realm_sync.sync,
+            get_selected_wallet_realm_sync: realm_sync.get,
+            cancel_selected_wallet_realm_sync: realm_sync.cancel,
             public_text_exporter,
         }
     }
@@ -1007,6 +1114,10 @@ impl WalletUiServices {
             developer_capabilities: Vec::new(),
             #[cfg(feature = "proof-benchmark")]
             proof_benchmark: None,
+            #[cfg(feature = "proof-benchmark")]
+            process_resource_sampler: Arc::new(UnavailableProcessResourceSampler),
+            #[cfg(any(target_os = "ios", target_os = "android"))]
+            diagnostic_events: diagnostics.events,
             get_diagnostic_snapshot: diagnostics.get,
             clear_diagnostics: diagnostics.clear,
             qr_scanner: ingress.qr_scanner,
@@ -1028,6 +1139,7 @@ impl WalletUiServices {
             recover_portable_wallet_backup: security.backup.recover_custody,
             export_complete_wallet_backup: security.backup.export_complete,
             recover_complete_wallet_backup: security.backup.recover_complete,
+            wallet_onboarding: security.onboarding,
             #[cfg(feature = "preprod-observation")]
             wallet_root_recovery: security.root_recovery,
             list_wallet_networks: account.list_wallet_networks,
@@ -1035,6 +1147,9 @@ impl WalletUiServices {
             derive_wallet_account: account.derive_wallet_account,
             get_wallet_account: account.get_wallet_account,
             sync_wallet_account: account.sync_wallet_account,
+            sync_selected_wallet_realm: account.sync_selected_wallet_realm,
+            get_selected_wallet_realm_sync: account.get_selected_wallet_realm_sync,
+            cancel_selected_wallet_realm_sync: account.cancel_selected_wallet_realm_sync,
             get_wallet_dust_sync_status: dust.get_wallet_dust_sync_status,
             start_wallet_dust_sync: dust.start_wallet_dust_sync,
             cancel_wallet_dust_sync: dust.cancel_wallet_dust_sync,
@@ -1153,8 +1268,10 @@ impl WalletUiServices {
     pub fn with_proof_benchmark(
         mut self,
         proof_benchmark: Arc<dyn RunProofBenchmarkUseCase>,
+        process_resource_sampler: Arc<dyn ProcessResourceSamplerPort>,
     ) -> Self {
         self.proof_benchmark = Some(proof_benchmark);
+        self.process_resource_sampler = process_resource_sampler;
         self
     }
 
@@ -1162,6 +1279,12 @@ impl WalletUiServices {
     #[must_use]
     pub fn proof_benchmark(&self) -> Option<Arc<dyn RunProofBenchmarkUseCase>> {
         self.proof_benchmark.as_ref().map(Arc::clone)
+    }
+
+    #[cfg(feature = "proof-benchmark")]
+    #[must_use]
+    pub fn process_resource_sampler(&self) -> Arc<dyn ProcessResourceSamplerPort> {
+        Arc::clone(&self.process_resource_sampler)
     }
 
     #[must_use]
@@ -1262,6 +1385,23 @@ impl WalletUiServices {
     #[must_use]
     pub fn sync_wallet_account(&self) -> Arc<dyn SyncWalletAccountUseCase> {
         Arc::clone(&self.sync_wallet_account)
+    }
+
+    #[must_use]
+    pub fn sync_selected_wallet_realm(&self) -> Arc<dyn SyncSelectedWalletRealmUseCase> {
+        Arc::clone(&self.sync_selected_wallet_realm)
+    }
+
+    #[must_use]
+    pub fn get_selected_wallet_realm_sync(&self) -> Arc<dyn GetSelectedWalletRealmSyncUseCase> {
+        Arc::clone(&self.get_selected_wallet_realm_sync)
+    }
+
+    #[must_use]
+    pub fn cancel_selected_wallet_realm_sync(
+        &self,
+    ) -> Arc<dyn CancelSelectedWalletRealmSyncUseCase> {
+        Arc::clone(&self.cancel_selected_wallet_realm_sync)
     }
 
     #[must_use]
@@ -1658,9 +1798,16 @@ enum Route {
     CredentialRequest,
     DidAuthenticationRequest,
     Settings,
+    BackupRecovery,
     Diagnostics,
     #[cfg(feature = "ui-profile-dev")]
     Developer,
+    #[cfg(feature = "ui-profile-dev")]
+    DeveloperManifest,
+    #[cfg(feature = "ui-profile-dev")]
+    DeveloperProofBenchmark,
+    #[cfg(feature = "ui-profile-dev")]
+    DeveloperDiagnostics,
     Profile,
 }
 
@@ -1677,9 +1824,16 @@ impl Route {
             Self::CredentialRequest => "Review document request",
             Self::DidAuthenticationRequest => "Review login request",
             Self::Settings => "Settings",
+            Self::BackupRecovery => "Backup & recovery",
             Self::Diagnostics => "Diagnostics",
             #[cfg(feature = "ui-profile-dev")]
-            Self::Developer => "Developer capabilities",
+            Self::Developer => "Developer tools",
+            #[cfg(feature = "ui-profile-dev")]
+            Self::DeveloperManifest => "Capability manifest",
+            #[cfg(feature = "ui-profile-dev")]
+            Self::DeveloperProofBenchmark => "Proof benchmark",
+            #[cfg(feature = "ui-profile-dev")]
+            Self::DeveloperDiagnostics => "Event log",
             Self::Profile => "Wallet profiles",
         }
     }
@@ -1696,10 +1850,14 @@ impl Route {
             | Self::CredentialRequest
             | Self::DidAuthenticationRequest
             | Self::Settings
+            | Self::BackupRecovery
             | Self::Diagnostics
             | Self::Profile => None,
             #[cfg(feature = "ui-profile-dev")]
-            Self::Developer => None,
+            Self::Developer
+            | Self::DeveloperManifest
+            | Self::DeveloperProofBenchmark
+            | Self::DeveloperDiagnostics => None,
         }
     }
 }
@@ -1762,6 +1920,18 @@ impl RouteStack {
         self.push(route);
     }
 
+    #[cfg(feature = "ui-profile-dev")]
+    fn replace_secondary(&mut self, route: Route) {
+        debug_assert!(is_developer_section(route));
+        if self.routes.len() > 1 {
+            if let Some(current) = self.routes.last_mut() {
+                *current = route;
+            }
+        } else {
+            self.push(route);
+        }
+    }
+
     fn pop(&mut self) -> bool {
         if self.can_go_back() {
             self.routes.pop();
@@ -1811,14 +1981,18 @@ enum ProfileSessionState {
 enum OnboardingStep {
     Welcome,
     Create,
-    Protect(WalletProfileView),
-    Restore,
+    RestorePhraseProfile,
+    Private(WalletProfileView, WalletOnboardingIntent),
+    RestoreBackup,
+    #[cfg(feature = "public-standalone-genesis")]
+    SharedDeveloper(WalletProfileView),
     #[cfg(feature = "preprod-observation")]
     RecoverRootProfile,
     #[cfg(feature = "preprod-observation")]
     RecoverRoot(WalletProfileView),
 }
 
+#[cfg(feature = "public-standalone-genesis")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum OnboardingProtectionState {
     Idle,
@@ -1909,7 +2083,6 @@ enum CredentialPageState {
     Loading,
     Ready {
         credentials: Vec<CredentialView>,
-        receiving: bool,
         operation_error: Option<String>,
         reverification_applied: bool,
     },
@@ -2270,7 +2443,6 @@ struct HomePageProjection {
     account: Box<WalletAccountView>,
     security: WalletSecurityStatusView,
     backup_receipt: HomeResource<Option<WalletBackupReceiptView>>,
-    shielded: HomeResource<WalletShieldedSyncView>,
     credentials: HomeResource<Vec<CredentialView>>,
     vault: HomeResource<Box<PassportVaultView>>,
 }
@@ -2288,18 +2460,6 @@ enum AccountOperation {
     Unlocking,
     Deriving,
     Syncing,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum AccountSyncCardState {
-    Loading,
-    Ready {
-        dust: WalletDustSyncView,
-        shielded: Box<WalletShieldedSyncView>,
-        action_busy: bool,
-        operation_error: Option<String>,
-    },
-    Failed(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2454,6 +2614,10 @@ struct SecretModeController {
 }
 
 impl SecretModeController {
+    fn is_masked(self) -> bool {
+        (self.state)().masked
+    }
+
     fn rearm(mut self) {
         let mut state = (self.state)();
         state.rearm();
@@ -2476,19 +2640,12 @@ impl SecretModeController {
     }
 }
 
-const fn route_forces_screen_privacy(route: Route) -> bool {
-    matches!(
-        route,
-        Route::Settings | Route::Documents | Route::CredentialRequest
-    )
-}
-
 #[cfg(feature = "ui-profile-demo")]
 const DEMO_PROFILE_MARKER: &str = "OXID_UI_PROFILE_DEMO";
 #[cfg(feature = "ui-profile-demo")]
 const DEMO_DRAWER_MARKER: &str = "OXID_DEMO_BOOTSTRAP_DRAWER";
 #[cfg(feature = "ui-profile-demo")]
-const DEMO_PROFILE_NAME: &str = "Oxid Demo Wallet";
+const DEMO_PROFILE_NAME: &str = "Demo Wallet";
 
 #[cfg(feature = "ui-profile-demo")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2497,7 +2654,6 @@ enum DemoBootstrapAction {
     Protection,
     Account,
     ManagedDid,
-    InboxFixture,
     SimulatedFunding,
     CredentialOffer,
     LoginRequest,
@@ -2512,7 +2668,6 @@ impl DemoBootstrapAction {
             Self::Protection => "Initialize or unlock wallet",
             Self::Account => "Derive Midnight account",
             Self::ManagedDid => "Create managed DID",
-            Self::InboxFixture => "Receive inbox fixture",
             Self::SimulatedFunding => "Load simulated funding",
             Self::CredentialOffer => "Review credential offer",
             Self::LoginRequest => "Review login request",
@@ -2529,12 +2684,11 @@ impl DemoBootstrapAction {
 }
 
 #[cfg(feature = "ui-profile-demo")]
-const DEMO_BOOTSTRAP_ACTIONS: [DemoBootstrapAction; 9] = [
+const DEMO_BOOTSTRAP_ACTIONS: [DemoBootstrapAction; 8] = [
     DemoBootstrapAction::Profile,
     DemoBootstrapAction::Protection,
     DemoBootstrapAction::Account,
     DemoBootstrapAction::ManagedDid,
-    DemoBootstrapAction::InboxFixture,
     DemoBootstrapAction::SimulatedFunding,
     DemoBootstrapAction::CredentialOffer,
     DemoBootstrapAction::LoginRequest,
@@ -2542,12 +2696,11 @@ const DEMO_BOOTSTRAP_ACTIONS: [DemoBootstrapAction; 9] = [
 ];
 
 #[cfg(feature = "ui-profile-demo")]
-const DEMO_SAFE_SETUP_ACTIONS: [DemoBootstrapAction; 6] = [
+const DEMO_SAFE_SETUP_ACTIONS: [DemoBootstrapAction; 5] = [
     DemoBootstrapAction::Profile,
     DemoBootstrapAction::Protection,
     DemoBootstrapAction::Account,
     DemoBootstrapAction::ManagedDid,
-    DemoBootstrapAction::InboxFixture,
     DemoBootstrapAction::SimulatedFunding,
 ];
 
@@ -2846,25 +2999,6 @@ async fn execute_demo_data_action(
             .await
             .map_err(|error| error.to_string())?
         }
-        DemoBootstrapAction::InboxFixture => {
-            let profile = require_demo_profile(profile)?;
-            let operation_profile = profile.clone();
-            let service = services.receive_credential();
-            run_ui_future(async move {
-                service
-                    .execute(CredentialProfileQuery {
-                        profile_id: operation_profile.id,
-                    })
-                    .await
-                    .map_err(|error| error.to_string())
-            })
-            .await
-            .map_err(|error| error.to_string())??;
-            Ok(DemoActionOutcome {
-                profile,
-                detail: "Verified and upserted the public standalone inbox fixture.".to_owned(),
-            })
-        }
         DemoBootstrapAction::SimulatedFunding => {
             let profile = require_demo_profile(profile)?;
             let operation_profile = profile.clone();
@@ -2921,7 +3055,7 @@ fn route_demo_review(
     services: &WalletUiServices,
     pending_identity_request: &mut Signal<Option<PendingIdentityRequest>>,
     navigation: &mut Signal<RouteStack>,
-    profile_menu_open: &mut Signal<bool>,
+    header_menu: &mut Signal<HeaderMenu>,
     identity_ingress_notice: &mut Signal<Option<String>>,
 ) -> Result<String, String> {
     if pending_identity_request.read().is_some() {
@@ -2934,7 +3068,7 @@ fn route_demo_review(
         DemoBootstrapAction::CredentialOffer => (
             services
                 .standalone_credential_offer()
-                .ok_or_else(|| "Standalone credential offer is unavailable.".to_owned())?,
+                .ok_or_else(|| "OID4VCI demo offer is unavailable.".to_owned())?,
             IdentityRequestKind::CredentialIssuance,
         ),
         DemoBootstrapAction::LoginRequest => (
@@ -2962,7 +3096,7 @@ fn route_demo_review(
     }
     pending_identity_request.set(Some(PendingIdentityRequest { kind, request_uri }));
     navigation.write().route_identity_request(kind);
-    profile_menu_open.set(false);
+    header_menu.set(HeaderMenu::Closed);
     identity_ingress_notice.set(Some(
         "Demo fixture loaded for review. Dismiss it without consent or continue on the existing review screen."
             .to_owned(),
@@ -2975,7 +3109,7 @@ fn route_demo_review(
 #[derive(Clone, Copy)]
 struct DemoActionSignals {
     navigation: Signal<RouteStack>,
-    profile_menu_open: Signal<bool>,
+    header_menu: Signal<HeaderMenu>,
     pending_identity_request: Signal<Option<PendingIdentityRequest>>,
     drawer_open: Signal<bool>,
     identity_ingress_notice: Signal<Option<String>>,
@@ -3002,7 +3136,7 @@ fn start_demo_action(
             &services,
             &mut signals.pending_identity_request,
             &mut signals.navigation,
-            &mut signals.profile_menu_open,
+            &mut signals.header_menu,
             &mut signals.identity_ingress_notice,
         );
         let mut next = state();
@@ -3113,7 +3247,7 @@ fn start_demo_full_setup(
             &services,
             &mut signals.pending_identity_request,
             &mut signals.navigation,
-            &mut signals.profile_menu_open,
+            &mut signals.header_menu,
             &mut signals.identity_ingress_notice,
         );
         let mut next = state();
@@ -3170,7 +3304,7 @@ fn demo_bootstrap_drawer(
 ) -> Element {
     let DemoActionSignals {
         navigation,
-        profile_menu_open,
+        header_menu,
         pending_identity_request,
         mut drawer_open,
         identity_ingress_notice,
@@ -3232,7 +3366,7 @@ fn demo_bootstrap_drawer(
                                 profile_session,
                                 DemoActionSignals {
                                     navigation,
-                                    profile_menu_open,
+                                    header_menu,
                                     pending_identity_request,
                                     drawer_open,
                                     identity_ingress_notice,
@@ -3305,7 +3439,7 @@ fn demo_bootstrap_drawer(
                                         profile_session,
                                         DemoActionSignals {
                                             navigation,
-                                            profile_menu_open,
+                                            header_menu,
                                             pending_identity_request,
                                             drawer_open,
                                             identity_ingress_notice,
@@ -3350,28 +3484,10 @@ const fn identity_request_admits_new_link(
     !request_waiting && !manual_credential_review_locked
 }
 
-#[cfg(feature = "ui-profile-dev")]
-fn developer_profile_banner() -> Element {
-    rsx! {
-        aside {
-            class: "developer-profile-banner",
-            role: "status",
-            "data-ui-profile": "OXID_UI_PROFILE_DEVELOPMENT",
-            strong { "Developer profile" }
-            span { "Standalone composition · public capability facts only · telemetry off" }
-        }
-    }
-}
-
-#[cfg(not(feature = "ui-profile-dev"))]
-fn developer_profile_banner() -> Element {
-    rsx! {}
-}
-
 #[cfg(feature = "public-standalone-genesis")]
 const PUBLIC_STANDALONE_GENESIS_MARKER: &str = "OXID_PUBLIC_STANDALONE_GENESIS_WALLET";
 #[cfg(feature = "public-standalone-genesis")]
-const PUBLIC_STANDALONE_PROFILE_NAME: &str = "Oxid Demo Wallet";
+const PUBLIC_STANDALONE_PROFILE_NAME: &str = "Demo Wallet";
 
 fn profile_creation_default_name() -> String {
     "My wallet".to_owned()
@@ -3409,24 +3525,6 @@ fn public_fixture_name_conflicts(profiles: &[WalletProfileView], candidate: &str
     }
 }
 
-#[cfg(feature = "public-standalone-genesis")]
-fn public_standalone_genesis_banner() -> Element {
-    rsx! {
-        aside {
-            class: "developer-profile-banner",
-            role: "alert",
-            "data-wallet-authority": PUBLIC_STANDALONE_GENESIS_MARKER,
-            strong { "Public genesis wallet capability" }
-            span { "Only the unique “Oxid Demo Wallet” profile can use shared, publicly spendable test authority; other profiles remain random. No privacy or ownership is implied." }
-        }
-    }
-}
-
-#[cfg(not(feature = "public-standalone-genesis"))]
-fn public_standalone_genesis_banner() -> Element {
-    rsx! {}
-}
-
 /// Brand-agnostic Dioxus incoming adapter and mobile-first application shell.
 #[cfg(not(target_os = "android"))]
 #[component]
@@ -3442,7 +3540,9 @@ fn WalletApp() -> Element {
     desktop_test_driver::use_desktop_test_driver();
     let mut profile_session = use_signal(|| ProfileSessionState::Loading);
     let mut navigation = use_signal(RouteStack::default);
-    let mut profile_menu_open = use_signal(|| false);
+    let mut header_menu = use_signal(HeaderMenu::default);
+    let developer_notice_state = use_signal(SessionNoticeState::default);
+    let public_genesis_notice_state = use_signal(SessionNoticeState::default);
     #[cfg(feature = "ui-profile-demo")]
     let demo_drawer_open = use_signal(|| false);
     #[cfg(feature = "ui-profile-demo")]
@@ -3474,6 +3574,8 @@ fn WalletApp() -> Element {
     let screen_privacy = services.screen_privacy();
     #[cfg(any(target_os = "ios", target_os = "android"))]
     let screen_privacy_for_lifecycle = Arc::clone(&screen_privacy);
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let diagnostic_events_for_lifecycle = Arc::clone(&services.diagnostic_events);
     use_effect(move || {
         let screen_privacy_enabled =
             secret_mode_state().masked || route_forces_screen_privacy(navigation.read().current());
@@ -3492,7 +3594,11 @@ fn WalletApp() -> Element {
                 dioxus::mobile::tao::event::Event::Suspended => {
                     // Protect the OS snapshot immediately. Dioxus signal writes
                     // wait until Resumed, when the WebView is active again.
-                    let _ = screen_privacy_for_lifecycle.set_protected(true);
+                    protect_suspended_snapshot(
+                        screen_privacy_for_lifecycle.as_ref(),
+                        diagnostic_events_for_lifecycle.as_ref(),
+                    );
+                    secret_mode.rearm();
                 }
                 dioxus::mobile::tao::event::Event::Resumed => {
                     identity_link_wake.set(identity_link_wake().wrapping_add(1));
@@ -3524,7 +3630,7 @@ fn WalletApp() -> Element {
                             pending_identity_request,
                             manual_credential_review_lock,
                             navigation,
-                            profile_menu_open,
+                            header_menu,
                             identity_ingress_notice,
                         );
                     }
@@ -3542,7 +3648,7 @@ fn WalletApp() -> Element {
                 pending_identity_request,
                 manual_credential_review_lock,
                 navigation,
-                profile_menu_open,
+                header_menu,
                 identity_ingress_notice,
             );
         }
@@ -3560,7 +3666,7 @@ fn WalletApp() -> Element {
         profile_session,
         DemoActionSignals {
             navigation,
-            profile_menu_open,
+            header_menu,
             pending_identity_request,
             drawer_open: demo_drawer_open,
             identity_ingress_notice,
@@ -3584,8 +3690,8 @@ fn WalletApp() -> Element {
             div {
                 aria_hidden: if demo_gateway_hidden { "true" } else { "false" },
                 inert: html_boolean_attribute(demo_gateway_inert),
-                {developer_profile_banner()}
-                {public_standalone_genesis_banner()}
+                DeveloperProfileBanner { state: developer_notice_state }
+                PublicStandaloneGenesisBanner { state: public_genesis_notice_state }
                 {demo_gateway_banner}
                 ProfileGateway {
                     state: session,
@@ -3645,21 +3751,6 @@ fn WalletApp() -> Element {
     let home_router = services.route_identity_request();
     let navigation_scanner = services.qr_scanner();
     let navigation_router = services.route_identity_request();
-    #[cfg(feature = "ui-profile-dev")]
-    let developer_profile_shortcut = rsx! {
-        button {
-            class: "profile-sheet__item",
-            r#type: "button",
-            aria_label: "Open developer capabilities",
-            onclick: move |_| {
-                navigation.write().push(Route::Developer);
-                profile_menu_open.set(false);
-            },
-            "Developer capabilities"
-        }
-    };
-    #[cfg(not(feature = "ui-profile-dev"))]
-    let developer_profile_shortcut = rsx! {};
     #[cfg(feature = "ui-profile-demo")]
     let demo_shell_banner = demo_profile_banner(demo_drawer_open);
     #[cfg(not(feature = "ui-profile-demo"))]
@@ -3671,7 +3762,7 @@ fn WalletApp() -> Element {
         profile_session,
         DemoActionSignals {
             navigation,
-            profile_menu_open,
+            header_menu,
             pending_identity_request,
             drawer_open: demo_drawer_open,
             identity_ingress_notice,
@@ -3697,20 +3788,19 @@ fn WalletApp() -> Element {
             "data-secret-mode": if secret_mode_state().masked { "masked" } else { "revealed" },
             aria_hidden: if demo_shell_hidden { "true" } else { "false" },
             inert: html_boolean_attribute(demo_shell_inert),
-            {developer_profile_banner()}
-            {public_standalone_genesis_banner()}
+            DeveloperProfileBanner { state: developer_notice_state }
+            PublicStandaloneGenesisBanner { state: public_genesis_notice_state }
             {demo_shell_banner}
             header { class: "app-header",
                 button {
-                    class: if *profile_menu_open.read() { "profile-shortcut active" } else { "profile-shortcut" },
+                    class: if header_menu() == HeaderMenu::ProfileSwitcher { "profile-shortcut active" } else { "profile-shortcut" },
                     r#type: "button",
-                    aria_label: "Open profile menu",
-                    aria_expanded: if *profile_menu_open.read() { "true" } else { "false" },
-                    title: "Profile and settings",
-                    onclick: move |_| {
-                        let next = !*profile_menu_open.read();
-                        profile_menu_open.set(next);
-                    },
+                    aria_label: "Switch wallet profile; current profile {active_profile.display_name}",
+                    aria_controls: "profile-switcher-menu",
+                    aria_expanded: if header_menu() == HeaderMenu::ProfileSwitcher { "true" } else { "false" },
+                    aria_haspopup: "menu",
+                    title: "Switch wallet profile",
+                    onclick: move |_| header_menu.set(header_menu().toggle_profile_switcher()),
                     "{profile_monogram}"
                 }
                 div { class: "app-header__title",
@@ -3718,18 +3808,6 @@ fn WalletApp() -> Element {
                     small { "{brand.product_name()} {brand.tagline()}" }
                 }
                 div { class: "app-header__actions",
-                    button {
-                        class: if secret_mode_state().masked { "privacy-toggle is-masked" } else { "privacy-toggle" },
-                        r#type: "button",
-                        aria_label: if secret_mode_state().masked { "Show private values for 30 seconds" } else { "Hide private values" },
-                        aria_pressed: if secret_mode_state().masked { "true" } else { "false" },
-                        title: if secret_mode_state().masked { "Show private values for 30 seconds" } else { "Hide private values" },
-                        onclick: move |_| secret_mode.toggle(),
-                        span {
-                            aria_hidden: "true",
-                            dangerous_inner_html: if secret_mode_state().masked { LUCIDE_EYE_OFF } else { LUCIDE_EYE },
-                        }
-                    }
                     if can_go_back {
                         button {
                             class: "back-action",
@@ -3737,17 +3815,15 @@ fn WalletApp() -> Element {
                             aria_label: "Go back",
                             onclick: move |_| {
                                 navigation.write().pop();
-                                profile_menu_open.set(false);
+                                header_menu.set(HeaderMenu::Closed);
                             },
                             span { aria_hidden: "true", "←" }
                             span { "Back" }
                         }
-                    } else {
-                        span {
-                            class: "app-header__mark brand-mark",
-                            aria_hidden: "true",
-                            dangerous_inner_html: "{brand.logo_svg()}",
-                        }
+                    }
+                    GlobalMenuTrigger {
+                        open: header_menu() == HeaderMenu::Global,
+                        on_toggle: move |_| header_menu.set(header_menu().toggle_global()),
                     }
                 }
             }
@@ -3757,45 +3833,37 @@ fn WalletApp() -> Element {
                     span { class: "status-dot" }
                     "{active_profile.display_name}"
                 }
-                span { class: "page-context__title", "{active_primary.label()}" }
+                if let Some(primary_label) = page_context_primary_label(content_route, active_primary) {
+                    span { class: "page-context__title", "{primary_label}" }
+                }
             }
 
-            if *profile_menu_open.read() {
-                nav { class: "profile-sheet", aria_label: "Profile and settings",
-                    div { class: "profile-sheet__identity",
-                        span { class: "profile-avatar", aria_hidden: "true", "{profile_monogram}" }
-                        div {
-                            strong { "{active_profile.display_name}" }
-                            small { "Active wallet profile" }
+            if header_menu() == HeaderMenu::ProfileSwitcher {
+                ProfileSwitcherMenu {
+                    active_profile: active_profile.clone(),
+                    profile_monogram,
+                    switching_allowed: profile_switch_is_allowed(active_route),
+                    on_selected: move |profile| {
+                        secret_mode.rearm();
+                        profile_session.set(ProfileSessionState::Active(profile));
+                        navigation.write().select_primary(PrimaryDestination::Home);
+                        header_menu.set(HeaderMenu::Closed);
+                    },
+                    on_close: move |_| header_menu.set(HeaderMenu::Closed),
+                }
+            }
+
+            if header_menu() == HeaderMenu::Global {
+                GlobalApplicationMenu {
+                    secret_mode,
+                    on_action: move |action: GlobalMenuAction| {
+                        header_menu.set(HeaderMenu::Closed);
+                        if action == GlobalMenuAction::SessionPrivacy {
+                            secret_mode.toggle();
+                        } else if let Some(route) = action.route() {
+                            navigation.write().push(route);
                         }
-                    }
-                    button {
-                        class: "profile-sheet__item",
-                        r#type: "button",
-                        aria_label: "Open wallet profiles",
-                        onclick: move |_| {
-                            navigation.write().push(Route::Profile);
-                            profile_menu_open.set(false);
-                        },
-                        "Wallet profiles"
-                    }
-                    button {
-                        class: "profile-sheet__item",
-                        r#type: "button",
-                        aria_label: "Open settings",
-                        onclick: move |_| {
-                            navigation.write().push(Route::Settings);
-                            profile_menu_open.set(false);
-                        },
-                        "Settings & backup"
-                    }
-                    {developer_profile_shortcut}
-                    button {
-                        class: "profile-sheet__dismiss",
-                        r#type: "button",
-                        onclick: move |_| profile_menu_open.set(false),
-                        "Close"
-                    }
+                    },
                 }
             }
 
@@ -3823,17 +3891,24 @@ fn WalletApp() -> Element {
                 match content_route {
                     Route::Home => rsx! {
                         HomePage {
+                            key: "{active_profile.id}",
                             active_profile: active_profile.clone(),
                             scan_busy: identity_scan_busy(),
                             on_select_primary: move |destination| {
                                 navigation.write().select_primary(destination);
-                                profile_menu_open.set(false);
+                                header_menu.set(HeaderMenu::Closed);
                             },
-                            on_open_vault: move |_| navigation.write().push(Route::PassportVault),
-                            on_open_settings: move |_| navigation.write().push(Route::Settings),
+                            on_open_vault: move |_| {
+                                navigation.write().push(Route::PassportVault);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
+                            on_open_settings: move |_| {
+                                navigation.write().push(Route::Settings);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
                             on_receive: move |_| {
                                 navigation.write().push(Route::Receive);
-                                profile_menu_open.set(false);
+                                header_menu.set(HeaderMenu::Closed);
                             },
                             on_scan: move |_| {
                                 start_identity_scan(
@@ -3843,7 +3918,7 @@ fn WalletApp() -> Element {
                                     identity_ingress_notice,
                                     pending_identity_request,
                                     navigation,
-                                    profile_menu_open,
+                                    header_menu,
                                 );
                             },
                         }
@@ -3855,7 +3930,10 @@ fn WalletApp() -> Element {
                             active_profile: active_profile.clone(),
                             pending_identity_request,
                             manual_credential_review_lock,
-                            on_manage_identities: move |_| navigation.write().push(Route::ManageIdentities),
+                            on_manage_identities: move |_| {
+                                navigation.write().push(Route::ManageIdentities);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
                         }
                     },
                     Route::Activity => rsx! { ActivityPage { active_profile: active_profile.clone() } },
@@ -3875,23 +3953,68 @@ fn WalletApp() -> Element {
                     },
                     Route::Diagnostics => rsx! { DiagnosticsPage { active_profile: active_profile.clone() } },
                     #[cfg(feature = "ui-profile-dev")]
-                    Route::Developer => rsx! { DeveloperCapabilitiesPage {} },
-                    Route::Settings => rsx! {
+                    Route::Developer => rsx! {
+                        DeveloperToolsHub {
+                            on_open_manifest: move |_| {
+                                navigation.write().push(Route::DeveloperManifest);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
+                            on_open_benchmark: move |_| {
+                                navigation.write().push(Route::DeveloperProofBenchmark);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
+                            on_open_diagnostics: move |_| {
+                                navigation.write().push(Route::DeveloperDiagnostics);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
+                        }
+                    },
+                    #[cfg(feature = "ui-profile-dev")]
+                    Route::DeveloperManifest => rsx! {
+                        DeveloperSectionNav {
+                            current: content_route,
+                            on_select: move |route| navigation.write().replace_secondary(route),
+                        }
+                        DeveloperCapabilitiesPage {}
+                    },
+                    #[cfg(feature = "ui-profile-dev")]
+                    Route::DeveloperProofBenchmark => rsx! {
+                        DeveloperSectionNav {
+                            current: content_route,
+                            on_select: move |route| navigation.write().replace_secondary(route),
+                        }
+                        DeveloperProofBenchmarkPage {}
+                    },
+                    #[cfg(feature = "ui-profile-dev")]
+                    Route::DeveloperDiagnostics => rsx! {
+                        DeveloperSectionNav {
+                            current: content_route,
+                            on_select: move |route| navigation.write().replace_secondary(route),
+                        }
+                        DeveloperDiagnosticsPage {}
+                    },
+                    Route::Settings | Route::BackupRecovery => rsx! {
                         SettingsPage {
                             active_profile: active_profile.clone(),
                             lifecycle_wake: identity_link_wake,
                             secret_mode,
+                            backup_only: content_route == Route::BackupRecovery,
                             on_root_recovered: move |_| {
                                 navigation.write().select_primary(PrimaryDestination::Wallet);
                             },
                             on_open_profile: move |_| navigation.write().push(Route::Profile),
                             on_open_diagnostics: move |_| navigation.write().push(Route::Diagnostics),
+                            on_open_developer: move |_| {
+                                #[cfg(feature = "ui-profile-dev")]
+                                navigation.write().push(Route::Developer);
+                            },
                         }
                     },
                     Route::Profile => rsx! {
                         ProfilePage {
                             active_profile: active_profile.clone(),
                             on_selected: move |profile| {
+                                secret_mode.rearm();
                                 profile_session.set(ProfileSessionState::Active(profile));
                                 navigation.write().select_primary(PrimaryDestination::Home);
                             },
@@ -3900,7 +4023,8 @@ fn WalletApp() -> Element {
                 }
             }
 
-            nav { class: "bottom-nav", aria_label: "Primary wallet destinations",
+            if !is_developer_route(content_route) {
+                nav { class: "bottom-nav", aria_label: "Primary wallet destinations",
                 for destination in PRIMARY_DESTINATIONS[..2].iter().copied() {
                     {
                         let is_active = active_primary == destination;
@@ -3911,7 +4035,7 @@ fn WalletApp() -> Element {
                                 active: is_active,
                                 on_select: move |destination| {
                                     navigation.write().select_primary(destination);
-                                    profile_menu_open.set(false);
+                                    header_menu.set(HeaderMenu::Closed);
                                 },
                             }
                         }
@@ -3934,7 +4058,7 @@ fn WalletApp() -> Element {
                                 identity_ingress_notice,
                                 pending_identity_request,
                                 navigation,
-                                profile_menu_open,
+                                header_menu,
                             );
                         }
                     },
@@ -3955,11 +4079,12 @@ fn WalletApp() -> Element {
                                 active: is_active,
                                 on_select: move |destination| {
                                     navigation.write().select_primary(destination);
-                                    profile_menu_open.set(false);
+                                    header_menu.set(HeaderMenu::Closed);
                                 },
                             }
                         }
                     }
+                }
                 }
             }
         }
@@ -3969,11 +4094,11 @@ fn WalletApp() -> Element {
                 masked: secret_mode_state().masked,
                 on_close: move |_| {
                     navigation.write().pop();
-                    profile_menu_open.set(false);
+                    header_menu.set(HeaderMenu::Closed);
                 },
                 on_open_wallet: move |_| {
                     navigation.write().select_primary(PrimaryDestination::Wallet);
-                    profile_menu_open.set(false);
+                    header_menu.set(HeaderMenu::Closed);
                 },
             }
         }
@@ -4014,14 +4139,14 @@ fn start_identity_scan(
     mut notice: Signal<Option<String>>,
     mut pending_request: Signal<Option<PendingIdentityRequest>>,
     mut navigation: Signal<RouteStack>,
-    mut profile_menu_open: Signal<bool>,
+    mut header_menu: Signal<HeaderMenu>,
 ) {
     if !identity_scan_is_admitted(busy(), pending_request.read().is_some()) {
         return;
     }
     busy.set(true);
     notice.set(None);
-    profile_menu_open.set(false);
+    header_menu.set(HeaderMenu::Closed);
     spawn(async move {
         match scanner.scan().await {
             Ok(payload) => {
@@ -4124,6 +4249,7 @@ fn ProfileGateway(
                 profiles,
                 active_profile_id: None,
                 onboarding: true,
+                allow_public_fixture: true,
                 on_selected,
             }
         },
@@ -4169,7 +4295,6 @@ fn OnboardingFlow(
     on_selected: EventHandler<WalletProfileView>,
     on_root_recovered: EventHandler<WalletProfileView>,
 ) -> Element {
-    #[cfg(feature = "preprod-observation")]
     let services = consume_context::<WalletUiServices>();
     let brand = consume_context::<BrandProfile>();
     let mut step = use_signal(|| OnboardingStep::Welcome);
@@ -4197,20 +4322,32 @@ fn OnboardingFlow(
             section { class: "page-heading onboarding-heading",
                 p { class: "eyebrow", "Welcome to {brand.product_name()}" }
                 h1 { "Your Midnight identity wallet" }
-                p { "Start a new wallet or restore one complete encrypted {brand.product_name()} backup." }
+                p { "Create a private wallet, restore its 24-word phrase, or recover one complete encrypted {brand.product_name()} backup." }
             }
             section { class: "profile-card surface-card onboarding-choice-card",
-                button {
-                    class: "primary-action",
-                    r#type: "button",
-                    onclick: move |_| step.set(OnboardingStep::Create),
-                    "Create new wallet"
+                if services.wallet_onboarding.is_some() {
+                    button {
+                        class: "primary-action",
+                        r#type: "button",
+                        onclick: move |_| step.set(OnboardingStep::Create),
+                        "Create private wallet"
+                    }
+                    button {
+                        class: "secondary-action",
+                        r#type: "button",
+                        onclick: move |_| step.set(OnboardingStep::RestorePhraseProfile),
+                        "Restore recovery phrase"
+                    }
+                } else {
+                    p { class: "form-hint", role: "status",
+                        "Select an authenticated Midnight network profile before creating or restoring a private wallet."
+                    }
                 }
                 button {
                     class: "secondary-action",
                     r#type: "button",
-                    onclick: move |_| step.set(OnboardingStep::Restore),
-                    "Restore from backup"
+                    onclick: move |_| step.set(OnboardingStep::RestoreBackup),
+                    "Restore complete backup"
                 }
                 {root_recovery_choice}
             }
@@ -4232,16 +4369,50 @@ fn OnboardingFlow(
                 profiles: Vec::new(),
                 active_profile_id: None,
                 onboarding: true,
-                on_selected: move |profile| step.set(OnboardingStep::Protect(profile)),
+                allow_public_fixture: true,
+                on_selected: move |profile| step.set(onboarding_step_for_created_profile(profile)),
             }
         },
-        OnboardingStep::Protect(profile) => rsx! {
+        OnboardingStep::RestorePhraseProfile => rsx! {
+            section { class: "page-heading onboarding-heading",
+                button {
+                    class: "text-action",
+                    r#type: "button",
+                    aria_label: "Back to onboarding choices",
+                    onclick: move |_| step.set(OnboardingStep::Welcome),
+                    "← Back"
+                }
+                p { class: "eyebrow", "Existing Midnight wallet" }
+                h1 { "Name this wallet" }
+                p { "Create an empty local profile before entering its recovery phrase." }
+            }
+            ProfileManager {
+                profiles: Vec::new(),
+                active_profile_id: None,
+                onboarding: true,
+                allow_public_fixture: false,
+                on_selected: move |profile| step.set(OnboardingStep::Private(
+                    profile,
+                    WalletOnboardingIntent::RestorePhrase,
+                )),
+            }
+        },
+        OnboardingStep::Private(profile, intent) => rsx! {
+            WalletOnboarding {
+                profile,
+                intent,
+                lifecycle_wake,
+                on_complete: move |profile| on_selected.call(profile),
+            }
+        },
+        #[cfg(feature = "public-standalone-genesis")]
+        OnboardingStep::SharedDeveloper(profile) => rsx! {
             OnboardingProtection {
                 profile,
                 on_continue: move |profile| on_selected.call(profile),
             }
         },
-        OnboardingStep::Restore => rsx! {
+        OnboardingStep::RestoreBackup => rsx! {
             section { class: "page-heading onboarding-heading",
                 button {
                     class: "text-action",
@@ -4276,6 +4447,7 @@ fn OnboardingFlow(
                 profiles: Vec::new(),
                 active_profile_id: None,
                 onboarding: true,
+                allow_public_fixture: false,
                 on_selected: move |profile| step.set(OnboardingStep::RecoverRoot(profile)),
             }
         },
@@ -4295,6 +4467,15 @@ fn OnboardingFlow(
     }
 }
 
+fn onboarding_step_for_created_profile(profile: WalletProfileView) -> OnboardingStep {
+    #[cfg(feature = "public-standalone-genesis")]
+    if profile.display_name == PUBLIC_STANDALONE_PROFILE_NAME {
+        return OnboardingStep::SharedDeveloper(profile);
+    }
+    OnboardingStep::Private(profile, WalletOnboardingIntent::Create)
+}
+
+#[cfg(feature = "public-standalone-genesis")]
 #[component]
 fn OnboardingProtection(
     profile: WalletProfileView,
@@ -4309,13 +4490,12 @@ fn OnboardingProtection(
         OnboardingProtectionState::Idle | OnboardingProtectionState::Working => None,
     };
     let protected_profile = profile.clone();
-    let skipped_profile = profile.clone();
 
     rsx! {
         section { class: "page-heading onboarding-heading",
-            p { class: "eyebrow", "Wallet created" }
-            h1 { "Protect this wallet" }
-            p { "Device protection authorizes sensitive wallet actions. You can enable it now or continue and configure it later in Settings." }
+            p { class: "eyebrow", "Shared developer wallet" }
+            h1 { "Enable public test authority" }
+            p { "This undeployed-network fixture is shared and publicly spendable. It provides no privacy or ownership and must never hold assets of value." }
         }
         section { class: "profile-card surface-card",
             div { class: "profile-row__identity",
@@ -4346,18 +4526,11 @@ fn OnboardingProtection(
                 },
                 if busy { "Enabling device protection…" } else { "Enable device protection" }
             }
-            button {
-                class: "secondary-action",
-                r#type: "button",
-                disabled: busy,
-                onclick: move |_| on_continue.call(skipped_profile.clone()),
-                "Skip for now"
-            }
             if let Some(message) = failure {
                 div { class: "result error", role: "alert",
                     strong { "Device protection was not enabled" }
                     p { "{message}" }
-                    p { "You can skip for now and retry from Settings." }
+                    p { "Retry only in the local or Tailnet developer profile." }
                 }
             }
         }
@@ -4527,6 +4700,7 @@ fn ProfileManager(
     profiles: Vec<WalletProfileView>,
     active_profile_id: Option<String>,
     onboarding: bool,
+    allow_public_fixture: bool,
     on_selected: EventHandler<WalletProfileView>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
@@ -4545,15 +4719,19 @@ fn ProfileManager(
     let public_fixture_choice = {
         let fixture_exists = public_fixture_profile_exists(&profile_list.read());
         let fixture_selected = display_name.read().trim() == PUBLIC_STANDALONE_PROFILE_NAME;
-        rsx! {
-            p { class: "form-hint", "For a disposable local demo, explicitly select the shared public wallet. Anyone can spend its funds." }
-            button {
-                class: "secondary-action",
-                r#type: "button",
-                disabled: busy || fixture_exists || fixture_selected,
-                onclick: move |_| display_name.set(PUBLIC_STANDALONE_PROFILE_NAME.to_owned()),
-                {public_fixture_choice_label(fixture_exists, fixture_selected)}
+        if allow_public_fixture {
+            rsx! {
+                p { class: "form-hint", "For a disposable local demo, explicitly select the shared public wallet. Anyone can spend its funds." }
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    disabled: busy || fixture_exists || fixture_selected,
+                    onclick: move |_| display_name.set(PUBLIC_STANDALONE_PROFILE_NAME.to_owned()),
+                    {public_fixture_choice_label(fixture_exists, fixture_selected)}
+                }
             }
+        } else {
+            rsx! {}
         }
     };
     #[cfg(not(feature = "public-standalone-genesis"))]
@@ -4734,16 +4912,13 @@ fn HomePage(
     match state.read().clone() {
         HomePageState::Loading => rsx! {
             section { class: "home-hero home-hero--loading", role: "status", aria_busy: "true",
-                p { class: "eyebrow", "Your wallet" }
-                div { class: "home-hero__number-row",
-                    h1 { "…" }
-                    span { "NIGHT" }
-                }
-                p { class: "home-hero__hint", "Loading your wallet overview…" }
+                p { class: "eyebrow", "Current realm" }
+                h1 { class: "home-hero__realm-title", "Loading network…" }
+                p { class: "home-hero__hint", "Preparing {active_profile.display_name} without carrying values across profiles." }
             }
             HomeQuickActions { scan_busy, on_select_primary, on_receive, on_scan }
             section { class: "home-card-stack", aria_label: "Loading wallet products", aria_busy: "true",
-                for label in ["NIGHT account", "Shielded account", "Newest document", "Passport Vault"] {
+                for label in ["Wallet", "Newest document", "Passport Vault"] {
                     article { class: "home-card home-card--loading", key: "{label}",
                         p { class: "card-eyebrow", "{label}" }
                         span { class: "loading-mark", aria_hidden: "true" }
@@ -4762,14 +4937,11 @@ fn HomePage(
         HomePageState::Failed => rsx! {
             section { class: "home-hero home-hero--unavailable",
                 div { class: "home-hero__heading-row",
-                    p { class: "eyebrow", "Your wallet" }
+                    p { class: "eyebrow", "Current realm" }
                     span { class: "status-pill warning", "Unavailable" }
                 }
-                div { class: "home-hero__number-row",
-                    h1 { "—" }
-                    span { "NIGHT" }
-                }
-                p { class: "home-hero__hint", "Wallet data could not be loaded safely." }
+                h1 { class: "home-hero__realm-title", "{active_profile.display_name}" }
+                p { class: "home-hero__hint", "The selected network context could not be loaded safely." }
             }
             HomeQuickActions { scan_busy, on_select_primary, on_receive, on_scan }
             article { class: "empty-state surface-card", role: "alert",
@@ -4799,16 +4971,14 @@ fn HomePage(
                 account,
                 security,
                 backup_receipt,
-                shielded,
                 credentials,
                 vault,
             } = *projection;
             rsx! {
-                HomeHero { account: (*account).clone() }
+                HomeHero { active_profile: active_profile.clone(), account: (*account).clone() }
                 HomeQuickActions { scan_busy, on_select_primary, on_receive, on_scan }
                 HomeProductStack {
                     account: (*account).clone(),
-                    shielded,
                     credentials,
                     vault,
                     on_select_primary,
@@ -4822,13 +4992,7 @@ fn HomePage(
 }
 
 #[component]
-fn HomeHero(account: WalletAccountView) -> Element {
-    let night = balance_for(&account, "NIGHT")
-        .map(|balance| ui::format_atomic_units(&balance.atomic_units, balance.decimals))
-        .unwrap_or_else(|| "—".to_owned());
-    let dust = balance_for(&account, "DUST")
-        .map(|balance| ui::format_atomic_units(&balance.atomic_units, balance.decimals))
-        .unwrap_or_else(|| "—".to_owned());
+fn HomeHero(active_profile: WalletProfileView, account: WalletAccountView) -> Element {
     let source = ui::account_source(&account.source);
     let freshness = ui::sync_state(&account.sync.state);
     let status_class = if matches!(
@@ -4843,21 +5007,15 @@ fn HomeHero(account: WalletAccountView) -> Element {
     rsx! {
         section { class: "home-hero",
             div { class: "home-hero__heading-row",
-                p { class: "eyebrow", "Your wallet" }
+                p { class: "eyebrow", "Current realm" }
                 span {
                     class: "{status_class}",
                     aria_label: "Account source {source}; freshness {freshness}",
                     "{source} · {freshness}"
                 }
             }
-            div { class: "home-hero__number-row",
-                h1 { class: "privacy-value", "{night}" }
-                span { "NIGHT" }
-            }
-            div { class: "dust-pill",
-                strong { class: "privacy-value", "{dust}" }
-                span { "DUST" }
-            }
+            h1 { class: "home-hero__realm-title", "{account.network_name}" }
+            p { class: "home-hero__profile", "{active_profile.display_name} · {account.chain}" }
             p { class: "home-hero__hint", "{ui::account_source_note(&account.source)}" }
         }
     }
@@ -5186,23 +5344,20 @@ fn grouped_address_preview(value: &str) -> String {
 #[component]
 fn HomeProductStack(
     account: WalletAccountView,
-    shielded: HomeResource<WalletShieldedSyncView>,
     credentials: HomeResource<Vec<CredentialView>>,
     vault: HomeResource<Box<PassportVaultView>>,
     on_select_primary: EventHandler<PrimaryDestination>,
     on_open_vault: EventHandler<MouseEvent>,
 ) -> Element {
     let brand = consume_context::<BrandProfile>();
-    let night = balance_for(&account, "NIGHT")
-        .map(|balance| ui::format_asset_amount(&balance.atomic_units, balance.decimals, "NIGHT"))
-        .unwrap_or_else(|| "Balance unavailable".to_owned());
+    let (wallet_title, wallet_detail) = home_wallet_summary(&account);
 
     rsx! {
-        section { class: "home-section", aria_label: "Wallet products",
+        section { class: "home-section", aria_label: "Profile spaces",
             div { class: "home-section__heading",
                 div {
-                    p { class: "card-eyebrow", "Products" }
-                    h2 { "Everything in one place" }
+                    p { class: "card-eyebrow", "Profile spaces" }
+                    h2 { "Continue your work" }
                 }
                 small { "Swipe" }
             }
@@ -5210,29 +5365,11 @@ fn HomeProductStack(
                 button {
                     class: "home-card home-card--assets",
                     r#type: "button",
-                    aria_label: "Open Wallet NIGHT account",
+                    aria_label: "Open Wallet for {wallet_title}",
                     onclick: move |_| on_select_primary.call(PrimaryDestination::Wallet),
-                    p { class: "card-eyebrow", "NIGHT account" }
-                    strong { class: "home-card__value privacy-value", "{night}" }
-                    span { class: "home-card__detail", "{account.network_name} · {ui::sync_state(&account.sync.state)}" }
-                    span { class: "home-card__link", "Open Wallet →" }
-                }
-                button {
-                    class: "home-card home-card--shielded",
-                    r#type: "button",
-                    aria_label: "Open Wallet shielded account",
-                    onclick: move |_| on_select_primary.call(PrimaryDestination::Wallet),
-                    p { class: "card-eyebrow", "Shielded account" }
-                    match shielded {
-                        HomeResource::Ready(status) => rsx! {
-                            strong { class: "home-card__value privacy-value", "{home_shielded_value(&status)}" }
-                            span { class: "home-card__detail", "{home_shielded_detail(&status)}" }
-                        },
-                        HomeResource::Unavailable => rsx! {
-                            strong { class: "home-card__value", "Unavailable" }
-                            span { class: "home-card__detail", "Open Wallet to activate or retry protected sync." }
-                        },
-                    }
+                    p { class: "card-eyebrow", "Wallet" }
+                    strong { class: "home-card__value", "{wallet_title}" }
+                    span { class: "home-card__detail", "{wallet_detail}" }
                     span { class: "home-card__link", "Open Wallet →" }
                 }
                 button {
@@ -5246,7 +5383,7 @@ fn HomeProductStack(
                             if let Some(credential) = newest_credential(&credentials) {
                                 rsx! {
                                     strong { class: "home-card__value", "{credential.display_name}" }
-                                    span { class: "home-card__detail", "{ui::credential_format(&credential.format)} · {ui::verification_outcome(&credential.verification_outcome)}" }
+                                    span { class: "home-card__detail", "{account.network_name} · {ui::credential_format(&credential.format)} · {ui::verification_outcome(&credential.verification_outcome)}" }
                                 }
                             } else {
                                 rsx! {
@@ -5274,8 +5411,8 @@ fn HomeProductStack(
                                 let lock_count = vault.locks.len();
                                 let lock_label = if lock_count == 1 { "active lock" } else { "active locks" };
                                 rsx! {
-                                    strong { class: "home-card__value privacy-value", "{ui::format_night_amount(&vault.total_locked)}" }
-                                    span { class: "home-card__detail", "{lock_count} {lock_label} · {ui::vault_contract_source(&vault.source)}" }
+                                    strong { class: "home-card__value", "{lock_count} {lock_label}" }
+                                    span { class: "home-card__detail", "{ui::vault_contract_source(&vault.source)} · value details stay in Vault" }
                                 }
                             },
                             HomeResource::Unavailable => rsx! {
@@ -5289,6 +5426,17 @@ fn HomeProductStack(
             }
         }
     }
+}
+
+fn home_wallet_summary(account: &WalletAccountView) -> (String, String) {
+    (
+        account.network_name.clone(),
+        format!(
+            "{} · {}",
+            ui::sync_state(&account.sync.state),
+            ui::account_source(&account.source),
+        ),
+    )
 }
 
 #[component]
@@ -5694,25 +5842,28 @@ fn AccountSyncCard(
             }
         }
         AccountSyncCardState::Ready {
-            dust,
-            shielded,
+            realm,
             action_busy,
             operation_error,
         } => {
-            let syncing = dust.state == "syncing" || shielded.state == "syncing";
-            let overall_state = account_sync_state(&dust, &shielded);
-            let progress = account_sync_progress(&dust, &shielded);
-            let dust_balance = dust
-                .balance_atomic_units
-                .as_deref()
-                .map(|value| ui::format_atomic_units(value, ui::DUST_DECIMALS))
-                .unwrap_or_else(|| "—".to_owned());
-            let owned_notes = shielded
-                .owned_note_count
-                .map_or_else(|| "—".to_owned(), |count| count.to_string());
-            let shielded_night = home_shielded_value(&shielded);
-            let retained_dust = dust.clone();
-            let retained_shielded = shielded.clone();
+            let syncing = selected_realm_is_syncing(&realm);
+            let overall_state = selected_realm_sync_state(&realm);
+            let provenance = selected_realm_provenance(&realm);
+            let chain_tip = selected_realm_chain_tip(&realm);
+            let progress = selected_realm_sync_progress(&realm);
+            let dust_balance = selected_realm_dust_balance(&realm.dust);
+            let dust_state = selected_realm_dust_state(&realm.dust);
+            let dust_note = selected_realm_dust_note(&realm.dust);
+            let shielded_night = selected_realm_shielded_balance(&realm.shielded);
+            let shielded_state = selected_realm_shielded_state(&realm.shielded);
+            let shielded_note = selected_realm_shielded_note(&realm.shielded);
+            let owned_notes = match &realm.shielded {
+                WalletRealmFamilyView::Ready(status) => status
+                    .owned_note_count
+                    .map_or_else(|| "—".to_owned(), |count| count.to_string()),
+                _ => "—".to_owned(),
+            };
+            let retained_realm = realm.clone();
             let action_services = services.clone();
             let action_profile = profile_id.clone();
             let mut action_state = state;
@@ -5725,32 +5876,36 @@ fn AccountSyncCard(
                         }
                         span { class: "{dust_status_pill_class(overall_state)}", "{ui::sync_state(overall_state)}" }
                     }
+                    p { class: "account-sync-card__provenance", "{provenance}" }
+                    p { class: "account-sync-card__provenance", "{chain_tip}" }
                     p { "Refresh the public account, DUST balance, and shielded notes together. Each source retains its own authoritative status." }
                     div { class: "account-sync-card__rows",
                         div { class: "account-sync-card__row",
                             div {
-                                strong { class: "privacy-value", "{dust_balance} DUST" }
-                                small { "{dust_sync_note(&dust)}" }
+                                strong { class: "privacy-value", "{dust_balance}" }
+                                small { "{dust_note}" }
                             }
-                            span { class: "{dust_status_pill_class(&dust.state)}", "{ui::sync_state(&dust.state)}" }
+                            span { class: "{dust_status_pill_class(dust_state)}", "{ui::sync_state(dust_state)}" }
                         }
                         div { class: "account-sync-card__row",
                             div {
                                 strong { class: "privacy-value", "{shielded_night}" }
                                 small { "Shielded NIGHT · {owned_notes} protected notes" }
-                                small { "{shielded_sync_note(&shielded)}" }
+                                small { "{shielded_note}" }
                             }
-                            span { class: "{dust_status_pill_class(&shielded.state)}", "{ui::sync_state(&shielded.state)}" }
+                            span { class: "{dust_status_pill_class(shielded_state)}", "{ui::sync_state(shielded_state)}" }
                         }
                     }
-                    if non_native_shielded_balances(&shielded).next().is_some() {
-                        div { class: "activity-list", aria_label: "Shielded token balances",
-                            for balance in non_native_shielded_balances(&shielded) {
-                                div { class: "activity-row", key: "{balance.token_type_hex}",
-                                    span { class: "activity-row__mark", aria_hidden: "true", "◈" }
-                                    div {
-                                        strong { class: "privacy-value", "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}" }
-                                        small { title: "{balance.token_type_hex}", "Protected token" }
+                    if let WalletRealmFamilyView::Ready(shielded) = &realm.shielded {
+                        if non_native_shielded_balances(shielded).next().is_some() {
+                            div { class: "activity-list", aria_label: "Shielded token balances",
+                                for balance in non_native_shielded_balances(shielded) {
+                                    div { class: "activity-row", key: "{balance.token_type_hex}",
+                                        span { class: "activity-row__mark", aria_hidden: "true", "◈" }
+                                        div {
+                                            strong { class: "privacy-value", "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}" }
+                                            small { title: "{balance.token_type_hex}", "Protected token" }
+                                        }
                                     }
                                 }
                             }
@@ -5770,75 +5925,54 @@ fn AccountSyncCard(
                         disabled: action_busy || (!syncing && (!can_sync || account_unavailable)),
                         onclick: move |_| {
                             action_state.set(AccountSyncCardState::Ready {
-                                dust: retained_dust.clone(),
-                                shielded: retained_shielded.clone(),
+                                realm: retained_realm.clone(),
                                 action_busy: true,
                                 operation_error: None,
                             });
                             let services = action_services.clone();
                             let profile_id = action_profile.clone();
-                            let dust = retained_dust.clone();
-                            let shielded = retained_shielded.clone();
+                            let retained = retained_realm.clone();
                             spawn(async move {
-                                if !syncing {
-                                    let account_service = services.sync_wallet_account();
-                                    let account_profile = profile_id.clone();
-                                    match run_ui_future(async move {
-                                        account_service
-                                            .execute(WalletAccountQuery {
-                                                profile_id: account_profile,
-                                            })
-                                            .await
-                                    })
-                                    .await
-                                    {
-                                        Ok(Ok(account)) => on_account_updated.call(account),
-                                        Ok(Err(error)) => {
-                                            action_state.set(AccountSyncCardState::Ready {
-                                                dust,
-                                                shielded,
-                                                action_busy: false,
-                                                operation_error: Some(error.to_string()),
-                                            });
-                                            return;
-                                        }
-                                        Err(error) => {
-                                            action_state.set(AccountSyncCardState::Ready {
-                                                dust,
-                                                shielded,
-                                                action_busy: false,
-                                                operation_error: Some(error.to_string()),
-                                            });
-                                            return;
-                                        }
-                                    }
-                                }
-                                let worker_services = services.clone();
-                                let worker_profile = profile_id.clone();
-                                let result = run_ui_blocking(move || {
-                                    mutate_account_indexes(
-                                        &worker_services,
-                                        &worker_profile,
-                                        dust,
-                                        shielded,
-                                        syncing,
-                                    )
-                                })
-                                .await;
+                                let command = SelectedWalletRealmSyncCommand {
+                                    profile_id: profile_id.clone(),
+                                };
+                                let result = if syncing {
+                                    let service = services.cancel_selected_wallet_realm_sync();
+                                    run_ui_blocking(move || service.execute(command)).await
+                                } else {
+                                    let service = services.sync_selected_wallet_realm();
+                                    run_ui_future(async move { service.execute(command).await }).await
+                                };
                                 match result {
-                                    Ok((dust, shielded, operation_error)) => {
-                                        let should_poll = dust.state == "syncing" || shielded.state == "syncing";
+                                    Ok(Ok(updated)) => {
+                                        let should_poll = selected_realm_is_syncing(&updated);
+                                        if let WalletRealmFamilyView::Ready(account) = &updated.account {
+                                            on_account_updated.call(account.clone());
+                                        }
                                         action_state.set(AccountSyncCardState::Ready {
-                                            dust,
-                                            shielded,
+                                            realm: Box::new(updated),
                                             action_busy: false,
-                                            operation_error,
+                                            operation_error: None,
                                         });
                                         if should_poll {
-                                            poll_account_sync(services, profile_id, action_state);
+                                            poll_account_sync(
+                                                services,
+                                                profile_id,
+                                                action_state,
+                                                on_account_updated,
+                                            );
                                         }
                                     }
-                                    Err(error) => action_state.set(AccountSyncCardState::Failed(error.to_string())),
+                                    Ok(Err(error)) => action_state.set(AccountSyncCardState::Ready {
+                                        realm: retained,
+                                        action_busy: false,
+                                        operation_error: Some(error.to_string()),
+                                    }),
+                                    Err(error) => action_state.set(AccountSyncCardState::Ready {
+                                        realm: retained,
+                                        action_busy: false,
+                                        operation_error: Some(error.to_string()),
+                                    }),
                                 }
                             });
                         },
@@ -6663,232 +6797,6 @@ fn dust_registration_readiness_label(readiness: &str) -> &'static str {
     }
 }
 
-fn load_account_sync_card(services: &WalletUiServices, profile_id: &str) -> AccountSyncCardState {
-    let dust = services
-        .get_wallet_dust_sync_status()
-        .execute(WalletDustSyncCommand {
-            profile_id: profile_id.to_owned(),
-        })
-        .map_err(|error| error.to_string());
-    let shielded = services
-        .get_wallet_shielded_sync_status()
-        .execute(WalletShieldedSyncCommand {
-            profile_id: profile_id.to_owned(),
-        })
-        .map_err(|error| error.to_string());
-    match (dust, shielded) {
-        (Ok(dust), Ok(shielded)) => AccountSyncCardState::Ready {
-            dust,
-            shielded: Box::new(shielded),
-            action_busy: false,
-            operation_error: None,
-        },
-        (Err(dust), Err(shielded)) => {
-            AccountSyncCardState::Failed(format!("DUST: {dust}; shielded: {shielded}"))
-        }
-        (Err(error), Ok(_)) => AccountSyncCardState::Failed(format!("DUST: {error}")),
-        (Ok(_), Err(error)) => AccountSyncCardState::Failed(format!("Shielded: {error}")),
-    }
-}
-
-fn mutate_account_indexes(
-    services: &WalletUiServices,
-    profile_id: &str,
-    retained_dust: WalletDustSyncView,
-    retained_shielded: Box<WalletShieldedSyncView>,
-    cancel: bool,
-) -> (
-    WalletDustSyncView,
-    Box<WalletShieldedSyncView>,
-    Option<String>,
-) {
-    let dust_result = if (cancel && retained_dust.state == "syncing")
-        || (!cancel && retained_dust.state != "unavailable")
-    {
-        let command = WalletDustSyncCommand {
-            profile_id: profile_id.to_owned(),
-        };
-        if cancel {
-            services.cancel_wallet_dust_sync().execute(command)
-        } else {
-            services.start_wallet_dust_sync().execute(command)
-        }
-        .map_err(|error| error.to_string())
-    } else {
-        Ok(retained_dust.clone())
-    };
-    let shielded_result = if (cancel && retained_shielded.state == "syncing")
-        || (!cancel && retained_shielded.state != "unavailable")
-    {
-        let command = WalletShieldedSyncCommand {
-            profile_id: profile_id.to_owned(),
-        };
-        let result = if cancel {
-            services.cancel_wallet_shielded_sync().execute(command)
-        } else {
-            services.start_wallet_shielded_sync().execute(command)
-        };
-        result.map(Box::new).map_err(|error| error.to_string())
-    } else {
-        Ok(retained_shielded.clone())
-    };
-
-    let (dust, dust_error) = dust_result
-        .map(|status| (status, None))
-        .unwrap_or_else(|error| (retained_dust, Some(format!("DUST: {error}"))));
-    let (shielded, shielded_error) = shielded_result
-        .map(|status| (status, None))
-        .unwrap_or_else(|error| (retained_shielded, Some(format!("Shielded: {error}"))));
-    let operation_error = match (dust_error, shielded_error) {
-        (Some(dust), Some(shielded)) => Some(format!("{dust}; {shielded}")),
-        (Some(error), None) | (None, Some(error)) => Some(error),
-        (None, None) => None,
-    };
-    (dust, shielded, operation_error)
-}
-
-fn poll_account_sync(
-    services: WalletUiServices,
-    profile_id: String,
-    mut state: Signal<AccountSyncCardState>,
-) {
-    spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_millis(150)).await;
-            let worker_services = services.clone();
-            let worker_profile = profile_id.clone();
-            let result =
-                run_ui_blocking(move || load_account_sync_card(&worker_services, &worker_profile))
-                    .await;
-            match result {
-                Ok(AccountSyncCardState::Ready { dust, shielded, .. }) => {
-                    let complete = dust.state != "syncing" && shielded.state != "syncing";
-                    state.set(AccountSyncCardState::Ready {
-                        dust,
-                        shielded,
-                        action_busy: false,
-                        operation_error: None,
-                    });
-                    if complete {
-                        break;
-                    }
-                }
-                Ok(AccountSyncCardState::Failed(error)) => {
-                    state.set(AccountSyncCardState::Failed(error));
-                    break;
-                }
-                Ok(AccountSyncCardState::Loading) => {}
-                Err(error) => {
-                    state.set(AccountSyncCardState::Failed(error.to_string()));
-                    break;
-                }
-            }
-        }
-    });
-}
-
-fn account_sync_state<'a>(
-    dust: &'a WalletDustSyncView,
-    shielded: &'a WalletShieldedSyncView,
-) -> &'a str {
-    if dust.state == "syncing" || shielded.state == "syncing" {
-        "syncing"
-    } else if dust.state == "synced" && shielded.state == "synced" {
-        "synced"
-    } else if dust.state == "stalled" || shielded.state == "stalled" {
-        "stalled"
-    } else if dust.state == "cancelled" || shielded.state == "cancelled" {
-        "cancelled"
-    } else if dust.state == "cached" || shielded.state == "cached" {
-        "cached"
-    } else if dust.state == "unavailable" && shielded.state == "unavailable" {
-        "unavailable"
-    } else {
-        "never_synced"
-    }
-}
-
-fn account_sync_progress(
-    dust: &WalletDustSyncView,
-    shielded: &WalletShieldedSyncView,
-) -> Option<u64> {
-    let values = [
-        dust_progress_percent(dust),
-        shielded_progress_percent(shielded),
-    ];
-    let values = values.into_iter().flatten().collect::<Vec<_>>();
-    if values.is_empty() {
-        None
-    } else {
-        Some(values.iter().sum::<u64>() / u64::try_from(values.len()).ok()?)
-    }
-}
-
-fn dust_progress_percent(status: &WalletDustSyncView) -> Option<u64> {
-    let (current, target) = status.current_cursor.zip(status.target_cursor)?;
-    let completed = u128::from(current).checked_add(1)?;
-    let total = u128::from(target).checked_add(1)?;
-    let percent = completed.checked_mul(100)?.checked_div(total)?.min(100);
-    u64::try_from(percent).ok()
-}
-
-fn dust_sync_note(status: &WalletDustSyncView) -> String {
-    let detail = match status.state.as_str() {
-        "never_synced" => "DUST has not been indexed for this protected account.".to_owned(),
-        "syncing" => "Refreshing the protected DUST balance…".to_owned(),
-        "synced" => "DUST is synchronized.".to_owned(),
-        "cached" => "Showing a resumable cached DUST checkpoint; spending remains disabled until live catch-up.".to_owned(),
-        "cancelled" => "DUST synchronization was cancelled at a consistent checkpoint and can resume.".to_owned(),
-        "stalled" => "DUST synchronization stalled; the last consistent checkpoint is retained.".to_owned(),
-        _ => "DUST synchronization is not available in this composition.".to_owned(),
-    };
-    status.failure.as_ref().map_or(detail.clone(), |failure| {
-        format!("{detail} ({})", ui::sync_failure(failure))
-    })
-}
-
-fn dust_status_pill_class(state: &str) -> &'static str {
-    match state {
-        "synced" => "status-pill success",
-        "syncing" | "cached" => "status-pill warning",
-        _ => "status-pill",
-    }
-}
-
-fn shielded_progress_percent(status: &WalletShieldedSyncView) -> Option<u64> {
-    let (current, target) = status.current_cursor.zip(status.target_cursor)?;
-    let completed = u128::from(current).checked_add(1)?;
-    let total = u128::from(target).checked_add(1)?;
-    let percent = completed.checked_mul(100)?.checked_div(total)?.min(100);
-    u64::try_from(percent).ok()
-}
-
-fn shielded_sync_note(status: &WalletShieldedSyncView) -> String {
-    let detail = match status.state.as_str() {
-        "never_synced" => {
-            "Shielded notes have not been indexed for this protected account.".to_owned()
-        }
-        "syncing" => "Refreshing protected shielded notes…".to_owned(),
-        "synced" => "Shielded notes are synchronized.".to_owned(),
-        "cached" => {
-            "Showing a key-scoped cached shielded checkpoint; live catch-up is still required."
-                .to_owned()
-        }
-        "cancelled" => {
-            "Shielded synchronization was cancelled at a consistent checkpoint and can resume."
-                .to_owned()
-        }
-        "stalled" => {
-            "Shielded synchronization stalled; the last consistent checkpoint is retained."
-                .to_owned()
-        }
-        _ => "Shielded synchronization is not available in this composition.".to_owned(),
-    };
-    status.failure.as_ref().map_or(detail.clone(), |failure| {
-        format!("{detail} ({})", ui::sync_failure(failure))
-    })
-}
-
 fn load_account_page(services: &WalletUiServices, profile_id: &str) -> AccountPageState {
     let query = WalletAccountQuery {
         profile_id: profile_id.to_owned(),
@@ -6947,12 +6855,6 @@ fn load_home_page(services: &WalletUiServices, profile_id: &str) -> HomePageStat
         } => (account, security),
         AccountPageState::Loading | AccountPageState::Failed(_) => return HomePageState::Failed,
     };
-    let shielded = services
-        .get_wallet_shielded_sync_status()
-        .execute(WalletShieldedSyncCommand {
-            profile_id: profile_id.to_owned(),
-        })
-        .map_or(HomeResource::Unavailable, HomeResource::Ready);
     let backup_receipt = services
         .get_wallet_backup_receipt
         .execute(WalletBackupReceiptCommand {
@@ -6976,7 +6878,6 @@ fn load_home_page(services: &WalletUiServices, profile_id: &str) -> HomePageStat
         account,
         security,
         backup_receipt,
-        shielded,
         credentials,
         vault,
     }))
@@ -7438,8 +7339,8 @@ fn SendTransferPanel(
             let amount_label = format_transfer_asset(&preview.amount);
             let change_label = format_transfer_asset(&preview.change);
             let recipient_label = truncate_middle(&preview.recipient_address, 18, 8);
-            let summary = transfer_review_summary(&preview);
-            let confirmation = authorize_transfer_confirmation(&preview);
+            let summary = preview.review_summary.clone();
+            let review_title = preview.review_title.clone();
             let draft_id = preview.draft_id.clone();
             let challenge = preview.authorization_challenge.clone();
             if confirmation_open() {
@@ -7449,7 +7350,7 @@ fn SendTransferPanel(
                         aria_label: "Confirm NIGHT transfer",
                         p { class: "card-eyebrow", "Confirm transfer" }
                         p { class: "privacy-consent-exemption", "Details shown for authorization." }
-                        h2 { "Authorize {amount_label}?" }
+                        h2 { "{review_title}" }
                         p { class: "confirm-sheet__summary", "{summary}" }
                         div { class: "confirm-sheet__recipient",
                             span { "Recipient" }
@@ -7475,7 +7376,6 @@ fn SendTransferPanel(
                                         profile_id: profile_id.clone(),
                                         draft_id: draft_id.clone(),
                                         authorization_challenge: challenge.clone(),
-                                        confirmation: confirmation.clone(),
                                     };
                                     let retained_preview = preview.clone();
                                     panel.set(TransferPanelState::Authorizing(preview.clone()));
@@ -7507,7 +7407,7 @@ fn SendTransferPanel(
                     article { class: "surface-card transfer-card review-card", aria_label: "Review NIGHT transfer",
                         p { class: "card-eyebrow", "Review transfer" }
                         p { class: "privacy-consent-exemption", "Details shown for authorization." }
-                        h2 { "Does this look right?" }
+                        h2 { "{review_title}" }
                         p { class: "send-wizard__summary", "{summary}" }
                         details { class: "transfer-details",
                             summary { "Details" }
@@ -7879,22 +7779,6 @@ fn transfer_failure_note(recovery: TransferRecovery, product_name: &str) -> Stri
     }
 }
 
-fn authorize_transfer_confirmation(
-    preview: &WalletTransferPreviewView,
-) -> SensitiveOperationConfirmation {
-    SensitiveOperationConfirmation {
-        title: "Authorize NIGHT transfer".to_owned(),
-        summary: format!(
-            "Send {} as a {} transfer to {} on {}; DUST fee balancing and proving remain pending",
-            format_transfer_asset(&preview.amount),
-            ui::transfer_privacy(&preview.recipient_kind).to_lowercase(),
-            truncate_middle(&preview.recipient_address, 18, 8),
-            ui::midnight_network(&preview.network_id),
-        ),
-        confirmed: true,
-    }
-}
-
 fn submit_transfer_confirmation(
     preview: &WalletTransferPreviewView,
 ) -> SensitiveOperationConfirmation {
@@ -7946,28 +7830,6 @@ fn home_shielded_value(status: &WalletShieldedSyncView) -> String {
         return "—".to_owned();
     }
     ui::format_shielded_amount(NATIVE_SHIELDED_NIGHT_TOKEN_TYPE, "0")
-}
-
-fn non_native_shielded_balances(
-    status: &WalletShieldedSyncView,
-) -> impl Iterator<Item = &oxid_wallet_application::WalletShieldedTokenBalanceView> {
-    status
-        .balances
-        .iter()
-        .filter(|balance| balance.token_type_hex != NATIVE_SHIELDED_NIGHT_TOKEN_TYPE)
-}
-
-fn home_shielded_detail(status: &WalletShieldedSyncView) -> String {
-    let notes = status.owned_note_count.map_or_else(
-        || "Protected note count unavailable".to_owned(),
-        |count| {
-            format!(
-                "{count} protected note{}",
-                if count == 1 { "" } else { "s" }
-            )
-        },
-    );
-    format!("{notes} · {}", ui::sync_state(&status.state))
 }
 
 fn home_transaction_amount(transaction: &oxid_wallet_application::WalletTransactionView) -> String {
@@ -8161,7 +8023,7 @@ fn ManagedDidControls(
     rsx! {
         details { class: "did-manager",
             summary { "Manage this DID" }
-            p { class: "form-hint", "Standalone operations use protected, process-local keys. Public DID records persist; development key custody does not survive an app restart." }
+            p { class: "form-hint", "DID operations use protected, process-local keys. Public DID records persist; development key custody does not survive an app restart." }
             label { r#for: "did-operation-{did}", "Operation" }
             select {
                 id: "did-operation-{did}",
@@ -8395,7 +8257,6 @@ fn load_credential_page(services: &WalletUiServices, profile_id: &str) -> Creden
             |error| CredentialPageState::Failed(credential_operation_message(error)),
             |credentials| CredentialPageState::Ready {
                 credentials,
-                receiving: false,
                 operation_error: None,
                 reverification_applied: false,
             },
@@ -8522,12 +8383,28 @@ fn identity_request_routing_message(error: IdentityRequestRoutingError) -> Strin
     }
 }
 
+#[cfg(not(feature = "ui-profile-dev"))]
+const fn is_developer_route(_route: Route) -> bool {
+    false
+}
+
+const fn page_context_primary_label(
+    content_route: Route,
+    active_primary: PrimaryDestination,
+) -> Option<&'static str> {
+    if is_developer_route(content_route) {
+        None
+    } else {
+        Some(active_primary.label())
+    }
+}
+
 fn route_pending_identity_link(
     services: &WalletUiServices,
     mut pending_identity_request: Signal<Option<PendingIdentityRequest>>,
     manual_credential_review_lock: Signal<bool>,
     mut navigation: Signal<RouteStack>,
-    mut profile_menu_open: Signal<bool>,
+    mut header_menu: Signal<HeaderMenu>,
     mut notice: Signal<Option<String>>,
 ) {
     if !identity_request_admits_new_link(
@@ -8545,6 +8422,7 @@ fn route_pending_identity_link(
             return;
         }
     };
+    header_menu.set(HeaderMenu::Closed);
     let request_uri = link.into_inner();
     match services
         .route_identity_request()
@@ -8554,7 +8432,6 @@ fn route_pending_identity_link(
         Ok(kind) => {
             pending_identity_request.set(Some(PendingIdentityRequest { kind, request_uri }));
             navigation.write().route_identity_request(kind);
-            profile_menu_open.set(false);
             notice.set(Some(format!(
                 "App link recognized as {}. Review the request before consent.",
                 ui::identity_request_kind(kind)
@@ -9048,7 +8925,6 @@ fn credential_page_after_change(
     };
     CredentialPageState::Ready {
         credentials,
-        receiving: false,
         operation_error,
         reverification_applied,
     }
@@ -9518,13 +9394,9 @@ fn CredentialsPage(
         },
         CredentialPageState::Ready {
             credentials,
-            receiving,
             operation_error,
             reverification_applied,
         } => {
-            let receive_service = services.receive_credential();
-            let receive_profile = profile_id.clone();
-            let retained = credentials.clone();
             let demo_offer = services.standalone_credential_offer();
             let credential_review_escape_visible = credential_review_escape_is_visible(
                 &pending_identity_request.read(),
@@ -9623,9 +9495,9 @@ fn CredentialsPage(
                                     offer_draft.set(CredentialOfferDraft::editable(offer.clone()));
                                     prepared_issuance.set(None);
                                     issuance_consent.set(false);
-                                    issuance_notice.set(Some("Standalone credential offer loaded. Preview it before accepting.".to_owned()));
+                                    issuance_notice.set(Some("OID4VCI demo offer loaded. Preview it before accepting.".to_owned()));
                                 },
-                                "Use standalone demo offer"
+                                "Use demo OID4VCI offer"
                             }
                         }
                         button {
@@ -10097,39 +9969,6 @@ fn CredentialsPage(
                         "{CREDENTIAL_REVERIFICATION_APPLIED_MARKER}"
                     }
                 }
-                if cfg!(feature = "ui-profile-dev") {
-                    article { class: "surface-card credential-receive-card",
-                        p { class: "card-eyebrow", "Developer fixture" }
-                        h2 { "Receive a standalone test credential" }
-                        p { class: "form-hint", "This bypasses OpenID4VCI and exists only in the explicit developer profile." }
-                        button {
-                            class: "primary-action", r#type: "button", disabled: receiving,
-                            onclick: move |_| {
-                                state.set(CredentialPageState::Ready { credentials: retained.clone(), receiving: true, operation_error: None, reverification_applied: false });
-                                let service = receive_service.clone();
-                                let profile_id = receive_profile.clone();
-                                let mut next = retained.clone();
-                                spawn(async move {
-                                    match run_ui_future(async move {
-                                        service.execute(CredentialProfileQuery { profile_id }).await
-                                    })
-                                    .await
-                                    {
-                                        Ok(Ok(credential)) => {
-                                            next.retain(|existing| existing.id != credential.id);
-                                            next.push(credential);
-                                            next.sort_by(|left, right| left.id.cmp(&right.id));
-                                            state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: None, reverification_applied: false });
-                                        }
-                                        Ok(Err(error)) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(credential_operation_message(error)), reverification_applied: false }),
-                                        Err(error) => state.set(CredentialPageState::Ready { credentials: next, receiving: false, operation_error: Some(error.to_string()), reverification_applied: false }),
-                                    }
-                                });
-                            },
-                            if receiving { "Receiving and verifying…" } else { "Receive standalone credential" }
-                        }
-                    }
-                }
                 if let Some(error) = operation_error.as_deref() {
                     p {
                         class: "field-error credential-operation-error",
@@ -10143,13 +9982,7 @@ fn CredentialsPage(
                     article { class: "empty-state surface-card",
                         span { class: "empty-state__mark", aria_hidden: "true", "◇" }
                         h2 { "No credentials yet" }
-                        p {
-                            if cfg!(feature = "ui-profile-dev") {
-                                "Scan an offer or use the developer fixture to add a test credential."
-                            } else {
-                                "Scan a credential offer to review and add your first credential."
-                            }
-                        }
+                        p { "Scan a credential offer to review and add your first credential." }
                         span { class: "status-pill", "Profile scoped" }
                     }
                 } else {
@@ -10177,76 +10010,16 @@ fn CredentialsPage(
     }
 }
 
-#[cfg(feature = "ui-profile-dev")]
-#[component]
-fn DeveloperCapabilitiesPage() -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let capabilities = services.developer_capabilities();
-    let ready = capabilities
-        .iter()
-        .filter(|capability| capability.status() == "ready")
-        .count();
-    let attention = capabilities.len().saturating_sub(ready);
-    #[cfg(feature = "proof-benchmark")]
-    let proof_benchmark_panel = rsx! { ProofBenchmarkPanel {} };
-    #[cfg(not(feature = "proof-benchmark"))]
-    let proof_benchmark_panel = rsx! {};
-
-    rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", "Standalone developer profile" }
-            h1 { "Capability manifest" }
-            p {
-                "Rendered from the same Oxid-owned manifest serialized by system.capabilities. Values are public composition facts; request payloads, identifiers, claims, endpoints, logs, and process telemetry are excluded."
-            }
-        }
-        section { class: "developer-capability-summary surface-card",
-            div {
-                p { class: "card-eyebrow", "Manifest snapshot" }
-                h2 { "{capabilities.len()} declared methods" }
-                p { "{ready} ready · {attention} queued, blocked, superseded, or composition-dependent" }
-            }
-            code { "source=oxid_capabilities_application freshness=composition_time cursor=not_applicable timing=not_collected" }
-        }
-        {proof_benchmark_panel}
-        div { class: "developer-capability-list",
-            for capability in capabilities {
-                article {
-                    class: "developer-capability-row capability-row",
-                    key: "{capability.method()}",
-                    span {
-                        class: if capability.status() == "ready" { "capability-dot ready" } else { "capability-dot queued" }
-                    }
-                    div { class: "developer-capability-row__body",
-                        strong { "{capability.method()}" }
-                        code { "status={capability.status()}" }
-                        if capability.facts().is_empty() {
-                            small { "No additional public composition facts" }
-                        } else {
-                            dl { class: "developer-capability-facts",
-                                for fact in capability.facts() {
-                                    div { key: "{fact.key()}",
-                                        dt { "{fact.key()}" }
-                                        dd { code { "{fact.value().display_text()}" } }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[component]
 fn SettingsPage(
     active_profile: WalletProfileView,
     lifecycle_wake: Signal<u64>,
     secret_mode: SecretModeController,
+    backup_only: bool,
     on_root_recovered: EventHandler<WalletProfileView>,
     on_open_profile: EventHandler<MouseEvent>,
     on_open_diagnostics: EventHandler<MouseEvent>,
+    on_open_developer: EventHandler<MouseEvent>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let brand = consume_context::<BrandProfile>();
@@ -10776,50 +10549,92 @@ fn SettingsPage(
     let deployment_profile_card = rsx! { DeploymentProfileCard {} };
     #[cfg(not(feature = "standalone-deployment-profile"))]
     let deployment_profile_card = rsx! {};
-
-    rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", "Local controls" }
-            h1 { "Settings" }
-            p { "Security-sensitive settings appear only when their application ports and platform adapters are available." }
-        }
+    #[cfg(feature = "ui-profile-dev")]
+    let developer_tools_card = rsx! {
         article { class: "settings-card surface-card",
             div {
-                p { class: "card-eyebrow", "Profile" }
-                h2 { "{active_profile.display_name}" }
-                p { "Public profile metadata and active selection are persisted. Seeds and keys are never part of this record." }
+                p { class: "card-eyebrow", "Development" }
+                h2 { "Developer tools" }
+                p { "Open capability diagnostics, the proof benchmark, and other explicitly composed development surfaces." }
             }
             button {
                 class: "secondary-action",
                 r#type: "button",
-                onclick: move |event| on_open_profile.call(event),
-                "Open profile page"
+                aria_label: "Open developer tools",
+                onclick: move |event| on_open_developer.call(event),
+                "Open developer tools"
+            }
+        }
+    };
+    #[cfg(not(feature = "ui-profile-dev"))]
+    let developer_tools_card = {
+        let _ = on_open_developer;
+        rsx! {}
+    };
+
+    rsx! {
+        section { class: "page-heading",
+            p { class: "eyebrow", if backup_only { "Wallet continuity" } else { "Local controls" } }
+            h1 { if backup_only { "Backup & recovery" } else { "Settings" } }
+            p { "Security-sensitive settings appear only when their application ports and platform adapters are available." }
+        }
+        if !backup_only {
+            article { class: "settings-card surface-card",
+                div {
+                    p { class: "card-eyebrow", "Profile" }
+                    h2 { "{active_profile.display_name}" }
+                    p { "Public profile metadata and active selection are persisted. Seeds and keys are never part of this record." }
+                }
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    onclick: move |event| on_open_profile.call(event),
+                    "Open profile page"
+                }
             }
         }
         {security_card}
         {root_recovery_card}
         {backup_card}
-        {deployment_profile_card}
-        article { class: "settings-card surface-card",
-            div {
-                p { class: "card-eyebrow", "Privacy" }
-                h2 { "Local-first · telemetry off" }
-                p { "No analytics or remote-storage adapter is active. Development simulation is local and production chain/identity adapters remain explicit capabilities." }
+        if !backup_only {
+            {deployment_profile_card}
+            article { class: "settings-card surface-card",
+                div {
+                    p { class: "card-eyebrow", "Privacy" }
+                    h2 { "Private values" }
+                    p { "Sensitive values for {active_profile.display_name} are hidden by default. A reveal lasts 30 seconds and ends immediately when you switch profiles or leave and resume the app." }
+                }
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    aria_label: if secret_mode.is_masked() { "Reveal private values for 30 seconds" } else { "Hide private values now" },
+                    aria_pressed: if secret_mode.is_masked() { "false" } else { "true" },
+                    onclick: move |_| secret_mode.toggle(),
+                    if secret_mode.is_masked() { "Reveal for 30 seconds" } else { "Hide now" }
+                }
             }
-            span { class: "status-pill success", "Enforced" }
-        }
-        article { class: "settings-card surface-card",
-            div {
-                p { class: "card-eyebrow", "About" }
-                h2 { "Diagnostics" }
-                p { "Review composed capabilities and bounded local runtime health without exposing wallet payloads." }
+            {developer_tools_card}
+            article { class: "settings-card surface-card",
+                div {
+                    p { class: "card-eyebrow", "Data collection" }
+                    h2 { "Local-first · telemetry off" }
+                    p { "No analytics or remote-storage adapter is active. Development simulation is local and production chain/identity adapters remain explicit capabilities." }
+                }
+                span { class: "status-pill success", "Enforced" }
             }
-            button {
-                class: "secondary-action",
-                r#type: "button",
-                aria_label: "Open diagnostics",
-                onclick: move |event| on_open_diagnostics.call(event),
-                "Open diagnostics"
+            article { class: "settings-card surface-card",
+                div {
+                    p { class: "card-eyebrow", "About" }
+                    h2 { "Diagnostics" }
+                    p { "Review composed capabilities and bounded local runtime health without exposing wallet payloads." }
+                }
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    aria_label: "Open diagnostics",
+                    onclick: move |event| on_open_diagnostics.call(event),
+                    "Open diagnostics"
+                }
             }
         }
     }
@@ -10865,6 +10680,7 @@ fn ProfilePage(
                 profiles: loaded,
                 active_profile_id: Some(active_profile.id),
                 onboarding: false,
+                allow_public_fixture: true,
                 on_selected,
             }
         },
@@ -10895,8 +10711,6 @@ const LUCIDE_ACTIVITY: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="
 const LUCIDE_SCAN_LINE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>"#;
 const LUCIDE_RECEIVE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>"#;
 const LUCIDE_SEND: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>"#;
-const LUCIDE_EYE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.06 12.35a1 1 0 0 1 0-.7C3.73 7.6 7.7 5 12 5c4.3 0 8.27 2.6 9.94 6.65a1 1 0 0 1 0 .7C20.27 16.4 16.3 19 12 19c-4.3 0-8.27-2.6-9.94-6.65"/><circle cx="12" cy="12" r="3"/></svg>"#;
-const LUCIDE_EYE_OFF: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 2 20 20"/><path d="M6.71 6.71C4.9 7.9 3.52 9.6 2.66 11.65a1 1 0 0 0 0 .7C4.33 16.4 8.3 19 12.6 19c1.3 0 2.56-.24 3.72-.68"/><path d="M10.73 5.08A9 9 0 0 1 12.6 5c4.3 0 8.27 2.6 9.94 6.65a1 1 0 0 1 0 .7 11.1 11.1 0 0 1-2.1 3.18"/><path d="M14.72 14.72A3 3 0 0 1 10.48 10.48"/></svg>"#;
 
 #[cfg(test)]
 mod tests {
@@ -11027,27 +10841,108 @@ mod tests {
 
     #[cfg(feature = "ui-profile-dev")]
     #[test]
-    fn developer_capabilities_are_a_bounded_secondary_route() {
-        assert_eq!(Route::Developer.title(), "Developer capabilities");
-        assert_eq!(Route::Developer.primary(), None);
-        assert!(!route_forces_screen_privacy(Route::Developer));
+    fn developer_tools_are_focused_secondary_routes_without_primary_navigation() {
+        let developer_routes = [
+            Route::Developer,
+            Route::DeveloperManifest,
+            Route::DeveloperProofBenchmark,
+            Route::DeveloperDiagnostics,
+        ];
+        assert_eq!(Route::Developer.title(), "Developer tools");
+        assert!(developer_routes.into_iter().all(|route| {
+            route.primary().is_none()
+                && is_developer_route(route)
+                && page_context_primary_label(route, PrimaryDestination::Home).is_none()
+                && !route_forces_screen_privacy(route)
+        }));
+        assert_eq!(
+            page_context_primary_label(Route::Wallet, PrimaryDestination::Wallet),
+            Some("Wallet")
+        );
 
         let mut navigation = RouteStack::default();
         navigation.push(Route::Developer);
-        assert_eq!(navigation.current(), Route::Developer);
+        navigation.push(Route::DeveloperProofBenchmark);
+        assert_eq!(
+            navigation.routes,
+            vec![
+                Route::Home,
+                Route::Developer,
+                Route::DeveloperProofBenchmark
+            ]
+        );
         assert!(navigation.pop());
-        assert_eq!(navigation.current(), Route::Home);
+        assert_eq!(navigation.current(), Route::Developer);
+
+        navigation.push(Route::DeveloperManifest);
+        navigation.replace_secondary(Route::DeveloperDiagnostics);
+        assert_eq!(
+            navigation.routes,
+            vec![Route::Home, Route::Developer, Route::DeveloperDiagnostics]
+        );
+        assert!(navigation.pop());
+        assert_eq!(navigation.current(), Route::Developer);
+    }
+
+    #[cfg(feature = "ui-profile-dev")]
+    #[test]
+    fn developer_section_navigation_and_benchmark_keep_phone_width_contracts() {
+        assert_eq!(
+            developer_tools::DEVELOPER_SECTIONS,
+            [
+                (Route::DeveloperManifest, "Capabilities"),
+                (Route::DeveloperProofBenchmark, "Benchmark"),
+                (Route::DeveloperDiagnostics, "Event log"),
+            ]
+        );
+
+        let section_nav = BASE_STYLES
+            .split(".developer-section-nav {")
+            .nth(1)
+            .and_then(|styles| styles.split('}').next())
+            .expect("developer section navigation rule");
+        assert!(section_nav.contains("overflow-x: auto;"));
+        assert!(section_nav.contains("repeat(3"));
+
+        let phone_rules = BASE_STYLES
+            .split("@media (max-width: 30rem) {")
+            .nth(1)
+            .expect("phone-width rules");
+        let benchmark_row = phone_rules
+            .split(".proof-benchmark-row.capability-row {")
+            .nth(1)
+            .and_then(|styles| styles.split('}').next())
+            .expect("phone-width benchmark row rule");
+        assert!(benchmark_row.contains("grid-template-columns: auto minmax(0, 1fr);"));
+        assert!(phone_rules.contains(".proof-benchmark-timings"));
+        assert!(phone_rules.contains("grid-template-columns: 1fr;"));
     }
 
     #[cfg(feature = "ui-profile-demo")]
     #[test]
     fn demo_profile_has_a_closed_order_and_three_explicit_review_boundaries() {
-        assert_eq!(DEMO_BOOTSTRAP_ACTIONS.len(), 9);
-        assert_eq!(DEMO_SAFE_SETUP_ACTIONS.len(), 6);
-        assert_eq!(DEMO_SAFE_SETUP_ACTIONS[0], DemoBootstrapAction::Profile);
         assert_eq!(
-            DEMO_SAFE_SETUP_ACTIONS[5],
-            DemoBootstrapAction::SimulatedFunding
+            DEMO_SAFE_SETUP_ACTIONS,
+            [
+                DemoBootstrapAction::Profile,
+                DemoBootstrapAction::Protection,
+                DemoBootstrapAction::Account,
+                DemoBootstrapAction::ManagedDid,
+                DemoBootstrapAction::SimulatedFunding,
+            ]
+        );
+        assert_eq!(
+            DEMO_BOOTSTRAP_ACTIONS,
+            [
+                DemoBootstrapAction::Profile,
+                DemoBootstrapAction::Protection,
+                DemoBootstrapAction::Account,
+                DemoBootstrapAction::ManagedDid,
+                DemoBootstrapAction::SimulatedFunding,
+                DemoBootstrapAction::CredentialOffer,
+                DemoBootstrapAction::LoginRequest,
+                DemoBootstrapAction::PresentationRequest,
+            ]
         );
         assert_eq!(
             DEMO_BOOTSTRAP_ACTIONS
@@ -11103,7 +10998,7 @@ mod tests {
             "review".to_owned(),
         );
         state.update(
-            DemoBootstrapAction::InboxFixture,
+            DemoBootstrapAction::SimulatedFunding,
             DemoActionPhase::Failed,
             "retry".to_owned(),
         );
@@ -11117,7 +11012,7 @@ mod tests {
             DemoActionPhase::ReviewRequired
         );
         assert_eq!(
-            state.progress(DemoBootstrapAction::InboxFixture).phase,
+            state.progress(DemoBootstrapAction::SimulatedFunding).phase,
             DemoActionPhase::Failed
         );
         assert!(
@@ -11773,6 +11668,44 @@ mod tests {
     }
 
     #[test]
+    fn profile_switching_is_bounded_to_the_home_root() {
+        assert!(profile_switch_is_allowed(Route::Home));
+        assert!(!profile_switch_is_allowed(Route::Receive));
+        assert!(!profile_switch_is_allowed(Route::Wallet));
+        assert!(!profile_switch_is_allowed(Route::CredentialRequest));
+        assert!(!profile_switch_is_allowed(Route::Settings));
+    }
+
+    #[test]
+    fn home_wallet_summary_is_realm_neutral() {
+        let networks = WalletNetworkListView {
+            selected_network_id: "undeployed".to_owned(),
+            networks: vec![oxid_wallet_application::WalletNetworkView {
+                chain: "midnight".to_owned(),
+                network_id: "undeployed".to_owned(),
+                display_name: "Standalone".to_owned(),
+                environment: "development".to_owned(),
+                selected: true,
+            }],
+        };
+        let mut account = protected_account_placeholder(&networks).expect("selected network");
+        account.balances = vec![oxid_wallet_application::WalletAssetBalanceView {
+            asset_id: "night".to_owned(),
+            symbol: "NIGHT".to_owned(),
+            decimals: 6,
+            atomic_units: "999000000".to_owned(),
+        }];
+
+        let (title, detail) = home_wallet_summary(&account);
+
+        assert_eq!(title, "Standalone");
+        assert!(detail.contains("Unavailable"));
+        assert!(!title.contains("NIGHT"));
+        assert!(!detail.contains("NIGHT"));
+        assert!(!detail.contains("999"));
+    }
+
+    #[test]
     fn home_selects_only_the_newest_public_credential_summary() {
         let credential = |id: &str, issued_at_ms| CredentialView {
             id: id.to_owned(),
@@ -11870,6 +11803,8 @@ mod tests {
             state: "prepared".to_owned(),
             proof_required: true,
             submission_ready: false,
+            review_title: "Authorize NIGHT transfer".to_owned(),
+            review_summary: "Trusted application-derived review summary.".to_owned(),
         }
     }
 
@@ -11883,6 +11818,12 @@ mod tests {
 
     #[test]
     fn send_review_summary_uses_only_the_exact_preview() {
+        let preview = transfer_preview("shielded");
+        assert_eq!(preview.review_title, "Authorize NIGHT transfer");
+        assert_eq!(
+            preview.review_summary,
+            "Trusted application-derived review summary."
+        );
         assert_eq!(
             transfer_review_summary(&transfer_preview("shielded")),
             "Send 12.5 NIGHT privately to mn_addr_test on Standalone development."
@@ -11970,6 +11911,8 @@ mod tests {
     fn profile_remains_an_explicit_non_primary_route() {
         assert_eq!(Route::Profile.title(), "Wallet profiles");
         assert_eq!(Route::Profile.primary(), None);
+        assert_eq!(Route::BackupRecovery.title(), "Backup & recovery");
+        assert_eq!(Route::BackupRecovery.primary(), None);
         assert_eq!(Route::Receive.title(), "Receive");
         assert_eq!(Route::Receive.primary(), None);
     }
@@ -12117,9 +12060,10 @@ mod tests {
             &profiles,
             PUBLIC_STANDALONE_PROFILE_NAME
         ));
-        assert!(public_fixture_name_conflicts(
+        assert!(public_fixture_name_conflicts(&profiles, "  Demo Wallet  "));
+        assert!(!public_fixture_name_conflicts(
             &profiles,
-            "  Oxid Demo Wallet  "
+            "Oxid Demo Wallet"
         ));
         assert!(!public_fixture_name_conflicts(&profiles, "Another wallet"));
         assert_eq!(
@@ -12393,6 +12337,35 @@ mod tests {
         }
     }
 
+    fn selected_realm_status(
+        account_state: &str,
+        dust: WalletDustSyncView,
+        shielded: WalletShieldedSyncView,
+    ) -> SelectedWalletRealmSyncView {
+        SelectedWalletRealmSyncView {
+            account: WalletRealmFamilyView::Ready(WalletAccountView {
+                chain: "midnight".to_owned(),
+                network_id: "undeployed".to_owned(),
+                network_name: "Standalone".to_owned(),
+                network_environment: "development".to_owned(),
+                account_id: Some("account_1".to_owned()),
+                source: "live".to_owned(),
+                addresses: Vec::new(),
+                balances: Vec::new(),
+                sync: WalletSyncStatusView {
+                    state: account_state.to_owned(),
+                    current_cursor: Some(2),
+                    target_cursor: Some(2),
+                    chain_tip_height: Some(5_255),
+                    updated_at_millis: Some(42),
+                },
+                transactions: Vec::new(),
+            }),
+            dust: WalletRealmFamilyView::Ready(dust),
+            shielded: WalletRealmFamilyView::Ready(shielded),
+        }
+    }
+
     #[test]
     fn shielded_progress_and_cached_copy_preserve_live_readiness() {
         assert_eq!(
@@ -12433,13 +12406,11 @@ mod tests {
 
         let unavailable = shielded_status("unavailable", None, None);
         assert_eq!(home_shielded_value(&unavailable), "—");
-        assert!(home_shielded_detail(&unavailable).contains(ui::sync_state("unavailable")));
 
         for incomplete in ["cached", "cancelled", "stalled"] {
             let mut status = shielded_status(incomplete, Some(2), Some(2));
             status.balances = funded.balances.clone();
             assert_eq!(home_shielded_value(&status), "1.5 NIGHT · last known");
-            assert!(home_shielded_detail(&status).contains(ui::sync_state(incomplete)));
         }
     }
 
@@ -12466,17 +12437,66 @@ mod tests {
     fn account_sync_card_combines_progress_without_event_count_copy() {
         let dust = dust_status("syncing", Some(0), Some(2));
         let shielded = shielded_status("syncing", Some(2), Some(2));
+        let realm = selected_realm_status("synced", dust.clone(), shielded.clone());
 
-        assert_eq!(account_sync_state(&dust, &shielded), "syncing");
-        assert_eq!(account_sync_progress(&dust, &shielded), Some(66));
+        assert_eq!(selected_realm_sync_state(&realm), "syncing");
+        assert_eq!(selected_realm_sync_progress(&realm), Some(66));
         assert!(!dust_sync_note(&dust).contains("event"));
         assert!(!shielded_sync_note(&shielded).contains("event"));
+        let synced = selected_realm_status(
+            "synced",
+            dust_status("synced", Some(2), Some(2)),
+            shielded_status("synced", Some(2), Some(2)),
+        );
+        assert_eq!(selected_realm_sync_state(&synced), "synced");
+    }
+
+    #[test]
+    fn selected_realm_copy_distinguishes_missing_dust_from_zero_and_unavailable() {
+        let mut missing = dust_status("synced", Some(2), Some(2));
+        missing.balance_atomic_units = None;
         assert_eq!(
-            account_sync_state(
-                &dust_status("synced", Some(2), Some(2)),
-                &shielded_status("synced", Some(2), Some(2)),
-            ),
-            "synced"
+            selected_realm_dust_balance(&WalletRealmFamilyView::Ready(missing.clone())),
+            "Not registered"
+        );
+        assert!(
+            selected_realm_dust_note(&WalletRealmFamilyView::Ready(missing))
+                .contains("No registered DUST state")
+        );
+
+        let mut zero = dust_status("synced", Some(2), Some(2));
+        zero.balance_atomic_units = Some("0".to_owned());
+        assert_eq!(
+            selected_realm_dust_balance(&WalletRealmFamilyView::Ready(zero)),
+            "0 DUST"
+        );
+        assert_eq!(
+            selected_realm_dust_balance(&WalletRealmFamilyView::Unavailable),
+            "Unavailable"
+        );
+    }
+
+    #[test]
+    fn selected_realm_provenance_is_public_and_endpoint_free() {
+        let realm = selected_realm_status(
+            "synced",
+            dust_status("synced", Some(2), Some(2)),
+            shielded_status("synced", Some(2), Some(2)),
+        );
+        assert_eq!(
+            selected_realm_provenance(&realm),
+            "Standalone · midnight · live source"
+        );
+        assert_eq!(selected_realm_chain_tip(&realm), "Indexer tip · block 5255");
+        assert!(!selected_realm_provenance(&realm).contains("http"));
+
+        let mut missing_tip = realm;
+        if let WalletRealmFamilyView::Ready(account) = &mut missing_tip.account {
+            account.sync.chain_tip_height = None;
+        }
+        assert_eq!(
+            selected_realm_chain_tip(&missing_tip),
+            "Indexer tip unavailable"
         );
     }
 
@@ -12568,15 +12588,6 @@ mod tests {
         assert!(!state.masked, "stale timeout must not hide a newer reveal");
         state.timeout(second_generation);
         assert!(state.masked);
-    }
-
-    #[test]
-    fn backup_and_credential_routes_force_native_snapshot_protection() {
-        assert!(route_forces_screen_privacy(Route::Settings));
-        assert!(route_forces_screen_privacy(Route::Documents));
-        assert!(route_forces_screen_privacy(Route::CredentialRequest));
-        assert!(!route_forces_screen_privacy(Route::Home));
-        assert!(!route_forces_screen_privacy(Route::Wallet));
     }
 
     fn dust_registration_preview(state: &str) -> WalletDustRegistrationPreviewView {

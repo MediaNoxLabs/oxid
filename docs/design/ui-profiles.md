@@ -48,7 +48,7 @@ data, exactly as AGENT.md demands.
 - **P8 — Demo is a drawer over existing fixtures.** The demo profile adds a
   bootstrap drawer that only sequences use cases that already exist in
   standalone composition: create profile → initialize/unlock → derive →
-  standalone demo offer (the exact Compact Digital Passport bundle) →
+  OID4VCI demo offer (the exact Compact Digital Passport bundle) →
   fixture inbox receive → standalone login/verifier requests → simulated
   sync/funding. One tap each, plus "Run full demo setup" chaining them with
   progress. No new capabilities; a thin ribbon over the fixtures the UI

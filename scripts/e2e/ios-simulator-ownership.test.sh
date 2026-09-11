@@ -56,7 +56,7 @@ case "${1:-}" in
   create)
     printf '%s\n' 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE'
     ;;
-  boot|bootstatus|install|terminate|launch|openurl|shutdown|delete)
+  boot|bootstatus|install|terminate|launch|openurl|io|shutdown|delete)
     [ "${2:-}" = 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE' ] || exit 92
     [ "${1:-}" != delete ] || : >"$OXID_FAKE_SIM_DELETED"
     ;;
@@ -96,7 +96,8 @@ oxid_ios_owned_simctl "$developer" "$receipt" boot || fail boot
 oxid_ios_owned_simctl "$developer" "$receipt" bootstatus -b || fail bootstatus
 oxid_ios_owned_simctl "$developer" "$receipt" install "$temporary/OxidApp.app" || fail install
 oxid_ios_owned_simctl "$developer" "$receipt" terminate io.medianox.oxid || fail terminate
-if grep -Eq 'simctl (boot|bootstatus|install|terminate) 99999999-8888-7777-6666-555555555555' "$log"; then
+oxid_ios_owned_simctl "$developer" "$receipt" io screenshot "$temporary/failure.png" || fail screenshot
+if grep -Eq 'simctl (boot|bootstatus|install|terminate|io) 99999999-8888-7777-6666-555555555555' "$log"; then
   fail existing-booted-mutated
 fi
 

@@ -236,6 +236,68 @@ pub trait ScreenPrivacyPort: Send + Sync {
     fn set_protected(&self, protected: bool) -> Result<(), ScreenPrivacyError>;
 }
 
+/// One bounded, public snapshot of resources used by the current process.
+///
+/// The snapshot intentionally carries no process identifier, executable path,
+/// command line, or system-wide measurements. It is suitable only for the
+/// opt-in development proof benchmark UI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProcessResourceSample {
+    resident_bytes: u64,
+    cpu_usage_basis_points: u32,
+}
+
+impl ProcessResourceSample {
+    #[must_use]
+    pub const fn new(resident_bytes: u64, cpu_usage_basis_points: u32) -> Self {
+        Self {
+            resident_bytes,
+            cpu_usage_basis_points,
+        }
+    }
+
+    #[must_use]
+    pub const fn resident_bytes(self) -> u64 {
+        self.resident_bytes
+    }
+
+    /// Current-process CPU usage in hundredths of one logical CPU percentage.
+    /// Multi-threaded work may therefore report more than 10,000 basis points.
+    #[must_use]
+    pub const fn cpu_usage_basis_points(self) -> u32 {
+        self.cpu_usage_basis_points
+    }
+}
+
+/// Stable failure for targets where current-process sampling is unavailable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProcessResourceSampleError {
+    Unavailable,
+}
+
+impl fmt::Display for ProcessResourceSampleError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("current-process resource sampling is unavailable")
+    }
+}
+
+impl Error for ProcessResourceSampleError {}
+
+/// Samples only the process hosting the development proof benchmark.
+pub trait ProcessResourceSamplerPort: Send + Sync {
+    fn sample(&self) -> Result<ProcessResourceSample, ProcessResourceSampleError>;
+}
+
+/// Fail-closed sampler for unsupported targets and production composition.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnavailableProcessResourceSampler;
+
+impl ProcessResourceSamplerPort for UnavailableProcessResourceSampler {
+    fn sample(&self) -> Result<ProcessResourceSample, ProcessResourceSampleError> {
+        Err(ProcessResourceSampleError::Unavailable)
+    }
+}
+
 /// Fail-closed scanner used by non-mobile and unavailable composition.
 pub struct UnavailableQrScanner;
 
@@ -398,5 +460,16 @@ mod tests {
             UnavailableScreenPrivacy.set_protected(false),
             Err(ScreenPrivacyError::Unavailable)
         );
+        assert_eq!(
+            UnavailableProcessResourceSampler.sample(),
+            Err(ProcessResourceSampleError::Unavailable)
+        );
+    }
+
+    #[test]
+    fn resource_sample_exposes_only_bounded_public_measurements() {
+        let sample = ProcessResourceSample::new(12_345, 27_500);
+        assert_eq!(sample.resident_bytes(), 12_345);
+        assert_eq!(sample.cpu_usage_basis_points(), 27_500);
     }
 }

@@ -393,6 +393,16 @@ fn main() {
             application.portable_wallet_backup_documents(),
         ),
     );
+    let wallet_security = if let Some(capability) = application.wallet_onboarding() {
+        wallet_security.with_onboarding(oxid_ui_dioxus::WalletOnboardingUiServices::new(
+            capability.network_id().to_owned(),
+            capability.prepare(),
+            capability.complete(),
+            capability.cancel(),
+        ))
+    } else {
+        wallet_security
+    };
     #[cfg(feature = "preprod-observation")]
     let wallet_security = {
         let capability = application
@@ -417,6 +427,11 @@ fn main() {
             application.derive_wallet_account(),
             application.get_wallet_account(),
             application.sync_wallet_account(),
+            oxid_ui_dioxus::WalletRealmSyncUiServices::new(
+                application.sync_selected_wallet_realm(),
+                application.get_selected_wallet_realm_sync(),
+                application.cancel_selected_wallet_realm_sync(),
+            ),
             application.public_text_exporter(),
         ),
         oxid_ui_dioxus::WalletOperationalUiServices::new(
@@ -535,6 +550,7 @@ fn main() {
             ),
         ),
         oxid_ui_dioxus::DiagnosticsUiServices::new(
+            application.diagnostic_events(),
             application.get_diagnostic_snapshot(),
             application.clear_diagnostics(),
         ),
@@ -556,6 +572,7 @@ fn main() {
     let ui = ui.with_proof_benchmark(
         oxid_composition::compose_development_proof_benchmark(development_proof_cache_directory())
             .unwrap_or_else(|error| panic!("development proof benchmark is unavailable: {error}")),
+        oxid_composition::compose_development_resource_sampler(),
     );
     #[cfg(target_os = "android")]
     let ui = ui.with_android_platform_initializer(std::sync::Arc::new(|| {
@@ -600,7 +617,25 @@ fn main() {
             });
         launcher.with_cfg(config).launch(oxid_ui_dioxus::App);
     }
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    #[cfg(all(
+        feature = "desktop",
+        not(any(target_os = "ios", target_os = "android"))
+    ))]
+    launcher
+        .with_cfg(
+            dioxus::desktop::Config::new().with_window(
+                dioxus::desktop::WindowBuilder::new()
+                    .with_title(generated_brand::BRAND_PROFILE.product_name())
+                    .with_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(390.0, 844.0))
+                    .with_min_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(360.0, 640.0))
+                    .with_resizable(true),
+            ),
+        )
+        .launch(oxid_ui_dioxus::App);
+    #[cfg(all(
+        not(feature = "desktop"),
+        not(any(target_os = "ios", target_os = "android"))
+    ))]
     launcher.launch(oxid_ui_dioxus::App);
 }
 

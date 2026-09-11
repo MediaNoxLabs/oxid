@@ -44,8 +44,8 @@ pub use profile_mobile::*;
 pub use profile_preprod::*;
 pub use profile_production::*;
 #[cfg(all(feature = "proof-benchmark", not(target_arch = "wasm32")))]
-pub use proof_benchmark::compose_development_proof_benchmark;
-pub use services::{ApplicationServices, WalletRootRecoveryCapability};
+pub use proof_benchmark::*;
+pub use services::{ApplicationServices, WalletOnboardingCapability, WalletRootRecoveryCapability};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod standalone_funding_tests;

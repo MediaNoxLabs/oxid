@@ -1094,6 +1094,7 @@ mod tests {
             self.calls.fetch_add(1, Ordering::Relaxed);
             Box::pin(async {
                 Ok(ChainTip {
+                    height: 42,
                     timestamp: Timestamp::from_secs(1_700_000_000),
                     parameters: INITIAL_PARAMETERS,
                 })
@@ -1123,11 +1124,11 @@ mod tests {
     }
 
     const ADDRESS: &str =
-        "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
+        "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
 
     fn live_config(websocket_url: &str) -> MidnightStandaloneConfig {
         MidnightStandaloneConfig::new(
-            "devnet",
+            "undeployed",
             websocket_url,
             "http://127.0.0.1:8088/api/v1/graphql",
             "ws://127.0.0.1:9944",

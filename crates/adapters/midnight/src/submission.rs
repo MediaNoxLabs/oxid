@@ -127,6 +127,36 @@ impl MidnightStandaloneConfig {
                 .map_err(MidnightStandaloneConfigError::Indexer)?;
         let indexer_http_url = validate_http_url(indexer_http_url.as_ref(), false)
             .map_err(|_| MidnightStandaloneConfigError::InvalidIndexerHttpEndpoint)?;
+        let indexer = indexer.with_http_url(indexer_http_url.clone());
+        let node_websocket_url =
+            super::indexer::validate_websocket_url(node_websocket_url.as_ref())
+                .map_err(|_| MidnightStandaloneConfigError::InvalidNodeEndpoint)?;
+        let proof_server_url = validate_http_url(proof_server_url.as_ref(), true)
+            .map_err(|_| MidnightStandaloneConfigError::InvalidProofEndpoint)?;
+        Ok(Self {
+            indexer,
+            indexer_http_url,
+            node_websocket_url,
+            proving: MidnightProvingMode::Remote { proof_server_url },
+        })
+    }
+
+    /// Builds a deployment configuration before protected custody derives an
+    /// account. It intentionally retains no configuration receive address.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_without_unshielded_address(
+        network_id: impl Into<String>,
+        indexer_websocket_url: impl AsRef<str>,
+        indexer_http_url: impl AsRef<str>,
+        node_websocket_url: impl AsRef<str>,
+        proof_server_url: impl AsRef<str>,
+    ) -> Result<Self, MidnightStandaloneConfigError> {
+        let indexer =
+            MidnightIndexerConfig::without_unshielded_address(network_id, indexer_websocket_url)
+                .map_err(MidnightStandaloneConfigError::Indexer)?;
+        let indexer_http_url = validate_http_url(indexer_http_url.as_ref(), false)
+            .map_err(|_| MidnightStandaloneConfigError::InvalidIndexerHttpEndpoint)?;
+        let indexer = indexer.with_http_url(indexer_http_url.clone());
         let node_websocket_url =
             super::indexer::validate_websocket_url(node_websocket_url.as_ref())
                 .map_err(|_| MidnightStandaloneConfigError::InvalidNodeEndpoint)?;
@@ -154,6 +184,7 @@ impl MidnightStandaloneConfig {
                 .map_err(MidnightStandaloneConfigError::Indexer)?;
         let indexer_http_url = validate_http_url(indexer_http_url.as_ref(), false)
             .map_err(|_| MidnightStandaloneConfigError::InvalidIndexerHttpEndpoint)?;
+        let indexer = indexer.with_http_url(indexer_http_url.clone());
         let node_websocket_url =
             super::indexer::validate_websocket_url(node_websocket_url.as_ref())
                 .map_err(|_| MidnightStandaloneConfigError::InvalidNodeEndpoint)?;
@@ -602,6 +633,7 @@ fn ensure_dust_sync_active(
 }
 
 pub(crate) struct ChainTip {
+    pub(crate) height: u64,
     pub(crate) timestamp: Timestamp,
     pub(crate) parameters: LedgerParameters,
 }
@@ -675,6 +707,11 @@ fn decode_chain_tip(root: &Value) -> Result<ChainTip, WalletTransactionPortError
         .pointer("/data/block")
         .and_then(Value::as_object)
         .ok_or(WalletTransactionPortError::InvalidChainState)?;
+    let height = block
+        .get("height")
+        .and_then(Value::as_i64)
+        .and_then(|value| u64::try_from(value).ok())
+        .ok_or(WalletTransactionPortError::InvalidChainState)?;
     let timestamp_millis = block
         .get("timestamp")
         .and_then(Value::as_i64)
@@ -688,6 +725,7 @@ fn decode_chain_tip(root: &Value) -> Result<ChainTip, WalletTransactionPortError
     let parameters = midnight_serialize::tagged_deserialize(&parameters_bytes[..])
         .map_err(|_| WalletTransactionPortError::InvalidChainState)?;
     Ok(ChainTip {
+        height,
         // Midnight indexer v4 exposes its DateTime scalar as Unix
         // milliseconds. The ledger Timestamp is second-granular.
         timestamp: Timestamp::from_secs(timestamp_millis / 1_000),
@@ -1624,12 +1662,12 @@ mod tests {
     use super::*;
 
     const ADDRESS: &str =
-        "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
+        "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
     type DustSubscriptionScenario = (u64, Vec<(u64, u64, String)>);
 
     fn config(proof: &str) -> Result<MidnightStandaloneConfig, MidnightStandaloneConfigError> {
         MidnightStandaloneConfig::new(
-            "devnet",
+            "undeployed",
             "ws://127.0.0.1:8088/api/v1/graphql/ws",
             "http://127.0.0.1:8088/api/v1/graphql",
             "ws://127.0.0.1:9944",
@@ -1966,10 +2004,14 @@ mod tests {
     #[test]
     fn standalone_routes_accept_loopback_http_proving() {
         let value = config("http://127.0.0.1:6300").expect("routes are valid");
-        assert_eq!(value.indexer().network_id().as_str(), "devnet");
+        assert_eq!(value.indexer().network_id().as_str(), "undeployed");
         assert_eq!(
             value.indexer_http_url(),
             "http://127.0.0.1:8088/api/v1/graphql"
+        );
+        assert_eq!(
+            value.indexer().http_url(),
+            Some("http://127.0.0.1:8088/api/v1/graphql")
         );
         assert_eq!(value.node_websocket_url(), "ws://127.0.0.1:9944");
         assert!(matches!(
@@ -1977,6 +2019,20 @@ mod tests {
             MidnightProvingMode::Remote { proof_server_url }
                 if proof_server_url == "http://127.0.0.1:6300/"
         ));
+    }
+
+    #[test]
+    fn deployment_configuration_needs_no_public_receive_address() {
+        let value = MidnightStandaloneConfig::new_without_unshielded_address(
+            "mainnet",
+            "wss://indexer.example.test/api/v4/graphql/ws",
+            "https://indexer.example.test/api/v4/graphql",
+            "wss://node.example.test",
+            "https://prover.example.test",
+        )
+        .expect("deployment routes are valid");
+
+        assert_eq!(value.indexer().network_id().as_str(), "mainnet");
     }
 
     #[test]
@@ -1990,7 +2046,7 @@ mod tests {
             Err(MidnightStandaloneConfigError::InvalidProofEndpoint)
         );
         let bad_http = MidnightStandaloneConfig::new(
-            "devnet",
+            "undeployed",
             "ws://127.0.0.1:8088/graphql/ws",
             "ftp://127.0.0.1/graphql",
             "ws://127.0.0.1:9944",
@@ -2003,7 +2059,7 @@ mod tests {
             "Midnight indexer HTTP endpoint is invalid"
         );
         let bad_node = MidnightStandaloneConfig::new(
-            "devnet",
+            "undeployed",
             "ws://127.0.0.1:8088/graphql/ws",
             "http://127.0.0.1/graphql",
             "http://127.0.0.1:9944",
@@ -2081,6 +2137,7 @@ mod tests {
         let tip = decode_chain_tip(&json!({
             "data": {
                 "block": {
+                    "height": 5_255,
                     "timestamp": 1_750_000_000_123_i64,
                     "ledgerParameters": hex::encode(parameters)
                 }
@@ -2088,6 +2145,7 @@ mod tests {
         }))
         .expect("valid chain tip decodes");
 
+        assert_eq!(tip.height, 5_255);
         assert_eq!(tip.timestamp, Timestamp::from_secs(1_750_000_000));
         assert_eq!(tip.parameters, INITIAL_PARAMETERS);
     }
@@ -2096,10 +2154,10 @@ mod tests {
     fn chain_tip_decoder_rejects_missing_negative_and_malformed_fields() {
         for value in [
             json!({ "data": { "block": null } }),
-            json!({ "data": { "block": { "timestamp": -1, "ledgerParameters": "00" } } }),
-            json!({ "data": { "block": { "timestamp": 1 } } }),
-            json!({ "data": { "block": { "timestamp": 1, "ledgerParameters": "0" } } }),
-            json!({ "data": { "block": { "timestamp": 1, "ledgerParameters": "zz" } } }),
+            json!({ "data": { "block": { "height": 1, "timestamp": -1, "ledgerParameters": "00" } } }),
+            json!({ "data": { "block": { "height": 1, "timestamp": 1 } } }),
+            json!({ "data": { "block": { "height": 1, "timestamp": 1, "ledgerParameters": "0" } } }),
+            json!({ "data": { "block": { "height": 1, "timestamp": 1, "ledgerParameters": "zz" } } }),
         ] {
             assert_eq!(
                 decode_chain_tip(&value).err(),
@@ -2120,6 +2178,7 @@ mod tests {
         let body = serde_json::to_vec(&json!({
             "data": {
                 "block": {
+                    "height": 5_255,
                     "timestamp": 1_750_000_123_999_i64,
                     "ledgerParameters": format!("0x{}", hex::encode(parameters))
                 }
@@ -2129,6 +2188,7 @@ mod tests {
         validate_chain_tip_status(StatusCode::OK).expect("successful status is accepted");
         let tip = decode_chain_tip_body(&body).expect("bounded chain tip succeeds");
 
+        assert_eq!(tip.height, 5_255);
         assert_eq!(tip.timestamp, Timestamp::from_secs(1_750_000_123));
         assert_eq!(tip.parameters, INITIAL_PARAMETERS);
         let request = chain_tip_request("http://127.0.0.1:8088/api/v1/graphql")

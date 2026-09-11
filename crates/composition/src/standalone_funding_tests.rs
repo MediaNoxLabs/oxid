@@ -1802,12 +1802,6 @@ fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
             profile_id: wallet_a_profile_id.clone(),
             draft_id: transfer.draft_id.clone(),
             authorization_challenge: transfer.authorization_challenge.clone(),
-            confirmation: SensitiveOperationConfirmation {
-                title: "Authorize PreProd shielded transfer".to_owned(),
-                summary: "Send the deterministic observed-balance share from A to empty B"
-                    .to_owned(),
-                confirmed: true,
-            },
         })
         .expect("explicit PreProd shielded transfer authorization");
     assert_eq!(authorized_transfer.state, "authorized");
@@ -2018,12 +2012,6 @@ fn funded_unshielded_finality_survives_adapter_restart_without_duplicate_deliver
             profile_id: funder_profile_id.clone(),
             draft_id: prepared.draft_id.clone(),
             authorization_challenge: prepared.authorization_challenge,
-            confirmation: SensitiveOperationConfirmation {
-                title: "Authorize NIGHT transfer".to_owned(),
-                summary: "Fund one ephemeral standalone wallet after exact preview review"
-                    .to_owned(),
-                confirmed: true,
-            },
         })
         .expect("explicit transfer authorization");
     assert_eq!(authorized.state, "authorized");
@@ -2189,12 +2177,6 @@ fn funded_shielded_finality_survives_adapter_reconstruction_and_consumes_the_inp
             profile_id: funder_profile_id.clone(),
             draft_id: prepared.draft_id.clone(),
             authorization_challenge: prepared.authorization_challenge,
-            confirmation: SensitiveOperationConfirmation {
-                title: "Authorize shielded transfer".to_owned(),
-                summary: "Send one exact shielded standalone amount after preview review"
-                    .to_owned(),
-                confirmed: true,
-            },
         })
         .expect("explicit shielded transfer authorization");
     assert_eq!(authorized.state, "authorized");

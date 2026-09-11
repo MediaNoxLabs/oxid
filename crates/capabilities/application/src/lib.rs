@@ -405,6 +405,15 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
         CapabilityView::new("wallet.sync.force", "ready")
             .text("mode", "standalone")
             .texts("sources", &["simulated", "live"]),
+        CapabilityView::new("wallet.realm.sync.status", "ready")
+            .text("mode", "standalone")
+            .text("scope", "selected_realm"),
+        CapabilityView::new("wallet.realm.sync.start", "ready")
+            .text("mode", "standalone")
+            .text("scope", "public_dust_shielded"),
+        CapabilityView::new("wallet.realm.sync.cancel", "ready")
+            .text("mode", "standalone")
+            .text("checkpoint", "private_families_resumable"),
         CapabilityView::new("wallet.dust.sync.status", "ready")
             .text("mode", "standalone")
             .texts("sources", &["simulated", "live", "cached", "unavailable"]),
@@ -500,6 +509,7 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
             .text("intent", "SUBMIT_PASSPORT_VAULT_CALL"),
         CapabilityView::new("vault.contract_call.start_submission", call_status)
             .text("mode", call_mode)
+            .boolean("confirmationRequired", true)
             .text("execution", "adapter_worker"),
         CapabilityView::new("vault.contract_call.submission_status", call_status)
             .text("mode", call_mode),
@@ -761,6 +771,7 @@ mod tests {
             "wallet.dust.registration.start_submission",
             "vault.contract_call.authorize",
             "vault.contract_call.submit",
+            "vault.contract_call.start_submission",
             "vault.lock.create",
             "vault.deposit",
             "vault.claim",

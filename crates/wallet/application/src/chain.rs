@@ -343,7 +343,7 @@ pub struct WalletAccountView {
 }
 
 impl WalletAccountView {
-    fn from_snapshot(snapshot: &WalletAccountSnapshot) -> Self {
+    pub(crate) fn from_snapshot(snapshot: &WalletAccountSnapshot) -> Self {
         let mut addresses = snapshot
             .addresses()
             .iter()

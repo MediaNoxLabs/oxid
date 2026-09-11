@@ -672,10 +672,10 @@ mod tests {
         let expected = checkpoint(&key, 4);
 
         store
-            .save(&network("devnet"), &key, &source(1), &expected)
+            .save(&network("undeployed"), &key, &source(1), &expected)
             .expect("checkpoint saves");
         let restored = store
-            .load(&network("devnet"), &key, &source(1))
+            .load(&network("undeployed"), &key, &source(1))
             .expect("checkpoint loads")
             .expect("matching checkpoint exists");
         assert_eq!(restored.current_cursor, 4);
@@ -690,13 +690,13 @@ mod tests {
         );
         assert!(
             store
-                .load(&network("devnet"), &keys(8), &source(1))
+                .load(&network("undeployed"), &keys(8), &source(1))
                 .expect("wrong key is a clean miss")
                 .is_none()
         );
         assert!(
             store
-                .load(&network("devnet"), &key, &source(2))
+                .load(&network("undeployed"), &key, &source(2))
                 .expect("wrong source is a clean miss")
                 .is_none()
         );
@@ -721,11 +721,16 @@ mod tests {
         let store = BinaryMidnightShieldedCheckpointStore::new(config.clone());
         let key = keys(7);
         store
-            .save(&network("devnet"), &key, &source(1), &checkpoint(&key, 9))
+            .save(
+                &network("undeployed"),
+                &key,
+                &source(1),
+                &checkpoint(&key, 9),
+            )
             .expect("partial checkpoint saves");
         assert_eq!(
             store
-                .load(&network("devnet"), &key, &source(1))
+                .load(&network("undeployed"), &key, &source(1))
                 .expect("partial checkpoint loads")
                 .expect("partial checkpoint exists")
                 .target_cursor,
@@ -736,11 +741,16 @@ mod tests {
         bytes[12] ^= 0x01;
         fs::write(config.path(), bytes).expect("corrupt fixture writes");
         assert_eq!(
-            store.load(&network("devnet"), &key, &source(1)).err(),
+            store.load(&network("undeployed"), &key, &source(1)).err(),
             Some(ShieldedCheckpointStoreError::InvalidData)
         );
         store
-            .save(&network("devnet"), &key, &source(1), &checkpoint(&key, 4))
+            .save(
+                &network("undeployed"),
+                &key,
+                &source(1),
+                &checkpoint(&key, 4),
+            )
             .expect("valid state replaces corrupt regular data");
 
         let file = fs::OpenOptions::new()
@@ -750,7 +760,7 @@ mod tests {
         file.set_len(MAX_FILE_BYTES + 1)
             .expect("oversized fixture is allocated sparsely");
         assert_eq!(
-            store.load(&network("devnet"), &key, &source(1)).err(),
+            store.load(&network("undeployed"), &key, &source(1)).err(),
             Some(ShieldedCheckpointStoreError::InvalidData)
         );
     }
@@ -767,7 +777,9 @@ mod tests {
         symlink(&target, config.path()).expect("symlink fixture is created");
         let store = BinaryMidnightShieldedCheckpointStore::new(config.clone());
         assert_eq!(
-            store.load(&network("devnet"), &keys(7), &source(1)).err(),
+            store
+                .load(&network("undeployed"), &keys(7), &source(1))
+                .err(),
             Some(ShieldedCheckpointStoreError::InvalidData)
         );
         fs::remove_file(config.path()).expect("fixture symlink is removed");
@@ -776,7 +788,12 @@ mod tests {
         let key = keys(7);
         assert_eq!(
             store
-                .save(&network("devnet"), &key, &source(1), &checkpoint(&key, 4),)
+                .save(
+                    &network("undeployed"),
+                    &key,
+                    &source(1),
+                    &checkpoint(&key, 4),
+                )
                 .err(),
             Some(ShieldedCheckpointStoreError::InvalidData)
         );

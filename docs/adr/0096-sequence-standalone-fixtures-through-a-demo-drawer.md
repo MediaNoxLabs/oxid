@@ -45,7 +45,7 @@ consents, authorizes, proves, submits, or marks wallet readiness.
 
 The drawer calls only the existing typed Dioxus services:
 
-1. keep the active profile only when it is the named `Oxid Demo Wallet`;
+1. keep the active profile only when it is the named `Demo Wallet`;
    otherwise select an existing profile with that exact display name or create
    and select it, leaving every unrelated active profile untouched;
 2. initialize an uninitialized standalone wallet, unlock a locked session, or

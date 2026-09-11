@@ -328,6 +328,7 @@ enum MidnightSubmissionPhase {
     Working,
     CancellationRequested,
     Broadcasting,
+    Terminal,
 }
 
 pub(crate) struct MidnightSubmissionControl {
@@ -363,6 +364,9 @@ impl MidnightSubmissionControl {
             }
             MidnightSubmissionPhase::CancellationRequested => Ok(()),
             MidnightSubmissionPhase::Broadcasting => {
+                Err(WalletTransactionPortError::SubmissionCancellationUnsafe)
+            }
+            MidnightSubmissionPhase::Terminal => {
                 Err(WalletTransactionPortError::SubmissionCancellationUnsafe)
             }
         }
@@ -407,6 +411,9 @@ impl MidnightSubmissionControl {
             MidnightSubmissionPhase::Broadcasting => {
                 Err(WalletTransactionPortError::SubmissionInProgress)
             }
+            MidnightSubmissionPhase::Terminal => {
+                Err(WalletTransactionPortError::SubmissionOutcomeUnknown)
+            }
         }
     }
 
@@ -423,6 +430,7 @@ impl MidnightSubmissionControl {
                 WalletTransactionSubmissionState::CancellationRequested
             }
             MidnightSubmissionPhase::Broadcasting => WalletTransactionSubmissionState::Broadcasting,
+            MidnightSubmissionPhase::Terminal => WalletTransactionSubmissionState::OutcomeUnknown,
         })
     }
 
@@ -441,7 +449,66 @@ impl MidnightSubmissionControl {
             MidnightSubmissionPhase::Broadcasting => {
                 MidnightContractCallSubmissionState::Broadcasting
             }
+            MidnightSubmissionPhase::Terminal => {
+                MidnightContractCallSubmissionState::OutcomeUnknown
+            }
         })
+    }
+
+    /// Records an unknown outcome and prevents a late worker from beginning or
+    /// finalizing the same attempt. A pre-broadcast timeout has no journal
+    /// entry to update; a broadcast attempt is durably retained for
+    /// reconciliation.
+    pub(crate) fn mark_outcome_unknown(&self) -> Result<(), WalletTransactionPortError> {
+        let mut phase = self
+            .phase
+            .lock()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?;
+        if *phase == MidnightSubmissionPhase::Broadcasting {
+            let mut entry = self
+                .journal
+                .load(&self.attempt.profile_id, &self.attempt.draft_id)
+                .map_err(map_submission_store_error)?
+                .ok_or(WalletTransactionPortError::InvalidData)?;
+            entry.state = StoredSubmissionState::OutcomeUnknown;
+            entry.block_hash = None;
+            entry.block_height = None;
+            self.journal
+                .save(&entry)
+                .map_err(map_submission_store_error)?;
+        }
+        *phase = MidnightSubmissionPhase::Terminal;
+        Ok(())
+    }
+
+    /// Finalizes only an active broadcast. Once a waiter has timed out, its
+    /// terminal unknown state wins over any later worker result.
+    pub(crate) fn mark_terminal_if_broadcasting(
+        &self,
+        state: StoredSubmissionState,
+        block_hash: Option<[u8; 32]>,
+        block_height: Option<u64>,
+    ) -> Result<bool, WalletTransactionPortError> {
+        let mut phase = self
+            .phase
+            .lock()
+            .map_err(|_| WalletTransactionPortError::Unavailable)?;
+        if *phase != MidnightSubmissionPhase::Broadcasting {
+            return Ok(false);
+        }
+        let mut entry = self
+            .journal
+            .load(&self.attempt.profile_id, &self.attempt.draft_id)
+            .map_err(map_submission_store_error)?
+            .ok_or(WalletTransactionPortError::InvalidData)?;
+        entry.state = state;
+        entry.block_hash = block_hash;
+        entry.block_height = block_height;
+        self.journal
+            .save(&entry)
+            .map_err(map_submission_store_error)?;
+        *phase = MidnightSubmissionPhase::Terminal;
+        Ok(true)
     }
 
     pub(crate) fn mark_terminal(
@@ -1605,12 +1672,13 @@ where
             .erase_signatures()
             .data_to_sign(SEND_UNSHIELDED_SEGMENT);
         let draft_id = digest_id("txdraft", &signing_payload)?;
-        let challenge = authorization_challenge(&draft_id, &signing_payload)?;
+        let pending_challenge = WalletTransactionAuthorizationChallenge::parse("txauth_pending")
+            .map_err(|_| WalletTransactionPortError::InvalidData)?;
         let night = midnight_asset("midnight:night", "NIGHT", STARS_PER_NIGHT)
             .map_err(map_account_error)?;
         let preview = WalletTransferPreview::new(
             draft_id.clone(),
-            challenge,
+            pending_challenge,
             selected,
             spendable.account.account_id().clone(),
             request.recipient,
@@ -1624,6 +1692,11 @@ where
             WalletTransactionDraftState::Prepared,
         )
         .map_err(|_| WalletTransactionPortError::InvalidData)?;
+        let preview = preview.with_authorization_challenge(authorization_challenge(
+            &draft_id,
+            &signing_payload,
+            &preview,
+        )?);
         let retained = RetainedMidnightDraft {
             planning_fingerprint,
             preview: preview.clone(),
@@ -1740,7 +1813,8 @@ where
             }
         }
         let draft_id = digest_id("txdraft", transaction_bytes.as_slice())?;
-        let challenge = authorization_challenge(&draft_id, transaction_bytes.as_slice())?;
+        let pending_challenge = WalletTransactionAuthorizationChallenge::parse("txauth_pending")
+            .map_err(|_| WalletTransactionPortError::InvalidData)?;
         let native_night = token_type == [0; 32];
         let asset = ChainAsset::new(
             request.asset_id,
@@ -1750,7 +1824,7 @@ where
         );
         let preview = WalletTransferPreview::new(
             draft_id.clone(),
-            challenge,
+            pending_challenge,
             selected,
             spendable.account.account_id().clone(),
             request.recipient,
@@ -1763,6 +1837,11 @@ where
             WalletTransactionDraftState::Prepared,
         )
         .map_err(|_| WalletTransactionPortError::InvalidData)?;
+        let preview = preview.with_authorization_challenge(authorization_challenge(
+            &draft_id,
+            transaction_bytes.as_slice(),
+            &preview,
+        )?);
         let retained = RetainedMidnightDraft {
             planning_fingerprint,
             preview: preview.clone(),
@@ -1836,7 +1915,9 @@ where
                 | WalletTransactionDraftState::Submitting
                 | WalletTransactionDraftState::Submitted
         ) {
-            return Ok(retained.preview.clone());
+            // A successful authorization is deliberately not idempotent: a
+            // challenge proves one review, never a reusable signing grant.
+            return Err(WalletTransactionPortError::DraftConflict);
         }
 
         if retained.preview.recipient().kind() == ChainAddressKind::Shielded {
@@ -2725,11 +2806,69 @@ fn digest_id(
 fn authorization_challenge(
     draft_id: &WalletTransactionDraftId,
     payload: &[u8],
+    preview: &WalletTransferPreview,
 ) -> Result<WalletTransactionAuthorizationChallenge, WalletTransactionPortError> {
+    // Length-prefixed fields avoid delimiter ambiguity. This commits to every
+    // semantic field exposed by the prepared preview, not just signing bytes.
     let mut digest = Sha256::new();
-    digest.update(b"oxid:midnight:transfer-authorization:v1\0");
-    digest.update(draft_id.as_str().as_bytes());
-    digest.update(payload);
+    digest.update(b"oxid:midnight:transfer-authorization:v2\0");
+    let amount_decimals = preview.amount().asset().decimals().to_be_bytes();
+    let amount_atomic_units = preview.amount().atomic_units().to_be_bytes();
+    let change_decimals = preview.change().asset().decimals().to_be_bytes();
+    let change_atomic_units = preview.change().atomic_units().to_be_bytes();
+    let fee_decimals = preview
+        .fee()
+        .map_or([0], |fee| fee.asset().decimals().to_be_bytes());
+    let fee_atomic_units = preview
+        .fee()
+        .map_or(0, |fee| fee.atomic_units())
+        .to_be_bytes();
+    let input_count = preview.input_count().to_be_bytes();
+    let expires_at = preview.expires_at().value().to_be_bytes();
+    for field in [
+        draft_id.as_str().as_bytes(),
+        payload,
+        preview.network_id().as_str().as_bytes(),
+        preview.account_id().as_str().as_bytes(),
+        preview.recipient().value().as_bytes(),
+        match preview.recipient().kind() {
+            ChainAddressKind::Unshielded => b"unshielded".as_slice(),
+            ChainAddressKind::Shielded => b"shielded".as_slice(),
+            ChainAddressKind::Dust => b"dust".as_slice(),
+            ChainAddressKind::Reward => b"reward".as_slice(),
+        },
+        preview.amount().asset().id().as_str().as_bytes(),
+        preview.amount().asset().symbol().as_str().as_bytes(),
+        &amount_decimals,
+        &amount_atomic_units,
+        preview.change().asset().id().as_str().as_bytes(),
+        preview.change().asset().symbol().as_str().as_bytes(),
+        &change_decimals,
+        &change_atomic_units,
+        match preview.fee() {
+            Some(fee) => fee.asset().id().as_str().as_bytes(),
+            None => b"",
+        },
+        match preview.fee() {
+            Some(fee) => fee.asset().symbol().as_str().as_bytes(),
+            None => b"",
+        },
+        &fee_decimals,
+        &fee_atomic_units,
+        match preview.fee_state() {
+            WalletTransactionFeeState::RequiresBalancing => b"requires_balancing",
+            WalletTransactionFeeState::Estimated => b"estimated",
+            WalletTransactionFeeState::Final => b"final",
+        },
+        &input_count,
+        &expires_at,
+        b"prepared",
+        &[1], // proof_required
+        &[0], // submission_ready
+    ] {
+        digest.update((field.len() as u64).to_be_bytes());
+        digest.update(field);
+    }
     WalletTransactionAuthorizationChallenge::parse(format!(
         "txauth_{}",
         hex::encode(digest.finalize())
@@ -3558,6 +3697,61 @@ mod tests {
         WalletProfileId::parse("profile_test").expect("profile is valid")
     }
 
+    #[test]
+    fn late_worker_completion_cannot_overwrite_unknown_outcome() {
+        let profile_id = profile();
+        let draft_id =
+            WalletTransactionDraftId::parse("late_completion").expect("draft identifier is valid");
+        let journal =
+            Arc::new(crate::submission_journal::MemoryMidnightSubmissionJournalStore::default());
+        let control = MidnightSubmissionControl::new(
+            MidnightSubmissionAttempt {
+                profile_id: profile_id.clone(),
+                network_id: network_id("undeployed").expect("network is valid"),
+                draft_id: draft_id.clone(),
+                planning_fingerprint: [1; 32],
+                expires_at: UnixTimestampMillis::new(2_000),
+                updated_at: UnixTimestampMillis::new(1_000),
+            },
+            journal.clone(),
+        );
+
+        control
+            .begin_broadcast(
+                42,
+                [2; 32],
+                [3; 32],
+                WalletTransferSubmissionMode::Simulated,
+            )
+            .expect("broadcast starts");
+        control
+            .mark_outcome_unknown()
+            .expect("waiter marks ambiguous broadcast unknown");
+
+        assert!(
+            !control
+                .mark_terminal_if_broadcasting(
+                    StoredSubmissionState::Included,
+                    Some([4; 32]),
+                    Some(4)
+                )
+                .expect("late worker completion is ignored")
+        );
+        assert_eq!(
+            control
+                .public_state()
+                .expect("in-memory outcome is readable"),
+            WalletTransactionSubmissionState::OutcomeUnknown
+        );
+        let entry = journal
+            .load(&profile_id, &draft_id)
+            .expect("journal is readable")
+            .expect("broadcast journal entry exists");
+        assert_eq!(entry.state, StoredSubmissionState::OutcomeUnknown);
+        assert_eq!(entry.block_hash, None);
+        assert_eq!(entry.block_height, None);
+    }
+
     fn request(expires_at: u64) -> PrepareWalletTransferRequest {
         let recipient = fixture_addresses(&network_id("undeployed").expect("network is valid"))
             .expect("fixture addresses encode")
@@ -3586,6 +3780,37 @@ mod tests {
         assert_eq!(
             first.authorization_challenge(),
             repeated.authorization_challenge()
+        );
+    }
+
+    #[test]
+    fn authorization_challenge_binds_rendered_preview_fields_and_is_single_use() {
+        let adapter = submittable_adapter(Arc::new(SimulatedMidnightTransactionCompleter));
+        let prepared = adapter
+            .prepare(&profile(), request(2_000))
+            .expect("transfer prepares");
+        let changed_fee = prepared.with_final_fee(AssetBalance::new(
+            midnight_asset("midnight:dust", "DUST", SPECKS_PER_DUST).expect("asset is valid"),
+            1,
+        ));
+        assert_ne!(
+            authorization_challenge(prepared.draft_id(), b"same signing payload", &prepared,)
+                .expect("challenge encodes preview"),
+            authorization_challenge(prepared.draft_id(), b"same signing payload", &changed_fee,)
+                .expect("changed preview encodes differently")
+        );
+
+        let request = AuthorizeWalletTransferRequest {
+            draft_id: prepared.draft_id().clone(),
+            authorization_challenge: prepared.authorization_challenge().clone(),
+            now: UnixTimestampMillis::new(1_000),
+        };
+        adapter
+            .authorize(&profile(), request.clone())
+            .expect("first authorization succeeds");
+        assert_eq!(
+            adapter.authorize(&profile(), request),
+            Err(WalletTransactionPortError::DraftConflict)
         );
     }
 
