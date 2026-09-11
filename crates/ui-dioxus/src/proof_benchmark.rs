@@ -101,8 +101,12 @@ fn high_resource_selected(max_k: u8) -> bool {
     max_k.clamp(PROOF_BENCHMARK_MIN_K, PROOF_BENCHMARK_MAX_K) >= PROOF_BENCHMARK_HIGH_RESOURCE_K
 }
 
-fn high_resource_guidance_visible(max_k: u8, individual_high_k_selected: bool) -> bool {
-    high_resource_selected(max_k) || individual_high_k_selected
+fn individual_high_resource_guidance_visible(
+    selected_k: Option<u8>,
+    row_k: u8,
+    acknowledged: bool,
+) -> bool {
+    selected_k == Some(row_k) && row_k >= PROOF_BENCHMARK_HIGH_RESOURCE_K && !acknowledged
 }
 
 fn resource_monitor_status(unavailable: bool) -> &'static str {
@@ -131,7 +135,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
     let mut sweep_max_k = use_signal(|| PROOF_BENCHMARK_DEFAULT_MAX_K);
     let mut high_resource_acknowledged = use_signal(|| false);
     let mut help_disclosure = use_signal(HelpDisclosure::default);
-    let mut individual_high_k_selected = use_signal(|| false);
+    let mut individual_high_k_selected = use_signal(|| None::<u8>);
     let mut sweeping = use_signal(|| false);
     let mut notice = use_signal(|| None::<String>);
     let mut resource_sample = use_signal(|| None::<ProcessResourceSample>);
@@ -178,8 +182,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
         |k| format!("k={k} · {}", current.stage.as_str()),
     );
     let result_snapshot = results.read().clone();
-    let high_resource_guidance_visible =
-        high_resource_guidance_visible(sweep_max_k(), individual_high_k_selected());
+    let high_resource_selected = high_resource_selected(sweep_max_k());
     let help_expanded = help_disclosure().is_expanded();
     let benchmark_for_sweep = Arc::clone(&benchmark);
 
@@ -268,7 +271,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                     if sweeping() { "Running sequential sweep…" } else { "Run sequential sweep" }
                 }
             }
-            if high_resource_guidance_visible {
+            if high_resource_selected {
                 p { class: "field-hint proof-benchmark-high-resource-warning",
                     "k=18–21 can consume substantial memory, time, network, and disk."
                 }
@@ -306,6 +309,12 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                     {
                         let outcome = result_snapshot.get(&k).copied();
                         let benchmark = Arc::clone(&benchmark);
+                        let show_individual_high_resource_guidance =
+                            individual_high_resource_guidance_visible(
+                                individual_high_k_selected(),
+                                k,
+                                high_resource_acknowledged(),
+                            );
                         rsx! {
                             article { class: "proof-benchmark-row capability-row", key: "proof-k-{k}",
                                 span { class: if matches!(outcome, Some(BenchmarkOutcome::Completed(_))) { "capability-dot ready" } else { "capability-dot queued" } }
@@ -349,11 +358,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                                         if k >= PROOF_BENCHMARK_HIGH_RESOURCE_K
                                             && !high_resource_acknowledged()
                                         {
-                                            individual_high_k_selected.set(true);
-                                            notice.set(Some(
-                                                "Acknowledge the high-resource warning before running k=18 or above."
-                                                    .to_owned(),
-                                            ));
+                                            individual_high_k_selected.set(Some(k));
                                             return;
                                         }
                                         let benchmark = Arc::clone(&benchmark);
@@ -368,6 +373,20 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                                         "Run again"
                                     } else {
                                         "Run"
+                                    }
+                                }
+                                if show_individual_high_resource_guidance {
+                                    div { class: "proof-benchmark-inline-warning", role: "alert",
+                                        p { "k={k} may consume substantial memory, time, network, and disk." }
+                                        label { class: "confirmation-check",
+                                            input {
+                                                r#type: "checkbox",
+                                                checked: high_resource_acknowledged(),
+                                                disabled: worker_busy || sweeping(),
+                                                onchange: move |event| high_resource_acknowledged.set(event.checked()),
+                                            }
+                                            span { "I understand and want to enable high-resource proof runs." }
+                                        }
                                     }
                                 }
                             }
@@ -412,9 +431,22 @@ mod tests {
         assert!(!high_resource_selected(17));
         assert!(high_resource_selected(18));
         assert!(high_resource_selected(21));
-        assert!(!high_resource_guidance_visible(17, false));
-        assert!(high_resource_guidance_visible(18, false));
-        assert!(high_resource_guidance_visible(17, true));
+        assert!(!individual_high_resource_guidance_visible(None, 18, false));
+        assert!(!individual_high_resource_guidance_visible(
+            Some(18),
+            17,
+            false
+        ));
+        assert!(individual_high_resource_guidance_visible(
+            Some(18),
+            18,
+            false
+        ));
+        assert!(!individual_high_resource_guidance_visible(
+            Some(18),
+            18,
+            true
+        ));
     }
 
     #[test]

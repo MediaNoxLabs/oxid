@@ -2179,6 +2179,21 @@ textarea:focus-visible {
   font-weight: 750;
 }
 
+.proof-benchmark-inline-warning {
+  grid-column: 2 / -1;
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-inline-start: 3px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+}
+
+.proof-benchmark-inline-warning p {
+  margin: 0;
+  color: var(--warning);
+  font-weight: 750;
+}
+
 .developer-capability-summary {
   display: grid;
   gap: var(--space-3);
