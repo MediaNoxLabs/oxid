@@ -22,6 +22,21 @@ enum BenchmarkOutcome {
     Failed(ProofBenchmarkError),
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct HelpDisclosure {
+    expanded: bool,
+}
+
+impl HelpDisclosure {
+    fn is_expanded(self) -> bool {
+        self.expanded
+    }
+
+    fn toggle(&mut self) {
+        self.expanded = !self.expanded;
+    }
+}
+
 fn benchmark_is_running(snapshot: ProofBenchmarkSnapshot) -> bool {
     matches!(
         snapshot.stage,
@@ -86,6 +101,10 @@ fn high_resource_selected(max_k: u8) -> bool {
     max_k.clamp(PROOF_BENCHMARK_MIN_K, PROOF_BENCHMARK_MAX_K) >= PROOF_BENCHMARK_HIGH_RESOURCE_K
 }
 
+fn high_resource_guidance_visible(max_k: u8, individual_high_k_selected: bool) -> bool {
+    high_resource_selected(max_k) || individual_high_k_selected
+}
+
 fn resource_monitor_status(unavailable: bool) -> &'static str {
     if unavailable {
         "Process resource monitor unavailable on this target"
@@ -111,7 +130,8 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
     let mut snapshot = use_signal(|| benchmark.snapshot());
     let mut sweep_max_k = use_signal(|| PROOF_BENCHMARK_DEFAULT_MAX_K);
     let mut high_resource_acknowledged = use_signal(|| false);
-    let mut help_open = use_signal(|| false);
+    let mut help_disclosure = use_signal(HelpDisclosure::default);
+    let mut individual_high_k_selected = use_signal(|| false);
     let mut sweeping = use_signal(|| false);
     let mut notice = use_signal(|| None::<String>);
     let mut resource_sample = use_signal(|| None::<ProcessResourceSample>);
@@ -158,7 +178,9 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
         |k| format!("k={k} · {}", current.stage.as_str()),
     );
     let result_snapshot = results.read().clone();
-    let high_resource_selected = high_resource_selected(sweep_max_k());
+    let high_resource_guidance_visible =
+        high_resource_guidance_visible(sweep_max_k(), individual_high_k_selected());
+    let help_expanded = help_disclosure().is_expanded();
     let benchmark_for_sweep = Arc::clone(&benchmark);
 
     rsx! {
@@ -246,7 +268,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                     if sweeping() { "Running sequential sweep…" } else { "Run sequential sweep" }
                 }
             }
-            if high_resource_selected {
+            if high_resource_guidance_visible {
                 p { class: "field-hint proof-benchmark-high-resource-warning",
                     "k=18–21 can consume substantial memory, time, network, and disk."
                 }
@@ -264,12 +286,12 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
             button {
                 class: "proof-benchmark-help-button",
                 r#type: "button",
-                aria_expanded: if help_open() { "true" } else { "false" },
+                aria_expanded: if help_expanded { "true" } else { "false" },
                 aria_controls: "proof-benchmark-help",
-                onclick: move |_| help_open.set(!help_open()),
-                if help_open() { "Hide benchmark help" } else { "About this benchmark" }
+                onclick: move |_| help_disclosure.with_mut(HelpDisclosure::toggle),
+                if help_expanded { "Hide benchmark help" } else { "About this benchmark" }
             }
-            if help_open() {
+            if help_expanded {
                 div { id: "proof-benchmark-help", class: "proof-benchmark-help", role: "note",
                     p { "Runs one synthetic proof at a time through k=21; results live only in this process." }
                     p { "First runs may download public proving parameters into the app-private cache." }
@@ -284,8 +306,6 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                     {
                         let outcome = result_snapshot.get(&k).copied();
                         let benchmark = Arc::clone(&benchmark);
-                        let high_k_blocked = k >= PROOF_BENCHMARK_HIGH_RESOURCE_K
-                            && (!high_resource_selected || !high_resource_acknowledged());
                         rsx! {
                             article { class: "proof-benchmark-row capability-row", key: "proof-k-{k}",
                                 span { class: if matches!(outcome, Some(BenchmarkOutcome::Completed(_))) { "capability-dot ready" } else { "capability-dot queued" } }
@@ -323,9 +343,19 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                                 button {
                                     class: "proof-benchmark-run-button",
                                     r#type: "button",
-                                    disabled: worker_busy || sweeping() || high_k_blocked,
+                                    disabled: worker_busy || sweeping(),
                                     onclick: move |_| {
                                         notice.set(None);
+                                        if k >= PROOF_BENCHMARK_HIGH_RESOURCE_K
+                                            && !high_resource_acknowledged()
+                                        {
+                                            individual_high_k_selected.set(true);
+                                            notice.set(Some(
+                                                "Acknowledge the high-resource warning before running k=18 or above."
+                                                    .to_owned(),
+                                            ));
+                                            return;
+                                        }
                                         let benchmark = Arc::clone(&benchmark);
                                         spawn(async move {
                                             let outcome = run_one(benchmark, k).await;
@@ -369,10 +399,12 @@ mod tests {
 
     #[test]
     fn help_is_collapsed_by_default_and_expands_only_on_action() {
-        let collapsed = false;
-        assert!(!collapsed, "the help disclosure starts collapsed");
-        let expanded = !collapsed;
-        assert!(expanded, "the help disclosure expands after its action");
+        let mut disclosure = HelpDisclosure::default();
+        assert!(!disclosure.is_expanded());
+        disclosure.toggle();
+        assert!(disclosure.is_expanded());
+        disclosure.toggle();
+        assert!(!disclosure.is_expanded());
     }
 
     #[test]
@@ -380,6 +412,9 @@ mod tests {
         assert!(!high_resource_selected(17));
         assert!(high_resource_selected(18));
         assert!(high_resource_selected(21));
+        assert!(!high_resource_guidance_visible(17, false));
+        assert!(high_resource_guidance_visible(18, false));
+        assert!(high_resource_guidance_visible(17, true));
     }
 
     #[test]
