@@ -344,6 +344,23 @@ async function inspectDeliveryProfiles(repoRoot) {
       || production?.qualityBudget?.advisoryDisposition !== "follow-up") {
       problems.push("production-ready must preserve the 70 percent quality budget and complete mandatory invariants");
     }
+    const fastPath = production?.preMutationFastPath;
+    if (fastPath?.executionProfile !== "small-slice"
+      || fastPath?.maximumToolCallsBeforeOutcome !== 20
+      || fastPath?.readPolicy !== "envelope-required-reads-only"
+      || fastPath?.requiredAssessment?.refined !== true
+      || fastPath?.requiredAssessment?.risk !== "low"
+      || fastPath?.requiredAssessment?.scope !== "small") {
+      problems.push("production-ready fast path must be bounded to an explicit refined, low-risk, small-scope assessment");
+    }
+    if (JSON.stringify(fastPath?.preservedGates) !== JSON.stringify([
+      "branch-claim-checks", "scoped-required-reads", "focused-tests", "signed-dco-commit-policy",
+      "exact-head-review-evidence", "selected-hosted-ci", "merge-authority",
+    ]) || JSON.stringify(fastPath?.terminalMetrics) !== JSON.stringify([
+      "executionProfile", "timeToFirstMutation", "turns", "toolCalls", "providerTokenBuckets", "validations", "fallbackReason",
+    ])) {
+      problems.push("production-ready fast path must preserve every quality gate and report comparable terminal metrics");
+    }
 
     const promotion = profiles.promotion;
     if (promotion?.explicit !== true || promotion?.refreshBase !== "recorded-delivery-base"
@@ -371,6 +388,9 @@ async function inspectDeliveryProfiles(repoRoot) {
     }
     if (!devLoopAgent.includes("--delivery-base <target>")) {
       problems.push(".pi/agents/dev-loop.agent.md does not bind the issue target into the handoff envelope");
+    }
+    if (!devLoopAgent.includes("--pre-mutation-assessment")) {
+      problems.push(".pi/agents/dev-loop.agent.md does not bind the deterministic fast-path assessment into the handoff envelope");
     }
   } catch (error) {
     problems.push(error.message);

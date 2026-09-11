@@ -12,7 +12,12 @@ import { createDeliveryBranchRewriteSink } from "../../scripts/loop/pre-flight-g
 import { auditPi, auditWorktreeAdmission, lifecycleCapacityChecks } from "../../scripts/factory/audit-pi.mjs";
 import { applyUserPolicy, mergePolicy, policyMismatches } from "../../scripts/factory/pi-policy.mjs";
 import { FACTORY_STATE_LABELS, syncFactoryLabels } from "../../scripts/github/sync-factory-labels.mjs";
-import { applyDeliveryProfile, extractDeliveryProfileArgs } from "../../scripts/dev-loops.mjs";
+import {
+  applyDeliveryProfile,
+  extractDeliveryProfileArgs,
+  extractPreMutationAssessmentArgs,
+  selectPreMutationExecution,
+} from "../../scripts/dev-loops.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -109,6 +114,42 @@ test("delivery profiles keep prototype evidence local and promotion explicit", a
     inferNewest: false,
     sessionLocal: true,
   });
+  assert.deepEqual(profiles.profiles["production-ready"].preMutationFastPath, {
+    executionProfile: "small-slice",
+    maximumToolCallsBeforeOutcome: 20,
+    readPolicy: "envelope-required-reads-only",
+    requiredAssessment: { refined: true, risk: "low", scope: "small" },
+    fallbackReasons: {
+      missingAssessment: "missing-pre-mutation-assessment",
+      t1: "t1-risk",
+      ambiguous: "ambiguous-scope",
+      dependency: "dependency-work",
+      workflow: "workflow-change",
+      release: "release-work",
+      crossRepository: "cross-repository-work",
+      notRefined: "issue-not-refined",
+      riskTooHigh: "risk-not-low",
+      scopeTooLarge: "scope-not-small",
+    },
+    preservedGates: [
+      "branch-claim-checks",
+      "scoped-required-reads",
+      "focused-tests",
+      "signed-dco-commit-policy",
+      "exact-head-review-evidence",
+      "selected-hosted-ci",
+      "merge-authority",
+    ],
+    terminalMetrics: [
+      "executionProfile",
+      "timeToFirstMutation",
+      "turns",
+      "toolCalls",
+      "providerTokenBuckets",
+      "validations",
+      "fallbackReason",
+    ],
+  });
 
   const [rootAgent, devLoopAgent, developerAgent, reviewAgent, productiveLoop] = await Promise.all([
     readFile(path.join(repoRoot, "AGENT.md"), "utf8"),
@@ -156,6 +197,16 @@ test("the handoff wrapper makes prototype local and production-ready the default
     () => extractDeliveryProfileArgs(["--delivery-profile", "prototype", "--delivery-profile=production-ready"]),
     /only once/u,
   );
+  assert.deepEqual(extractPreMutationAssessmentArgs([
+    "--input", "state.json", "--pre-mutation-assessment={\"refined\":true,\"risk\":\"low\",\"scope\":\"small\"}",
+  ]), {
+    args: ["--input", "state.json"],
+    assessment: { refined: true, risk: "low", scope: "small" },
+  });
+  assert.throws(
+    () => extractPreMutationAssessmentArgs(["--pre-mutation-assessment", "[]"]),
+    /JSON object/u,
+  );
 
   const prototype = applyDeliveryProfile(base, contract, "prototype", {
     branch: "milestone-0.4.0", remoteRef: "origin/milestone-0.4.0", kind: "milestone",
@@ -170,6 +221,12 @@ test("the handoff wrapper makes prototype local and production-ready the default
   assert.equal(prototype.control.needsAttentionAfterMs, 180000);
   assert.equal(prototype.control.activeNoticeAfterMs, 600000);
   assert.equal(prototype.acceptance.criteria.length, contract.profiles.prototype.closeoutFields.length);
+  assert.throws(
+    () => applyDeliveryProfile({ ...base, preMutationAssessment: {} }, contract, "prototype", {
+      branch: "milestone-0.4.0", remoteRef: "origin/milestone-0.4.0", kind: "milestone",
+    }),
+    /only for production-ready delivery/u,
+  );
 
   const production = applyDeliveryProfile(base, contract, "production-ready", {
     branch: "develop", remoteRef: "origin/develop", kind: "factory",
@@ -183,6 +240,8 @@ test("the handoff wrapper makes prototype local and production-ready the default
     advisoryDisposition: "follow-up",
   });
   assert.equal(production.nextAction, base.nextAction);
+  assert.equal(production.executionProfile, "regular-production-ready");
+  assert.equal(production.fallbackReason, "missing-pre-mutation-assessment");
   assert.deepEqual(production.stopRules, base.stopRules);
   assert.equal(production.requiredReads.includes(".pi/delivery-profiles.json"), true);
   assert.throws(
@@ -191,6 +250,44 @@ test("the handoff wrapper makes prototype local and production-ready the default
     }),
     /issue-backed target/u,
   );
+});
+
+test("a refined issue #96 fixture takes the bounded production-ready fast path", async () => {
+  const contract = JSON.parse(await readFile(path.join(repoRoot, ".pi", "delivery-profiles.json"), "utf8"));
+  const fastPath = contract.profiles["production-ready"].preMutationFastPath;
+  const issue96 = {
+    target: { kind: "issue", issue: 96, repo: "MediaNoxLabs/oxid" },
+    requiredReads: ["AGENT.md", "crates/ui-dioxus/src/lib.rs", "android/OxidMobilePlugin.kt"],
+    nextAction: "regular production loop",
+    preMutationAssessment: { refined: true, risk: "low", scope: "small" },
+  };
+  const selected = applyDeliveryProfile(issue96, contract, "production-ready", {
+    branch: "develop", remoteRef: "origin/develop", kind: "factory",
+  });
+  assert.equal(selected.executionProfile, "small-slice");
+  assert.equal(selected.fallbackReason, null);
+  assert.match(selected.nextAction, /first source mutation or return an evidence-backed blocker before 20 tool calls/u);
+  assert.deepEqual(selected.requiredReads, [...issue96.requiredReads, ".pi/delivery-profiles.json"]);
+  assert.deepEqual(selected.preMutationFastPath, {
+    maximumToolCallsBeforeOutcome: 20,
+    readPolicy: "envelope-required-reads-only",
+    preservedGates: fastPath.preservedGates,
+  });
+  assert.deepEqual(selected.terminalMetrics, fastPath.terminalMetrics);
+
+  for (const [assessment, reason] of [
+    [{ ...issue96.preMutationAssessment, tier: "T1" }, "t1-risk"],
+    [{ ...issue96.preMutationAssessment, ambiguous: true }, "ambiguous-scope"],
+    [{ ...issue96.preMutationAssessment, dependency: true }, "dependency-work"],
+    [{ ...issue96.preMutationAssessment, workflow: true }, "workflow-change"],
+    [{ ...issue96.preMutationAssessment, release: true }, "release-work"],
+    [{ ...issue96.preMutationAssessment, crossRepository: true }, "cross-repository-work"],
+  ]) {
+    assert.deepEqual(selectPreMutationExecution({ preMutationAssessment: assessment }, fastPath), {
+      executionProfile: "regular-production-ready",
+      fallbackReason: reason,
+    });
+  }
 });
 
 test("supervisor policy preserves verified work after pre-helper shell syntax errors", async () => {

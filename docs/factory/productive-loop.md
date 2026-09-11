@@ -95,6 +95,17 @@ DCO/GPG requirements, secret and custody boundaries, process ownership, and
 disk limits. The machine-readable contract is
 `.pi/delivery-profiles.json`; `scripts/factory/audit-pi.mjs` rejects drift.
 
+`production-ready` also has an internal `small-slice` startup path; it is not a
+third delivery profile. The deterministic startup may select it only for an
+explicitly refined, low-risk, small-scope issue with no T1, ambiguity,
+dependency, workflow, release, or cross-repository flag. Its worker loads only
+the envelope's scoped required reads and must make a first source mutation or
+return an evidence-backed blocker before 20 tool calls. Missing or ineligible
+facts fall back to `regular-production-ready` with a recorded reason. Both
+execution paths retain the same focused tests, signed/DCO commit, exact-head
+review, selected hosted CI, and merge-authority rules, and report comparable
+time-to-first-mutation, tool, token, validation, and fallback metrics.
+
 ## Delivery targets and concurrent trains
 
 Several milestone trains may stream concurrently. Each session binds one work
