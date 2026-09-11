@@ -7,10 +7,11 @@ const root = new URL("../../", import.meta.url);
 const text = (relative) => readFile(new URL(relative, root), "utf8");
 
 test("responsive application navigation keeps one accessible leading Back action", async () => {
-  const [ui, styles, design] = await Promise.all([
+  const [ui, styles, design, androidActivity] = await Promise.all([
     text("crates/ui-dioxus/src/lib.rs"),
     text("crates/ui-dioxus/assets/styles.css"),
     text("docs/design/application-navigation.md"),
+    text("apps/oxid/android/MainActivity.kt"),
   ]);
 
   assert.match(ui, /div \{ class: "app-header__leading",[\s\S]*?class: "back-action"/);
@@ -26,4 +27,12 @@ test("responsive application navigation keeps one accessible leading Back action
   assert.match(styles, /\.profile-sheet \{[\s\S]*?right: max\(1rem, env\(safe-area-inset-right\)\);[\s\S]*?left: auto;/);
   assert.match(design, /390.*430.*768/s);
   assert.match(design, /48dp.*44pt/s);
+
+  assert.match(androidActivity, /override val handleBackNavigation: Boolean = false/);
+  assert.match(androidActivity, /OnBackPressedCallback/);
+  assert.match(androidActivity, /document\.querySelector\('button\.back-action'\)/);
+  assert.match(androidActivity, /action\.click\(\)/);
+  assert.match(androidActivity, /onBackPressedDispatcher\.onBackPressed\(\)/);
+  assert.match(design, /Android system and gesture Back.*activity bridge/s);
+  assert.match(design, /without claiming a native Back input/s);
 });
