@@ -42,7 +42,28 @@ fn row_presentation(
     requested_k: u8,
     outcome: Option<BenchmarkOutcome>,
     snapshot: ProofBenchmarkSnapshot,
+    queued_through: Option<u8>,
 ) -> BenchmarkRowPresentation {
+    if benchmark_is_running(snapshot) && snapshot.active_k == Some(requested_k) {
+        return BenchmarkRowPresentation {
+            state_copy: "Running",
+            total: format!("{}…", snapshot.stage.as_str()),
+            realized_k: None,
+            detail: None,
+        };
+    }
+    if benchmark_is_running(snapshot)
+        && snapshot.active_k.is_some_and(|active_k| {
+            queued_through.is_some_and(|max_k| requested_k > active_k && requested_k <= max_k)
+        })
+    {
+        return BenchmarkRowPresentation {
+            state_copy: "Queued",
+            total: "Waiting for the active worker".to_owned(),
+            realized_k: None,
+            detail: None,
+        };
+    }
     match outcome {
         Some(BenchmarkOutcome::Completed(report)) => BenchmarkRowPresentation {
             state_copy: "Completed",
@@ -70,20 +91,6 @@ fn row_presentation(
             total: "No result".to_owned(),
             realized_k: None,
             detail: Some(error.to_string()),
-        },
-        None if benchmark_is_running(snapshot) && snapshot.active_k == Some(requested_k) => {
-            BenchmarkRowPresentation {
-                state_copy: "Running",
-                total: format!("{}…", snapshot.stage.as_str()),
-                realized_k: None,
-                detail: None,
-            }
-        }
-        None if benchmark_is_running(snapshot) => BenchmarkRowPresentation {
-            state_copy: "Queued",
-            total: "Waiting for the active worker".to_owned(),
-            realized_k: None,
-            detail: None,
         },
         None => BenchmarkRowPresentation {
             state_copy: "Not run",
@@ -376,15 +383,28 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
             }
             div { class: "proof-benchmark-list", aria_label: "Circuit benchmark results",
                 div { class: "proof-benchmark-list__header", aria_hidden: "true",
-                    span { "Circuit / state" }
-                    span { "Total" }
+                    div { class: "proof-benchmark-list__header-summary",
+                        span { "Circuit" }
+                        span { "Status" }
+                        span { "Stage total" }
+                    }
                     span { "Details" }
                     span { "Run" }
                 }
                 for k in PROOF_BENCHMARK_MIN_K..=PROOF_BENCHMARK_MAX_K {
                     {
                         let outcome = result_snapshot.get(&k).copied();
-                        let presentation = row_presentation(k, outcome, current);
+                        let active = worker_busy && current.active_k == Some(k);
+                        let presentation = row_presentation(
+                            k,
+                            outcome,
+                            current,
+                            sweeping().then_some(sweep_max_k()),
+                        );
+                        let displayed_report = match (active, outcome) {
+                            (false, Some(BenchmarkOutcome::Completed(report))) => Some(report),
+                            _ => None,
+                        };
                         let expanded = expanded_row() == Some(k);
                         let benchmark = Arc::clone(&benchmark);
                         let show_individual_high_resource_guidance =
@@ -426,7 +446,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                                             results.write().insert(k, outcome);
                                         });
                                     },
-                                    if worker_busy && current.active_k == Some(k) {
+                                    if active {
                                         "Running…"
                                     } else if outcome.is_some() {
                                         "Retry"
@@ -439,7 +459,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                                         if let Some(detail) = presentation.detail {
                                             p { class: "proof-benchmark-outcome", "{detail}" }
                                         }
-                                        if let Some(BenchmarkOutcome::Completed(report)) = outcome {
+                                        if let Some(report) = displayed_report {
                                             dl { class: "proof-benchmark-timings", aria_label: "Circuit k={k} timing metrics",
                                                 div { dt { "Stage total" } dd { "{duration_text(stage_total(report))}" } }
                                                 div { dt { "Key generation" } dd { "{duration_text(report.key_generation)}" } }
@@ -562,6 +582,7 @@ mod tests {
             7,
             Some(BenchmarkOutcome::Completed(completed_report(7))),
             idle,
+            None,
         );
         assert_eq!(matching.total, "Stage total 350ms");
         assert_eq!(matching.realized_k, None);
@@ -570,6 +591,7 @@ mod tests {
             7,
             Some(BenchmarkOutcome::Completed(completed_report(8))),
             idle,
+            None,
         );
         assert_eq!(differing.realized_k.as_deref(), Some("realized k=8"));
     }
@@ -599,18 +621,40 @@ mod tests {
             row_presentation(
                 7,
                 Some(BenchmarkOutcome::Completed(completed_report(7))),
-                idle
+                idle,
+                None,
             )
             .state_copy,
             "Completed"
         );
-        assert_eq!(row_presentation(7, None, running).state_copy, "Running");
-        assert_eq!(row_presentation(7, None, queued).state_copy, "Queued");
+        assert_eq!(
+            row_presentation(
+                7,
+                Some(BenchmarkOutcome::Completed(completed_report(7))),
+                running,
+                None,
+            )
+            .state_copy,
+            "Running"
+        );
+        assert_eq!(
+            row_presentation(9, None, queued, Some(17)).state_copy,
+            "Queued"
+        );
+        assert_eq!(
+            row_presentation(7, None, queued, Some(17)).state_copy,
+            "Not run"
+        );
+        assert_eq!(
+            row_presentation(18, None, queued, Some(17)).state_copy,
+            "Not run"
+        );
         assert_eq!(
             row_presentation(
                 7,
                 Some(BenchmarkOutcome::Failed(ProofBenchmarkError::Busy)),
-                idle
+                idle,
+                None,
             )
             .state_copy,
             "Admission refused"
@@ -619,7 +663,8 @@ mod tests {
             row_presentation(
                 7,
                 Some(BenchmarkOutcome::Failed(ProofBenchmarkError::ProvingFailed)),
-                idle
+                idle,
+                None,
             )
             .state_copy,
             "Failed"
@@ -628,12 +673,13 @@ mod tests {
             row_presentation(
                 7,
                 Some(BenchmarkOutcome::Failed(ProofBenchmarkError::Unavailable)),
-                idle
+                idle,
+                None,
             )
             .state_copy,
             "Unavailable"
         );
-        assert_eq!(row_presentation(7, None, idle).state_copy, "Not run");
+        assert_eq!(row_presentation(7, None, idle, None).state_copy, "Not run");
     }
 
     #[test]
