@@ -261,19 +261,23 @@ async function touchButton(label, timeoutMs = 20_000) {
 async function ensureProfile() {
   await waitFor("Boolean(document.body)", "document body", 60_000);
   await waitFor(
-    `Boolean(${button("Create new wallet")} || ${button("Create and continue")} || ${button("Skip for now")} || ${button("Home")})`,
+    `Boolean(${button("Create private wallet")} || ${button("Create and continue")} || ${button("Enable device protection")} || ${button("Home")})`,
     "onboarding or wallet",
     60_000,
   );
-  if (await evaluate(`Boolean(${button("Create new wallet")})`)) {
-    await click("Create new wallet");
+  if (await evaluate(`Boolean(${button("Create private wallet")})`)) {
+    await click("Create private wallet");
+    await waitFor(`Boolean(${button("Use public demo wallet")})`, "public demo wallet choice");
+    await click("Use public demo wallet");
     await waitFor(`Boolean(${button("Create and continue")})`, "wallet-name step");
   }
   if (await evaluate(`Boolean(${button("Create and continue")})`)) {
     await click("Create and continue");
-    await waitFor(`Boolean(${button("Skip for now")})`, "wallet-protection step", 60_000);
+    await waitFor(`Boolean(${button("Enable device protection")})`, "wallet-protection step", 60_000);
   }
-  if (await evaluate(`Boolean(${button("Skip for now")})`)) await click("Skip for now", 60_000);
+  if (await evaluate(`Boolean(${button("Enable device protection")})`)) {
+    await click("Enable device protection", 60_000);
+  }
   await waitFor(`Boolean(${button("Home")})`, "composed wallet", 60_000);
 }
 
@@ -354,9 +358,10 @@ try {
     }
     await click("Documents");
     await click("Manage identities");
-    await click("Create standalone DID");
+    await click("Create a DID");
+    await click("Create DID");
     await waitFor(
-      'document.body.innerText.includes("Manage this DID") || Array.from(document.querySelectorAll(".field-error")).some((element) => element.textContent.trim() === "protected DID key operation is unavailable")',
+      'document.body.innerText.includes("A protected managed DID is ready for credential issuance.") || Array.from(document.querySelectorAll(".field-error")).some((element) => element.textContent.trim() === "protected DID key operation is unavailable")',
       "managed DID terminal state",
       30_000,
     );
@@ -365,7 +370,7 @@ try {
     }
     await click("Publish active holder DID to test issuer");
     await waitFor(
-      'document.body.innerText.includes("Public DID document is available to the current test issuer")',
+      'document.body.innerText.includes("Public DID document is available to the configured test issuer")',
       "explicit holder DID bootstrap",
       30_000,
     );

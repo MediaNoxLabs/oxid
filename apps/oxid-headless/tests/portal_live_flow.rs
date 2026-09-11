@@ -1226,7 +1226,7 @@ fn live_target_requires_the_lace_service_and_supported_mock_mode() {
     let script = include_str!("../../../scripts/e2e/portal-headless-e2e.sh");
     let consumer = include_str!("../../../scripts/portal-consumer-stack.yml");
     for required in [
-        "git -C \"$RUN_TREE\" fetch origin integration",
+        "git -C \"$RUN_TREE\" fetch origin \"$PORTAL_COMMIT\"",
         "lace_portal_mock_flow_issues_to_same_headless_process_and_restores",
         ".portalServiceExercised == true",
         ".issuerImplementation == \"lace-id-portal-rust\"",

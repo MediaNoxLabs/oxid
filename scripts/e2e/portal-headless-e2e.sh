@@ -56,7 +56,7 @@ if ! git clone --no-checkout "$SOURCE_INPUT" "$RUN_TREE" >>"$RAW_LOG" 2>&1; then
   fail source-clone
 fi
 git -C "$RUN_TREE" remote set-url origin "$PORTAL_REMOTE"
-if ! git -C "$RUN_TREE" fetch origin integration >>"$RAW_LOG" 2>&1; then
+if ! git -C "$RUN_TREE" fetch origin "$PORTAL_COMMIT" >>"$RAW_LOG" 2>&1; then
   fail source-fetch
 fi
 [ "$(git -C "$RUN_TREE" rev-parse FETCH_HEAD^{commit})" = "$PORTAL_COMMIT" ] || fail portal-commit

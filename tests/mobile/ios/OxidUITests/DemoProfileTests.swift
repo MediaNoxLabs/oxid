@@ -20,7 +20,7 @@ final class DemoProfileTests: XCTestCase {
         application.launch()
 
         XCTAssertTrue(staticText("Standalone demo", in: application).waitForExistence(timeout: 15))
-        XCTAssertTrue(application.buttons["Create new wallet"].waitForExistence(timeout: 15))
+        XCTAssertTrue(application.buttons["Create private wallet"].waitForExistence(timeout: 15))
         XCTAssertTrue(application.buttons["Open standalone demo setup"].exists)
         application.buttons["Open standalone demo setup"].tap()
 
