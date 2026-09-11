@@ -3808,7 +3808,7 @@ fn WalletApp() -> Element {
                     }
                 }
                 div { class: "app-header__title",
-                    strong { "{active_route.title()}" }
+                    strong { role: "heading", aria_level: "1", "{active_route.title()}" }
                     small { "{brand.product_name()} {brand.tagline()}" }
                 }
                 div { class: "app-header__actions",
