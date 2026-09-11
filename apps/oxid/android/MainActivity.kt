@@ -4,6 +4,8 @@ package dev.dioxus.main
 
 import android.content.Intent
 import android.os.Bundle
+import android.webkit.WebView
+import androidx.activity.OnBackPressedCallback
 import io.medianox.oxid.mobile.OxidMobilePlugin
 
 typealias BuildConfig = io.medianox.oxid.BuildConfig
@@ -14,10 +16,32 @@ typealias BuildConfig = io.medianox.oxid.BuildConfig
  */
 class MainActivity : WryActivity() {
     private val oxidMobilePlugin by lazy { OxidMobilePlugin(this) }
+    private var oxidWebView: WebView? = null
+    private lateinit var applicationBackCallback: OnBackPressedCallback
+
+    override val handleBackNavigation: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         captureIdentityLink(intent)
         super.onCreate(savedInstanceState)
+        applicationBackCallback = object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val webView = oxidWebView
+                if (webView == null) {
+                    delegateBackToHost()
+                    return
+                }
+                webView.evaluateJavascript(APPLICATION_BACK_SCRIPT) { handled ->
+                    if (handled != "true") delegateBackToHost()
+                }
+            }
+        }
+        onBackPressedDispatcher.addCallback(this, applicationBackCallback)
+    }
+
+    override fun onWebViewCreate(webView: WebView) {
+        super.onWebViewCreate(webView)
+        oxidWebView = webView
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -49,6 +73,15 @@ class MainActivity : WryActivity() {
         val scheme = intent.data?.scheme ?: return
         if (scheme != "openid-credential-offer" && scheme != "openid4vp") return
         OxidMobilePlugin.captureIdentityLink(intent.dataString)
+    }
+
+    private fun delegateBackToHost() {
+        applicationBackCallback.isEnabled = false
+        try {
+            onBackPressedDispatcher.onBackPressed()
+        } finally {
+            applicationBackCallback.isEnabled = true
+        }
     }
 
     /** JNI entry points use the activity instance so Android resolves classes with the app loader. */
@@ -89,4 +122,15 @@ class MainActivity : WryActivity() {
 
     /** Side-effect-free second call for the smoke-only JNI recovery probe. */
     fun oxidJniRecoveryProbeJson(): String = "{\"status\":\"ready\"}"
+
+    companion object {
+        private const val APPLICATION_BACK_SCRIPT = """
+            (() => {
+                const action = document.querySelector('button.back-action');
+                if (!(action instanceof HTMLButtonElement) || action.disabled) return false;
+                action.click();
+                return true;
+            })()
+        """
+    }
 }
