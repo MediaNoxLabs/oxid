@@ -550,6 +550,7 @@ fn main() {
             ),
         ),
         oxid_ui_dioxus::DiagnosticsUiServices::new(
+            application.diagnostic_events(),
             application.get_diagnostic_snapshot(),
             application.clear_diagnostics(),
         ),

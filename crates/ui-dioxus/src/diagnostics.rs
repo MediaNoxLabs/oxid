@@ -5,7 +5,8 @@ use std::sync::Arc;
 use dioxus::prelude::*;
 use oxid_diagnostics_application::{
     CLEAR_LOCAL_DIAGNOSTICS_INTENT, ClearDiagnosticsCommand, ClearDiagnosticsUseCase,
-    DiagnosticSeverity, DiagnosticSnapshotView, GetDiagnosticSnapshotUseCase,
+    DiagnosticEventSinkPort, DiagnosticSeverity, DiagnosticSnapshotView,
+    GetDiagnosticSnapshotUseCase,
 };
 use oxid_wallet_application::WalletProfileView;
 
@@ -15,17 +16,27 @@ use super::{AccountPageState, WalletUiServices, load_account_page, run_ui_blocki
 /// Process-local, payload-free diagnostic use cases consumed by the
 /// Diagnostics page.
 pub struct DiagnosticsUiServices {
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    pub(super) events: Arc<dyn DiagnosticEventSinkPort>,
     pub(super) get: Arc<dyn GetDiagnosticSnapshotUseCase>,
     pub(super) clear: Arc<dyn ClearDiagnosticsUseCase>,
 }
 
 impl DiagnosticsUiServices {
     #[must_use]
-    pub const fn new(
+    pub fn new(
+        events: Arc<dyn DiagnosticEventSinkPort>,
         get: Arc<dyn GetDiagnosticSnapshotUseCase>,
         clear: Arc<dyn ClearDiagnosticsUseCase>,
     ) -> Self {
-        Self { get, clear }
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
+        let _ = events;
+        Self {
+            #[cfg(any(target_os = "ios", target_os = "android"))]
+            events,
+            get,
+            clear,
+        }
     }
 }
 

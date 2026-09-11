@@ -202,6 +202,12 @@
           ]
         },
         {
+          "name": "screen-privacy",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/screen_privacy"
+          ]
+        },
+        {
           "name": "selected-realm-sync",
           "modulePathPrefixes": [
             "crates/ui-dioxus/src/selected_realm_sync"

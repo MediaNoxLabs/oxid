@@ -22,6 +22,7 @@ mod profile_guard;
 mod profile_quick_switcher;
 #[cfg(feature = "proof-benchmark")]
 mod proof_benchmark;
+mod screen_privacy;
 mod selected_realm_sync;
 mod wallet_onboarding;
 #[cfg(feature = "preprod-observation")]
@@ -63,6 +64,8 @@ use oxid_credential_application::{
     PreviewCredentialDisclosureUseCase, ReceiveCredentialUseCase, RevealCredentialClaimCommand,
     RevealCredentialClaimUseCase, ReverifyCredentialUseCase,
 };
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use oxid_diagnostics_application::DiagnosticEventSinkPort;
 use oxid_diagnostics_application::{ClearDiagnosticsUseCase, GetDiagnosticSnapshotUseCase};
 use oxid_identity_application::{
     CreateDidCommand, CreateDidUseCase, DeactivateDidCommand, DeactivateDidUseCase,
@@ -168,6 +171,9 @@ use header_menu::{GlobalApplicationMenu, GlobalMenuAction, GlobalMenuTrigger, He
 use labels as ui;
 use passport_vault::PassportVaultPage;
 use profile_quick_switcher::{ProfileSwitcherMenu, profile_switch_is_allowed};
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use screen_privacy::protect_suspended_snapshot;
+use screen_privacy::route_forces_screen_privacy;
 use selected_realm_sync::{
     AccountSyncCardState, dust_status_pill_class, load_account_sync_card,
     non_native_shielded_balances, poll_account_sync, selected_realm_chain_tip,
@@ -289,6 +295,8 @@ pub struct WalletUiServices {
     proof_benchmark: Option<Arc<dyn RunProofBenchmarkUseCase>>,
     #[cfg(feature = "proof-benchmark")]
     process_resource_sampler: Arc<dyn ProcessResourceSamplerPort>,
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    diagnostic_events: Arc<dyn DiagnosticEventSinkPort>,
     get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase>,
     clear_diagnostics: Arc<dyn ClearDiagnosticsUseCase>,
     qr_scanner: Arc<dyn QrScannerPort>,
@@ -1108,6 +1116,8 @@ impl WalletUiServices {
             proof_benchmark: None,
             #[cfg(feature = "proof-benchmark")]
             process_resource_sampler: Arc::new(UnavailableProcessResourceSampler),
+            #[cfg(any(target_os = "ios", target_os = "android"))]
+            diagnostic_events: diagnostics.events,
             get_diagnostic_snapshot: diagnostics.get,
             clear_diagnostics: diagnostics.clear,
             qr_scanner: ingress.qr_scanner,
@@ -2630,13 +2640,6 @@ impl SecretModeController {
     }
 }
 
-const fn route_forces_screen_privacy(route: Route) -> bool {
-    matches!(
-        route,
-        Route::Settings | Route::BackupRecovery | Route::Documents | Route::CredentialRequest
-    )
-}
-
 #[cfg(feature = "ui-profile-demo")]
 const DEMO_PROFILE_MARKER: &str = "OXID_UI_PROFILE_DEMO";
 #[cfg(feature = "ui-profile-demo")]
@@ -3571,6 +3574,8 @@ fn WalletApp() -> Element {
     let screen_privacy = services.screen_privacy();
     #[cfg(any(target_os = "ios", target_os = "android"))]
     let screen_privacy_for_lifecycle = Arc::clone(&screen_privacy);
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let diagnostic_events_for_lifecycle = Arc::clone(&services.diagnostic_events);
     use_effect(move || {
         let screen_privacy_enabled =
             secret_mode_state().masked || route_forces_screen_privacy(navigation.read().current());
@@ -3589,7 +3594,11 @@ fn WalletApp() -> Element {
                 dioxus::mobile::tao::event::Event::Suspended => {
                     // Protect the OS snapshot immediately. Dioxus signal writes
                     // wait until Resumed, when the WebView is active again.
-                    let _ = screen_privacy_for_lifecycle.set_protected(true);
+                    protect_suspended_snapshot(
+                        screen_privacy_for_lifecycle.as_ref(),
+                        diagnostic_events_for_lifecycle.as_ref(),
+                    );
+                    secret_mode.rearm();
                 }
                 dioxus::mobile::tao::event::Event::Resumed => {
                     identity_link_wake.set(identity_link_wake().wrapping_add(1));
@@ -12579,15 +12588,6 @@ mod tests {
         assert!(!state.masked, "stale timeout must not hide a newer reveal");
         state.timeout(second_generation);
         assert!(state.masked);
-    }
-
-    #[test]
-    fn backup_and_credential_routes_force_native_snapshot_protection() {
-        assert!(route_forces_screen_privacy(Route::Settings));
-        assert!(route_forces_screen_privacy(Route::Documents));
-        assert!(route_forces_screen_privacy(Route::CredentialRequest));
-        assert!(!route_forces_screen_privacy(Route::Home));
-        assert!(!route_forces_screen_privacy(Route::Wallet));
     }
 
     fn dust_registration_preview(state: &str) -> WalletDustRegistrationPreviewView {

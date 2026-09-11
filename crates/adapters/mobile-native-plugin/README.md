@@ -13,7 +13,7 @@ compiles multiple Swift packages but embeds only its primary framework.
 ## QR lifecycle contract
 
 Native code captures one QR value and returns only this closed JSON status
-vocabulary to Rust: `scanning`, `succeeded`, `cancelled`, `denied` (iOS only),
+vocabulary to Rust: `scanning`, `succeeded`, `cancelled`, `denied`,
 `unavailable`, `timed_out`, `invalid`, or `failed`. Only `succeeded` carries a
 non-empty UTF-8 payload, bounded to 32 KiB before it crosses the bridge. Error
 objects, permission details, request values, and platform exception text never
@@ -30,7 +30,7 @@ This limitation must remain visible in physical-device evidence.
 | --- | --- | --- | --- |
 | Success | bounded AVFoundation QR metadata | bounded Google Code Scanner QR result | Rust closed-status/bound tests; physical Android pass on Samsung/API 36 |
 | Cancel | repository Cancel control | Code Scanner cancelled task, including reviewed post-presentation Samsung/API 36 `INTERNAL` normalization | Rust closed-status test; physical Android Back pass |
-| Denial | AVFoundation permission denied/restricted | not an app-owned permission outcome | Rust distinct-denial test; physical iOS denial open |
+| Denial | AVFoundation permission denied/restricted | Google Code Scanner camera permission denied | Rust native-source and distinct-denial tests; physical denial remains optional smoke evidence |
 | Timeout | Rust deadline acknowledged; scanner stopped/dismissed | Rust deadline acknowledged; late task invalidated | Rust closed-status test; physical Android 60-second pass |
 | Unavailable | simulator or missing capture device | failed Play Services preflight/module | existing iOS simulator and focused adapter evidence |
 
