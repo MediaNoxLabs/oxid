@@ -78,6 +78,12 @@ cross-system risk makes the classification medium or high.
 
 `production-ready` retains the normal routed workflow, affected-target planning, draft and pre-approval gates, current-head evidence, and authority controls below. Promotion from `prototype` must be explicit: refresh the envelope's recorded `deliveryBase`, audit prototype shortcuts and known gaps, invalidate provisional evidence, rebuild the handoff envelope, recompute targets, and run the production-ready gates from the refreshed state.
 
+### Production-ready pre-mutation fast path
+
+`small-slice` is an internal execution profile, never a third public delivery profile. Before the single envelope build, reduce only the deterministic startup/refinement facts to `--pre-mutation-assessment '<json>'`; the JSON may contain `refined`, `risk`, `scope`, `tier`/`t1`, `ambiguous`, `dependency`, `workflow`, `release`, and `crossRepository`. The envelope may select it only when the assessment is explicitly `refined: true`, `risk: "low"`, and `scope: "small"`. Missing facts are a recorded `missing-pre-mutation-assessment` fallback, not permission to infer eligibility. T1, ambiguity, dependency, workflow, release, and cross-repository flags always select `regular-production-ready` with the envelope's exact fallback reason.
+
+For `small-slice`, load only the envelope's scoped required reads; do not reread the factory corpus. Make the first source mutation, or return an evidence-backed blocker naming the inspected source and blocking fact, before 20 tool calls. This time limit changes neither branch/claim checks, focused tests, signed/DCO commit policy, exact-head review evidence, selected hosted CI, nor merge authority. At the terminal checkpoint report the selected execution profile, time to first mutation, turns, tool calls, exact provider token buckets when available (otherwise `unavailable`), validations, and fallback reason. The regular production-ready loop reports the same metrics.
+
 The parent MUST dispatch this tracked `dev-loop` agent directly through
 `pi-subagents`; it MUST NOT place this conductor inside `taskflow`. The current
 taskflow detached path has not proved isolated peer resolution, nested progress

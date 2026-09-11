@@ -59,6 +59,46 @@
       "targets": {
         "strategy": "path-and-risk",
         "featureCiProfile": "feature"
+      },
+      "preMutationFastPath": {
+        "executionProfile": "small-slice",
+        "maximumToolCallsBeforeOutcome": 20,
+        "readPolicy": "envelope-required-reads-only",
+        "requiredAssessment": {
+          "refined": true,
+          "risk": "low",
+          "scope": "small"
+        },
+        "fallbackReasons": {
+          "missingAssessment": "missing-pre-mutation-assessment",
+          "t1": "t1-risk",
+          "ambiguous": "ambiguous-scope",
+          "dependency": "dependency-work",
+          "workflow": "workflow-change",
+          "release": "release-work",
+          "crossRepository": "cross-repository-work",
+          "notRefined": "issue-not-refined",
+          "riskTooHigh": "risk-not-low",
+          "scopeTooLarge": "scope-not-small"
+        },
+        "preservedGates": [
+          "branch-claim-checks",
+          "scoped-required-reads",
+          "focused-tests",
+          "signed-dco-commit-policy",
+          "exact-head-review-evidence",
+          "selected-hosted-ci",
+          "merge-authority"
+        ],
+        "terminalMetrics": [
+          "executionProfile",
+          "timeToFirstMutation",
+          "turns",
+          "toolCalls",
+          "providerTokenBuckets",
+          "validations",
+          "fallbackReason"
+        ]
       }
     }
   },
