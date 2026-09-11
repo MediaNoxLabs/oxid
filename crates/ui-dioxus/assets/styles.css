@@ -2496,6 +2496,31 @@ textarea:focus-visible {
   margin-top: var(--space-5);
 }
 
+.diagnostic-event-log__toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.diagnostic-event-log__heading {
+  min-width: 0;
+}
+
+.diagnostic-event-log__heading p {
+  margin: var(--space-1) 0 0;
+}
+
+.diagnostic-event-controls {
+  flex: 0 0 auto;
+}
+
+.diagnostic-event-controls .utility-icon-button {
+  width: 3rem;
+  min-width: 3rem;
+  min-height: 3rem;
+}
+
 .diagnostic-event-filters {
   display: flex;
   flex-wrap: wrap;
@@ -3570,6 +3595,10 @@ select:focus-visible {
 
   .diagnostic-grid {
     grid-template-columns: 1fr;
+  }
+
+  .diagnostic-event-log__toolbar {
+    align-items: start;
   }
 
   .developer-tool {
