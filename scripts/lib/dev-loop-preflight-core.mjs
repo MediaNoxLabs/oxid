@@ -76,17 +76,17 @@ export default function devLoopPreflight(pi, runtime = {}) {
   pi.on("input", async (_event, ctx) => {
     const result = await check(ctx.cwd);
     if (result.ok) return { action: "continue" };
-    ctx.ui.notify(`${result.message}. Pi 0.84 hooks cannot cancel agent or provider execution; diagnose here, then run the tracked pre-flight wrapper before any routed action or delegation.`, "warning");
+    ctx.ui.notify(`${result.message}. Pi lifecycle hooks are advisory and cannot replace the fail-closed repository gate; diagnose here, then run the tracked pre-flight wrapper before any routed action or delegation.`, "warning");
     return { action: "continue" };
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
     const result = await check(ctx.cwd, { activeTools: event?.systemPromptOptions?.selectedTools });
-    if (!result.ok) ctx.ui.notify(`${result.message}. Advisory only: Pi 0.84 before_agent_start has no cancellation result.`, "error");
+    if (!result.ok) ctx.ui.notify(`${result.message}. Advisory only: before_agent_start has no repository-authoritative cancellation result.`, "error");
   });
 
   pi.on("before_provider_request", async (_event, ctx) => {
     const result = await check(ctx.cwd, { activeTools: toolNames(pi.getActiveTools?.() ?? []) });
-    if (!result.ok) ctx.ui.notify(`${result.message}. Advisory only: Pi 0.84 before_provider_request errors are swallowed by the runner.`, "error");
+    if (!result.ok) ctx.ui.notify(`${result.message}. Advisory only: before_provider_request errors are not the repository's fail-closed gate.`, "error");
   });
 }

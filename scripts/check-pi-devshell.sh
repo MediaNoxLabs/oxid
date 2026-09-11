@@ -21,11 +21,36 @@ if [[ "$pi_executable" != /nix/store/*/bin/pi ]]; then
 fi
 
 pi_version="$(pi --version)"
-if [[ ! "$pi_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
-  echo "unexpected Pi version output: $pi_version" >&2
-  echo "start Pi only through ./bootstrap.sh --pi" >&2
+if [[ "$pi_version" != "0.85.1" ]]; then
+  echo "Pi 0.85.1 is required for native detached child dispatch; found: $pi_version" >&2
+  echo "enter through ./bootstrap.sh so the locked Nix runtime is active, then retry" >&2
   exit 1
 fi
+
+common_git_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
+expected_runtime_state="$common_git_dir/oxid-factory/pi-runtime-v1"
+expected_session_dir="$expected_runtime_state/sessions"
+expected_subagent_root="$expected_runtime_state/subagents"
+for variable in PI_CODING_AGENT_SESSION_DIR PI_SUBAGENTS_TEMP_ROOT; do
+  value="${!variable:-}"
+  expected="$expected_session_dir"
+  [[ "$variable" == "PI_SUBAGENTS_TEMP_ROOT" ]] && expected="$expected_subagent_root"
+  if [[ -z "$value" || ! -d "$value" || "$(realpath "$value")" != "$(realpath "$expected")" ]]; then
+    echo "$variable must use stable owner-private runtime state at $expected" >&2
+    echo "re-enter with ./bootstrap.sh before dispatching a detached child" >&2
+    exit 1
+  fi
+  if stat -f '%Lp' "$value" >/dev/null 2>&1; then
+    state_mode="$(stat -f '%Lp' "$value")"
+  else
+    state_mode="$(stat -c '%a' "$value")"
+  fi
+  if [[ "$state_mode" != "700" ]]; then
+    echo "$variable must reference a directory with mode 0700: $value" >&2
+    echo "re-enter with ./bootstrap.sh to repair the stable runtime state directory" >&2
+    exit 1
+  fi
+done
 
 model_policy="$(node --input-type=module <<'NODE'
 import { readFile } from "node:fs/promises";

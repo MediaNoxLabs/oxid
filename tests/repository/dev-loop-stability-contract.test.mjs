@@ -509,12 +509,12 @@ test("tracked extension is idempotent and truthfully advisory on invalid allowli
   await handlers.get("before_agent_start")[0]({}, ctx);
   await handlers.get("before_provider_request")[0]({}, ctx);
   assert.equal(notifications.length, 3);
-  assert.match(notifications[0].message, /hooks cannot cancel agent or provider execution/);
-  assert.match(notifications[1].message, /Advisory only.*no cancellation result/);
-  assert.match(notifications[2].message, /Advisory only.*errors are swallowed/);
+  assert.match(notifications[0].message, /hooks are advisory.*fail-closed repository gate/);
+  assert.match(notifications[1].message, /Advisory only.*no repository-authoritative cancellation result/);
+  assert.match(notifications[2].message, /Advisory only.*not the repository's fail-closed gate/);
 });
 
-test("Nix-pinned Pi runner cannot hard-cancel a local fake provider through these hooks", async (t) => {
+test("Nix-pinned Pi lifecycle hooks remain advisory beside the repository gate", async (t) => {
   const piRoot = await installedPiRoot(t);
   if (!piRoot) return;
   const [{ Agent }, { createAssistantMessageEventStream }, { fauxAssistantMessage }, extensions, { createEventBus }] = await Promise.all([
