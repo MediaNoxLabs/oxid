@@ -80,19 +80,7 @@ pub use transaction::{
 #[cfg(not(target_arch = "wasm32"))]
 pub fn standalone_configuration_placeholder_address() -> Result<ChainAddress, WalletAccountPortError>
 {
-    configuration_placeholder_address(DEFAULT_NETWORK_ID)
-}
-
-/// Returns one public address vector for validating a build-authenticated
-/// deployment profile before protected custody derives the owned account.
-///
-/// The returned value proves neither ownership nor funding and is discarded
-/// as soon as a profile binds its protected derived account.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn configuration_placeholder_address(
-    network_id_value: &str,
-) -> Result<ChainAddress, WalletAccountPortError> {
-    let network = network_id(network_id_value)?;
+    let network = network_id(DEFAULT_NETWORK_ID)?;
     fixture_addresses(&network)?
         .into_iter()
         .find(|address| address.kind() == ChainAddressKind::Unshielded)
@@ -544,6 +532,14 @@ impl<S, D> MidnightWalletAdapter<S, D> {
             .load_associations(profile_id)
             .map_err(map_association_error)?;
         if let Some(associations) = associations {
+            if network_by_id(associations.selected_network_id())?.is_none() {
+                return Err(WalletAccountPortError::UnsupportedNetwork);
+            }
+            for account in associations.accounts() {
+                if network_by_id(account.network_id())?.is_none() {
+                    return Err(WalletAccountPortError::UnsupportedNetwork);
+                }
+            }
             self.selections
                 .lock()
                 .map_err(|_| WalletAccountPortError::Unavailable)?
@@ -1302,11 +1298,12 @@ impl<C> SimulatedMidnightAccountSource<C> {
             .cloned();
         let (account_id, addresses) = match derived {
             Some(derived) => (derived.account_id().clone(), derived.addresses().to_vec()),
-            None => (
+            None if network.id().as_str() == DEFAULT_NETWORK_ID => (
                 ChainAccountId::parse(profile_id.as_str().to_owned())
                     .map_err(|_| WalletAccountPortError::InvalidData)?,
                 fixture_addresses(network.id())?,
             ),
+            None => return Err(WalletAccountPortError::Unavailable),
         };
         let sync = if synchronized {
             WalletSyncStatus::new(
@@ -1773,14 +1770,11 @@ const fn map_account_to_shielded_error(
 fn network_catalog() -> Result<Vec<ChainNetwork>, WalletAccountPortError> {
     [
         ("mainnet", "Mainnet", NetworkEnvironment::Mainnet),
-        ("preprod", "PreProd", NetworkEnvironment::PublicTest),
+        ("preprod", "Preprod", NetworkEnvironment::PublicTest),
         ("preview", "Preview", NetworkEnvironment::PublicTest),
-        ("testnet", "TestNet", NetworkEnvironment::PublicTest),
-        ("qanet", "QANet", NetworkEnvironment::PublicTest),
-        ("devnet", "DevNet", NetworkEnvironment::Development),
         (
             DEFAULT_NETWORK_ID,
-            "Standalone",
+            "Local (undeployed)",
             NetworkEnvironment::Development,
         ),
     ]
@@ -2103,10 +2097,25 @@ mod tests {
         let adapter = unavailable_midnight_wallet();
         let networks = adapter.available_networks().expect("catalog is valid");
 
-        assert_eq!(networks.len(), 7);
+        assert_eq!(networks.len(), 4);
         assert!(networks.iter().any(|network| {
-            network.id().as_str() == "undeployed" && network.display_name().as_str() == "Standalone"
+            network.id().as_str() == "undeployed"
+                && network.display_name().as_str() == "Local (undeployed)"
         }));
+        assert_eq!(
+            networks
+                .iter()
+                .map(|network| network.id().as_str())
+                .collect::<Vec<_>>(),
+            ["mainnet", "preprod", "preview", "undeployed"],
+        );
+        for retired in ["devnet", "qanet", "testnet"] {
+            assert!(
+                network_by_id(&network_id(retired).expect("legacy identifier is well formed"))
+                    .expect("catalog lookup succeeds")
+                    .is_none()
+            );
+        }
         assert!(networks.iter().all(|network| {
             !network.id().as_str().contains("://")
                 && !network.display_name().as_str().contains("://")
@@ -2143,9 +2152,12 @@ mod tests {
 
     #[test]
     fn protected_deriver_matches_the_pinned_wallet_sdk_address_vector() {
-        let devnet = network_by_id(&network_id("devnet").expect("network is valid"))
-            .expect("catalog is valid")
-            .expect("devnet exists");
+        let devnet = ChainNetwork::new(
+            ChainKind::Midnight,
+            network_id("devnet").expect("historical vector network is valid"),
+            NetworkDisplayName::parse("Historical Devnet vector").expect("label is valid"),
+            NetworkEnvironment::Development,
+        );
         let derived = ProtectedMidnightAccountDeriver::new(Arc::new(WalletSdkVectorKeys))
             .derive(&profile(), &devnet, 0, 0)
             .expect("public account derives");
@@ -2192,6 +2204,30 @@ mod tests {
     }
 
     #[test]
+    fn standalone_configuration_placeholder_cannot_select_a_value_bearing_network() {
+        let address = standalone_configuration_placeholder_address()
+            .expect("the undeployed public placeholder is valid");
+        for network in ["mainnet", "preprod", "preview"] {
+            assert_eq!(
+                MidnightIndexerConfig::new(
+                    network,
+                    "wss://indexer.example.invalid/api/v4/graphql/ws",
+                    address.value(),
+                ),
+                Err(MidnightIndexerConfigError::AddressNetworkMismatch)
+            );
+        }
+        assert_eq!(
+            MidnightIndexerConfig::new(
+                "testnet",
+                "wss://indexer.example.invalid/api/v4/graphql/ws",
+                address.value(),
+            ),
+            Err(MidnightIndexerConfigError::InvalidNetwork)
+        );
+    }
+
+    #[test]
     fn simulated_account_is_empty_until_explicit_sync() {
         let adapter = simulated_midnight_wallet(Arc::new(FixedClock));
         let before = adapter.account(&profile()).expect("account is available");
@@ -2211,7 +2247,7 @@ mod tests {
     }
 
     #[test]
-    fn network_selection_is_profile_scoped_and_changes_address_hrp() {
+    fn simulated_unbound_value_bearing_network_is_unavailable() {
         let adapter = simulated_midnight_wallet(Arc::new(FixedClock));
         let second = WalletProfileId::parse("profile_second").expect("profile id is valid");
         let preprod = network_id("preprod").expect("network is valid");
@@ -2219,14 +2255,11 @@ mod tests {
             .select_network(&profile(), &preprod)
             .expect("selection succeeds");
 
-        let first_account = adapter.account(&profile()).expect("account is available");
-        let second_account = adapter.account(&second).expect("account is available");
-        assert_eq!(first_account.network().id().as_str(), "preprod");
-        assert!(
-            first_account.addresses()[0]
-                .value()
-                .starts_with("mn_addr_preprod1")
+        assert_eq!(
+            adapter.account(&profile()),
+            Err(WalletAccountPortError::Unavailable)
         );
+        let second_account = adapter.account(&second).expect("account is available");
         assert_eq!(second_account.network().id().as_str(), "undeployed");
         assert!(
             second_account.addresses()[0]
@@ -2245,14 +2278,14 @@ mod tests {
     #[test]
     fn rebinds_the_exact_derived_account_from_persisted_public_coordinates() {
         let repository = Arc::new(TestAssociationRepository::default());
-        let devnet = network_id("devnet").expect("network is valid");
+        let preview = network_id("preview").expect("network is valid");
         let first = MidnightWalletAdapter::with_deriver(
             SimulatedMidnightAccountSource::new(Arc::new(FixedClock)),
             ProtectedMidnightAccountDeriver::new(Arc::new(WalletSdkVectorKeys)),
         )
         .with_profile_association_repository(repository.clone());
         first
-            .select_network(&profile(), &devnet)
+            .select_network(&profile(), &preview)
             .expect("selection persists");
         let derived = first
             .derive_account(&profile(), 0, 0)
@@ -2269,7 +2302,7 @@ mod tests {
             reopened
                 .selected_network(&profile())
                 .expect("selection reloads"),
-            devnet
+            preview
         );
         assert_eq!(
             reopened
@@ -2277,6 +2310,27 @@ mod tests {
                 .expect("account rebinds")
                 .addresses()[0],
             expected_address
+        );
+    }
+
+    #[test]
+    fn retired_persisted_network_fails_closed_without_fallback() {
+        let repository = Arc::new(TestAssociationRepository::default());
+        repository
+            .save_associations(
+                &profile(),
+                WalletProfileAssociations::new(
+                    network_id("devnet").expect("historical network id is well formed"),
+                    Vec::new(),
+                )
+                .expect("association fixture is valid"),
+            )
+            .expect("association fixture persists");
+        let adapter = unavailable_midnight_wallet().with_profile_association_repository(repository);
+
+        assert_eq!(
+            adapter.selected_network(&profile()),
+            Err(WalletAccountPortError::UnsupportedNetwork)
         );
     }
 

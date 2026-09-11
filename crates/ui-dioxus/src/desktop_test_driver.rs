@@ -38,12 +38,13 @@ return await (async () => {
   const hasText = (value) => text(document.body).includes(value);
   let phase = "create-wallet";
   try {
-    await click("Create new wallet");
+    await click("Create private wallet");
     phase = "profile-name";
     const input = await wait(() => document.querySelector("#profile-name"));
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
     setter.call(input, "Oxid Desktop Test");
     input.dispatchEvent(new Event("input", { bubbles: true }));
+    await click("Use public demo wallet");
     phase = "create-profile";
     await click("Create and continue");
     phase = "protect-wallet";
@@ -59,7 +60,8 @@ return await (async () => {
     phase = "manage-identities";
     await click("Manage identities");
     phase = "create-did";
-    await click("Create standalone DID");
+    await click("Create a DID");
+    await click("Create DID");
     phase = "did-ready";
     await wait(() => hasText("A protected managed DID is ready for credential issuance."));
     return "ok";

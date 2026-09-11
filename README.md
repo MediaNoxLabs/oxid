@@ -188,11 +188,11 @@ just android-demo
 ```
 
 The non-dismissible banner identifies fixture data. Its opt-in drawer can
-idempotently select or create the isolated `Oxid Demo Wallet` profile, leaving
+idempotently select or create the isolated `Demo Wallet` profile, leaving
 unrelated active profiles untouched, initialize or unlock standalone custody,
-derive account `0/0`, create a managed DID, receive the public inbox fixture,
-and load funding only from the exact undeployed simulator. Offer, login, and
-presentation actions stop on their existing review screens and never automate
+derive account `0/0`, create a managed DID, and load funding only from the
+exact undeployed simulator. Offer, login, and presentation actions stop on
+their existing review screens and never automate
 consent, authorization, proving, or submission. Normal and native-custody builds
 reject this profile, and normal release artifacts exclude its code markers.
 
@@ -332,7 +332,8 @@ The implemented account methods are `wallet.network.list`,
 `wallet.transaction.start_submission`, `wallet.transaction.submission_status`,
 `wallet.transaction.submission_history`, `wallet.transaction.reconcile_submission`,
 `wallet.transaction.cancel_submission`,
-`wallet.connect`, `wallet.sync.force`, `wallet.dust.sync.status`,
+`wallet.connect`, `wallet.sync.force`, `wallet.realm.sync.status`,
+`wallet.realm.sync.start`, `wallet.realm.sync.cancel`, `wallet.dust.sync.status`,
 `wallet.dust.sync.start`, `wallet.dust.sync.cancel`,
 `wallet.shielded.sync.status`, `wallet.shielded.sync.start`, and
 `wallet.shielded.sync.cancel`. The implemented identity methods are

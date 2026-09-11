@@ -130,7 +130,7 @@ oxid_ios_owned_simctl() {
   shift 3
   local values receipt_developer runtime_id device_type_id name udid
   case "$operation" in
-    boot|bootstatus|install|terminate|launch|openurl|get_app_container|spawn|uninstall) ;;
+    boot|bootstatus|install|terminate|launch|openurl|get_app_container|io|spawn|uninstall) ;;
     *) return 1 ;;
   esac
   oxid_ios_receipt_matches_simulator "$developer_dir" "$receipt" || return 1

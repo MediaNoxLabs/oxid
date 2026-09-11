@@ -64,10 +64,15 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(smoke, /owner-private runtime state/u);
   assert.match(smoke, /skill:taskflow/u);
   assert.match(smoke, /unsafe inherited taskflow resources are active/u);
-  assert.match(smoke, /Failed to load skill/u);
   assert.match(smoke, /Pi startup modified tracked project agent shadows/u);
+  assert.match(smoke, /Failed to load skill/u);
   assert.match(smoke, /Pi did not expose the tracked scenario and use-case commands/u);
   assert.match(bootstrap, /bash scripts\/check-pi-devshell\.sh/u);
+  const discoverNix = bootstrap.indexOf('[[ -x "$nix_daemon_profile_bin/nix" ]]');
+  const prependNix = bootstrap.indexOf('export PATH="$nix_daemon_profile_bin:$PATH"');
+  const rejectMissingNix = bootstrap.indexOf('echo "Nix is required; install it with flakes enabled before bootstrapping Oxid."');
+  assert.match(bootstrap, /readonly nix_daemon_profile_bin="\/nix\/var\/nix\/profiles\/default\/bin"/u);
+  assert.ok(discoverNix >= 0 && prependNix > discoverNix && rejectMissingNix > prependNix);
   assert.match(devshell, /typeof entry === "string" \? entry : entry\?\.source/u);
   assert.match(devshell, /Git-common-dir path survives the per-entry nix-shell TMPDIR/u);
   assert.match(devshell, /export PI_CODING_AGENT_SESSION_DIR/u);
@@ -289,7 +294,6 @@ test("a refined issue #96 fixture takes the bounded production-ready fast path",
     });
   }
 });
-
 test("supervisor policy preserves verified work after pre-helper shell syntax errors", async () => {
   const policy = await readFile(path.join(repoRoot, "AGENT.md"), "utf8");
   assert.match(policy, /shell parser error that[\s\S]*before an agent-generated command starts its named helper/u);

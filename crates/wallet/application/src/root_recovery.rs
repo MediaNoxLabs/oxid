@@ -20,9 +20,27 @@ use oxid_wallet_domain::{ChainNetworkId, WalletProfileId, WalletProtectionState}
 pub const RECOVER_WALLET_ROOT_TITLE: &str = "Recover PreProd wallet";
 pub const RECOVER_WALLET_ROOT_SUMMARY: &str = "Install the owner root into this empty protected profile and derive its canonical PreProd account.";
 
-/// Canonical owner input: exactly 32 bytes encoded as 64 lowercase hexadecimal
-/// characters. Formatting and debugging never expose the value.
-pub struct WalletRootSeed([u8; 32]);
+/// Width of the legacy, development-only wallet root.
+pub const DEVELOPMENT_WALLET_ROOT_BYTES: usize = 32;
+/// Width of the complete seed produced by BIP-39 mnemonic recovery.
+pub const BIP39_WALLET_SEED_BYTES: usize = 64;
+
+/// Explicit secret format installed at the protected-custody boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletRootSeedKind {
+    RawDevelopment,
+    Bip39,
+}
+
+enum WalletRootSeedMaterial {
+    RawDevelopment([u8; DEVELOPMENT_WALLET_ROOT_BYTES]),
+    Bip39([u8; BIP39_WALLET_SEED_BYTES]),
+}
+
+/// Typed owner root material. Construction always names the source format, so
+/// custody never infers it from an untyped byte slice. Formatting and debugging
+/// never expose the value.
+pub struct WalletRootSeed(WalletRootSeedMaterial);
 
 impl WalletRootSeed {
     pub fn parse_hex(value: &str) -> Result<Self, WalletRootSeedError> {
@@ -34,24 +52,58 @@ impl WalletRootSeed {
             return Err(WalletRootSeedError::NonCanonicalEncoding);
         }
 
-        let mut decoded = [0_u8; 32];
+        let mut decoded = [0_u8; DEVELOPMENT_WALLET_ROOT_BYTES];
         for (index, pair) in bytes.chunks_exact(2).enumerate() {
             decoded[index] = (hex_nibble(pair[0])? << 4) | hex_nibble(pair[1])?;
         }
-        Ok(Self(decoded))
+        Ok(Self::from_raw_development(decoded))
     }
 
-    /// Copies the root only for the selected protected adapter. The adapter
-    /// must immediately place the copy in its own zeroizing container.
+    /// Constructs the explicitly development-only 32-byte root format.
     #[must_use]
-    pub fn copy_for_protected_import(&self) -> [u8; 32] {
-        self.0
+    pub const fn from_raw_development(root: [u8; DEVELOPMENT_WALLET_ROOT_BYTES]) -> Self {
+        Self(WalletRootSeedMaterial::RawDevelopment(root))
+    }
+
+    /// Constructs the complete 64-byte BIP-39 seed format.
+    #[must_use]
+    pub const fn from_bip39_seed(seed: [u8; BIP39_WALLET_SEED_BYTES]) -> Self {
+        Self(WalletRootSeedMaterial::Bip39(seed))
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> WalletRootSeedKind {
+        match &self.0 {
+            WalletRootSeedMaterial::RawDevelopment(_) => WalletRootSeedKind::RawDevelopment,
+            WalletRootSeedMaterial::Bip39(_) => WalletRootSeedKind::Bip39,
+        }
+    }
+
+    /// Borrows the complete root only inside a protected adapter operation.
+    #[must_use]
+    pub fn expose_for_protected_use(&self) -> &[u8] {
+        match &self.0 {
+            WalletRootSeedMaterial::RawDevelopment(root) => root,
+            WalletRootSeedMaterial::Bip39(seed) => seed,
+        }
+    }
+
+    /// Copies the typed root only for another protected adapter container.
+    #[must_use]
+    pub fn copy_for_protected_import(&self) -> Self {
+        match &self.0 {
+            WalletRootSeedMaterial::RawDevelopment(root) => Self::from_raw_development(*root),
+            WalletRootSeedMaterial::Bip39(seed) => Self::from_bip39_seed(*seed),
+        }
     }
 }
 
 impl Drop for WalletRootSeed {
     fn drop(&mut self) {
-        self.0.fill(0);
+        match &mut self.0 {
+            WalletRootSeedMaterial::RawDevelopment(root) => root.fill(0),
+            WalletRootSeedMaterial::Bip39(seed) => seed.fill(0),
+        }
         // Keep the cleared value observable without introducing a low-level
         // core-layer memory exception. Concrete adapters additionally use the
         // audited `zeroize` crate for every copied value.
@@ -321,6 +373,7 @@ mod tests {
         let secret = "01".repeat(32);
         let root = WalletRootSeed::parse_hex(&secret).expect("root");
         assert_eq!(format!("{root:?}"), "WalletRootSeed([REDACTED])");
+        assert_eq!(root.kind(), WalletRootSeedKind::RawDevelopment);
         for invalid in [
             String::new(),
             "01".to_owned(),
@@ -335,11 +388,31 @@ mod tests {
         }
     }
 
+    #[test]
+    fn development_root_and_bip39_seed_are_explicit_and_not_equivalent() {
+        let development = WalletRootSeed::from_raw_development([0x42; 32]);
+        let mut complete = [0x24; 64];
+        complete[..32].fill(0x42);
+        let bip39 = WalletRootSeed::from_bip39_seed(complete);
+
+        assert_eq!(development.kind(), WalletRootSeedKind::RawDevelopment);
+        assert_eq!(bip39.kind(), WalletRootSeedKind::Bip39);
+        assert_eq!(
+            development.expose_for_protected_use(),
+            &bip39.expose_for_protected_use()[..32]
+        );
+        assert_ne!(
+            development.expose_for_protected_use(),
+            bip39.expose_for_protected_use()
+        );
+        assert_eq!(format!("{bip39:?}"), "WalletRootSeed([REDACTED])");
+    }
+
     struct TestState {
         profile: WalletProfile,
         associations: Mutex<Option<crate::WalletProfileAssociations>>,
         status: Mutex<WalletSecurityStatus>,
-        recovered: Mutex<Option<[u8; 32]>>,
+        recovered: Mutex<Option<(WalletRootSeedKind, Vec<u8>)>>,
         deny_recovery: Mutex<bool>,
         deny_derivation: Mutex<bool>,
         derive_count: Mutex<u8>,
@@ -467,7 +540,8 @@ mod tests {
             if *self.deny_recovery.lock().expect("denial") {
                 return Err(WalletSecurityPortError::AuthorizationDenied);
             }
-            *self.recovered.lock().expect("root") = Some(root.copy_for_protected_import());
+            *self.recovered.lock().expect("root") =
+                Some((root.kind(), root.expose_for_protected_use().to_vec()));
             *self.status.lock().expect("status") = WalletSecurityStatus::new(
                 WalletProtectionState::Unlocked,
                 WalletProtectionClass::HardwareBacked,

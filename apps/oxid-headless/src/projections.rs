@@ -15,11 +15,11 @@ use oxid_passport_vault_application::{
 use oxid_presentation_application::CredentialPresentationView;
 use oxid_protocol_application::{CredentialIssuanceView, SelfIssuedAuthenticationView};
 use oxid_wallet_application::{
-    DerivedWalletAccountView, WalletAccountView, WalletDustRegistrationPreviewView,
-    WalletDustRegistrationSubmissionStatusView, WalletDustRegistrationSubmissionView,
-    WalletDustSyncView, WalletKeyView, WalletNetworkListView, WalletSecurityStatusView,
-    WalletShieldedSyncView, WalletTransferPreviewView, WalletTransferSubmissionStatusView,
-    WalletTransferSubmissionView,
+    DerivedWalletAccountView, SelectedWalletRealmSyncView, WalletAccountView,
+    WalletDustRegistrationPreviewView, WalletDustRegistrationSubmissionStatusView,
+    WalletDustRegistrationSubmissionView, WalletDustSyncView, WalletKeyView, WalletNetworkListView,
+    WalletRealmFamilyView, WalletSecurityStatusView, WalletShieldedSyncView,
+    WalletTransferPreviewView, WalletTransferSubmissionStatusView, WalletTransferSubmissionView,
 };
 use oxid_wallet_domain::{
     PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyPurpose, WalletProtectionClass,
@@ -89,6 +89,26 @@ pub(super) fn sync_value(account: &WalletAccountView) -> Value {
         "chainTipHeight": account.sync.chain_tip_height,
         "updatedAtMillis": account.sync.updated_at_millis
     })
+}
+
+pub(super) fn selected_realm_sync_value(status: &SelectedWalletRealmSyncView) -> Value {
+    json!({
+        "account": realm_family_value(&status.account, account_value),
+        "dust": realm_family_value(&status.dust, dust_sync_value),
+        "shielded": realm_family_value(&status.shielded, shielded_sync_value)
+    })
+}
+
+fn realm_family_value<T>(
+    family: &WalletRealmFamilyView<T>,
+    project: impl FnOnce(&T) -> Value,
+) -> Value {
+    match family {
+        WalletRealmFamilyView::Ready(value) => {
+            json!({ "state": family.state_name(), "value": project(value) })
+        }
+        _ => json!({ "state": family.state_name() }),
+    }
 }
 
 pub(super) fn dust_sync_value(status: &WalletDustSyncView) -> Value {
@@ -247,6 +267,8 @@ pub(super) fn transfer_preview_value(preview: &WalletTransferPreviewView) -> Val
         "state": preview.state,
         "proofRequired": preview.proof_required,
         "submissionReady": preview.submission_ready,
+        "reviewTitle": preview.review_title,
+        "reviewSummary": preview.review_summary,
         "custodyMode": "development_only"
     })
 }

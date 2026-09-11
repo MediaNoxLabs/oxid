@@ -195,6 +195,13 @@ fn completes_an_exact_unshielded_transfer_without_exposing_material() {
     assert_eq!(transfer["feeState"], "requires_balancing");
     assert_eq!(transfer["proofRequired"], true);
     assert_eq!(transfer["submissionReady"], false);
+    assert_eq!(transfer["reviewTitle"], "Authorize NIGHT transfer");
+    assert!(
+        transfer["reviewSummary"]
+            .as_str()
+            .expect("wallet-derived review summary is returned")
+            .contains(recipient)
+    );
     let draft_id = transfer["draftId"].as_str().expect("draft id is returned");
     let challenge = transfer["authorizationChallenge"]
         .as_str()
@@ -278,8 +285,8 @@ fn completes_an_exact_unshielded_transfer_without_exposing_material() {
                 "draftId": draft_id,
                 "authorizationChallenge": challenge,
                 "confirmation": {
-                    "title": "Authorize NIGHT transfer",
-                    "summary": "Send 1.5 NIGHT; proving and submission remain pending",
+                    "title": "Harmless account check",
+                    "summary": "Caller prose must be validated then discarded by the headless boundary.",
                     "confirmed": true
                 }
             }

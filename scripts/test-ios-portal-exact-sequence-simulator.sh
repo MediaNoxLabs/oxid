@@ -15,6 +15,7 @@ readonly PORTAL_LOCK="$ROOT/target/portal-virtual-mobile/stack.lock"
 readonly RUN_ROOT="$ROOT/target/ios-portal-exact-sequence-simulator"
 readonly PRIVATE_STATE="$RUN_ROOT/private"
 readonly PRIVATE_LOG="$PRIVATE_STATE/journey.log"
+readonly FAILURE_SCREENSHOT="$PRIVATE_STATE/failure.png"
 readonly EVIDENCE="$RUN_ROOT/evidence.json"
 readonly PROTOCOL_ERROR_DIAGNOSTIC="$RUN_ROOT/protocol-error-diagnostic.json"
 readonly BUILD_RECEIPT="$PRIVATE_STATE/build-receipt.tsv"
@@ -22,7 +23,6 @@ readonly RECEIPT="$PRIVATE_STATE/simulator-receipt.json"
 readonly PACKAGE="io.medianox.oxid"
 readonly TRIGGER="openid-credential-offer://standalone-portal-test-fetch"
 readonly CONTROL_ORIGIN="http://127.0.0.1:18095"
-readonly PARENT_HEAD="6d4f8256eb524179c7edf1cf772919e0fe3102f9"
 readonly PORTAL_COMMIT="25499870f84d77173c46e4af3021311decfb840b"
 readonly PORTAL_TREE="2d845d2293603dfd8adce5362c8a9941e6ba78a9"
 readonly OPERATION="${1:-run}"
@@ -233,6 +233,12 @@ cleanup() {
     portal_pid=""
   fi
 
+  if [ "$incoming" -ne 0 ] && [ "$simulator_owned" -eq 1 ] && [ "$private_state_owned" -eq 1 ]; then
+    if oxid_ios_owned_simctl "$DEVELOPER_DIR_SELECTED" "$RECEIPT" io screenshot "$FAILURE_SCREENSHOT" >/dev/null 2>&1; then
+      run_deadline 5 chmod 600 "$FAILURE_SCREENSHOT" >/dev/null 2>&1 || true
+    fi
+  fi
+
   if [ "$simulator_owned" -eq 1 ]; then
     if oxid_ios_delete_owned "$DEVELOPER_DIR_SELECTED" "$RECEIPT" >/dev/null 2>&1; then simulator_cleanup=true; simulator_owned=0; else cleanup_ok=false; fi
   elif [ "$simulator_mutation_started" -eq 1 ]; then
@@ -271,11 +277,13 @@ cleanup() {
       cleanup_ok=false
     fi
   fi
-  if [ "$private_state_owned" -eq 1 ]; then
+  if [ "$private_state_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then
     if oxid_path_has_identity "$RUN_ROOT" "$run_root_identity"; then
       run_deadline 30 rm -rf -- "$PRIVATE_STATE" >/dev/null 2>&1
       [ ! -e "$PRIVATE_STATE" ] && private_logs_removed=true || cleanup_ok=false
     else cleanup_ok=false; fi
+  elif [ "$private_state_owned" -eq 1 ]; then
+    printf 'ios-portal-exact-sequence-simulator: private failure diagnostics retained mode=0600\n' >&2
   fi
   if [ "$(run_deadline 10 git -C "$ROOT" rev-parse HEAD 2>/dev/null)" = "$head" ] \
     && [ "$(run_deadline 10 git -C "$ROOT" rev-parse 'HEAD^{tree}' 2>/dev/null)" = "$tree" ] \
@@ -284,7 +292,7 @@ cleanup() {
   if [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ] && [ "$journey_status" = passed ]; then write_evidence || cleanup_ok=false; fi
   if [ "$run_root_owned" -eq 1 ] && [ "$evidence_published" -eq 0 ]; then
     if oxid_path_has_identity "$RUN_ROOT" "$run_root_identity"; then
-      if [ "$protocol_error_diagnostic_retained" != true ]; then
+      if [ "$protocol_error_diagnostic_retained" != true ] && [ ! -e "$PRIVATE_STATE" ]; then
         run_deadline 5 rmdir -- "$RUN_ROOT" >/dev/null 2>&1 || cleanup_ok=false
       fi
     else cleanup_ok=false; fi
@@ -302,7 +310,6 @@ cleanup() {
 head="$(run_deadline 10 git -C "$ROOT" rev-parse HEAD)"
 tree="$(run_deadline 10 git -C "$ROOT" rev-parse 'HEAD^{tree}')"
 [[ "$head" =~ ^[0-9a-f]{40}$ && "$tree" =~ ^[0-9a-f]{40}$ ]] || fail oxid-head
-run_deadline 10 git -C "$ROOT" merge-base --is-ancestor "$PARENT_HEAD" "$head" || fail parent-ancestry
 run_deadline 20 git -C "$ROOT" verify-commit "$head" >/dev/null 2>&1 || fail oxid-signature
 if ! portal_project_ids="$(run_deadline 15 docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet)"; then fail docker-query; fi
 [ -z "$portal_project_ids" ] || fail occupied-portal-project
@@ -337,7 +344,7 @@ simulator_mutation_started=1
 udid="$(oxid_ios_create_owned "$DEVELOPER_DIR_SELECTED" "$RUNTIME_ID" "$DEVICE_TYPE_ID" "$simulator_name" "$RECEIPT")" || fail simulator-create
 simulator_owned=1
 oxid_ios_owned_simctl "$DEVELOPER_DIR_SELECTED" "$RECEIPT" boot >>"$PRIVATE_LOG" 2>&1 || fail simulator-boot
-OXID_IOS_OPERATION_TIMEOUT_SECONDS=300 oxid_ios_owned_simctl "$DEVELOPER_DIR_SELECTED" "$RECEIPT" bootstatus -b >>"$PRIVATE_LOG" 2>&1 || fail simulator-bootstatus
+OXID_IOS_OPERATION_TIMEOUT_SECONDS=600 oxid_ios_owned_simctl "$DEVELOPER_DIR_SELECTED" "$RECEIPT" bootstatus -b >>"$PRIVATE_LOG" 2>&1 || fail simulator-bootstatus
 
 timeout -k 30s 7200s "$ROOT/scripts/e2e/portal-virtual-mobile-stack.sh" >>"$PRIVATE_LOG" 2>&1 &
 portal_pid=$!

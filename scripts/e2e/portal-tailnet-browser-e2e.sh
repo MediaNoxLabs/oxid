@@ -172,7 +172,7 @@ chmod 600 "$RUNTIME/tailscale-baseline.json"
 
 git clone --no-checkout "$SOURCE_INPUT" "$SOURCE" >>"$PRIVATE_LOG" 2>&1 || fail source-clone
 git -C "$SOURCE" remote set-url origin "$PORTAL_REMOTE"
-git -C "$SOURCE" fetch origin integration >>"$PRIVATE_LOG" 2>&1 || fail source-fetch
+git -C "$SOURCE" fetch origin "$PORTAL_COMMIT" >>"$PRIVATE_LOG" 2>&1 || fail source-fetch
 [ "$(git -C "$SOURCE" rev-parse FETCH_HEAD^{commit})" = "$PORTAL_COMMIT" ] || fail source-commit
 [ "$(git -C "$SOURCE" rev-parse FETCH_HEAD^{tree})" = "$PORTAL_TREE" ] || fail source-tree
 git -C "$SOURCE" checkout --detach "$PORTAL_COMMIT" >>"$PRIVATE_LOG" 2>&1 || fail source-checkout

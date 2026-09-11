@@ -46,20 +46,28 @@ final class PortalFlowTests: XCTestCase {
 
     @MainActor
     private func ensureProfile(in application: XCUIApplication) {
-        let createWallet = application.buttons["Create new wallet"]
-        if createWallet.waitForExistence(timeout: 5) {
+        let createWallet = application.buttons["Create private wallet"]
+        let home = application.buttons["Home"]
+        let readinessDeadline = Date().addingTimeInterval(20)
+        while Date() < readinessDeadline, !createWallet.exists, !home.exists {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        if createWallet.exists {
             createWallet.tap()
+            let publicDemo = application.buttons["Use public demo wallet"]
+            XCTAssertTrue(publicDemo.waitForExistence(timeout: 10))
+            publicDemo.tap()
             let createAndContinue = application.buttons["Create and continue"]
             if !createAndContinue.waitForExistence(timeout: 3) {
                 createWallet.tap()
             }
             XCTAssertTrue(createAndContinue.waitForExistence(timeout: 7))
             createAndContinue.tap()
-            let skip = application.buttons["Skip for now"]
-            XCTAssertTrue(skip.waitForExistence(timeout: 15))
-            skip.tap()
+            let enableProtection = application.buttons["Enable device protection"]
+            XCTAssertTrue(enableProtection.waitForExistence(timeout: 15))
+            enableProtection.tap()
         }
-        XCTAssertTrue(application.buttons["Home"].waitForExistence(timeout: 20))
+        XCTAssertTrue(home.waitForExistence(timeout: 20))
     }
 
     @MainActor
@@ -258,11 +266,21 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertTrue(manage.waitForExistence(timeout: 10))
         scrollTo(manage, in: application)
         manage.tap()
-        let createDid = application.buttons["Create standalone DID"]
+        let createDid = application.buttons["Create a DID"]
         XCTAssertTrue(createDid.waitForExistence(timeout: 10))
         scrollTo(createDid, in: application)
         createDid.tap()
-        XCTAssertTrue(application.descendants(matching: .any)["Manage this DID"].waitForExistence(timeout: 30))
+        let confirmCreateDid = application.buttons["Create DID"]
+        XCTAssertTrue(confirmCreateDid.waitForExistence(timeout: 10))
+        scrollTo(confirmCreateDid, in: application)
+        confirmCreateDid.tap()
+        let didReady = application.staticTexts.matching(
+            NSPredicate(
+                format: "label BEGINSWITH %@",
+                "A protected managed DID is ready for credential issuance."
+            )
+        ).firstMatch
+        XCTAssertTrue(didReady.waitForExistence(timeout: 30))
     }
 
     @MainActor

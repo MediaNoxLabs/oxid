@@ -22,6 +22,15 @@ routes through a coordination server.
 | `typebox` | `1.3.9` | exact `agent-review-pi` peer |
 | `@input-output-hk/agent-review-pi` | `0.6.0` | same, **GitHub Packages — needs a token** |
 
+Oxid loads the exact `dev-loops` CLI, skills, and packaged agent sources but
+filters out its optional Pi extension. In `1.0.2` that extension refreshes an
+existing project `.pi/agents/` directory from the generic package agents during
+every `session_start`; those writes would replace Oxid's bounded budgets and
+repository handoff policy before the startup audit. The tracked project agents
+remain authoritative, while `scripts/dev-loops.mjs` provides the deterministic
+CLI surface. The shell smoke hashes the agent shadows around a real offline Pi
+startup and fails if any package mutates them.
+
 The devshell's `shellHook` reads `.pi/settings.json`, compares each exact pin
 against the common checkout's `.pi/npm/node_modules/<pkg>/package.json`, and
 installs only what is missing or mismatched. Linked worktrees reuse that one

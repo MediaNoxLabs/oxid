@@ -387,7 +387,7 @@ release must exclude the profile marker and viewer copy through
 `scripts/check-ui-profile-release.sh`.
 ADR-0096 keeps the separate compile-time `ui-profile-demo` feature inside
 standalone-development composition. Its drawer may select or create only the
-named `Oxid Demo Wallet` profile, initialize/unlock development custody, derive
+named `Demo Wallet` profile, initialize/unlock development custody, derive
 account `0/0`, select or create one managed DID, receive the public inbox
 fixture, and synchronize only the exact
 `simulated`/`undeployed`/`development` fixture. Operations are serialized and

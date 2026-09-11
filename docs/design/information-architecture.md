@@ -63,9 +63,10 @@ masking and native privacy policy are implemented (`ui-profiles.md`).
 
 **Retired surfaces:**
 - Hamburger menu: deleted (redundant with tabs + avatar sheet).
-- Diagnostics tab: folded into Settings; expands into the full capability
-  viewer in the dev profile (rendered from `system.capabilities` so it can
-  never drift).
+- Diagnostics tab: folded into Settings. Development builds expose a separate
+  **Developer tools** secondary hub from the profile sheet: Capability manifest,
+  Proof benchmark, and Event log each use a focused pushable route with Back;
+  the product tab bar is hidden there so no wallet destination is claimed.
 - Vault tab: Passport Vault becomes a **product card on Home** (and a
   section reachable from it), not a permanent global tab — it is one product
   in the stack, monobank-style, present when its capability is composed.

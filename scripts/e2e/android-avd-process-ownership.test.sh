@@ -403,6 +403,9 @@ fi
 for runner in \
   "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" \
   "$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh"; do
+  if grep -Eq 'PARENT_HEAD|parent-ancestry|merge-base --is-ancestor' "$runner"; then
+    fail historical-ancestry-coupling
+  fi
   grep -qF 'oxid_poll_job_dead "$portal_pid" 1200 || true' "$runner" \
     || fail portal-cleanup-grace
   grep -qF 'BUILD_SOURCE="$(run_deadline 5 mktemp -d "${TMPDIR:-/tmp}/oxid-' "$runner" \
@@ -427,11 +430,14 @@ grep -qF 'index($value) != null' "$ios_runner" \
   || fail ios-closed-diagnostic-jq-compatibility
 grep -qF 'if [ "$build_owned" -eq 1 ]; then' "$ios_runner" \
   || fail ios-failed-build-cleanup
-grep -qF 'if [ "$private_state_owned" -eq 1 ]; then' "$ios_runner" \
-  || fail ios-failed-private-cleanup
-if grep -qF 'if [ "$private_state_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then' "$ios_runner"; then
-  fail ios-failed-private-preservation
-fi
+grep -qF 'if [ "$private_state_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then' "$ios_runner" \
+  || fail ios-failed-private-preservation
+grep -qF 'private failure diagnostics retained mode=0600' "$ios_runner" \
+  || fail ios-failed-private-marker
+grep -qF 'oxid_ios_owned_simctl "$DEVELOPER_DIR_SELECTED" "$RECEIPT" io screenshot "$FAILURE_SCREENSHOT"' "$ios_runner" \
+  || fail ios-failed-private-screenshot
+grep -qF 'OXID_IOS_OPERATION_TIMEOUT_SECONDS=600 oxid_ios_owned_simctl "$DEVELOPER_DIR_SELECTED" "$RECEIPT" bootstatus -b' "$ios_runner" \
+  || fail ios-cold-boot-budget
 grep -qF 'OXID_ANDROID_ADB_TIMEOUT_SECONDS=180 OXID_MOBILE_CUSTODY=development' \
   "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" || fail android-launcher-adb-budget
 grep -qF 'prepare_owned_reverse_mappings || fail reverse-ownership' \

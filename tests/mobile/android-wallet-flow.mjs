@@ -133,13 +133,13 @@ async function openWallet() {
 
 async function createFreshProfile() {
   await waitFor(
-    `Boolean(${buttonExpression("Create new wallet")}) || Boolean(${buttonExpression("Wallet")})`,
+    `Boolean(${buttonExpression("Create private wallet")}) || Boolean(${buttonExpression("Wallet")})`,
     "first-run or restored profile readiness",
     30_000,
   );
-  const createAvailable = await evaluate(`Boolean(${buttonExpression("Create new wallet")})`);
+  const createAvailable = await evaluate(`Boolean(${buttonExpression("Create private wallet")})`);
   if (!createAvailable) return;
-  await clickButton("Create new wallet");
+  await clickButton("Create private wallet");
   await clickButton("Create and continue");
   await clickButton("Skip for now");
 }
@@ -343,7 +343,7 @@ try {
     await waitForButton("Use my receive address", 90_000);
 
     await openIdentities();
-    await clickButton("Create standalone DID");
+    await clickButton("Create a DID");
     await waitFor(
       "document.body.innerText.includes('standalone-1') && document.body.innerText.includes('Manage this DID')",
       "managed DID for complete backup",
@@ -351,7 +351,7 @@ try {
     );
 
     await openDocuments();
-    await clickButton("Use standalone demo offer");
+    await clickButton("Use demo OID4VCI offer");
     await clickButton("Preview credential offer");
     await waitFor(
       "document.body.innerText.includes('Credential offer preview') && document.body.innerText.includes('Digital Passport')",
@@ -598,8 +598,8 @@ try {
         && document.body.innerText.includes("5 NIGHT"),
     }))()`);
     await openIdentities();
-    await waitForButton("Create standalone DID");
-    await clickButton("Create standalone DID");
+    await waitForButton("Create a DID");
+    await clickButton("Create a DID");
     await waitFor(
       "document.body.innerText.includes('standalone-1') && document.body.innerText.includes('Manage this DID')",
       "created managed standalone DID",
@@ -650,8 +650,8 @@ try {
       "document.body.innerText.includes('DID authentication succeeded and the standalone verifier independently validated the proof.')",
     );
     await openDocuments();
-    await waitForButton("Use standalone demo offer");
-    await clickButton("Use standalone demo offer");
+    await waitForButton("Use demo OID4VCI offer");
+    await clickButton("Use demo OID4VCI offer");
     await clickButton("Preview credential offer");
     await waitFor(
       "document.body.innerText.includes('Credential offer preview') && document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('Who is issuing it?') && document.body.innerText.includes('What will you receive?') && document.body.innerText.includes('Which identity receives it?') && document.body.innerText.includes('Why add it?') && document.body.innerText.includes('Unverified endpoint')",
@@ -677,7 +677,7 @@ try {
     // so the chooser is exercised with two distinct stored credentials.
     await evaluate("new Promise((resolve) => setTimeout(resolve, 1200))");
     await clickButton("Start another offer");
-    await clickButton("Use standalone demo offer");
+    await clickButton("Use demo OID4VCI offer");
     await clickButton("Preview credential offer");
     await waitFor(
       "document.body.innerText.includes('Credential offer preview')",
@@ -958,7 +958,7 @@ try {
     }
     process.stdout.write(`${JSON.stringify(restored)}\n`);
   } else if (mode === "native-authorize") {
-    const createProfile = await evaluate(`Boolean(${buttonExpression("Create new wallet")})`);
+    const createProfile = await evaluate(`Boolean(${buttonExpression("Create private wallet")})`);
     if (createProfile) await createFreshProfile();
     await openWallet();
     await waitFor(

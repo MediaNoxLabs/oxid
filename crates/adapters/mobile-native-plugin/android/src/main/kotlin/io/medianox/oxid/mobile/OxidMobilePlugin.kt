@@ -337,6 +337,10 @@ private object CustodyCoordinator {
         if (request.isEmpty() || request.length > MAX_PLAINTEXT_BYTES * 2) return json("invalid")
         val body = runCatching { JSONObject(request) }.getOrNull() ?: return json("invalid")
         val operation = body.optString("operation", "")
+        if (operation == "authorize_recovery_phrase_reveal") {
+            if (body.keys().asSequence().toSet() != setOf("operation")) return json("invalid")
+            return authorizeRecoveryPhraseReveal(activity)
+        }
         val profileId = body.optString("profile_id", "")
         val expected = when (operation) {
             "initialize", "save" -> setOf("operation", "profile_id", "payload")
@@ -354,6 +358,17 @@ private object CustodyCoordinator {
             "lock" -> lock(activity, profileId)
             else -> json("invalid")
         }
+    }
+
+    @Synchronized
+    fun authorizeRecoveryPhraseReveal(activity: Activity): String {
+        val keyguard = activity.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        if (!keyguard.isDeviceSecure) return json("unavailable")
+        return if (CustodyAuthorization.request(
+                activity,
+                "Reveal wallet recovery phrase",
+                "Confirm the device credential to reveal your new recovery phrase"
+            )) json("succeeded") else json("authorization_denied")
     }
 
     @Synchronized
@@ -888,7 +903,7 @@ private object ScannerState {
             // pre-presentation internal failures remain fail-closed failures.
             errorCode == MlKitException.INTERNAL && hostSuspendedDuringScan -> "cancelled"
             errorCode == MlKitException.CODE_SCANNER_CAMERA_PERMISSION_NOT_GRANTED ->
-                "unavailable"
+                "denied"
             errorCode == MlKitException.CODE_SCANNER_UNAVAILABLE ||
                 errorCode == MlKitException.CODE_SCANNER_GOOGLE_PLAY_SERVICES_VERSION_TOO_OLD ->
                 "unavailable"

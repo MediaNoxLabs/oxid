@@ -6,8 +6,11 @@ use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     thread,
+    time::Duration,
 };
 
+use futures::future::{Either, select};
+use futures_timer::Delay;
 use midnight_base_crypto::{hash::HashOutput, schnorr::Signature, time::Timestamp};
 use midnight_coin_structure::coin::{NIGHT, UserAddress};
 use midnight_ledger::{
@@ -49,6 +52,7 @@ use crate::{
 };
 
 const DUST_REGISTRATION_SEGMENT: u16 = 1;
+const DUST_REGISTRATION_COMPLETION_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 pub(crate) struct RetainedMidnightDustRegistration {
     planning_fingerprint: [u8; 32],
@@ -420,18 +424,14 @@ where
                     );
                     WalletDustRegistrationPortError::Unavailable
                 })?;
-            match receiver.await {
+            match await_registration_completion(receiver, DUST_REGISTRATION_COMPLETION_TIMEOUT)
+                .await
+            {
                 Ok(result) => result,
-                Err(_) => {
-                    if control.broadcast_started().unwrap_or(true) {
-                        let _ = control.mark_terminal(
-                            StoredSubmissionState::OutcomeUnknown,
-                            None,
-                            None,
-                        );
-                    }
+                Err(error) => {
+                    let _ = control.mark_outcome_unknown();
                     mark_outcome_unknown(self.dust_registration_drafts.as_ref(), &key)?;
-                    Err(WalletDustRegistrationPortError::SubmissionOutcomeUnknown)
+                    Err(error)
                 }
             }
         })
@@ -568,6 +568,18 @@ where
                 .await
                 .unwrap_or(Err(WalletDustRegistrationPortError::Unavailable))
         })
+    }
+}
+
+async fn await_registration_completion<T>(
+    receiver: futures::channel::oneshot::Receiver<T>,
+    deadline: Duration,
+) -> Result<T, WalletDustRegistrationPortError> {
+    match select(receiver, Delay::new(deadline)).await {
+        Either::Left((Ok(result), _)) => Ok(result),
+        Either::Left((Err(_), _)) | Either::Right((_, _)) => {
+            Err(WalletDustRegistrationPortError::SubmissionOutcomeUnknown)
+        }
     }
 }
 
@@ -863,7 +875,7 @@ fn finish_registration(
             return Err(WalletDustRegistrationPortError::DraftExpired);
         }
         Err(WalletTransactionPortError::SubmissionOutcomeUnknown) => {
-            let _ = control.mark_terminal(StoredSubmissionState::OutcomeUnknown, None, None);
+            let _ = control.mark_outcome_unknown();
             mark_outcome_unknown(drafts, key)?;
             return Err(WalletDustRegistrationPortError::SubmissionOutcomeUnknown);
         }
@@ -873,9 +885,13 @@ fn finish_registration(
         }
         Err(WalletTransactionPortError::SubmissionRejected) => {
             if control.broadcast_started().map_err(map_transaction_error)? {
-                control
-                    .mark_terminal(StoredSubmissionState::Rejected, None, None)
-                    .map_err(map_transaction_error)?;
+                if !control
+                    .mark_terminal_if_broadcasting(StoredSubmissionState::Rejected, None, None)
+                    .map_err(map_transaction_error)?
+                {
+                    mark_outcome_unknown(drafts, key)?;
+                    return Err(WalletDustRegistrationPortError::SubmissionOutcomeUnknown);
+                }
                 remove_retained(drafts, key)?;
             } else {
                 restore_authorized(drafts, key, WalletTransactionSubmissionState::NotStarted)?;
@@ -888,7 +904,7 @@ fn finish_registration(
         }
         Err(error) => {
             if control.broadcast_started().map_err(map_transaction_error)? {
-                let _ = control.mark_terminal(StoredSubmissionState::OutcomeUnknown, None, None);
+                let _ = control.mark_outcome_unknown();
                 mark_outcome_unknown(drafts, key)?;
                 return Err(WalletDustRegistrationPortError::SubmissionOutcomeUnknown);
             }
@@ -896,15 +912,14 @@ fn finish_registration(
             return Err(map_transaction_error(error));
         }
     };
-    if control
-        .mark_terminal(
+    if !control
+        .mark_terminal_if_broadcasting(
             StoredSubmissionState::Included,
             Some(outcome.block_hash),
             Some(outcome.block_height),
         )
-        .is_err()
+        .map_err(map_transaction_error)?
     {
-        let _ = control.mark_terminal(StoredSubmissionState::OutcomeUnknown, None, None);
         mark_outcome_unknown(drafts, key)?;
         return Err(WalletDustRegistrationPortError::SubmissionOutcomeUnknown);
     }
@@ -1180,6 +1195,7 @@ const fn map_store_error(
 
 #[cfg(test)]
 mod tests {
+    use futures::channel::oneshot;
     use midnight_ledger::structure::INITIAL_PARAMETERS;
 
     use super::*;
@@ -1214,6 +1230,44 @@ mod tests {
         assert_eq!(
             generated_dust(&utxo(2, 1, Some(1_000_001), false), 1_000_001, &context),
             Ok(0)
+        );
+    }
+
+    #[test]
+    fn registration_completion_accepts_timely_worker_success_and_failure() {
+        let (success_sender, success_receiver) = oneshot::channel();
+        success_sender
+            .send(Ok::<_, WalletDustRegistrationPortError>(()))
+            .expect("receiver exists");
+        assert_eq!(
+            futures::executor::block_on(await_registration_completion(
+                success_receiver,
+                Duration::ZERO
+            )),
+            Ok(Ok(()))
+        );
+
+        let (failure_sender, failure_receiver) = oneshot::channel();
+        failure_sender
+            .send(Err::<(), _>(
+                WalletDustRegistrationPortError::SubmissionRejected,
+            ))
+            .expect("receiver exists");
+        assert_eq!(
+            futures::executor::block_on(await_registration_completion(
+                failure_receiver,
+                Duration::ZERO
+            )),
+            Ok(Err(WalletDustRegistrationPortError::SubmissionRejected))
+        );
+    }
+
+    #[test]
+    fn registration_completion_timeout_reports_unknown_outcome() {
+        let (_sender, receiver) = oneshot::channel::<()>();
+        assert_eq!(
+            futures::executor::block_on(await_registration_completion(receiver, Duration::ZERO)),
+            Err(WalletDustRegistrationPortError::SubmissionOutcomeUnknown)
         );
     }
 

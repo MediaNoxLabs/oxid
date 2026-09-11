@@ -19,7 +19,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::indexer::IndexerSnapshot;
 
-const SCHEMA_VERSION: u32 = 2;
+// Version three records an authoritative network height rather than the most
+// recent block that happened to contain a transaction for this address.
+const SCHEMA_VERSION: u32 = 3;
 const MAX_CHECKPOINT_COUNT: usize = 128;
 const MAX_CHECKPOINT_BYTES: u64 = 16 * 1024 * 1024;
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -403,7 +405,7 @@ mod tests {
     }
 
     fn network() -> ChainNetworkId {
-        ChainNetworkId::parse("devnet").expect("network fixture should be valid")
+        ChainNetworkId::parse("undeployed").expect("network fixture should be valid")
     }
 
     fn address() -> ChainAddress {
@@ -498,7 +500,7 @@ mod tests {
             &fs::read(directory.file()).expect("checkpoint bytes should be readable"),
         )
         .expect("checkpoint JSON should parse");
-        assert_eq!(document["schemaVersion"], serde_json::json!(2));
+        assert_eq!(document["schemaVersion"], serde_json::json!(3));
         assert!(
             store
                 .load(
@@ -511,7 +513,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_schema_one_checkpoint_fails_closed_and_fresh_state_replaces_it() {
+    fn legacy_schema_two_checkpoint_fails_closed_and_fresh_state_replaces_it() {
         let directory = TestDirectory::new();
         let path = directory.file();
         let store = store(path.clone());
@@ -526,7 +528,7 @@ mod tests {
         let mut legacy: serde_json::Value =
             serde_json::from_slice(&fs::read(&path).expect("checkpoint bytes should be readable"))
                 .expect("checkpoint JSON should parse");
-        legacy["schemaVersion"] = serde_json::json!(1);
+        legacy["schemaVersion"] = serde_json::json!(2);
         let snapshot = &mut legacy["checkpoints"][0]["snapshot"];
         for utxo in snapshot["utxos"]
             .as_array_mut()
@@ -600,7 +602,7 @@ mod tests {
         assert_eq!(save(duplicate), Err(CheckpointStoreError::InvalidData));
 
         let mut inconsistent_tip = snapshot();
-        inconsistent_tip.chain_tip_height = Some(43);
+        inconsistent_tip.chain_tip_height = Some(41);
         assert_eq!(
             save(inconsistent_tip),
             Err(CheckpointStoreError::InvalidData)

@@ -19,7 +19,6 @@ readonly BUILD_RECEIPT="$PRIVATE_STATE/build-receipt.tsv"
 readonly PACKAGE="io.medianox.oxid"
 readonly TRIGGER="openid-credential-offer://standalone-portal-test-fetch"
 readonly CONTROL_ORIGIN="http://127.0.0.1:18095"
-readonly PARENT_HEAD="6d4f8256eb524179c7edf1cf772919e0fe3102f9"
 readonly PORTAL_COMMIT="25499870f84d77173c46e4af3021311decfb840b"
 readonly PORTAL_TREE="2d845d2293603dfd8adce5362c8a9941e6ba78a9"
 readonly EMULATOR_PORT=5562
@@ -473,7 +472,6 @@ cleanup() {
 head="$(run_deadline 10 git -C "$ROOT" rev-parse HEAD)"
 tree="$(run_deadline 10 git -C "$ROOT" rev-parse 'HEAD^{tree}')"
 [[ "$head" =~ ^[0-9a-f]{40}$ && "$tree" =~ ^[0-9a-f]{40}$ ]] || fail oxid-head
-run_deadline 10 git -C "$ROOT" merge-base --is-ancestor "$PARENT_HEAD" "$head" || fail parent-ancestry
 run_deadline 20 git -C "$ROOT" verify-commit "$head" >/dev/null 2>&1 || fail oxid-signature
 if ! portal_project_ids="$(run_deadline 15 docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet)"; then fail docker-query; fi
 [ -z "$portal_project_ids" ] || fail occupied-portal-project

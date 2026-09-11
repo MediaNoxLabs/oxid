@@ -120,9 +120,14 @@ use super::standalone_genesis::{public_profile_protection, public_standalone_net
         feature = "mobile-portal"
     )
 ))]
-use super::wiring::compose_with_adapters_and_credential_profile;
+use super::wiring::{
+    compose_with_adapters_and_credential_profile,
+    with_wallet_onboarding as with_portal_wallet_onboarding,
+};
 #[cfg(any(target_os = "ios", target_os = "android"))]
-use super::wiring::compose_with_adapters_and_presentation;
+use super::wiring::{
+    compose_with_adapters_and_presentation, with_wallet_onboarding as with_native_wallet_onboarding,
+};
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_platform_system::OsRandom;
 use oxid_adapter_platform_system::SystemClock;
@@ -257,13 +262,20 @@ fn compose_mobile_native_standalone_with_presentation(
             },
         )
         .with_profile_association_repository(profiles.clone());
+    let midnight = Arc::new(midnight);
     let services = compose_with_adapters_and_presentation(
-        profiles,
-        security,
-        Arc::new(midnight),
+        Arc::clone(&profiles),
+        Arc::clone(&security),
+        Arc::clone(&midnight),
         credential_presentation,
     );
-    with_simulated_passport_vault_calls(services)
+    with_simulated_passport_vault_calls(with_native_wallet_onboarding(
+        services,
+        profiles,
+        security,
+        midnight,
+        "undeployed".to_owned(),
+    ))
 }
 
 /// Runs the explicit Android smoke probe for JNI exception recovery.
@@ -678,20 +690,24 @@ where
     N: oxid_platform_ports::RandomPort + 'static,
     F: FnOnce(Arc<DevelopmentWalletSecurity<SystemClock, N>>) -> Arc<dyn WalletProtectionPort>,
 {
+    let network_id = config.indexer().network_id().as_str().to_owned();
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let midnight = Arc::new(
         protected_standalone_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))
             .with_profile_association_repository(profiles.clone()),
     );
     let services = compose_with_adapters_and_credential_profile(
-        profiles,
-        security,
-        midnight,
+        Arc::clone(&profiles),
+        Arc::clone(&security),
+        Arc::clone(&midnight),
         credential_presentation,
         HeadlessCredentialProfile::Portal(Box::new(portal)),
         protection_for_security,
     );
-    with_passport_vault_state_source(services, passport_vault_state_source)
+    with_passport_vault_state_source(
+        with_portal_wallet_onboarding(services, profiles, security, midnight, network_id),
+        passport_vault_state_source,
+    )
 }
 
 #[cfg(all(

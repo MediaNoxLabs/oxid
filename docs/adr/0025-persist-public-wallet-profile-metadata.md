@@ -4,6 +4,7 @@
 - Date: 2026-08-11
 - Source: Blueprint Sections 3, 7, 12, 13, and 17 plus [issue #1](https://github.com/MediaNoxLabs/oxid/issues/1)
 - Implementation state: Version 3 bounded owner-private atomic JSON profile store, active selection, account associations, backup receipts, mobile onboarding, and headless profile lifecycle implemented
+- Amended by: ADR-0106
 
 ## Context
 

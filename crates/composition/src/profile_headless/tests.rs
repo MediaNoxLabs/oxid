@@ -106,10 +106,13 @@ fn ordinary_standalone_composition_keeps_os_random_profile_custody() {
 #[test]
 fn explicit_live_compositions_are_constructible_without_network_io() {
     const ADDRESS: &str =
-        "mn_addr_devnet1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9syn2j3y";
-    let indexer =
-        MidnightIndexerConfig::new("devnet", "ws://127.0.0.1:8088/api/v1/graphql/ws", ADDRESS)
-            .expect("indexer fixture is valid");
+        "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
+    let indexer = MidnightIndexerConfig::new(
+        "undeployed",
+        "ws://127.0.0.1:8088/api/v1/graphql/ws",
+        ADDRESS,
+    )
+    .expect("indexer fixture is valid");
     drop(compose_headless_live(indexer.clone()));
     let checkpoint = MidnightAccountCheckpointConfig::new(
         std::env::temp_dir().join("oxid-composition-account-checkpoints.json"),
@@ -121,7 +124,7 @@ fn explicit_live_compositions_are_constructible_without_network_io() {
     ));
 
     let remote = MidnightStandaloneConfig::new(
-        "devnet",
+        "undeployed",
         "ws://127.0.0.1:8088/api/v1/graphql/ws",
         "http://127.0.0.1:8088/api/v1/graphql",
         "ws://127.0.0.1:9944",
@@ -173,7 +176,7 @@ fn explicit_live_compositions_are_constructible_without_network_io() {
     )
     .expect("local proving fixture is valid");
     let private = MidnightStandaloneConfig::new_private(
-        "devnet",
+        "undeployed",
         "ws://127.0.0.1:8088/api/v1/graphql/ws",
         "http://127.0.0.1:8088/api/v1/graphql",
         "ws://127.0.0.1:9944",

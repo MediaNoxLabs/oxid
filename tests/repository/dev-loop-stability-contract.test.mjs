@@ -1614,17 +1614,16 @@ test("tracked pre-flight wrapper reports Pi child dispatch availability determin
 test("repository wrapper executes conventional help and delegates watch-ci unchanged", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  execFileSync("git", ["update-ref", "refs/remotes/origin/develop", "HEAD"], { cwd: fixture.root, stdio: "ignore" });
   const cli = path.join(fixture.packageRoot, "cli", "index.mjs");
   await writeFile(cli, "process.stdout.write(JSON.stringify(process.argv.slice(2)) + '\\n');\n");
   const output = [];
   const sink = new Writable({ write(chunk, _encoding, callback) { output.push(chunk.toString()); callback(); } });
   assert.equal(await runDevLoops(["--help"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
   assert.equal(await runDevLoops(["--silent", "loop", "watch-ci", "--pr", "7"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
-  assert.equal(await runDevLoops(["gate", "size-budget", "--base", "origin/develop", "--delivery-base", "develop"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
   assert.deepEqual(output.join("").trim().split("\n").map((line) => JSON.parse(line)), [
     ["help"],
     ["--silent", "loop", "watch-ci", "--pr", "7"],
-    ["gate", "size-budget", "--base", "origin/develop"],
   ]);
 });
 

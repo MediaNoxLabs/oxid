@@ -7,6 +7,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/dioxus-wallet` and `wallet-core`
 - Tracking: issues #2, #33, #65, and #82
 - Implementation state: Dioxus owns the bounded onboarding and sync presentation; wallet application owns a profile-scoped successful complete-backup receipt
+- Amended by: ADR-0106
 
 ## Context
 

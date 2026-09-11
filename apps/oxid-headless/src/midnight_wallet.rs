@@ -8,7 +8,8 @@ use oxid_wallet_application::{
     CancelWalletDustRegistrationSubmissionCommand, GetWalletDustRegistrationCommand,
     GetWalletDustRegistrationStatusCommand, PrepareShieldedWalletTransferCommand,
     PrepareWalletDustRegistrationCommand, PrepareWalletTransferCommand,
-    ReconcileWalletDustRegistrationSubmissionCommand, SensitiveOperationConfirmation,
+    ReconcileWalletDustRegistrationSubmissionCommand, SelectedWalletRealmSyncCommand,
+    SelectedWalletRealmSyncError, SelectedWalletRealmSyncView, SensitiveOperationConfirmation,
     SubmitWalletDustRegistrationCommand, SubmitWalletTransferCommand, WalletAccountQuery,
     WalletAccountView, WalletDustRegistrationError, WalletDustRegistrationPortError,
     WalletDustRegistrationSubmissionStatusView, WalletDustSyncCommand, WalletDustSyncError,
@@ -33,11 +34,28 @@ use crate::{
     projections::{
         account_value, address_value, balance_value, dust_registration_preview_value,
         dust_registration_status_value, dust_registration_submission_value, dust_sync_value,
-        shielded_sync_value, sync_value, transaction_value, transfer_preview_value,
-        transfer_submission_status_value, transfer_submission_value,
+        selected_realm_sync_value, shielded_sync_value, sync_value, transaction_value,
+        transfer_preview_value, transfer_submission_status_value, transfer_submission_value,
     },
     protocol::{Dispatch, Request, Response, params_are_empty},
 };
+
+fn selected_realm_sync_dispatch(
+    id: Option<String>,
+    result: Result<SelectedWalletRealmSyncView, SelectedWalletRealmSyncError>,
+) -> Dispatch {
+    match result {
+        Ok(status) => Dispatch::continue_with(Response::success(
+            id,
+            json!({ "realmSync": selected_realm_sync_value(&status) }),
+        )),
+        Err(_) => Dispatch::continue_with(Response::error(
+            id,
+            "invalid_request",
+            "active wallet profile could not be synchronized",
+        )),
+    }
+}
 
 impl HeadlessWallet {
     pub(super) fn sync_account(&self, request: Request) -> Dispatch {
@@ -63,6 +81,72 @@ impl HeadlessWallet {
             )),
             Err(error) => Dispatch::continue_with(account_error(request.id, error)),
         }
+    }
+
+    pub(super) fn selected_realm_sync_status(&self, request: Request) -> Dispatch {
+        self.selected_realm_sync_operation(
+            request,
+            "wallet.realm.sync.status",
+            |application, command| {
+                application
+                    .get_selected_wallet_realm_sync()
+                    .execute(command)
+            },
+        )
+    }
+
+    pub(super) fn start_selected_realm_sync(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "wallet.realm.sync.start");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        let result = futures::executor::block_on(
+            self.application
+                .sync_selected_wallet_realm()
+                .execute(SelectedWalletRealmSyncCommand { profile_id }),
+        );
+        selected_realm_sync_dispatch(request.id, result)
+    }
+
+    pub(super) fn cancel_selected_realm_sync(&self, request: Request) -> Dispatch {
+        self.selected_realm_sync_operation(
+            request,
+            "wallet.realm.sync.cancel",
+            |application, command| {
+                application
+                    .cancel_selected_wallet_realm_sync()
+                    .execute(command)
+            },
+        )
+    }
+
+    fn selected_realm_sync_operation(
+        &self,
+        request: Request,
+        method: &'static str,
+        operation: impl FnOnce(
+            &ApplicationServices,
+            SelectedWalletRealmSyncCommand,
+        )
+            -> Result<SelectedWalletRealmSyncView, SelectedWalletRealmSyncError>,
+    ) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, method);
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        selected_realm_sync_dispatch(
+            request.id,
+            operation(
+                &self.application,
+                SelectedWalletRealmSyncCommand { profile_id },
+            ),
+        )
     }
 
     pub(super) fn dust_sync_status(&self, request: Request) -> Dispatch {
@@ -616,6 +700,13 @@ impl HeadlessWallet {
                 ));
             }
         };
+        // `oxid.headless.v1` retains the legacy confirmation object for wire
+        // compatibility. Validate its bounded shape here, then deliberately
+        // discard caller-authored prose before the application boundary.
+        let confirmation: SensitiveOperationConfirmation = params.confirmation.into();
+        if let Err(error) = validate_confirmation(&confirmation) {
+            return Dispatch::continue_with(sensitive_error(request.id, error));
+        }
         let profile_id = match self.active_profile_id(request.id.clone()) {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
@@ -627,7 +718,6 @@ impl HeadlessWallet {
                 profile_id,
                 draft_id: params.draft_id,
                 authorization_challenge: params.authorization_challenge,
-                confirmation: params.confirmation.into(),
             }) {
             Ok(preview) => Dispatch::continue_with(Response::success(
                 request.id,

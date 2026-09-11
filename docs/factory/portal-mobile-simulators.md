@@ -26,8 +26,11 @@ holder binding, and encrypted storage remain the security boundary.
 - Nix shell, Docker Desktop, Git/network, Cargo/rustup, Node, Java, `jq`,
   `curl`, `shasum`, `timeout`, and XcodeGen.
 - Installed `aarch64-apple-ios-sim` and Android Rust target for the selected AVD.
-- A clean, committed, locally verifiable signed `HEAD` containing merged PR
-  #211 integration commit `6d4f8256eb524179c7edf1cf772919e0fe3102f9`.
+- A clean, committed, locally verifiable signed `HEAD`. The harness verifies
+  the required behavior and pinned dependency content directly; it does not
+  require ancestry from a historical integration commit, because milestone
+  synchronization and squash promotion may preserve the behavior without
+  preserving that temporary Git graph.
 - Exactly three healthy pre-existing `oxid-standalone` services on ports 6300,
   8088, and 9944; no Portal consumer, virtual stack lock, Portal listeners, or
   stale mobile evidence.
@@ -115,11 +118,20 @@ names, DIDs, URLs, offers, grants, tokens, nonces, credentials, claims, proofs,
 capabilities, paths, PIDs, and timestamps. Private build sources, DerivedData,
 XCTest results, and logs are removed before publication.
 
+On a failed iOS journey, the harness still removes its receipt-owned simulator,
+Portal stack, listeners, and detached build source, but retains the owner-private
+mode-`0600` log and best-effort failure screenshot below its run directory for
+one bounded investigation.
+They are never publication evidence and may contain sensitive development data;
+delete only that receipt-owned run directory after the failure is understood.
+
 ## Ownership and timeouts
 
 iOS creates a uniquely named simulator and stores the exact returned UDID in an
 owner-private receipt. Every operation is `simctl <operation> <receipt-UDID>`;
-existing booted simulators are ignored. Cleanup revalidates runtime, device type,
+existing booted simulators are ignored. Cold runtime startup has a ten-minute
+ceiling, while an already-ready simulator returns immediately. Cleanup
+revalidates runtime, device type,
 name, UDID, receipt mode, and receipt filesystem identity before shutdown and
 deletion. It never selects the first booted simulator, accepts keep-failed mode,
 or kills shared CoreSimulator processes.
