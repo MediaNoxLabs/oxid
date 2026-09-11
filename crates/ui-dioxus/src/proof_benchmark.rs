@@ -24,7 +24,7 @@ enum BenchmarkOutcome {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BenchmarkRowPresentation {
-    state: &'static str,
+    state_copy: &'static str,
     total: String,
     realized_k: Option<String>,
     detail: Option<String>,
@@ -45,14 +45,14 @@ fn row_presentation(
 ) -> BenchmarkRowPresentation {
     match outcome {
         Some(BenchmarkOutcome::Completed(report)) => BenchmarkRowPresentation {
-            state: "Completed",
+            state_copy: "Completed",
             total: format!("Stage total {}", duration_text(stage_total(report))),
             realized_k: (report.realized_k != requested_k)
                 .then(|| format!("realized k={}", report.realized_k)),
             detail: Some(verification_text(report)),
         },
         Some(BenchmarkOutcome::Failed(ProofBenchmarkError::Busy)) => BenchmarkRowPresentation {
-            state: "Admission refused",
+            state_copy: "Admission refused",
             total: "No result".to_owned(),
             realized_k: None,
             detail: Some("Another proof benchmark is still running".to_owned()),
@@ -60,33 +60,33 @@ fn row_presentation(
         Some(BenchmarkOutcome::Failed(
             ProofBenchmarkError::Unavailable | ProofBenchmarkError::ResourceUnavailable,
         )) => BenchmarkRowPresentation {
-            state: "Unavailable",
+            state_copy: "Unavailable",
             total: "No result".to_owned(),
             realized_k: None,
             detail: Some("Required benchmark resources are unavailable".to_owned()),
         },
         Some(BenchmarkOutcome::Failed(error)) => BenchmarkRowPresentation {
-            state: "Failed",
+            state_copy: "Failed",
             total: "No result".to_owned(),
             realized_k: None,
             detail: Some(error.to_string()),
         },
         None if benchmark_is_running(snapshot) && snapshot.active_k == Some(requested_k) => {
             BenchmarkRowPresentation {
-                state: "Running",
+                state_copy: "Running",
                 total: format!("{}…", snapshot.stage.as_str()),
                 realized_k: None,
                 detail: None,
             }
         }
         None if benchmark_is_running(snapshot) => BenchmarkRowPresentation {
-            state: "Queued",
+            state_copy: "Queued",
             total: "Waiting for the active worker".to_owned(),
             realized_k: None,
             detail: None,
         },
         None => BenchmarkRowPresentation {
-            state: "Not run",
+            state_copy: "Not run",
             total: "No result".to_owned(),
             realized_k: None,
             detail: None,
@@ -393,7 +393,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                             article { class: "proof-benchmark-row capability-row", key: "proof-k-{k}",
                                 div { class: "proof-benchmark-row__summary",
                                     strong { "Circuit k={k}" }
-                                    span { class: "proof-benchmark-row__state", "{presentation.state}" }
+                                    span { class: "proof-benchmark-row__state", "{presentation.state_copy}" }
                                     span { class: "proof-benchmark-row__total", "{presentation.total}" }
                                     if let Some(realized_k) = &presentation.realized_k {
                                         span { class: "proof-benchmark-row__realized", "{realized_k}" }
@@ -601,18 +601,18 @@ mod tests {
                 Some(BenchmarkOutcome::Completed(completed_report(7))),
                 idle
             )
-            .state,
+            .state_copy,
             "Completed"
         );
-        assert_eq!(row_presentation(7, None, running).state, "Running");
-        assert_eq!(row_presentation(7, None, queued).state, "Queued");
+        assert_eq!(row_presentation(7, None, running).state_copy, "Running");
+        assert_eq!(row_presentation(7, None, queued).state_copy, "Queued");
         assert_eq!(
             row_presentation(
                 7,
                 Some(BenchmarkOutcome::Failed(ProofBenchmarkError::Busy)),
                 idle
             )
-            .state,
+            .state_copy,
             "Admission refused"
         );
         assert_eq!(
@@ -621,7 +621,7 @@ mod tests {
                 Some(BenchmarkOutcome::Failed(ProofBenchmarkError::ProvingFailed)),
                 idle
             )
-            .state,
+            .state_copy,
             "Failed"
         );
         assert_eq!(
@@ -630,10 +630,10 @@ mod tests {
                 Some(BenchmarkOutcome::Failed(ProofBenchmarkError::Unavailable)),
                 idle
             )
-            .state,
+            .state_copy,
             "Unavailable"
         );
-        assert_eq!(row_presentation(7, None, idle).state, "Not run");
+        assert_eq!(row_presentation(7, None, idle).state_copy, "Not run");
     }
 
     #[test]
