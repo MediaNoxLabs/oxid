@@ -2017,16 +2017,18 @@ textarea:focus-visible {
 .proof-resource-monitor {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-2);
-  margin: var(--space-4) 0;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3) 0;
+  border-block: 1px solid var(--line);
 }
 
 .proof-resource-monitor div {
   min-width: 0;
-  padding: var(--space-3);
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
-  border-radius: var(--radius-control);
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.proof-resource-monitor__unavailable {
+  grid-column: 1 / -1;
 }
 
 .proof-resource-monitor dt,
@@ -2136,6 +2138,45 @@ textarea:focus-visible {
 
 .proof-benchmark-sweep-button {
   min-height: 3.2rem;
+}
+
+.proof-benchmark-help-button {
+  min-height: 3rem;
+  margin-top: var(--space-3);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text-strong);
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.proof-benchmark-help-button:hover,
+.proof-benchmark-help-button:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.proof-benchmark-help {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border-inline-start: 3px solid var(--accent);
+  background: var(--surface-3);
+}
+
+.proof-benchmark-help p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.proof-benchmark-high-resource-warning {
+  margin: var(--space-3) 0 0;
+  color: var(--warning);
+  font-weight: 750;
 }
 
 .developer-capability-summary {

@@ -82,6 +82,18 @@ fn proof_size_text(bytes: usize) -> String {
     }
 }
 
+fn high_resource_selected(max_k: u8) -> bool {
+    max_k.clamp(PROOF_BENCHMARK_MIN_K, PROOF_BENCHMARK_MAX_K) >= PROOF_BENCHMARK_HIGH_RESOURCE_K
+}
+
+fn resource_monitor_status(unavailable: bool) -> &'static str {
+    if unavailable {
+        "Process resource monitor unavailable on this target"
+    } else {
+        "Warming up process resource monitor…"
+    }
+}
+
 async fn run_one(benchmark: Arc<dyn RunProofBenchmarkUseCase>, k: u8) -> BenchmarkOutcome {
     match benchmark.execute(RunProofBenchmarkCommand { k }).await {
         Ok(report) => BenchmarkOutcome::Completed(report),
@@ -99,6 +111,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
     let mut snapshot = use_signal(|| benchmark.snapshot());
     let mut sweep_max_k = use_signal(|| PROOF_BENCHMARK_DEFAULT_MAX_K);
     let mut high_resource_acknowledged = use_signal(|| false);
+    let mut help_open = use_signal(|| false);
     let mut sweeping = use_signal(|| false);
     let mut notice = use_signal(|| None::<String>);
     let mut resource_sample = use_signal(|| None::<ProcessResourceSample>);
@@ -145,42 +158,36 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
         |k| format!("k={k} · {}", current.stage.as_str()),
     );
     let result_snapshot = results.read().clone();
+    let high_resource_selected = high_resource_selected(sweep_max_k());
     let benchmark_for_sweep = Arc::clone(&benchmark);
 
     rsx! {
         section { class: "page-heading",
             p { class: "eyebrow", "Development tool" }
             h1 { "Proof benchmark" }
-            p { "Synthetic proving measurements are process-local and never change wallet policy." }
+            p { "Run synthetic Midnight proving measurements in this development process." }
         }
         section { class: "surface-card", aria_label: "Development proof benchmark",
-            p { class: "card-eyebrow", "Controls and resource boundary" }
-            h2 { "Midnight proving envelope" }
-            p {
-                "Runs one synthetic proof at a time through k=21. Results live only in this process. First runs may download public proving parameters into the app-private cache."
-            }
-            p { class: "field-hint",
-                "k=18–21 can consume substantial memory, time, network, and disk. This build does not run high-k proofs in CI. Leaving this page does not cancel an admitted worker."
-            }
-            if let Some(sample) = resource_sample() {
-                dl { class: "proof-resource-monitor", aria_label: "Current process resource monitor",
+            dl { class: "proof-resource-monitor", aria_label: "Current process resource monitor",
+                if let Some(sample) = resource_sample() {
                     div {
                         dt { "Memory now" }
                         dd { "{memory_text(sample.resident_bytes())}" }
                     }
                     div {
-                        dt { "Process CPU" }
-                        dd { "{cpu_text(sample.cpu_usage_basis_points())}" }
-                    }
-                    div {
                         dt { "Page-session peak" }
                         dd { "{memory_text(peak_resident_bytes())}" }
                     }
+                    div {
+                        dt { "Process CPU" }
+                        dd { "{cpu_text(sample.cpu_usage_basis_points())}" }
+                    }
+                } else {
+                    div { class: "proof-resource-monitor__unavailable",
+                        dt { "Resource monitor" }
+                        dd { "{resource_monitor_status(resource_sampler_unavailable())}" }
+                    }
                 }
-            } else if resource_sampler_unavailable() {
-                p { class: "status-pill", "Process resource monitor unavailable on this target" }
-            } else {
-                p { class: "status-pill", "Warming up process resource monitor…" }
             }
             div { class: "button-row proof-benchmark-controls",
                 label { class: "network-field",
@@ -239,16 +246,36 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                     if sweeping() { "Running sequential sweep…" } else { "Run sequential sweep" }
                 }
             }
-            label { class: "confirmation-check",
-                input {
-                    r#type: "checkbox",
-                    checked: high_resource_acknowledged(),
-                    disabled: worker_busy || sweeping(),
-                    onchange: move |event| high_resource_acknowledged.set(event.checked()),
+            if high_resource_selected {
+                p { class: "field-hint proof-benchmark-high-resource-warning",
+                    "k=18–21 can consume substantial memory, time, network, and disk."
                 }
-                span { "I understand that k=18–21 may exhaust this device's resources." }
+                label { class: "confirmation-check",
+                    input {
+                        r#type: "checkbox",
+                        checked: high_resource_acknowledged(),
+                        disabled: worker_busy || sweeping(),
+                        onchange: move |event| high_resource_acknowledged.set(event.checked()),
+                    }
+                    span { "I understand that k=18–21 may exhaust this device's resources." }
+                }
             }
             p { class: "status-pill", role: "status", "{stage}" }
+            button {
+                class: "proof-benchmark-help-button",
+                r#type: "button",
+                aria_expanded: if help_open() { "true" } else { "false" },
+                aria_controls: "proof-benchmark-help",
+                onclick: move |_| help_open.set(!help_open()),
+                if help_open() { "Hide benchmark help" } else { "About this benchmark" }
+            }
+            if help_open() {
+                div { id: "proof-benchmark-help", class: "proof-benchmark-help", role: "note",
+                    p { "Runs one synthetic proof at a time through k=21; results live only in this process." }
+                    p { "First runs may download public proving parameters into the app-private cache." }
+                    p { "Leaving this page does not cancel an admitted worker. This build does not run high-k proofs in CI." }
+                }
+            }
             if let Some(message) = notice() {
                 p { class: "field-error", role: "alert", "{message}" }
             }
@@ -258,7 +285,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                         let outcome = result_snapshot.get(&k).copied();
                         let benchmark = Arc::clone(&benchmark);
                         let high_k_blocked = k >= PROOF_BENCHMARK_HIGH_RESOURCE_K
-                            && !high_resource_acknowledged();
+                            && (!high_resource_selected || !high_resource_acknowledged());
                         rsx! {
                             article { class: "proof-benchmark-row capability-row", key: "proof-k-{k}",
                                 span { class: if matches!(outcome, Some(BenchmarkOutcome::Completed(_))) { "capability-dot ready" } else { "capability-dot queued" } }
@@ -338,6 +365,33 @@ mod tests {
     fn high_k_requires_explicit_resource_acknowledgement() {
         assert!(sweep_targets(18, false).is_err());
         assert_eq!(sweep_targets(21, true).expect("acknowledged").len(), 21);
+    }
+
+    #[test]
+    fn help_is_collapsed_by_default_and_expands_only_on_action() {
+        let collapsed = false;
+        assert!(!collapsed, "the help disclosure starts collapsed");
+        let expanded = !collapsed;
+        assert!(expanded, "the help disclosure expands after its action");
+    }
+
+    #[test]
+    fn high_resource_warning_is_shown_only_for_a_selected_high_k_range() {
+        assert!(!high_resource_selected(17));
+        assert!(high_resource_selected(18));
+        assert!(high_resource_selected(21));
+    }
+
+    #[test]
+    fn unavailable_resource_sampler_has_a_truthful_compact_status() {
+        assert_eq!(
+            resource_monitor_status(true),
+            "Process resource monitor unavailable on this target"
+        );
+        assert_eq!(
+            resource_monitor_status(false),
+            "Warming up process resource monitor…"
+        );
     }
 
     #[test]
