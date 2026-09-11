@@ -532,6 +532,15 @@ mod tests {
     }
 
     #[test]
+    fn android_camera_permission_failure_maps_to_denied() {
+        let android =
+            include_str!("../android/src/main/kotlin/io/medianox/oxid/mobile/OxidMobilePlugin.kt");
+        assert!(android.contains(
+            "errorCode == MlKitException.CODE_SCANNER_CAMERA_PERMISSION_NOT_GRANTED ->\n                \"denied\""
+        ));
+    }
+
+    #[test]
     fn recovery_phrase_authorization_request_is_payload_free() {
         let request =
             custody_request("authorize_recovery_phrase_reveal", "", None, None).expect("request");

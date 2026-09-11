@@ -903,7 +903,7 @@ private object ScannerState {
             // pre-presentation internal failures remain fail-closed failures.
             errorCode == MlKitException.INTERNAL && hostSuspendedDuringScan -> "cancelled"
             errorCode == MlKitException.CODE_SCANNER_CAMERA_PERMISSION_NOT_GRANTED ->
-                "unavailable"
+                "denied"
             errorCode == MlKitException.CODE_SCANNER_UNAVAILABLE ||
                 errorCode == MlKitException.CODE_SCANNER_GOOGLE_PLAY_SERVICES_VERSION_TOO_OLD ->
                 "unavailable"
