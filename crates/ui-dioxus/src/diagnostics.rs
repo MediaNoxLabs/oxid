@@ -78,6 +78,20 @@ struct DiagnosticsProjection {
     empty: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DiagnosticEventToolbarState {
+    loading: bool,
+}
+
+/// Keeps the event-ring actions in one stable toolbar across all snapshot states.
+const fn diagnostic_event_toolbar_state(
+    state: &LocalDiagnosticsPageState,
+) -> DiagnosticEventToolbarState {
+    DiagnosticEventToolbarState {
+        loading: matches!(state, LocalDiagnosticsPageState::Loading),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DiagnosticEventRow {
     sequence: u64,
@@ -271,6 +285,7 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
     let diagnostic_rows = diagnostic_projection.rows;
     let diagnostics_ready = diagnostic_projection.ready;
     let diagnostics_empty = diagnostic_projection.empty;
+    let diagnostic_toolbar = diagnostic_event_toolbar_state(&diagnostic_state.read());
     let diagnostic_events = project_event_log(
         &diagnostic_state.read(),
         show_warnings(),
@@ -284,7 +299,6 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
     rsx! {
         section { class: "page-heading",
             p { class: "eyebrow", "Capability status" }
-            h1 { "Diagnostics" }
             p { "This view reports only capabilities that are actually composed into the current application." }
         }
         div { class: "diagnostic-grid",
@@ -303,53 +317,55 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
         }
         section { class: "surface-card",
             p { class: "card-eyebrow", "Secret-safe runtime health" }
-            h2 { "Process-local diagnostics" }
             p { "Telemetry is off. Events use fixed codes, retain no payloads, and disappear when this process exits." }
-            DiagnosticEventControls {
-                loading: matches!(*diagnostic_state.read(), LocalDiagnosticsPageState::Loading),
-                on_refresh: move |_| {
-                        let get = refresh_services.get_diagnostic_snapshot();
-                        refresh_state.set(LocalDiagnosticsPageState::Loading);
-                        spawn(async move {
-                            refresh_state.set(load_diagnostic_snapshot(get).await);
-                        });
-                },
-                on_clear: move |_| clear_confirmation.set(true),
-            }
-            if clear_confirmation() {
-                ClearDiagnosticsConfirmation {
-                    on_confirm: move |_| {
-                                let clear = clear_services.clear_diagnostics();
-                                let get = clear_services.get_diagnostic_snapshot();
-                                clear_confirmation.set(false);
-                                clear_state.set(LocalDiagnosticsPageState::Loading);
+            section { class: "diagnostic-event-log", aria_label: "Local event log",
+                div { class: "diagnostic-event-log__toolbar",
+                    div { class: "diagnostic-event-log__heading",
+                        h2 { "Local event log" }
+                        p { "Retained events for this process." }
+                    }
+                    DiagnosticEventControls {
+                        loading: diagnostic_toolbar.loading,
+                        on_refresh: move |_| {
+                                let get = refresh_services.get_diagnostic_snapshot();
+                                refresh_state.set(LocalDiagnosticsPageState::Loading);
                                 spawn(async move {
-                                    clear_state.set(clear_diagnostics_and_reload(clear, get).await);
+                                    refresh_state.set(load_diagnostic_snapshot(get).await);
                                 });
-                    },
-                    on_cancel: move |_| clear_confirmation.set(false),
+                        },
+                        on_clear: move |_| clear_confirmation.set(true),
+                    }
                 }
-            }
-            div { class: "diagnostic-grid",
                 CapabilityStatus { name: "Bounded event ring", state: diagnostic_summary, ready: diagnostics_ready }
-                CapabilityStatus { name: "Privacy boundary", state: "No persistence · no upload · no payloads".to_owned(), ready: true }
-                if diagnostics_empty && diagnostics_ready {
-                    article { class: "capability-row",
-                        span { class: "capability-dot ready" }
-                        div { strong { "No diagnostic events recorded" } p { "Runtime health is clean for this process." } }
+                if clear_confirmation() {
+                    ClearDiagnosticsConfirmation {
+                        on_confirm: move |_| {
+                                    let clear = clear_services.clear_diagnostics();
+                                    let get = clear_services.get_diagnostic_snapshot();
+                                    clear_confirmation.set(false);
+                                    clear_state.set(LocalDiagnosticsPageState::Loading);
+                                    spawn(async move {
+                                        clear_state.set(clear_diagnostics_and_reload(clear, get).await);
+                                    });
+                        },
+                        on_cancel: move |_| clear_confirmation.set(false),
                     }
                 }
-                for (code, detail) in diagnostic_rows {
-                    article { class: "capability-row", key: "{code}",
-                        span { class: "capability-dot queued" }
-                        div { strong { "{code}" } p { "{detail}" } }
+                div { class: "diagnostic-grid",
+                    CapabilityStatus { name: "Privacy boundary", state: "No persistence · no upload · no payloads".to_owned(), ready: true }
+                    if diagnostics_empty && diagnostics_ready {
+                        article { class: "capability-row",
+                            span { class: "capability-dot ready" }
+                            div { strong { "No diagnostic events recorded" } p { "Runtime health is clean for this process." } }
+                        }
+                    }
+                    for (code, detail) in diagnostic_rows {
+                        article { class: "capability-row", key: "{code}",
+                            span { class: "capability-dot queued" }
+                            div { strong { "{code}" } p { "{detail}" } }
+                        }
                     }
                 }
-            }
-            section { class: "diagnostic-event-log", aria_label: "Recent diagnostic events",
-                p { class: "card-eyebrow", "Recent event log" }
-                h2 { "Newest retained events" }
-                p { "Search and filters inspect only fixed event codes and severity labels." }
                 div { class: "diagnostic-event-filters",
                     label { class: "confirmation-check",
                         input {
@@ -782,6 +798,40 @@ mod tests {
             }
         );
         assert!(!projection_text(&projection).contains(SECRET_SENTINEL));
+    }
+
+    #[test]
+    fn event_toolbar_keeps_48px_actions_paired_with_the_event_log_at_narrow_widths() {
+        let styles = include_str!("../assets/styles.css");
+        assert!(styles.contains(".diagnostic-event-log__toolbar"));
+        assert!(styles.contains("grid-template-columns: minmax(0, 1fr) auto;"));
+        assert!(styles.contains("@media (max-width: 30rem)"));
+        assert!(styles.contains("width: 3rem;"));
+        assert!(styles.contains("min-height: 3rem;"));
+    }
+
+    #[test]
+    fn event_toolbar_is_stable_for_loading_empty_populated_and_failed_snapshots() {
+        assert_eq!(
+            diagnostic_event_toolbar_state(&LocalDiagnosticsPageState::Loading),
+            DiagnosticEventToolbarState { loading: true }
+        );
+        for state in [
+            LocalDiagnosticsPageState::Failed,
+            LocalDiagnosticsPageState::Ready(DiagnosticSnapshotView::new(
+                8,
+                0,
+                0,
+                Vec::new(),
+                Vec::new(),
+            )),
+            LocalDiagnosticsPageState::Ready(populated_snapshot()),
+        ] {
+            assert_eq!(
+                diagnostic_event_toolbar_state(&state),
+                DiagnosticEventToolbarState { loading: false }
+            );
+        }
     }
 
     #[test]
