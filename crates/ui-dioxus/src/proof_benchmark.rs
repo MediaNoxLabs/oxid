@@ -65,13 +65,21 @@ fn row_presentation(
         };
     }
     match outcome {
-        Some(BenchmarkOutcome::Completed(report)) => BenchmarkRowPresentation {
-            state_copy: "Completed",
-            total: format!("Stage total {}", duration_text(stage_total(report))),
-            realized_k: (report.realized_k != requested_k)
-                .then(|| format!("realized k={}", report.realized_k)),
-            detail: Some(verification_text(report)),
-        },
+        Some(BenchmarkOutcome::Completed(report)) => {
+            let state_copy = match report.verification_result {
+                ProofBenchmarkVerification::Failed => "Verification failed",
+                ProofBenchmarkVerification::Verified | ProofBenchmarkVerification::Skipped => {
+                    "Completed"
+                }
+            };
+            BenchmarkRowPresentation {
+                state_copy,
+                total: format!("Stage total {}", duration_text(stage_total(report))),
+                realized_k: (report.realized_k != requested_k)
+                    .then(|| format!("realized k={}", report.realized_k)),
+                detail: Some(verification_text(report)),
+            }
+        }
         Some(BenchmarkOutcome::Failed(ProofBenchmarkError::Busy)) => BenchmarkRowPresentation {
             state_copy: "Admission refused",
             total: "No result".to_owned(),
@@ -99,6 +107,18 @@ fn row_presentation(
             detail: None,
         },
     }
+}
+
+fn displayed_report(
+    presentation: &BenchmarkRowPresentation,
+    outcome: Option<BenchmarkOutcome>,
+) -> Option<ProofBenchmarkReport> {
+    matches!(presentation.state_copy, "Completed" | "Verification failed")
+        .then(|| match outcome {
+            Some(BenchmarkOutcome::Completed(report)) => Some(report),
+            _ => None,
+        })
+        .flatten()
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -401,10 +421,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                             current,
                             sweeping().then_some(sweep_max_k()),
                         );
-                        let displayed_report = match (active, outcome) {
-                            (false, Some(BenchmarkOutcome::Completed(report))) => Some(report),
-                            _ => None,
-                        };
+                        let displayed_report = displayed_report(&presentation, outcome);
                         let expanded = expanded_row() == Some(k);
                         let benchmark = Arc::clone(&benchmark);
                         let show_individual_high_resource_guidance =
@@ -594,6 +611,23 @@ mod tests {
             None,
         );
         assert_eq!(differing.realized_k.as_deref(), Some("realized k=8"));
+
+        let mut failed_verification = completed_report(7);
+        failed_verification.verification_result = ProofBenchmarkVerification::Failed;
+        let failed = row_presentation(
+            7,
+            Some(BenchmarkOutcome::Completed(failed_verification)),
+            idle,
+            None,
+        );
+        assert_eq!(failed.state_copy, "Verification failed");
+        assert!(
+            displayed_report(
+                &failed,
+                Some(BenchmarkOutcome::Completed(failed_verification))
+            )
+            .is_some()
+        );
     }
 
     #[test]
@@ -640,6 +674,20 @@ mod tests {
         assert_eq!(
             row_presentation(9, None, queued, Some(17)).state_copy,
             "Queued"
+        );
+        let queued_with_prior_result = row_presentation(
+            9,
+            Some(BenchmarkOutcome::Completed(completed_report(9))),
+            queued,
+            Some(17),
+        );
+        assert_eq!(queued_with_prior_result.state_copy, "Queued");
+        assert!(
+            displayed_report(
+                &queued_with_prior_result,
+                Some(BenchmarkOutcome::Completed(completed_report(9))),
+            )
+            .is_none()
         );
         assert_eq!(
             row_presentation(7, None, queued, Some(17)).state_copy,
