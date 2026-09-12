@@ -47,7 +47,7 @@ jobs:
         # result for the final job verdict instead of failing fast here.
         if: always()
         continue-on-error: true
-        uses: midnightntwrk/upload-sarif-github-action@4bbe849e9707b46342832d4b7f94fec585823ca4 # pinned main, 2026-07-10
+        uses: midnightntwrk/upload-sarif-github-action@362d0346b194663004cb371e8e8523bd1c910917 # pinned main, 2026-07-10
         with:
           fail_severity: high
           skip_scorecard_scan: "true"
