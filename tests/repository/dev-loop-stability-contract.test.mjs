@@ -831,6 +831,9 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   assert.doesNotMatch(reviewTools, /\b(?:bash|edit|write)\b/, "review shadow exposes only read-only inspection tools");
   const devLoop = await read(".pi/agents/dev-loop.agent.md");
   assert.match(devLoop, /scripts\/dev-loops\.mjs/);
+  assert.match(devLoop, /<git-root>` is always the exact output of `git rev-parse --show-toplevel`/u);
+  assert.match(devLoop, /Never replace it with the primary\s+checkout derived from `--git-common-dir` or `git worktree list`/u);
+  assert.match(devLoop, /common\s+checkout is a topology and shared-private-storage boundary only/u);
   assert.match(devLoop, /pre-flight-gate\.mjs --check-subagents.*before each later routed action/s);
   assert.match(devLoop, /MUST NOT call\n`subagent`, dispatch a reviewer, or create any nested workflow/u);
   assert.match(devLoop, /exact-head local gate, push, and draft PR/u);
