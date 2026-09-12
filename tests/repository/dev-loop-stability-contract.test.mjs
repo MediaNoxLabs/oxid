@@ -10,9 +10,12 @@ import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  auditPiPackageClosures,
   checkAgentToolAllowlists,
+  cleanupPiPackageClosures,
   devLoopPreflightCacheKey,
   ensureSharedPiPackageStore,
+  piPackageClosureIdentity,
   parseAgentFrontmatter,
   resolveDevLoopsPackageRoot,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
@@ -179,13 +182,91 @@ async function makeFixture() {
   return { root, worktree, packageRoot };
 }
 
+test("Pi closure identities cover ordered exact package configuration", () => {
+  const base = { packages: [
+    { source: "npm:dev-loops@1.0.2", extensions: [] },
+    "npm:pi-subagents@0.66.0",
+  ] };
+  const reordered = { packages: [...base.packages].reverse() };
+  const changedResourcePolicy = { packages: [
+    { extensions: ["./extension.mjs"], source: "npm:dev-loops@1.0.2" },
+    "npm:pi-subagents@0.66.0",
+  ] };
+  assert.equal(piPackageClosureIdentity(base).identity, piPackageClosureIdentity({ packages: [
+    { extensions: [], source: "npm:dev-loops@1.0.2" },
+    "npm:pi-subagents@0.66.0",
+  ] }).identity, "object key order is not closure configuration order");
+  assert.notEqual(piPackageClosureIdentity(base).identity, piPackageClosureIdentity(reordered).identity);
+  assert.notEqual(piPackageClosureIdentity(base).identity, piPackageClosureIdentity(changedResourcePolicy).identity);
+});
+
+test("Pi closures isolate linked worktrees, publish once, and retain only referenced state", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const first = await ensureSharedPiPackageStore({ cwd: fixture.root });
+  const packageRoot = path.resolve(first.store, "node_modules", "dev-loops");
+  const originalManifest = await readFile(path.join(packageRoot, "package.json"), "utf8");
+
+  await writeFile(path.join(fixture.worktree, ".pi", "settings.json"), JSON.stringify({
+    packages: ["npm:dev-loops@0.8.0"], subagents: { projectRootResolution: "git-root" },
+  }));
+  const second = await ensureSharedPiPackageStore({
+    cwd: fixture.worktree,
+    install: async ({ nodeModules }) => {
+      const root = path.join(nodeModules, "dev-loops");
+      await mkdir(path.join(root, "cli"), { recursive: true });
+      await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.8.0" }));
+      await writeFile(path.join(root, "cli", "index.mjs"), "");
+    },
+  });
+  assert.notEqual(first.identity, second.identity);
+  assert.equal(JSON.parse(await readFile((await resolveDevLoopsPackageRoot({ cwd: fixture.root })).packageRoot + "/package.json", "utf8")).version, "1.0.2");
+  assert.equal(JSON.parse(await readFile((await resolveDevLoopsPackageRoot({ cwd: fixture.worktree })).packageRoot + "/package.json", "utf8")).version, "0.8.0");
+  assert.equal(await readFile(path.join(packageRoot, "package.json"), "utf8"), originalManifest, "a published closure is never changed in place");
+
+  const closure = path.resolve(first.store, "../..");
+  const state = path.dirname(path.dirname(closure));
+  const staleClosure = path.join(state, "closures", "stale-unreferenced");
+  const staleStage = path.join(state, "staging", "interrupted-stage");
+  const staleLock = path.join(state, "locks", "interrupted.lock");
+  await Promise.all([mkdir(staleClosure, { recursive: true }), mkdir(staleStage, { recursive: true }), writeFile(staleLock, "interrupted")]);
+  const old = new Date(Date.now() - 11 * 60_000);
+  await Promise.all([utimes(staleClosure, old, old), utimes(staleStage, old, old), utimes(staleLock, old, old)]);
+  const before = await auditPiPackageClosures({ cwd: fixture.root, olderThanMs: 1 });
+  assert.deepEqual(before.referenced, [first.identity, second.identity].sort());
+  const cleaned = await cleanupPiPackageClosures({ cwd: fixture.root, olderThanMs: 1, staleMs: 1 });
+  assert.deepEqual(cleaned.removed, ["stale-unreferenced"]);
+  assert.deepEqual(cleaned.reclaimedStaging, ["interrupted-stage"]);
+  assert.deepEqual(cleaned.reclaimedLocks, ["interrupted.lock"]);
+});
+
+test("Pi closure installation is atomic and concurrent callers share one publication", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const results = await Promise.all([
+    ensureSharedPiPackageStore({ cwd: fixture.root }),
+    ensureSharedPiPackageStore({ cwd: fixture.root }),
+  ]);
+  assert.equal(results.filter(({ published }) => published).length, 1);
+  assert.equal(results[0].identity, results[1].identity);
+
+  await writeFile(path.join(fixture.worktree, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:dev-loops@0.8.0"] }));
+  await assert.rejects(
+    ensureSharedPiPackageStore({ cwd: fixture.worktree, install: async () => { throw new Error("simulated interruption"); } }),
+    /simulated interruption/,
+  );
+  const audit = await auditPiPackageClosures({ cwd: fixture.root });
+  assert.deepEqual(audit.closures.map(({ identity }) => identity), [results[0].identity]);
+});
+
 test("project-local dev-loops resolution is exact from roots and linked worktrees", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
 
+  await ensureSharedPiPackageStore({ cwd: fixture.root });
   for (const cwd of [fixture.root, fixture.worktree]) {
     const resolved = await resolveDevLoopsPackageRoot({ cwd });
-    assert.equal(await realpath(resolved.packageRoot), await realpath(fixture.packageRoot));
+    assert.match(await realpath(resolved.packageRoot), /pi-package-closures-v1\/closures\/[0-9a-f]{64}\/\.pi\/npm\/node_modules\/dev-loops$/u);
     assert.equal(resolved.version, "1.0.2");
     assert.equal(resolved.source, cwd === fixture.root ? "git-root" : "git-common-root");
   }
@@ -195,7 +276,9 @@ test("registered linked worktrees use one fail-closed Pi package store", async (
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
 
-  assert.equal((await ensureSharedPiPackageStore({ cwd: fixture.root })).mode, "primary");
+  const primary = await ensureSharedPiPackageStore({ cwd: fixture.root });
+  assert.equal(primary.mode, "primary");
+  assert.equal(primary.published, true);
   const linked = await ensureSharedPiPackageStore({ cwd: fixture.worktree });
   assert.equal(linked.mode, "linked");
   assert.equal((await lstat(path.join(fixture.worktree, ".pi", "npm"))).isSymbolicLink(), true);
@@ -206,12 +289,12 @@ test("registered linked worktrees use one fail-closed Pi package store", async (
 
   await rm(path.join(fixture.worktree, ".pi", "npm"));
   await mkdir(path.join(fixture.worktree, ".pi", "npm"));
-  await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /absent or a managed symlink/);
+  await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /absent or a managed closure symlink/);
   await rm(path.join(fixture.worktree, ".pi", "npm"), { recursive: true });
   const outside = await realMkdtemp("oxid-pi-store-outside-");
   t.after(() => rm(outside, { recursive: true, force: true }));
   await symlink(outside, path.join(fixture.worktree, ".pi", "npm"), "dir");
-  await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /outside the registered common checkout/);
+  await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /points outside the managed closure state/);
 });
 
 test("Pi smoke resolution reuses every exact common-checkout package from a linked worktree", async (t) => {
@@ -235,6 +318,7 @@ test("Pi smoke resolution reuses every exact common-checkout package from a link
     await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name, version }));
   }
 
+  await ensureSharedPiPackageStore({ cwd: fixture.root });
   const resolved = await resolveDevLoopsPackageRoot({
     cwd: fixture.worktree,
     includeAllPinnedPackages: true,
@@ -254,7 +338,8 @@ test("Pi devshell smoke delegates package authority to the bounded exact-pin res
   assert.match(smoke, /includeAllPinnedPackages:\s*true/);
   assert.doesNotMatch(smoke, /review_package_root=["']\.pi\/npm/);
   assert.doesNotMatch(smoke, /(?:HOME|global|node_modules\/\.\.\/)/);
-  assert.match(devshell, /ensureSharedPiPackageStore/);
+  assert.match(devshell, /provision-pi-packages\.mjs/);
+  assert.match(devshell, /content-addressed closure/);
   assert.match(devshell, /export PI_OFFLINE=.*PI_OFFLINE:-1/);
 });
 

@@ -73,7 +73,7 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   const rejectMissingNix = bootstrap.indexOf('echo "Nix is required; install it with flakes enabled before bootstrapping Oxid."');
   assert.match(bootstrap, /readonly nix_daemon_profile_bin="\/nix\/var\/nix\/profiles\/default\/bin"/u);
   assert.ok(discoverNix >= 0 && prependNix > discoverNix && rejectMissingNix > prependNix);
-  assert.match(devshell, /typeof entry === "string" \? entry : entry\?\.source/u);
+  assert.match(devshell, /provision-pi-packages\.mjs/u);
   assert.match(devshell, /Git-common-dir path survives the per-entry nix-shell TMPDIR/u);
   assert.match(devshell, /export PI_CODING_AGENT_SESSION_DIR/u);
   assert.match(devshell, /export PI_SUBAGENTS_TEMP_ROOT/u);

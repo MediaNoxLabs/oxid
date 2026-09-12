@@ -173,12 +173,6 @@
                     # CI never needs Pi tooling, and this block performs network package
                     # installs, so continuous-integration shells skip it entirely.
                     if [ -z "''${CI:-}" ] && [ -f .pi/settings.json ]; then
-                      pi_checkout_root="$(node --input-type=module <<'NODE'
-                        import { ensureSharedPiPackageStore } from "./scripts/lib/dev-loop-runtime.mjs";
-                        const prepared = await ensureSharedPiPackageStore({ cwd: process.cwd() });
-                        process.stdout.write(prepared.commonRoot);
-          NODE
-                      )" || exit 1
                       if [ -z "''${GITHUB_TOKEN:-}" ]; then
                         if [ -n "''${GH_TOKEN:-}" ]; then
                           export GITHUB_TOKEN="''${GH_TOKEN}"
@@ -186,40 +180,10 @@
                           export GITHUB_TOKEN="''${GH_TOKENS}"
                         fi
                       fi
-
-                      while IFS=$'\t' read -r pi_spec pi_package pi_version; do
-                        [ -n "$pi_spec" ] || continue
-                        pi_package_json="$pi_checkout_root/.pi/npm/node_modules/$pi_package/package.json"
-                        pi_installed_version=""
-                        if [ -f "$pi_package_json" ]; then
-                          pi_installed_version="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version ?? "")' "$pi_package_json")"
-                        fi
-
-                        if [ -n "$pi_installed_version" ] && { [ -z "$pi_version" ] || [ "$pi_installed_version" = "$pi_version" ]; }; then
-                          continue
-                        fi
-
-                        if [ "$pi_package" = "@input-output-hk/agent-review-pi" ] && [ -z "''${GITHUB_TOKEN:-}" ]; then
-                          echo "Skipping optional Pi package $pi_spec (set GITHUB_TOKEN, GH_TOKEN, or GH_TOKENS to install it)."
-                          continue
-                        fi
-
-                        echo "Installing project-local Pi package $pi_spec..."
-                        (cd "$pi_checkout_root" && pi install "$pi_spec" --local --approve </dev/null)
-                      done < <(node -e '
-                        const fs = require("fs");
-                        const settings = JSON.parse(fs.readFileSync(".pi/settings.json", "utf8"));
-                        for (const entry of settings.packages ?? []) {
-                          const spec = typeof entry === "string" ? entry : entry?.source;
-                          if (typeof spec !== "string" || !spec.startsWith("npm:")) continue;
-                          if (typeof entry === "object" && entry.autoload === false) continue;
-                          const ref = spec.slice(4);
-                          const at = ref.startsWith("@") ? ref.indexOf("@", 1) : ref.indexOf("@");
-                          const name = at === -1 ? ref : ref.slice(0, at);
-                          const version = at === -1 ? "" : ref.slice(at + 1);
-                          console.log([spec, name, version].join("\t"));
-                        }
-                      ')
+                      # The helper publishes one content-addressed closure only after all
+                      # exact pins validate. It migrates a legacy real .pi/npm lazily,
+                      # then points this checkout at its matching immutable closure.
+                      node scripts/factory/provision-pi-packages.mjs
                       # Exact pins were reconciled above. Keep Pi startup itself offline
                       # so it cannot race that authority or retry an unavailable optional
                       # private package. Operators can explicitly unset this for package maintenance.
