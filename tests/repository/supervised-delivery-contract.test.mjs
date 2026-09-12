@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { runManagedChild } from "../../scripts/lib/managed-child-process.mjs";
 import {
+  assertLocalGateDevShellCapabilities,
   digestGateCommand,
   runLocalGate,
   verifyLocalGate,
@@ -51,6 +52,29 @@ async function gateFixture(t) {
   git(root, ["update-ref", "refs/remotes/origin/develop", head]);
   return { root, head };
 }
+
+test("local gate reports the bootstrap boundary before starting validation without timeout", async (t) => {
+  const { root } = await gateFixture(t);
+  assert.throws(
+    () => assertLocalGateDevShellCapabilities({ environmentPath: path.join(root, "no-devshell-tools") }),
+    /pinned devshell capability: timeout; rerun through \.\/bootstrap\.sh -- node scripts\/loop\/local-gate\.mjs/u,
+  );
+
+  let childStarted = false;
+  await assert.rejects(
+    runLocalGate({
+      cwd: root,
+      deliveryBase: "origin/develop",
+      gateId: "production-ready",
+      assertCapabilities: () => assertLocalGateDevShellCapabilities({ environmentPath: path.join(root, "no-devshell-tools") }),
+      runChild: async () => { childStarted = true; return 0; },
+      resolvePlan: targetPlan(false),
+    }),
+    /pinned devshell capability: timeout/u,
+  );
+  assert.equal(childStarted, false);
+  assert.doesNotThrow(() => assertLocalGateDevShellCapabilities({ hasCapability: () => true }));
+});
 
 test("the production-ready Pi contract has one non-delegating implementation child and a terminal metrics checkpoint", async () => {
   const [agent, policy, profiles] = await Promise.all([

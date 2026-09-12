@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { accessSync, constants } from "node:fs";
 import { chmod, lstat, mkdir, open, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -132,6 +133,27 @@ export function buildLocalGateReceipt({ headSha, deliveryBase, deliveryBaseOid, 
   });
 }
 
+function hasCommand(command, environmentPath = process.env.PATH ?? "") {
+  return environmentPath.split(path.delimiter).some((directory) => {
+    if (!directory) return false;
+    try {
+      accessSync(path.join(directory, command), constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+export function assertLocalGateDevShellCapabilities({
+  environmentPath = process.env.PATH ?? "",
+  hasCapability = (command) => hasCommand(command, environmentPath),
+} = {}) {
+  if (!hasCapability("timeout")) {
+    throw new Error("local gate requires pinned devshell capability: timeout; rerun through ./bootstrap.sh -- node scripts/loop/local-gate.mjs <run|verify> --delivery-base origin/<target> --gate-id <id>");
+  }
+}
+
 function inspectCheckout(cwd, deliveryBase) {
   const root = git(cwd, ["rev-parse", "--path-format=absolute", "--show-toplevel"]);
   const commonDir = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
@@ -179,7 +201,9 @@ function assertCleanState(state) {
 
 export async function verifyLocalGate({
   cwd = process.cwd(), deliveryBase, gateId, command = [], resolvePlan = resolveTargetPlan,
+  assertCapabilities = assertLocalGateDevShellCapabilities,
 }) {
+  assertCapabilities();
   const state = inspectCheckout(cwd, deliveryBase);
   assertCleanState(state);
   const resolvedCommand = resolveGateCommand({ state, deliveryBase, gateId, command, resolvePlan });
@@ -207,7 +231,9 @@ export async function verifyLocalGate({
 export async function runLocalGate({
   cwd = process.cwd(), deliveryBase, gateId, command = [],
   runChild = runManagedChild, now = () => Date.now(), resolvePlan = resolveTargetPlan,
+  assertCapabilities = assertLocalGateDevShellCapabilities,
 }) {
+  assertCapabilities();
   const before = inspectCheckout(cwd, deliveryBase);
   assertCleanState(before);
   const resolvedCommand = resolveGateCommand({ state: before, deliveryBase, gateId, command, resolvePlan });
