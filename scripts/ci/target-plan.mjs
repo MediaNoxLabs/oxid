@@ -47,7 +47,7 @@ const AREA_PATTERNS = Object.freeze({
     /^\.pi\//,
     /^AGENT\.md$/,
     /^scripts\/check-pi-devshell\.sh$/,
-    /^scripts\/(?:dev-loops\.mjs|factory\/|git-hooks\/|github\/|loop\/|lib\/(?:dev-loop|handoff-envelope)|review\/|worktree-lifecycle\.mjs)/,
+    /^scripts\/(?:dev-loops\.mjs|factory\/|git-hooks\/|github\/|loop\/|lib\/(?:dev-loop|handoff-envelope|managed-child-process)|review\/|worktree-lifecycle\.mjs)/,
     /^tests\/repository\//,
   ],
   ci: [

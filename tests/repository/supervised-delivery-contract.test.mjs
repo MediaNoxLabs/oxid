@@ -163,6 +163,7 @@ test("bounded drain escalation kills the exact owned descendant process group", 
   const child = new EventEmitter();
   child.pid = 452;
   const signals = [];
+  let escalate;
   const completion = runManagedChild("node", ["fixture"], {
     processRef,
     platform: "darwin",
@@ -171,9 +172,17 @@ test("bounded drain escalation kills the exact owned descendant process group", 
       signals.push([pid, signal]);
       if (signal === "SIGKILL") child.emit("close", null, "SIGKILL");
     },
+    setTimeoutImpl: (callback, delay) => {
+      assert.equal(delay, 5);
+      escalate = callback;
+      return { unref() {} };
+    },
+    clearTimeoutImpl: () => {},
     graceMs: 5,
   });
   processRef.emit("SIGTERM");
+  assert.equal(typeof escalate, "function");
+  escalate();
   assert.equal(await completion, 143);
   assert.deepEqual(signals, [[-452, "SIGTERM"], [-452, "SIGKILL"]]);
   assert.equal(processRef.listenerCount("SIGTERM"), 0);

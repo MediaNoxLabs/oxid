@@ -14,7 +14,7 @@ import { checkUserPolicy } from "./pi-policy.mjs";
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const EXPECTED_PACKAGES = new Map([
   ["dev-loops", "1.0.2"],
-  ["pi-subagents", "0.66.0"],
+  ["pi-subagents", "0.67.0"],
   ["@playwright/test", "1.60.0"],
   ["@axe-core/playwright", "4.10.0"],
   ["typebox", "1.3.9"],

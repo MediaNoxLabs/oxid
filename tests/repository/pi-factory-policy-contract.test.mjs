@@ -41,7 +41,7 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
     },
     "npm:@playwright/test@1.60.0",
     "npm:@axe-core/playwright@4.10.0",
-    "npm:pi-subagents@0.66.0",
+    "npm:pi-subagents@0.67.0",
     "npm:typebox@1.3.9",
     {
       source: "npm:pi-taskflow@0.2.10",
@@ -62,6 +62,11 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(smoke, /PI_CODING_AGENT_SESSION_DIR/u);
   assert.match(smoke, /PI_SUBAGENTS_TEMP_ROOT/u);
   assert.match(smoke, /owner-private runtime state/u);
+  assert.match(smoke, /unexpected pi-subagents package/u);
+  assert.match(smoke, /attentionRunsForSession/u);
+  assert.match(smoke, /remembered detached foreground descendant/u);
+  assert.match(smoke, /reconcileDetachedWorkflowChildCompletion/u);
+  assert.match(smoke, /planWorkflowSettlement/u);
   assert.match(smoke, /skill:taskflow/u);
   assert.match(smoke, /unsafe inherited taskflow resources are active/u);
   assert.match(smoke, /Pi startup modified tracked project agent shadows/u);

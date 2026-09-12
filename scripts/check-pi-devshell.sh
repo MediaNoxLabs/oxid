@@ -108,11 +108,28 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 const root = process.argv[2];
-const [types, agents, toolBudget] = await Promise.all([
+const [manifestSource, types, agents, toolBudget, waitTool, waitRuntime, foregroundSettlement] = await Promise.all([
+  readFile(path.join(root, "package.json"), "utf8"),
   readFile(path.join(root, "src", "shared", "types.ts"), "utf8"),
   readFile(path.join(root, "src", "agents", "agents.ts"), "utf8"),
   readFile(path.join(root, "src", "runs", "shared", "tool-budget.ts"), "utf8"),
+  readFile(path.join(root, "src", "runs", "background", "wait-tool.ts"), "utf8"),
+  readFile(path.join(root, "src", "runs", "background", "subagent-wait.ts"), "utf8"),
+  readFile(path.join(root, "src", "runs", "foreground", "workflow-detach-reconcile.ts"), "utf8"),
 ]);
+const manifest = JSON.parse(manifestSource);
+if (manifest.name !== "pi-subagents" || manifest.version !== "0.67.0") {
+  throw new Error(`unexpected pi-subagents package ${manifest.name}@${manifest.version}`);
+}
+for (const [source, capability] of [
+  [waitTool, "remembered detached foreground descendant"],
+  [waitRuntime, "attentionRunsForSession"],
+  [waitRuntime, "stopOnAttention"],
+  [foregroundSettlement, "reconcileDetachedWorkflowChildCompletion"],
+  [foregroundSettlement, "planWorkflowSettlement"],
+]) {
+  if (!source.includes(capability)) throw new Error(`pi-subagents lacks ${capability}`);
+}
 for (const field of [
   "asyncByDefault", "forceTopLevelAsync", "maxSubagentDepth",
   "maxSubagentSpawnsPerSession", "maxSubagentSpawnsPerRun",
