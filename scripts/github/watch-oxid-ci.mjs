@@ -12,6 +12,10 @@ function isNoneTerminal(result) {
   return result?.ciStatus === "none" && result.status === "success" && result.settled === true;
 }
 
+function hasNoChecks(result) {
+  return result?.ciStatus === "none";
+}
+
 function isSupersessionPending(result) {
   return result?.status === "pending" && result.settled === false && result.workflowAttemptSelection !== undefined;
 }
@@ -73,6 +77,30 @@ function loadWorkflowAttemptData({ repo, headSha }) {
     throw new Error("GitHub Actions workflow-attempt response was malformed");
   }
   return { checkRuns, workflowRuns };
+}
+
+function loadPrLifecycleState({ repo, pr }) {
+  const pull = JSON.parse(runGhCommand("gh", [
+    "api", `repos/${repo}/pulls/${pr}`, ...GITHUB_REST_HEADERS,
+  ], { failureLabel: "GitHub pull-request lifecycle request" }));
+  if (typeof pull?.head?.sha !== "string" || typeof pull?.state !== "string") {
+    throw new Error("GitHub pull-request lifecycle response was malformed");
+  }
+  return { state: pull.merged_at ? "MERGED" : pull.state.toUpperCase(), headSha: pull.head.sha };
+}
+
+function mergedLifecycleResult(result, options, { loadPrLifecycle }) {
+  try {
+    const lifecycle = loadPrLifecycle({ repo: options.repo, pr: options.pr });
+    if (lifecycle.state !== "MERGED") return null;
+    if (lifecycle.headSha !== result.headSha) {
+      return changedResult({ ...result, headSha: lifecycle.headSha, prState: "merged" });
+    }
+    return { ...result, status: "success", settled: true, ciStatus: "success", prState: "merged" };
+  } catch {
+    // A failed lifecycle read must not turn an otherwise checkless observation green.
+    return null;
+  }
 }
 
 /**
@@ -141,13 +169,19 @@ export async function watchOxidPrCiStatus(
     delayImpl = delay,
     now = performance.now.bind(performance),
     loadWorkflowAttempts,
+    loadPrLifecycle = loadPrLifecycleState,
     ...watchDependencies
   },
 ) {
   const reconcile = (result) => reconcileSupersededWorkflowFailure(result, options, { loadWorkflowAttempts });
+  const settleMergedLifecycle = (result) => mergedLifecycleResult(result, options, { loadPrLifecycle });
   const startedAtMs = now();
   const initial = await watchCiStatus(options, watchDependencies);
   const reconciledInitial = reconcile(initial);
+  if (hasNoChecks(initial)) {
+    const merged = settleMergedLifecycle(initial);
+    if (merged) return merged;
+  }
   if (!isNoneTerminal(initial) && !isSupersessionPending(reconciledInitial)) return reconciledInitial;
 
   // A zero-budget read cannot establish that Oxid's mandatory workflows had
@@ -173,7 +207,13 @@ export async function watchOxidPrCiStatus(
     const observedWithAttempts = { ...observed, attempts };
     latest = reconcile(observedWithAttempts);
     if (observed.headSha !== baselineSha) return changedResult(observedWithAttempts);
-    if (isNoneTerminal(observed)) continue;
+    if (hasNoChecks(observed)) {
+      const merged = settleMergedLifecycle(observedWithAttempts);
+      if (merged) return merged;
+    }
+    if (isNoneTerminal(observed)) {
+      continue;
+    }
     if (isSupersessionPending(latest)) continue;
 
     const remainingAfterObservation = remainingTimeoutMs(startedAtMs, options.timeoutMs, now);

@@ -1869,6 +1869,43 @@ test("Oxid PR CI adapter holds generic none through bounded registration and del
   assert.deepEqual(calls.map(({ timeoutMs }) => timeoutMs), [4_000, 0, 3_000]);
 });
 
+test("Oxid PR CI adapter settles an exact-head PR merged during no-check registration", async (t) => {
+  const noChecks = { ok: true, status: "success", settled: true, ciStatus: "none", headSha: "head-a", attempts: 1 };
+
+  await t.test("returns a distinct successful terminal result for an exact-head merge", async () => {
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 3_000, pollIntervalMs: 1_000 }, {
+      watchCiStatus: async () => noChecks,
+      loadPrLifecycle: () => ({ state: "MERGED", headSha: "head-a" }),
+    });
+    assert.deepEqual(result, { ...noChecks, status: "success", settled: true, ciStatus: "success", prState: "merged" });
+  });
+
+  await t.test("settles the pending no-check shape emitted by the pinned watcher", async () => {
+    const pendingNoChecks = { ...noChecks, status: "pending", settled: false };
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
+      watchCiStatus: async () => pendingNoChecks,
+      loadPrLifecycle: () => ({ state: "MERGED", headSha: "head-a" }),
+    });
+    assert.deepEqual(result, { ...pendingNoChecks, status: "success", settled: true, ciStatus: "success", prState: "merged" });
+  });
+
+  await t.test("fails closed when a merged PR head differs from the watch baseline", async () => {
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 3_000, pollIntervalMs: 1_000 }, {
+      watchCiStatus: async () => noChecks,
+      loadPrLifecycle: () => ({ state: "MERGED", headSha: "head-b" }),
+    });
+    assert.deepEqual(result, { ...noChecks, status: "changed", settled: false, headSha: "head-b", prState: "merged" });
+  });
+
+  await t.test("does not report a closed-unmerged PR as successful", async () => {
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
+      watchCiStatus: async () => noChecks,
+      loadPrLifecycle: () => ({ state: "CLOSED", headSha: "head-a" }),
+    });
+    assert.deepEqual(result, { ...noChecks, status: "pending", settled: false });
+  });
+});
+
 test("Oxid PR CI adapter bounds no-check polls and preserves changed and API-pending results", async (t) => {
   await t.test("never turns a stable no-check PR green", async () => {
     let clock = 0;
