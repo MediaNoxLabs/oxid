@@ -495,6 +495,14 @@ test("factory claim surface fails closed and exposes no raw GitHub mutations", a
   assert.doesNotMatch(source, /factory\/\$\{issue\}/u);
 });
 
+test("dev-loop grants only issue-bound push and draft-PR delivery writes", async () => {
+  const source = await readFile(path.join(repoRoot, ".pi", "agents", "dev-loop.agent.md"), "utf8");
+  assert.match(source, /issue-backed delivery authorization permits only a normal push/u);
+  assert.match(source, /resolved issue, repository, delivery target, canonical branch, and current worktree/u);
+  assert.match(source, /No force-push, replacement, cross-issue write, ready-for-review, merge, durable-branch mutation, release, credential, protection, or scope-expansion authority is granted/u);
+  assert.match(source, /fail closed before either delivery write/u);
+});
+
 test("Pi worker guidance confines external repository writes to approved supervision", async () => {
   const guidance = await Promise.all([
     readFile(path.join(repoRoot, "AGENT.md"), "utf8"),
