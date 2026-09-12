@@ -64,12 +64,12 @@ test("the production-ready Pi contract has one non-delegating implementation chi
     terminalCheckpoint: ["headSha", "validationReceipt", "workerMetrics", "remainingRisks"],
   });
   assert.match(agent, /never silently creates another phase child/u);
-  assert.match(agent, /Later review\/checkpoint logic invokes `verify` with the same planned command, not the full command/u);
+  assert.match(agent, /Production-ready always supplies this repository-owned canonical command/u);
 });
 
 test("the issue 449 sequence runs one full local gate and reuses its exact-head receipt", async (t) => {
   const { root, head } = await gateFixture(t);
-  const command = ["just", "check"];
+  const command = ["env", "OXID_COVERAGE_BASE=origin/develop", "just", "check"];
   let fullGateStarts = 0;
   const runChild = async () => {
     fullGateStarts += 1;
@@ -122,10 +122,10 @@ test("the issue 449 sequence runs one full local gate and reuses its exact-head 
       cwd: root,
       deliveryBase: "origin/develop",
       gateId: "production-ready",
-      command: ["env", "OXID_COVERAGE_BASE=origin/develop", "just", "check"],
+      command: ["just", "check"],
       runChild,
     }),
-    /commandDigest does not match/u,
+    /production-ready local gate requires the canonical command/u,
   );
   assert.equal(fullGateStarts, 1, "a mismatched unchanged-head gate must stop instead of rerunning");
   await assert.rejects(
@@ -135,8 +135,31 @@ test("the issue 449 sequence runs one full local gate and reuses its exact-head 
       gateId: "production-ready",
       command: ["true"],
     }),
-    /commandDigest does not match/u,
+    /production-ready local gate requires the canonical command/u,
   );
+});
+
+test("production-ready receipts accept only the repository-owned canonical command", async (t) => {
+  const { root } = await gateFixture(t);
+  await assert.rejects(
+    runLocalGate({
+      cwd: root,
+      deliveryBase: "origin/develop",
+      gateId: "production-ready",
+      command: ["node", "--test", "tests/repository/supervised-delivery-contract.test.mjs"],
+      runChild: async () => 0,
+    }),
+    /production-ready local gate requires the canonical command/u,
+  );
+
+  const result = await runLocalGate({
+    cwd: root,
+    deliveryBase: "origin/develop",
+    gateId: "production-ready",
+    command: ["env", "OXID_COVERAGE_BASE=origin/develop", "just", "check"],
+    runChild: async () => 0,
+  });
+  assert.equal(result.action, "ran");
 });
 
 test("resume-first refuses an in-flight unchanged-head gate instead of launching a replacement", async (t) => {
@@ -150,7 +173,7 @@ test("resume-first refuses an in-flight unchanged-head gate instead of launching
       cwd: root,
       deliveryBase: "origin/develop",
       gateId: "production-ready",
-      command: ["just", "check"],
+      command: ["env", "OXID_COVERAGE_BASE=origin/develop", "just", "check"],
       runChild: async () => { starts += 1; return 0; },
     }),
     /reconcile it instead of launching a replacement/u,

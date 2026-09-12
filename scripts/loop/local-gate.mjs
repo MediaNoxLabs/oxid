@@ -19,6 +19,9 @@ const RECEIPT_KEYS = Object.freeze([
   "schema", "headSha", "deliveryBase", "deliveryBaseOid", "gateId",
   "commandDigest", "durationMs", "completedAt", "outcome",
 ]);
+export function resolveProductionReadyGateCommand(deliveryBase) {
+  return ["env", `OXID_COVERAGE_BASE=${deliveryBase}`, "just", "check"];
+}
 
 function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -37,6 +40,15 @@ function assertGateIdentity({ headSha, deliveryBase, deliveryBaseOid, gateId, co
   if (!HEAD.test(deliveryBaseOid ?? "")) throw new Error("local gate delivery-base OID is malformed");
   if (!GATE_ID.test(gateId ?? "")) throw new Error("local gate id is malformed");
   if (commandDigest !== undefined && !DIGEST.test(commandDigest ?? "")) throw new Error("local gate command digest is malformed");
+}
+
+function assertCanonicalGateCommand(deliveryBase, gateId, command) {
+  const canonical = resolveProductionReadyGateCommand(deliveryBase);
+  if (gateId === "production-ready"
+    && (command.length !== canonical.length
+      || command.some((argument, index) => argument !== canonical[index]))) {
+    throw new Error(`production-ready local gate requires the canonical command: env OXID_COVERAGE_BASE=${deliveryBase} just check`);
+  }
 }
 
 export function digestGateCommand(command) {
@@ -132,6 +144,7 @@ function assertCleanState(state) {
 }
 
 export async function verifyLocalGate({ cwd = process.cwd(), deliveryBase, gateId, command }) {
+  assertCanonicalGateCommand(deliveryBase, gateId, command);
   const commandDigest = digestGateCommand(command);
   assertGateIdentity({
     headSha: "0".repeat(40),
@@ -159,6 +172,7 @@ export async function runLocalGate({
   cwd = process.cwd(), deliveryBase, gateId, command,
   runChild = runManagedChild, now = () => Date.now(),
 }) {
+  assertCanonicalGateCommand(deliveryBase, gateId, command);
   const commandDigest = digestGateCommand(command);
   assertGateIdentity({ headSha: "0".repeat(40), deliveryBase, deliveryBaseOid: "0".repeat(40), gateId, commandDigest });
   const before = inspectCheckout(cwd, deliveryBase);

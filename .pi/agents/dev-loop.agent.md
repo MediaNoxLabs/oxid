@@ -115,12 +115,13 @@ invocation is a new measured supervisor decision, not an internal continuation
 of the original budget.
 
 After committing and before push, invoke the full local gate only through
-`node scripts/loop/local-gate.mjs run --delivery-base <target> --gate-id production-ready -- <planned-command>`. It writes one private receipt bound to the exact clean head, delivery-base OID, gate id, and command digest. Later review/checkpoint logic invokes `verify` with the same planned command, not the full command. A matching repeated `run` returns `action: "reused"`; an in-flight or mismatched record stops rather than launching a replacement.
+`node scripts/loop/local-gate.mjs run --delivery-base <target> --gate-id production-ready -- env OXID_COVERAGE_BASE=<target> just check`. Production-ready always supplies this repository-owned canonical command, whose coverage base is the recorded delivery target; focused or caller-selected commands are rejected. It writes one private receipt bound to the exact clean head, delivery-base OID, gate id, and canonical command digest. Later review/checkpoint logic invokes `verify` with the same canonical command. A matching repeated `run` returns `action: "reused"`; an in-flight or mismatched record stops rather than launching a replacement.
 
-Oxid is a Rust/Cargo workspace without a root `package.json`. Validation MUST
-use the handoff envelope's target plan and its sanctioned Cargo, Just, Nix, or
-focused platform commands. Never substitute `npm run verify` or another
-ecosystem-generic command that is absent from the repository.
+Oxid is a Rust/Cargo workspace without a root `package.json`. Production-ready
+receipt validation MUST use `env OXID_COVERAGE_BASE=<target> just check`; prototype and focused checks use only
+the handoff envelope's sanctioned Cargo, Just, Nix, or focused platform commands.
+Never substitute `npm run verify` or another ecosystem-generic command that is
+absent from the repository.
 
 A shell parser diagnostic emitted before the named helper starts (for example,
 an unmatched quote or unexpected EOF in an agent-generated `bash -c` command)
