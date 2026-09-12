@@ -835,6 +835,7 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   assert.match(devLoop, /MUST NOT call\n`subagent`, dispatch a reviewer, or create any nested workflow/u);
   assert.match(devLoop, /exact-head local gate, push, and draft PR/u);
   assert.match(devLoop, /MUST NOT place it inside `taskflow`/u);
+  assert.match(devLoop, /^worktree:\s*false$/mu, "the conductor reuses the canonical managed worktree");
   assert.match(devLoop, /Never substitute `npm run verify`/u);
   assert.match(devLoop, /shell parser diagnostic emitted before the named helper starts/u);
   assert.match(devLoop, /correct\s+the command once within the existing bounded attempt/u);
