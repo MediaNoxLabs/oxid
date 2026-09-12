@@ -21,6 +21,7 @@ import {
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
 import { normalizeDevLoopsArgs, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
+import { watchOxidPrCiStatus } from "../../scripts/github/watch-oxid-ci.mjs";
 import { runResolveTrackerLocalSpec } from "../../scripts/github/resolve-tracker-local-spec.mjs";
 import { assertNoPreflightBypass, inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
 import { runBranchGuard } from "../../scripts/loop/pre-commit-branch-guard.mjs";
@@ -161,12 +162,18 @@ async function makeFixture() {
   await writeFile(path.join(packageRoot, "scripts", "lib", "jq-output.mjs"), [
     'export function emitResult(result, { jq, silent, stdout }) {',
     '  if (silent) return result.ok ? 0 : 1;',
-    '  const value = jq === undefined ? result : jq === ".ok" ? result.ok : result;',
+    '  const value = jq === undefined ? result : jq === ".ok" ? result.ok : jq === ".status" ? result.status : result;',
     '  stdout.write(`${JSON.stringify(value)}\\n`);',
     '  return 0;',
     '}',
   ].join("\n"));
   await writeFile(path.join(packageRoot, "scripts", "_core-helpers.mjs"), 'export function formatCliError(error) { return error.message; }\n');
+  await mkdir(path.join(packageRoot, "scripts", "github"), { recursive: true });
+  await writeFile(path.join(packageRoot, "scripts", "github", "probe-ci-status.mjs"), [
+    'export function parseCiWatchCliArgs(argv) { const value = (name) => { const index = argv.indexOf(name); return index >= 0 ? argv[index + 1] : undefined; }; return { help: argv.includes("--help"), repo: value("--repo"), pr: Number(value("--pr")), commit: value("--commit"), timeoutMs: Number(value("--timeout-ms") ?? 1800000), pollIntervalMs: Number(value("--poll-interval-ms") ?? 60000), silent: argv.includes("--silent"), jq: value("--jq") }; }',
+    'export async function watchCiStatus() { return { ok: true, status: "success", settled: true, ciStatus: "none", failedChecks: [], excludedFailureDetails: [], headSha: "fixture-head", attempts: 1 }; }',
+    'export async function runCli(_argv, { stdout }) { stdout.write("fixture watch help\\n"); }',
+  ].join("\n"));
   await writeFile(path.join(packageRoot, "scripts", "loop", "pre-commit-branch-guard.mjs"), [
     'import { execFileSync } from "node:child_process";',
     'const index = process.argv.indexOf("--expected-branch");',
@@ -1813,7 +1820,7 @@ test("tracked pre-flight wrapper reports Pi child dispatch availability determin
   }
 });
 
-test("repository wrapper executes conventional help and delegates watch-ci unchanged", async (t) => {
+test("repository wrapper delegates generic and foreign CI while keeping the Oxid PR adapter output silent", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
   execFileSync("git", ["update-ref", "refs/remotes/origin/develop", "HEAD"], { cwd: fixture.root, stdio: "ignore" });
@@ -1822,11 +1829,91 @@ test("repository wrapper executes conventional help and delegates watch-ci uncha
   const output = [];
   const sink = new Writable({ write(chunk, _encoding, callback) { output.push(chunk.toString()); callback(); } });
   assert.equal(await runDevLoops(["--help"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
-  assert.equal(await runDevLoops(["--silent", "loop", "watch-ci", "--pr", "7"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
+  assert.equal(await runDevLoops(["--silent", "loop", "watch-ci", "--commit", "fixture-commit"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
+  assert.equal(await runDevLoops(["--silent", "loop", "watch-ci", "--repo", "MediaNoxLabs/oxid", "--pr", "7", "--timeout-ms", "0"], {
+    cwd: fixture.root, stdout: sink, stderr: sink,
+  }), 0);
+  assert.equal(await runDevLoops(["loop", "watch-ci", "--repo", "MediaNoxLabs/oxid", "--pr", "7", "--timeout-ms", "0", "--jq", ".status"], {
+    cwd: fixture.root, stdout: sink, stderr: sink,
+  }), 0);
+  assert.equal(await runDevLoops(["loop", "watch-ci", "--pr", "7", "--timeout-ms", "0", "--jq", ".status"], {
+    cwd: fixture.root, stdout: sink, stderr: sink,
+  }), 0);
+  assert.equal(await runDevLoops(["loop", "watch-ci", "--repo", "owner/checkless-project", "--pr", "7", "--timeout-ms", "0"], {
+    cwd: fixture.root, stdout: sink, stderr: sink,
+  }), 0);
   assert.deepEqual(output.join("").trim().split("\n").map((line) => JSON.parse(line)), [
     ["help"],
-    ["--silent", "loop", "watch-ci", "--pr", "7"],
+    ["--silent", "loop", "watch-ci", "--commit", "fixture-commit"],
+    "pending",
+    "pending",
+    ["loop", "watch-ci", "--repo", "owner/checkless-project", "--pr", "7", "--timeout-ms", "0"],
   ]);
+});
+
+test("Oxid PR CI adapter holds generic none through bounded registration and delegates real states", async () => {
+  let clock = 0;
+  const calls = [];
+  const responses = [
+    { ok: true, status: "success", settled: true, ciStatus: "none", headSha: "head-a", attempts: 2 },
+    { ok: true, status: "pending", settled: false, ciStatus: "pending", headSha: "head-a", attempts: 1 },
+    { ok: true, status: "success", settled: true, ciStatus: "success", headSha: "head-a", attempts: 2 },
+  ];
+  const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 4_000, pollIntervalMs: 1_000 }, {
+    watchCiStatus: async (options) => { calls.push(options); return responses.shift(); },
+    delayImpl: async (milliseconds) => { clock += milliseconds; },
+    now: () => clock,
+  });
+  assert.deepEqual(result, { ok: true, status: "success", settled: true, ciStatus: "success", headSha: "head-a", attempts: 2 });
+  assert.deepEqual(calls.map(({ timeoutMs }) => timeoutMs), [4_000, 0, 3_000]);
+});
+
+test("Oxid PR CI adapter bounds no-check polls and preserves changed and API-pending results", async (t) => {
+  await t.test("never turns a stable no-check PR green", async () => {
+    let clock = 0;
+    const calls = [];
+    const noChecks = (attempts) => ({ ok: true, status: "success", settled: true, ciStatus: "none", headSha: "head-a", attempts });
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 3_000, pollIntervalMs: 1_000 }, {
+      watchCiStatus: async (options) => { calls.push(options); return noChecks(calls.length === 1 ? 2 : 1); },
+      delayImpl: async (milliseconds) => { clock += milliseconds; },
+      now: () => clock,
+    });
+    assert.deepEqual(result, { ...noChecks(1), status: "timeout", settled: false, attempts: 4 });
+    assert.deepEqual(calls.map(({ timeoutMs }) => timeoutMs), [3_000, 0, 0]);
+  });
+
+  await t.test("a same-watch head change remains changed", async () => {
+    const upstreamChanged = { ok: true, status: "changed", settled: false, ciStatus: "none", headSha: "head-b", attempts: 2 };
+    assert.equal(await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 3_000, pollIntervalMs: 1_000 }, {
+      watchCiStatus: async () => upstreamChanged,
+    }), upstreamChanged);
+
+    let clock = 0;
+    const responses = [
+      { ok: true, status: "success", settled: true, ciStatus: "none", headSha: "head-a", attempts: 2 },
+      { ok: true, status: "success", settled: true, ciStatus: "none", headSha: "head-b", attempts: 1 },
+    ];
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 3_000, pollIntervalMs: 1_000 }, {
+      watchCiStatus: async () => responses.shift(),
+      delayImpl: async (milliseconds) => { clock += milliseconds; },
+      now: () => clock,
+    });
+    assert.equal(result.status, "changed");
+    assert.equal(result.settled, false);
+    assert.equal(result.headSha, "head-b");
+  });
+
+  await t.test("package API or parse results stay non-green without local reinterpretation", async () => {
+    const pending = { ok: true, status: "timeout", settled: false, ciStatus: "pending", headSha: "head-a", attempts: 4 };
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 3_000, pollIntervalMs: 1_000 }, {
+      watchCiStatus: async () => pending,
+      delayImpl: async () => { throw new Error("real states must not enter the compatibility wait"); },
+    });
+    assert.equal(result, pending);
+    await assert.rejects(watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 3_000, pollIntervalMs: 1_000 }, {
+      watchCiStatus: async () => { throw new Error("fixture API/parse failure"); },
+    }), /fixture API\/parse failure/);
+  });
 });
 
 test("repository wrappers await child close and preserve trailing output", async (t) => {
