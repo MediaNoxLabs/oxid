@@ -14,10 +14,10 @@ not.
 - One review agent is the routine default and one automatic review/fix round is
   the limit. A second opinion requires high risk, a disputed finding, or an
   explicit owner request.
-- Only one PR candidate is auto-driven remotely by each parent session. An
-  external supervisor should run Pi directly as the sole issue worker and stop
-  it before hosted CI. An interactive Pi operator may instead dispatch one
-  tracked child. Neither topology auto-resumes or launches a CI-only child.
+- Only one PR candidate is auto-driven remotely by each parent session. One
+  top-level `/dev-loop` invocation dispatches exactly one tracked implementation
+  child and stops after its pushed draft-PR checkpoint. It never auto-resumes
+  or launches review, pre-approval, or CI-only children.
 - Keep at most two active managed delivery worktrees per Git common checkout
   on a host. An experiment may use a temporary third worktree only when its
   owner and deletion date are recorded.
@@ -146,9 +146,9 @@ ledger and PR comment without blocking a clean verdict.
    records a justified no-demo impact. The inventory CLI is read-only; an
    explicit `/scenario prepare` request delegates bounded preparation to the
    active agent under the existing authority and resource-ownership rules.
-3. Run the draft gate for scope and correctness. It does not wait for hosted
-   CI. Repair blocking findings together. Record bounded non-critical findings
-   as linked follow-up issues instead of extending the current iteration.
+3. Keep draft review outside the implementation invocation. The persistent
+   supervisor owns focused review and any resulting explicit retry; no Pi child
+   chains into a reviewer.
 4. Run the target planner locally against the intended base and head:
 
    ```bash
@@ -160,15 +160,19 @@ ledger and PR comment without blocking a clean verdict.
      --delivery-profile production-ready
    ```
 
-5. Run the matching local gate, commit once, and push one coherent candidate.
-   Do not push after each finding; every push cancels CI and stales exact-head
-   evidence.
-6. Pre-approval runs one correctness/security review against that candidate and
-   waits for the protected contexts once. A bounded non-critical finding is
-   complete for this increment only when its follow-up issue and mapping comment
-   exist; a second automatic fix/review cycle is forbidden for advisory-only
-   findings. Post one current-head receipt with `review-triage.mjs`; a new head
-   invalidates it.
+5. Run focused pre-commit checks, commit once, then invoke the matching full
+   local gate through `scripts/loop/local-gate.mjs`. Its private exact-head
+   receipt is reused only when unchanged-head review/checkpoint logic supplies
+   the same planned command. Push one coherent
+   candidate and open the draft PR. Do not push after each finding; every push
+   cancels CI and stales exact-head evidence.
+6. The implementation child stops. The persistent supervisor runs one focused
+   correctness/security review and waits for protected contexts once. Reviewers
+   verify the producer receipt and never rerun its full gate on an unchanged
+   head. A bounded non-critical finding is complete for this increment only when
+   its follow-up issue and mapping comment exist; a second automatic fix/review
+   cycle is forbidden for advisory-only findings. Post one current-head receipt
+   with `review-triage.mjs`; a new head invalidates it.
 7. For a release-profile/high-risk change, an owner request, or a disputed finding, run
    the manually invoked current-head Claude review once after the last edit.
 8. Recheck current-head and delivery-base freshness. Use
@@ -306,9 +310,12 @@ acceptance; restoring or deleting an archive remains a separate owner action.
 
 ## Failure and cancellation rules
 
-- On cancellation, the owner of a spawned process group terminates its children
-  and escalates to `KILL` after a bounded grace period. Tests must put cleanup
-  in an exit trap, not only after the happy-path assertion.
+- On cancellation or bounded-drain failure, the owner of a spawned process group
+  terminates its descendants and escalates to `KILL` after a bounded grace
+  period. Reconciliation is complete only when every exact owned descendant is
+  terminal; otherwise preserve the branch/session and report owned process state
+  to the supervisor. Tests must put cleanup in an exit trap, not only after the
+  happy-path assertion.
 - A canceled hosted run is not a failed product gate. Inspect only the latest
   run for the current head.
 - A provider, transport, or pinned-runtime failure is not a code finding. Retry

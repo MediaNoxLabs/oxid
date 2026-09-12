@@ -64,6 +64,7 @@ run_repository() {
   node --test tests/repository/coverage-contract.test.mjs
   node --test tests/repository/worktree-lifecycle-contract.test.mjs
   node --test tests/repository/managed-child-process-contract.test.mjs
+  node --test tests/repository/supervised-delivery-contract.test.mjs
 }
 
 run_basic() {

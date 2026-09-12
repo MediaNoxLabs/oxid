@@ -19,22 +19,20 @@ The repository policy now defaults routine work to
 provider request at ten minutes, and makes compaction explicit. Tracked agents
 have role-sized wall-clock and tool budgets. The user-level subagent policy
 caps concurrency at two across independent Pi parents, permits exactly one
-child launch in each parent session/run, limits each child to 60 tool calls
-with a soft nudge at 40, retains recursion at two levels for one bounded
-reviewer, and reports child usage against an 80k soft / 120k hard token
+implementation-child launch in each parent session/run, limits each child to 60
+tool calls with a soft nudge at 40, disables nested dispatch in the tracked
+child manifest, and reports child usage against an 80k soft / 120k hard token
 envelope. The package's token ceiling gates later launches but does not
 interrupt an active model response, so the one-child rule, tool budget, and
 wall-clock deadline are the enforceable stop controls. Async execution requires
 an explicit request. Tune these starting bounds only from retained metrics.
 
-The first supervised product runs established a cheaper default topology:
-external supervisors invoke Pi directly as the sole issue worker. A nested
-parent and child both loaded the repository contract and one 25-turn child
-reached its ceiling before editing; the equivalent direct worker reached the
-implementation. Terra completed routine repository changes more reliably than
-Luna, while Sol was useful but materially more expensive. The tracked default
-therefore stays Terra; Sol requires a concrete hard-reasoning need and Luna is
-limited to bounded scouting or small documentation work.
+The tracked topology now makes the one dispatched `dev-loop` child the sole
+implementation worker. It exposes editing tools directly and cannot chain into
+review/pre-approval children. Terra completed routine repository changes more
+reliably than Luna, while Sol was useful but materially more expensive. The
+tracked default therefore stays Terra; Sol requires a concrete hard-reasoning
+need and Luna is limited to bounded scouting or small documentation work.
 
 Agent budget frontmatter intentionally uses a small machine-readable grammar:
 `timeoutMs` and `maxSubagentDepth` are top-level integers, while `toolBudget` is

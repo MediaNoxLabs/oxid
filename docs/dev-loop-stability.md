@@ -59,10 +59,10 @@ uses the pinned Pi runtime's public `getAllTools()`, `getActiveTools()`, and
 `before_agent_start.systemPromptOptions.selectedTools` contracts. It validates
 the selected agent against that agent's active tools, root execution against
 all configured tools, and future child manifests against Pi's documented child
-built-ins plus registered extension tools. A selected read/bash/subagent
-`dev-loop` therefore does not make `edit` and `write` unavailable to future
-implementation children. Unsupported aliases such as `search`, `execute`, and
-`web_search` still fail closed.
+built-ins plus registered extension tools. The selected `dev-loop` is now the
+single implementation child: its manifest exposes `edit` and `write` directly
+and deliberately omits `subagent`. Unsupported aliases such as `search`,
+`execute`, and `web_search` still fail closed.
 
 The bounded, dependency-free parser reads `name` and `tools` in each installed
 pinned package's top-level `agents/*.agent.md` manifests plus repository-local
@@ -151,9 +151,10 @@ identity, no-check handling, head bracketing, heartbeat/ownership, and global
 output-option semantics.
 
 `.devloops` sets `maxCopilotRounds: 0`, caps automatic gate review at two
-concurrent reviewers, and stops low-signal refinement. Independent external
-review is an explicit high-risk or owner-requested action rather than a
-mandatory angle repeated at both gates. Contradictory aggregate loop-info is a
+concurrent reviewers, and stops low-signal refinement. The implementation child
+does not run those reviewers; the persistent supervisor owns focused review.
+Independent external review is an explicit high-risk or owner-requested action.
+Contradictory aggregate loop-info is a
 pinned upstream residual. For a draft PR, the pinned gate coordinator remains
 the authority: when it explicitly permits `run_draft_gate` under
 `requireCi: false`, continue bounded review and keep the PR draft. Stop and
@@ -161,11 +162,14 @@ obtain a consistent authoritative state for every other contradiction rather
 than overriding the pinned coordinator locally.
 
 There is no gate-evidence repair command. The sanctioned response to incomplete
-inline evidence is stop, preserve findings, and re-draft/re-run the canonical
-lifecycle. Canonical parser, findings ledger, reviewer identity, mandatory
-angles, artifact hashing, and lifecycle coordination remain pinned-tooling
-responsibilities; comment-only repair is unsupported and must not be described
-as an upgraded gate.
+inline evidence is stop and preserve findings. The producer's full local gate
+runs through `scripts/loop/local-gate.mjs`, which writes a private receipt bound
+to the clean head, delivery-base OID, gate id, and command digest. An unchanged-
+head reviewer verifies that receipt against the same planned command and performs focused review rather than
+rerunning the full gate. Canonical parser, findings ledger, reviewer identity,
+mandatory angles, artifact hashing, and lifecycle coordination remain pinned-
+tooling responsibilities; comment-only repair is unsupported and must not be
+described as an upgraded gate.
 
 ## Local wrapper performance
 

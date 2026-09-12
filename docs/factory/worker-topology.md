@@ -16,7 +16,7 @@ are the shared coordination plane; a local process or filesystem is not.
 | Git common checkout on one host | Two active managed delivery worktrees | This is a disk and local-compute admission bound, not a repository-wide queue. A second clone has its own bound and cache accounting. |
 | Parent Pi session | One remotely driven candidate | `.devloops` `queue.maxParallel: 1` limits one conductor. It does not prohibit another parent session working another issue. |
 | Issue worktree | One mutating parent session | Never attach two writers to one worktree, branch, target directory, or session file. Extra sessions may inspect through read-only tools. |
-| Sub-agent run | Two concurrent children, eight spawns | The user-level policy is installed independently on every host and applies inside that Pi process. |
+| Sub-agent run | One implementation child, no nested dispatch | The user-level policy is installed independently on every host and applies inside that Pi process. |
 
 Branch names are globally unique issue identities: `<type>/issue-<number>`. Two
 workers must not create different implementations for the same issue unless a
@@ -100,13 +100,14 @@ cloud worker can overwrite. Factory, harness, CI, documentation, dependency,
 and governance sessions select `origin/develop`; product sessions select the
 one milestone recorded by their work item.
 
-An external supervisor normally launches Pi directly as the one issue worker;
-that Pi process must not launch a nested child. An interactive human-owned Pi
-session may instead launch exactly one tracked child and return at that child's
-terminal checkpoint. The external supervisor watches hosted CI and owns review
-triage, merge, metrics, cleanup, and any explicit retry. These operations never
-justify an automatic continuation child or a fresh hidden budget inside the
-original invocation.
+A top-level `/dev-loop` invocation launches exactly one tracked implementation
+child. That child owns the issue worktree only through focused validation,
+signed commit, exact-head local gate, push, and draft PR, then stops without
+nested dispatch. The external supervisor watches hosted CI and owns focused
+review, triage, merge, metrics, cleanup, and any explicit retry. Resume first
+inspects the preserved branch/session/receipt; these operations never justify an
+automatic continuation child or a fresh hidden budget inside the original
+invocation.
 
 ## Cloud workers
 
