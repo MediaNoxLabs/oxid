@@ -2,6 +2,7 @@
 
 import { setTimeout as delay } from "node:timers/promises";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 
 import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
@@ -33,7 +34,7 @@ export async function watchOxidPrCiStatus(
   {
     watchCiStatus,
     delayImpl = delay,
-    now = Date.now,
+    now = performance.now.bind(performance),
     ...watchDependencies
   },
 ) {
