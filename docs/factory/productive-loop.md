@@ -221,6 +221,13 @@ linked worktrees. A running Pi process must be restarted after `.pi/`,
 `.devloops`, or package-pin changes because already-loaded instructions and
 extensions do not update in place.
 
+That shared-package location does not make the common checkout an executable
+policy root. Every worker resolves `git rev-parse --show-toplevel` in its
+current directory and runs tracked preflight, routing, and validation scripts
+from that active worktree. `--git-common-dir` is used only for topology and
+shared private storage; a stale primary checkout must never replace the active
+worktree's tracked policy.
+
 Rust targets stay worktree-local. Compilation is reused through one bounded 10 GiB
 `sccache`, so an old target can be deleted without paying the entire historical
 compile cost again.
