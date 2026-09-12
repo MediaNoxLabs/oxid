@@ -16,6 +16,8 @@ import {
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
+import { cleanupPiPackageClosures } from "./lib/dev-loop-runtime.mjs";
+
 function git(root, args, options = {}) {
   return execFileSync("git", ["-C", root, ...args], {
     encoding: "utf8",
@@ -495,7 +497,24 @@ function pullRequestForCloseout(root, prNumber) {
   return JSON.parse(output);
 }
 
-function main(argv = process.argv.slice(2)) {
+export async function cleanupPiPackagesAfterWorktreeRemoval(root, { cleanup = cleanupPiPackageClosures } = {}) {
+  try {
+    const result = await cleanup({ cwd: root });
+    return {
+      status: result.cleanupBlocked ? "blocked" : "completed",
+      closures: result.closures.length,
+      referenced: result.referenced.length,
+      removed: result.removed,
+      reclaimedStaging: result.reclaimedStaging,
+      reclaimedLocks: result.reclaimedLocks,
+    };
+  } catch (error) {
+    // The exact worktree removal already succeeded; retain its receipt and report cleanup separately.
+    return { status: "failed", error: error.message };
+  }
+}
+
+async function main(argv = process.argv.slice(2)) {
   const command = argv[0] ?? "audit";
   const root = git(process.cwd(), ["worktree", "list", "--porcelain"])
     .split("\n").find((line) => line.startsWith("worktree ")).slice("worktree ".length);
@@ -520,6 +539,7 @@ function main(argv = process.argv.slice(2)) {
     });
     if (reason) throw new Error(`refusing PR closeout: ${reason}`);
     execFileSync("git", ["-C", root, "worktree", "remove", "--", item.worktree], { stdio: "inherit" });
+    const packageClosureCleanup = await cleanupPiPackagesAfterWorktreeRemoval(root);
     process.stdout.write(`${JSON.stringify({
       closedOut: true,
       pr: prNumber,
@@ -527,6 +547,7 @@ function main(argv = process.argv.slice(2)) {
       head: item.head,
       branch: item.branch,
       mergedAt: pullRequest.mergedAt,
+      packageClosureCleanup,
     })}\n`);
     return;
   }
@@ -577,10 +598,8 @@ function main(argv = process.argv.slice(2)) {
 }
 
 if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
-  try {
-    main();
-  } catch (error) {
+  main().catch((error) => {
     process.stderr.write(`[worktree-lifecycle] ${error.message}\n`);
     process.exitCode = 1;
-  }
+  });
 }

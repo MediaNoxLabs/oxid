@@ -237,6 +237,18 @@ worktrees, and all unavailable or mismatched evidence. Other Codex Desktop and
 Pi sessions may retain their worktrees; their mere presence or age is not
 cleanup authority.
 
+After a successful exact closeout, the receipt reports a bounded best-effort Pi
+package-closure cleanup. It removes only unreferenced age-eligible closures and
+stale interrupted state; a live same-host package installer lock is preserved.
+A blocked or failed package cleanup is reported in `packageClosureCleanup` and
+does not undo the already successful worktree closeout. Audit or explicitly
+request that cleanup before closeout when needed:
+
+```bash
+node scripts/factory/pi-package-closures.mjs audit
+node scripts/factory/pi-package-closures.mjs cleanup --execute
+```
+
 Mutation is intentionally awkward and single-target. It requires an exact
 registered path, the expected head, and `--execute`. Worktree removal also
 requires a clean head already integrated into its recorded milestone or

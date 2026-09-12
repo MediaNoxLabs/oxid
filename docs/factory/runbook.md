@@ -31,28 +31,35 @@ remain authoritative, while `scripts/dev-loops.mjs` provides the deterministic
 CLI surface. The shell smoke hashes the agent shadows around a real offline Pi
 startup and fails if any package mutates them.
 
-The devshell's `shellHook` reads `.pi/settings.json`, compares each exact pin
-against the common checkout's `.pi/npm/node_modules/<pkg>/package.json`, and
-installs only what is missing or mismatched. Linked worktrees reuse that one
-installation through one topology-checked `.pi/npm` link instead of creating a
-second mutable package tree each. A pre-existing real directory or foreign link
-is rejected for manual inspection, never deleted by shell entry. CI skips Pi
-tooling entirely. The private review package is skipped with a printed notice
-when no token is present, so the shell still works without one.
+The devshell's `shellHook` reads `.pi/settings.json`, derives a stable identity
+from the complete ordered package configuration, and resolves this checkout to
+the matching content-addressed closure beneath Git-common private state. A
+missing closure is assembled in a unique staging directory, validated against
+every exact pin, and atomically published. Linked worktrees can therefore use
+different tracked package versions without rewriting each other's dependencies.
+A pre-existing primary-checkout package tree is migrated only after validation;
+a real package tree in a linked worktree or a foreign symlink fails closed for
+manual inspection. CI skips Pi tooling entirely.
+
 After exact-pin reconciliation, shell entry defaults Pi startup to offline mode;
-this prevents Pi's own package manager from racing the common-store authority or
-retrying a missing optional package. Explicit package maintenance may unset it.
+this prevents Pi's own package manager from racing the closure authority. A
+fresh closure includes the private review package and therefore requires a
+GitHub Packages credential. An already validated matching closure can be reused
+offline without another registry request. Explicit package maintenance may
+unset offline mode.
 
 **To get the review package**, export a GitHub token with `read:packages`
-before entering the shell — `GITHUB_TOKEN`, `GH_TOKEN`, or `GH_TOKENS` are all
-accepted, in that order of preference:
+before the first closure installation — `GITHUB_TOKEN`, `GH_TOKEN`, or
+`GH_TOKENS` are accepted, in that order of preference:
 
 ```bash
 export GH_TOKEN="$(gh auth token)"   # if your gh login carries read:packages
 ./bootstrap.sh
 ```
 
-Never write that token into repository configuration or diagnostics.
+Never write that token into repository configuration, closure markers, or
+diagnostics. GitHub Packages requires authentication even when package metadata
+is otherwise visible through a credentialed local npm configuration.
 
 `agent-review-pi@0.6.0` fixes its bundled skill metadata. The smoke requires its
 complete explicit `typebox@1.3.9` and `pi-taskflow@0.2.10` peer closure, all 13
