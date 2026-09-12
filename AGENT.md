@@ -47,6 +47,11 @@ index points to it; it is not a required read for unrelated work.
   authoritative.
 - Do not push, merge, change repository settings, accept an ADR, tag, or release
   without the authority required by the active user request.
+- The active issue-backed delivery authority permits tracked writes only in this
+  repository. Before any write outside the active repository—including an
+  external issue, PR, comment, label, release, package publication, or other repository
+  writes—obtain explicit owner or supervisor approval. Draft a suggested
+  external report locally for the supervisor; never publish it directly.
 
 See [issue-branch delivery](docs/issue-branch-delivery.md) for branch protection,
 freshness, and exact required contexts.
@@ -88,7 +93,9 @@ Follow [the productive loop](docs/factory/productive-loop.md):
 - An external supervisor starts Pi itself as the sole issue worker. Give that
   direct worker one canonical worktree, one issue, the acceptance profile, and
   a stop-before-CI checkpoint; do not ask it to launch another agent. This
-  avoids paying twice to load the repository contract.
+  avoids paying twice to load the repository contract. The supervisor must
+  explicitly approve any write outside the active repository; issue-backed
+  Oxid delivery authority does not extend to external repositories.
 - A human working interactively inside Pi may dispatch the tracked `dev-loop`
   agent through `pi-subagents`. Never wrap `/dev-loop` in `taskflow`. That
   top-level invocation launches exactly one child and exits after its terminal

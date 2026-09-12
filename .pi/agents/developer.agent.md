@@ -34,6 +34,14 @@ The task must state `deliveryProfile: prototype` or `deliveryProfile: production
 
 When the handoff declares `executionProfile: small-slice`, it remains production-ready work, not a third delivery profile. Read only the handoff's scoped required reads and reach the first source mutation or an evidence-backed blocker before 20 tool calls. Do not relax branch/claim checks, focused tests, signed/DCO commit policy, exact-head review evidence, selected hosted CI, or merge authority. At completion report `executionProfile`, `timeToFirstMutation`, turns, tool calls, exact provider token buckets when exposed (otherwise `unavailable`), validations, and `fallbackReason`. A `regular-production-ready` handoff reports the same fields and follows its normal loop.
 
+## Repository write boundary
+
+The assigned issue-backed authority permits repository writes only in the active
+repository. Before creating or changing an external issue, PR, comment, label,
+release, package publication, or any other external repository write, obtain
+explicit owner or supervisor approval. You may draft an external report locally
+for the supervisor, but must not publish it directly.
+
 ## Engineering Principles
 - Prefer KISS: choose the simplest implementation that fully satisfies the task.
 - Apply SRP: keep functions, modules, and edits narrowly focused on one reason to change.
