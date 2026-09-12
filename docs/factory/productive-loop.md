@@ -160,12 +160,19 @@ ledger and PR comment without blocking a clean verdict.
      --delivery-profile production-ready
    ```
 
-5. Run focused pre-commit checks, commit once, then invoke the matching full
-   local gate through `scripts/loop/local-gate.mjs`. Its private exact-head
-   receipt is reused only when unchanged-head review/checkpoint logic supplies
-   the same planned command. Push one coherent
-   candidate and open the draft PR. Do not push after each finding; every push
-   cancels CI and stales exact-head evidence.
+5. Run focused pre-commit checks, commit once, then create exactly one
+   post-commit canonical change-relevant L0 receipt with `node
+   scripts/loop/local-gate.mjs run --delivery-base "$delivery_base" --gate-id
+   production-ready`. The immutable repository-owned gate derives its command
+   from `scripts/ci/target-plan.mjs` for HEAD versus the recorded delivery base:
+   non-Rust runs `./run.sh repository --strict`; Rust runs `./run.sh basic
+   --strict`, including repository contracts. Do not supply a command: arbitrary
+   or focused commands are rejected. Do not run a pre-commit full gate plus a
+   second full receipt. An unchanged-head review/checkpoint verifies the same
+   gate ID without a command. Hosted CI owns wider affected unit, headless, UI,
+   coverage, and Nix fan-out. Push one coherent candidate and open the draft PR.
+   Do not push after each finding; every push cancels CI and stales exact-head
+   evidence.
 6. The implementation child stops. The persistent supervisor runs one focused
    correctness/security review and waits for protected contexts once. Reviewers
    verify the producer receipt and never rerun its full gate on an unchanged

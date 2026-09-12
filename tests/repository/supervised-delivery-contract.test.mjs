@@ -21,6 +21,20 @@ function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
+function targetPlan(rustChanged) {
+  return () => ({
+    paths: ["scripts/loop/local-gate.mjs"],
+    plan: {
+      areas: ["harness"],
+      deliveryProfile: "production-ready",
+      diffAvailable: true,
+      profile: "feature",
+      rustChanged,
+      targets: ["basic"],
+    },
+  });
+}
+
 async function gateFixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), "oxid-local-gate-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -64,14 +78,16 @@ test("the production-ready Pi contract has one non-delegating implementation chi
     terminalCheckpoint: ["headSha", "validationReceipt", "workerMetrics", "remainingRisks"],
   });
   assert.match(agent, /never silently creates another phase child/u);
-  assert.match(agent, /Later review\/checkpoint logic invokes `verify` with the same planned command, not the full command/u);
+  assert.match(agent, /exactly one post-commit\s+canonical, change-relevant L0 receipt/u);
+  assert.match(agent, /non-Rust\nplan runs `\.\/run\.sh repository --strict`; a Rust plan runs `\.\/run\.sh basic/u);
 });
 
-test("the issue 449 sequence runs one full local gate and reuses its exact-head receipt", async (t) => {
+test("the production-ready sequence runs one canonical non-Rust receipt and reuses it", async (t) => {
   const { root, head } = await gateFixture(t);
-  const command = ["just", "check"];
+  const command = ["./run.sh", "repository", "--strict"];
   let fullGateStarts = 0;
-  const runChild = async () => {
+  const runChild = async (file, args) => {
+    assert.deepEqual([file, ...args], command);
     fullGateStarts += 1;
     return 0;
   };
@@ -86,9 +102,9 @@ test("the issue 449 sequence runs one full local gate and reuses its exact-head 
     cwd: root,
     deliveryBase: "origin/develop",
     gateId: "production-ready",
-    command,
     runChild,
     now,
+    resolvePlan: targetPlan(false),
   });
   assert.equal(implementation.action, "ran");
   assert.equal(implementation.receipt.headSha, head);
@@ -98,15 +114,15 @@ test("the issue 449 sequence runs one full local gate and reuses its exact-head 
     cwd: root,
     deliveryBase: "origin/develop",
     gateId: "production-ready",
-    command,
+    resolvePlan: targetPlan(false),
   });
   const preApproval = await runLocalGate({
     cwd: root,
     deliveryBase: "origin/develop",
     gateId: "production-ready",
-    command,
     runChild,
     now,
+    resolvePlan: targetPlan(false),
   });
   assert.equal(reviewer.action, "verified");
   assert.equal(preApproval.action, "reused");
@@ -122,10 +138,11 @@ test("the issue 449 sequence runs one full local gate and reuses its exact-head 
       cwd: root,
       deliveryBase: "origin/develop",
       gateId: "production-ready",
-      command: ["env", "OXID_COVERAGE_BASE=origin/develop", "just", "check"],
+      command: ["just", "check"],
       runChild,
+      resolvePlan: targetPlan(false),
     }),
-    /commandDigest does not match/u,
+    /immutable repository-owned command/u,
   );
   assert.equal(fullGateStarts, 1, "a mismatched unchanged-head gate must stop instead of rerunning");
   await assert.rejects(
@@ -134,8 +151,37 @@ test("the issue 449 sequence runs one full local gate and reuses its exact-head 
       deliveryBase: "origin/develop",
       gateId: "production-ready",
       command: ["true"],
+      resolvePlan: targetPlan(false),
     }),
-    /commandDigest does not match/u,
+    /immutable repository-owned command/u,
+  );
+});
+
+test("production-ready runs the Rust-safe basic target and fails closed for an invalid plan", async (t) => {
+  const { root } = await gateFixture(t);
+  let command;
+  const result = await runLocalGate({
+    cwd: root,
+    deliveryBase: "origin/develop",
+    gateId: "production-ready",
+    runChild: async (file, args) => { command = [file, ...args]; return 0; },
+    resolvePlan: targetPlan(true),
+  });
+  assert.equal(result.action, "ran");
+  assert.deepEqual(command, ["./run.sh", "basic", "--strict"]);
+
+  await assert.rejects(
+    runLocalGate({
+      cwd: root,
+      deliveryBase: "origin/develop",
+      gateId: "production-ready",
+      runChild: async () => 0,
+      resolvePlan: () => ({
+        paths: ["scripts/loop/local-gate.mjs"],
+        plan: { diffAvailable: true, rustChanged: "true" },
+      }),
+    }),
+    /available, well-formed target plan/u,
   );
 });
 
@@ -150,8 +196,8 @@ test("resume-first refuses an in-flight unchanged-head gate instead of launching
       cwd: root,
       deliveryBase: "origin/develop",
       gateId: "production-ready",
-      command: ["just", "check"],
       runChild: async () => { starts += 1; return 0; },
+      resolvePlan: targetPlan(false),
     }),
     /reconcile it instead of launching a replacement/u,
   );

@@ -410,7 +410,7 @@ function githubOutput(plan) {
   return `${lines.join("\n")}\n`;
 }
 
-export function run(argv = process.argv.slice(2), { cwd = process.cwd(), stdout = process.stdout } = {}) {
+export function resolveTargetPlan(argv = [], { cwd = process.cwd() } = {}) {
   const profile = resolveProfile(
     readOption(argv, "--profile") ?? "auto",
     readOption(argv, "--event"),
@@ -422,14 +422,21 @@ export function run(argv = process.argv.slice(2), { cwd = process.cwd(), stdout 
   const base = readOption(argv, "--base");
   const head = readOption(argv, "--head");
   const paths = changedPaths(base, head, cwd);
-  const plan = makeTargetPlan(paths ?? [], {
-    profile,
-    deliveryProfile,
-    extraTargets: parseTargets(readOption(argv, "--targets")),
-    ownershipAreas: paths ? ownershipMapAreas(paths, base, head, cwd) : undefined,
-    eventName: readOption(argv, "--event"),
-    pullRequestDraft: parseBoolean(readOption(argv, "--pr-draft"), "--pr-draft"),
-  });
+  return {
+    paths,
+    plan: makeTargetPlan(paths ?? [], {
+      profile,
+      deliveryProfile,
+      extraTargets: parseTargets(readOption(argv, "--targets")),
+      ownershipAreas: paths ? ownershipMapAreas(paths, base, head, cwd) : undefined,
+      eventName: readOption(argv, "--event"),
+      pullRequestDraft: parseBoolean(readOption(argv, "--pr-draft"), "--pr-draft"),
+    }),
+  };
+}
+
+export function run(argv = process.argv.slice(2), { cwd = process.cwd(), stdout = process.stdout } = {}) {
+  const { plan } = resolveTargetPlan(argv, { cwd });
   const format = readOption(argv, "--format") ?? "summary";
 
   if (format === "github") stdout.write(githubOutput(plan));

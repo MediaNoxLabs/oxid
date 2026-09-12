@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
+import { resolveTargetPlan } from "../ci/target-plan.mjs";
 import { runManagedChild } from "../lib/managed-child-process.mjs";
 
 export const LOCAL_GATE_SCHEMA = "oxid-local-gate-v1";
@@ -19,6 +20,38 @@ const RECEIPT_KEYS = Object.freeze([
   "schema", "headSha", "deliveryBase", "deliveryBaseOid", "gateId",
   "commandDigest", "durationMs", "completedAt", "outcome",
 ]);
+function assertProductionReadyPlan(result) {
+  const planKeys = ["areas", "deliveryProfile", "diffAvailable", "profile", "rustChanged", "targets"];
+  const plan = result?.plan;
+  if (!result || typeof result !== "object"
+    || !Array.isArray(result.paths) || result.paths.length === 0
+    || result.paths.some((value) => typeof value !== "string" || value.length === 0)
+    || !plan || typeof plan !== "object" || Array.isArray(plan)
+    || JSON.stringify(Object.keys(plan).sort()) !== JSON.stringify(planKeys)
+    || plan.deliveryProfile !== "production-ready" || typeof plan.profile !== "string"
+    || plan.diffAvailable !== true || typeof plan.rustChanged !== "boolean"
+    || !Array.isArray(plan.areas) || !Array.isArray(plan.targets)) {
+    throw new Error("production-ready local gate requires an available, well-formed target plan");
+  }
+  return plan;
+}
+
+export function resolveProductionReadyGateCommand({
+  cwd, deliveryBase, headSha, resolvePlan = resolveTargetPlan,
+}) {
+  let result;
+  try {
+    result = resolvePlan([
+      "--base", deliveryBase,
+      "--head", headSha,
+      "--delivery-profile", "production-ready",
+    ], { cwd });
+  } catch (error) {
+    throw new Error("production-ready local gate could not resolve its target plan", { cause: error });
+  }
+  const plan = assertProductionReadyPlan(result);
+  return ["./run.sh", plan.rustChanged ? "basic" : "repository", "--strict"];
+}
 
 function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -37,6 +70,19 @@ function assertGateIdentity({ headSha, deliveryBase, deliveryBaseOid, gateId, co
   if (!HEAD.test(deliveryBaseOid ?? "")) throw new Error("local gate delivery-base OID is malformed");
   if (!GATE_ID.test(gateId ?? "")) throw new Error("local gate id is malformed");
   if (commandDigest !== undefined && !DIGEST.test(commandDigest ?? "")) throw new Error("local gate command digest is malformed");
+}
+
+function resolveGateCommand({ state, deliveryBase, gateId, command, resolvePlan }) {
+  if (gateId !== "production-ready") return command;
+  if (command.length !== 0) {
+    throw new Error("production-ready local gate chooses its immutable repository-owned command; do not supply one");
+  }
+  return resolveProductionReadyGateCommand({
+    cwd: state.root,
+    deliveryBase,
+    headSha: state.headSha,
+    resolvePlan,
+  });
 }
 
 export function digestGateCommand(command) {
@@ -131,17 +177,20 @@ function assertCleanState(state) {
   if (state.dirty) throw new Error("local gate requires a clean checkout so evidence binds the exact head");
 }
 
-export async function verifyLocalGate({ cwd = process.cwd(), deliveryBase, gateId, command }) {
-  const commandDigest = digestGateCommand(command);
+export async function verifyLocalGate({
+  cwd = process.cwd(), deliveryBase, gateId, command = [], resolvePlan = resolveTargetPlan,
+}) {
+  const state = inspectCheckout(cwd, deliveryBase);
+  assertCleanState(state);
+  const resolvedCommand = resolveGateCommand({ state, deliveryBase, gateId, command, resolvePlan });
+  const commandDigest = digestGateCommand(resolvedCommand);
   assertGateIdentity({
-    headSha: "0".repeat(40),
+    headSha: state.headSha,
     deliveryBase,
-    deliveryBaseOid: "0".repeat(40),
+    deliveryBaseOid: state.deliveryBaseOid,
     gateId,
     commandDigest,
   });
-  const state = inspectCheckout(cwd, deliveryBase);
-  assertCleanState(state);
   const paths = gatePaths(state.commonDir, state.headSha, gateId);
   const receipt = await readReceipt(paths.receipt);
   if (!receipt) throw new Error(`no local gate receipt exists for ${gateId} at ${state.headSha}`);
@@ -156,13 +205,20 @@ export async function verifyLocalGate({ cwd = process.cwd(), deliveryBase, gateI
 }
 
 export async function runLocalGate({
-  cwd = process.cwd(), deliveryBase, gateId, command,
-  runChild = runManagedChild, now = () => Date.now(),
+  cwd = process.cwd(), deliveryBase, gateId, command = [],
+  runChild = runManagedChild, now = () => Date.now(), resolvePlan = resolveTargetPlan,
 }) {
-  const commandDigest = digestGateCommand(command);
-  assertGateIdentity({ headSha: "0".repeat(40), deliveryBase, deliveryBaseOid: "0".repeat(40), gateId, commandDigest });
   const before = inspectCheckout(cwd, deliveryBase);
   assertCleanState(before);
+  const resolvedCommand = resolveGateCommand({ state: before, deliveryBase, gateId, command, resolvePlan });
+  const commandDigest = digestGateCommand(resolvedCommand);
+  assertGateIdentity({
+    headSha: before.headSha,
+    deliveryBase,
+    deliveryBaseOid: before.deliveryBaseOid,
+    gateId,
+    commandDigest,
+  });
   const paths = gatePaths(before.commonDir, before.headSha, gateId);
   await mkdir(paths.directory, { recursive: true, mode: 0o700 });
   await chmod(paths.directory, 0o700);
@@ -194,7 +250,7 @@ export async function runLocalGate({
       gateId,
     });
     const startedAt = now();
-    const exitCode = await runChild(command[0], command.slice(1), {
+    const exitCode = await runChild(resolvedCommand[0], resolvedCommand.slice(1), {
       cwd: before.root,
       env: process.env,
       label: `local gate ${gateId}`,
@@ -241,11 +297,14 @@ function parseCli(argv) {
 }
 
 const USAGE = `Usage:
-  node scripts/loop/local-gate.mjs run --delivery-base origin/<target> --gate-id <id> -- <command> [args...]
-  node scripts/loop/local-gate.mjs verify --delivery-base origin/<target> --gate-id <id> -- <command> [args...]
+  node scripts/loop/local-gate.mjs run --delivery-base origin/<target> --gate-id production-ready
+  node scripts/loop/local-gate.mjs verify --delivery-base origin/<target> --gate-id production-ready
+  node scripts/loop/local-gate.mjs <run|verify> --delivery-base origin/<target> --gate-id <id> -- <command> [args...]
 
-A successful run writes one private exact-head receipt. Repeating the same run
-reuses it without launching a child; an in-flight or mismatched receipt stops.`;
+The production-ready gate chooses its immutable repository-owned command from
+the HEAD-versus-delivery-base target plan. A successful run writes one private
+exact-head receipt. Repeating the same run reuses it without launching a child;
+an in-flight or mismatched receipt stops.`;
 
 export async function runCli(argv = process.argv.slice(2), { cwd = process.cwd(), stdout = process.stdout } = {}) {
   const { operation, values, command } = parseCli(argv);
@@ -256,10 +315,10 @@ export async function runCli(argv = process.argv.slice(2), { cwd = process.cwd()
   if (!values["delivery-base"] || !values["gate-id"]) throw new Error("local gate requires --delivery-base and --gate-id");
   let result;
   if (operation === "run") {
-    if (command.length === 0) throw new Error("local gate run requires a command after --");
+    if (values["gate-id"] !== "production-ready" && command.length === 0) throw new Error("local gate run requires a command after --");
     result = await runLocalGate({ cwd, deliveryBase: values["delivery-base"], gateId: values["gate-id"], command });
   } else if (operation === "verify") {
-    if (command.length === 0) throw new Error("local gate verify requires the expected command after --");
+    if (values["gate-id"] !== "production-ready" && command.length === 0) throw new Error("local gate verify requires the expected command after --");
     result = await verifyLocalGate({
       cwd,
       deliveryBase: values["delivery-base"],

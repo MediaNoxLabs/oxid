@@ -114,11 +114,23 @@ facts, then publishes the validated exact-head metrics receipt. A follow-up
 invocation is a new measured supervisor decision, not an internal continuation
 of the original budget.
 
-After committing and before push, invoke the full local gate only through
-`node scripts/loop/local-gate.mjs run --delivery-base <target> --gate-id production-ready -- <planned-command>`. It writes one private receipt bound to the exact clean head, delivery-base OID, gate id, and command digest. Later review/checkpoint logic invokes `verify` with the same planned command, not the full command. A matching repeated `run` returns `action: "reused"`; an in-flight or mismatched record stops rather than launching a replacement.
+Run focused pre-commit checks, commit once, then create exactly one post-commit
+canonical, change-relevant L0 receipt before push through `node
+scripts/loop/local-gate.mjs run --delivery-base <target> --gate-id
+production-ready`. This immutable repository-owned entrypoint compares HEAD
+with the recorded delivery base using `scripts/ci/target-plan.mjs`: a non-Rust
+plan runs `./run.sh repository --strict`; a Rust plan runs `./run.sh basic
+--strict`, which includes repository contracts. Do not supply a command after
+`--` for this gate ID: arbitrary and focused commands are rejected. The receipt
+binds the exact clean head, delivery-base OID, gate id, and resolved command
+digest. Later review/checkpoint logic invokes `verify` with the same gate ID and
+no command. A matching repeated `run` returns `action: "reused"`; an in-flight
+or mismatched record stops rather than launching a replacement. Never run a
+pre-commit full gate plus another full receipt. Hosted CI, not this local
+receipt, owns the wider affected unit, headless, UI, coverage, and Nix fan-out.
 
-Oxid is a Rust/Cargo workspace without a root `package.json`. Validation MUST
-use the handoff envelope's target plan and its sanctioned Cargo, Just, Nix, or
+Oxid is a Rust/Cargo workspace without a root `package.json`. Prototype and
+focused checks use only the handoff envelope's sanctioned Cargo, Just, Nix, or
 focused platform commands. Never substitute `npm run verify` or another
 ecosystem-generic command that is absent from the repository.
 

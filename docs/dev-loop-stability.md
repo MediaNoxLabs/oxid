@@ -162,11 +162,15 @@ obtain a consistent authoritative state for every other contradiction rather
 than overriding the pinned coordinator locally.
 
 There is no gate-evidence repair command. The sanctioned response to incomplete
-inline evidence is stop and preserve findings. The producer's full local gate
-runs through `scripts/loop/local-gate.mjs`, which writes a private receipt bound
-to the clean head, delivery-base OID, gate id, and command digest. An unchanged-
-head reviewer verifies that receipt against the same planned command and performs focused review rather than
-rerunning the full gate. Canonical parser, findings ledger, reviewer identity,
+inline evidence is stop and preserve findings. After focused pre-commit checks
+and one commit, the producer creates exactly one post-commit canonical
+change-relevant L0 receipt through `scripts/loop/local-gate.mjs`. For
+`production-ready`, it derives the immutable command from the HEAD-versus-
+recorded-base target plan: non-Rust uses `./run.sh repository --strict`; Rust
+uses `./run.sh basic --strict`. An unchanged-head reviewer verifies that receipt
+by gate ID without supplying a command and performs focused review rather than
+rerunning the full gate; hosted CI owns the wider fan-out. Canonical parser,
+findings ledger, reviewer identity,
 mandatory angles, artifact hashing, and lifecycle coordination remain pinned-
 tooling responsibilities; comment-only repair is unsupported and must not be
 described as an upgraded gate.
