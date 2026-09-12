@@ -192,16 +192,16 @@ async function makeFixture() {
 test("Pi closure identities cover ordered exact package configuration", () => {
   const base = { packages: [
     { source: "npm:dev-loops@1.0.2", extensions: [] },
-    "npm:pi-subagents@0.66.0",
+    "npm:pi-subagents@0.67.0",
   ] };
   const reordered = { packages: [...base.packages].reverse() };
   const changedResourcePolicy = { packages: [
     { extensions: ["./extension.mjs"], source: "npm:dev-loops@1.0.2" },
-    "npm:pi-subagents@0.66.0",
+    "npm:pi-subagents@0.67.0",
   ] };
   assert.equal(piPackageClosureIdentity(base).identity, piPackageClosureIdentity({ packages: [
     { extensions: [], source: "npm:dev-loops@1.0.2" },
-    "npm:pi-subagents@0.66.0",
+    "npm:pi-subagents@0.67.0",
   ] }).identity, "object key order is not closure configuration order");
   assert.notEqual(piPackageClosureIdentity(base).identity, piPackageClosureIdentity(reordered).identity);
   assert.notEqual(piPackageClosureIdentity(base).identity, piPackageClosureIdentity(changedResourcePolicy).identity);
@@ -422,7 +422,7 @@ test("Pi smoke resolution reuses every exact common-checkout package from a link
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
 
   const pins = [
-    ["pi-subagents", "0.66.0"],
+    ["pi-subagents", "0.67.0"],
     ["@input-output-hk/agent-review-pi", "0.5.0"],
   ];
   const settings = {
@@ -577,12 +577,12 @@ test("preflight scans all installed pinned package agents and content-invalidate
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
   const settingsPath = path.join(fixture.root, ".pi", "settings.json");
   const settings = JSON.parse(await readFile(settingsPath, "utf8"));
-  settings.packages.push("npm:pi-subagents@0.66.0", "npm:@input-output-hk/agent-review-pi@0.5.0");
+  settings.packages.push("npm:pi-subagents@0.67.0", "npm:@input-output-hk/agent-review-pi@0.5.0");
   await writeFile(settingsPath, JSON.stringify(settings));
   const piSubagents = path.join(fixture.root, ".pi", "npm", "node_modules", "pi-subagents");
   const reviewPackage = path.join(fixture.root, ".pi", "npm", "node_modules", "@input-output-hk", "agent-review-pi");
   for (const [root, name, version] of [
-    [piSubagents, "pi-subagents", "0.66.0"],
+    [piSubagents, "pi-subagents", "0.67.0"],
     [reviewPackage, "@input-output-hk/agent-review-pi", "0.5.0"],
   ]) {
     await mkdir(path.join(root, "agents"), { recursive: true });

@@ -17,7 +17,7 @@ routes through a coordination server.
 | --- | --- | --- |
 | `pi-coding-agent` | Nix-pinned | immutable nixpkgs input in `flake.lock`; executable supplied by `devShells.default` |
 | `dev-loops` | `1.0.2` | `.pi/settings.json` → project-local `.pi/npm` |
-| `pi-subagents` | `0.66.0` | same |
+| `pi-subagents` | `0.67.0` | same |
 | `pi-taskflow` | `0.2.10` | installed as an `agent-review-pi` peer; all runtime resources disabled |
 | `typebox` | `1.3.9` | exact `agent-review-pi` peer |
 | `@input-output-hk/agent-review-pi` | `0.6.0` | same, **GitHub Packages — needs a token** |
@@ -68,7 +68,7 @@ taskflow package is installed only to satisfy that peer contract; project
 filters disable all of its runtime resources because detached orchestration is
 not safe for Oxid's dev-loop topology.
 
-`pi-subagents@0.66.0` no longer enforces the historical `turnBudget` field.
+`pi-subagents@0.67.0` no longer enforces the historical `turnBudget` field.
 Oxid therefore removes that inert key, uses a fail-closed `toolBudget`, and caps
 each parent session and run at one child. The token budget remains visible and
 prevents additional launches, while the tool and wall-clock limits bound the
@@ -238,7 +238,7 @@ an upstream default expansion. Prefer it over a YAML lint.
 
 **`doctor` reports 3/4 and that is expected.** The warning is *"Subagent command
 available"*, because `doctor` looks for a standalone `subagent` executable while
-`pi-subagents@0.66.0` exposes the capability as a Pi extension. **Do not add a
+`pi-subagents@0.67.0` exposes the capability as a Pi extension. **Do not add a
 dummy binary to make the check pass** — it would make a real absence
 undetectable later. The check that matters is `gates` parsing.
 

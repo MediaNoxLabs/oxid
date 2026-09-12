@@ -93,6 +93,7 @@ test("documentation, harness, and workflow-only feature changes keep the basic g
     [".devloops", "scripts/loop/pre-flight-gate.mjs"],
     ["scripts/git-hooks/local-policy.mjs"],
     ["scripts/check-pi-devshell.sh", "scripts/lib/dev-loop-runtime.mjs"],
+    ["scripts/lib/managed-child-process.mjs"],
     [".github/workflows/ci.yml", "scripts/ci/target-plan.mjs"],
     ["scripts/coverage/policy.json", "scripts/coverage/run.mjs"],
     ["docs/factory/metrics.md", "scripts/ci/target-plan.mjs"],
@@ -126,6 +127,13 @@ test("scanner policy changes retain conservative product and unknown-root combin
   );
   assert.deepEqual(
     makeTargetPlan([".gitleaks.toml", "unknown-root-file"]).targets,
+    [HostedTarget.BASIC, HostedTarget.UNIT_LINUX, HostedTarget.HEADLESS_LINUX],
+  );
+});
+
+test("unclassified scripts/lib helpers remain conservative", () => {
+  assert.deepEqual(
+    makeTargetPlan(["scripts/lib/unclassified-helper.mjs"]).targets,
     [HostedTarget.BASIC, HostedTarget.UNIT_LINUX, HostedTarget.HEADLESS_LINUX],
   );
 });
