@@ -285,6 +285,8 @@ export function makeTargetPlan(paths, {
   deliveryProfile = DeliveryProfile.PRODUCTION_READY,
   extraTargets = [],
   ownershipAreas,
+  eventName,
+  pullRequestDraft = false,
 } = {}) {
   if (!Object.values(Profile).includes(profile)) throw new Error(`unknown CI profile: ${profile}`);
   if (!Object.values(DeliveryProfile).includes(deliveryProfile)) {
@@ -309,6 +311,15 @@ export function makeTargetPlan(paths, {
       throw new Error(`hosted CI target is not available in prototype delivery: ${target}`);
     }
     targets.add(target);
+  }
+
+  // Draft PRs retain L0 and independent policy contexts while review settles
+  // the exact head. Ready PRs and all durable/manual events retain the normal
+  // selected plan. The milestone merge guard independently rejects drafts.
+  if (eventName === "pull_request" && pullRequestDraft) {
+    for (const target of HOSTED_TARGETS) {
+      if (target !== HostedTarget.BASIC) targets.delete(target);
+    }
   }
 
   return {
@@ -375,6 +386,13 @@ function parseTargets(value) {
   return (value ?? "").split(",").map((target) => target.trim()).filter(Boolean);
 }
 
+function parseBoolean(value, name) {
+  if (value === undefined) return false;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`${name} must be true or false`);
+}
+
 function githubOutput(plan) {
   const selected = new Set(plan.targets);
   const lines = [
@@ -407,6 +425,8 @@ export function run(argv = process.argv.slice(2), { cwd = process.cwd(), stdout 
     deliveryProfile,
     extraTargets: parseTargets(readOption(argv, "--targets")),
     ownershipAreas: paths ? ownershipMapAreas(paths, base, head, cwd) : undefined,
+    eventName: readOption(argv, "--event"),
+    pullRequestDraft: parseBoolean(readOption(argv, "--pr-draft"), "--pr-draft"),
   });
   const format = readOption(argv, "--format") ?? "summary";
 
