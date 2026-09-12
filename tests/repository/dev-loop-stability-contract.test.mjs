@@ -229,15 +229,22 @@ test("Pi closures isolate linked worktrees, publish once, and retain only refere
   const staleClosure = path.join(state, "closures", "stale-unreferenced");
   const staleStage = path.join(state, "staging", "interrupted-stage");
   const staleLock = path.join(state, "locks", "interrupted.lock");
-  await Promise.all([mkdir(staleClosure, { recursive: true }), mkdir(staleStage, { recursive: true }), writeFile(staleLock, "interrupted")]);
+  const liveLock = path.join(state, "locks", "live-owner.lock");
+  await Promise.all([
+    mkdir(staleClosure, { recursive: true }),
+    mkdir(staleStage, { recursive: true }),
+    writeFile(staleLock, "interrupted"),
+    writeFile(liveLock, JSON.stringify({ pid: process.pid, host: hostname() })),
+  ]);
   const old = new Date(Date.now() - 11 * 60_000);
-  await Promise.all([utimes(staleClosure, old, old), utimes(staleStage, old, old), utimes(staleLock, old, old)]);
+  await Promise.all([utimes(staleClosure, old, old), utimes(staleStage, old, old), utimes(staleLock, old, old), utimes(liveLock, old, old)]);
   const before = await auditPiPackageClosures({ cwd: fixture.root, olderThanMs: 1 });
   assert.deepEqual(before.referenced, [first.identity, second.identity].sort());
   const cleaned = await cleanupPiPackageClosures({ cwd: fixture.root, olderThanMs: 1, staleMs: 1 });
   assert.deepEqual(cleaned.removed, ["stale-unreferenced"]);
   assert.deepEqual(cleaned.reclaimedStaging, ["interrupted-stage"]);
   assert.deepEqual(cleaned.reclaimedLocks, ["interrupted.lock"]);
+  assert.equal((await lstat(liveLock)).isFile(), true, "cleanup preserves a live same-host lock regardless of age");
 });
 
 test("Pi closure installation is atomic and concurrent callers share one publication", async (t) => {

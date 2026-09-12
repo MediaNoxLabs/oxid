@@ -342,13 +342,17 @@ export async function cleanupPiPackageClosures({ cwd = process.cwd(), now = () =
     await rm(path.join(paths.closures, closure.identity), { recursive: true, force: true });
     removed.push(closure.identity);
   }
-  const reclaim = async (directory) => {
+  const reclaim = async (directory, { protectLiveLocks = false } = {}) => {
     const entries = await readdir(directory, { withFileTypes: true }).catch((error) => error?.code === "ENOENT" ? [] : Promise.reject(error));
     const aged = [];
     for (const entry of entries) {
       const candidate = path.join(directory, entry.name);
       const info = await lstat(candidate);
-      if (now() - info.mtimeMs >= staleMs) aged.push({ entry, candidate, ageMs: now() - info.mtimeMs });
+      const ageMs = now() - info.mtimeMs;
+      // A future lock timestamp is untrustworthy state, but a live local owner wins.
+      if (ageMs < staleMs && !(protectLiveLocks && ageMs < 0)) continue;
+      if (protectLiveLocks && await liveSameHostLock(candidate, processIsAlive)) continue;
+      aged.push({ entry, candidate, ageMs });
     }
     const reclaimed = [];
     for (const { entry, candidate } of aged
@@ -359,7 +363,12 @@ export async function cleanupPiPackageClosures({ cwd = process.cwd(), now = () =
     }
     return reclaimed;
   };
-  return { ...audit, removed, reclaimedStaging: await reclaim(paths.staging), reclaimedLocks: await reclaim(paths.locks) };
+  return {
+    ...audit,
+    removed,
+    reclaimedStaging: await reclaim(paths.staging),
+    reclaimedLocks: await reclaim(paths.locks, { protectLiveLocks: true }),
+  };
 }
 
 const EXACT_SEMVER = "(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
