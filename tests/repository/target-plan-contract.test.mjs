@@ -102,6 +102,34 @@ test("documentation, harness, and workflow-only feature changes keep the basic g
   }
 });
 
+test("scanner policy paths retain the bounded policy lane", () => {
+  for (const paths of [
+    [".github/workflows/scan.yml"],
+    [".gitleaksignore"],
+    [".gitleaks.toml"],
+    [".github/workflows/scan.yml", ".gitleaksignore", ".gitleaks.toml"],
+  ]) {
+    assert.deepEqual(makeTargetPlan(paths).targets, [HostedTarget.BASIC], paths.join(","));
+  }
+});
+
+test("scan workflow remains independently required for every pull request", async () => {
+  const workflow = await readFile(new URL("../../.github/workflows/scan.yml", import.meta.url), "utf8");
+  assert.match(workflow, /pull_request:/);
+  assert.match(workflow, /name: scan/);
+});
+
+test("scanner policy changes retain conservative product and unknown-root combinations", () => {
+  assert.deepEqual(
+    makeTargetPlan([".gitleaksignore", "crates/foundation/src/lib.rs"]).targets,
+    [HostedTarget.BASIC, HostedTarget.UNIT_LINUX, HostedTarget.HEADLESS_LINUX],
+  );
+  assert.deepEqual(
+    makeTargetPlan([".gitleaks.toml", "unknown-root-file"]).targets,
+    [HostedTarget.BASIC, HostedTarget.UNIT_LINUX, HostedTarget.HEADLESS_LINUX],
+  );
+});
+
 test("root bootstrap and repository-contract changes retain only the Basic gate", () => {
   assert.deepEqual(makeTargetPlan(["bootstrap.sh"]).targets, [HostedTarget.BASIC]);
   assert.deepEqual(
