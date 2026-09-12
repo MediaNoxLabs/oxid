@@ -369,7 +369,16 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(sccacheRunner, /write-error counters are expected for rejected local puts/);
   assert.doesNotMatch(ci, /path: ~\/\.cache\/oxid-sccache/);
   assert.doesNotMatch(ci, /key: sccache-/);
-  assert.match(ci, /save: \$\{\{ github\.event_name == 'push' && \(github\.ref == 'refs\/heads\/develop' \|\| startsWith\(github\.ref, 'refs\/heads\/milestone-'\)\) \}\}/);
+  const nixPackageJob = ci.slice(
+    ci.indexOf("\n  nix_package:\n    name:"),
+    ci.indexOf("\n  compact_artifacts:\n    name:"),
+  );
+  assert.match(nixPackageJob, /save: \$\{\{ github\.event_name == 'push' && github\.ref == 'refs\/heads\/develop' \}\}/);
+  assert.doesNotMatch(nixPackageJob, /\bpurge(?:-|:)/);
+  assert.doesNotMatch(nixPackageJob, /actions:\s*write/);
+  assert.doesNotMatch(ci, /^\s*actions:\s*write\s*$/m);
+  const nightly = await read(".github/workflows/nightly.yml");
+  assert.match(nightly, /Cache the package-build Nix store[\s\S]*?save: false/);
   assert.match(ci, /if: always\(\)[\s\S]*?needs: \[plan, basic, unit_linux, headless_linux, ui_linux, ui_release_linux, coverage_linux\]/);
   assert.doesNotMatch(ci, /Run full repository gate/);
   assert.doesNotMatch(ci, /^\s+target$/m);
