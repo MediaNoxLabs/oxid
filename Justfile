@@ -32,7 +32,6 @@ pi-smoke:
 factory-smoke:
     ./scripts/check-pi-devshell.sh
     node scripts/git-hooks/configure.mjs check
-    node scripts/git-hooks/check-github-web-flow-key.mjs
 
 run:
     cargo run -p oxid-app

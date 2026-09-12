@@ -120,12 +120,16 @@ The local pre-push hook recognizes the same fixed subject, topology, GitHub
 committer, base ancestry, and cryptographic signature after an updated branch
 is fetched. This lets a contributor add another signed commit after using the
 Web UI without rewriting the server-generated merge. A clean supported host
-must run `./bootstrap.sh --check` before using **Update branch**; if the pinned
-GitHub web-flow public key is absent, that check reports the exact local owner
-action (`gpg --batch --import scripts/git-hooks/github-web-flow-signing-key.asc`).
-The checked-in key is a pinned public verification key, so this setup needs no
-network access and never imports a key from a candidate commit. If the key
-cannot be provisioned, rebase remains the no-bypass recovery path.
+must run `./bootstrap.sh --check` before using **Update branch**. That smoke
+first inspects the checked-in public key offline and accepts it only when it
+contains exactly the pinned fingerprint
+`968479A1AFF927E37D1A566BB5690EEEBB952194`; a corrupt or substituted file
+fails the smoke closed. If the validated key is absent from the default personal
+keyring, the smoke still succeeds on a fresh CI host while reporting the exact
+owner-only action (`gpg --batch --import scripts/git-hooks/github-web-flow-signing-key.asc`).
+It never imports the key itself or uses the network. Local commit verification
+remains fail-closed until the owner performs that import. If the key cannot be
+provisioned, rebase remains the no-bypass recovery path.
 
 The required check retains the historical name `Verify commit sign-offs` so
 the active ruleset remains effective while its implementation now verifies the
