@@ -285,6 +285,9 @@ export async function ensureSharedPiPackageStore({
   const localStore = path.join(gitRoot, ".pi", "npm");
   const legacyBackup = `${localStore}.legacy`;
   const localInfo = await lstatIfPresent(localStore);
+  if (localInfo !== null && !localInfo.isDirectory() && !localInfo.isSymbolicLink()) {
+    throw new Error(`Pi package store must be absent, a real primary directory, or a managed closure symlink: ${localStore}`);
+  }
   let movedLegacy = false;
   if (localInfo?.isDirectory() && !localInfo.isSymbolicLink()) {
     if (gitRoot !== commonRoot) throw new Error(`linked worktree Pi package store must be absent or a managed closure symlink: ${localStore}`);

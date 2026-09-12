@@ -183,7 +183,7 @@
                       # The helper publishes one content-addressed closure only after all
                       # exact pins validate. It migrates a legacy real .pi/npm lazily,
                       # then points this checkout at its matching factory-managed closure.
-                      node scripts/factory/provision-pi-packages.mjs
+                      node scripts/factory/provision-pi-packages.mjs || exit 1
                       # Exact pins were reconciled above. Keep Pi startup itself offline
                       # so it cannot race that authority or retry an unavailable optional
                       # private package. Operators can explicitly unset this for package maintenance.

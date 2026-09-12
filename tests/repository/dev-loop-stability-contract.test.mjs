@@ -400,6 +400,10 @@ test("registered linked worktrees use one fail-closed Pi package store", async (
   await mkdir(path.join(fixture.worktree, ".pi", "npm"));
   await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /absent or a managed closure symlink/);
   await rm(path.join(fixture.worktree, ".pi", "npm"), { recursive: true });
+  await writeFile(path.join(fixture.worktree, ".pi", "npm"), "owner data\n");
+  await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /must be absent, a real primary directory, or a managed closure symlink/);
+  assert.equal(await readFile(path.join(fixture.worktree, ".pi", "npm"), "utf8"), "owner data\n");
+  await rm(path.join(fixture.worktree, ".pi", "npm"));
   const outside = await realMkdtemp("oxid-pi-store-outside-");
   t.after(() => rm(outside, { recursive: true, force: true }));
   await symlink(outside, path.join(fixture.worktree, ".pi", "npm"), "dir");
@@ -452,6 +456,7 @@ test("Pi devshell smoke delegates package authority to the bounded exact-pin res
   assert.match(devshell, /GITHUB_TOKEN/);
   assert.match(devshell, /GH_TOKEN/);
   assert.match(devshell, /GH_TOKENS/);
+  assert.match(devshell, /provision-pi-packages\.mjs \|\| exit 1/);
   assert.match(devshell, /export PI_OFFLINE=.*PI_OFFLINE:-1/);
 });
 
