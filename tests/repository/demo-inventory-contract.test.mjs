@@ -141,14 +141,16 @@ test("validator rejects broken references, unsafe operations, and invalid eviden
     ["duplicate id", (inventory) => { inventory.targets.push(clone(inventory.targets[0])); }, /duplicate id/u],
     ["unsafe absolute command", (inventory) => { inventory.commands[0].command = "/bin/sh"; }, /unsafe|absolute/u],
     ["destructive git command", (inventory) => { inventory.commands[0].command = "git clean -fdx"; }, /not a supported repository command/u],
-    ["unsupported environment", (inventory) => { inventory.commands[0].environment = { HOME: "elsewhere" }; }, /unsupported HOME/u],
+    ["unsupported environment", (inventory) => { inventory.commands[0].environment = { HOME: "elsewhere" }; }, /unsupported HOME|additional property/u],
     ["missing mutable cleanup", (inventory) => { inventory.dependencies[0].cleanupCommandIds = []; }, /missing cleanup/u],
-    ["invalid cadence", (inventory) => { inventory.scenarios[0].cadence = "daily"; }, /invalid cadence/u],
-    ["invalid evidence", (inventory) => { inventory.scenarios[0].evidenceClass = "live"; }, /invalid evidence/u],
-    ["invalid target evidence", (inventory) => { inventory.scenarios[0].targetPlans[0].evidenceClass = "live"; }, /invalid evidence class/u],
+    ["invalid cadence", (inventory) => { inventory.scenarios[0].cadence = "daily"; }, /invalid cadence|schema enum/u],
+    ["invalid evidence", (inventory) => { inventory.scenarios[0].evidenceClass = "live"; }, /invalid evidence|schema enum/u],
+    ["invalid target evidence", (inventory) => { inventory.scenarios[0].targetPlans[0].evidenceClass = "live"; }, /invalid evidence class|schema enum/u],
     ["unsupported default target", (inventory) => { inventory.scenarios[0].defaultTargetId = "ios-physical"; }, /default target must be supported/u],
     ["wrong command phase", (inventory) => { inventory.scenarios[0].targetPlans[0].commandIds.build = ["desktop-run"]; }, /from phase 'run'/u],
-    ["missing test mapping", (inventory) => { delete inventory.scenarios[0].testMapping; }, /missing a test mapping/u],
+    ["missing test mapping", (inventory) => { delete inventory.scenarios[0].testMapping; }, /missing a test mapping|schema required property 'testMapping'/u],
+    ["unknown schema property", (inventory) => { inventory.products[0].unpublished = true; }, /schema.*additional property|additional property.*schema/u],
+    ["invalid command oneOf", (inventory) => { inventory.commands[0].status = "manual"; }, /schema.*oneOf|oneOf.*schema/u],
   ];
   for (const [name, mutate, error] of cases) {
     const inventory = clone(valid); mutate(inventory);
