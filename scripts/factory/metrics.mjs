@@ -673,9 +673,13 @@ export function renderPublicMetricComment(record, options = {}) {
   const tokenSummary = payload.tokens === null
     ? "unavailable"
     : `${payload.tokens.input.toLocaleString("en-US")} input, ${payload.tokens.output.toLocaleString("en-US")} output, ${payload.tokens.cacheRead.toLocaleString("en-US")} cache-read, ${payload.tokens.cacheWrite.toLocaleString("en-US")} cache-write`;
-  const outcome = payload.ci.failedChecks > 0 || payload.validations.some((entry) => entry.outcome === "failed")
+  const terminalOutcomes = [
+    ...payload.validations.map((entry) => entry.outcome),
+    ...payload.ci.checks.map((check) => check.outcome),
+  ];
+  const outcome = terminalOutcomes.includes("failed")
     ? "failed"
-    : payload.ci.canceledRuns > 0 || payload.validations.some((entry) => entry.outcome === "canceled") ? "canceled" : "delivered";
+    : terminalOutcomes.includes("canceled") ? "canceled" : "delivered";
   const body = `## Software Factory metrics
 
 - Outcome: ${outcome}; exact head \`${payload.headSha}\`

@@ -154,6 +154,28 @@ test("public metrics projection is allow-listed, redacted, canonical, and reject
   assert.throws(() => projectPublicMetricRecord(record(), { nowMs: nowMs + 25 * 60 * 60_000 }), /stale/);
 });
 
+test("public metrics outcome derives from terminal validation and selected check outcomes", () => {
+  const nowMs = Date.parse("2026-08-28T00:32:00.000Z");
+  const deliveredWithCanceledHistory = record({
+    attempts: { pushesAfterFirstCi: 2, failed: 1, canceled: 3 },
+    ci: { ...record().ci, canceledRuns: 3 },
+  });
+  const delivered = renderPublicMetricComment(deliveredWithCanceledHistory, { nowMs });
+  assert.match(delivered, /Outcome: delivered; exact head/);
+  assert.match(delivered, /Attempts: 1 failed, 3 canceled, 2 post-initial-CI pushes/);
+  assert.deepEqual(parsePublicMetricComment(delivered, { nowMs }).attempts, deliveredWithCanceledHistory.attempts);
+
+  const terminalFailure = record({
+    ci: { ...record().ci, failedChecks: 1, checks: [{ ...record().ci.checks[0], outcome: "failed" }, record().ci.checks[1]] },
+  });
+  assert.match(renderPublicMetricComment(terminalFailure, { nowMs }), /Outcome: failed; exact head/);
+
+  const terminalCancellation = record({
+    validations: [{ ...record().validations[0], outcome: "canceled" }],
+  });
+  assert.match(renderPublicMetricComment(terminalCancellation, { nowMs }), /Outcome: canceled; exact head/);
+});
+
 test("public collection deduplicates read-only evidence and fails closed on ambiguity", () => {
   const nowMs = Date.parse("2026-08-28T00:32:00.000Z");
   const body = renderPublicMetricComment(record(), { nowMs });
