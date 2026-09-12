@@ -162,7 +162,8 @@ ledger and PR comment without blocking a clean verdict.
 
 5. Run focused pre-commit checks, commit once, then invoke the matching full
    local gate through `scripts/loop/local-gate.mjs`. Its private exact-head
-   receipt is reused by unchanged-head review/checkpoint logic. Push one coherent
+   receipt is reused only when unchanged-head review/checkpoint logic supplies
+   the same planned command. Push one coherent
    candidate and open the draft PR. Do not push after each finding; every push
    cancels CI and stales exact-head evidence.
 6. The implementation child stops. The persistent supervisor runs one focused

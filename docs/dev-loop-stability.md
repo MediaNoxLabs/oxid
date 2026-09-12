@@ -165,7 +165,7 @@ There is no gate-evidence repair command. The sanctioned response to incomplete
 inline evidence is stop and preserve findings. The producer's full local gate
 runs through `scripts/loop/local-gate.mjs`, which writes a private receipt bound
 to the clean head, delivery-base OID, gate id, and command digest. An unchanged-
-head reviewer verifies that receipt and performs focused review rather than
+head reviewer verifies that receipt against the same planned command and performs focused review rather than
 rerunning the full gate. Canonical parser, findings ledger, reviewer identity,
 mandatory angles, artifact hashing, and lifecycle coordination remain pinned-
 tooling responsibilities; comment-only repair is unsupported and must not be

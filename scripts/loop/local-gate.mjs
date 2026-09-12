@@ -131,8 +131,15 @@ function assertCleanState(state) {
   if (state.dirty) throw new Error("local gate requires a clean checkout so evidence binds the exact head");
 }
 
-export async function verifyLocalGate({ cwd = process.cwd(), deliveryBase, gateId }) {
-  assertGateIdentity({ headSha: "0".repeat(40), deliveryBase, deliveryBaseOid: "0".repeat(40), gateId });
+export async function verifyLocalGate({ cwd = process.cwd(), deliveryBase, gateId, command }) {
+  const commandDigest = digestGateCommand(command);
+  assertGateIdentity({
+    headSha: "0".repeat(40),
+    deliveryBase,
+    deliveryBaseOid: "0".repeat(40),
+    gateId,
+    commandDigest,
+  });
   const state = inspectCheckout(cwd, deliveryBase);
   assertCleanState(state);
   const paths = gatePaths(state.commonDir, state.headSha, gateId);
@@ -143,6 +150,7 @@ export async function verifyLocalGate({ cwd = process.cwd(), deliveryBase, gateI
     deliveryBase,
     deliveryBaseOid: state.deliveryBaseOid,
     gateId,
+    commandDigest,
   });
   return { ok: true, action: "verified", receipt };
 }
@@ -234,7 +242,7 @@ function parseCli(argv) {
 
 const USAGE = `Usage:
   node scripts/loop/local-gate.mjs run --delivery-base origin/<target> --gate-id <id> -- <command> [args...]
-  node scripts/loop/local-gate.mjs verify --delivery-base origin/<target> --gate-id <id>
+  node scripts/loop/local-gate.mjs verify --delivery-base origin/<target> --gate-id <id> -- <command> [args...]
 
 A successful run writes one private exact-head receipt. Repeating the same run
 reuses it without launching a child; an in-flight or mismatched receipt stops.`;
@@ -251,8 +259,13 @@ export async function runCli(argv = process.argv.slice(2), { cwd = process.cwd()
     if (command.length === 0) throw new Error("local gate run requires a command after --");
     result = await runLocalGate({ cwd, deliveryBase: values["delivery-base"], gateId: values["gate-id"], command });
   } else if (operation === "verify") {
-    if (command.length !== 0) throw new Error("local gate verify does not accept a command");
-    result = await verifyLocalGate({ cwd, deliveryBase: values["delivery-base"], gateId: values["gate-id"] });
+    if (command.length === 0) throw new Error("local gate verify requires the expected command after --");
+    result = await verifyLocalGate({
+      cwd,
+      deliveryBase: values["delivery-base"],
+      gateId: values["gate-id"],
+      command,
+    });
   } else {
     throw new Error(`unknown local gate operation: ${operation}`);
   }

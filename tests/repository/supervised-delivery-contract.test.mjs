@@ -64,7 +64,7 @@ test("the production-ready Pi contract has one non-delegating implementation chi
     terminalCheckpoint: ["headSha", "validationReceipt", "workerMetrics", "remainingRisks"],
   });
   assert.match(agent, /never silently creates another phase child/u);
-  assert.match(agent, /Later review\/checkpoint logic invokes `verify`, not the full command/u);
+  assert.match(agent, /Later review\/checkpoint logic invokes `verify` with the same planned command, not the full command/u);
 });
 
 test("the issue 449 sequence runs one full local gate and reuses its exact-head receipt", async (t) => {
@@ -94,7 +94,12 @@ test("the issue 449 sequence runs one full local gate and reuses its exact-head 
   assert.equal(implementation.receipt.headSha, head);
   assert.equal(implementation.receipt.commandDigest, digestGateCommand(command));
 
-  const reviewer = await verifyLocalGate({ cwd: root, deliveryBase: "origin/develop", gateId: "production-ready" });
+  const reviewer = await verifyLocalGate({
+    cwd: root,
+    deliveryBase: "origin/develop",
+    gateId: "production-ready",
+    command,
+  });
   const preApproval = await runLocalGate({
     cwd: root,
     deliveryBase: "origin/develop",
@@ -123,6 +128,15 @@ test("the issue 449 sequence runs one full local gate and reuses its exact-head 
     /commandDigest does not match/u,
   );
   assert.equal(fullGateStarts, 1, "a mismatched unchanged-head gate must stop instead of rerunning");
+  await assert.rejects(
+    verifyLocalGate({
+      cwd: root,
+      deliveryBase: "origin/develop",
+      gateId: "production-ready",
+      command: ["true"],
+    }),
+    /commandDigest does not match/u,
+  );
 });
 
 test("resume-first refuses an in-flight unchanged-head gate instead of launching a replacement", async (t) => {
