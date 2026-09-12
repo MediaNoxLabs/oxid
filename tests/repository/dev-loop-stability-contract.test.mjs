@@ -1836,12 +1836,16 @@ test("repository wrapper delegates generic and foreign CI while keeping the Oxid
   assert.equal(await runDevLoops(["loop", "watch-ci", "--repo", "MediaNoxLabs/oxid", "--pr", "7", "--timeout-ms", "0", "--jq", ".status"], {
     cwd: fixture.root, stdout: sink, stderr: sink,
   }), 0);
+  assert.equal(await runDevLoops(["loop", "watch-ci", "--pr", "7", "--timeout-ms", "0", "--jq", ".status"], {
+    cwd: fixture.root, stdout: sink, stderr: sink,
+  }), 0);
   assert.equal(await runDevLoops(["loop", "watch-ci", "--repo", "owner/checkless-project", "--pr", "7", "--timeout-ms", "0"], {
     cwd: fixture.root, stdout: sink, stderr: sink,
   }), 0);
   assert.deepEqual(output.join("").trim().split("\n").map((line) => JSON.parse(line)), [
     ["help"],
     ["--silent", "loop", "watch-ci", "--commit", "fixture-commit"],
+    "pending",
     "pending",
     ["loop", "watch-ci", "--repo", "owner/checkless-project", "--pr", "7", "--timeout-ms", "0"],
   ]);

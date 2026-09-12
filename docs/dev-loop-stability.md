@@ -138,7 +138,9 @@ Oxid's mandatory contribution and metadata workflows mean an Oxid PR is never
 truly checkless, so the package's `ciStatus: "none"` result cannot settle green.
 The adapter re-observes only that bounded registration gap and delegates every
 real pending, success, failure, parse/API-error, and check-selection state back
-to the pinned watcher. It retains exact-head `changed` results and the pinned
+to the pinned watcher. An omitted repository defaults narrowly to
+`MediaNoxLabs/oxid`; an explicit foreign repository bypasses the adapter. It
+retains exact-head `changed` results and the pinned
 parser/emitter, including `--jq` and `--silent`. The package lacks a policy hook
 for this distinction; [dev-loops#2151](https://github.com/mfittko/dev-loops/issues/2151)
 tracks the upstream fix.

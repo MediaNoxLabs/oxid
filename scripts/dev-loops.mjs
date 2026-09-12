@@ -347,16 +347,20 @@ export function resolveOxidCompatibilityRoute(args) {
     };
   }
   const repositories = readLongOptionValues(args, "--repo");
+  const usesOxidRepository = repositories.length === 0
+    || (repositories.length === 1 && repositories[0].toLowerCase() === OXID_REPOSITORY);
   if (
     route.category === "loop"
     && route.command === "watch-ci"
     && readLongOptionValues(args, "--pr").length === 1
-    && repositories.length === 1
-    && repositories[0].toLowerCase() === OXID_REPOSITORY
+    && usesOxidRepository
   ) {
     return async (routeArgs, runtime) => {
       const { runOxidPrCiWatch } = await import("./github/watch-oxid-ci.mjs");
-      return runOxidPrCiWatch(routeArgs, runtime);
+      const watcherArgs = repositories.length === 0
+        ? ["--repo", "MediaNoxLabs/oxid", ...routeArgs]
+        : routeArgs;
+      return runOxidPrCiWatch(watcherArgs, runtime);
     };
   }
   return null;
