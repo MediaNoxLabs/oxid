@@ -20,7 +20,8 @@ import {
   resolveDevLoopsPackageRoot,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
-import { normalizeDevLoopsArgs, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
+import { normalizeDevLoopsArgs, resolveOxidCompatibilityRoute, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
+import { editPrBody, parseEditPrArgs } from "../../scripts/github/edit-pr.mjs";
 import { watchOxidPrCiStatus } from "../../scripts/github/watch-oxid-ci.mjs";
 import { runResolveTrackerLocalSpec } from "../../scripts/github/resolve-tracker-local-spec.mjs";
 import { assertNoPreflightBypass, inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
@@ -37,7 +38,7 @@ import {
   resolveIssuePullRequestLinks,
 } from "../../scripts/github/resolve-issue-pr-links.mjs";
 import { preflightGh } from "../../scripts/github/preflight-gh.mjs";
-import { GH_REST_MAX_BUFFER_BYTES, runGhCommand } from "../../scripts/github/rest-client.mjs";
+import { GH_REST_MAX_BUFFER_BYTES, GITHUB_REST_HEADERS, runGhCommand } from "../../scripts/github/rest-client.mjs";
 import {
   assertClaudeAuthHelpCapabilities,
   assertAttestedReviewEffort,
@@ -2107,6 +2108,33 @@ test("only checkpoint verdict upserts enter the repository Nix shell", async (t)
   assert.equal(calls.length, 1);
   assert.equal(calls[0].command, process.execPath);
   assert.deepEqual(calls[0].args, [path.join(fixture.packageRoot, "cli", "index.mjs"), "gates"]);
+});
+
+test("PR body edits use the REST facade and fail closed outside its narrow contract", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const calls = [];
+  const runGh = (args) => { calls.push(args); return "{}"; };
+
+  assert.deepEqual(editPrBody({ repository: "owner/repo", pr: 284, body: "Closes #474", runGh }), {
+    ok: true, repository: "owner/repo", pr: 284, edited: ["body"],
+  });
+  assert.deepEqual(calls, [[
+    "api", "--method", "PATCH", ...GITHUB_REST_HEADERS,
+    "repos/owner/repo/pulls/284", "-f", "body=Closes #474",
+  ]]);
+  assert.throws(() => parseEditPrArgs(["--repo", "owner/repo", "--pr", "284"]), /--body must be a non-empty string/);
+  assert.throws(() => parseEditPrArgs(["--repo", "owner/repo", "--pr", "284", "--title", "nope", "--body", "x"]), /Unknown option/);
+  assert.throws(() => editPrBody({ repository: "owner/repo", pr: 284, body: "x", runGh: () => { throw new Error("REST denied"); } }), /REST denied/);
+
+  const output = [];
+  const route = resolveOxidCompatibilityRoute(["pr", "edit", "--repo", "owner/repo", "--pr", "284", "--body", "x"]);
+  assert.ok(route);
+  assert.equal(await route(["--repo", "owner/repo", "--pr", "284", "--body", "x"], {
+    stdout: new Writable({ write(chunk, _encoding, callback) { output.push(chunk.toString()); callback(); } }),
+    runGh,
+  }), 0);
+  assert.match(output.join(""), /"edited":\["body"\]/);
 });
 
 test("checkpoint verdict upsert failures remain fail-closed", async (t) => {

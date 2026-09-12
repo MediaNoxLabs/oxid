@@ -347,6 +347,12 @@ export function resolveOxidCompatibilityRoute(args) {
       return main(routeArgs, runtime);
     };
   }
+  if (route.category === "pr" && route.command === "edit") {
+    return async (routeArgs, runtime) => {
+      const { main } = await import("./github/edit-pr.mjs");
+      return main(routeArgs, runtime);
+    };
+  }
   const repositories = readLongOptionValues(args, "--repo");
   const usesOxidRepository = repositories.length === 0
     || (repositories.length === 1 && repositories[0].toLowerCase() === OXID_REPOSITORY);
@@ -393,10 +399,10 @@ export async function runDevLoops(argv = process.argv.slice(2), {
   if (envelopeArgs) return runBuildEnvelope(envelopeArgs, { cwd, stdout, stderr, resolved });
 
   const cli = path.join(resolved.packageRoot, "cli", "index.mjs");
-  // This is the only package route requiring the Nix-pinned `gh`: its
-  // coordination-state detector queries `closingIssuesReferences`, which the
-  // host gh may not support. bootstrap changes to the repository root, so
-  // restore the caller's cwd before starting the pinned package CLI.
+  // This is the primary verdict route: its coordination-state detector queries
+  // `closingIssuesReferences`, which the host gh may not support. The Nix-pinned
+  // shell is therefore used instead of a fallback. bootstrap changes to the
+  // repository root, so restore the caller's cwd before starting the package CLI.
   const requiresNixGh = route.category === "gate" && route.command === "upsert-verdict";
   const command = requiresNixGh ? path.join(resolved.gitRoot, "bootstrap.sh") : process.execPath;
   const commandArgs = requiresNixGh
