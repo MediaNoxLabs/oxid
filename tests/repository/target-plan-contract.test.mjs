@@ -102,6 +102,21 @@ test("documentation, harness, and workflow-only feature changes keep the basic g
   }
 });
 
+test("root bootstrap and repository-contract changes retain only the Basic gate", () => {
+  assert.deepEqual(makeTargetPlan(["bootstrap.sh"]).targets, [HostedTarget.BASIC]);
+  assert.deepEqual(
+    makeTargetPlan(["bootstrap.sh", "tests/repository/target-plan-contract.test.mjs"]).targets,
+    [HostedTarget.BASIC],
+  );
+});
+
+test("root bootstrap preserves Rust/product target selection", () => {
+  assert.deepEqual(
+    makeTargetPlan(["bootstrap.sh", "crates/foundation/src/lib.rs"]).targets,
+    [HostedTarget.BASIC, HostedTarget.UNIT_LINUX, HostedTarget.HEADLESS_LINUX],
+  );
+});
+
 test("the repository gate driver remains a fail-closed global build input", () => {
   assert.deepEqual(makeTargetPlan(["run.sh"]).targets, Object.values(HostedTarget));
 });

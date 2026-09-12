@@ -168,7 +168,9 @@ storage ceiling before any new layer becomes required.
 
 - Documentation, harness, and CI-only feature changes run L0 and their
   independent policy/scanner contexts without realizing the Rust/Nix build
-  graph.
+  graph. The harness allowlist includes only the exact root `bootstrap.sh`
+  entrypoint (alongside existing reviewed harness paths); scripts outside that
+  allowlist remain fail-closed core inputs.
 - UI and headless changes select their own consumer lanes rather than both;
   the UI's optimized artifact audit remains separate from its profile/tests.
 - Shared core, platform, and Compact changes select both UI and headless
