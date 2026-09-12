@@ -56,7 +56,9 @@ checkout cannot independently verify an unknown contributor's GPG keyring.
 The two current stable required CI names remain aggregators. They fail when a
 selected child lane fails and succeed when an unselected lane is intentionally
 skipped. This changes execution topology without requiring an unsafe one-step
-branch-protection migration.
+branch-protection migration. The `hard` budgets in this table are workflow
+limits; supervisor green/amber/red throughput warnings are separately calibrated
+and documented in [Factory Metrics and Baselines](metrics.md).
 
 ### Draft assurance boundary
 

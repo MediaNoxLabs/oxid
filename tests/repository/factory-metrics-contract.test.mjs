@@ -8,6 +8,7 @@ import test from "node:test";
 
 import {
   CI_TARGET_BUDGET_MS,
+  CI_TARGET_EARLY_WARNING_MS,
   METRIC_KEYS,
   aggregateMetricRecords,
   auditMetricsDirectory,
@@ -274,9 +275,12 @@ test("aggregate reports medians, p90, and tuning SLO violations without raw reco
     durationMs: { median: 300_000, p90: 300_000 },
     outcomes: { passed: 2, failed: 0, canceled: 0 },
   });
-  for (const key of ["routineOver60Minutes", "ciTargetOverBudget", "reviewSessionsOver4", "pushesAfterFirstCi", "failedOrCanceledAttempts", "targetOver10GiB"]) {
+  for (const key of ["routineOver60Minutes", "ciTargetHardBudgetExceeded", "ciTargetEarlyWarningRed", "reviewSessionsRed", "pushesAfterFirstCiAmber", "failedOrCanceledAttempts", "targetOver10GiB"]) {
     assert.deepEqual(aggregate.sloViolations[key], [`issue-168/pr-169/${HEAD}`]);
   }
+  assert.deepEqual(aggregate.sloViolations.ciTargetEarlyWarningAmber, []);
+  assert.deepEqual(aggregate.sloViolations.reviewSessionsAmber, []);
+  assert.deepEqual(aggregate.sloViolations.pushesAfterFirstCiRed, []);
   assert.equal(JSON.stringify(aggregate).includes("repository-contract"), true);
   for (const rawKey of ["startedAt", "completedAt", "recordedAt", "valid.json"]) {
     assert.equal(JSON.stringify(aggregate).includes(`\"${rawKey}\"`), false, rawKey);
@@ -305,7 +309,8 @@ test("aggregate excludes each unavailable review counter instead of treating it 
   assert.deepEqual(aggregate.distributions.reviewSessions, { median: 2, p90: 2 });
   assert.deepEqual(aggregate.distributions.reviewTurns, { median: 8, p90: 8 });
   assert.deepEqual(aggregate.distributions.toolCalls, { median: 9.5, p90: 12 });
-  assert.deepEqual(aggregate.sloViolations.reviewSessionsOver4, []);
+  assert.deepEqual(aggregate.sloViolations.reviewSessionsAmber, []);
+  assert.deepEqual(aggregate.sloViolations.reviewSessionsRed, []);
 
   const allUnavailable = aggregateMetricRecords([record({
     issue: 172,
@@ -319,7 +324,8 @@ test("aggregate excludes each unavailable review counter instead of treating it 
   assert.deepEqual(allUnavailable.distributions.reviewSessions, { median: null, p90: null });
   assert.deepEqual(allUnavailable.distributions.reviewTurns, { median: null, p90: null });
   assert.deepEqual(allUnavailable.distributions.toolCalls, { median: null, p90: null });
-  assert.deepEqual(allUnavailable.sloViolations.reviewSessionsOver4, []);
+  assert.deepEqual(allUnavailable.sloViolations.reviewSessionsAmber, []);
+  assert.deepEqual(allUnavailable.sloViolations.reviewSessionsRed, []);
 });
 
 test("per-target CI SLO still catches a slow basic lane beside a high-budget lane", () => {
@@ -340,7 +346,52 @@ test("per-target CI SLO still catches a slow basic lane beside a high-budget lan
     routing: { profile: "feature", areas: ["build"], targets: ["basic", "nix-package"] },
   });
   const aggregate = aggregateMetricRecords([mixed], [], { nowMs: Date.parse("2026-08-28T02:00:00.000Z") });
-  assert.deepEqual(aggregate.sloViolations.ciTargetOverBudget, [`issue-171/pr-180/${HEAD}`]);
+  assert.deepEqual(aggregate.sloViolations.ciTargetHardBudgetExceeded, [`issue-171/pr-180/${HEAD}`]);
+  assert.deepEqual(aggregate.sloViolations.ciTargetEarlyWarningRed, [`issue-171/pr-180/${HEAD}`]);
+});
+
+test("aggregate keeps measured early warnings distinct from hard budgets and profiles", () => {
+  const integration = record({
+    issue: 173,
+    pr: 181,
+    completedAt: "2026-08-28T02:00:00.000Z",
+    recordedAt: "2026-08-28T02:01:00.000Z",
+    phases: { developmentMs: 1_000_000, reviewMs: 500_000, validationMs: 300_000, ciMs: 1_200_000, totalElapsedMs: 7_200_000 },
+    review: { sessions: 4, turns: 8, toolCalls: 12, externalReviewRequired: false },
+    attempts: { pushesAfterFirstCi: 1, canceled: 0, failed: 0 },
+    ci: { wallTimeMs: 1_200_000, requiredChecks: 1, failedChecks: 0, canceledRuns: 0, checks: [{ name: "unit-linux", queueMs: 1_000, durationMs: 600_001, outcome: "passed" }] },
+    routing: { profile: "integration", areas: ["build"], targets: ["unit-linux"] },
+  });
+  const release = record({
+    issue: 174,
+    pr: 182,
+    completedAt: "2026-08-28T03:00:00.000Z",
+    recordedAt: "2026-08-28T03:01:00.000Z",
+    phases: { developmentMs: 1_000_000, reviewMs: 500_000, validationMs: 300_000, ciMs: 1_200_000, totalElapsedMs: 10_800_000 },
+    review: { sessions: 5, turns: 8, toolCalls: 12, externalReviewRequired: false },
+    attempts: { pushesAfterFirstCi: 2, canceled: 0, failed: 0 },
+    ci: { wallTimeMs: 1_200_000, requiredChecks: 1, failedChecks: 0, canceledRuns: 0, checks: [{ name: "unit-linux", queueMs: 1_000, durationMs: 600_001, outcome: "passed" }] },
+    routing: { profile: "release", areas: ["build"], targets: ["unit-linux"] },
+  });
+  const aggregate = aggregateMetricRecords([record(), integration, release]);
+  assert.equal(CI_TARGET_BUDGET_MS["unit-linux"], 600_000);
+  assert.deepEqual(CI_TARGET_EARLY_WARNING_MS["unit-linux"], { green: 9 * 60_000, amber: 10 * 60_000 });
+  assert.deepEqual(aggregate.elapsedByProfile.feature.totalElapsedMs, { median: 1_800_000, p90: 1_800_000 });
+  assert.deepEqual(aggregate.elapsedByProfile.integration.totalElapsedMs, { median: 7_200_000, p90: 7_200_000 });
+  assert.deepEqual(aggregate.elapsedByProfile.release.totalElapsedMs, { median: 10_800_000, p90: 10_800_000 });
+  assert.deepEqual(aggregate.sloViolations.ciTargetHardBudgetExceeded, [
+    `issue-173/pr-181/${HEAD}`,
+    `issue-174/pr-182/${HEAD}`,
+  ]);
+  assert.deepEqual(aggregate.sloViolations.ciTargetEarlyWarningAmber, []);
+  assert.deepEqual(aggregate.sloViolations.ciTargetEarlyWarningRed, [
+    `issue-173/pr-181/${HEAD}`,
+    `issue-174/pr-182/${HEAD}`,
+  ]);
+  assert.deepEqual(aggregate.sloViolations.reviewSessionsAmber, [`issue-173/pr-181/${HEAD}`]);
+  assert.deepEqual(aggregate.sloViolations.reviewSessionsRed, [`issue-174/pr-182/${HEAD}`]);
+  assert.deepEqual(aggregate.sloViolations.pushesAfterFirstCiAmber, [`issue-173/pr-181/${HEAD}`]);
+  assert.deepEqual(aggregate.sloViolations.pushesAfterFirstCiRed, [`issue-174/pr-182/${HEAD}`]);
 });
 
 test("aggregate reports records beyond retention without deleting them", () => {
@@ -555,6 +606,11 @@ test("factory guidance defines the periodic secret-safe supervisor boundary", as
   assert.match(metrics, /90 days/);
   assert.match(metrics, /no model call/i);
   assert.match(metrics, /CI target and dependency matrix/);
+  assert.match(metrics, /2026-09-12/);
+  assert.match(metrics, /38\/38 valid records/);
+  assert.match(metrics, /hard workflow budgets/i);
+  assert.match(metrics, /integration and release elapsed time/i);
+  assert.match(metrics, /reported separately/i);
   assert.match(loop, /prompts, transcripts, credentials, identifiers/);
   assert.match(runbook, /owner-private/);
 });
