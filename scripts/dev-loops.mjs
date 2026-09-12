@@ -192,6 +192,7 @@ export function applyDeliveryProfile(envelope, contract, profile, deliveryTarget
     return {
       ...routed,
       ...selection,
+      supervision: structuredClone(contract.profiles[profile].supervision),
       preMutationFastPath: {
         maximumToolCallsBeforeOutcome: fastPath.maximumToolCallsBeforeOutcome,
         readPolicy: fastPath.readPolicy,

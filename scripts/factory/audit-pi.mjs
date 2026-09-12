@@ -198,8 +198,8 @@ function validateAgentBudget(file, fields) {
   } catch {
     problems.push(`${file}: toolBudget must be valid JSON`);
   }
-  if (file === "dev-loop.agent.md" && Number(fields.maxSubagentDepth) !== 2) {
-    problems.push(`${file}: maxSubagentDepth must be 2`);
+  if (file === "dev-loop.agent.md" && Number(fields.maxSubagentDepth) !== 1) {
+    problems.push(`${file}: maxSubagentDepth must be 1`);
   }
   return problems;
 }
@@ -413,6 +413,17 @@ async function inspectDeliveryProfiles(repoRoot) {
     }
     if (!devLoopAgent.includes("--pre-mutation-assessment")) {
       problems.push(".pi/agents/dev-loop.agent.md does not bind the deterministic fast-path assessment into the handoff envelope");
+    }
+    const tools = devLoopAgent.match(/^tools:\s*(.+)$/mu)?.[1]?.split(",").map((tool) => tool.trim()) ?? [];
+    if (tools.includes("subagent") || !tools.includes("edit") || !tools.includes("write")) {
+      problems.push(".pi/agents/dev-loop.agent.md must be the sole editing child and must not expose nested delegation");
+    }
+    if (production?.supervision?.implementationChildrenPerInvocation !== 1
+      || production?.supervision?.childMayDelegate !== false
+      || production?.supervision?.localGate?.receiptCommand !== "node scripts/loop/local-gate.mjs"
+      || production?.supervision?.resumePolicy !== "reuse-only"
+      || !production?.supervision?.terminalCheckpoint?.includes("workerMetrics")) {
+      problems.push("production-ready supervision must bind one implementation child, exact-head gate reuse, resume-first, and terminal metrics");
     }
   } catch (error) {
     problems.push(error.message);

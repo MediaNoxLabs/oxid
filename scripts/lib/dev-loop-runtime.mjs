@@ -19,7 +19,7 @@ export const PI_BUILTIN_CHILD_TOOLS = Object.freeze([
 ]);
 
 export const DEV_LOOP_SELECTED_TOOLS = Object.freeze([
-  "read", "grep", "find", "ls", "bash", "subagent",
+  "read", "grep", "find", "ls", "bash", "edit", "write",
 ]);
 
 export const REPOSITORY_CONFIGURED_TOOLS = Object.freeze([
