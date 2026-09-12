@@ -129,10 +129,14 @@ prompt and its absolute managed worktree as the current directory:
 ```
 
 The prompt must prohibit subagent/taskflow dispatch and assign review, hosted
-CI, merge, metrics, and cleanup to the external supervisor. A terminal or
-transport failure never deletes valid edits: inspect the worktree, record the
-failure, and either supervise the existing diff to a checkpoint or authorize
-one fresh bounded run. Do not silently resume the dead process.
+CI, merge, metrics, and cleanup to the external supervisor. It must also retain
+writes within `MediaNoxLabs/oxid`: before an issue, PR, comment, label, release,
+package publication, or other repository write outside that active repository,
+the worker needs explicit owner or supervisor approval and may otherwise only
+prepare a local draft. A terminal or transport failure never deletes valid edits:
+inspect the worktree, record the failure, and either supervise the existing diff
+to a checkpoint or authorize one fresh bounded run. Do not silently resume the
+dead process.
 
 `--configure-git` copies the tracked contribution dispatchers into stable,
 private Git-common state and sets only repository-local OpenPGP signing

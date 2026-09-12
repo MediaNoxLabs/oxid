@@ -488,6 +488,33 @@ test("factory claim surface fails closed and exposes no raw GitHub mutations", a
   assert.doesNotMatch(source, /factory\/\$\{issue\}/u);
 });
 
+test("Pi worker guidance confines external repository writes to approved supervision", async () => {
+  const guidance = await Promise.all([
+    readFile(path.join(repoRoot, "AGENT.md"), "utf8"),
+    readFile(path.join(repoRoot, ".pi", "agents", "developer.agent.md"), "utf8"),
+    readFile(path.join(repoRoot, ".pi", "agents", "dev-loop.agent.md"), "utf8"),
+    readFile(path.join(repoRoot, ".pi", "agents", "fixer.agent.md"), "utf8"),
+  ]);
+  const rawExternalMutationGrant = /\b(?:may|can|should|must)\s+(?:directly\s+)?(?:create|open|post|edit|apply|publish|release)\s+(?:an?\s+)?(?:external|upstream)\s+(?:issue|PR|pull request|comment|label|release|package)/iu;
+
+  for (const source of guidance) {
+    assert.match(source, /active\s+repository/u);
+    assert.match(source, /explicit\s+owner or supervisor approval/u);
+    assert.match(source, /external issue, PR, comment, label,\s+release,\s+package publication/u);
+    assert.match(source, /(?:draft|report)[^.\n]*locally/u);
+    assert.doesNotMatch(source, rawExternalMutationGrant);
+  }
+
+  const [rootAgent, charter, runtime] = await Promise.all([
+    readFile(path.join(repoRoot, "AGENT.md"), "utf8"),
+    readFile(path.join(repoRoot, "docs", "factory", "charter.md"), "utf8"),
+    readFile(path.join(repoRoot, "docs", "factory", "pi-runtime-audit.md"), "utf8"),
+  ]);
+  assert.match(rootAgent, /issue-backed delivery authority permits tracked writes only in this\s+repository/u);
+  assert.match(charter, /Issue-backed Oxid delivery authority is limited to the active repository/u);
+  assert.match(runtime, /worker\s+guidance now limit issue-backed delivery writes to `MediaNoxLabs\/oxid`/u);
+});
+
 test("factory state labels are complete, unique, and dry-run by default", () => {
   const expected = [
     "factory:ready",
