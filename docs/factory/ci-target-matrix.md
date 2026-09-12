@@ -12,9 +12,9 @@ devices, and a separate repository remain explicit owner evidence.
 | Level | Required evidence | Budget | When it runs |
 | --- | --- | --- | --- |
 | L0 basic | Advisory PR title/body feedback; required DCO, GitHub-verified commit signature, repository contracts, formatting, architecture, lint, and production compilation | 0–5 min | Every PR. Rust compilation is omitted only when the impact plan proves no Rust/build surface changed. |
-| L1 host | Workspace unit tests on one Linux host | 5–10 min | Rust, UI, headless, platform, Compact, or build changes; on demand for any PR. |
-| L2 component integration | Hermetic headless black-box tests, then deterministic Docker integration when its fixture is ready | 5–10 min for the current hermetic lane; Docker budget pending measurement | Affected host/component changes and on demand. |
-| L3 extended | UI feature profiles, optimized UI release audit, coverage, quality, locked Nix package, Compact artifacts | 10–30 min per parallel lane | Affected UI/Compact feature changes where listed below; explicit demand; every trusted `develop` push; release profile. |
+| L1 host | Workspace unit tests on one Linux host | 5–10 min | Ready-for-review Rust, UI, headless, platform, Compact, or build PR changes; on demand for any PR. |
+| L2 component integration | Hermetic headless black-box tests, then deterministic Docker integration when its fixture is ready | 5–10 min for the current hermetic lane; Docker budget pending measurement | Ready-for-review affected host/component changes and on demand. |
+| L3 extended | UI feature profiles, optimized UI release audit, coverage, quality, locked Nix package, Compact artifacts | 10–30 min per parallel lane | Ready-for-review affected UI/Compact feature changes where listed below; explicit demand; every trusted `develop` push; release profile. |
 | L4 platform/release | WASM, Android, iOS, Portal, standalone Midnight, PreProd, physical-device and real-proof evidence | Target-specific | Scheduled, on demand, or owner-private until each row below has a hermetic hosted runner. |
 
 L0 is an envelope of parallel policy and build contexts rather than one serial
@@ -57,6 +57,22 @@ The two current stable required CI names remain aggregators. They fail when a
 selected child lane fails and succeed when an unselected lane is intentionally
 skipped. This changes execution topology without requiring an unsafe one-step
 branch-protection migration.
+
+### Draft assurance boundary
+
+On `opened`, `synchronize`, `reopened`, or `converted_to_draft` events for a
+draft PR, the CI planner selects only `basic`; DCO, metadata, scan, and other
+independent short policy contexts still run. `ready_for_review` and a
+`synchronize` event while `github.event.pull_request.draft` is false recompute
+the ordinary change-relevant plan for that exact head. `workflow_dispatch` is
+not draft-limited, so its profile and `targets` inputs can request any existing
+public hosted target. Pushes to `develop`, `main`, and `milestone-*` remain
+complete-profile backstops.
+
+A successful draft aggregate is only truthful evidence that its selected L0
+work passed. It is not merge authorization: the existing milestone merge guard
+rejects `isDraft !== false` before it accepts any exact-head critical contexts.
+No separate draft CI state machine or alternate merge context is introduced.
 
 ### Capability-ownership metadata routing
 
@@ -169,9 +185,11 @@ storage ceiling before any new layer becomes required.
 
 | Repository event | Effective profile | Gate set |
 | --- | --- | --- |
-| Product PR to `milestone-<x.y.z>` | `feature` | L0 plus critical change- and risk-relevant hosted lanes; optional extras remain advisory |
+| Draft product PR to `milestone-<x.y.z>` | `feature` | L0 plus independent policy/scanner contexts; the draft merge guard rejects it |
+| Ready product PR to `milestone-<x.y.z>` | `feature` | L0 plus critical change- and risk-relevant hosted lanes; optional extras remain advisory |
 | Push to `milestone-<x.y.z>` | `integration` | every deterministic public hosted lane, in parallel; a red tip pauses automatic merges |
-| Factory/harness/CI/docs/dependency/governance PR to `develop` | `feature` | L0 plus change-relevant hosted lanes and requested extras; human merge only |
+| Draft factory/harness/CI/docs/dependency/governance PR to `develop` | `feature` | L0 plus independent policy/scanner contexts; human merge only |
+| Ready factory/harness/CI/docs/dependency/governance PR to `develop` | `feature` | L0 plus change-relevant hosted lanes and requested extras; human merge only |
 | Milestone promotion PR or push to `develop` | `integration` | every deterministic public hosted lane, in parallel; human merge only |
 | PR or push to `main` | `release` | every deterministic public hosted lane, in parallel |
 | manual workflow | selected `feature`, `integration`, or `release` | impacted, public-full, or public-full respectively; extra hosted targets may be named |
