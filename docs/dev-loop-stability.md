@@ -136,7 +136,8 @@ path under the common root. Commit-scoped `loop watch-ci` is delegated unchanged
 to `dev-loops@1.0.2`. PR-scoped monitoring has one narrow repository adapter:
 Oxid's mandatory contribution and metadata workflows mean an Oxid PR is never
 truly checkless, so the package's `ciStatus: "none"` result cannot settle green.
-The adapter re-observes only that bounded registration gap and delegates every
+The adapter re-observes only that bounded registration gap through the caller's
+monotonic deadline, including a final partial poll interval, and delegates every
 real pending, success, failure, parse/API-error, and check-selection state back
 to the pinned watcher. An omitted repository defaults narrowly to
 `MediaNoxLabs/oxid`; an explicit foreign repository bypasses the adapter. It

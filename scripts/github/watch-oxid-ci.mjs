@@ -47,14 +47,13 @@ export async function watchOxidPrCiStatus(
   if (options.timeoutMs === 0) return { ...initial, status: "pending", settled: false };
 
   const baselineSha = initial.headSha;
-  const maximumAttempts = Math.max(1, Math.floor(options.timeoutMs / options.pollIntervalMs) + 1);
   let attempts = initial.attempts;
   let latest = initial;
 
   // The upstream watcher consumed its own generic no-check grace before it
   // returned `none`. Re-observe only the registration gap, one bounded poll at
   // a time. A real pending/success/failure result resumes upstream delegation.
-  while (attempts < maximumAttempts) {
+  while (true) {
     const remaining = remainingTimeoutMs(startedAtMs, options.timeoutMs, now);
     if (remaining === 0) return timedOutNoChecks(latest, attempts);
     await delayImpl(Math.min(options.pollIntervalMs, remaining));
@@ -64,13 +63,14 @@ export async function watchOxidPrCiStatus(
     if (observed.headSha !== baselineSha) return changedResult(latest);
     if (isNoneTerminal(observed)) continue;
 
+    const remainingAfterObservation = remainingTimeoutMs(startedAtMs, options.timeoutMs, now);
+    if (remainingAfterObservation === 0) return observed;
     const resumed = await watchCiStatus({
       ...options,
-      timeoutMs: remainingTimeoutMs(startedAtMs, options.timeoutMs, now),
+      timeoutMs: remainingAfterObservation,
     }, watchDependencies);
     return resumed.headSha !== baselineSha ? changedResult(resumed) : resumed;
   }
-  return timedOutNoChecks(latest, attempts);
 }
 
 async function loadPinnedWatcher(packageRoot) {

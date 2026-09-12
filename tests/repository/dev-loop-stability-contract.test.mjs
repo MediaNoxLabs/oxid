@@ -1878,8 +1878,25 @@ test("Oxid PR CI adapter bounds no-check polls and preserves changed and API-pen
       delayImpl: async (milliseconds) => { clock += milliseconds; },
       now: () => clock,
     });
-    assert.deepEqual(result, { ...noChecks(1), status: "timeout", settled: false, attempts: 4 });
-    assert.deepEqual(calls.map(({ timeoutMs }) => timeoutMs), [3_000, 0, 0]);
+    assert.deepEqual(result, { ...noChecks(1), status: "timeout", settled: false, attempts: 5 });
+    assert.deepEqual(calls.map(({ timeoutMs }) => timeoutMs), [3_000, 0, 0, 0]);
+  });
+
+  await t.test("observes the final partial registration interval", async () => {
+    let clock = 0;
+    const delays = [];
+    const responses = [
+      { ok: true, status: "success", settled: true, ciStatus: "none", headSha: "head-a", attempts: 1 },
+      { ok: true, status: "success", settled: true, ciStatus: "none", headSha: "head-a", attempts: 1 },
+      { ok: true, status: "pending", settled: false, ciStatus: "pending", headSha: "head-a", attempts: 1 },
+    ];
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 90_000, pollIntervalMs: 60_000 }, {
+      watchCiStatus: async () => responses.shift(),
+      delayImpl: async (milliseconds) => { delays.push(milliseconds); clock += milliseconds; },
+      now: () => clock,
+    });
+    assert.equal(result.ciStatus, "pending");
+    assert.deepEqual(delays, [60_000, 30_000]);
   });
 
   await t.test("a same-watch head change remains changed", async () => {
