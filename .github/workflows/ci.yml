@@ -206,7 +206,7 @@ jobs:
     # A read-only PR with no trusted sccache seed can finish the command at the
     # 20-minute boundary. Keep the cold fallback bounded while leaving time for
     # sccache metrics and GitHub post-job cleanup.
-    timeout-minutes: 22
+    timeout-minutes: 25
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
