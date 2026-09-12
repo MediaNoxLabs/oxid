@@ -371,6 +371,7 @@ export async function runDevLoops(argv = process.argv.slice(2), {
   cwd = process.cwd(),
   stdout = process.stdout,
   stderr = process.stderr,
+  runChild = runManagedChild,
 } = {}) {
   const route = argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")
     ? {}
@@ -392,7 +393,16 @@ export async function runDevLoops(argv = process.argv.slice(2), {
   if (envelopeArgs) return runBuildEnvelope(envelopeArgs, { cwd, stdout, stderr, resolved });
 
   const cli = path.join(resolved.packageRoot, "cli", "index.mjs");
-  return runManagedChild(process.execPath, [cli, ...args], {
+  // This is the only package route requiring the Nix-pinned `gh`: its
+  // coordination-state detector queries `closingIssuesReferences`, which the
+  // host gh may not support. bootstrap changes to the repository root, so
+  // restore the caller's cwd before starting the pinned package CLI.
+  const requiresNixGh = route.category === "gate" && route.command === "upsert-verdict";
+  const command = requiresNixGh ? path.join(resolved.gitRoot, "bootstrap.sh") : process.execPath;
+  const commandArgs = requiresNixGh
+    ? ["--", "bash", "-c", 'cd "$1"; shift; exec "$@"', "dev-loops-bootstrap-command", cwd, process.execPath, cli, ...args]
+    : [cli, ...args];
+  return runChild(command, commandArgs, {
     cwd,
     stdout,
     stderr,

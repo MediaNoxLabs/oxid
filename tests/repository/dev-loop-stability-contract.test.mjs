@@ -1949,6 +1949,55 @@ test("repository wrappers await child close and preserve trailing output", async
   assert.match(output.join(""), /worktree-err/);
 });
 
+test("only checkpoint verdict upserts enter the repository Nix shell", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const calls = [];
+  const runChild = async (command, args, options) => {
+    calls.push({ command, args, options });
+    return 0;
+  };
+
+  assert.equal(await runDevLoops(["gate", "upsert-verdict", "--pr", "284"], {
+    cwd: fixture.root, runChild,
+  }), 0);
+  assert.deepEqual(calls[0], {
+    command: path.join(fixture.root, "bootstrap.sh"),
+    args: [
+      "--", "bash", "-c", 'cd "$1"; shift; exec "$@"', "dev-loops-bootstrap-command",
+      fixture.root, process.execPath, path.join(fixture.packageRoot, "cli", "index.mjs"),
+      "gate", "upsert-verdict", "--pr", "284",
+    ],
+    options: {
+      cwd: fixture.root,
+      stdout: process.stdout,
+      stderr: process.stderr,
+      label: "dev-loops",
+    },
+  });
+
+  calls.length = 0;
+  assert.equal(await runDevLoops(["gates"], { cwd: fixture.root, runChild }), 0);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, process.execPath);
+  assert.deepEqual(calls[0].args, [path.join(fixture.packageRoot, "cli", "index.mjs"), "gates"]);
+});
+
+test("checkpoint verdict upsert failures remain fail-closed", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  let calls = 0;
+  const code = await runDevLoops(["gate", "upsert-verdict", "--pr", "284"], {
+    cwd: fixture.root,
+    runChild: async () => {
+      calls += 1;
+      return 1;
+    },
+  });
+  assert.equal(code, 1);
+  assert.equal(calls, 1, "a Nix-shell failure must not retry through the host CLI");
+});
+
 test("managed worktree routes use remote refs and persist delivery metadata on create and reuse", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
