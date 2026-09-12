@@ -449,8 +449,9 @@ test("Pi devshell smoke delegates package authority to the bounded exact-pin res
   assert.doesNotMatch(smoke, /(?:HOME|global|node_modules\/\.\.\/)/);
   assert.match(devshell, /provision-pi-packages\.mjs/);
   assert.match(devshell, /content-addressed closure/);
-  assert.match(devshell, /without credentials/);
-  assert.doesNotMatch(devshell, /GITHUB_TOKEN|GH_TOKEN|optional review package/);
+  assert.match(devshell, /GITHUB_TOKEN/);
+  assert.match(devshell, /GH_TOKEN/);
+  assert.match(devshell, /GH_TOKENS/);
   assert.match(devshell, /export PI_OFFLINE=.*PI_OFFLINE:-1/);
 });
 

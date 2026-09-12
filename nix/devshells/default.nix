@@ -167,10 +167,19 @@
                       export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath linuxLibraries}:''${LD_LIBRARY_PATH:-}
                     ''}
 
-                    # Provision public exact project-local Pi packages without credentials.
+                    # Provision the exact project-local Pi package set. The review
+                    # package is hosted by GitHub Packages, so reuse an existing gh
+                    # token when the conventional GITHUB_TOKEN variable is absent.
                     # CI never needs Pi tooling, and this block performs network package
                     # installs, so continuous-integration shells skip it entirely.
                     if [ -z "''${CI:-}" ] && [ -f .pi/settings.json ]; then
+                      if [ -z "''${GITHUB_TOKEN:-}" ]; then
+                        if [ -n "''${GH_TOKEN:-}" ]; then
+                          export GITHUB_TOKEN="''${GH_TOKEN}"
+                        elif [ -n "''${GH_TOKENS:-}" ]; then
+                          export GITHUB_TOKEN="''${GH_TOKENS}"
+                        fi
+                      fi
                       # The helper publishes one content-addressed closure only after all
                       # exact pins validate. It migrates a legacy real .pi/npm lazily,
                       # then points this checkout at its matching factory-managed closure.
