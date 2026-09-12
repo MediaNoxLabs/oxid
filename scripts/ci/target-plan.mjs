@@ -42,6 +42,7 @@ const AREA_PATTERNS = Object.freeze({
     /^(?:LICENSE|CODE_OF_CONDUCT\.md|CONTRIBUTING\.md|SECURITY\.md|SUPPORT\.md)$/,
   ],
   harness: [
+    /^bootstrap\.sh$/,
     /^\.devloops$/,
     /^\.pi\//,
     /^AGENT\.md$/,
