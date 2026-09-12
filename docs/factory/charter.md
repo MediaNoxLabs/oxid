@@ -78,6 +78,12 @@ in which order concurrent trains promote.
 
 ## Authority boundaries
 
+Issue-backed Oxid delivery authority is limited to the active repository and
+its assigned work item. A worker may draft an external report locally, but must
+obtain explicit owner or supervisor approval before any write outside the active
+repository, including an issue, PR, comment, label, release, package
+publication, or other repository write.
+
 | Action | Who may do it |
 | --- | --- |
 | Create/refine/order work items and assign one delivery target | Planner, Quality Steward |
@@ -89,6 +95,7 @@ in which order concurrent trains promote.
 | Create, close, synchronize, or delete a milestone train | Human delivery operator; agents may prepare the issue-backed PR |
 | Tag, release, change repo settings, accept ADRs | Release Manager (human) only |
 | Modify factory protocol docs | Via a normal factory work item and the same delivery gates |
+| Write to an external repository | Owner or supervisor approval required; workers may only prepare a local draft |
 
 ## Provider agnosticism
 
