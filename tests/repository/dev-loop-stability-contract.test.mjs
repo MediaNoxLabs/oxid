@@ -1934,6 +1934,91 @@ test("Oxid PR CI adapter bounds no-check polls and preserves changed and API-pen
   });
 });
 
+test("Oxid PR CI adapter reconciles only superseded same-head Actions failures", async (t) => {
+  const failure = {
+    ok: true, status: "failure", settled: true, ciStatus: "failure", headSha: "head-a", attempts: 1,
+    failedChecks: [{ name: "Repository gate" }],
+  };
+  const attemptData = (replacement) => ({
+    checkRuns: [
+      {
+        name: "Repository gate", app: { slug: "github-actions" },
+        details_url: "https://github.com/o/r/actions/runs/10/job/1", status: "completed", conclusion: "failure",
+      },
+      ...(replacement.status === "completed" ? [{
+        name: "Repository gate", app: { slug: "github-actions" },
+        details_url: "https://github.com/o/r/actions/runs/11/job/2", status: "completed", conclusion: replacement.conclusion,
+      }] : []),
+    ],
+    workflowRuns: [
+      { id: 10, workflow_id: 5, run_number: 8, status: "completed", conclusion: "cancelled" },
+      replacement,
+    ],
+  });
+  const watch = async () => failure;
+
+  await t.test("an active replacement holds the stale failure pending", async () => {
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
+      watchCiStatus: watch,
+      loadWorkflowAttempts: () => attemptData({ id: 11, workflow_id: 5, run_number: 9, status: "in_progress", conclusion: null }),
+    });
+    assert.deepEqual(result, {
+      ...failure, status: "pending", settled: false, ciStatus: "pending",
+      workflowAttemptSelection: { examinedRuns: 2, supersededFailedRunIds: [10], selectedReplacementRunIds: [11] },
+    });
+  });
+
+  await t.test("a newer successful replacement clears only the stale Actions failure", async () => {
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
+      watchCiStatus: watch,
+      loadWorkflowAttempts: () => attemptData({ id: 11, workflow_id: 5, run_number: 9, status: "completed", conclusion: "success" }),
+    });
+    assert.equal(result.status, "success");
+    assert.deepEqual(result.failedChecks, []);
+  });
+
+  await t.test("a bounded watch waits for the active replacement instead of returning early", async () => {
+    let clock = 0;
+    let observations = 0;
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 2_000, pollIntervalMs: 1_000 }, {
+      watchCiStatus: async () => failure,
+      loadWorkflowAttempts: () => attemptData({
+        id: 11, workflow_id: 5, run_number: 9,
+        status: observations++ === 0 ? "in_progress" : "completed",
+        conclusion: observations === 1 ? null : "success",
+      }),
+      delayImpl: async (milliseconds) => { clock += milliseconds; },
+      now: () => clock,
+    });
+    assert.equal(result.status, "success");
+    assert.equal(clock, 1_000);
+  });
+
+  await t.test("latest-run, external, and API failures remain settled failures", async () => {
+    const latestFailure = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
+      watchCiStatus: watch,
+      loadWorkflowAttempts: () => attemptData({ id: 11, workflow_id: 5, run_number: 9, status: "completed", conclusion: "failure" }),
+    });
+    assert.equal(latestFailure, failure);
+    const externalFailure = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
+      watchCiStatus: watch,
+      loadWorkflowAttempts: () => ({
+        checkRuns: [{
+          name: "Repository gate", app: { slug: "external-ci" }, details_url: "https://ci.invalid/run/1",
+          status: "completed", conclusion: "failure",
+        }],
+        workflowRuns: [],
+      }),
+    });
+    assert.equal(externalFailure, failure);
+    const apiFailure = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
+      watchCiStatus: watch,
+      loadWorkflowAttempts: () => { throw new Error("fixture API failure"); },
+    });
+    assert.equal(apiFailure, failure);
+  });
+});
+
 test("repository wrappers await child close and preserve trailing output", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
