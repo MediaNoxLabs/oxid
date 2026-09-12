@@ -2,14 +2,16 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { hostname } from "node:os";
 import { cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const SETTINGS_PATH = path.join(".pi", "settings.json");
 const PROJECT_AGENTS_PATH = path.join(".pi", "agents");
 const PI_CLOSURE_SCHEMA_VERSION = 1;
-const PI_CLOSURE_LOCK_WAIT_MS = 15_000;
-const PI_CLOSURE_STALE_MS = 10 * 60_000;
+// One provider request may take ten minutes; installation must outlast it.
+const PI_CLOSURE_LOCK_WAIT_MS = 12 * 60_000;
+const PI_CLOSURE_STALE_MS = 15 * 60_000;
 const PI_CLOSURE_RETENTION_MS = 7 * 24 * 60 * 60_000;
 
 export const PI_BUILTIN_CHILD_TOOLS = Object.freeze([
@@ -132,9 +134,9 @@ export function piPackageClosureIdentity(settings) {
 async function readClosureMarker(closure) {
   try {
     return await readJson(path.join(closure, "closure.json"), "Pi package closure marker");
-  } catch (error) {
-    if (error?.cause?.code === "ENOENT" || error?.code === "ENOENT") return null;
-    throw error;
+  } catch {
+    // A missing or malformed final marker is untrusted and will be quarantined.
+    return null;
   }
 }
 
@@ -153,16 +155,37 @@ async function pause(milliseconds) {
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function acquireClosureLock(lock, { waitMs = PI_CLOSURE_LOCK_WAIT_MS, staleMs = PI_CLOSURE_STALE_MS, now = () => Date.now() } = {}) {
+function processIsAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid < 1) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+async function liveSameHostLock(lock, isProcessAlive) {
+  try {
+    const owner = JSON.parse(await readFile(lock, "utf8"));
+    return owner?.host === hostname() && isProcessAlive(owner.pid);
+  } catch {
+    return false;
+  }
+}
+
+async function acquireClosureLock(lock, {
+  waitMs = PI_CLOSURE_LOCK_WAIT_MS, staleMs = PI_CLOSURE_STALE_MS, now = () => Date.now(), isProcessAlive = processIsAlive,
+} = {}) {
   const deadline = now() + waitMs;
   for (;;) {
     try {
-      await writeFile(lock, JSON.stringify({ pid: process.pid, createdAtMs: now() }), { flag: "wx", mode: 0o600 });
+      await writeFile(lock, JSON.stringify({ pid: process.pid, host: hostname(), createdAtMs: now() }), { flag: "wx", mode: 0o600 });
       return async () => { await rm(lock, { force: true }); };
     } catch (error) {
       if (error?.code !== "EEXIST") throw error;
       const info = await lstatIfPresent(lock);
-      if (info && now() - info.mtimeMs > staleMs) {
+      if (info && now() - info.mtimeMs > staleMs && !(await liveSameHostLock(lock, isProcessAlive))) {
         await rm(lock, { force: true });
         continue;
       }
@@ -188,11 +211,14 @@ async function copyLegacyStore(legacyStore, stageStore) {
 }
 
 /**
- * Publish an exact immutable package closure and point only this worktree at it.
+ * Publish a content-addressed closure and point only this worktree at it.
+ * Immutability is factory-enforced: this module never rewrites a published
+ * closure, but it does not claim filesystem-level read-only enforcement.
  * `install` receives an empty staging store when no verified legacy store exists.
  */
 export async function ensureSharedPiPackageStore({
-  cwd = process.cwd(), install, waitMs = PI_CLOSURE_LOCK_WAIT_MS, staleMs = PI_CLOSURE_STALE_MS, now = () => Date.now(),
+  cwd = process.cwd(), install, waitMs = PI_CLOSURE_LOCK_WAIT_MS, staleMs = PI_CLOSURE_STALE_MS,
+  now = () => Date.now(), isProcessAlive = processIsAlive,
 } = {}) {
   const gitRoot = await findGitRoot(cwd);
   const commonRoot = await resolveCommonCheckoutRoot(gitRoot);
@@ -207,7 +233,7 @@ export async function ensureSharedPiPackageStore({
 
   let published = false;
   if (!(await validClosure(paths.closure, identity, pins))) {
-    const release = await acquireClosureLock(paths.lock, { waitMs, staleMs, now });
+    const release = await acquireClosureLock(paths.lock, { waitMs, staleMs, now, isProcessAlive });
     try {
       if (!(await validClosure(paths.closure, identity, pins))) {
         const stage = path.join(paths.staging, `${identity}.${process.pid}.${Math.random().toString(16).slice(2)}`);
@@ -224,7 +250,16 @@ export async function ensureSharedPiPackageStore({
               if (gitRoot !== commonRoot && target === commonLegacy) legacySource = target;
             } catch { /* A broken or foreign link is never migration input. */ }
           }
-          const migrated = legacySource !== null && await copyLegacyStore(legacySource, stageStore);
+          let migrated = legacySource !== null && await copyLegacyStore(legacySource, stageStore);
+          if (migrated) {
+            try {
+              await resolveInstalledPinnedPackages({ candidates: [{ root: stage, source: "legacy staging" }], pins });
+            } catch {
+              // Legacy stores are only an optimization; an exact staged install is authoritative.
+              await rm(stageStore, { recursive: true, force: true });
+              migrated = false;
+            }
+          }
           if (!migrated) {
             if (typeof install !== "function") throw new Error(`missing Pi package closure ${identity}; enter the devshell to install the exact tracked pins`);
             await mkdir(stageStore, { recursive: true, mode: 0o700 });
@@ -232,6 +267,10 @@ export async function ensureSharedPiPackageStore({
           }
           await resolveInstalledPinnedPackages({ candidates: [{ root: stage, source: "staging" }], pins });
           await writeFile(path.join(stage, "closure.json"), `${JSON.stringify({ schemaVersion: PI_CLOSURE_SCHEMA_VERSION, identity, configuration })}\n`, { mode: 0o600 });
+          if (await lstatIfPresent(paths.closure)) {
+            const quarantine = `${paths.closure}.corrupt-${Date.now()}-${process.pid}`;
+            await rename(paths.closure, quarantine);
+          }
           await rename(stage, paths.closure);
           published = true;
         } catch (error) {
@@ -297,17 +336,24 @@ export async function cleanupPiPackageClosures({ cwd = process.cwd(), now = () =
   const gitRoot = await findGitRoot(cwd);
   const paths = closurePaths(await resolveCommonCheckoutRoot(gitRoot), "placeholder");
   const removed = [];
-  for (const closure of audit.closures.filter((entry) => !entry.referenced && entry.ageMs >= olderThanMs)) {
+  for (const closure of audit.closures
+    .filter((entry) => !entry.referenced && entry.ageMs >= olderThanMs)
+    .sort((left, right) => right.ageMs - left.ageMs || left.identity.localeCompare(right.identity))) {
     await rm(path.join(paths.closures, closure.identity), { recursive: true, force: true });
     removed.push(closure.identity);
   }
   const reclaim = async (directory) => {
     const entries = await readdir(directory, { withFileTypes: true }).catch((error) => error?.code === "ENOENT" ? [] : Promise.reject(error));
-    const reclaimed = [];
-    for (const entry of entries.slice(0, 32)) {
+    const aged = [];
+    for (const entry of entries) {
       const candidate = path.join(directory, entry.name);
       const info = await lstat(candidate);
-      if (now() - info.mtimeMs < staleMs) continue;
+      if (now() - info.mtimeMs >= staleMs) aged.push({ entry, candidate, ageMs: now() - info.mtimeMs });
+    }
+    const reclaimed = [];
+    for (const { entry, candidate } of aged
+      .sort((left, right) => right.ageMs - left.ageMs || left.entry.name.localeCompare(right.entry.name))
+      .slice(0, 32)) {
       await rm(candidate, { recursive: entry.isDirectory(), force: true });
       reclaimed.push(entry.name);
     }

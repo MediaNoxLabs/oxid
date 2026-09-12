@@ -234,7 +234,7 @@ async function inspectPackageClosureState(repoRoot) {
     return check("pi-package-closures", audit.cleanupBlocked ? "warn" : audit.closures.length > 32 ? "warn" : "pass",
       audit.cleanupBlocked
         ? "Pi package closure cleanup is blocked by malformed registered worktree settings"
-        : `${audit.closures.length} immutable Pi closures (${audit.referenced.length} referenced, ${unreferenced} unreferenced)`,
+        : `${audit.closures.length} factory-managed Pi closures (${audit.referenced.length} referenced, ${unreferenced} unreferenced)`,
       { closures: audit.closures.length, referenced: audit.referenced.length, unreferenced }, "operational");
   } catch (error) {
     return check("pi-package-closures", "warn", `Pi package closure audit unavailable: ${error.message}`, undefined, "operational");
