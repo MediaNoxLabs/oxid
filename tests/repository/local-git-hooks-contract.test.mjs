@@ -32,6 +32,10 @@ import {
   validatePrePush,
 } from "../../scripts/git-hooks/local-policy.mjs";
 import { verifyOpenPgpCommit } from "../../scripts/ci/contribution-policy.mjs";
+import {
+  GITHUB_WEB_FLOW_SIGNING_KEY_FINGERPRINT,
+  inspectPinnedGitHubWebFlowKey,
+} from "../../scripts/git-hooks/check-github-web-flow-key.mjs";
 import { withManagedHookWarningFilter } from "../../scripts/loop/ensure-worktree-consumer.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
@@ -166,6 +170,15 @@ test("installer preserves a foreign hook manager", async (t) => {
   git(repository, ["config", "--local", "core.hooksPath", "/private/other-hooks"]);
   assert.throws(() => applyGitHooks(repository, { execute: true }), /refusing to replace another hook manager/u);
   assert.equal(git(repository, ["config", "--local", "core.hooksPath"]), "/private/other-hooks");
+});
+
+test("pinned GitHub web-flow key inspection accepts only the current trusted fingerprint", () => {
+  const present = inspectPinnedGitHubWebFlowKey(
+    `fpr:::::::::${GITHUB_WEB_FLOW_SIGNING_KEY_FINGERPRINT}:\n`,
+  );
+  assert.equal(present.ok, true);
+  assert.equal(inspectPinnedGitHubWebFlowKey("fpr:::::::::5DE3E0509C47EA3CF04A42D34AEE18F83AFDEB23:\n").ok, false);
+  assert.match(inspectPinnedGitHubWebFlowKey("").ownerAction, /gpg --batch --import/u);
 });
 
 test("pre-commit policy requires OpenPGP signing defaults and exact identity inputs", async (t) => {
