@@ -9,6 +9,9 @@ inheritSkills: true
 user-invocable: true
 maxSubagentDepth: 1
 timeoutMs: 3600000
+# The supervisor has already selected the canonical managed issue worktree.
+# Prevent pi-subagents from wrapping this conductor in a second temporary tree.
+worktree: false
 toolBudget: {"soft":40,"hard":60,"block":"*"}
 ---
 <!-- SPDX-License-Identifier: MIT -->
