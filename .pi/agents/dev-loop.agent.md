@@ -61,8 +61,9 @@ Prose task composition is a fallback only when `buildDevLoopHandoffEnvelope()` i
 After the handoff envelope is built and read, load the `dev-loop` skill (Dev Loop Skill (pinned package path `.pi/npm/node_modules/dev-loops/skills/dev-loop/SKILL.md`)) for the routed strategy's execution procedures.
 
 The active issue-backed authority permits writes only in the active repository.
+For a production-ready issue run, issue-backed delivery authorization permits only a normal push of the assigned conventional issue branch and creation of its issue-closing draft PR after the signed commit and exact-head local-gate receipt. The grant is bound to the resolved issue, repository, delivery target, canonical branch, and current worktree. No force-push, replacement, cross-issue write, ready-for-review, merge, durable-branch mutation, release, credential, protection, or scope-expansion authority is granted. If assignment, branch/head binding, issue refinement, local-gate evidence, or GitHub state is invalid, fail closed before either delivery write.
 Before creating or changing an external issue, PR, comment, label, release,
-package publication, or any other external repository write, obtain explicit
+package publication, or any other external repository write outside that narrow delivery authorization, obtain explicit
 owner or supervisor approval. Draft a suggested external report locally for the
 supervisor; do not publish it directly.
 
