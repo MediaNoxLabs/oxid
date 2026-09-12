@@ -161,6 +161,7 @@ jobs:
               && (process.env.GITHUB_REF === 'refs/heads/develop'
                 || process.env.GITHUB_REF.startsWith('refs/heads/milestone-'));
             core.exportVariable('SCCACHE_GHA_RW_MODE', trustedTrainPush ? 'READ_WRITE' : 'READ_ONLY');
+            core.exportVariable('SCCACHE_BACKEND_DIAGNOSTICS', trustedTrainPush ? 'on' : 'off');
       - name: Compile and run workspace unit tests
         run: nix develop .#ci-rust --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh unit --strict
 
