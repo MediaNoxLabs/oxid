@@ -102,6 +102,21 @@ test("documentation, harness, and workflow-only feature changes keep the basic g
   }
 });
 
+test("root bootstrap and repository-contract changes retain only the Basic gate", () => {
+  assert.deepEqual(makeTargetPlan(["bootstrap.sh"]).targets, [HostedTarget.BASIC]);
+  assert.deepEqual(
+    makeTargetPlan(["bootstrap.sh", "tests/repository/target-plan-contract.test.mjs"]).targets,
+    [HostedTarget.BASIC],
+  );
+});
+
+test("root bootstrap preserves Rust/product target selection", () => {
+  assert.deepEqual(
+    makeTargetPlan(["bootstrap.sh", "crates/foundation/src/lib.rs"]).targets,
+    [HostedTarget.BASIC, HostedTarget.UNIT_LINUX, HostedTarget.HEADLESS_LINUX],
+  );
+});
+
 test("the repository gate driver remains a fail-closed global build input", () => {
   assert.deepEqual(makeTargetPlan(["run.sh"]).targets, Object.values(HostedTarget));
 });
@@ -163,9 +178,39 @@ test("expensive assurance lanes remain available explicitly on feature PRs", () 
   for (const target of targets) assert.equal(plan.targets.includes(target), true, target);
 });
 
-test("integration and release profiles are complete backstops", () => {
+test("draft PR state defers selected lanes until the PR is ready", () => {
+  const changedPaths = ["crates/ui-dioxus/src/lib.rs"];
+  const normalTargets = [HostedTarget.BASIC, HostedTarget.UNIT_LINUX, HostedTarget.UI_LINUX];
+
+  assert.deepEqual(
+    makeTargetPlan(changedPaths, { eventName: "pull_request", pullRequestDraft: true }).targets,
+    [HostedTarget.BASIC],
+  );
+  assert.deepEqual(
+    makeTargetPlan(changedPaths, { eventName: "pull_request", pullRequestDraft: false }).targets,
+    normalTargets,
+  );
+});
+
+test("manual dispatch escalates draft-independent hosted targets", () => {
+  const plan = makeTargetPlan(["README.md"], {
+    eventName: "workflow_dispatch",
+    pullRequestDraft: true,
+    extraTargets: [HostedTarget.UI_RELEASE_LINUX],
+  });
+  assert.deepEqual(plan.targets, [HostedTarget.BASIC, HostedTarget.UI_RELEASE_LINUX]);
+});
+
+test("CI supplies PR draft state for every draft transition", async () => {
+  const workflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+  assert.match(workflow, /types: \[opened, synchronize, reopened, ready_for_review, converted_to_draft\]/);
+  assert.match(workflow, /PR_DRAFT: \$\{\{ github\.event\.pull_request\.draft \|\| 'false' \}\}/);
+  assert.equal((workflow.match(/--pr-draft "\$PR_DRAFT"/g) ?? []).length, 2);
+});
+
+test("integration and release profiles are complete durable-branch backstops", () => {
   for (const profile of [Profile.INTEGRATION, Profile.RELEASE]) {
-    assert.deepEqual(makeTargetPlan(["README.md"], { profile }).targets, HOSTED_TARGETS);
+    assert.deepEqual(makeTargetPlan(["README.md"], { profile, eventName: "push", pullRequestDraft: true }).targets, HOSTED_TARGETS);
   }
 });
 

@@ -1,0 +1,4 @@
+docs/adr/0009-separate-credential-models-from-serializations.md:generic-api-key:11
+fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/positive/credential-response.json:generic-api-key:4
+docs/site/src/quality-baseline-2026-08-26.md:generic-api-key:271
+docs/migration/midnight-ledger-prototype.md:generic-api-key:386

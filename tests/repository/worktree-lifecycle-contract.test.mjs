@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   archiveEligibility,
+  cleanupPiPackagesAfterWorktreeRemoval,
   githubMergeQuery,
   githubRepositoryFromRemote,
   indexGithubMergeProofs,
@@ -17,6 +18,28 @@ import {
   resolveMergeState,
   worktreeArchiveRef,
 } from "../../scripts/worktree-lifecycle.mjs";
+
+test("post-removal closure cleanup reports bounded results without reversing closeout", async () => {
+  const completed = await cleanupPiPackagesAfterWorktreeRemoval("/repo", {
+    cleanup: async () => ({
+      cleanupBlocked: false,
+      closures: [{ identity: "a" }],
+      referenced: ["a"],
+      removed: ["old"],
+      reclaimedStaging: ["stage"],
+      reclaimedLocks: ["lock"],
+    }),
+  });
+  assert.deepEqual(completed, {
+    status: "completed", closures: 1, referenced: 1, removed: ["old"], reclaimedStaging: ["stage"], reclaimedLocks: ["lock"],
+  });
+  const blocked = await cleanupPiPackagesAfterWorktreeRemoval("/repo", {
+    cleanup: async () => ({ cleanupBlocked: true, closures: [], referenced: [], removed: [], reclaimedStaging: [], reclaimedLocks: [] }),
+  });
+  assert.equal(blocked.status, "blocked");
+  const failed = await cleanupPiPackagesAfterWorktreeRemoval("/repo", { cleanup: async () => { throw new Error("cleanup unavailable"); } });
+  assert.deepEqual(failed, { status: "failed", error: "cleanup unavailable" });
+});
 
 test("worktree porcelain parsing preserves paths and branches", () => {
   assert.deepEqual(parseWorktrees([

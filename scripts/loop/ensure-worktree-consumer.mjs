@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
+import { inspectManagedHookBundle } from "../git-hooks/configure.mjs";
 
 export const REVIEWED_WORKTREE_PIN = "1.0.2";
 
@@ -17,7 +18,53 @@ export function assertReviewedWorktreePin(version) {
   }
 }
 
-/** Oxid resolves exact Pi packages from the common checkout; no worktree files are provisioned. */
+/**
+ * The pinned generic worktree helper intentionally refuses every hooksPath
+ * override. Oxid owns one exception: its exact Git-common factory bundle.
+ * Recognize only that verified bundle after provisioning; foreign, incomplete,
+ * and symlink-escaped paths remain untouched and keep the helper's warning.
+ */
+function expectedPinnedWarnings(configured) {
+  return new Set([
+    `[ensure-worktree] WARN default-branch guard not installed: core.hooksPath is set to "${configured}" — install the guard there, or unset it, or use DEVLOOPS_ALLOW_MAIN discipline instead\n`,
+    `[ensure-worktree] WARN commit-msg guard not installed: core.hooksPath is set to "${configured}" — install the guard there, or unset it\n`,
+  ]);
+}
+
+export async function withManagedHookWarningFilter(repository, action, { stderr = process.stderr } = {}) {
+  const before = inspectManagedHookBundle(repository);
+  if (!before.ok) return { value: await action(), managed: before, suppressed: 0 };
+
+  const expected = expectedPinnedWarnings(before.configured);
+  const originalWrite = process.stderr.write;
+  const forwardWrite = stderr.write.bind(stderr);
+  const buffered = [];
+  process.stderr.write = function filteredWrite(chunk, ...args) {
+    if (typeof chunk === "string" && expected.has(chunk)) {
+      buffered.push([chunk, args]);
+      return true;
+    }
+    return forwardWrite(chunk, ...args);
+  };
+
+  let value;
+  let thrown;
+  try {
+    value = await action();
+  } catch (error) {
+    thrown = error;
+  } finally {
+    process.stderr.write = originalWrite;
+  }
+
+  const after = inspectManagedHookBundle(repository);
+  if (!after.ok) {
+    for (const [chunk, args] of buffered) forwardWrite(chunk, ...args);
+  }
+  if (thrown) throw thrown;
+  return { value, managed: after, suppressed: after.ok ? buffered.length : 0 };
+}
+
 export function oxidConsumerProvision() {
   return {
     ok: true,
@@ -78,7 +125,29 @@ export async function runConsumerEnsureWorktree(argv = process.argv.slice(2), {
     return code;
   }
   try {
-    const result = await cli.ensureWorktree(options, { provision: oxidConsumerProvision });
+    const filtered = await withManagedHookWarningFilter(
+      cwd,
+      () => cli.ensureWorktree(options, { provision: oxidConsumerProvision }),
+      { stderr },
+    );
+    const result = filtered.value;
+    const managed = filtered.managed;
+    if (managed.ok) {
+      result.guard = {
+        ok: true,
+        installed: [],
+        refreshed: [],
+        skipped: [],
+        reason: "repository-managed Git-common policy dispatchers are active (pre-merge-commit is not required by Oxid policy)",
+      };
+      result.commitMsgGuard = {
+        ok: true,
+        installed: false,
+        refreshed: false,
+        skipped: false,
+        reason: "repository-managed commit-msg dispatcher is active",
+      };
+    }
     return output.emitResult(result, { jq: options.jq, silent: options.silent, stdout, stderr });
   } catch (error) {
     stderr.write(`${helpers.formatCliError(error)}\n`);

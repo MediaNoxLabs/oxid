@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { resolvePinnedCoreModulePath } from "../dev-loops.mjs";
-import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
+import { auditPiPackageClosures, resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
 import { checkUserPolicy } from "./pi-policy.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -204,23 +204,41 @@ function validateAgentBudget(file, fields) {
   return problems;
 }
 
-async function inspectInstalledPackages(commonCheckout) {
-  const store = path.join(commonCheckout, ".pi", "npm", "node_modules");
+async function inspectInstalledPackages(repoRoot) {
   const installed = {};
   const problems = [];
-  for (const [name, expected] of EXPECTED_PACKAGES) {
-    try {
-      const manifest = JSON.parse(await readFile(path.join(store, name, "package.json"), "utf8"));
+  try {
+    const resolved = await resolveDevLoopsPackageRoot({ cwd: repoRoot, includeAllPinnedPackages: true });
+    for (const [name, expected] of EXPECTED_PACKAGES) {
+      const packageRoot = resolved.packageRoots.find((entry) => entry.name === name)?.packageRoot;
+      if (!packageRoot) {
+        problems.push(`${name}: exact package is not installed in this worktree's matching closure`);
+        continue;
+      }
+      const manifest = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
       installed[name] = manifest.version ?? null;
       if (manifest.name !== name || manifest.version !== expected) {
         problems.push(`${name}: expected ${expected}, installed ${manifest.version ?? "unknown"}`);
       }
-    } catch (error) {
-      if (error?.code === "ENOENT") problems.push(`${name}: exact package is not installed in the common store`);
-      else problems.push(`${name}: ${error.message}`);
     }
+  } catch (error) {
+    problems.push(error.message);
   }
   return { installed, problems };
+}
+
+async function inspectPackageClosureState(repoRoot) {
+  try {
+    const audit = await auditPiPackageClosures({ cwd: repoRoot });
+    const unreferenced = audit.closures.filter((entry) => !entry.referenced).length;
+    return check("pi-package-closures", audit.cleanupBlocked ? "warn" : audit.closures.length > 32 ? "warn" : "pass",
+      audit.cleanupBlocked
+        ? "Pi package closure cleanup is blocked by malformed registered worktree settings"
+        : `${audit.closures.length} factory-managed Pi closures (${audit.referenced.length} referenced, ${unreferenced} unreferenced)`,
+      { closures: audit.closures.length, referenced: audit.referenced.length, unreferenced }, "operational");
+  } catch (error) {
+    return check("pi-package-closures", "warn", `Pi package closure audit unavailable: ${error.message}`, undefined, "operational");
+  }
 }
 
 function inspectOperationalState(repoRoot) {
@@ -482,7 +500,7 @@ export async function auditPi({
   let layout;
   try {
     layout = resolveGitLayout(repoRoot);
-    const installed = await inspectInstalledPackages(layout.commonCheckout);
+    const installed = await inspectInstalledPackages(repoRoot);
     checks.push(check("installed-packages", installed.problems.length ? "fail" : "pass",
       installed.problems.length ? "The common Pi package store does not match tracked pins" : "Installed Pi packages match tracked pins",
       { installed: installed.installed, problems: installed.problems }, "runtime"));
@@ -570,6 +588,7 @@ export async function auditPi({
 
   if (includeOperational) {
     checks.push(...inspectOperationalState(repoRoot));
+    checks.push(await inspectPackageClosureState(repoRoot));
     checks.push(await inspectMetrics(repoRoot));
   }
 

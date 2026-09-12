@@ -9,13 +9,21 @@ import {
   readFile,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Writable } from "node:stream";
 import test from "node:test";
 
-import { applyGitHooks, BUNDLE_FILES, checkGitHooks, HOOK_NAMES } from "../../scripts/git-hooks/configure.mjs";
+import {
+  applyGitHooks,
+  BUNDLE_FILES,
+  checkGitHooks,
+  HOOK_NAMES,
+  inspectManagedHookBundle,
+} from "../../scripts/git-hooks/configure.mjs";
 import {
   inspectSigningConfiguration,
   parsePushUpdates,
@@ -24,6 +32,7 @@ import {
   validatePrePush,
 } from "../../scripts/git-hooks/local-policy.mjs";
 import { verifyOpenPgpCommit } from "../../scripts/ci/contribution-policy.mjs";
+import { withManagedHookWarningFilter } from "../../scripts/loop/ensure-worktree-consumer.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 
@@ -69,6 +78,87 @@ test("repository-local hook installation is stable in Git-common private state",
     );
   }
   assert.equal(checkGitHooks(repository).ok, true);
+});
+
+test("canonical factory bundle is recognized without inventing a pre-merge dispatcher", async (t) => {
+  const repository = await fixture(t);
+  applyGitHooks(repository, { execute: true });
+  const initial = inspectManagedHookBundle(repository);
+  assert.equal(initial.ok, true);
+  git(repository, ["config", "--local", "core.hooksPath", path.join(initial.installedDir, "..", "hooks")]);
+  assert.equal(inspectManagedHookBundle(repository).ok, true);
+  assert.equal(checkGitHooks(repository).ok, true);
+  applyGitHooks(repository, { execute: true });
+  assert.equal(initial.preMergeCommitRequired, false);
+
+  const stale = path.join(initial.installedDir, "pre-commit");
+  await writeFile(stale, `${await readFile(stale, "utf8")}# stale\n`);
+  const staleResult = inspectManagedHookBundle(repository);
+  assert.equal(staleResult.managed, true);
+  assert.equal(staleResult.ok, false);
+  assert.equal(staleResult.stale, true);
+  assert.match(staleResult.reason, /explicit bootstrap repair/u);
+  applyGitHooks(repository, { execute: true });
+  assert.equal(inspectManagedHookBundle(repository).ok, true);
+});
+
+test("consumer suppresses only pinned false warnings while canonical hooks remain valid", async (t) => {
+  const repository = await fixture(t);
+  const installed = applyGitHooks(repository, { execute: true });
+  const output = [];
+  const stderr = new Writable({ write(chunk, _encoding, callback) { output.push(chunk.toString()); callback(); } });
+  const defaultWarning = `[ensure-worktree] WARN default-branch guard not installed: core.hooksPath is set to "${installed.installedDir}" — install the guard there, or unset it, or use DEVLOOPS_ALLOW_MAIN discipline instead\n`;
+  const commitWarning = `[ensure-worktree] WARN commit-msg guard not installed: core.hooksPath is set to "${installed.installedDir}" — install the guard there, or unset it\n`;
+
+  const filtered = await withManagedHookWarningFilter(repository, async () => {
+    process.stderr.write(defaultWarning);
+    process.stderr.write("retained warning\n");
+    process.stderr.write(commitWarning);
+    return 42;
+  }, { stderr });
+
+  assert.equal(filtered.value, 42);
+  assert.equal(filtered.suppressed, 2);
+  assert.equal(output.join(""), "retained warning\n");
+
+  output.length = 0;
+  const invalidated = await withManagedHookWarningFilter(repository, async () => {
+    process.stderr.write(defaultWarning);
+    await rm(path.join(installed.installedDir, "pre-push"));
+    process.stderr.write(commitWarning);
+  }, { stderr });
+  assert.equal(invalidated.managed.ok, false);
+  assert.equal(invalidated.suppressed, 0);
+  assert.equal(output.join(""), `${defaultWarning}${commitWarning}`);
+});
+
+test("canonical incomplete and symlink-escaped bundles are never recognized", async (t) => {
+  const repository = await fixture(t);
+  const installed = applyGitHooks(repository, { execute: true });
+  await rm(path.join(installed.installedDir, "pre-push"));
+  assert.equal(inspectManagedHookBundle(repository).managed, false);
+
+  await rm(installed.installedDir, { recursive: true, force: true });
+  const escaped = path.join(repository, "escaped-hooks");
+  await mkdir(escaped);
+  await symlink(escaped, installed.installedDir);
+  assert.equal(inspectManagedHookBundle(repository).managed, false);
+});
+
+test("canonical factory bundle is shared truthfully by linked worktrees", async (t) => {
+  const repository = await fixture(t);
+  await writeFile(path.join(repository, "tracked"), "base\n");
+  git(repository, ["add", "tracked", ".githooks", "scripts", ".github"]);
+  git(repository, ["commit", "-m", "test(harness): establish fixture"]);
+  applyGitHooks(repository, { execute: true });
+  const linked = path.join(repository, "linked");
+  git(repository, ["worktree", "add", "-b", "fix/issue-431", linked]);
+  t.after(() => { try { git(repository, ["worktree", "remove", "--force", linked]); } catch {} });
+  const main = inspectManagedHookBundle(repository);
+  const fromLinked = inspectManagedHookBundle(linked);
+  assert.equal(fromLinked.ok, true);
+  assert.equal(fromLinked.installedDir, main.installedDir);
+  assert.equal(checkGitHooks(linked).ok, true);
 });
 
 test("installer preserves a foreign hook manager", async (t) => {

@@ -116,6 +116,18 @@ locked Nix input and its exact Pi runtime; re-entering `./bootstrap.sh` then
 reconstructs only that reverted closure. Owner-private session and async state
 is intentionally retained for recovery and is not part of rollback.
 
+### External repository mutation boundary (2026-09-12)
+
+A supervised worker investigating an upstream watcher behavior created a useful
+external issue without explicit approval. No credentials or payloads were
+exposed, but the write exceeded the active Oxid issue authority. Pi and worker
+guidance now limit issue-backed delivery writes to `MediaNoxLabs/oxid`; an
+owner or supervisor must explicitly approve any external issue, PR, comment,
+label, release, package publication, or other repository write. Workers may
+instead prepare a local report for the supervisor. Contract tests cover the
+worker guidance, while the supervisor retains the decision and publication
+boundary.
+
 ### Supervised taskflow canary (2026-09-07)
 
 Issue [#158](https://github.com/MediaNoxLabs/oxid/issues/158) was used as a

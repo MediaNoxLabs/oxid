@@ -68,8 +68,10 @@ from runner execution time. `ci.canceledRuns` counts canceled hosted run
 attempts across the work item; it is not derived from the final exact-head
 check outcomes. Use the hosted target identifier as the check name for a lane
 (`basic`, `unit-linux`, and so on); protection-only contexts use other bounded
-names. The target-budget SLO compares each selected target check's execution
-duration with that target's authoritative budget. Provider queue time remains
+names. Hard workflow budgets remain authoritative in the target matrix. The
+supervisor reports separately calibrated green/amber/red early-warning bands
+from execution distributions; they are advisory throughput signals, never a
+workflow timeout or a replacement for a hard budget. Provider queue time remains
 visible in per-check distributions and `ci.wallTimeMs` without creating a false
 execution-budget violation. Named validation durations/outcomes are aggregated separately
 so slow or flaky local gates remain visible. `peakWorktreeBytes` is physical worktree usage
@@ -204,35 +206,60 @@ lychee-only devshell instead of realizing the compiler and Compact artifact
 closure. The nightly is the one that changed character rather than duration:
 the flake checks previously ran nowhere.
 
-## Active budgets
+## Calibrated supervisor warnings — 2026-09-12
 
-| Measurement | Green | Amber | Red |
-| --- | --- | --- | --- |
-| Warm local strict-light gate | ≤ 2 min | 2–5 min | > 5 min |
-| Cold `cargo check --workspace` | ≤ 2 min | 2–5 min | > 5 min |
-| L0 basic envelope | ≤ 5 min | 5–7 min | > 7 min |
-| L1 unit / L2 headless host lane | ≤ 10 min | 10–15 min | > 15 min |
-| L3 UI lane | ≤ 20 min | 20–25 min | > 25 min |
-| L3 quality lane | ≤ 20 min | 20–25 min | > 25 min |
-| L3 coverage / UI release lane | ≤ 25 min | 25–35 min | > 35 min |
-| L3 Compact artifact lane | ≤ 30 min | 30–40 min | > 40 min |
-| L3 locked Nix package lane | ≤ 45 min | 45–55 min | > 55 min |
-| Routine PR to merge-ready | ≤ 60 min | 60–90 min | > 90 min |
-| Automatic review sessions per routine PR | ≤ 4 | 5–6 | > 6 |
-| Pushes after first hosted CI starts | 0 | 1 | > 1 |
-| Active managed delivery worktrees per Git common checkout/host | ≤ 2 | 3 | > 3 |
-| Worktree-local target usage | ≤ 100 GiB | 100–200 GiB | > 200 GiB |
+The dated read-only audit environment was the retained owner-private v1 store:
+**38/38 valid records**, including 24 exact token decompositions and 20
+turn/tool-call counters. It measured 30 Basic, 25 Unit, 18 Headless, 22 UI, 12
+UI release, 12 Coverage, 10 Nix package, and 10 Compact executions. The audit
+reported work-item median/p90 47m14s/3h11m04s and hosted critical-path
+median/p90 16m51s/21m23s. These retained aggregates, not a new canary, set the
+advisory bands below.
 
-Amber requires a backlog item; red blocks new `factory:ready` labels until a
-mitigation item is claimed.
+Hard workflow budgets are the unchanged, separately authoritative limits in
+[CI target and dependency matrix](ci-target-matrix.md). They retain their
+workflow/runner role. The following supervisor green/amber/red bands classify
+execution time for early warning only: green is at or below the first bound,
+amber is above green through the second bound, and red is above the second
+bound. A red warning is not itself a timeout or retry instruction.
 
-The supervisor's exact per-target CI budgets are contract-tested against the authoritative
-[CI target and dependency matrix](ci-target-matrix.md); every hosted target
-must be named explicitly, with no fallback for a future target.
+| Hosted target | Green | Amber through | Red above | Hard workflow budget |
+| --- | ---: | ---: | ---: | ---: |
+| Basic | 2 min | 3 min | 3 min | 5 min |
+| Unit | 9 min | 10 min | 10 min | 10 min |
+| Headless | 6 min | 8 min | 8 min | 10 min |
+| UI | 18 min | 20 min | 20 min | 20 min |
+| UI release | 17 min | 20 min | 20 min | 25 min |
+| Coverage | 17 min | 20 min | 20 min | 25 min |
+| Quality | 7 min | 10 min | 10 min | 20 min |
+| Nix package | 18 min | 25 min | 25 min | 45 min |
+| Compact artifacts | 4 min | 6 min | 6 min | 30 min |
 
-The 20/25/30/45-minute extended-lane rows above align the supervisor thresholds
-with the already-active hard budgets in that target matrix as of 2026-08-28;
-they do not change workflow timeouts in this metrics-only slice.
+The retained Unit p90 was 11m03s and UI p90 was 20m27s, so Unit at/over 10
+minutes and UI at/over 18 minutes are visible throughput signals while cache
+capacity work proceeds. The audit continues to report queue time separately;
+queue does not consume an execution band or hard workflow budget.
+
+Routine feature work remains the only population compared with routine
+merge-ready elapsed time. The audit emits `elapsedByProfile` distributions for
+`feature`, `integration`, and `release`; integration and release elapsed time
+are reported separately and must not be folded into routine feature medians or
+p90s.
+
+Review sessions are green through 3, amber at 4, and red at 5 or more. Pushes
+after first CI are green at 0, amber at 1, and red at 2 or more. This preserves
+an actionable distinction between the first recovery push and repeated churn.
+The audit reports hard-budget exceedances separately from amber/red early
+warnings and remains read-only: it creates no model call, retry, issue, service,
+dashboard, schema change, or workflow change.
+
+Active managed delivery worktrees remain green at ≤2, amber at 3, and red above
+3; worktree-local target usage remains green at ≤100 GiB, amber through 200
+GiB, and red above 200 GiB.
+
+The supervisor's exact per-target CI budgets are contract-tested against the
+authoritative [CI target and dependency matrix](ci-target-matrix.md); every
+hosted target must be named explicitly, with no fallback for a future target.
 
 ## Historical trend log
 

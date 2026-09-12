@@ -57,6 +57,12 @@ Prose task composition is a fallback only when `buildDevLoopHandoffEnvelope()` i
 
 After the handoff envelope is built and read, load the `dev-loop` skill (Dev Loop Skill (pinned package path `.pi/npm/node_modules/dev-loops/skills/dev-loop/SKILL.md`)) for the routed strategy's execution procedures.
 
+The active issue-backed authority permits writes only in the active repository.
+Before creating or changing an external issue, PR, comment, label, release,
+package publication, or any other external repository write, obtain explicit
+owner or supervisor approval. Draft a suggested external report locally for the
+supervisor; do not publish it directly.
+
 ## Delivery profile
 
 After validating the envelope and loading its `requiredReads`, resolve the invocation against `.pi/delivery-profiles.json`. The only accepted entrypoints are:
