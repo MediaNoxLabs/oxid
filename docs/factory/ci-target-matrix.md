@@ -108,10 +108,14 @@ GitHub's cache-service write quota is shared by a workflow run, and concurrent
 writers otherwise lose throttled objects before sccache can reuse them.
 Quality uses a minimal shell without archiving the Nix store, preventing a new
 roughly 2 GiB immutable cache whenever a Nix expression changes. The locked
-package lane may update its bounded Nix-store cache only on trusted
-`develop` pushes; PRs restore it without allocating a branch-scoped copy.
-It uses `cache-nix-action` v7 in a new namespace so the noisy v6 archive
-observed on PR #165 cannot be reused.
+package lane may save its bounded Nix-store cache only on a trusted push to the
+default `develop` branch; milestone pushes, PRs, and nightly validation restore
+it read-only without allocating a branch-scoped copy. The PR-capable job has no
+`actions: write` permission and does not attempt cache deletion. Cache archives
+are disposable, rebuildable acceleration data: the supervisor performs any
+one-time, explicitly scoped removal of superseded entries outside candidate
+code. The lane uses `cache-nix-action` v7 in a new namespace so the noisy v6
+archive observed on PR #165 cannot be reused.
 
 ### Freezing dependency and crate layers
 
