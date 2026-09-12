@@ -73,6 +73,7 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(smoke, /Failed to load skill/u);
   assert.match(smoke, /Pi did not expose the tracked scenario and use-case commands/u);
   assert.match(bootstrap, /bash scripts\/check-pi-devshell\.sh/u);
+  assert.match(bootstrap, /node scripts\/git-hooks\/check-github-web-flow-key\.mjs/u);
   const discoverNix = bootstrap.indexOf('[[ -x "$nix_daemon_profile_bin/nix" ]]');
   const prependNix = bootstrap.indexOf('export PATH="$nix_daemon_profile_bin:$PATH"');
   const rejectMissingNix = bootstrap.indexOf('echo "Nix is required; install it with flakes enabled before bootstrapping Oxid."');

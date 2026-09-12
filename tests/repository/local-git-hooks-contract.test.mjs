@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   copyFile,
   mkdir,
@@ -32,6 +32,13 @@ import {
   validatePrePush,
 } from "../../scripts/git-hooks/local-policy.mjs";
 import { verifyOpenPgpCommit } from "../../scripts/ci/contribution-policy.mjs";
+import {
+  GITHUB_WEB_FLOW_SIGNING_KEY_FILE,
+  GITHUB_WEB_FLOW_SIGNING_KEY_FINGERPRINT,
+  GITHUB_WEB_FLOW_SIGNING_KEY_OWNER_ACTION,
+  inspectPinnedGitHubWebFlowKey,
+  inspectPinnedGitHubWebFlowKeyFile,
+} from "../../scripts/git-hooks/check-github-web-flow-key.mjs";
 import { withManagedHookWarningFilter } from "../../scripts/loop/ensure-worktree-consumer.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
@@ -166,6 +173,46 @@ test("installer preserves a foreign hook manager", async (t) => {
   git(repository, ["config", "--local", "core.hooksPath", "/private/other-hooks"]);
   assert.throws(() => applyGitHooks(repository, { execute: true }), /refusing to replace another hook manager/u);
   assert.equal(git(repository, ["config", "--local", "core.hooksPath"]), "/private/other-hooks");
+});
+
+function runGitHubWebFlowKeyCheck(keyring) {
+  return spawnSync(process.execPath, [path.join(repoRoot, "scripts/git-hooks/check-github-web-flow-key.mjs")], {
+    encoding: "utf8",
+    env: { ...process.env, GNUPGHOME: keyring },
+  });
+}
+
+async function keyringFixture(t) {
+  const keyring = await mkdtemp(path.join(os.tmpdir(), "oxid-web-flow-keyring-"));
+  t.after(() => rm(keyring, { recursive: true, force: true }));
+  return keyring;
+}
+
+test("GitHub web-flow key check is a no-network success on a fresh keyring and reports the exact manual import", async (t) => {
+  const result = runGitHubWebFlowKeyCheck(await keyringFixture(t));
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /Local Update branch verification remains fail-closed/u);
+  assert.match(result.stderr, new RegExp(GITHUB_WEB_FLOW_SIGNING_KEY_OWNER_ACTION, "u"));
+});
+
+test("GitHub web-flow key check recognizes an existing key in an isolated keyring", async (t) => {
+  const keyring = await keyringFixture(t);
+  execFileSync("gpg", ["--batch", "--no-options", "--homedir", keyring, "--import", GITHUB_WEB_FLOW_SIGNING_KEY_FILE], {
+    stdio: "ignore",
+  });
+  const result = runGitHubWebFlowKeyCheck(keyring);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /is available for local Update branch verification/u);
+  assert.equal(result.stderr, "");
+});
+
+test("GitHub web-flow key check fails closed for a corrupt pinned file", async (t) => {
+  const corruptFile = path.join(await keyringFixture(t), "corrupt-key.asc");
+  await writeFile(corruptFile, "not a public key\n");
+  assert.equal(inspectPinnedGitHubWebFlowKeyFile(corruptFile).ok, false);
+  assert.equal(inspectPinnedGitHubWebFlowKey(
+    `fpr:::::::::${GITHUB_WEB_FLOW_SIGNING_KEY_FINGERPRINT}:\nfpr:::::::::5DE3E0509C47EA3CF04A42D34AEE18F83AFDEB23:\n`,
+  ).ok, false);
 });
 
 test("pre-commit policy requires OpenPGP signing defaults and exact identity inputs", async (t) => {

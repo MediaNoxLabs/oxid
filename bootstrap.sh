@@ -71,7 +71,11 @@ case "${1:-}" in
       usage >&2
       exit 2
     fi
-    nix_develop_command just factory-smoke
+    nix_develop_command bash -c '
+      set -e
+      just factory-smoke
+      node scripts/git-hooks/check-github-web-flow-key.mjs
+    '
     ;;
   --audit-pi)
     shift
