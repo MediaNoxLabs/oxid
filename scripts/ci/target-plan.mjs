@@ -52,6 +52,7 @@ const AREA_PATTERNS = Object.freeze({
   ],
   ci: [
     /^\.github\/(?:actions|workflows)\//,
+    /^\.gitleaks(?:ignore|\.toml)$/,
     /^scripts\/ci\//,
     /^scripts\/coverage\//,
   ],
