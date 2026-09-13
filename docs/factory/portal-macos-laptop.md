@@ -19,6 +19,11 @@ provides the separate packaged iOS Simulator and Android QEMU continuation.
   the tools checked by the harnesses (including Cargo, Node, `jq`,
   `screencapture`, and `shasum`).
 - A tracked-clean, committed candidate `HEAD`.
+- The headless preflight resolves the exact pinned Portal commit and tree,
+  independently of the mutable upstream branch head. A missing object or
+  repository mismatch reports `source-fetch`; commit and tree mismatches report
+  `portal-commit` and `portal-tree`. Each phase fails before Docker or service
+  mutation.
 - No `oxid-portal-consumer` containers and no unresolved
   `target/portal-virtual-mobile/stack.lock`. Ports used by standalone
   (6300, 8088, 9944), the Portal consumer (8081, 8090, 8098, 9090, 9092), and
