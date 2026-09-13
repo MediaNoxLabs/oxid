@@ -89,7 +89,10 @@ function zipMembers(archive) {
   const minimumEnd = Math.max(0, archive.length - 0xffff - 22);
   let end = -1;
   for (let offset = archive.length - 22; offset >= minimumEnd; offset -= 1) {
-    if (view.getUint32(offset, true) === 0x06054b50) {
+    if (
+      view.getUint32(offset, true) === 0x06054b50
+      && offset + 22 + view.getUint16(offset + 20, true) === archive.length
+    ) {
       end = offset;
       break;
     }
@@ -126,6 +129,9 @@ function zipMembers(archive) {
 
 export function verifyApk(archive, archiveName = "APK") {
   const nativeMembers = zipMembers(archive).filter(({ name }) => name.endsWith(".so"));
+  if (nativeMembers.length === 0) {
+    throw new Error(`${archiveName}: APK contains no native shared libraries`);
+  }
   for (const member of nativeMembers) {
     if (member.method !== 0 || member.compressedSize !== member.uncompressedSize) {
       fail(member.name, "ZIP member must be stored uncompressed");

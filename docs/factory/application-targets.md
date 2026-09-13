@@ -96,6 +96,11 @@ artifact hashes, ABI set, tool versions, and target page-size evidence in the
 final private/public review receipt as appropriate; never include device serials
 or local SDK paths.
 
+The release evidence follows Android's official
+[16 KiB page-size guidance](https://developer.android.com/guide/practices/page-sizes),
+including an independent `zipalign -c -P 16 -v 4 <apk>` cross-check when the
+pinned Android build tools are available.
+
 `ios-deploy` installs only into iOS Simulator. Physical iOS deployment is not
 implemented because it requires an owner-approved signing, provisioning, and
 device policy. These commands do not publish to an application store and do

@@ -35,9 +35,9 @@ function elf({ alignment = PAGE_SIZE, virtualAddress = 0 } = {}) {
   return bytes;
 }
 
-function apk({ archiveAligned = true, method = 0, ...elfOptions } = {}) {
+function apk({ archiveAligned = true, method = 0, memberName = member, ...elfOptions } = {}) {
   const payload = elf(elfOptions);
-  const name = Buffer.from(member);
+  const name = Buffer.from(memberName);
   const extraLength = archiveAligned ? PAGE_SIZE - 30 - name.length : 0;
   const local = Buffer.alloc(30);
   local.writeUInt32LE(0x04034b50, 0);
@@ -75,6 +75,13 @@ test("names the exact archive member that is compressed instead of ZIP-placed", 
 
 test("names the exact archive member whose ELF LOAD alignment is insufficient", () => {
   assert.throws(() => verifyApk(apk({ alignment: 4096 })), new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ELF LOAD segment 0 alignment 4096`));
+});
+
+test("fails closed when an APK contains no native shared libraries", () => {
+  assert.throws(
+    () => verifyApk(apk({ memberName: "assets/not-a-library.bin" }), "empty.apk"),
+    /empty\.apk: APK contains no native shared libraries/,
+  );
 });
 
 test("the documented command reports the exact offending archive member", async () => {
