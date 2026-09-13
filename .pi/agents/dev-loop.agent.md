@@ -1,14 +1,17 @@
 ---
 name: "dev-loop"
-description: "Use as the single public workflow entrypoint. Route from canonical current state to the deterministic internal strategy, preferring GitHub-first paths and only using local phase implementation when explicitly requested. Keywords: dev-loop, public entrypoint, route workflow, continue dev loop."
-tools: read, grep, find, ls, bash, subagent
+description: "Use as the single public workflow implementation child. Resolve canonical state, implement one issue, validate once per exact head, push, open a draft PR, and stop for external supervision. Keywords: dev-loop, public entrypoint, issue implementation."
+tools: read, grep, find, ls, bash, edit, write
 argument-hint: "[prototype|production-ready] plus an issue/PR number or URL; production-ready is the default."
 systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: true
 user-invocable: true
-maxSubagentDepth: 2
+maxSubagentDepth: 1
 timeoutMs: 3600000
+# The supervisor has already selected the canonical managed issue worktree.
+# Prevent pi-subagents from wrapping this conductor in a second temporary tree.
+worktree: false
 toolBudget: {"soft":40,"hard":60,"block":"*"}
 ---
 <!-- SPDX-License-Identifier: MIT -->
@@ -34,13 +37,19 @@ The envelope is the primary handoff artifact — it is derived from resolver out
 <!-- pi-only -->
 **Repository wrapper mandate:** resolve the checkout with `git rev-parse --show-toplevel`, then invoke dev-loops only through `node <git-root>/scripts/dev-loops.mjs <verb...>`. The wrapper validates the exact repository-local `dev-loops` pin from the Git root or its bounded common checkout. Resolve exactly one `## Delivery target` from the issue: product work uses `milestone-<x.y.z>` and eligible factory work uses `develop`. Pass it to every PR, envelope, and managed-worktree route as `--delivery-base <target>`. A stacked child may use the conventional parent issue branch as its temporary `--base`; after the parent lands, retarget the child to its unchanged delivery base. The wrapper rejects a missing, malformed, ambiguous, or mismatched target and never guesses the newest milestone.
 
+`<git-root>` is always the exact output of `git rev-parse --show-toplevel`
+from the child's current working directory. Never replace it with the primary
+checkout derived from `--git-common-dir` or `git worktree list`. The Git common
+checkout is a topology and shared-private-storage boundary only; it is never
+the source of tracked executable policy for a linked-worktree run.
+
 Do not invoke a package `cli/index.mjs` directly. Do not use user-home, global npm, Node module-search, package-relative, arbitrary-ancestor, or filesystem-search fallbacks. If the tracked wrapper cannot resolve the exact project pin, stop at its diagnostic. Pi 0.84 extension hooks are advisory and cannot cancel provider execution.
 <!-- /pi-only -->
 
-1. Before startup, routing, tools that act on routed state, or delegation, run `node <git-root>/scripts/loop/pre-flight-gate.mjs --check-subagents` from the canonical worktree. Stop on any nonzero result. Run it again immediately before each later delegation or routed action; `DEVLOOPS_PREFLIGHT_BYPASS` is forbidden.
+1. Before startup, routing, or tools that act on routed state, run `node <git-root>/scripts/loop/pre-flight-gate.mjs --check-subagents` from the active canonical linked worktree identified by `<git-root>`. Stop on any nonzero result. Run it again immediately before each later routed action; `DEVLOOPS_PREFLIGHT_BYPASS` is forbidden.
 2. Run the deterministic startup resolver to produce the authoritative state bundle: `node <git-root>/scripts/dev-loops.mjs loop startup --issue <n>` for issues, or `node <git-root>/scripts/dev-loops.mjs loop startup --pr <n>` for PRs. Resolve the issue's single delivery target before any worktree creation. When already inside the canonical linked worktree, reuse it; any ensure-worktree call must pass the main checkout as `--repo-root`, never the linked worktree itself, plus the exact conventional `--branch <type>/issue-<n>` and `--delivery-base <target>`.
 3. Pass the resolver output file, current gate state, delivery target, and invocation profile to `node <git-root>/scripts/dev-loops.mjs loop build-envelope --input <resolver-output> --gate-state <json> --delivery-base <target> --delivery-profile <profile>`. Parse only the exact `prototype` or `production-ready` token from the invocation at this point; an omitted token means `production-ready`. Do not call the package builder directly. The tracked route loads the candidate checkout's `.devloops`, preserves pinned derivation, records the immutable delivery base in the envelope, applies the tracked delivery-profile envelope, reuses an identity-matching existing canonical managed worktree, rejects ambiguous/foreign/nested topology, and validates the normalized envelope with the exact pinned core validator before emission.
-4. **Validate the emitted envelope** with `validateHandoffEnvelope()` before consuming any field. If validation returns `ok: false`, reject the handoff with the structured error — do not load requiredReads, do not execute nextAction, do not delegate. Stop if `deliveryProfile` does not equal the requested/default profile or `deliveryBase` does not equal the issue target.
+4. **Validate the emitted envelope** with `validateHandoffEnvelope()` before consuming any field. If validation returns `ok: false`, reject the handoff with the structured error — do not load requiredReads or execute nextAction. Stop if `deliveryProfile` does not equal the requested/default profile or `deliveryBase` does not equal the issue target.
 5. Read the envelope as the first artifact.
 6. Load every absolute path listed in `requiredReads` (in order). The repository
    wrapper has already resolved and verified each entry. Inspect
@@ -49,13 +58,20 @@ Do not invoke a package `cli/index.mjs` directly. Do not use user-home, global n
    a global/user-home package copy.
 7. Execute `nextAction` constrained by `stopRules` and `acceptance`.
 
-**The agent MUST NOT load skills, route packs, or delegate work before the envelope is built and read.** The derivation contract is Workflow Handoff Contract (pinned package path `.pi/npm/node_modules/dev-loops/skills/docs/workflow-handoff-contract.md`).
+**The agent MUST NOT load skills or route packs before the envelope is built and read. It MUST NOT delegate at any point.** The derivation contract is Workflow Handoff Contract (pinned package path `.pi/npm/node_modules/dev-loops/skills/docs/workflow-handoff-contract.md`).
 
 Prose task composition is a fallback only when `buildDevLoopHandoffEnvelope()` is unavailable (missing `@dev-loops/core` package) — the handoff contract in `skills/docs/workflow-handoff-contract.md` applies in that fallback case.
 
 ## Operating contract
 
 After the handoff envelope is built and read, load the `dev-loop` skill (Dev Loop Skill (pinned package path `.pi/npm/node_modules/dev-loops/skills/dev-loop/SKILL.md`)) for the routed strategy's execution procedures.
+
+The active issue-backed authority permits writes only in the active repository.
+For a production-ready issue run, issue-backed delivery authorization permits only a normal push of the assigned conventional issue branch and creation of its issue-closing draft PR after the signed commit and exact-head local-gate receipt. The grant is bound to the resolved issue, repository, delivery target, canonical branch, and current worktree. No force-push, replacement, cross-issue write, ready-for-review, merge, durable-branch mutation, release, credential, protection, or scope-expansion authority is granted. If assignment, branch/head binding, issue refinement, local-gate evidence, or GitHub state is invalid, fail closed before either delivery write.
+Before creating or changing an external issue, PR, comment, label, release,
+package publication, or any other external repository write outside that narrow delivery authorization, obtain explicit
+owner or supervisor approval. Draft a suggested external report locally for the
+supervisor; do not publish it directly.
 
 ## Delivery profile
 
@@ -66,46 +82,65 @@ After validating the envelope and loading its `requiredReads`, resolve the invoc
 
 An omitted profile means `production-ready`. Reject an unknown or conflicting profile instead of guessing. Profile selection is per invocation; never write shared mutable profile state.
 
-Before delegation or adding workflow steps, record one concise complexity
-classification based on reversibility, blast radius, and evidence cost. Treat a
+Before implementation, record one concise complexity classification based on
+reversibility, blast radius, and evidence cost. Treat a
 local ignored package store or exact-pinned Pi configuration with a direct
 rollback as low complexity. Execute it in the current issue with one focused
 runtime smoke; do not manufacture a separate canary, ADR, staging branch, or
 review cycle unless a concrete irreversible, security, data, protocol, or
 cross-system risk makes the classification medium or high.
 
-`prototype` is an explicit request for the local implementation strategy. Keep the issue-backed worktree and all contribution, security, process, and disk invariants, but do not create/update a PR, push, wait for hosted CI, claim merge readiness, or merge. The hosted target plan is `basic` plus only a focused `unit-linux` or `headless-linux` target that the task explicitly needs. When a real stack, platform, device, or Tailnet path is itself the hypothesis, run at most that one focused qualification rather than inferring the whole platform chain. Use at most one bounded scope/correctness reviewer, and stop a focused iteration at ten minutes with a concrete result or blocker. Close with the hypothesis, result, changed paths, checks run, known gaps, resource use, and promotion plan. All prototype evidence is provisional.
+`prototype` is an explicit request for the local implementation strategy. Keep the issue-backed worktree and all contribution, security, process, and disk invariants, but do not create/update a PR, push, wait for hosted CI, claim merge readiness, or merge. The hosted target plan is `basic` plus only a focused `unit-linux` or `headless-linux` target that the task explicitly needs. When a real stack, platform, device, or Tailnet path is itself the hypothesis, run at most that one focused qualification rather than inferring the whole platform chain. Do not launch a reviewer. Stop a focused iteration at ten minutes with a concrete result or blocker. Close with the hypothesis, result, changed paths, checks run, known gaps, resource use, and promotion plan. All prototype evidence is provisional.
 
-`production-ready` retains the normal routed workflow, affected-target planning, draft and pre-approval gates, current-head evidence, and authority controls below. Promotion from `prototype` must be explicit: refresh the envelope's recorded `deliveryBase`, audit prototype shortcuts and known gaps, invalidate provisional evidence, rebuild the handoff envelope, recompute targets, and run the production-ready gates from the refreshed state.
+`production-ready` ends at the implementation checkpoint: implement the issue, run focused validation, create a signed DCO commit, run or reuse the exact-head local gate, push one coherent branch, open the draft PR, and stop. The repository `supervision` block in `.pi/delivery-profiles.json` overrides generic route-pack instructions that would launch review, pre-approval, CI-watch, retry, metrics, or merge children. Promotion from `prototype` must be explicit: refresh the envelope's recorded `deliveryBase`, audit prototype shortcuts and known gaps, invalidate provisional evidence, rebuild the handoff envelope, and recompute targets.
 
 ### Production-ready pre-mutation fast path
 
 `small-slice` is an internal execution profile, never a third public delivery profile. Before the single envelope build, reduce only the deterministic startup/refinement facts to `--pre-mutation-assessment '<json>'`; the JSON may contain `refined`, `risk`, `scope`, `tier`/`t1`, `ambiguous`, `dependency`, `workflow`, `release`, and `crossRepository`. The envelope may select it only when the assessment is explicitly `refined: true`, `risk: "low"`, and `scope: "small"`. Missing facts are a recorded `missing-pre-mutation-assessment` fallback, not permission to infer eligibility. T1, ambiguity, dependency, workflow, release, and cross-repository flags always select `regular-production-ready` with the envelope's exact fallback reason.
 
-For `small-slice`, load only the envelope's scoped required reads; do not reread the factory corpus. Make the first source mutation, or return an evidence-backed blocker naming the inspected source and blocking fact, before 20 tool calls. This time limit changes neither branch/claim checks, focused tests, signed/DCO commit policy, exact-head review evidence, selected hosted CI, nor merge authority. At the terminal checkpoint report the selected execution profile, time to first mutation, turns, tool calls, exact provider token buckets when available (otherwise `unavailable`), validations, and fallback reason. The regular production-ready loop reports the same metrics.
+For `small-slice`, load only the envelope's scoped required reads; do not reread the factory corpus. Make the first source mutation, or return an evidence-backed blocker naming the inspected source and blocking fact, before 20 tool calls. This time limit changes neither branch/claim checks, focused tests, signed/DCO commit policy, exact-head local-gate evidence, nor supervisor ownership. At the terminal checkpoint report the selected execution profile, time to first mutation, turns, tool calls, exact provider token buckets when available (otherwise `unavailable`), validations, and fallback reason. The regular production-ready implementation reports the same metrics.
 
-The parent MUST dispatch this tracked `dev-loop` agent directly through
-`pi-subagents`; it MUST NOT place this conductor inside `taskflow`. The current
-taskflow detached path has not proved isolated peer resolution, nested progress
-forwarding, or descendant cancellation. If a taskflow tool or skill is visible,
-stop and run `./bootstrap.sh --check` instead of selecting it. This guard remains
-until detached peer resolution, nested progress, and descendant cleanup are
-proved by the terminal-reconciliation work in #227 or an equivalent upstream fix.
+The parent MUST dispatch this tracked `dev-loop` implementation agent directly through
+`pi-subagents`; it MUST NOT place it inside `taskflow`. This child MUST NOT call
+`subagent`, dispatch a reviewer, or create any nested workflow. If a taskflow
+tool or skill is visible, stop and run `./bootstrap.sh --check` instead of
+selecting it.
 
-One parent invocation MUST dispatch this agent exactly once and return after
+One parent invocation MUST dispatch this implementation child exactly once and return after
 its terminal checkpoint. The parent MUST NOT automatically resume or replace
 the child when it reports incomplete work, opens a PR, or reaches hosted CI.
-The external supervisor owns every explicit retry, CI watch, review triage,
-merge, and worktree closeout. At the terminal checkpoint, every Pi worker MUST
-report only exact local counters it owns (sessions, turns, tool calls, and
-non-overlapping token buckets when exposed); it MUST report unavailable values
-as unavailable and never infer them. The persistent main/supervisor alone
-aggregates CI, elapsed duration, attempts, and disk facts, then publishes the
-validated exact-head metrics receipt. A follow-up invocation is a new measured
-decision, not an internal continuation of the original budget.
+Resume-first means inspecting the preserved branch, worktree, session, gate
+receipt, and draft PR; it never silently creates another phase child. The
+external supervisor owns every explicit retry, focused review, CI watch, review
+triage, metrics, merge, and worktree closeout. Before the parent reports a
+bounded-drain failure or interruption as reconciled, every exact owned child
+process group must be terminal; otherwise it reports the owned PIDs/run state
+and preserves the branch/session for supervisor cleanup. At the terminal
+checkpoint, every Pi worker MUST report only exact local counters it owns
+(sessions, turns, tool calls, and non-overlapping token buckets when exposed);
+it MUST report unavailable values as unavailable and never infer them. The
+persistent supervisor alone aggregates CI, elapsed duration, attempts, and disk
+facts, then publishes the validated exact-head metrics receipt. A follow-up
+invocation is a new measured supervisor decision, not an internal continuation
+of the original budget.
 
-Oxid is a Rust/Cargo workspace without a root `package.json`. Validation MUST
-use the handoff envelope's target plan and its sanctioned Cargo, Just, Nix, or
+Run focused pre-commit checks, commit once, then create exactly one post-commit
+canonical, change-relevant L0 receipt before push through `node
+scripts/loop/local-gate.mjs run --delivery-base <target> --gate-id
+production-ready`. This immutable repository-owned entrypoint compares HEAD
+with the recorded delivery base using `scripts/ci/target-plan.mjs`: a non-Rust
+plan runs `./run.sh repository --strict`; a Rust plan runs `./run.sh basic
+--strict`, which includes repository contracts. Do not supply a command after
+`--` for this gate ID: arbitrary and focused commands are rejected. The receipt
+binds the exact clean head, delivery-base OID, gate id, and resolved command
+digest. Later review/checkpoint logic invokes `verify` with the same gate ID and
+no command. A matching repeated `run` returns `action: "reused"`; an in-flight
+or mismatched record stops rather than launching a replacement. Never run a
+pre-commit full gate plus another full receipt. Hosted CI, not this local
+receipt, owns the wider affected unit, headless, UI, coverage, and Nix fan-out.
+
+Oxid is a Rust/Cargo workspace without a root `package.json`. Prototype and
+focused checks use only the handoff envelope's sanctioned Cargo, Just, Nix, or
 focused platform commands. Never substitute `npm run verify` or another
 ecosystem-generic command that is absent from the repository.
 
@@ -137,37 +172,24 @@ Treat the deterministic public routing contract in Public Dev Loop Contract (pin
 Interpret issue-based shorthand triggers like `auto dev loop on issue <n>`, `enter copilot auto dev loop on issue <n>`, and `run auto dev loop on <n> until approval gate` as compatibility wording for the same public `dev-loop` intent, not a second public workflow entrypoint.
 
 Respect repository contract routing posture:
-- prefer the GitHub-first routed path when work should move through GitHub branches, pull requests, CI, and review
-- route to the local implementation strategy only when the user explicitly requests a local phase-based path
-- keep any specialized Copilot behavior behind `dev-loop` as internal routed logic, helper modules, or non-user-facing implementation details
-- honor `.devloops` `maxCopilotRounds: 0`, the one-reviewer routine cap, and low-signal stop; use automated merge only for an issue-backed PR to its exact `milestone-<x.y.z>` target through the repository guard; hand every `develop` or `main` merge to a human; repair closed-class blocking findings now and defer only bounded non-critical findings through an open linked issue and visible PR mapping; invoke the tracked external current-head review only for high-risk work, an owner request, or a disputed finding; for a draft PR, gate coordination is authoritative for gate progression, so proceed with `run_draft_gate` and keep the PR draft when it is explicitly allowed under `requireCi: false`, even if aggregate loop-info reports failed CI; stop on every other contradiction rather than shadowing a pinned route locally
-- apply the production-ready quality budget from `.pi/delivery-profiles.json`: mandatory acceptance, correctness, security, provenance, and required evidence remain complete; after one automatic review round, preserve non-blocking quality recommendations as follow-up work instead of mutating an otherwise eligible exact head
+- use the GitHub-first route only through the implementation checkpoint: branch, focused validation, signed commit, exact-head local gate, push, and draft PR
+- route `prototype` to bounded local implementation without remote mutation
+- never enter Copilot, draft-review, pre-approval, CI-watch, retry, metrics, merge, or closeout phases; those are supervisor-owned
+- honor `.devloops` `maxCopilotRounds: 0` and stop on contradictory state rather than shadowing the pinned route locally
+- apply the production-ready quality budget from `.pi/delivery-profiles.json` without repeating a valid exact-head producer gate
 
 If the current issue/PR/local state is materially unclear, contradictory, off-trail, or not cleanly covered by deterministic guidance, stop and ask for human direction rather than guessing.
 
 If local facts, GitHub facts, and helper/state-machine output do not agree well enough to choose the next step confidently, stop and ask for human direction.
 
-## Subagent delegation
+## No nested delegation
 
-<!-- pi-only -->
-This agent's frontmatter `tools:` comma-token scalar includes `subagent` (single-line comma form, no brackets — see #1111) and sets `maxSubagentDepth: 2`. The previous three-level chain is intentionally retired: the parent conductor dispatches workers and independent reviewers directly instead of allowing a worker to create another orchestration tier.
-<!-- /pi-only -->
-
-All delegation MUST originate from the handoff envelope: the envelope's `nextAction`, `requiredReads`, `stopRules`, and `acceptance` define the bounded task. The envelope is passed to child subagents as their primary handoff artifact.
-
-The pi-subagents skill is parent-only, so delegated subagents do not receive orchestration patterns. This section exists as the minimal locally-enforced subset needed for correct delegation — it is not a restatement of the full policy. The `dev-loop` skill owns all procedural rules; this section only declares the invariants the agent MUST follow when it cannot defer to the skill:
-- One writer thread; `async: true` default; `context: "fresh"` for reviewers.
-- No child subagent spawning beyond assigned fanout work.
-- Bounded tasks with concrete scope, exit conditions, and validation expectations.
-
-<!-- pi-only -->
-**Supervisor communication (known pi runtime bug #671):** The pi runtime `contact_supervisor` tool has a broken response path — supervisor responses do not flow back to resolve the pending subagent tool call. Subagents calling `contact_supervisor` become blocked until the idle timeout fires (~60s), then pause without the decision.
-
-- **Prefer `intercom` when available.** If the `pi-intercom` extension is active, use `intercom({ action: "ask", ... })` instead of `contact_supervisor`. The `intercom` tool uses message-based delivery (no blocking tool-call state) — see the pi documentation for `intercom({ action: "ask", ... })` parameters and reply conventions.
-- **When `intercom` is unavailable,** do not call `contact_supervisor`. Instead, brief the supervisor to include the decision in the resume message when re-dispatching. The subagent states what it needs in the task description; the supervisor provides the answer on resume. This avoids the broken response path entirely.
-- **If `contact_supervisor` was already called** (legacy code or unavoidable): expect a ~60s idle timeout followed by a pause. On resume, the supervisor MUST inject the decision in the resume message — do not rely on `intercom` on resume when it was unavailable at call time.
-- **Timeout detection (supervisor-side):** if a `contact_supervisor` call has been pending for >30s, the supervisor SHOULD treat it as a probable timeout and prepare to inject the decision in the resume message on re-dispatch. The subagent cannot execute this detection while blocked inside `contact_supervisor`; the supervisor MUST observe the pending duration externally.
-<!-- /pi-only -->
+This agent is the one implementation child. Its frontmatter deliberately omits
+`subagent`, and its role ends at the pushed draft-PR checkpoint. If generic
+installed skill text asks for a developer, reviewer, fixer, judge,
+retrospective, or gate child, this repository overlay wins: do the scoped
+implementation directly, reuse exact-head gate evidence, and return control to
+the external supervisor.
 
 ## Output
 

@@ -4,8 +4,10 @@
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   statSync,
   writeFileSync,
@@ -51,6 +53,105 @@ export function hookLayout(repository) {
   };
 }
 
+function configuredHookPath(layout, configured) {
+  if (!configured) return null;
+  return path.resolve(layout.commonDir, configured);
+}
+
+function isRealDirectory(candidate) {
+  try {
+    return lstatSync(candidate).isDirectory() && realpathSync(candidate) === path.resolve(candidate);
+  } catch {
+    return false;
+  }
+}
+
+function isExecutableRegularFile(candidate) {
+  try {
+    const metadata = lstatSync(candidate);
+    return metadata.isFile() && !metadata.isSymbolicLink() && (metadata.mode & 0o111) !== 0;
+  } catch {
+    return false;
+  }
+}
+
+function isRegularFile(candidate) {
+  try {
+    const metadata = lstatSync(candidate);
+    return metadata.isFile() && !metadata.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+function hasSameContents(left, right) {
+  try {
+    return readFileSync(left).equals(readFileSync(right));
+  } catch {
+    return false;
+  }
+}
+
+function dispatcherIsBound(contents) {
+  return /hook_dir=.*dirname/u.test(contents)
+    && /exec node "\$hook_dir\/policy-root\/scripts\/git-hooks\/local-policy\.mjs"/u.test(contents);
+}
+
+/**
+ * Inspect only the repository-owned Git-common bundle. A configured path that
+ * merely has a similar name, is symlinked, or has an absent dispatcher is not
+ * ours and must never become a refresh target.
+ */
+export function inspectManagedHookBundle(repository) {
+  const layout = hookLayout(repository);
+  const configured = config(repository, "core.hooksPath");
+  if (configuredHookPath(layout, configured) !== path.resolve(layout.installedDir)) {
+    return { ok: false, managed: false, configured, reason: "core.hooksPath is not the canonical repository-managed hook directory", ...layout };
+  }
+  if (!isRealDirectory(layout.installedDir) || !isRealDirectory(layout.bundleDir)) {
+    return { ok: false, managed: false, configured, reason: "canonical hook directory or policy root is missing or symlinked", ...layout };
+  }
+  const dispatchers = HOOK_NAMES.map((name) => {
+    const installed = path.join(layout.installedDir, name);
+    if (!isExecutableRegularFile(installed)) return { name, valid: false, reason: "missing, non-executable, or symlinked dispatcher" };
+    const contents = readFileSync(installed, "utf8");
+    if (!dispatcherIsBound(contents)) return { name, valid: false, reason: "dispatcher is not bound to policy-root" };
+    return { name, valid: true, stale: !hasSameContents(path.join(layout.sourceDir, name), installed) };
+  });
+  const invalid = dispatchers.find((dispatcher) => !dispatcher.valid);
+  if (invalid) return { ok: false, managed: false, configured, reason: `${invalid.name} is ${invalid.reason}`, dispatchers, ...layout };
+  const invalidBundle = BUNDLE_FILES.find((relative) => !isRegularFile(path.join(layout.bundleDir, relative)));
+  if (invalidBundle) {
+    return { ok: false, managed: false, configured, reason: `${invalidBundle} is missing, non-regular, or symlinked`, dispatchers, ...layout };
+  }
+  const bundle = BUNDLE_FILES.map((relative) => ({
+    relative,
+    stale: !hasSameContents(path.join(layout.repoRoot, relative), path.join(layout.bundleDir, relative)),
+  }));
+  if (dispatchers.some((dispatcher) => dispatcher.stale) || bundle.some((entry) => entry.stale)) {
+    return {
+      ok: false,
+      managed: true,
+      stale: true,
+      configured,
+      reason: "canonical repository-managed hook bundle is stale; run the explicit bootstrap repair",
+      dispatchers,
+      bundle,
+      ...layout,
+    };
+  }
+  return {
+    ok: true,
+    managed: true,
+    stale: false,
+    configured,
+    dispatchers,
+    bundle,
+    preMergeCommitRequired: false,
+    ...layout,
+  };
+}
+
 function requiredIdentity(repository) {
   const errors = [];
   for (const key of ["user.name", "user.email", "user.signingkey"]) {
@@ -62,7 +163,7 @@ function requiredIdentity(repository) {
 export function checkGitHooks(repository) {
   const layout = hookLayout(repository);
   const errors = [];
-  if (config(repository, "core.hooksPath") !== layout.installedDir) {
+  if (configuredHookPath(layout, config(repository, "core.hooksPath")) !== path.resolve(layout.installedDir)) {
     errors.push(`core.hooksPath must be ${layout.installedDir}`);
   }
   for (const name of HOOK_NAMES) {
@@ -94,7 +195,7 @@ export function applyGitHooks(repository, { execute = false } = {}) {
   const identityErrors = requiredIdentity(repository);
   if (identityErrors.length) throw new Error(identityErrors.join("; "));
   const existing = config(repository, "core.hooksPath");
-  if (existing && existing !== layout.installedDir) {
+  if (existing && configuredHookPath(layout, existing) !== path.resolve(layout.installedDir)) {
     throw new Error(`core.hooksPath already points to ${existing}; refusing to replace another hook manager`);
   }
   mkdirSync(layout.installedDir, { recursive: true, mode: 0o700 });

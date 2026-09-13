@@ -60,6 +60,29 @@
         "strategy": "path-and-risk",
         "featureCiProfile": "feature"
       },
+      "supervision": {
+        "implementationChildrenPerInvocation": 1,
+        "childMayDelegate": false,
+        "supervisorOwnedPhases": [
+          "review",
+          "hosted-ci",
+          "retry",
+          "metrics",
+          "merge"
+        ],
+        "localGate": {
+          "gateId": "production-ready",
+          "receiptCommand": "node scripts/loop/local-gate.mjs",
+          "reusePolicy": "exact-head"
+        },
+        "resumePolicy": "reuse-only",
+        "terminalCheckpoint": [
+          "headSha",
+          "validationReceipt",
+          "workerMetrics",
+          "remainingRisks"
+        ]
+      },
       "preMutationFastPath": {
         "executionProfile": "small-slice",
         "maximumToolCallsBeforeOutcome": 20,

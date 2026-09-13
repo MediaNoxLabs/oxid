@@ -22,7 +22,12 @@ test("ARM64 Darwin desktop Portal remains owner-invoked and outside HostedTarget
   assert.match(harness, /CGWindowListCopyWindowInfo/);
   assert.match(harness, /kCGWindowOwnerPID/);
   assert.doesNotMatch(harness, /kCGWindowLayer/);
-  assert.match(harness, /"\$x" =~ \^-\?\[0-9\]\+\$ && "\$y" =~ \^-\?\[0-9\]\+\$/);
+  assert.match(harness, /NSRunningApplication\(processIdentifier: pid\)/);
+  assert.match(harness, /application\.activate\(options: \[\.activateAllWindows\]\)/);
+  assert.match(harness, /guard activated else/);
+  assert.match(harness, /kCGWindowNumber/);
+  assert.match(harness, /screencapture -x -l "\$window_id"/);
+  assert.doesNotMatch(harness, /screencapture -x -R/);
   assert.match(harness, /\/Applications\/Xcode\.app\/Contents\/Developer/);
   assert.match(harness, /\/usr\/bin\/xcrun --sdk macosx swiftc/);
   assert.doesNotMatch(harness, /System Events|osascript|xcode-select -p/);
@@ -30,6 +35,30 @@ test("ARM64 Darwin desktop Portal remains owner-invoked and outside HostedTarget
   assert.match(harness, /\.state == "empty"/);
   assert.doesNotMatch(harness, /\.state == "consumed"/);
   assert.match(harness, /rm -f -- "\$CONTROL_ROOT\/driver-admitted"/);
+});
+
+test("desktop driver startup contracts are phased, bounded, and payload-free", async () => {
+  const [harness, driver] = await Promise.all([
+    text("scripts/e2e/portal-desktop-e2e.sh"),
+    text("crates/ui-dioxus/src/desktop_test_driver.rs"),
+  ]);
+  assert.match(harness, /POST_BUILD_MAXIMUM_SECONDS=180/);
+  assert.match(harness, /fail intended-window-not-active/);
+  assert.match(harness, /window-ready/);
+  for (const marker of ["profile-created", "protection-enabled", "account-activated", "live-sync-complete", "did-ready"]) {
+    assert.match(driver, new RegExp(`"${marker}"`));
+    assert.match(harness, new RegExp(`\\$CONTROL_ROOT/${marker}`));
+  }
+  assert.match(driver, /tokio::time::timeout\(DOCUMENT_EVALUATION_TIMEOUT/);
+  assert.match(driver, /failed:document-evaluation-timeout/);
+  assert.match(driver, /wait_for_rendered_text\(&\["Synced", "Live source"\], "live-sync"\)/);
+  assert.match(driver, /failed:profile-creation/);
+  assert.match(driver, /"did-readiness"/);
+  assert.match(driver, /run_retryable_stage/);
+  assert.match(driver, /result == "pending"/);
+  assert.match(harness, /driver-failed/);
+  assert.match(driver, /return "ok"/);
+  assert.doesNotMatch(harness, /System Events|Accessibility/);
 });
 
 test("canonical macOS laptop lane runs headless before desktop and validates both exact-head records", async () => {

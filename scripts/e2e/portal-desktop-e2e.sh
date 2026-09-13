@@ -27,6 +27,10 @@ readonly INDEXER_HTTP="http://127.0.0.1:8088/api/v4/graphql"
 readonly NODE_WS="ws://127.0.0.1:9944"
 readonly PROOF_SERVER="http://127.0.0.1:6300"
 readonly STANDALONE_ADDRESS="mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh"
+# An already-built app against a ready local stack must finish or diagnose
+# within three minutes; cold synchronization is not admitted in this lane.
+readonly POST_BUILD_MAXIMUM_SECONDS=180
+post_build_deadline=0
 
 stack_pid=""
 app_pid=""
@@ -75,7 +79,12 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 
 wait_for_file() {
-  local wanted="$1" failure="${2:-}" maximum="${3:-900}" deadline
+  local wanted="$1" failure="${2:-}" maximum="${3:-900}" deadline remaining
+  if [ "$post_build_deadline" -gt 0 ]; then
+    remaining=$((post_build_deadline - SECONDS))
+    [ "$remaining" -gt 0 ] || return 1
+    [ "$maximum" -le "$remaining" ] || maximum="$remaining"
+  fi
   deadline=$((SECONDS + maximum))
   while [ "$SECONDS" -lt "$deadline" ]; do
     [ -n "$failure" ] && [ -f "$failure" ] && return 2
@@ -142,42 +151,59 @@ guard CommandLine.arguments.count == 2,
     fail()
 }
 let pid = pid_t(rawPid)
-NSRunningApplication(processIdentifier: pid)?.activate(options: [.activateAllWindows])
-Thread.sleep(forTimeInterval: 0.2)
+guard let application = NSRunningApplication(processIdentifier: pid) else {
+    fail()
+}
+var activated = false
+for _ in 0..<10 {
+    if application.activate(options: [.activateAllWindows]) {
+        activated = true
+        break
+    }
+    Thread.sleep(forTimeInterval: 0.2)
+}
+guard activated else {
+    fail()
+}
 let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
 guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
         as? [[String: Any]] else {
     fail()
 }
-let candidates = windows.compactMap { window -> CGRect? in
+let candidates = windows.compactMap { window -> (CGWindowID, CGFloat)? in
     guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
+          let number = window[kCGWindowNumber as String] as? NSNumber,
           let dictionary = window[kCGWindowBounds as String] as? NSDictionary,
           let bounds = CGRect(dictionaryRepresentation: dictionary),
           bounds.width >= 320,
           bounds.height >= 480 else {
         return nil
     }
-    return bounds
+    return (CGWindowID(number.uint32Value), bounds.width * bounds.height)
 }
-guard let bounds = candidates.max(by: { $0.width * $0.height < $1.width * $1.height }) else {
+guard let window = candidates.max(by: { $0.1 < $1.1 }) else {
     fail()
 }
-print("\(Int(bounds.origin.x)),\(Int(bounds.origin.y)),\(Int(bounds.width)),\(Int(bounds.height))")
+print(window.0)
 SWIFT
   env -u SDKROOT DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" SDKROOT="$sdk_root" \
     /usr/bin/xcrun --sdk macosx swiftc "$source" -o "$WINDOW_BOUNDS_HELPER" || return 1
   chmod 700 "$WINDOW_BOUNDS_HELPER"
 }
 
+activate_app_window() {
+  local window_id
+  window_id="$("$WINDOW_BOUNDS_HELPER" "$app_pid")" || return 1
+  [[ "$window_id" =~ ^[0-9]+$ ]] && [ "$window_id" -gt 0 ]
+}
+
 capture_app_window() {
-  local output="$1" bounds x y width height
-  bounds="$("$WINDOW_BOUNDS_HELPER" "$app_pid")" || return 1
-  IFS=, read -r x y width height <<EOF_BOUNDS
-$bounds
-EOF_BOUNDS
-  [[ "$x" =~ ^-?[0-9]+$ && "$y" =~ ^-?[0-9]+$ && "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] || return 1
-  [ "$width" -ge 320 ] && [ "$height" -ge 480 ] || return 1
-  /usr/sbin/screencapture -x -R"$x,$y,$width,$height" "$output"
+  local output="$1" window_id
+  window_id="$("$WINDOW_BOUNDS_HELPER" "$app_pid")" || return 1
+  [[ "$window_id" =~ ^[0-9]+$ ]] && [ "$window_id" -gt 0 ] || return 1
+  # Capture CoreGraphics' exact, PID-verified window ID, never a screen region
+  # whose contents could belong to another application.
+  /usr/sbin/screencapture -x -l "$window_id" "$output"
   [ -s "$output" ]
 }
 
@@ -218,8 +244,17 @@ source "$STACK_BUILD_ENV"
 [[ "$OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH" = /* ]] || fail manifest-path
 [[ "$OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]] || fail manifest-digest
 
+post_build_deadline=$((SECONDS + POST_BUILD_MAXIMUM_SECONDS))
 launch_app "$RUNTIME/app-first.log"
-if ! wait_for_file "$CONTROL_ROOT/driver-started" "$CONTROL_ROOT/driver-failed" 60; then
+if ! wait_for_file "$CONTROL_ROOT/driver-admitted" "$CONTROL_ROOT/driver-failed" 30; then
+  fail driver-not-admitted
+fi
+if ! activate_app_window; then
+  fail intended-window-not-active
+fi
+printf 'ok\n' >"$CONTROL_ROOT/window-ready"
+chmod 600 "$CONTROL_ROOT/window-ready"
+if ! wait_for_file "$CONTROL_ROOT/driver-started" "$CONTROL_ROOT/driver-failed" 30; then
   if kill -0 "$app_pid" 2>/dev/null; then
     fail driver-not-started-app-running
   elif grep -q 'desktop Portal test configuration is invalid' "$RUNTIME/app-first.log"; then
@@ -228,7 +263,12 @@ if ! wait_for_file "$CONTROL_ROOT/driver-started" "$CONTROL_ROOT/driver-failed" 
     fail first-app-exited-before-driver
   fi
 fi
-wait_for_file "$CONTROL_ROOT/sync-and-holder-visible" "$CONTROL_ROOT/driver-failed" \
+if ! wait_for_file "$CONTROL_ROOT/profile-created" "$CONTROL_ROOT/driver-failed" 30; then fail profile-creation; fi
+if ! wait_for_file "$CONTROL_ROOT/protection-enabled" "$CONTROL_ROOT/driver-failed" 30; then fail protection; fi
+if ! wait_for_file "$CONTROL_ROOT/account-activated" "$CONTROL_ROOT/driver-failed" 30; then fail account-activation; fi
+if ! wait_for_file "$CONTROL_ROOT/live-sync-complete" "$CONTROL_ROOT/driver-failed" 30; then fail live-sync; fi
+if ! wait_for_file "$CONTROL_ROOT/did-ready" "$CONTROL_ROOT/driver-failed" 30; then fail did-readiness; fi
+wait_for_file "$CONTROL_ROOT/sync-and-holder-visible" "$CONTROL_ROOT/driver-failed" 5 \
   || fail first-rendered-setup
 kill -0 "$app_pid" 2>/dev/null || fail first-app-exited
 [ -f "$WALLET_ROOT/private/did-records.json" ] || fail holder-store
@@ -242,7 +282,7 @@ chmod 600 "$APP_SUPPORT_ROOT/portal-offer.capability"
 printf 'ok\n' >"$CONTROL_ROOT/holder-ready"
 chmod 600 "$CONTROL_ROOT/holder-ready"
 
-wait_for_file "$CONTROL_ROOT/consent-visible" "$CONTROL_ROOT/driver-failed" \
+wait_for_file "$CONTROL_ROOT/consent-visible" "$CONTROL_ROOT/driver-failed" 20 \
   || fail consent-not-visible
 control_curl "$CONTROL_ORIGIN/counters" >"$RUNTIME/counters-before-consent.json" \
   || fail pre-consent-counters
@@ -252,7 +292,7 @@ capture_app_window "$EVIDENCE_ROOT/screenshots/consent.png" || fail consent-scre
 printf 'ok\n' >"$CONTROL_ROOT/consent-approved"
 chmod 600 "$CONTROL_ROOT/consent-approved"
 
-wait_for_file "$CONTROL_ROOT/first-complete" "$CONTROL_ROOT/driver-failed" \
+wait_for_file "$CONTROL_ROOT/first-complete" "$CONTROL_ROOT/driver-failed" 20 \
   || fail issuance-or-reverify
 control_curl "$CONTROL_ORIGIN/counters" >"$RUNTIME/counters-after-consent.json" \
   || fail post-consent-counters
@@ -276,7 +316,7 @@ rm -f -- "$CONTROL_ROOT/driver-admitted"
 printf 'ok\n' >"$CONTROL_ROOT/restart"
 chmod 600 "$CONTROL_ROOT/restart"
 launch_app "$RUNTIME/app-restart.log"
-wait_for_file "$CONTROL_ROOT/restart-complete" "$CONTROL_ROOT/driver-failed" \
+wait_for_file "$CONTROL_ROOT/restart-complete" "$CONTROL_ROOT/driver-failed" 20 \
   || fail restart-reverify
 capture_app_window "$EVIDENCE_ROOT/screenshots/restart.png" || fail restart-screenshot
 kill "$app_pid" >/dev/null 2>&1 || fail restart-app-stop

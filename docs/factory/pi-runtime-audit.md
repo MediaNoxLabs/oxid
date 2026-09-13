@@ -19,22 +19,20 @@ The repository policy now defaults routine work to
 provider request at ten minutes, and makes compaction explicit. Tracked agents
 have role-sized wall-clock and tool budgets. The user-level subagent policy
 caps concurrency at two across independent Pi parents, permits exactly one
-child launch in each parent session/run, limits each child to 60 tool calls
-with a soft nudge at 40, retains recursion at two levels for one bounded
-reviewer, and reports child usage against an 80k soft / 120k hard token
+implementation-child launch in each parent session/run, limits each child to 60
+tool calls with a soft nudge at 40, disables nested dispatch in the tracked
+child manifest, and reports child usage against an 80k soft / 120k hard token
 envelope. The package's token ceiling gates later launches but does not
 interrupt an active model response, so the one-child rule, tool budget, and
 wall-clock deadline are the enforceable stop controls. Async execution requires
 an explicit request. Tune these starting bounds only from retained metrics.
 
-The first supervised product runs established a cheaper default topology:
-external supervisors invoke Pi directly as the sole issue worker. A nested
-parent and child both loaded the repository contract and one 25-turn child
-reached its ceiling before editing; the equivalent direct worker reached the
-implementation. Terra completed routine repository changes more reliably than
-Luna, while Sol was useful but materially more expensive. The tracked default
-therefore stays Terra; Sol requires a concrete hard-reasoning need and Luna is
-limited to bounded scouting or small documentation work.
+The tracked topology now makes the one dispatched `dev-loop` child the sole
+implementation worker. It exposes editing tools directly and cannot chain into
+review/pre-approval children. Terra completed routine repository changes more
+reliably than Luna, while Sol was useful but materially more expensive. The
+tracked default therefore stays Terra; Sol requires a concrete hard-reasoning
+need and Luna is limited to bounded scouting or small documentation work.
 
 Agent budget frontmatter intentionally uses a small machine-readable grammar:
 `timeoutMs` and `maxSubagentDepth` are top-level integers, while `toolBudget` is
@@ -47,7 +45,7 @@ the startup audit rejects formats outside that tracked contract.
 | --- | --- | --- |
 | Devshell Pi | Nix-pinned; `./bootstrap.sh --check` passed | healthy |
 | Direct host Pi | outside Nix | unsupported path; use `./bootstrap.sh --pi` |
-| Project packages | `dev-loops@1.0.2` (CLI/skills/agents; mutating extension filtered), `pi-subagents@0.66.0`, `agent-review-pi@0.6.0` plus exact peers | exact pins installed |
+| Project packages | `dev-loops@1.0.2` (CLI/skills/agents; mutating extension filtered), `pi-subagents@0.67.0`, `agent-review-pi@0.6.0` plus exact peers | exact pins installed |
 | npm production audit | 0 reported vulnerabilities | healthy at audit time |
 | Common Pi package store | one shared store per Git common checkout | healthy |
 | Registered worktrees | above the active green limit | red; exact counts remain private operational telemetry |
@@ -67,9 +65,9 @@ The owner-aware reconciliation of remaining dirty/unmerged state is tracked by
 
 | Package | Pin | Available at audit | Decision |
 | --- | --- | --- | --- |
-| `pi-coding-agent` | `0.85.1` via locked Nix | `0.85.1` | required compatible runtime for `pi-subagents@0.66.0` native detached children |
+| `pi-coding-agent` | `0.85.1` via locked Nix | `0.85.1` | required compatible runtime for `pi-subagents@0.67.0` native detached children |
 | `dev-loops` | `1.0.2` | `1.0.2` | major update in [#303](https://github.com/MediaNoxLabs/oxid/issues/303) |
-| `pi-subagents` | `0.66.0` | `0.66.0` | adopted directly in [#195](https://github.com/MediaNoxLabs/oxid/issues/195) |
+| `pi-subagents` | `0.67.0` | `0.67.0` | upgraded in [#455](https://github.com/MediaNoxLabs/oxid/issues/455); originally adopted in [#195](https://github.com/MediaNoxLabs/oxid/issues/195) |
 | `agent-review-pi` | `0.6.0` | `0.6.0` | adopted with exact peers by [#301](https://github.com/MediaNoxLabs/oxid/issues/301) |
 | `pi-taskflow` | `0.2.10` | `0.3.0-beta.1.2` | peer only; runtime resources disabled |
 | `typebox` | `1.3.9` | `1.3.28` | minimum compatible exact peer; retain |
@@ -83,7 +81,7 @@ rules immediately before model dispatch. A real offline Pi RPC startup must
 leave every tracked agent hash unchanged.
 
 `pi-coding-agent@0.85.1` is locked through the Nix input and is the supported
-entrypoint for `pi-subagents@0.66.0`: its native child launcher receives the
+entrypoint for `pi-subagents@0.67.0`: its native child launcher receives the
 package context that the former standalone Nix `0.84.0` executable lacked.
 The devshell leaves `PI_CODING_AGENT_DIR` user-scoped so the existing Codex
 authentication and bounded user policy remain available. It roots
@@ -95,10 +93,10 @@ the expiring Nix `TMPDIR`. The smoke rejects missing or misdirected runtime
 state and an incompatible Pi version with actionable diagnostics before native
 dispatch.
 
-The `pi-subagents` releases between the pin and 0.66.0 contain fixes directly
+The `pi-subagents` releases between the prior pin and 0.67.0 contain fixes directly
 related to recovered/detached runs, budget/timeout terminal classification,
 smaller child context, exact model failures, and Codex priority propagation.
-Issue #195 adopts that local, recoverable upgrade directly with one focused
+Issue #455 adopts that local, recoverable upgrade directly with one focused
 smoke rather than a separate migration canary. `agent-review-pi@0.6.0` is small
 enough to verify here: its exact peer
 closure reports zero npm vulnerabilities, its 13 native tools register, and its
@@ -115,6 +113,18 @@ It restores the previous
 locked Nix input and its exact Pi runtime; re-entering `./bootstrap.sh` then
 reconstructs only that reverted closure. Owner-private session and async state
 is intentionally retained for recovery and is not part of rollback.
+
+### External repository mutation boundary (2026-09-12)
+
+A supervised worker investigating an upstream watcher behavior created a useful
+external issue without explicit approval. No credentials or payloads were
+exposed, but the write exceeded the active Oxid issue authority. Pi and worker
+guidance now limit issue-backed delivery writes to `MediaNoxLabs/oxid`; an
+owner or supervisor must explicitly approve any external issue, PR, comment,
+label, release, package publication, or other repository write. Workers may
+instead prepare a local report for the supervisor. Contract tests cover the
+worker guidance, while the supervisor retains the decision and publication
+boundary.
 
 ### Supervised taskflow canary (2026-09-07)
 

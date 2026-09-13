@@ -297,6 +297,15 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.equal((config.match(/^    blockCleanOnFindingSeverities:\n      - high$/gm) ?? []).length, 2);
   assert.match(config, /^  requireFanoutEvidence: false$/m);
   assert.match(config, /^  requireFanoutProvenance: false$/m);
+  const gitleaksIgnore = await read(".gitleaksignore");
+  const gitleaksFingerprints = [
+    "docs/adr/0009-separate-credential-models-from-serializations.md:generic-api-key:11",
+    "fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final/positive/credential-response.json:generic-api-key:4",
+    "docs/site/src/quality-baseline-2026-08-26.md:generic-api-key:271",
+    "docs/migration/midnight-ledger-prototype.md:generic-api-key:386",
+    "scripts/git-hooks/check-github-web-flow-key.mjs:generic-api-key:8",
+  ];
+  assert.deepEqual(gitleaksIgnore.trim().split("\n"), gitleaksFingerprints);
   const scan = await read(".github/workflows/scan.yml");
   const scanJobStart = scan.indexOf("  scan:");
   assert.ok(scanJobStart >= 0, "scan.yml: scan job");
@@ -306,15 +315,13 @@ test("guidance, required contexts, and review configuration agree", async () => 
   for (const line of scanJob.split("\n").filter((candidate) => /^\s+uses:/.test(candidate))) {
     assert.match(line, /@[0-9a-f]{40}\b/, line);
   }
-  assert.match(scanJob, /midnightntwrk\/upload-sarif-github-action@4bbe849e9707b46342832d4b7f94fec585823ca4/);
+  assert.match(scanJob, /midnightntwrk\/upload-sarif-github-action@362d0346b194663004cb371e8e8523bd1c910917/);
   assert.match(scanJob, /Run scanners and upload SARIF/);
-  assert.equal((scanJob.match(/if: always\(\)/g) || []).length, 3);
+  assert.equal((scanJob.match(/if: always\(\)/g) || []).length, 2);
   assert.equal((scanJob.match(/continue-on-error: true/g) || []).length, 1);
-  assert.match(scanJob, /STAGE_OUTCOME: \$\{\{ steps\.stage-checkov-exclusion\.outcome \}\}/);
   assert.match(scanJob, /SCAN_OUTCOME: \$\{\{ steps\.security-scan\.outcome \}\}/);
-  assert.match(scanJob, /RESTORE_OUTCOME: \$\{\{ steps\.restore-checkov-exclusion\.outcome \}\}/);
-  assert.match(scanJob, /Aggregate scanner and fixture results/);
-  assert.equal((scanJob.match(/fixtures\/laceid-portal\/76e8edf394a4cb37ca822037272d543c68f25f71\/openid4vci-final\/negative\/unsupported-proof-alg\.json/g) || []).length, 2);
+  assert.match(scanJob, /Aggregate scanner result/);
+  assert.doesNotMatch(scanJob, /stage-checkov-exclusion|restore-checkov-exclusion|RUNNER_TEMP/);
   assert.doesNotMatch(scanJob, /skip_checkov_scan:/);
   assert.doesNotMatch(scanJob, /^\s+skip_(?:check|framework):/m);
   assert.doesNotMatch(scanJob, /\bsoft_fail:/);
@@ -345,7 +352,7 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(ci, /name: Basic gate \(policy, lint, compile\)[\s\S]*?timeout-minutes: 5/);
   assert.match(ci, /name: Unit tests \(Linux host\)[\s\S]*?timeout-minutes: 14/);
   assert.match(ci, /name: Headless integration tests \(Linux host\)[\s\S]*?timeout-minutes: 10/);
-  assert.match(ci, /name: UI and application profiles \(Linux host\)[\s\S]*?timeout-minutes: 22/);
+  assert.match(ci, /name: UI and application profiles \(Linux host\)[\s\S]*?timeout-minutes: 25/);
   assert.match(ci, /name: Optimized UI release artifact \(Linux host\)[\s\S]*?timeout-minutes: 25/);
   assert.match(ci, /nix develop \.#ci-rust --command \.\/scripts\/ci\/run-with-sccache-stats\.sh \.\/run\.sh basic --strict/);
   assert.match(ci, /nix develop \.#ci-rust --command \.\/scripts\/ci\/run-with-sccache-stats\.sh \.\/run\.sh unit --strict/);
@@ -369,7 +376,16 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(sccacheRunner, /write-error counters are expected for rejected local puts/);
   assert.doesNotMatch(ci, /path: ~\/\.cache\/oxid-sccache/);
   assert.doesNotMatch(ci, /key: sccache-/);
-  assert.match(ci, /save: \$\{\{ github\.event_name == 'push' && \(github\.ref == 'refs\/heads\/develop' \|\| startsWith\(github\.ref, 'refs\/heads\/milestone-'\)\) \}\}/);
+  const nixPackageJob = ci.slice(
+    ci.indexOf("\n  nix_package:\n    name:"),
+    ci.indexOf("\n  compact_artifacts:\n    name:"),
+  );
+  assert.match(nixPackageJob, /save: \$\{\{ github\.event_name == 'push' && github\.ref == 'refs\/heads\/develop' \}\}/);
+  assert.doesNotMatch(nixPackageJob, /\bpurge(?:-|:)/);
+  assert.doesNotMatch(nixPackageJob, /actions:\s*write/);
+  assert.doesNotMatch(ci, /^\s*actions:\s*write\s*$/m);
+  const nightly = await read(".github/workflows/nightly.yml");
+  assert.match(nightly, /Cache the package-build Nix store[\s\S]*?save: false/);
   assert.match(ci, /if: always\(\)[\s\S]*?needs: \[plan, basic, unit_linux, headless_linux, ui_linux, ui_release_linux, coverage_linux\]/);
   assert.doesNotMatch(ci, /Run full repository gate/);
   assert.doesNotMatch(ci, /^\s+target$/m);

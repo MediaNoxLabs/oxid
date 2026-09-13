@@ -42,15 +42,17 @@ const AREA_PATTERNS = Object.freeze({
     /^(?:LICENSE|CODE_OF_CONDUCT\.md|CONTRIBUTING\.md|SECURITY\.md|SUPPORT\.md)$/,
   ],
   harness: [
+    /^bootstrap\.sh$/,
     /^\.devloops$/,
     /^\.pi\//,
     /^AGENT\.md$/,
     /^scripts\/check-pi-devshell\.sh$/,
-    /^scripts\/(?:dev-loops\.mjs|factory\/|git-hooks\/|github\/|loop\/|lib\/(?:dev-loop|handoff-envelope)|review\/|worktree-lifecycle\.mjs)/,
+    /^scripts\/(?:dev-loops\.mjs|factory\/|git-hooks\/|github\/|loop\/|lib\/(?:dev-loop|handoff-envelope|managed-child-process)|review\/|worktree-lifecycle\.mjs)/,
     /^tests\/repository\//,
   ],
   ci: [
     /^\.github\/(?:actions|workflows)\//,
+    /^\.gitleaks(?:ignore|\.toml)$/,
     /^scripts\/ci\//,
     /^scripts\/coverage\//,
   ],
@@ -285,6 +287,8 @@ export function makeTargetPlan(paths, {
   deliveryProfile = DeliveryProfile.PRODUCTION_READY,
   extraTargets = [],
   ownershipAreas,
+  eventName,
+  pullRequestDraft = false,
 } = {}) {
   if (!Object.values(Profile).includes(profile)) throw new Error(`unknown CI profile: ${profile}`);
   if (!Object.values(DeliveryProfile).includes(deliveryProfile)) {
@@ -309,6 +313,15 @@ export function makeTargetPlan(paths, {
       throw new Error(`hosted CI target is not available in prototype delivery: ${target}`);
     }
     targets.add(target);
+  }
+
+  // Draft PRs retain L0 and independent policy contexts while review settles
+  // the exact head. Ready PRs and all durable/manual events retain the normal
+  // selected plan. The milestone merge guard independently rejects drafts.
+  if (eventName === "pull_request" && pullRequestDraft) {
+    for (const target of HOSTED_TARGETS) {
+      if (target !== HostedTarget.BASIC) targets.delete(target);
+    }
   }
 
   return {
@@ -375,6 +388,13 @@ function parseTargets(value) {
   return (value ?? "").split(",").map((target) => target.trim()).filter(Boolean);
 }
 
+function parseBoolean(value, name) {
+  if (value === undefined) return false;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`${name} must be true or false`);
+}
+
 function githubOutput(plan) {
   const selected = new Set(plan.targets);
   const lines = [
@@ -390,7 +410,7 @@ function githubOutput(plan) {
   return `${lines.join("\n")}\n`;
 }
 
-export function run(argv = process.argv.slice(2), { cwd = process.cwd(), stdout = process.stdout } = {}) {
+export function resolveTargetPlan(argv = [], { cwd = process.cwd() } = {}) {
   const profile = resolveProfile(
     readOption(argv, "--profile") ?? "auto",
     readOption(argv, "--event"),
@@ -402,12 +422,21 @@ export function run(argv = process.argv.slice(2), { cwd = process.cwd(), stdout 
   const base = readOption(argv, "--base");
   const head = readOption(argv, "--head");
   const paths = changedPaths(base, head, cwd);
-  const plan = makeTargetPlan(paths ?? [], {
-    profile,
-    deliveryProfile,
-    extraTargets: parseTargets(readOption(argv, "--targets")),
-    ownershipAreas: paths ? ownershipMapAreas(paths, base, head, cwd) : undefined,
-  });
+  return {
+    paths,
+    plan: makeTargetPlan(paths ?? [], {
+      profile,
+      deliveryProfile,
+      extraTargets: parseTargets(readOption(argv, "--targets")),
+      ownershipAreas: paths ? ownershipMapAreas(paths, base, head, cwd) : undefined,
+      eventName: readOption(argv, "--event"),
+      pullRequestDraft: parseBoolean(readOption(argv, "--pr-draft"), "--pr-draft"),
+    }),
+  };
+}
+
+export function run(argv = process.argv.slice(2), { cwd = process.cwd(), stdout = process.stdout } = {}) {
+  const { plan } = resolveTargetPlan(argv, { cwd });
   const format = readOption(argv, "--format") ?? "summary";
 
   if (format === "github") stdout.write(githubOutput(plan));
