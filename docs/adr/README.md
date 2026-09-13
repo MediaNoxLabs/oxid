@@ -133,6 +133,7 @@ ADR status and delivery state answer different questions:
 | [0107](0107-bind-prepared-transfer-review-to-authorization.md) Bind prepared transfer review to authorization | Accepted | issue #108 | Transfer authorization consumes a single-use challenge bound by unambiguous encoding to every rendered prepared-preview semantic field; caller prose cannot reach the application boundary |
 | [0108](0108-adopt-seedless-ux-with-multi-factor-recovery.md) Adopt a seedless UX with passkey recovery | Proposed | ADR-0017/0074–0078/0090/0105; issues #359/#364 | Research selects an Oxid-owned random-secret envelope with Apple/Google-synchronized passkeys and capability-detected PRF wrapping; advanced recovery and providers remain unapproved |
 | [0109](0109-place-scan-contextually-in-the-top-app-bar.md) Place Scan contextually in the top app bar | Proposed | ADR-0086/0087; issue #349; Apple HIG, Material 3, WCAG 2.2 | Research proposes one contextual Scan action with a closed current visibility matrix and future typed extension point; implementation and unsupported QR classes remain unapproved |
+| [0110](0110-compact-submission-barriers-after-checkpoint-acknowledgement.md) Compact submission barriers after checkpoint acknowledgement | Accepted | ADR-0035/0079; issue #93 | Defines fail-closed checkpoint acknowledgement before bounded public-journal compaction; implementation pending |
 
 ## Current boundaries
 
