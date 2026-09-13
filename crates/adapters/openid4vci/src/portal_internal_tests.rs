@@ -1,13 +1,17 @@
 use std::sync::{Arc, Mutex};
 
+use crate::ZeroizingHolderProofJwt;
+
 use oxid_identity_application::{
     DidDocumentMetadataView, DidDocumentView, DidOperationError, DidRecordQuery, DidRecordView,
     PublicJwkView, VerificationMethodView, VerificationRelationshipView,
 };
 use oxid_protocol_application::{
-    CredentialHolderProofPort, HolderProofError, HolderProofFuture, PrepareIssuanceRequest,
+    CredentialHolderProofPort, HolderProofError, HolderProofFuture, HolderProofJwt,
+    PrepareIssuanceRequest,
 };
 use oxid_protocol_domain::ProtocolProfileId;
+use serde_json::json;
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::TcpListener,
@@ -38,13 +42,15 @@ const POSITIVE_ROOT: &str = concat!(
 struct Proof;
 
 impl CredentialHolderProofPort for Proof {
-    fn create<'a>(&'a self, request: HolderProofRequest) -> HolderProofFuture<'a> {
+    fn create<'a>(&'a self, request: HolderProofRequest<'a>) -> HolderProofFuture<'a> {
         Box::pin(async move {
             if request.holder_did == HOLDER_DID
                 && request.method_id == AUTH_METHOD
                 && !request.nonce.is_empty()
             {
-                Ok("SYNTHETIC.JWT.PROOF".to_owned())
+                Ok(Box::new(ZeroizingHolderProofJwt(Zeroizing::new(
+                    "SYNTHETIC.JWT.PROOF".to_owned(),
+                ))) as Box<dyn HolderProofJwt>)
             } else {
                 Err(HolderProofError::Rejected)
             }

@@ -145,7 +145,7 @@ impl HeadlessWallet {
                 profile_id,
                 did: params.did,
                 method_id: params.method_id,
-                payload,
+                payload: &payload,
                 confirmation: params.confirmation.into(),
             }) {
             Ok(signature) => Dispatch::continue_with(Response::success(

@@ -134,13 +134,17 @@ impl IdentityRequestRouterPort for UnavailableIdentityRequestRouter {
     }
 }
 
+pub trait HolderProofJwt: Send {
+    fn as_str(&self) -> &str;
+}
+
 pub type PrepareIssuancePortFuture<'a> = Pin<
     Box<dyn Future<Output = Result<PreparedCredentialOffer, IssuanceProtocolError>> + Send + 'a>,
 >;
 pub type IssueCredentialPortFuture<'a> =
     Pin<Box<dyn Future<Output = Result<IssuedCredentialBytes, IssuanceProtocolError>> + Send + 'a>>;
 pub type HolderProofFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<String, HolderProofError>> + Send + 'a>>;
+    Pin<Box<dyn Future<Output = Result<Box<dyn HolderProofJwt>, HolderProofError>> + Send + 'a>>;
 pub type StoreIssuedCredentialFuture<'a> =
     Pin<Box<dyn Future<Output = Result<StoredCredential, IssuedCredentialSinkError>> + Send + 'a>>;
 pub type IssuanceViewFuture<'a> = Pin<
@@ -198,17 +202,30 @@ pub trait CredentialIssuanceProtocolPort: Send + Sync {
     fn discard(&self, issuance_id: &CredentialIssuanceId) -> Result<(), IssuanceProtocolError>;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HolderProofRequest {
+#[derive(Clone, PartialEq, Eq)]
+pub struct HolderProofRequest<'a> {
     pub profile_id: ProtocolProfileId,
     pub holder_did: String,
     pub method_id: String,
     pub audience: String,
-    pub nonce: String,
+    pub nonce: &'a str,
+}
+
+impl fmt::Debug for HolderProofRequest<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HolderProofRequest")
+            .field("profile_id", &self.profile_id)
+            .field("holder_did", &self.holder_did)
+            .field("method_id", &self.method_id)
+            .field("audience", &self.audience)
+            .field("nonce", &"[REDACTED]")
+            .finish()
+    }
 }
 
 pub trait CredentialHolderProofPort: Send + Sync {
-    fn create<'a>(&'a self, request: HolderProofRequest) -> HolderProofFuture<'a>;
+    fn create<'a>(&'a self, request: HolderProofRequest<'a>) -> HolderProofFuture<'a>;
 }
 
 #[derive(PartialEq, Eq)]
@@ -1263,6 +1280,35 @@ impl SelfIssuedAuthenticationProtocolPort for UnavailableSelfIssuedAuthenticatio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct PendingHolderProof;
+
+    impl CredentialHolderProofPort for PendingHolderProof {
+        fn create<'a>(&'a self, request: HolderProofRequest<'a>) -> HolderProofFuture<'a> {
+            Box::pin(async move {
+                let _request = request;
+                std::future::pending().await
+            })
+        }
+    }
+
+    #[test]
+    fn holder_proof_nonce_is_borrowed_and_redacted_when_futures_are_dropped() {
+        let nonce = "sensitive-nonce";
+        let request = HolderProofRequest {
+            profile_id: ProtocolProfileId::parse("profile_test").expect("profile"),
+            holder_did: "did:example:holder".to_owned(),
+            method_id: "did:example:holder#key-1".to_owned(),
+            audience: "https://issuer.example".to_owned(),
+            nonce,
+        };
+        let request_debug = format!("{request:?}");
+        assert!(request_debug.contains("[REDACTED]"));
+        assert!(!request_debug.contains("sensitive-nonce"));
+
+        let future = PendingHolderProof.create(request);
+        drop(future);
+    }
 
     struct RoutingPort;
 

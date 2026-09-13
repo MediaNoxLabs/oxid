@@ -857,7 +857,7 @@ mod tests {
                     profile_id: "profile_test".to_owned(),
                     did: DID.to_owned(),
                     method_id: "#auth-1".to_owned(),
-                    payload: b"challenge".to_vec(),
+                    payload: b"challenge",
                     confirmation: confirmation(true),
                 }
             )
@@ -873,7 +873,7 @@ mod tests {
                     profile_id: "profile_test".to_owned(),
                     did: DID.to_owned(),
                     method_id: "#auth-1".to_owned(),
-                    payload: Vec::new(),
+                    payload: &[],
                     confirmation: confirmation(true),
                 }
             ),
