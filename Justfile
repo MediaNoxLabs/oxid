@@ -70,6 +70,10 @@ portal-macos-laptop-e2e:
 portal-desktop-e2e:
     ./scripts/e2e/portal-desktop-e2e.sh
 
+# Owner-invoked ARM64 macOS rendered developer pager smoke; captures are private.
+developer-pager-desktop-e2e:
+    ./scripts/e2e/developer-pager-desktop-e2e.sh
+
 # Start the virtual-mobile Portal issuer, resolver, offer endpoint, and authenticated manifest.
 portal-virtual-mobile-stack:
     ./scripts/e2e/portal-virtual-mobile-stack.sh

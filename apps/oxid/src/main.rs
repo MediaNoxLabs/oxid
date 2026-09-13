@@ -20,6 +20,18 @@ fn development_proof_cache_directory() -> std::path::PathBuf {
     std::env::temp_dir().join("oxid-midnight-proof-benchmark")
 }
 
+#[cfg(feature = "desktop-developer-pager-test")]
+fn developer_pager_viewport() -> (f64, f64) {
+    match std::env::var("OXID_DEVELOPER_PAGER_VIEWPORT").as_deref() {
+        Ok("360x640") => (360.0, 640.0),
+        Ok("390x844") | Err(_) => (390.0, 844.0),
+        Ok(_) => {
+            eprintln!("Oxid startup failed: invalid developer pager viewport");
+            std::process::exit(2);
+        }
+    }
+}
+
 #[cfg(any(
     feature = "standalone-portal",
     feature = "standalone-portal-tailnet",
@@ -39,6 +51,34 @@ fn main() {
         not(all(target_os = "macos", target_arch = "aarch64"))
     ))]
     compile_error!("desktop-portal-test is available only on ARM64 macOS");
+
+    #[cfg(all(
+        feature = "desktop-developer-pager-test",
+        not(all(target_os = "macos", target_arch = "aarch64"))
+    ))]
+    compile_error!("desktop-developer-pager-test is available only on ARM64 macOS");
+
+    #[cfg(all(
+        feature = "desktop-developer-pager-test",
+        feature = "desktop-portal-test"
+    ))]
+    compile_error!("desktop test profiles are mutually exclusive");
+
+    #[cfg(all(
+        feature = "desktop-developer-pager-test",
+        any(
+            feature = "mobile",
+            feature = "web",
+            feature = "standalone-local",
+            feature = "standalone-tailnet",
+            feature = "standalone-portal",
+            feature = "standalone-portal-tailnet",
+            feature = "standalone-native-custody",
+            feature = "preprod-observation",
+            feature = "ui-profile-demo"
+        )
+    ))]
+    compile_error!("desktop-developer-pager-test is an isolated test-only desktop profile");
 
     #[cfg(all(
         feature = "desktop-portal-test",
@@ -621,17 +661,22 @@ fn main() {
         feature = "desktop",
         not(any(target_os = "ios", target_os = "android"))
     ))]
-    launcher
-        .with_cfg(
+    {
+        #[cfg(feature = "desktop-developer-pager-test")]
+        let (width, height) = developer_pager_viewport();
+        #[cfg(not(feature = "desktop-developer-pager-test"))]
+        let (width, height) = (390.0, 844.0);
+        launcher.with_cfg(
             dioxus::desktop::Config::new().with_window(
                 dioxus::desktop::WindowBuilder::new()
                     .with_title(generated_brand::BRAND_PROFILE.product_name())
-                    .with_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(390.0, 844.0))
+                    .with_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(width, height))
                     .with_min_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(360.0, 640.0))
                     .with_resizable(true),
             ),
         )
-        .launch(oxid_ui_dioxus::App);
+    }
+    .launch(oxid_ui_dioxus::App);
     #[cfg(all(
         not(feature = "desktop"),
         not(any(target_os = "ios", target_os = "android"))

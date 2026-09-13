@@ -126,6 +126,7 @@
         {
           "name": "desktop-test-driver",
           "modulePathPrefixes": [
+            "crates/ui-dioxus/src/desktop_developer_pager_driver",
             "crates/ui-dioxus/src/desktop_test_driver"
           ]
         },

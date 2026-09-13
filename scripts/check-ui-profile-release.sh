@@ -365,6 +365,7 @@ done
 
 if [ "$(uname -s)-$(uname -m)" = "Darwin-arm64" ]; then
   cargo check -p oxid-app --no-default-features --features desktop-portal-test
+  cargo check -p oxid-app --no-default-features --features desktop-developer-pager-test
 else
   if cargo check -p oxid-app --no-default-features \
     --features desktop-portal-test >"$failure_log" 2>&1; then
@@ -373,6 +374,16 @@ else
   fi
   if ! rg -q 'desktop-portal-test is available only on ARM64 macOS' "$failure_log"; then
     echo "desktop-portal-test failed for an unexpected reason" >&2
+    sed -n '1,120p' "$failure_log" >&2
+    exit 1
+  fi
+  if cargo check -p oxid-app --no-default-features \
+    --features desktop-developer-pager-test >"$failure_log" 2>&1; then
+    echo "desktop-developer-pager-test compiled outside ARM64 macOS" >&2
+    exit 1
+  fi
+  if ! rg -q 'desktop-developer-pager-test is available only on ARM64 macOS' "$failure_log"; then
+    echo "desktop-developer-pager-test failed for an unexpected reason" >&2
     sed -n '1,120p' "$failure_log" >&2
     exit 1
   fi
@@ -634,6 +645,12 @@ if rg -a -q \
   'OXID_DESKTOP_PORTAL_TEST_PROFILE|portal-offer\.capability|Oxid Desktop Test' \
   "$release_binary"; then
   echo "normal release binary contains the ARM64 desktop test profile" >&2
+  exit 1
+fi
+if rg -a -q \
+  'OXID_DEVELOPER_PAGER_VIEWPORT|Developer Pager Test|developer-pager-test' \
+  "$release_binary"; then
+  echo "normal release binary contains the developer pager test profile" >&2
   exit 1
 fi
 standalone_local_release_values=(
