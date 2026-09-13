@@ -25,8 +25,7 @@ usage() {
 
 readonly nix_daemon_profile_bin="/nix/var/nix/profiles/default/bin"
 nix_nested_profile_bin=""
-if [[ "${OXID_BOOTSTRAP_NIX_PROFILE_BIN:-}" == "$nix_daemon_profile_bin" ]] \
-  && [[ -x "$nix_daemon_profile_bin/nix" ]]; then
+if [[ "${OXID_BOOTSTRAP_NIX_PROFILE_BIN:-}" == "$nix_daemon_profile_bin" ]]; then
   nix_nested_profile_bin="$nix_daemon_profile_bin"
 fi
 unset OXID_BOOTSTRAP_NIX_PROFILE_BIN
