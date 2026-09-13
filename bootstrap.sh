@@ -25,6 +25,11 @@ usage() {
 
 readonly nix_daemon_profile_bin="/nix/var/nix/profiles/default/bin"
 nix_nested_profile_bin=""
+if [[ "${OXID_BOOTSTRAP_NIX_PROFILE_BIN:-}" == "$nix_daemon_profile_bin" ]] \
+  && [[ -x "$nix_daemon_profile_bin/nix" ]]; then
+  nix_nested_profile_bin="$nix_daemon_profile_bin"
+fi
+unset OXID_BOOTSTRAP_NIX_PROFILE_BIN
 if ! command -v nix >/dev/null 2>&1 && [[ -x "$nix_daemon_profile_bin/nix" ]]; then
   export PATH="$nix_daemon_profile_bin:$PATH"
   nix_nested_profile_bin="$nix_daemon_profile_bin"
@@ -79,6 +84,7 @@ case "${1:-}" in
           echo "resolved canonical worktree has no executable bootstrap: $canonical_bootstrap" >&2
           exit 1
         fi
+        export OXID_BOOTSTRAP_NIX_PROFILE_BIN="$nix_nested_profile_bin"
         exec "$canonical_bootstrap" --pi "$@"
       fi
     fi

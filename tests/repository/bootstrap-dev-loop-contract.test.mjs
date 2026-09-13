@@ -69,6 +69,7 @@ printf '%s\\n' "$CANONICAL_WORKTREE"
 `, { mode: 0o755 }),
     writeFile(path.join(bin, "nix"), `#!/bin/bash
 [ "$1" = develop ] || exit 90
+[[ " $* " == *" /nix/var/nix/profiles/default/bin "* ]] || exit 91
 printf '%s\\n' "$(cat .fixture-flake-pin)" >> "$NIX_PINS"
 `, { mode: 0o755 }),
   ]);
@@ -81,6 +82,7 @@ printf '%s\\n' "$(cat .fixture-flake-pin)" >> "$NIX_PINS"
       PATH: `${bin}:/usr/bin:/bin`,
       CANONICAL_WORKTREE: worktree,
       NIX_PINS: pins,
+      OXID_BOOTSTRAP_NIX_PROFILE_BIN: "/nix/var/nix/profiles/default/bin",
     },
   });
   assert.equal(result.status, 0, result.stderr);
