@@ -720,7 +720,7 @@ impl PortalOid4vciClient {
             .await
             .map_err(|_| IssuanceProtocolError::Unavailable)?;
         let token_bytes = read_json_response(token_response, MAX_TOKEN_BYTES).await?;
-        let access_token = Zeroizing::new(parse_token_response(&token_bytes)?);
+        let access_token = parse_token_response(&token_bytes)?;
 
         validate_portal_endpoint(
             &secret.nonce_endpoint,
@@ -734,7 +734,7 @@ impl PortalOid4vciClient {
             .await
             .map_err(|_| IssuanceProtocolError::Unavailable)?;
         let nonce_bytes = read_json_response(nonce_response, MAX_NONCE_BYTES).await?;
-        let nonce = Zeroizing::new(parse_nonce_response(&nonce_bytes)?);
+        let nonce = parse_nonce_response(&nonce_bytes)?;
 
         let proof = Zeroizing::new(
             self.proof
