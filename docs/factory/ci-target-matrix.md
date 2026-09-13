@@ -12,9 +12,9 @@ devices, and a separate repository remain explicit owner evidence.
 | Level | Required evidence | Budget | When it runs |
 | --- | --- | --- | --- |
 | L0 basic | Advisory PR title/body feedback; required DCO, GitHub-verified commit signature, repository contracts, formatting, architecture, lint, and production compilation | 0–5 min | Every PR. Rust compilation is omitted only when the impact plan proves no Rust/build surface changed. |
-| L1 host | Workspace unit tests on one Linux host | 5–10 min | Rust, UI, headless, platform, Compact, or build changes; on demand for any PR. |
-| L2 component integration | Hermetic headless black-box tests, then deterministic Docker integration when its fixture is ready | 5–10 min for the current hermetic lane; Docker budget pending measurement | Affected host/component changes and on demand. |
-| L3 extended | UI feature profiles, optimized UI release audit, coverage, quality, locked Nix package, Compact artifacts | 10–30 min per parallel lane | Affected UI/Compact feature changes where listed below; explicit demand; every trusted `develop` push; release profile. |
+| L1 host | Workspace unit tests on one Linux host | 5–10 min | Ready-for-review Rust, UI, headless, platform, Compact, or build PR changes; on demand for any PR. |
+| L2 component integration | Hermetic headless black-box tests, then deterministic Docker integration when its fixture is ready | 5–10 min for the current hermetic lane; Docker budget pending measurement | Ready-for-review affected host/component changes and on demand. |
+| L3 extended | UI feature profiles, optimized UI release audit, coverage, quality, locked Nix package, Compact artifacts | 10–30 min per parallel lane | Ready-for-review affected UI/Compact feature changes where listed below; explicit demand; every trusted `develop` push; release profile. |
 | L4 platform/release | WASM, Android, iOS, Portal, standalone Midnight, PreProd, physical-device and real-proof evidence | Target-specific | Scheduled, on demand, or owner-private until each row below has a hermetic hosted runner. |
 
 L0 is an envelope of parallel policy and build contexts rather than one serial
@@ -30,7 +30,7 @@ checkout cannot independently verify an unknown contributor's GPG keyring.
 | `basic` | `./run.sh repository`; for Rust-affecting changes `./run.sh basic` compiles/lints the dependency-light architectural/domain canary | Node; minimal `ci-rust` shell only for Rust | all | hard 5 min | Hosted PR gate |
 | `unit-linux` | `./run.sh unit` (workspace core/headless/MCP units; UI/app excluded to their lane) | x86_64 Linux, minimal `ci-rust` shell, sccache | core, UI, headless, mobile/platform, Compact, build | hard 10 min; command SLO retains a 14 min GitHub job cap for cold Nix setup, metrics, and cleanup; historical cold workspace tests 119 s locally | Hosted PR lane |
 | `headless-linux` | `./run.sh headless-integration` | same Linux host; no live services | core, headless, Compact | hard 10 min | Hosted PR lane |
-| `ui-linux` | `./run.sh ui` (profile guards, feature compilation and UI/app tests) | minimal `ci-ui` shell plus Linux GTK/WebKit libraries | UI, platform | hard 20 min; command SLO retains a 22 min GitHub job cap for metrics and cleanup; a cold read-only run with no trusted seed crossed the former 15 min ceiling after its tests passed | Hosted PR lane |
+| `ui-linux` | `./run.sh ui` (profile guards, feature compilation and UI/app tests) | minimal `ci-ui` shell plus Linux GTK/WebKit libraries | UI, platform | hard 20 min; a 25 min GitHub completion cap retains terminal metrics and cleanup for cold read-only runs without treating an SLO breach as healthy | Hosted PR lane |
 | `ui-release-linux` | `./run.sh ui-release` (optimized build and forbidden-marker audit) | minimal `ci-ui` shell, release compilation | explicit feature-PR demand; complete profiles | hard 25 min | On-demand PR artifact lane and complete-profile backstop |
 | `coverage-linux` | `./run.sh coverage` | minimal `ci-coverage` shell and `cargo-llvm-cov`; host coverage explicitly enables deployment readiness, Tailnet DID publication, standalone wallet, PreProd observation, and recovery UI features that are otherwise selected only by device profiles | explicit feature-PR demand; every `develop`/`main` complete profile | hard 25 min, current-phase 70% line floor; changed production files without an instrumented mapping fail closed and are reported together, while conventional `src/**/tests.rs`, `*_tests.rs`, the reviewed declaration-only composition facade, and the explicit desktop test driver remain non-production | On-demand PR lane and complete-profile backstop |
 | `quality` | `./run.sh quality --strict` | minimal uncached `ci-quality` audit/deny/rustdoc shell | explicit feature-PR demand; complete profiles; weekly schedule | hard 20 min; 9m15 on PR #165 | On-demand PR lane and complete-profile backstop |
@@ -56,7 +56,25 @@ checkout cannot independently verify an unknown contributor's GPG keyring.
 The two current stable required CI names remain aggregators. They fail when a
 selected child lane fails and succeed when an unselected lane is intentionally
 skipped. This changes execution topology without requiring an unsafe one-step
-branch-protection migration.
+branch-protection migration. The `hard` budgets in this table are workflow
+limits; supervisor green/amber/red throughput warnings are separately calibrated
+and documented in [Factory Metrics and Baselines](metrics.md).
+
+### Draft assurance boundary
+
+On `opened`, `synchronize`, `reopened`, or `converted_to_draft` events for a
+draft PR, the CI planner selects only `basic`; DCO, metadata, scan, and other
+independent short policy contexts still run. `ready_for_review` and a
+`synchronize` event while `github.event.pull_request.draft` is false recompute
+the ordinary change-relevant plan for that exact head. `workflow_dispatch` is
+not draft-limited, so its profile and `targets` inputs can request any existing
+public hosted target. Pushes to `develop`, `main`, and `milestone-*` remain
+complete-profile backstops.
+
+A successful draft aggregate is only truthful evidence that its selected L0
+work passed. It is not merge authorization: the existing milestone merge guard
+rejects `isDraft !== false` before it accepts any exact-head critical contexts.
+No separate draft CI state machine or alternate merge context is introduced.
 
 ### Capability-ownership metadata routing
 
@@ -108,10 +126,14 @@ GitHub's cache-service write quota is shared by a workflow run, and concurrent
 writers otherwise lose throttled objects before sccache can reuse them.
 Quality uses a minimal shell without archiving the Nix store, preventing a new
 roughly 2 GiB immutable cache whenever a Nix expression changes. The locked
-package lane may update its bounded Nix-store cache only on trusted
-`develop` pushes; PRs restore it without allocating a branch-scoped copy.
-It uses `cache-nix-action` v7 in a new namespace so the noisy v6 archive
-observed on PR #165 cannot be reused.
+package lane may save its bounded Nix-store cache only on a trusted push to the
+default `develop` branch; milestone pushes, PRs, and nightly validation restore
+it read-only without allocating a branch-scoped copy. The PR-capable job has no
+`actions: write` permission and does not attempt cache deletion. Cache archives
+are disposable, rebuildable acceleration data: the supervisor performs any
+one-time, explicitly scoped removal of superseded entries outside candidate
+code. The lane uses `cache-nix-action` v7 in a new namespace so the noisy v6
+archive observed on PR #165 cannot be reused.
 
 ### Freezing dependency and crate layers
 
@@ -148,7 +170,9 @@ storage ceiling before any new layer becomes required.
 
 - Documentation, harness, and CI-only feature changes run L0 and their
   independent policy/scanner contexts without realizing the Rust/Nix build
-  graph.
+  graph. The harness allowlist includes only the exact root `bootstrap.sh`
+  entrypoint (alongside existing reviewed harness paths); scripts outside that
+  allowlist remain fail-closed core inputs.
 - UI and headless changes select their own consumer lanes rather than both;
   the UI's optimized artifact audit remains separate from its profile/tests.
 - Shared core, platform, and Compact changes select both UI and headless
@@ -165,9 +189,11 @@ storage ceiling before any new layer becomes required.
 
 | Repository event | Effective profile | Gate set |
 | --- | --- | --- |
-| Product PR to `milestone-<x.y.z>` | `feature` | L0 plus critical change- and risk-relevant hosted lanes; optional extras remain advisory |
+| Draft product PR to `milestone-<x.y.z>` | `feature` | L0 plus independent policy/scanner contexts; the draft merge guard rejects it |
+| Ready product PR to `milestone-<x.y.z>` | `feature` | L0 plus critical change- and risk-relevant hosted lanes; optional extras remain advisory |
 | Push to `milestone-<x.y.z>` | `integration` | every deterministic public hosted lane, in parallel; a red tip pauses automatic merges |
-| Factory/harness/CI/docs/dependency/governance PR to `develop` | `feature` | L0 plus change-relevant hosted lanes and requested extras; human merge only |
+| Draft factory/harness/CI/docs/dependency/governance PR to `develop` | `feature` | L0 plus independent policy/scanner contexts; human merge only |
+| Ready factory/harness/CI/docs/dependency/governance PR to `develop` | `feature` | L0 plus change-relevant hosted lanes and requested extras; human merge only |
 | Milestone promotion PR or push to `develop` | `integration` | every deterministic public hosted lane, in parallel; human merge only |
 | PR or push to `main` | `release` | every deterministic public hosted lane, in parallel |
 | manual workflow | selected `feature`, `integration`, or `release` | impacted, public-full, or public-full respectively; extra hosted targets may be named |

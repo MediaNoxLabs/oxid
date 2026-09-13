@@ -16,6 +16,7 @@ import { runEnsureWorktree } from "./loop/ensure-worktree.mjs";
 
 const DELIVERY_PROFILE_OPTION = "--delivery-profile";
 const PRE_MUTATION_ASSESSMENT_OPTION = "--pre-mutation-assessment";
+const OXID_REPOSITORY = "medianoxlabs/oxid";
 
 function bindPrBase(args, target) {
   const bases = readLongOptionValues(args, "--base");
@@ -191,6 +192,7 @@ export function applyDeliveryProfile(envelope, contract, profile, deliveryTarget
     return {
       ...routed,
       ...selection,
+      supervision: structuredClone(contract.profiles[profile].supervision),
       preMutationFastPath: {
         maximumToolCallsBeforeOutcome: fastPath.maximumToolCallsBeforeOutcome,
         readPolicy: fastPath.readPolicy,
@@ -332,16 +334,40 @@ async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
 }
 
 export function resolveOxidCompatibilityRoute(args) {
-  if (args[0] === "gate" && args[1] === "size-budget") {
+  const route = pinnedPublicRoute(args);
+  if (route.category === "gate" && route.command === "size-budget") {
     return async (routeArgs, runtime) => {
       const { main } = await import("./loop/oxid-size-budget.mjs");
       return main(routeArgs, runtime);
     };
   }
-  if (args[0] === "pr" && args[1] === "ready-for-review") {
+  if (route.category === "pr" && route.command === "ready-for-review") {
     return async (routeArgs, runtime) => {
       const { main } = await import("./github/ready-for-review.mjs");
       return main(routeArgs, runtime);
+    };
+  }
+  if (route.category === "pr" && route.command === "edit") {
+    return async (routeArgs, runtime) => {
+      const { main } = await import("./github/edit-pr.mjs");
+      return main(routeArgs, runtime);
+    };
+  }
+  const repositories = readLongOptionValues(args, "--repo");
+  const usesOxidRepository = repositories.length === 0
+    || (repositories.length === 1 && repositories[0].toLowerCase() === OXID_REPOSITORY);
+  if (
+    route.category === "loop"
+    && route.command === "watch-ci"
+    && readLongOptionValues(args, "--pr").length === 1
+    && usesOxidRepository
+  ) {
+    return async (routeArgs, runtime) => {
+      const { runOxidPrCiWatch } = await import("./github/watch-oxid-ci.mjs");
+      const watcherArgs = repositories.length === 0
+        ? ["--repo", "MediaNoxLabs/oxid", ...routeArgs]
+        : routeArgs;
+      return runOxidPrCiWatch(watcherArgs, runtime);
     };
   }
   return null;
@@ -351,6 +377,7 @@ export async function runDevLoops(argv = process.argv.slice(2), {
   cwd = process.cwd(),
   stdout = process.stdout,
   stderr = process.stderr,
+  runChild = runManagedChild,
 } = {}) {
   const route = argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")
     ? {}
@@ -362,13 +389,26 @@ export async function runDevLoops(argv = process.argv.slice(2), {
   }
   const args = normalizeDevLoopsArgs(argv);
   const compatibilityRoute = resolveOxidCompatibilityRoute(args);
-  if (compatibilityRoute) return compatibilityRoute(args.slice(2), { repoRoot: cwd, stdout, stderr });
+  if (compatibilityRoute) {
+    const routeArgs = route.category && route.command ? routedCommandArgs(args, route.category, route.command) : null;
+    if (routeArgs === null) throw new Error("could not isolate repository compatibility route arguments");
+    return compatibilityRoute(routeArgs, { cwd, repoRoot: cwd, stdout, stderr });
+  }
   const resolved = await resolveDevLoopsPackageRoot({ cwd });
   const envelopeArgs = buildEnvelopeArgs(args);
   if (envelopeArgs) return runBuildEnvelope(envelopeArgs, { cwd, stdout, stderr, resolved });
 
   const cli = path.join(resolved.packageRoot, "cli", "index.mjs");
-  return runManagedChild(process.execPath, [cli, ...args], {
+  // This is the primary verdict route: its coordination-state detector queries
+  // `closingIssuesReferences`, which the host gh may not support. The Nix-pinned
+  // shell is therefore used instead of a fallback. bootstrap changes to the
+  // repository root, so restore the caller's cwd before starting the package CLI.
+  const requiresNixGh = route.category === "gate" && route.command === "upsert-verdict";
+  const command = requiresNixGh ? path.join(resolved.gitRoot, "bootstrap.sh") : process.execPath;
+  const commandArgs = requiresNixGh
+    ? ["--", "bash", "-c", 'cd "$1"; shift; exec "$@"', "dev-loops-bootstrap-command", cwd, process.execPath, cli, ...args]
+    : [cli, ...args];
+  return runChild(command, commandArgs, {
     cwd,
     stdout,
     stderr,

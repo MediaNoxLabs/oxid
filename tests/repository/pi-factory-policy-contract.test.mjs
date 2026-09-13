@@ -41,7 +41,7 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
     },
     "npm:@playwright/test@1.60.0",
     "npm:@axe-core/playwright@4.10.0",
-    "npm:pi-subagents@0.66.0",
+    "npm:pi-subagents@0.67.0",
     "npm:typebox@1.3.9",
     {
       source: "npm:pi-taskflow@0.2.10",
@@ -62,18 +62,24 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(smoke, /PI_CODING_AGENT_SESSION_DIR/u);
   assert.match(smoke, /PI_SUBAGENTS_TEMP_ROOT/u);
   assert.match(smoke, /owner-private runtime state/u);
+  assert.match(smoke, /unexpected pi-subagents package/u);
+  assert.match(smoke, /attentionRunsForSession/u);
+  assert.match(smoke, /remembered detached foreground descendant/u);
+  assert.match(smoke, /reconcileDetachedWorkflowChildCompletion/u);
+  assert.match(smoke, /planWorkflowSettlement/u);
   assert.match(smoke, /skill:taskflow/u);
   assert.match(smoke, /unsafe inherited taskflow resources are active/u);
   assert.match(smoke, /Pi startup modified tracked project agent shadows/u);
   assert.match(smoke, /Failed to load skill/u);
   assert.match(smoke, /Pi did not expose the tracked scenario and use-case commands/u);
   assert.match(bootstrap, /bash scripts\/check-pi-devshell\.sh/u);
+  assert.match(bootstrap, /node scripts\/git-hooks\/check-github-web-flow-key\.mjs/u);
   const discoverNix = bootstrap.indexOf('[[ -x "$nix_daemon_profile_bin/nix" ]]');
   const prependNix = bootstrap.indexOf('export PATH="$nix_daemon_profile_bin:$PATH"');
   const rejectMissingNix = bootstrap.indexOf('echo "Nix is required; install it with flakes enabled before bootstrapping Oxid."');
   assert.match(bootstrap, /readonly nix_daemon_profile_bin="\/nix\/var\/nix\/profiles\/default\/bin"/u);
   assert.ok(discoverNix >= 0 && prependNix > discoverNix && rejectMissingNix > prependNix);
-  assert.match(devshell, /typeof entry === "string" \? entry : entry\?\.source/u);
+  assert.match(devshell, /provision-pi-packages\.mjs/u);
   assert.match(devshell, /Git-common-dir path survives the per-entry nix-shell TMPDIR/u);
   assert.match(devshell, /export PI_CODING_AGENT_SESSION_DIR/u);
   assert.match(devshell, /export PI_SUBAGENTS_TEMP_ROOT/u);
@@ -245,6 +251,7 @@ test("the handoff wrapper makes prototype local and production-ready the default
     advisoryDisposition: "follow-up",
   });
   assert.equal(production.nextAction, base.nextAction);
+  assert.deepEqual(production.supervision, contract.profiles["production-ready"].supervision);
   assert.equal(production.executionProfile, "regular-production-ready");
   assert.equal(production.fallbackReason, "missing-pre-mutation-assessment");
   assert.deepEqual(production.stopRules, base.stopRules);
@@ -486,6 +493,41 @@ test("factory claim surface fails closed and exposes no raw GitHub mutations", a
   assert.match(source, /Claiming #\$\{issue\} is disabled/u);
   assert.doesNotMatch(source, /["'](?:issue|pr)["']\s*,\s*["'](?:edit|comment|close|reopen|delete|merge|create)["']/u);
   assert.doesNotMatch(source, /factory\/\$\{issue\}/u);
+});
+
+test("dev-loop grants only issue-bound push and draft-PR delivery writes", async () => {
+  const source = await readFile(path.join(repoRoot, ".pi", "agents", "dev-loop.agent.md"), "utf8");
+  assert.match(source, /issue-backed delivery authorization permits only a normal push/u);
+  assert.match(source, /resolved issue, repository, delivery target, canonical branch, and current worktree/u);
+  assert.match(source, /No force-push, replacement, cross-issue write, ready-for-review, merge, durable-branch mutation, release, credential, protection, or scope-expansion authority is granted/u);
+  assert.match(source, /fail closed before either delivery write/u);
+});
+
+test("Pi worker guidance confines external repository writes to approved supervision", async () => {
+  const guidance = await Promise.all([
+    readFile(path.join(repoRoot, "AGENT.md"), "utf8"),
+    readFile(path.join(repoRoot, ".pi", "agents", "developer.agent.md"), "utf8"),
+    readFile(path.join(repoRoot, ".pi", "agents", "dev-loop.agent.md"), "utf8"),
+    readFile(path.join(repoRoot, ".pi", "agents", "fixer.agent.md"), "utf8"),
+  ]);
+  const rawExternalMutationGrant = /\b(?:may|can|should|must)\s+(?:directly\s+)?(?:create|open|post|edit|apply|publish|release)\s+(?:an?\s+)?(?:external|upstream)\s+(?:issue|PR|pull request|comment|label|release|package)/iu;
+
+  for (const source of guidance) {
+    assert.match(source, /active\s+repository/u);
+    assert.match(source, /explicit\s+owner or supervisor approval/u);
+    assert.match(source, /external issue, PR, comment, label,\s+release,\s+package publication/u);
+    assert.match(source, /(?:draft|report)[^.\n]*locally/u);
+    assert.doesNotMatch(source, rawExternalMutationGrant);
+  }
+
+  const [rootAgent, charter, runtime] = await Promise.all([
+    readFile(path.join(repoRoot, "AGENT.md"), "utf8"),
+    readFile(path.join(repoRoot, "docs", "factory", "charter.md"), "utf8"),
+    readFile(path.join(repoRoot, "docs", "factory", "pi-runtime-audit.md"), "utf8"),
+  ]);
+  assert.match(rootAgent, /issue-backed delivery authority permits tracked writes only in this\s+repository/u);
+  assert.match(charter, /Issue-backed Oxid delivery authority is limited to the active repository/u);
+  assert.match(runtime, /worker\s+guidance now limit issue-backed delivery writes to `MediaNoxLabs\/oxid`/u);
 });
 
 test("factory state labels are complete, unique, and dry-run by default", () => {

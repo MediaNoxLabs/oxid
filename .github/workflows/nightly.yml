@@ -37,7 +37,8 @@ jobs:
           primary-key: nix7-build-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix', 'Cargo.lock') }}
           restore-prefixes-first-match: nix7-build-${{ runner.os }}-
           gc-max-store-size-linux: 6G
-          purge: false
+          # Scheduled validation restores the default-branch archive read-only.
+          save: false
 
       - name: Run every flake check hermetically
         run: nix flake check --print-build-logs

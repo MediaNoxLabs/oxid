@@ -146,7 +146,7 @@ sysinfo = { version = "=0.39.6", default-features = false, features = ["system"]
 rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
 rustls-platform-verifier-05 = { package = "rustls-platform-verifier", version = "=0.5.3" }
 rustls-platform-verifier-07 = { package = "rustls-platform-verifier", version = "=0.7.0" }
-rand = { version = "=0.8.7" }
+rand = { version = "=0.8.8" }
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls"] }
 subxt = { version = "=0.44.3" }
 tokio = { version = "=1.53.1", default-features = false, features = ["net", "rt", "time"] }

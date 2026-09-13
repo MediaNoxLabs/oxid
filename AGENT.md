@@ -47,6 +47,11 @@ index points to it; it is not a required read for unrelated work.
   authoritative.
 - Do not push, merge, change repository settings, accept an ADR, tag, or release
   without the authority required by the active user request.
+- The active issue-backed delivery authority permits tracked writes only in this
+  repository. Before any write outside the active repository—including an
+  external issue, PR, comment, label, release, package publication, or other repository
+  writes—obtain explicit owner or supervisor approval. Draft a suggested
+  external report locally for the supervisor; never publish it directly.
 
 See [issue-branch delivery](docs/issue-branch-delivery.md) for branch protection,
 freshness, and exact required contexts.
@@ -83,18 +88,19 @@ Follow [the productive loop](docs/factory/productive-loop.md):
 - `/dev-loop prototype issue <n>` selects a local, provisional loop for one
   hypothesis: basic plus explicitly relevant focused checks, at most one
   reviewer, no push/PR/hosted-CI wait, and no merge-readiness claim.
-- `/dev-loop production-ready issue <n>` selects the normal affected-target,
-  draft, CI, and pre-approval loop. It is the default when no profile is named.
-- An external supervisor starts Pi itself as the sole issue worker. Give that
-  direct worker one canonical worktree, one issue, the acceptance profile, and
-  a stop-before-CI checkpoint; do not ask it to launch another agent. This
-  avoids paying twice to load the repository contract.
-- A human working interactively inside Pi may dispatch the tracked `dev-loop`
-  agent through `pi-subagents`. Never wrap `/dev-loop` in `taskflow`. That
-  top-level invocation launches exactly one child and exits after its terminal
-  checkpoint; it never automatically resumes or launches a CI-only child.
-- The external supervisor owns every explicit retry, hosted-CI watch, review
-  triage, merge, metrics, and closeout for both topologies.
+- `/dev-loop production-ready issue <n>` selects the affected-target
+  implementation through a pushed draft PR and exact-head local-gate receipt.
+  It is the default when no profile is named; external supervision owns later
+  review, CI, and pre-approval.
+- One top-level `/dev-loop` invocation dispatches the tracked `dev-loop` agent
+  as its only implementation child. That child edits, runs focused validation,
+  creates the signed commit, runs or reuses one exact-head local gate, pushes,
+  opens the draft PR, and stops. It cannot dispatch nested children. The
+  supervisor must explicitly approve any write outside the active repository;
+  issue-backed Oxid delivery authority does not extend to external repositories.
+- Never wrap `/dev-loop` in `taskflow`, automatically resume it, or launch a
+  review/CI/pre-approval continuation. The external supervisor owns focused
+  review, hosted CI, every explicit retry, triage, metrics, merge, and closeout.
 - Route routine repository delivery to `openai-codex/gpt-5.6-terra`. Reserve
   `gpt-5.6-sol` for a concrete architecture or hard-reasoning need; use Luna
   for bounded scouting or small documentation changes, not repository-wide
@@ -117,15 +123,17 @@ Follow [the productive loop](docs/factory/productive-loop.md):
    managed delivery worktrees per Git common checkout on a host. Parallel
    parents own different issue worktrees.
 2. Run the narrowest meaningful check while editing.
-3. Use the bounded draft review for direction; it does not wait for CI. When
-   aggregate CI is red on a draft, follow gate coordination if it permits
-   `run_draft_gate`, keep the PR draft, and repair required evidence before
-   pre-approval.
-4. Batch accepted findings, run the target plan locally, then push one coherent
-   current-head candidate.
-5. Run final correctness/security review and hosted CI once. Resolve blocking
-   findings; leave bounded non-blocking polish as a concrete linked follow-up
-   issue and visible PR triage comment without another exact-head CI cycle.
+3. The implementation child does not launch draft review. The supervisor may
+   run bounded focused review after the draft exists and owns any explicit fix
+   retry.
+4. Run the target plan locally, create the signed commit, then run or reuse the
+   exact-head local gate before pushing one coherent current-head candidate.
+5. The external supervisor runs final correctness/security review and hosted CI
+   once. An unchanged-head reviewer verifies the producer's private local-gate
+   receipt and performs focused review; it never repeats the full local gate.
+   Resolve blocking findings; leave bounded non-blocking polish as a concrete
+   linked follow-up issue and visible PR triage comment without another
+   exact-head CI cycle.
 6. Invoke independent current-head Claude review only for a high-risk/release-profile
    change, an owner request, or a disputed finding.
 7. At merge, post the exact-head `review-triage.mjs` receipt and use the guarded
@@ -207,7 +215,10 @@ hermetic flake check remain backstops.
   to the same worktree, target directory, branch, or Pi session file. See the
   [worker topology](docs/factory/worker-topology.md) for local and cloud lanes.
 - A parent that spawns a process owns its process group and must clean it in an
-  exit/signal path. Tests put cleanup in a trap, not after happy-path assertions.
+  exit/signal or bounded-drain-failure path. It may report reconciliation only
+  after every exact owned descendant is terminal; otherwise preserve and report
+  the owned run/PIDs for supervisor cleanup. Tests put cleanup in a trap, not
+  after happy-path assertions.
 - Rust targets remain worktree-local; compilation reuse comes from the bounded
   shared `sccache`, not shared mutable target trees.
 - Pi packages live once in the common checkout and are resolved from linked

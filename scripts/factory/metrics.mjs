@@ -44,6 +44,7 @@ export const METRIC_KEYS = Object.freeze({
   routing: Object.freeze(["profile", "areas", "targets"]),
 });
 
+// Hard workflow budgets remain the target-matrix authority; warning bands are advisory calibration.
 export const CI_TARGET_BUDGET_MS = Object.freeze({
   [HostedTarget.BASIC]: 5 * 60_000,
   [HostedTarget.UNIT_LINUX]: 10 * 60_000,
@@ -56,9 +57,25 @@ export const CI_TARGET_BUDGET_MS = Object.freeze({
   [HostedTarget.COMPACT_ARTIFACTS]: 30 * 60_000,
 });
 
+export const CI_TARGET_EARLY_WARNING_MS = Object.freeze({
+  [HostedTarget.BASIC]: Object.freeze({ green: 2 * 60_000, amber: 3 * 60_000 }),
+  [HostedTarget.UNIT_LINUX]: Object.freeze({ green: 9 * 60_000, amber: 10 * 60_000 }),
+  [HostedTarget.HEADLESS_LINUX]: Object.freeze({ green: 6 * 60_000, amber: 8 * 60_000 }),
+  [HostedTarget.UI_LINUX]: Object.freeze({ green: 18 * 60_000, amber: 20 * 60_000 }),
+  [HostedTarget.UI_RELEASE_LINUX]: Object.freeze({ green: 17 * 60_000, amber: 20 * 60_000 }),
+  [HostedTarget.COVERAGE_LINUX]: Object.freeze({ green: 17 * 60_000, amber: 20 * 60_000 }),
+  [HostedTarget.QUALITY]: Object.freeze({ green: 7 * 60_000, amber: 10 * 60_000 }),
+  [HostedTarget.NIX_PACKAGE]: Object.freeze({ green: 18 * 60_000, amber: 25 * 60_000 }),
+  [HostedTarget.COMPACT_ARTIFACTS]: Object.freeze({ green: 4 * 60_000, amber: 6 * 60_000 }),
+});
+
 if (Object.keys(CI_TARGET_BUDGET_MS).length !== HOSTED_TARGETS.length
-  || HOSTED_TARGETS.some((target) => !Number.isSafeInteger(CI_TARGET_BUDGET_MS[target]))) {
-  throw new Error("every hosted CI target must have one explicit supervisor budget");
+  || HOSTED_TARGETS.some((target) => !Number.isSafeInteger(CI_TARGET_BUDGET_MS[target]))
+  || HOSTED_TARGETS.some((target) => !Number.isSafeInteger(CI_TARGET_EARLY_WARNING_MS[target]?.green)
+    || !Number.isSafeInteger(CI_TARGET_EARLY_WARNING_MS[target]?.amber)
+    || CI_TARGET_EARLY_WARNING_MS[target].green > CI_TARGET_EARLY_WARNING_MS[target].amber
+    || CI_TARGET_EARLY_WARNING_MS[target].amber > CI_TARGET_BUDGET_MS[target])) {
+  throw new Error("every hosted CI target must have calibrated warning bands within its hard budget");
 }
 
 function error(errors, pathName, code, message) {
@@ -303,11 +320,38 @@ function safeSum(values) {
   return sum;
 }
 
-function targetCheckOverBudget(record) {
+function targetCheckExceedsHardBudget(record) {
   const selected = new Set(record.routing.targets);
   return record.ci.checks.some((check) => selected.has(check.name)
     && CI_TARGET_BUDGET_MS[check.name] !== undefined
     && check.durationMs > CI_TARGET_BUDGET_MS[check.name]);
+}
+
+function targetCheckWarningStatus(record) {
+  const selected = new Set(record.routing.targets);
+  let status = "green";
+  for (const check of record.ci.checks) {
+    if (!selected.has(check.name)) continue;
+    const thresholds = CI_TARGET_EARLY_WARNING_MS[check.name];
+    if (!thresholds) continue;
+    if (check.durationMs > thresholds.amber) return "red";
+    if (check.durationMs > thresholds.green) status = "amber";
+  }
+  return status;
+}
+
+function aggregateElapsedByProfile(records) {
+  return Object.fromEntries(["feature", "integration", "release"].map((profile) => {
+    const selected = records.filter((record) => record.routing.profile === profile);
+    return [profile, {
+      records: selected.length,
+      totalElapsedMs: distribution(selected.map((record) => record.phases.totalElapsedMs)),
+      developmentMs: distribution(selected.map((record) => record.phases.developmentMs)),
+      reviewMs: distribution(selected.map((record) => record.phases.reviewMs)),
+      validationMs: distribution(selected.map((record) => record.phases.validationMs)),
+      ciWallTimeMs: distribution(selected.map((record) => record.ci.wallTimeMs)),
+    }];
+  }));
 }
 
 function metricId(record) {
@@ -405,6 +449,7 @@ export function aggregateMetricRecords(records, invalidRecords = [], { nowMs = D
       peakTargetBytes: distribution(values((record) => record.worktree.peakTargetBytes)),
       peakWorktreeBytes: distribution(values((record) => record.worktree.peakWorktreeBytes)),
     },
+    elapsedByProfile: aggregateElapsedByProfile(records),
     validations: aggregateValidations(records),
     ciChecks: aggregateCiChecks(records),
     totals: {
@@ -422,9 +467,13 @@ export function aggregateMetricRecords(records, invalidRecords = [], { nowMs = D
     ],
     sloViolations: {
       routineOver60Minutes: violationIds((record) => record.routing.profile === "feature" && record.phases.totalElapsedMs > 60 * 60_000),
-      ciTargetOverBudget: violationIds(targetCheckOverBudget),
-      reviewSessionsOver4: violationIds((record) => Number.isSafeInteger(record.review.sessions) && record.review.sessions > 4),
-      pushesAfterFirstCi: violationIds((record) => record.attempts.pushesAfterFirstCi > 0),
+      ciTargetHardBudgetExceeded: violationIds(targetCheckExceedsHardBudget),
+      ciTargetEarlyWarningAmber: violationIds((record) => targetCheckWarningStatus(record) === "amber"),
+      ciTargetEarlyWarningRed: violationIds((record) => targetCheckWarningStatus(record) === "red"),
+      reviewSessionsAmber: violationIds((record) => Number.isSafeInteger(record.review.sessions) && record.review.sessions === 4),
+      reviewSessionsRed: violationIds((record) => Number.isSafeInteger(record.review.sessions) && record.review.sessions >= 5),
+      pushesAfterFirstCiAmber: violationIds((record) => record.attempts.pushesAfterFirstCi === 1),
+      pushesAfterFirstCiRed: violationIds((record) => record.attempts.pushesAfterFirstCi >= 2),
       failedOrCanceledAttempts: violationIds((record) => record.attempts.failed > 0 || record.attempts.canceled > 0 || record.ci.canceledRuns > 0),
       targetOver10GiB: violationIds((record) => record.worktree.peakTargetBytes > 10 * 1024 ** 3),
       retentionOver90Days: violationIds((record) => nowMs - Date.parse(record.recordedAt) > RETENTION_MS),
@@ -624,9 +673,13 @@ export function renderPublicMetricComment(record, options = {}) {
   const tokenSummary = payload.tokens === null
     ? "unavailable"
     : `${payload.tokens.input.toLocaleString("en-US")} input, ${payload.tokens.output.toLocaleString("en-US")} output, ${payload.tokens.cacheRead.toLocaleString("en-US")} cache-read, ${payload.tokens.cacheWrite.toLocaleString("en-US")} cache-write`;
-  const outcome = payload.ci.failedChecks > 0 || payload.validations.some((entry) => entry.outcome === "failed")
+  const terminalOutcomes = [
+    ...payload.validations.map((entry) => entry.outcome),
+    ...payload.ci.checks.map((check) => check.outcome),
+  ];
+  const outcome = terminalOutcomes.includes("failed")
     ? "failed"
-    : payload.ci.canceledRuns > 0 || payload.validations.some((entry) => entry.outcome === "canceled") ? "canceled" : "delivered";
+    : terminalOutcomes.includes("canceled") ? "canceled" : "delivered";
   const body = `## Software Factory metrics
 
 - Outcome: ${outcome}; exact head \`${payload.headSha}\`

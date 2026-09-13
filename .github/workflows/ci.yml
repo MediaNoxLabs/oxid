@@ -4,6 +4,7 @@ on:
   push:
     branches: [develop, main, "milestone-*"]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
     inputs:
       profile:
@@ -55,6 +56,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/develop' }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           EVENT_NAME: ${{ github.event_name }}
+          PR_DRAFT: ${{ github.event.pull_request.draft || 'false' }}
           BASE_BRANCH: ${{ github.base_ref || '' }}
           HEAD_BRANCH: ${{ github.head_ref || '' }}
           REF_NAME: ${{ github.ref_name }}
@@ -65,6 +67,7 @@ jobs:
             --base "$BASE_SHA" \
             --head "$HEAD_SHA" \
             --event "$EVENT_NAME" \
+            --pr-draft "$PR_DRAFT" \
             --base-branch "$BASE_BRANCH" \
             --head-branch "$HEAD_BRANCH" \
             --ref-name "$REF_NAME" \
@@ -75,6 +78,7 @@ jobs:
             --base "$BASE_SHA" \
             --head "$HEAD_SHA" \
             --event "$EVENT_NAME" \
+            --pr-draft "$PR_DRAFT" \
             --base-branch "$BASE_BRANCH" \
             --head-branch "$HEAD_BRANCH" \
             --ref-name "$REF_NAME" \
@@ -157,6 +161,7 @@ jobs:
               && (process.env.GITHUB_REF === 'refs/heads/develop'
                 || process.env.GITHUB_REF.startsWith('refs/heads/milestone-'));
             core.exportVariable('SCCACHE_GHA_RW_MODE', trustedTrainPush ? 'READ_WRITE' : 'READ_ONLY');
+            core.exportVariable('SCCACHE_BACKEND_DIAGNOSTICS', trustedTrainPush ? 'on' : 'off');
       - name: Compile and run workspace unit tests
         run: nix develop .#ci-rust --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh unit --strict
 
@@ -201,7 +206,7 @@ jobs:
     # A read-only PR with no trusted sccache seed can finish the command at the
     # 20-minute boundary. Keep the cold fallback bounded while leaving time for
     # sccache metrics and GitHub post-job cleanup.
-    timeout-minutes: 22
+    timeout-minutes: 25
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -358,11 +363,7 @@ jobs:
           primary-key: nix7-build-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**/*.nix', 'Cargo.lock') }}
           restore-prefixes-first-match: nix7-build-${{ runner.os }}-
           gc-max-store-size-linux: 4G
-          save: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/heads/milestone-')) }}
-          purge: true
-          purge-prefixes: nix7-build-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
+          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
       - name: Build the locked Nix package
         run: nix build --print-build-logs
 

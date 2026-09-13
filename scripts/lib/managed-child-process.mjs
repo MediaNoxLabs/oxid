@@ -35,6 +35,8 @@ export function runManagedChild(command, args, {
   processRef = process,
   platform = process.platform,
   kill = process.kill.bind(process),
+  setTimeoutImpl = setTimeout,
+  clearTimeoutImpl = clearTimeout,
 } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawnImpl(command, args, {
@@ -53,7 +55,7 @@ export function runManagedChild(command, args, {
       if (parentSignal) return;
       parentSignal = signal;
       send("SIGTERM");
-      escalation = setTimeout(() => send("SIGKILL"), graceMs);
+      escalation = setTimeoutImpl(() => send("SIGKILL"), graceMs);
       escalation.unref?.();
     }]));
     const onExit = () => send("SIGKILL");
@@ -62,7 +64,7 @@ export function runManagedChild(command, args, {
     processRef.once("exit", onExit);
 
     const cleanup = () => {
-      if (escalation) clearTimeout(escalation);
+      if (escalation) clearTimeoutImpl(escalation);
       for (const [signal, handler] of handlers) processRef.off(signal, handler);
       processRef.off("exit", onExit);
     };

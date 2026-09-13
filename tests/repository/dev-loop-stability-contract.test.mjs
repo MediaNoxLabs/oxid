@@ -3,21 +3,26 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
-import os from "node:os";
+import os, { hostname } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  auditPiPackageClosures,
   checkAgentToolAllowlists,
+  cleanupPiPackageClosures,
   devLoopPreflightCacheKey,
   ensureSharedPiPackageStore,
+  piPackageClosureIdentity,
   parseAgentFrontmatter,
   resolveDevLoopsPackageRoot,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
-import { normalizeDevLoopsArgs, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
+import { normalizeDevLoopsArgs, resolveOxidCompatibilityRoute, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
+import { editPrBody, parseEditPrArgs } from "../../scripts/github/edit-pr.mjs";
+import { watchOxidPrCiStatus } from "../../scripts/github/watch-oxid-ci.mjs";
 import { runResolveTrackerLocalSpec } from "../../scripts/github/resolve-tracker-local-spec.mjs";
 import { assertNoPreflightBypass, inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
 import { runBranchGuard } from "../../scripts/loop/pre-commit-branch-guard.mjs";
@@ -33,7 +38,7 @@ import {
   resolveIssuePullRequestLinks,
 } from "../../scripts/github/resolve-issue-pr-links.mjs";
 import { preflightGh } from "../../scripts/github/preflight-gh.mjs";
-import { GH_REST_MAX_BUFFER_BYTES, runGhCommand } from "../../scripts/github/rest-client.mjs";
+import { GH_REST_MAX_BUFFER_BYTES, GITHUB_REST_HEADERS, runGhCommand } from "../../scripts/github/rest-client.mjs";
 import {
   assertClaudeAuthHelpCapabilities,
   assertAttestedReviewEffort,
@@ -158,12 +163,18 @@ async function makeFixture() {
   await writeFile(path.join(packageRoot, "scripts", "lib", "jq-output.mjs"), [
     'export function emitResult(result, { jq, silent, stdout }) {',
     '  if (silent) return result.ok ? 0 : 1;',
-    '  const value = jq === undefined ? result : jq === ".ok" ? result.ok : result;',
+    '  const value = jq === undefined ? result : jq === ".ok" ? result.ok : jq === ".status" ? result.status : result;',
     '  stdout.write(`${JSON.stringify(value)}\\n`);',
     '  return 0;',
     '}',
   ].join("\n"));
   await writeFile(path.join(packageRoot, "scripts", "_core-helpers.mjs"), 'export function formatCliError(error) { return error.message; }\n');
+  await mkdir(path.join(packageRoot, "scripts", "github"), { recursive: true });
+  await writeFile(path.join(packageRoot, "scripts", "github", "probe-ci-status.mjs"), [
+    'export function parseCiWatchCliArgs(argv) { const value = (name) => { const index = argv.indexOf(name); return index >= 0 ? argv[index + 1] : undefined; }; return { help: argv.includes("--help"), repo: value("--repo"), pr: Number(value("--pr")), commit: value("--commit"), timeoutMs: Number(value("--timeout-ms") ?? 1800000), pollIntervalMs: Number(value("--poll-interval-ms") ?? 60000), silent: argv.includes("--silent"), jq: value("--jq") }; }',
+    'export async function watchCiStatus() { return { ok: true, status: "success", settled: true, ciStatus: "none", failedChecks: [], excludedFailureDetails: [], headSha: "fixture-head", attempts: 1 }; }',
+    'export async function runCli(_argv, { stdout }) { stdout.write("fixture watch help\\n"); }',
+  ].join("\n"));
   await writeFile(path.join(packageRoot, "scripts", "loop", "pre-commit-branch-guard.mjs"), [
     'import { execFileSync } from "node:child_process";',
     'const index = process.argv.indexOf("--expected-branch");',
@@ -179,13 +190,200 @@ async function makeFixture() {
   return { root, worktree, packageRoot };
 }
 
+test("Pi closure identities cover ordered exact package configuration", () => {
+  const base = { packages: [
+    { source: "npm:dev-loops@1.0.2", extensions: [] },
+    "npm:pi-subagents@0.67.0",
+  ] };
+  const reordered = { packages: [...base.packages].reverse() };
+  const changedResourcePolicy = { packages: [
+    { extensions: ["./extension.mjs"], source: "npm:dev-loops@1.0.2" },
+    "npm:pi-subagents@0.67.0",
+  ] };
+  assert.equal(piPackageClosureIdentity(base).identity, piPackageClosureIdentity({ packages: [
+    { extensions: [], source: "npm:dev-loops@1.0.2" },
+    "npm:pi-subagents@0.67.0",
+  ] }).identity, "object key order is not closure configuration order");
+  assert.notEqual(piPackageClosureIdentity(base).identity, piPackageClosureIdentity(reordered).identity);
+  assert.notEqual(piPackageClosureIdentity(base).identity, piPackageClosureIdentity(changedResourcePolicy).identity);
+});
+
+test("Pi closures isolate linked worktrees, publish once, and retain only referenced state", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const first = await ensureSharedPiPackageStore({ cwd: fixture.root });
+  const packageRoot = path.resolve(first.store, "node_modules", "dev-loops");
+  const originalManifest = await readFile(path.join(packageRoot, "package.json"), "utf8");
+
+  await writeFile(path.join(fixture.worktree, ".pi", "settings.json"), JSON.stringify({
+    packages: ["npm:dev-loops@0.8.0"], subagents: { projectRootResolution: "git-root" },
+  }));
+  const second = await ensureSharedPiPackageStore({
+    cwd: fixture.worktree,
+    install: async ({ nodeModules }) => {
+      const root = path.join(nodeModules, "dev-loops");
+      await mkdir(path.join(root, "cli"), { recursive: true });
+      await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.8.0" }));
+      await writeFile(path.join(root, "cli", "index.mjs"), "");
+    },
+  });
+  assert.notEqual(first.identity, second.identity);
+  assert.equal(JSON.parse(await readFile((await resolveDevLoopsPackageRoot({ cwd: fixture.root })).packageRoot + "/package.json", "utf8")).version, "1.0.2");
+  assert.equal(JSON.parse(await readFile((await resolveDevLoopsPackageRoot({ cwd: fixture.worktree })).packageRoot + "/package.json", "utf8")).version, "0.8.0");
+  assert.equal(await readFile(path.join(packageRoot, "package.json"), "utf8"), originalManifest, "a published closure is never changed in place");
+
+  const closure = path.resolve(first.store, "../..");
+  const state = path.dirname(path.dirname(closure));
+  const staleClosure = path.join(state, "closures", "stale-unreferenced");
+  const staleStage = path.join(state, "staging", "interrupted-stage");
+  const staleLock = path.join(state, "locks", "interrupted.lock");
+  const liveLock = path.join(state, "locks", "live-owner.lock");
+  await Promise.all([
+    mkdir(staleClosure, { recursive: true }),
+    mkdir(staleStage, { recursive: true }),
+    writeFile(staleLock, "interrupted"),
+    writeFile(liveLock, JSON.stringify({ pid: process.pid, host: hostname() })),
+  ]);
+  const old = new Date(Date.now() - 11 * 60_000);
+  await Promise.all([utimes(staleClosure, old, old), utimes(staleStage, old, old), utimes(staleLock, old, old), utimes(liveLock, old, old)]);
+  const before = await auditPiPackageClosures({ cwd: fixture.root, olderThanMs: 1 });
+  assert.deepEqual(before.referenced, [first.identity, second.identity].sort());
+  const cleaned = await cleanupPiPackageClosures({ cwd: fixture.root, olderThanMs: 1, staleMs: 1 });
+  assert.deepEqual(cleaned.removed, ["stale-unreferenced"]);
+  assert.deepEqual(cleaned.reclaimedStaging, ["interrupted-stage"]);
+  assert.deepEqual(cleaned.reclaimedLocks, ["interrupted.lock"]);
+  assert.equal((await lstat(liveLock)).isFile(), true, "cleanup preserves a live same-host lock regardless of age");
+});
+
+test("Pi closure installation is atomic and concurrent callers share one publication", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const results = await Promise.all([
+    ensureSharedPiPackageStore({ cwd: fixture.root }),
+    ensureSharedPiPackageStore({ cwd: fixture.root }),
+  ]);
+  assert.equal(results.filter(({ published }) => published).length, 1);
+  assert.equal(results[0].identity, results[1].identity);
+
+  await writeFile(path.join(fixture.worktree, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:dev-loops@0.8.0"] }));
+  await assert.rejects(
+    ensureSharedPiPackageStore({ cwd: fixture.worktree, install: async () => { throw new Error("simulated interruption"); } }),
+    /simulated interruption/,
+  );
+  const audit = await auditPiPackageClosures({ cwd: fixture.root });
+  assert.deepEqual(audit.closures.map(({ identity }) => identity), [results[0].identity]);
+});
+
+test("legacy mismatches fall back to one exact staged install", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  await writeFile(path.join(fixture.packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "0.9.0" }));
+  let installs = 0;
+  const result = await ensureSharedPiPackageStore({
+    cwd: fixture.root,
+    install: async ({ nodeModules }) => {
+      installs += 1;
+      const root = path.join(nodeModules, "dev-loops");
+      await mkdir(path.join(root, "cli"), { recursive: true });
+      await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "dev-loops", version: "1.0.2" }));
+      await writeFile(path.join(root, "cli", "index.mjs"), "");
+    },
+  });
+  assert.equal(installs, 1);
+  assert.equal(JSON.parse(await readFile(path.join(result.store, "node_modules", "dev-loops", "package.json"), "utf8")).version, "1.0.2");
+});
+
+test("a valid published Pi closure skips installers and stays stable", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const first = await ensureSharedPiPackageStore({ cwd: fixture.root });
+  const manifest = path.join(first.store, "node_modules", "dev-loops", "package.json");
+  const before = await readFile(manifest, "utf8");
+  const second = await ensureSharedPiPackageStore({ cwd: fixture.root, install: async () => { throw new Error("installer must not run"); } });
+  assert.equal(second.published, false);
+  assert.equal(second.identity, first.identity);
+  assert.equal(await readFile(manifest, "utf8"), before);
+});
+
+test("corrupt final closures are quarantined before replacement", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const first = await ensureSharedPiPackageStore({ cwd: fixture.root });
+  const closure = path.resolve(first.store, "../..");
+  await writeFile(path.join(closure, "closure.json"), "{broken\n");
+  const second = await ensureSharedPiPackageStore({
+    cwd: fixture.root,
+    install: async ({ nodeModules }) => {
+      const root = path.join(nodeModules, "dev-loops");
+      await mkdir(path.join(root, "cli"), { recursive: true });
+      await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "dev-loops", version: "1.0.2" }));
+      await writeFile(path.join(root, "cli", "index.mjs"), "");
+    },
+  });
+  assert.equal(second.published, true);
+  const quarantined = (await readdir(path.dirname(closure))).filter((entry) => entry.startsWith(`${first.identity}.corrupt-`));
+  assert.equal(quarantined.length, 1);
+  assert.equal(JSON.parse(await readFile(path.join(second.store, "node_modules", "dev-loops", "package.json"), "utf8")).version, "1.0.2");
+});
+
+test("old dead locks are reclaimable while live owners are never stolen", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const identity = piPackageClosureIdentity(JSON.parse(await readFile(path.join(fixture.root, ".pi", "settings.json"), "utf8"))).identity;
+  const locks = path.join(fixture.root, ".git", "oxid-factory", "pi-package-closures-v1", "locks");
+  await mkdir(locks, { recursive: true });
+  const lock = path.join(locks, `${identity}.lock`);
+  await writeFile(lock, JSON.stringify({ pid: process.pid, host: hostname() }));
+  const old = new Date(Date.now() - 16 * 60_000);
+  await utimes(lock, old, old);
+  await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.root, waitMs: 0, staleMs: 1 }), /timed out waiting/);
+  await writeFile(lock, JSON.stringify({ pid: 999999, host: hostname() }));
+  await utimes(lock, old, old);
+  assert.equal((await ensureSharedPiPackageStore({ cwd: fixture.root, waitMs: 1, staleMs: 1 })).published, true);
+});
+
+test("closure cleanup is explicit, fail-closed, and selects stale state deterministically", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const first = await ensureSharedPiPackageStore({ cwd: fixture.root });
+  const state = path.dirname(path.dirname(path.resolve(first.store, "../..")));
+  const staging = path.join(state, "staging");
+  await mkdir(staging, { recursive: true });
+  const fresh = new Date(Date.now() + 24 * 60 * 60_000);
+  for (let index = 0; index < 33; index += 1) {
+    const candidate = path.join(staging, `fresh-${index.toString().padStart(2, "0")}`);
+    await mkdir(candidate);
+    await utimes(candidate, fresh, fresh);
+  }
+  await mkdir(path.join(staging, "old-stage"));
+  const old = new Date(Date.now() - 16 * 60_000);
+  await utimes(path.join(staging, "old-stage"), old, old);
+  const cleanup = await cleanupPiPackageClosures({ cwd: fixture.root, staleMs: 1 });
+  assert.deepEqual(cleanup.reclaimedStaging, ["old-stage"]);
+
+  await writeFile(path.join(fixture.worktree, ".pi", "settings.json"), "{broken\n");
+  const command = spawnSync(process.execPath, [path.join(repoRoot, "scripts", "factory", "pi-package-closures.mjs"), "cleanup", "--execute"], {
+    cwd: fixture.root,
+    encoding: "utf8",
+  });
+  assert.equal(command.status, 1);
+  assert.match(command.stderr, /registered worktree settings are malformed/);
+  const malformed = spawnSync(process.execPath, [path.join(repoRoot, "scripts", "factory", "pi-package-closures.mjs"), "cleanup", "--execute", "unexpected"], {
+    cwd: fixture.root,
+    encoding: "utf8",
+  });
+  assert.equal(malformed.status, 1);
+  assert.match(malformed.stderr, /unknown or repeated option/);
+});
+
 test("project-local dev-loops resolution is exact from roots and linked worktrees", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
 
+  await ensureSharedPiPackageStore({ cwd: fixture.root });
   for (const cwd of [fixture.root, fixture.worktree]) {
     const resolved = await resolveDevLoopsPackageRoot({ cwd });
-    assert.equal(await realpath(resolved.packageRoot), await realpath(fixture.packageRoot));
+    assert.match(await realpath(resolved.packageRoot), /pi-package-closures-v1\/closures\/[0-9a-f]{64}\/\.pi\/npm\/node_modules\/dev-loops$/u);
     assert.equal(resolved.version, "1.0.2");
     assert.equal(resolved.source, cwd === fixture.root ? "git-root" : "git-common-root");
   }
@@ -195,7 +393,9 @@ test("registered linked worktrees use one fail-closed Pi package store", async (
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
 
-  assert.equal((await ensureSharedPiPackageStore({ cwd: fixture.root })).mode, "primary");
+  const primary = await ensureSharedPiPackageStore({ cwd: fixture.root });
+  assert.equal(primary.mode, "primary");
+  assert.equal(primary.published, true);
   const linked = await ensureSharedPiPackageStore({ cwd: fixture.worktree });
   assert.equal(linked.mode, "linked");
   assert.equal((await lstat(path.join(fixture.worktree, ".pi", "npm"))).isSymbolicLink(), true);
@@ -206,12 +406,16 @@ test("registered linked worktrees use one fail-closed Pi package store", async (
 
   await rm(path.join(fixture.worktree, ".pi", "npm"));
   await mkdir(path.join(fixture.worktree, ".pi", "npm"));
-  await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /absent or a managed symlink/);
+  await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /absent or a managed closure symlink/);
   await rm(path.join(fixture.worktree, ".pi", "npm"), { recursive: true });
+  await writeFile(path.join(fixture.worktree, ".pi", "npm"), "owner data\n");
+  await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /must be absent, a real primary directory, or a managed closure symlink/);
+  assert.equal(await readFile(path.join(fixture.worktree, ".pi", "npm"), "utf8"), "owner data\n");
+  await rm(path.join(fixture.worktree, ".pi", "npm"));
   const outside = await realMkdtemp("oxid-pi-store-outside-");
   t.after(() => rm(outside, { recursive: true, force: true }));
   await symlink(outside, path.join(fixture.worktree, ".pi", "npm"), "dir");
-  await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /outside the registered common checkout/);
+  await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /points outside the managed closure state/);
 });
 
 test("Pi smoke resolution reuses every exact common-checkout package from a linked worktree", async (t) => {
@@ -219,7 +423,7 @@ test("Pi smoke resolution reuses every exact common-checkout package from a link
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
 
   const pins = [
-    ["pi-subagents", "0.66.0"],
+    ["pi-subagents", "0.67.0"],
     ["@input-output-hk/agent-review-pi", "0.5.0"],
   ];
   const settings = {
@@ -235,6 +439,7 @@ test("Pi smoke resolution reuses every exact common-checkout package from a link
     await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name, version }));
   }
 
+  await ensureSharedPiPackageStore({ cwd: fixture.root });
   const resolved = await resolveDevLoopsPackageRoot({
     cwd: fixture.worktree,
     includeAllPinnedPackages: true,
@@ -254,7 +459,12 @@ test("Pi devshell smoke delegates package authority to the bounded exact-pin res
   assert.match(smoke, /includeAllPinnedPackages:\s*true/);
   assert.doesNotMatch(smoke, /review_package_root=["']\.pi\/npm/);
   assert.doesNotMatch(smoke, /(?:HOME|global|node_modules\/\.\.\/)/);
-  assert.match(devshell, /ensureSharedPiPackageStore/);
+  assert.match(devshell, /provision-pi-packages\.mjs/);
+  assert.match(devshell, /content-addressed closure/);
+  assert.match(devshell, /GITHUB_TOKEN/);
+  assert.match(devshell, /GH_TOKEN/);
+  assert.match(devshell, /GH_TOKENS/);
+  assert.match(devshell, /provision-pi-packages\.mjs \|\| exit 1/);
   assert.match(devshell, /export PI_OFFLINE=.*PI_OFFLINE:-1/);
 });
 
@@ -368,12 +578,12 @@ test("preflight scans all installed pinned package agents and content-invalidate
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
   const settingsPath = path.join(fixture.root, ".pi", "settings.json");
   const settings = JSON.parse(await readFile(settingsPath, "utf8"));
-  settings.packages.push("npm:pi-subagents@0.66.0", "npm:@input-output-hk/agent-review-pi@0.5.0");
+  settings.packages.push("npm:pi-subagents@0.67.0", "npm:@input-output-hk/agent-review-pi@0.5.0");
   await writeFile(settingsPath, JSON.stringify(settings));
   const piSubagents = path.join(fixture.root, ".pi", "npm", "node_modules", "pi-subagents");
   const reviewPackage = path.join(fixture.root, ".pi", "npm", "node_modules", "@input-output-hk", "agent-review-pi");
   for (const [root, name, version] of [
-    [piSubagents, "pi-subagents", "0.66.0"],
+    [piSubagents, "pi-subagents", "0.67.0"],
     [reviewPackage, "@input-output-hk/agent-review-pi", "0.5.0"],
   ]) {
     await mkdir(path.join(root, "agents"), { recursive: true });
@@ -622,16 +832,20 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   assert.doesNotMatch(reviewTools, /\b(?:bash|edit|write)\b/, "review shadow exposes only read-only inspection tools");
   const devLoop = await read(".pi/agents/dev-loop.agent.md");
   assert.match(devLoop, /scripts\/dev-loops\.mjs/);
-  assert.match(devLoop, /pre-flight-gate\.mjs --check-subagents.*before each later delegation or routed action/s);
-  assert.match(devLoop, /gate coordination is authoritative for gate progression/);
-  assert.match(devLoop, /run_draft_gate[\s\S]*requireCi: false/);
-  assert.match(devLoop, /MUST NOT place this conductor inside `taskflow`/u);
+  assert.match(devLoop, /<git-root>` is always the exact output of `git rev-parse --show-toplevel`/u);
+  assert.match(devLoop, /Never replace it with the primary\s+checkout derived from `--git-common-dir` or `git worktree list`/u);
+  assert.match(devLoop, /common\s+checkout is a topology and shared-private-storage boundary only/u);
+  assert.match(devLoop, /pre-flight-gate\.mjs --check-subagents.*before each later routed action/s);
+  assert.match(devLoop, /MUST NOT call\n`subagent`, dispatch a reviewer, or create any nested workflow/u);
+  assert.match(devLoop, /exact-head local gate, push, and draft PR/u);
+  assert.match(devLoop, /MUST NOT place it inside `taskflow`/u);
+  assert.match(devLoop, /^worktree:\s*false$/mu, "the conductor reuses the canonical managed worktree");
   assert.match(devLoop, /Never substitute `npm run verify`/u);
   assert.match(devLoop, /shell parser diagnostic emitted before the named helper starts/u);
   assert.match(devLoop, /correct\s+the command once within the existing bounded attempt/u);
   assert.match(devLoop, /Never revert valid scoped\s+work solely/u);
   assert.match(devLoop, /Missing\s+helpers,\s+pin mismatches,\s+admission failures,\s+helper-originated nonzero exits,[\s\S]*remain fail-closed/u);
-  assert.match(devLoop, /stop on every other contradiction/);
+  assert.match(devLoop, /stop on contradictory state/);
   assert.doesNotMatch(devLoop, /review-routing\.mjs|~\/.pi|npm root -g|require\.resolve\(['"]dev-loops|<dev-loops-package-root>\/cli\/index\.mjs/);
   const review = await read(".pi/agents/review.agent.md");
   assert.doesNotMatch(review, /\bgh api\b|\bgit (?:diff|log)\b/);
@@ -1611,7 +1825,7 @@ test("tracked pre-flight wrapper reports Pi child dispatch availability determin
   }
 });
 
-test("repository wrapper executes conventional help and delegates watch-ci unchanged", async (t) => {
+test("repository wrapper delegates generic and foreign CI while keeping the Oxid PR adapter output silent", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
   execFileSync("git", ["update-ref", "refs/remotes/origin/develop", "HEAD"], { cwd: fixture.root, stdio: "ignore" });
@@ -1620,11 +1834,230 @@ test("repository wrapper executes conventional help and delegates watch-ci uncha
   const output = [];
   const sink = new Writable({ write(chunk, _encoding, callback) { output.push(chunk.toString()); callback(); } });
   assert.equal(await runDevLoops(["--help"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
-  assert.equal(await runDevLoops(["--silent", "loop", "watch-ci", "--pr", "7"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
+  assert.equal(await runDevLoops(["--silent", "loop", "watch-ci", "--commit", "fixture-commit"], { cwd: fixture.root, stdout: sink, stderr: sink }), 0);
+  assert.equal(await runDevLoops(["--silent", "loop", "watch-ci", "--repo", "MediaNoxLabs/oxid", "--pr", "7", "--timeout-ms", "0"], {
+    cwd: fixture.root, stdout: sink, stderr: sink,
+  }), 0);
+  assert.equal(await runDevLoops(["loop", "watch-ci", "--repo", "MediaNoxLabs/oxid", "--pr", "7", "--timeout-ms", "0", "--jq", ".status"], {
+    cwd: fixture.root, stdout: sink, stderr: sink,
+  }), 0);
+  assert.equal(await runDevLoops(["loop", "watch-ci", "--pr", "7", "--timeout-ms", "0", "--jq", ".status"], {
+    cwd: fixture.root, stdout: sink, stderr: sink,
+  }), 0);
+  assert.equal(await runDevLoops(["loop", "watch-ci", "--repo", "owner/checkless-project", "--pr", "7", "--timeout-ms", "0"], {
+    cwd: fixture.root, stdout: sink, stderr: sink,
+  }), 0);
   assert.deepEqual(output.join("").trim().split("\n").map((line) => JSON.parse(line)), [
     ["help"],
-    ["--silent", "loop", "watch-ci", "--pr", "7"],
+    ["--silent", "loop", "watch-ci", "--commit", "fixture-commit"],
+    "pending",
+    "pending",
+    ["loop", "watch-ci", "--repo", "owner/checkless-project", "--pr", "7", "--timeout-ms", "0"],
   ]);
+});
+
+test("Oxid PR CI adapter holds generic none through bounded registration and delegates real states", async () => {
+  let clock = 0;
+  const calls = [];
+  const responses = [
+    { ok: true, status: "success", settled: true, ciStatus: "none", headSha: "head-a", attempts: 2 },
+    { ok: true, status: "pending", settled: false, ciStatus: "pending", headSha: "head-a", attempts: 1 },
+    { ok: true, status: "success", settled: true, ciStatus: "success", headSha: "head-a", attempts: 2 },
+  ];
+  const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 4_000, pollIntervalMs: 1_000 }, {
+    watchCiStatus: async (options) => { calls.push(options); return responses.shift(); },
+    delayImpl: async (milliseconds) => { clock += milliseconds; },
+    now: () => clock,
+  });
+  assert.deepEqual(result, { ok: true, status: "success", settled: true, ciStatus: "success", headSha: "head-a", attempts: 2 });
+  assert.deepEqual(calls.map(({ timeoutMs }) => timeoutMs), [4_000, 0, 3_000]);
+});
+
+test("Oxid PR CI adapter settles an exact-head PR merged during no-check registration", async (t) => {
+  const noChecks = { ok: true, status: "success", settled: true, ciStatus: "none", headSha: "head-a", attempts: 1 };
+
+  await t.test("returns a distinct successful terminal result for an exact-head merge", async () => {
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 3_000, pollIntervalMs: 1_000 }, {
+      watchCiStatus: async () => noChecks,
+      loadPrLifecycle: () => ({ state: "MERGED", headSha: "head-a" }),
+    });
+    assert.deepEqual(result, { ...noChecks, status: "success", settled: true, ciStatus: "success", prState: "merged" });
+  });
+
+  await t.test("settles the pending no-check shape emitted by the pinned watcher", async () => {
+    const pendingNoChecks = { ...noChecks, status: "pending", settled: false };
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
+      watchCiStatus: async () => pendingNoChecks,
+      loadPrLifecycle: () => ({ state: "MERGED", headSha: "head-a" }),
+    });
+    assert.deepEqual(result, { ...pendingNoChecks, status: "success", settled: true, ciStatus: "success", prState: "merged" });
+  });
+
+  await t.test("fails closed when a merged PR head differs from the watch baseline", async () => {
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 3_000, pollIntervalMs: 1_000 }, {
+      watchCiStatus: async () => noChecks,
+      loadPrLifecycle: () => ({ state: "MERGED", headSha: "head-b" }),
+    });
+    assert.deepEqual(result, { ...noChecks, status: "changed", settled: false, headSha: "head-b", prState: "merged" });
+  });
+
+  await t.test("does not report a closed-unmerged PR as successful", async () => {
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
+      watchCiStatus: async () => noChecks,
+      loadPrLifecycle: () => ({ state: "CLOSED", headSha: "head-a" }),
+    });
+    assert.deepEqual(result, { ...noChecks, status: "pending", settled: false });
+  });
+});
+
+test("Oxid PR CI adapter bounds no-check polls and preserves changed and API-pending results", async (t) => {
+  await t.test("never turns a stable no-check PR green", async () => {
+    let clock = 0;
+    const calls = [];
+    const noChecks = (attempts) => ({ ok: true, status: "success", settled: true, ciStatus: "none", headSha: "head-a", attempts });
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 3_000, pollIntervalMs: 1_000 }, {
+      watchCiStatus: async (options) => { calls.push(options); return noChecks(calls.length === 1 ? 2 : 1); },
+      delayImpl: async (milliseconds) => { clock += milliseconds; },
+      now: () => clock,
+    });
+    assert.deepEqual(result, { ...noChecks(1), status: "timeout", settled: false, attempts: 5 });
+    assert.deepEqual(calls.map(({ timeoutMs }) => timeoutMs), [3_000, 0, 0, 0]);
+  });
+
+  await t.test("observes the final partial registration interval", async () => {
+    let clock = 0;
+    const delays = [];
+    const responses = [
+      { ok: true, status: "success", settled: true, ciStatus: "none", headSha: "head-a", attempts: 1 },
+      { ok: true, status: "success", settled: true, ciStatus: "none", headSha: "head-a", attempts: 1 },
+      { ok: true, status: "pending", settled: false, ciStatus: "pending", headSha: "head-a", attempts: 1 },
+    ];
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 90_000, pollIntervalMs: 60_000 }, {
+      watchCiStatus: async () => responses.shift(),
+      delayImpl: async (milliseconds) => { delays.push(milliseconds); clock += milliseconds; },
+      now: () => clock,
+    });
+    assert.equal(result.ciStatus, "pending");
+    assert.deepEqual(delays, [60_000, 30_000]);
+  });
+
+  await t.test("a same-watch head change remains changed", async () => {
+    const upstreamChanged = { ok: true, status: "changed", settled: false, ciStatus: "none", headSha: "head-b", attempts: 2 };
+    assert.equal(await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 3_000, pollIntervalMs: 1_000 }, {
+      watchCiStatus: async () => upstreamChanged,
+    }), upstreamChanged);
+
+    let clock = 0;
+    const responses = [
+      { ok: true, status: "success", settled: true, ciStatus: "none", headSha: "head-a", attempts: 2 },
+      { ok: true, status: "success", settled: true, ciStatus: "none", headSha: "head-b", attempts: 1 },
+    ];
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 3_000, pollIntervalMs: 1_000 }, {
+      watchCiStatus: async () => responses.shift(),
+      delayImpl: async (milliseconds) => { clock += milliseconds; },
+      now: () => clock,
+    });
+    assert.equal(result.status, "changed");
+    assert.equal(result.settled, false);
+    assert.equal(result.headSha, "head-b");
+  });
+
+  await t.test("package API or parse results stay non-green without local reinterpretation", async () => {
+    const pending = { ok: true, status: "timeout", settled: false, ciStatus: "pending", headSha: "head-a", attempts: 4 };
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 3_000, pollIntervalMs: 1_000 }, {
+      watchCiStatus: async () => pending,
+      delayImpl: async () => { throw new Error("real states must not enter the compatibility wait"); },
+    });
+    assert.equal(result, pending);
+    await assert.rejects(watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 3_000, pollIntervalMs: 1_000 }, {
+      watchCiStatus: async () => { throw new Error("fixture API/parse failure"); },
+    }), /fixture API\/parse failure/);
+  });
+});
+
+test("Oxid PR CI adapter reconciles only superseded same-head Actions failures", async (t) => {
+  const failure = {
+    ok: true, status: "failure", settled: true, ciStatus: "failure", headSha: "head-a", attempts: 1,
+    failedChecks: [{ name: "Repository gate" }],
+  };
+  const attemptData = (replacement) => ({
+    checkRuns: [
+      {
+        name: "Repository gate", app: { slug: "github-actions" },
+        details_url: "https://github.com/o/r/actions/runs/10/job/1", status: "completed", conclusion: "failure",
+      },
+      ...(replacement.status === "completed" ? [{
+        name: "Repository gate", app: { slug: "github-actions" },
+        details_url: "https://github.com/o/r/actions/runs/11/job/2", status: "completed", conclusion: replacement.conclusion,
+      }] : []),
+    ],
+    workflowRuns: [
+      { id: 10, workflow_id: 5, run_number: 8, status: "completed", conclusion: "cancelled" },
+      replacement,
+    ],
+  });
+  const watch = async () => failure;
+
+  await t.test("an active replacement holds the stale failure pending", async () => {
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
+      watchCiStatus: watch,
+      loadWorkflowAttempts: () => attemptData({ id: 11, workflow_id: 5, run_number: 9, status: "in_progress", conclusion: null }),
+    });
+    assert.deepEqual(result, {
+      ...failure, status: "pending", settled: false, ciStatus: "pending",
+      workflowAttemptSelection: { examinedRuns: 2, supersededFailedRunIds: [10], selectedReplacementRunIds: [11] },
+    });
+  });
+
+  await t.test("a newer successful replacement clears only the stale Actions failure", async () => {
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
+      watchCiStatus: watch,
+      loadWorkflowAttempts: () => attemptData({ id: 11, workflow_id: 5, run_number: 9, status: "completed", conclusion: "success" }),
+    });
+    assert.equal(result.status, "success");
+    assert.deepEqual(result.failedChecks, []);
+  });
+
+  await t.test("a bounded watch waits for the active replacement instead of returning early", async () => {
+    let clock = 0;
+    let observations = 0;
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 2_000, pollIntervalMs: 1_000 }, {
+      watchCiStatus: async () => failure,
+      loadWorkflowAttempts: () => attemptData({
+        id: 11, workflow_id: 5, run_number: 9,
+        status: observations++ === 0 ? "in_progress" : "completed",
+        conclusion: observations === 1 ? null : "success",
+      }),
+      delayImpl: async (milliseconds) => { clock += milliseconds; },
+      now: () => clock,
+    });
+    assert.equal(result.status, "success");
+    assert.equal(clock, 1_000);
+  });
+
+  await t.test("latest-run, external, and API failures remain settled failures", async () => {
+    const latestFailure = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
+      watchCiStatus: watch,
+      loadWorkflowAttempts: () => attemptData({ id: 11, workflow_id: 5, run_number: 9, status: "completed", conclusion: "failure" }),
+    });
+    assert.equal(latestFailure, failure);
+    const externalFailure = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
+      watchCiStatus: watch,
+      loadWorkflowAttempts: () => ({
+        checkRuns: [{
+          name: "Repository gate", app: { slug: "external-ci" }, details_url: "https://ci.invalid/run/1",
+          status: "completed", conclusion: "failure",
+        }],
+        workflowRuns: [],
+      }),
+    });
+    assert.equal(externalFailure, failure);
+    const apiFailure = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
+      watchCiStatus: watch,
+      loadWorkflowAttempts: () => { throw new Error("fixture API failure"); },
+    });
+    assert.equal(apiFailure, failure);
+  });
 });
 
 test("repository wrappers await child close and preserve trailing output", async (t) => {
@@ -1641,6 +2074,82 @@ test("repository wrappers await child close and preserve trailing output", async
   assert.match(output.join(""), /dev-loop-err/);
   assert.match(output.join(""), /worktree-out/);
   assert.match(output.join(""), /worktree-err/);
+});
+
+test("only checkpoint verdict upserts enter the repository Nix shell", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const calls = [];
+  const runChild = async (command, args, options) => {
+    calls.push({ command, args, options });
+    return 0;
+  };
+
+  assert.equal(await runDevLoops(["gate", "upsert-verdict", "--pr", "284"], {
+    cwd: fixture.root, runChild,
+  }), 0);
+  assert.deepEqual(calls[0], {
+    command: path.join(fixture.root, "bootstrap.sh"),
+    args: [
+      "--", "bash", "-c", 'cd "$1"; shift; exec "$@"', "dev-loops-bootstrap-command",
+      fixture.root, process.execPath, path.join(fixture.packageRoot, "cli", "index.mjs"),
+      "gate", "upsert-verdict", "--pr", "284",
+    ],
+    options: {
+      cwd: fixture.root,
+      stdout: process.stdout,
+      stderr: process.stderr,
+      label: "dev-loops",
+    },
+  });
+
+  calls.length = 0;
+  assert.equal(await runDevLoops(["gates"], { cwd: fixture.root, runChild }), 0);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, process.execPath);
+  assert.deepEqual(calls[0].args, [path.join(fixture.packageRoot, "cli", "index.mjs"), "gates"]);
+});
+
+test("PR body edits use the REST facade and fail closed outside its narrow contract", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const calls = [];
+  const runGh = (args) => { calls.push(args); return "{}"; };
+
+  assert.deepEqual(editPrBody({ repository: "owner/repo", pr: 284, body: "Closes #474", runGh }), {
+    ok: true, repository: "owner/repo", pr: 284, edited: ["body"],
+  });
+  assert.deepEqual(calls, [[
+    "api", "--method", "PATCH", ...GITHUB_REST_HEADERS,
+    "repos/owner/repo/pulls/284", "-f", "body=Closes #474",
+  ]]);
+  assert.throws(() => parseEditPrArgs(["--repo", "owner/repo", "--pr", "284"]), /--body must be a non-empty string/);
+  assert.throws(() => parseEditPrArgs(["--repo", "owner/repo", "--pr", "284", "--title", "nope", "--body", "x"]), /Unknown option/);
+  assert.throws(() => editPrBody({ repository: "owner/repo", pr: 284, body: "x", runGh: () => { throw new Error("REST denied"); } }), /REST denied/);
+
+  const output = [];
+  const route = resolveOxidCompatibilityRoute(["pr", "edit", "--repo", "owner/repo", "--pr", "284", "--body", "x"]);
+  assert.ok(route);
+  assert.equal(await route(["--repo", "owner/repo", "--pr", "284", "--body", "x"], {
+    stdout: new Writable({ write(chunk, _encoding, callback) { output.push(chunk.toString()); callback(); } }),
+    runGh,
+  }), 0);
+  assert.match(output.join(""), /"edited":\["body"\]/);
+});
+
+test("checkpoint verdict upsert failures remain fail-closed", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  let calls = 0;
+  const code = await runDevLoops(["gate", "upsert-verdict", "--pr", "284"], {
+    cwd: fixture.root,
+    runChild: async () => {
+      calls += 1;
+      return 1;
+    },
+  });
+  assert.equal(code, 1);
+  assert.equal(calls, 1, "a Nix-shell failure must not retry through the host CLI");
 });
 
 test("managed worktree routes use remote refs and persist delivery metadata on create and reuse", async (t) => {

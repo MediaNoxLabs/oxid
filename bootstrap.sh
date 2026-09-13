@@ -24,13 +24,27 @@ usage() {
 }
 
 readonly nix_daemon_profile_bin="/nix/var/nix/profiles/default/bin"
+nix_nested_profile_bin=""
 if ! command -v nix >/dev/null 2>&1 && [[ -x "$nix_daemon_profile_bin/nix" ]]; then
   export PATH="$nix_daemon_profile_bin:$PATH"
+  nix_nested_profile_bin="$nix_daemon_profile_bin"
 fi
 if ! command -v nix >/dev/null 2>&1; then
   echo "Nix is required; install it with flakes enabled before bootstrapping Oxid." >&2
   exit 1
 fi
+
+# `nix develop --command` replaces PATH with the development shell's tools.
+# Retain the standard daemon profile only when this entrypoint used it to find
+# Nix, so repository commands launched from that shell can invoke Nix again.
+nix_develop_command() {
+  exec nix develop --command bash -c '
+    profile_bin="$1"
+    shift
+    if [[ -n "$profile_bin" ]]; then export PATH="$profile_bin:$PATH"; fi
+    exec "$@"
+  ' bootstrap-devshell "$nix_nested_profile_bin" "$@"
+}
 
 case "${1:-}" in
   "")
@@ -38,7 +52,11 @@ case "${1:-}" in
     ;;
   --pi)
     shift
-    exec nix develop --command bash -c '
+    nix_develop_command bash -c '
+      repo_root="$1"
+      shift
+      pi_cwd="$(node "$repo_root/scripts/loop/bootstrap-dev-loop.mjs" --repo-root "$repo_root" -- "$@")" || exit $?
+      cd "$pi_cwd"
       node scripts/factory/audit-pi.mjs --config-only --enforce-config || {
         echo "Pi startup audit failed. If user-subagent-policy is red, run ./bootstrap.sh --configure-pi; otherwise fix the reported control, then retry ./bootstrap.sh --pi." >&2
         exit 1
@@ -48,7 +66,7 @@ case "${1:-}" in
         exit 1
       }
       exec pi "$@"
-    ' bootstrap-pi "$@"
+    ' bootstrap-pi "$repo_root" "$@"
     ;;
   --check)
     shift
@@ -57,7 +75,11 @@ case "${1:-}" in
       usage >&2
       exit 2
     fi
-    exec nix develop --command just factory-smoke
+    nix_develop_command bash -c '
+      set -e
+      just factory-smoke
+      node scripts/git-hooks/check-github-web-flow-key.mjs
+    '
     ;;
   --audit-pi)
     shift
@@ -66,7 +88,7 @@ case "${1:-}" in
       usage >&2
       exit 2
     fi
-    exec nix develop --command node scripts/factory/audit-pi.mjs
+    nix_develop_command node scripts/factory/audit-pi.mjs
     ;;
   --configure-pi)
     shift
@@ -75,7 +97,7 @@ case "${1:-}" in
       usage >&2
       exit 2
     fi
-    exec nix develop --command node scripts/factory/pi-policy.mjs apply --execute
+    nix_develop_command node scripts/factory/pi-policy.mjs apply --execute
     ;;
   --configure-git)
     shift
@@ -84,7 +106,7 @@ case "${1:-}" in
       usage >&2
       exit 2
     fi
-    exec nix develop --command node scripts/git-hooks/configure.mjs apply --execute
+    nix_develop_command node scripts/git-hooks/configure.mjs apply --execute
     ;;
   --help|-h)
     usage
@@ -96,7 +118,7 @@ case "${1:-}" in
       usage >&2
       exit 2
     fi
-    exec nix develop --command "$@"
+    nix_develop_command "$@"
     ;;
   *)
     echo "unknown bootstrap argument: $1" >&2

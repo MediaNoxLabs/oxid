@@ -68,8 +68,45 @@ function safeEnvironment(environment, label) {
     if (!values || !values.has(value)) fail(`${label} has unsupported ${name} value`);
   }
 }
+function schemaValue(schema, root) {
+  if (!schema.$ref) return schema;
+  const parts = schema.$ref.replace(/^#\//u, "").split("/");
+  return parts.reduce((value, part) => value?.[part], root);
+}
+function sameValue(left, right) { return JSON.stringify(left) === JSON.stringify(right); }
+function validateSchema(value, schema, root, label = "inventory") {
+  const rule = schemaValue(schema, root);
+  if (!rule) fail(`${label} has an unresolved schema reference`);
+  if (rule.type === "object" && (!value || typeof value !== "object" || Array.isArray(value))) fail(`${label} violates schema type object`);
+  if (rule.type === "array" && !Array.isArray(value)) fail(`${label} violates schema type array`);
+  if (rule.type === "string" && typeof value !== "string") fail(`${label} violates schema type string`);
+  if (rule.type === "boolean" && typeof value !== "boolean") fail(`${label} violates schema type boolean`);
+  if (rule.const !== undefined && !sameValue(value, rule.const)) fail(`${label} violates schema const`);
+  if (rule.enum && !rule.enum.some((candidate) => sameValue(value, candidate))) fail(`${label} violates schema enum`);
+  if (rule.minLength !== undefined && value.length < rule.minLength) fail(`${label} violates schema minLength`);
+  if (rule.pattern && !new RegExp(rule.pattern, "u").test(value)) fail(`${label} violates schema pattern`);
+  if (Array.isArray(value)) {
+    if (rule.minItems !== undefined && value.length < rule.minItems) fail(`${label} violates schema minItems`);
+    if (rule.uniqueItems && new Set(value.map((item) => JSON.stringify(item))).size !== value.length) fail(`${label} violates schema uniqueItems`);
+    if (rule.items) value.forEach((item, index) => validateSchema(item, rule.items, root, `${label}[${index}]`));
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const properties = rule.properties ?? {};
+    for (const name of rule.required ?? []) if (!(name in value)) fail(`${label} violates schema required property '${name}'`);
+    if (rule.additionalProperties === false) for (const name of Object.keys(value)) if (!(name in properties)) fail(`${label} violates schema additional property '${name}'`);
+    for (const [name, property] of Object.entries(properties)) if (name in value) validateSchema(value[name], property, root, `${label}.${name}`);
+  }
+  if (rule.allOf && !rule.allOf.every((candidate) => schemaMatches(value, candidate, root))) fail(`${label} violates schema allOf`);
+  if (rule.anyOf && !rule.anyOf.some((candidate) => schemaMatches(value, candidate, root))) fail(`${label} violates schema anyOf`);
+  if (rule.not && schemaMatches(value, rule.not, root)) fail(`${label} violates schema not`);
+  if (rule.oneOf && rule.oneOf.filter((candidate) => schemaMatches(value, candidate, root)).length !== 1) fail(`${label} violates schema oneOf`);
+}
+function schemaMatches(value, schema, root) {
+  try { validateSchema(value, schema, root); return true; } catch { return false; }
+}
 
-export function validateInventory(inventory) {
+export function validateInventory(inventory, schema = JSON.parse(readFileSync(inventorySchemaPath, "utf8"))) {
+  validateSchema(inventory, schema, schema);
   if (!inventory || typeof inventory !== "object" || Array.isArray(inventory)) fail("inventory must be an object");
   if (inventory.version !== 1) fail("inventory version must be 1");
   if (JSON.stringify(inventory.cadences) !== JSON.stringify([...cadences])) fail("inventory cadences must use the closed supported values");
@@ -188,10 +225,10 @@ export function validateInventory(inventory) {
 }
 
 export function loadInventory(inventoryPath = defaultInventoryPath) {
-  let parsed;
-  try { JSON.parse(readFileSync(inventorySchemaPath, "utf8")); } catch (error) { fail(`cannot read inventory schema: ${error.message}`); }
+  let parsed; let schema;
+  try { schema = JSON.parse(readFileSync(inventorySchemaPath, "utf8")); } catch (error) { fail(`cannot read inventory schema: ${error.message}`); }
   try { parsed = JSON.parse(readFileSync(inventoryPath, "utf8")); } catch (error) { fail(`cannot read inventory '${inventoryPath}': ${error.message}`); }
-  return validateInventory(parsed);
+  return validateInventory(parsed, schema);
 }
 function commandDisplay(command) {
   const environment = Object.entries(command.environment ?? {}).map(([name, value]) => `${name}=${value}`).join(" ");
