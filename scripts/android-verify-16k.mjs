@@ -3,6 +3,7 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { inflateRawSync } from "node:zlib";
 
 const PAGE_SIZE = 16 * 1024;
 const LOAD = 1;
@@ -133,13 +134,29 @@ export function verifyApk(archive, archiveName = "APK") {
     throw new Error(`${archiveName}: APK contains no native shared libraries`);
   }
   for (const member of nativeMembers) {
-    if (member.method !== 0 || member.compressedSize !== member.uncompressedSize) {
-      fail(member.name, "ZIP member must be stored uncompressed");
+    const stored = archive.subarray(member.dataOffset, member.dataOffset + member.compressedSize);
+    let elfBytes;
+    if (member.method === 0) {
+      if (member.compressedSize !== member.uncompressedSize) {
+        fail(member.name, "stored ZIP member has inconsistent sizes");
+      }
+      if (member.dataOffset % PAGE_SIZE !== 0) {
+        fail(member.name, `ZIP data offset ${member.dataOffset} is not aligned to 16 KiB`);
+      }
+      elfBytes = stored;
+    } else if (member.method === 8) {
+      try {
+        elfBytes = inflateRawSync(stored);
+      } catch {
+        fail(member.name, "compressed ZIP member cannot be decompressed");
+      }
+      if (elfBytes.length !== member.uncompressedSize) {
+        fail(member.name, "compressed ZIP member has inconsistent size");
+      }
+    } else {
+      fail(member.name, `uses unsupported ZIP compression method ${member.method}`);
     }
-    if (member.dataOffset % PAGE_SIZE !== 0) {
-      fail(member.name, `ZIP data offset ${member.dataOffset} is not aligned to 16 KiB`);
-    }
-    verifyElf(archive.subarray(member.dataOffset, member.dataOffset + member.uncompressedSize), member.name);
+    verifyElf(elfBytes, member.name);
   }
   return nativeMembers.length;
 }

@@ -81,13 +81,15 @@ just android-verify-16k
 just android-verify-16k /path/to/app-release.apk
 ```
 
-The command checks every packaged `.so` member. It fails closed with that exact
-archive-member path when the member is compressed, its ZIP data placement is
-not 16 KiB aligned, or any ELF `LOAD` segment has insufficient alignment or
-non-congruent file/virtual offsets. Its default is the existing local Android
-build output; the release candidate must be passed explicitly. The hermetic
-fixtures cover compliant and non-compliant ZIP/ELF cases, so neither an APK
-build nor an Android SDK is needed to test the verifier.
+The command checks every packaged `.so` member. An uncompressed member must
+have 16 KiB-aligned ZIP data placement; a Deflate-compressed member is decoded
+before inspection because Android extracts it instead of directly mapping the
+archive entry. Every decoded ELF must have compatible `LOAD` alignment and
+congruent file/virtual offsets. Failures name the exact archive-member path.
+The default is the existing local Android build output; a release candidate
+must be passed explicitly. The hermetic fixtures cover compliant and
+non-compliant ZIP/ELF cases, so neither an APK build nor an Android SDK is
+needed to test the verifier.
 
 This is an on-demand static artifact check. It is not evidence that an APK was
 built with the pinned Android/Gradle/NDK toolchain and it does not replace the

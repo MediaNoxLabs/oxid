@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { deflateRawSync } from "node:zlib";
 
 import { verifyApk } from "./android-verify-16k.mjs";
 
@@ -37,6 +38,7 @@ function elf({ alignment = PAGE_SIZE, virtualAddress = 0 } = {}) {
 
 function apk({ archiveAligned = true, method = 0, memberName = member, ...elfOptions } = {}) {
   const payload = elf(elfOptions);
+  const stored = method === 8 ? deflateRawSync(payload) : payload;
   const name = Buffer.from(memberName);
   const extraLength = archiveAligned ? PAGE_SIZE - 30 - name.length : 0;
   const local = Buffer.alloc(30);
@@ -45,12 +47,12 @@ function apk({ archiveAligned = true, method = 0, memberName = member, ...elfOpt
   local.writeUInt16LE(name.length, 26);
   local.writeUInt16LE(extraLength, 28);
   const dataOffset = local.length + name.length + extraLength;
-  const centralOffset = dataOffset + payload.length;
+  const centralOffset = dataOffset + stored.length;
   const central = Buffer.alloc(46);
   central.writeUInt32LE(0x02014b50, 0);
   central.writeUInt16LE(method, 10);
   central.writeUInt16LE(name.length, 28);
-  central.writeUInt32LE(payload.length, 20);
+  central.writeUInt32LE(stored.length, 20);
   central.writeUInt32LE(payload.length, 24);
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);
@@ -58,7 +60,7 @@ function apk({ archiveAligned = true, method = 0, memberName = member, ...elfOpt
   end.writeUInt16LE(1, 10);
   end.writeUInt32LE(central.length + name.length, 12);
   end.writeUInt32LE(centralOffset, 16);
-  return Buffer.concat([local, name, Buffer.alloc(extraLength), payload, central, name, end]);
+  return Buffer.concat([local, name, Buffer.alloc(extraLength), stored, central, name, end]);
 }
 
 test("accepts a hermetic APK with a 16 KiB ZIP placement and ELF LOAD alignment", () => {
@@ -69,8 +71,15 @@ test("names the exact archive member whose ZIP placement is not 16 KiB aligned",
   assert.throws(() => verifyApk(apk({ archiveAligned: false })), new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ZIP data offset .*16 KiB`));
 });
 
-test("names the exact archive member that is compressed instead of ZIP-placed", () => {
-  assert.throws(() => verifyApk(apk({ method: 8 })), new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ZIP member must be stored uncompressed`));
+test("accepts a compressed native member after verifying its ELF alignment", () => {
+  assert.equal(verifyApk(apk({ method: 8 })), 1);
+});
+
+test("names a compressed member whose decompressed ELF alignment is insufficient", () => {
+  assert.throws(
+    () => verifyApk(apk({ method: 8, alignment: 4096 })),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ELF LOAD segment 0 alignment 4096`),
+  );
 });
 
 test("names the exact archive member whose ELF LOAD alignment is insufficient", () => {
