@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -174,6 +174,24 @@ test("the command executes when its filesystem path requires URL encoding", asyn
     await writeFile(fixture, apk());
     const result = spawnSync(process.execPath, [encodedScript, fixture], { cwd: root, encoding: "utf8" });
     assert.equal(result.status, 0);
+    assert.match(result.stdout, /PASS.*native-libraries=1/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("the command executes through a preserved main-module symlink", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "oxid-android-16k-"));
+  try {
+    const linkedScript = path.join(directory, "verifier.mjs");
+    const fixture = path.join(directory, "compliant.apk");
+    await symlink(script, linkedScript);
+    await writeFile(fixture, apk());
+    const result = spawnSync(process.execPath, ["--preserve-symlinks-main", linkedScript, fixture], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /PASS.*native-libraries=1/);
   } finally {
     await rm(directory, { recursive: true, force: true });
