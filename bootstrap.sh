@@ -52,11 +52,19 @@ case "${1:-}" in
     ;;
   --pi)
     shift
+    pi_cwd="$(node "$repo_root/scripts/loop/bootstrap-dev-loop.mjs" --repo-root "$repo_root" -- "$@")" || exit $?
+    if [[ "$pi_cwd" != "$repo_root" ]]; then
+      canonical_bootstrap="$pi_cwd/bootstrap.sh"
+      if [[ ! -x "$canonical_bootstrap" ]]; then
+        echo "resolved canonical worktree has no executable bootstrap: $canonical_bootstrap" >&2
+        exit 1
+      fi
+      exec "$canonical_bootstrap" --pi "$@"
+    fi
     nix_develop_command bash -c '
       repo_root="$1"
       shift
-      pi_cwd="$(node "$repo_root/scripts/loop/bootstrap-dev-loop.mjs" --repo-root "$repo_root" -- "$@")" || exit $?
-      cd "$pi_cwd"
+      cd "$repo_root"
       node scripts/factory/audit-pi.mjs --config-only --enforce-config || {
         echo "Pi startup audit failed. If user-subagent-policy is red, run ./bootstrap.sh --configure-pi; otherwise fix the reported control, then retry ./bootstrap.sh --pi." >&2
         exit 1

@@ -119,11 +119,20 @@ account and failing before the child starts. Omitting the override safely uses
 the tracked default.
 
 For unattended supervised delivery, invoke Pi with one cohesive `/dev-loop
-production-ready issue N` prompt from the absolute managed worktree. Pi
-launches the tracked `dev-loop` implementation child exactly once. That child
-must not dispatch subagents/taskflow and stops after focused checks, signed push,
-draft PR, and the exact-head local-gate receipt. Review, hosted CI, merge,
-metrics, and cleanup belong to the external supervisor.
+production-ready issue N` prompt. From a primary checkout, use the supported
+public entrypoint below; it resolves the canonical worktree before entering Nix
+or auditing Pi, then re-executes that worktree's bootstrap without recursion:
+
+```bash
+./bootstrap.sh --pi --print '/dev-loop production-ready issue N'
+```
+
+Starting the same command from the canonical managed worktree stays there.
+Ordinary non-`/dev-loop` Pi launches remain in the current checkout. Pi launches
+the tracked `dev-loop` implementation child exactly once. That child must not
+dispatch subagents/taskflow and stops after focused checks, signed push, draft
+PR, and the exact-head local-gate receipt. Review, hosted CI, merge, metrics,
+and cleanup belong to the external supervisor.
 
 The prompt must also retain writes within `MediaNoxLabs/oxid`: before an issue,
 PR, comment, label, release, package publication, or other repository write
