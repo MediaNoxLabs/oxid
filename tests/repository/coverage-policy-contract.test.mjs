@@ -112,7 +112,10 @@ test("policy pins the current-phase 70 percent floors, baseline placeholders, pa
   assert.deepEqual(policy.pathRules.production, ["apps/*/src/**/*.rs", "crates/*/src/**/*.rs"]);
   assert.deepEqual(policy.pathRules.excludedDirectories, ["tests", "examples", "benches"]);
   assert.deepEqual(policy.pathRules.nonExecutableSources, ["crates/composition/src/lib.rs"]);
-  assert.deepEqual(policy.pathRules.testOnlySources, ["crates/ui-dioxus/src/desktop_test_driver.rs"]);
+  assert.deepEqual(policy.pathRules.testOnlySources, [
+    "crates/ui-dioxus/src/desktop_developer_pager_driver.rs",
+    "crates/ui-dioxus/src/desktop_test_driver.rs",
+  ]);
   assert.equal(policy.pathRules.testModuleFilename, "tests.rs");
   assert.deepEqual(policy.changedLines, {
     floorPercent: 70,

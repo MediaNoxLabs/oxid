@@ -247,7 +247,9 @@ export function validatePolicy(policy, workspacePackages, { now = new Date() } =
   ]) || JSON.stringify(policy.pathRules.excludedDirectories) !== JSON.stringify(["tests", "examples", "benches"])
       || JSON.stringify(policy.pathRules.generated) !== JSON.stringify(["**/generated/**"])
       || JSON.stringify(policy.pathRules.nonExecutableSources) !== JSON.stringify(["crates/composition/src/lib.rs"])
-      || JSON.stringify(policy.pathRules.testOnlySources) !== JSON.stringify(["crates/ui-dioxus/src/desktop_test_driver.rs"])
+      || JSON.stringify(policy.pathRules.testOnlySources) !== JSON.stringify([
+        "crates/ui-dioxus/src/desktop_developer_pager_driver.rs", "crates/ui-dioxus/src/desktop_test_driver.rs",
+      ])
       || policy.pathRules.testModuleFilename !== "tests.rs"
       || policy.pathRules.siblingTestSuffix !== "_tests.rs") {
     throw new Error("production, test, generated, non-executable, or sibling path rules differ from the reviewed contract");

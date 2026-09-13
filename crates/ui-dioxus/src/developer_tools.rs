@@ -73,7 +73,7 @@ pub(super) fn DeveloperSectionPager(
     children: Element,
 ) -> Element {
     let mut pager_element = use_signal(|| None::<std::rc::Rc<MountedData>>);
-    use_effect(move || {
+    use_effect(use_reactive((&current,), move |(current,)| {
         let page_index = developer_section_index(current);
         if let Some(pager) = pager_element.cloned() {
             spawn(async move {
@@ -83,7 +83,7 @@ pub(super) fn DeveloperSectionPager(
                 }
             });
         }
-    });
+    }));
 
     rsx! {
         div {

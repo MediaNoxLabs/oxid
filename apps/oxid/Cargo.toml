@@ -47,6 +47,13 @@ desktop-portal-test = [
   "oxid-composition/desktop-portal-test",
   "oxid-ui-dioxus/desktop-test-click-driver",
 ]
+# Owner-invoked rendered developer-pager smoke. It carries the synthetic
+# benchmark presentation only; the driver never invokes a proof.
+desktop-developer-pager-test = [
+  "desktop",
+  "developer-proof-benchmark",
+  "oxid-ui-dioxus/desktop-developer-pager-driver",
+]
 # Opt-in native development route profile for the laptop-hosted standalone
 # stack. Routes are immutable loopback constants; Android emulators reach them
 # only through repository-owned adb reverse mappings.

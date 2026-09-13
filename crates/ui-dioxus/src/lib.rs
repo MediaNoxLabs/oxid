@@ -8,6 +8,8 @@ mod assets_page;
 mod brand;
 #[cfg(feature = "standalone-deployment-profile")]
 mod deployment_profile;
+#[cfg(feature = "desktop-developer-pager-driver")]
+mod desktop_developer_pager_driver;
 #[cfg(feature = "desktop-test-click-driver")]
 mod desktop_test_driver;
 mod developer_notices;
@@ -3536,6 +3538,8 @@ pub fn App() -> Element {
 fn WalletApp() -> Element {
     let services = consume_context::<WalletUiServices>();
     let brand = consume_context::<BrandProfile>();
+    #[cfg(feature = "desktop-developer-pager-driver")]
+    desktop_developer_pager_driver::use_desktop_developer_pager_driver();
     #[cfg(feature = "desktop-test-click-driver")]
     desktop_test_driver::use_desktop_test_driver();
     let mut profile_session = use_signal(|| ProfileSessionState::Loading);

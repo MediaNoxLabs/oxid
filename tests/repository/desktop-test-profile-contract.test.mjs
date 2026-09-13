@@ -261,10 +261,50 @@ test("desktop test feature is exact and its rendered-control driver has no direc
   assert.match(desktopHarness, /visibleScreenshotDenylistClear:true/);
 });
 
+test("developer pager smoke is isolated, viewport-bound, redacted, and owner-invoked", async () => {
+  const [app, main, driver, harness, justfile, ownershipSource] = await Promise.all([
+    text("apps/oxid/Cargo.toml"), text("apps/oxid/src/main.rs"),
+    text("crates/ui-dioxus/src/desktop_developer_pager_driver.rs"),
+    text("scripts/e2e/developer-pager-desktop-e2e.sh"), text("Justfile"),
+    text("scripts/architecture/capability-facades.json"),
+  ]);
+  assert.match(app, /desktop-developer-pager-test = \[[\s\S]*"developer-proof-benchmark"[\s\S]*"oxid-ui-dioxus\/desktop-developer-pager-driver"[\s\S]*\]/);
+  assert.match(main, /OXID_DEVELOPER_PAGER_VIEWPORT/);
+  assert.match(main, /"360x640"/);
+  assert.match(main, /"390x844"/);
+  assert.match(driver, /scroll:2/);
+  assert.match(driver, /developer-section-nav__item\.active/);
+  assert.match(driver, /oxid-developer-pager-screenshot-redaction/);
+  assert.match(driver, /window\.innerWidth/);
+  assert.match(driver, /getComputedStyle/);
+  assert.match(driver, /Create private wallet/);
+  assert.match(driver, /Open global application menu/);
+  assert.match(driver, /global-application-menu/);
+  assert.match(driver, /"Back"/);
+  assert.doesNotMatch(driver, /\.execute\(/);
+  for (const viewport of ["360x640", "390x844"]) assert.match(harness, new RegExp(`run_viewport ${viewport}`));
+  assert.match(harness, /CGPreflightScreenCaptureAccess\(\)/);
+  assert.match(harness, /screencapture -x -l "\$id"/);
+  assert.match(harness, /rm -rf -- "\$RUNTIME"/);
+  assert.match(harness, /rm -rf -- "\$RUNTIME\/home"/);
+  assert.match(harness, /evidence-denylist/);
+  assert.match(harness, /app=%s driver=%s reason=%s log=%s/);
+  assert.match(driver, /failed:invalid-code/);
+  assert.match(harness, /wait_for "\$CONTROL\/driver-admitted" 600/);
+  assert.match(harness, /cleanupOwned:true/);
+  assert.match(justfile, /developer-pager-desktop-e2e:\n\s+\.\/scripts\/e2e\/developer-pager-desktop-e2e\.sh/);
+  const uiOwnership = JSON.parse(ownershipSource).crates
+    .find((crate) => crate.name === "oxid-ui-dioxus").capabilityOwners
+    .find((owner) => owner.name === "desktop-test-driver").modulePathPrefixes;
+  assert.ok(uiOwnership.includes("crates/ui-dioxus/src/desktop_developer_pager_driver"));
+});
+
 test("normal release gate excludes every desktop-test marker and localhost route", async () => {
   const release = await text("scripts/check-ui-profile-release.sh");
   assert.match(release, /OXID_DESKTOP_PORTAL_TEST_PROFILE/);
   assert.match(release, /desktop-portal-test compiled outside ARM64 macOS/);
+  assert.match(release, /desktop-developer-pager-test compiled outside ARM64 macOS/);
+  assert.match(release, /normal release binary contains the developer pager test profile/);
   assert.match(release, /portal-offer\\\.capability/);
   assert.match(
     release,
