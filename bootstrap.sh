@@ -52,14 +52,35 @@ case "${1:-}" in
     ;;
   --pi)
     shift
-    pi_cwd="$(node "$repo_root/scripts/loop/bootstrap-dev-loop.mjs" --repo-root "$repo_root" -- "$@")" || exit $?
-    if [[ "$pi_cwd" != "$repo_root" ]]; then
-      canonical_bootstrap="$pi_cwd/bootstrap.sh"
-      if [[ ! -x "$canonical_bootstrap" ]]; then
-        echo "resolved canonical worktree has no executable bootstrap: $canonical_bootstrap" >&2
+    pi_arguments=("$@")
+    dev_loop_requested=false
+    for ((index = 0; index < ${#pi_arguments[@]}; index += 1)); do
+      argument="${pi_arguments[$index]}"
+      print_value=""
+      if [[ "$argument" == "--print" ]] && ((index + 1 < ${#pi_arguments[@]})); then
+        print_value="${pi_arguments[$((index + 1))]}"
+      elif [[ "$argument" == --print=* ]]; then
+        print_value="${argument#--print=}"
+      fi
+      if [[ "$print_value" == /dev-loop* ]]; then
+        dev_loop_requested=true
+        break
+      fi
+    done
+    if [[ "$dev_loop_requested" == true ]]; then
+      if ! command -v node >/dev/null 2>&1; then
+        echo "Node.js is required outside the Nix shell to resolve an initial /dev-loop worktree." >&2
         exit 1
       fi
-      exec "$canonical_bootstrap" --pi "$@"
+      pi_cwd="$(node "$repo_root/scripts/loop/bootstrap-dev-loop.mjs" --repo-root "$repo_root" -- "$@")" || exit $?
+      if [[ "$pi_cwd" != "$repo_root" ]]; then
+        canonical_bootstrap="$pi_cwd/bootstrap.sh"
+        if [[ ! -x "$canonical_bootstrap" ]]; then
+          echo "resolved canonical worktree has no executable bootstrap: $canonical_bootstrap" >&2
+          exit 1
+        fi
+        exec "$canonical_bootstrap" --pi "$@"
+      fi
     fi
     nix_develop_command bash -c '
       repo_root="$1"

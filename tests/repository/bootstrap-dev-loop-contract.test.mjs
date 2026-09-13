@@ -87,6 +87,35 @@ printf '%s\\n' "$(cat .fixture-flake-pin)" >> "$NIX_PINS"
   assert.equal(await readFile(pins, "utf8"), "canonical-current\n");
 });
 
+test("ordinary Pi startup remains Nix-only and does not require a host Node binary", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "oxid-bootstrap-ordinary-pi-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const primary = path.join(root, "primary");
+  const bin = path.join(root, "bin");
+  const pins = path.join(root, "nix-pins");
+  await Promise.all([mkdir(primary, { recursive: true }), mkdir(bin, { recursive: true })]);
+  await Promise.all([
+    writeFile(path.join(primary, "bootstrap.sh"), bootstrapSource, { mode: 0o755 }),
+    writeFile(path.join(primary, ".fixture-flake-pin"), "primary-current\n"),
+    writeFile(path.join(bin, "nix"), `#!/bin/bash
+[ "$1" = develop ] || exit 90
+printf '%s\\n' "$(cat .fixture-flake-pin)" >> "$NIX_PINS"
+`, { mode: 0o755 }),
+  ]);
+  await chmod(path.join(primary, "bootstrap.sh"), 0o755);
+
+  const result = spawnSync(path.join(primary, "bootstrap.sh"), ["--pi", "--print", "explain this checkout"], {
+    cwd: primary,
+    encoding: "utf8",
+    env: {
+      PATH: `${bin}:/usr/bin:/bin`,
+      NIX_PINS: pins,
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(await readFile(pins, "utf8"), "primary-current\n");
+});
+
 test("linked canonical /dev-loop print stays in that worktree", async () => {
   let ensured = false;
   const cwd = await resolveBootstrapDevLoopCwd(["--print=/dev-loop prototype issue 305"], {

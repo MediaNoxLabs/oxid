@@ -134,6 +134,12 @@ dispatch subagents/taskflow and stops after focused checks, signed push, draft
 PR, and the exact-head local-gate receipt. Review, hosted CI, merge, metrics,
 and cleanup belong to the external supervisor.
 
+The cross-worktree resolver runs before Nix so it cannot accidentally evaluate
+a stale primary flake. Its narrow bootstrap boundary therefore requires host
+`node`, `git`, and authenticated `gh`; the canonical pinned shell owns every
+subsequent audit and Pi process. Ordinary Pi prompts do not cross that boundary
+and continue to require only Nix.
+
 The prompt must also retain writes within `MediaNoxLabs/oxid`: before an issue,
 PR, comment, label, release, package publication, or other repository write
 outside that active repository, the worker needs explicit owner or supervisor
