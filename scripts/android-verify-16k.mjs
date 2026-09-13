@@ -32,6 +32,7 @@ function elfLoadSegments(bytes, member) {
   let offsetAt;
   let virtualAddressAt;
   let alignAt;
+  let minimumProgramEntrySize;
 
   if (elfClass === 1) {
     programOffset = view.getUint32(28, true);
@@ -40,6 +41,7 @@ function elfLoadSegments(bytes, member) {
     offsetAt = 4;
     virtualAddressAt = 8;
     alignAt = 28;
+    minimumProgramEntrySize = 32;
   } else if (elfClass === 2) {
     if (bytes.length < 64) fail(member, "ELF header is truncated");
     programOffset = u64(view, 32, member, "ELF program-header offset");
@@ -48,11 +50,15 @@ function elfLoadSegments(bytes, member) {
     offsetAt = 8;
     virtualAddressAt = 16;
     alignAt = 48;
+    minimumProgramEntrySize = 56;
   } else {
     fail(member, "has an unsupported ELF class");
   }
 
-  if (programEntrySize === 0 || programOffset + programEntrySize * programCount > bytes.length) {
+  if (
+    programEntrySize < minimumProgramEntrySize
+    || programOffset + programEntrySize * programCount > bytes.length
+  ) {
     fail(member, "ELF program headers are truncated");
   }
 

@@ -16,7 +16,7 @@ const script = path.join(root, "scripts", "android-verify-16k.mjs");
 const PAGE_SIZE = 16 * 1024;
 const member = "lib/arm64-v8a/liboxid.so";
 
-function elf({ alignment = PAGE_SIZE, virtualAddress = 0 } = {}) {
+function elf({ alignment = PAGE_SIZE, virtualAddress = 0, programEntrySize = 56 } = {}) {
   const bytes = Buffer.alloc(64 + 56);
   bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
   bytes.writeUInt16LE(3, 16);
@@ -24,7 +24,7 @@ function elf({ alignment = PAGE_SIZE, virtualAddress = 0 } = {}) {
   bytes.writeUInt32LE(1, 20);
   bytes.writeBigUInt64LE(64n, 32);
   bytes.writeUInt16LE(64, 52);
-  bytes.writeUInt16LE(56, 54);
+  bytes.writeUInt16LE(programEntrySize, 54);
   bytes.writeUInt16LE(1, 56);
   bytes.writeUInt32LE(1, 64);
   bytes.writeBigUInt64LE(0n, 72);
@@ -84,6 +84,13 @@ test("names a compressed member whose decompressed ELF alignment is insufficient
 
 test("names the exact archive member whose ELF LOAD alignment is insufficient", () => {
   assert.throws(() => verifyApk(apk({ alignment: 4096 })), new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ELF LOAD segment 0 alignment 4096`));
+});
+
+test("rejects an ELF whose declared program-header entries are undersized", () => {
+  assert.throws(
+    () => verifyApk(apk({ programEntrySize: 1 })),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ELF program headers are truncated`),
+  );
 });
 
 test("fails closed when an APK contains no native shared libraries", () => {
