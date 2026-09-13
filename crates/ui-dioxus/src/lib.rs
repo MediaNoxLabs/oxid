@@ -8156,7 +8156,7 @@ fn ManagedDidControls(
                                     profile_id,
                                     did,
                                     method_id: method_or_service,
-                                    payload: input_value.into_bytes(),
+                                    payload: input_value.as_bytes(),
                                     confirmation: did_confirmation(
                                         "Sign identity challenge",
                                         "Authorize the visible payload with this DID verification method",

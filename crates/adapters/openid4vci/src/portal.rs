@@ -27,21 +27,30 @@ use reqwest::{
     redirect::Policy,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use sha2::{Digest as _, Sha256};
 use url::Url;
 use webpki_root_certs::TLS_SERVER_ROOT_CERTS;
 use zeroize::Zeroizing;
 
 use super::{
-    EndpointPolicy, ParsedOffer, host_is_loopback, map_get_did_error, map_holder_proof_error,
+    EndpointPolicy, JwtProofs, ParsedOffer, PortalCredentialRequest, PortalMidnightRequest,
+    decode_json_string, host_is_loopback, map_get_did_error, map_holder_proof_error,
     parse_issuer_metadata, parse_offer, parse_strict_json, required_object, required_string,
-    required_unique_strings, resolve_holder_binding, validate_endpoint,
+    required_unique_strings, resolve_holder_binding, serialize_sensitive_json, validate_endpoint,
 };
 
 #[path = "portal_response.rs"]
 mod response;
 use response::*;
+
+struct SensitiveHttpBody(Zeroizing<Vec<u8>>);
+
+impl AsRef<[u8]> for SensitiveHttpBody {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
 
 pub const PORTAL_INTEGRATION_COMMIT: &str = "25499870f84d77173c46e4af3021311decfb840b";
 pub const PORTAL_INTEGRATION_TREE: &str = "2d845d2293603dfd8adce5362c8a9941e6ba78a9";
@@ -736,33 +745,45 @@ impl PortalOid4vciClient {
         let nonce_bytes = read_json_response(nonce_response, MAX_NONCE_BYTES).await?;
         let nonce = parse_nonce_response(&nonce_bytes)?;
 
-        let proof = Zeroizing::new(
-            self.proof
-                .create(HolderProofRequest {
-                    profile_id: request.profile_id,
-                    holder_did: request.holder_did.clone(),
-                    method_id: request.method_id,
-                    audience: secret.issuer.clone(),
-                    nonce: nonce.to_string(),
-                })
-                .await
-                .map_err(map_holder_proof_error)?,
-        );
-        let credential_request = json!({
-            "credential_configuration_id": secret.configuration_id,
-            "midnight": {"holderBindingMethod": request.holder_binding_method_id},
-            "proofs": {"jwt": [proof.as_str()]}
-        });
+        let proof = self
+            .proof
+            .create(HolderProofRequest {
+                profile_id: request.profile_id,
+                holder_did: request.holder_did.clone(),
+                method_id: request.method_id,
+                audience: secret.issuer.clone(),
+                nonce: nonce.as_str(),
+            })
+            .await
+            .map_err(map_holder_proof_error)?;
+        let credential_request = serialize_sensitive_json(&PortalCredentialRequest {
+            credential_configuration_id: &secret.configuration_id,
+            midnight: PortalMidnightRequest {
+                holder_binding_method: &request.holder_binding_method_id,
+            },
+            proofs: JwtProofs {
+                jwt: [proof.as_str()],
+            },
+        })
+        .map_err(|_| IssuanceProtocolError::InvalidProof)?;
         validate_portal_endpoint(
             &secret.credential_endpoint,
             self.deployment.issuer_origin(),
             "/api/issuer/credentials",
         )?;
+        let request_length = credential_request.len();
+        let request_body = reqwest::Body::wrap_stream(futures::stream::once(async move {
+            Result::<_, std::convert::Infallible>::Ok(bytes::Bytes::from_owner(SensitiveHttpBody(
+                credential_request,
+            )))
+        }));
         let credential_response = self
             .client
             .post(&secret.credential_endpoint)
             .bearer_auth(access_token.as_str())
-            .json(&credential_request)
+            .header(CONTENT_TYPE, "application/json")
+            .header(CONTENT_LENGTH, request_length)
+            .body(request_body)
             .send()
             .await
             .map_err(|_| IssuanceProtocolError::Unavailable)?;

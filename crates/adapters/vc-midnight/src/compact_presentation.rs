@@ -813,7 +813,7 @@ impl PresentationHolderAuthorizationPort for ManagedDidJubjubHolderAuthorization
                     profile_id: request.profile_id.as_str().to_owned(),
                     did: request.holder_did,
                     method_id: request.holder_method_id.clone(),
-                    payload: payload.to_vec(),
+                    payload: &payload,
                     confirmation: DidOperationConfirmation {
                         title: "Authorize credential presentation".to_owned(),
                         summary: "Authorize the current protected holder method for the consented credential presentation.".to_owned(),

@@ -830,7 +830,7 @@ impl SelfIssuedIdentityProofPort for DidSelfIssuedIdentityProof {
                     profile_id: request.profile_id.as_str().to_owned(),
                     did: request.holder_did,
                     method_id: request.method_id,
-                    payload: signing_input.as_bytes().to_vec(),
+                    payload: signing_input.as_bytes(),
                     confirmation: DidOperationConfirmation {
                         title: "Authenticate with DID".to_owned(),
                         summary: "Bind the accepted self-issued authentication to this verifier."

@@ -102,13 +102,26 @@ pub struct DeactivateDidCommand {
     pub confirmation: DidOperationConfirmation,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SignDidPayloadCommand {
+#[derive(Clone, PartialEq, Eq)]
+pub struct SignDidPayloadCommand<'a> {
     pub profile_id: String,
     pub did: String,
     pub method_id: String,
-    pub payload: Vec<u8>,
+    pub payload: &'a [u8],
     pub confirmation: DidOperationConfirmation,
+}
+
+impl fmt::Debug for SignDidPayloadCommand<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SignDidPayloadCommand")
+            .field("profile_id", &self.profile_id)
+            .field("did", &self.did)
+            .field("method_id", &self.method_id)
+            .field("payload", &"[REDACTED]")
+            .field("confirmation", &self.confirmation)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,7 +153,7 @@ pub trait DeactivateDidUseCase: Send + Sync {
 pub trait SignDidPayloadUseCase: Send + Sync {
     fn execute(
         &self,
-        command: SignDidPayloadCommand,
+        command: SignDidPayloadCommand<'_>,
     ) -> Result<DidSignatureView, DidOperationError>;
 }
 
@@ -398,7 +411,7 @@ impl DeactivateDidUseCase for DidService {
 impl SignDidPayloadUseCase for DidService {
     fn execute(
         &self,
-        command: SignDidPayloadCommand,
+        command: SignDidPayloadCommand<'_>,
     ) -> Result<DidSignatureView, DidOperationError> {
         validate_confirmation(&command.confirmation)?;
         if command.payload.is_empty() {
@@ -415,7 +428,7 @@ impl SignDidPayloadUseCase for DidService {
                 &profile_id,
                 &prior,
                 command.method_id.trim(),
-                &command.payload,
+                command.payload,
             )
             .map(|signature| DidSignatureView {
                 method_id: signature.method_id,
@@ -644,7 +657,7 @@ mod tests {
         }
     }
 
-    fn sign_command(payload: Vec<u8>) -> SignDidPayloadCommand {
+    fn sign_command(payload: &[u8]) -> SignDidPayloadCommand<'_> {
         SignDidPayloadCommand {
             profile_id: PROFILE.to_owned(),
             did: DID.to_owned(),
@@ -741,7 +754,7 @@ mod tests {
             ),
         ] {
             let (service, lifecycle) = service_with_lifecycle((None, None), None);
-            let mut command = sign_command(b"challenge".to_vec());
+            let mut command = sign_command(b"challenge");
             command.confirmation = confirmation;
             assert_eq!(
                 SignDidPayloadUseCase::execute(&service, command),
@@ -795,16 +808,16 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                SignDidPayloadUseCase::execute(&service, sign_command(payload)),
+                SignDidPayloadUseCase::execute(&service, sign_command(&payload)),
                 Err(expected)
             );
         }
         assert!(lifecycle.sign_calls.lock().expect("sign calls").is_empty());
 
-        let payload = (0..MAX_DID_SIGNING_PAYLOAD_BYTES)
+        let payload: Vec<u8> = (0..MAX_DID_SIGNING_PAYLOAD_BYTES)
             .map(|index| (index % 251) as u8)
             .collect();
-        assert!(SignDidPayloadUseCase::execute(&service, sign_command(payload)).is_ok());
+        assert!(SignDidPayloadUseCase::execute(&service, sign_command(&payload)).is_ok());
 
         let calls = lifecycle.sign_calls.lock().expect("sign calls");
         assert_eq!(calls.len(), 1);
@@ -848,7 +861,7 @@ mod tests {
         assert_eq!(
             SignDidPayloadUseCase::execute(
                 &service((None, None), Some(DidLifecyclePortError::Locked)),
-                sign_command(b"challenge".to_vec())
+                sign_command(b"challenge")
             ),
             Err(DidOperationError::Lifecycle(DidLifecyclePortError::Locked))
         );
@@ -889,8 +902,11 @@ mod tests {
     #[test]
     fn signing_failures_do_not_echo_payload_or_confirmation_text() {
         let payload = b"private-signing-payload-sentinel".to_vec();
-        let mut command = sign_command(payload.clone());
+        let mut command = sign_command(&payload);
         command.confirmation.summary = "private-confirmation-sentinel".to_owned();
+        let command_debug = format!("{command:?}");
+        assert!(command_debug.contains("[REDACTED]"));
+        assert!(!command_debug.contains("private-signing-payload-sentinel"));
         let error = SignDidPayloadUseCase::execute(
             &service((None, None), Some(DidLifecyclePortError::Locked)),
             command,
