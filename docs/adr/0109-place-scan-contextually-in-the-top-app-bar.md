@@ -29,13 +29,16 @@ application state machine.
 The proposed placement is consistent with primary platform and accessibility
 guidance, while the exact control remains an Oxid presentation decision:
 
-- [Apple Human Interface Guidelines: Navigation and
-  search](https://developer.apple.com/design/human-interface-guidelines/navigation-and-search)
-  treats navigation as a way to move among destinations and places actions in
-  the relevant bar or context rather than making every action a destination.
-- [Material 3: App bars](https://m3.material.io/components/app-bars/overview)
-  describes the top app bar as the place for screen identity and contextual
-  actions, with overflow for less frequent actions.
+- [Apple Human Interface Guidelines: Tab
+  bars](https://developer.apple.com/design/human-interface-guidelines/tab-bars)
+  reserves tab bars for navigation rather than actions, while
+  [Toolbars](https://developer.apple.com/design/human-interface-guidelines/toolbars)
+  place frequent commands and controls around the current view.
+- Android's Material guidance describes
+  [navigation bars](https://developer.android.com/develop/ui/compose/components/navigation-bar)
+  as destination switching and
+  [top app bars](https://developer.android.com/develop/ui/compose/components/app-bars)
+  as the home for a title, core actions, and selected navigation controls.
 - [WCAG 2.2, SC 2.5.8 Target Size (Minimum)](https://www.w3.org/TR/WCAG22/#target-size-minimum)
   requires a 24 by 24 CSS-pixel minimum for pointer targets, subject to its
   exceptions. Oxid will use a 44 by 44 CSS-pixel touch target for Scan, also
@@ -49,8 +52,9 @@ claim that payment or network QR is supported.
 ## Decision
 
 **Proposed:** replace the persistent center-bar and Home quick-action Scan
-controls with one labeled Scan action in the top app bar on scan-capable
-surfaces. Scan remains an action using the existing `QrScannerPort` and
+controls with one labeled Scan action in the top app bar on the Home and
+Documents surfaces where an identity ingress action has direct context. Scan
+remains an action using the existing `QrScannerPort` and
 `RouteIdentityRequestUseCase`; this ADR does not add a route, scanner format,
 protocol, consent, or application capability.
 
@@ -58,9 +62,10 @@ The visibility contract is deliberately closed:
 
 | Current surface/state | Scan control | Result |
 | --- | --- | --- |
-| Home, Wallet, Documents, Activity with scanner capability and no scan running | Visible in top app bar | Starts one scan |
-| Same surfaces while a scan is running | Visible but disabled and announced busy | No second scan |
-| Same surfaces with unavailable scanner composition | Visible only if the surface can explain the unavailable capability; otherwise omitted by the existing capability policy | Never pretends to scan |
+| Home or Documents with scanner capability and no scan running | Visible in top app bar | Starts one scan |
+| Home or Documents while a scan is running | Visible but disabled and announced busy | No second scan |
+| Home or Documents with unavailable scanner composition | Visible only if the surface can explain the unavailable capability; otherwise omitted by the existing capability policy | Never pretends to scan |
+| Wallet or Activity | Hidden | These asset/activity contexts do not advertise identity ingress; the user returns to Home or Documents to scan |
 | Credential/DID review with a pending request | Not added as a second entry point | Existing review and one-pending-request rule win |
 | Settings, Profile, Passport Vault, Diagnostics, backup/recovery, and developer routes | Hidden | No contextual scan affordance |
 | Compact/mobile layout | Same single top-bar control, 44 x 44 CSS-pixel minimum target, accessible name “Scan identity QR code” | No bottom-bar duplicate |
@@ -96,9 +101,9 @@ If accepted, this ADR supersedes only their Scan placement clauses:
 - ADR-0086's bottom-bar list changes from four destinations plus center Scan to
   the four destinations only; its shared scanner, strict routing, pending
   request, and review transitions remain unchanged.
-- ADR-0087's Home anatomy retains Scan as a quick action semantically, but the
-  repeated Home Scan control is removed; Home invokes the same contextual
-  top-bar action and retains all other projection boundaries.
+- ADR-0087's repeated Home quick-action control is removed; Home exposes Scan
+  only as its contextual top-bar action and retains all other projection
+  boundaries.
 
 All other decisions, including the bounded route stack, Wallet/Documents
 ownership, explicit consent, fail-closed unavailable behavior, and no
@@ -108,8 +113,8 @@ production implementation before owner acceptance, remain in force.
 
 - One contextual action removes duplicate entry points and preserves navigation
   space for destinations.
-- Scan is discoverable on the four current primary surfaces without implying
-  that it is a destination.
+- Scan is discoverable on Home and Documents without occupying unrelated
+  Wallet or Activity contexts or implying that it is a destination.
 - Contextual visibility must be tested across capability, busy, pending, and
   compact-layout states.
 - This ADR does not implement the move, add payment/network support, alter QR
