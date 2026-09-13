@@ -358,8 +358,9 @@ impl SelfIssuedAuthenticationProtocolPort for StandaloneSiopV2Verifier {
                 })
                 .await
                 .map_err(map_proof_error)?;
+            let id_token_snapshot = id_token.as_str();
             let response = serialize_sensitive_json(&SelfIssuedResponse {
-                id_token: id_token.as_str(),
+                id_token: id_token_snapshot,
                 state: prepared.state.as_str(),
             })
             .map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
@@ -377,7 +378,7 @@ impl SelfIssuedAuthenticationProtocolPort for StandaloneSiopV2Verifier {
                 &request.profile_id,
                 &request.holder_did,
                 &request.method_id,
-                id_token.as_str(),
+                id_token_snapshot,
             )
         })
     }
@@ -1097,6 +1098,36 @@ mod tests {
         method: String,
     }
 
+    struct CountingProof {
+        inner: Arc<dyn SelfIssuedIdentityProofPort>,
+        snapshot_calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl SelfIssuedIdentityProofPort for CountingProof {
+        fn create<'a>(&'a self, request: SelfIssuedProofRequest<'a>) -> SelfIssuedProofFuture<'a> {
+            Box::pin(async move {
+                let proof = self.inner.create(request).await?;
+                Ok(Box::new(CountingProofJwt {
+                    inner: proof,
+                    snapshot_calls: Arc::clone(&self.snapshot_calls),
+                }) as Box<dyn SelfIssuedProofJwt>)
+            })
+        }
+    }
+
+    struct CountingProofJwt {
+        inner: Box<dyn SelfIssuedProofJwt>,
+        snapshot_calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl SelfIssuedProofJwt for CountingProofJwt {
+        fn as_str(&self) -> &str {
+            self.snapshot_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.inner.as_str()
+        }
+    }
+
     fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
         std::task::Waker::noop().wake_by_ref();
         let mut future = std::pin::pin!(future);
@@ -1345,6 +1376,47 @@ mod tests {
                 })
             ),
             Err(SelfIssuedProtocolError::InvalidRequest)
+        );
+    }
+
+    #[test]
+    fn authentication_uses_one_stable_jwt_snapshot() {
+        let ProofFixture {
+            proof,
+            get_did,
+            clock,
+            profile_id,
+            did,
+            method,
+        } = proof_fixture();
+        let snapshot_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let proof: Arc<dyn SelfIssuedIdentityProofPort> = Arc::new(CountingProof {
+            inner: proof,
+            snapshot_calls: Arc::clone(&snapshot_calls),
+        });
+        let adapter = StandaloneSiopV2Verifier::new(proof, get_did, clock);
+        let profile = oxid_protocol_domain::ProtocolProfileId::parse(profile_id)
+            .expect("fixture profile id is valid");
+        let prepared = block_on(adapter.prepare(PrepareSelfIssuedAuthenticationRequest {
+            profile_id: profile.clone(),
+            request: standalone_self_issued_request(),
+        }))
+        .expect("request should prepare");
+
+        block_on(
+            adapter.authenticate(ProtocolSelfIssuedAuthenticationRequest {
+                profile_id: profile,
+                authentication_id: prepared.id,
+                holder_did: did,
+                method_id: method,
+            }),
+        )
+        .expect("managed DID should authenticate from one JWT snapshot");
+
+        assert_eq!(
+            snapshot_calls.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "the claims and signature must be checked against one JWT snapshot"
         );
     }
 
