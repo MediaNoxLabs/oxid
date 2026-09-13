@@ -191,6 +191,8 @@ impl ProcessHarness {
 struct ServerState {
     holder: Option<BoundCredentialRequest>,
     journal: Vec<(String, String)>,
+    grant_redeemed: bool,
+    response_status: u16,
 }
 
 struct PortalServer {
@@ -234,10 +236,13 @@ impl PortalServer {
                     .expect("state")
                     .journal
                     .push((path.clone(), body.clone()));
+                thread_state.lock().expect("state").response_status = 200;
                 let response = response_for(&path, &body, &thread_origin, &thread_state);
+                let status = thread_state.lock().expect("state").response_status;
                 write!(
                     stream,
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 {status} {}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    if status == 200 { "OK" } else { "Bad Request" },
                     response.len(),
                     response
                 )
@@ -368,7 +373,14 @@ fn response_for(path: &str, body: &str, origin: &str, state: &Arc<Mutex<ServerSt
         .to_string(),
         "/api/issuer/token" => {
             assert!(body.contains("pre-authorized_code=PORTAL_TEST_PRE_AUTHORIZED_CODE"));
-            json!({"access_token":ACCESS_TOKEN,"expires_in":300,"token_type":"Bearer"}).to_string()
+            let mut state = state.lock().expect("state");
+            if state.grant_redeemed {
+                state.response_status = 400;
+                json!({"error":"invalid_grant"}).to_string()
+            } else {
+                state.grant_redeemed = true;
+                json!({"access_token":ACCESS_TOKEN,"expires_in":300,"token_type":"Bearer"}).to_string()
+            }
         }
         "/api/issuer/nonce" => {
             assert!(body.is_empty(), "Portal nonce request body must be empty");
@@ -601,6 +613,47 @@ fn portal_standalone_profile_issues_encrypts_restores_and_reverifies_in_a_new_pr
         .as_str()
         .expect("credential id")
         .to_owned();
+
+    let replay_prepared = request(
+        &mut first,
+        "replay-prepare",
+        "credential.issuance.prepare",
+        json!({"offer":offer}),
+    );
+    let replay_issuance_id = replay_prepared["result"]["issuance"]["id"]
+        .as_str()
+        .expect("replay issuance id");
+    let replayed = request(
+        &mut first,
+        "replay-accept",
+        "credential.issuance.accept",
+        json!({
+            "issuanceId":replay_issuance_id,
+            "holderDid":holder_did,
+            "methodId":authentication_method,
+            "holderBindingMethodId":binding_method,
+            "confirmed":true,
+            "intent":"ACCEPT_CREDENTIAL_ISSUANCE"
+        }),
+    );
+    assert_eq!(
+        replayed["ok"], false,
+        "a redeemed grant must not issue again"
+    );
+    assert!(!replayed.to_string().contains(SECRET_CODE));
+    assert_eq!(
+        server
+            .state
+            .lock()
+            .expect("state")
+            .journal
+            .iter()
+            .filter(|(path, _)| path == "/api/issuer/credentials")
+            .count(),
+        1,
+        "a replay must stop before the credential endpoint"
+    );
+
     let listed = request(&mut first, "list", "credential.list", json!({}));
     assert_eq!(
         listed["result"]["credentials"].as_array().map(Vec::len),
