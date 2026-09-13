@@ -5,6 +5,66 @@
 //! this module owns only response/endpoint validation.
 
 use super::*;
+use serde_json::value::RawValue;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CredentialResponse<'a> {
+    #[serde(borrow)]
+    credentials: [CredentialResponseItem<'a>; 1],
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CredentialResponseItem<'a> {
+    credential: &'a str,
+    #[serde(borrow)]
+    midnight: MidnightCredentialResponse<'a>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
+struct MidnightCredentialResponse<'a> {
+    credential_family: &'a str,
+    #[serde(borrow)]
+    credential_private_parts: &'a RawValue,
+    #[serde(borrow)]
+    credential_proof: CredentialProof<'a>,
+    encoding: &'a str,
+    expires_at: &'a str,
+    has_expiration: bool,
+    #[serde(borrow)]
+    holder_binding: HolderBinding<'a>,
+    schema_id: &'a str,
+    schema_version: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CredentialProof<'a> {
+    encoding: &'a str,
+    payload: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
+struct HolderBinding<'a> {
+    challenge: &'a str,
+    #[serde(borrow)]
+    holder_did_method: HolderDidMethod<'a>,
+    method: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
+struct HolderDidMethod<'a> {
+    did: &'a str,
+    key_type: &'a str,
+    method_id: &'a str,
+}
 
 pub(super) fn parse_portal_authorization_metadata(
     bytes: &[u8],
@@ -94,103 +154,38 @@ pub(super) fn parse_portal_credential_response(
     expected_nonce: &str,
     decoder: &dyn PortalCredentialMaterialDecoder,
 ) -> Result<IssuedCredentialBytes, IssuanceProtocolError> {
-    let value =
-        parse_strict_json(bytes).map_err(|_| IssuanceProtocolError::InvalidCredentialResponse)?;
-    let root = value
-        .as_object()
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
-    exact_keys(
-        root,
-        &["credentials"],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    let credentials = root
-        .get("credentials")
-        .and_then(Value::as_array)
-        .filter(|values| values.len() == 1)
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
-    let item = credentials[0]
-        .as_object()
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
-    exact_keys(
-        item,
-        &["credential", "midnight"],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    let signed = item
-        .get("credential")
-        .and_then(Value::as_str)
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)
-        .and_then(decode_payload)?;
-    let midnight = required_response_object(item, "midnight")?;
-    exact_keys(
-        midnight,
-        &[
-            "credentialFamily",
-            "credentialPrivateParts",
-            "credentialProof",
-            "encoding",
-            "expiresAt",
-            "hasExpiration",
-            "holderBinding",
-            "schemaId",
-            "schemaVersion",
-        ],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    if response_string(midnight, "credentialFamily")? != PORTAL_FAMILY
-        || response_string(midnight, "encoding")? != PORTAL_ENCODING
-        || response_string(midnight, "schemaId")? != PORTAL_SCHEMA_ID
-        || response_string(midnight, "schemaVersion")? != PORTAL_SCHEMA_VERSION
-        || midnight
-            .get("hasExpiration")
-            .and_then(Value::as_bool)
-            .is_none()
-        || response_string(midnight, "expiresAt")?.len() > 64
+    let response: CredentialResponse<'_> = serde_json::from_slice(bytes)
+        .map_err(|_| IssuanceProtocolError::InvalidCredentialResponse)?;
+    let item = &response.credentials[0];
+    let midnight = &item.midnight;
+    let _ = midnight.has_expiration;
+    if response_text(midnight.credential_family)? != PORTAL_FAMILY
+        || response_text(midnight.encoding)? != PORTAL_ENCODING
+        || response_text(midnight.schema_id)? != PORTAL_SCHEMA_ID
+        || response_text(midnight.schema_version)? != PORTAL_SCHEMA_VERSION
+        || response_text(midnight.expires_at)?.len() > 64
     {
         return Err(IssuanceProtocolError::InvalidCredentialResponse);
     }
-    let proof = required_response_object(midnight, "credentialProof")?;
-    exact_keys(
-        proof,
-        &["encoding", "payload"],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    if response_string(proof, "encoding")? != PORTAL_ENCODING {
+    if response_text(midnight.credential_proof.encoding)? != PORTAL_ENCODING {
         return Err(IssuanceProtocolError::InvalidCredentialResponse);
     }
-    let detached_proof = decode_payload(response_string(proof, "payload")?)?;
-    let holder = required_response_object(midnight, "holderBinding")?;
-    exact_keys(
-        holder,
-        &["challenge", "holderDidMethod", "method"],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    if response_string(holder, "challenge")? != expected_nonce
-        || response_string(holder, "method")? != "explicit_did_method"
+    let signed = decode_payload(item.credential)?;
+    let detached_proof = decode_payload(response_text(midnight.credential_proof.payload)?)?;
+    let holder = &midnight.holder_binding;
+    if response_text(holder.challenge)? != expected_nonce
+        || response_text(holder.method)? != "explicit_did_method"
     {
         return Err(IssuanceProtocolError::InvalidCredentialResponse);
     }
-    let method = required_response_object(holder, "holderDidMethod")?;
-    exact_keys(
-        method,
-        &["did", "keyType", "methodId"],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    if response_string(method, "did")? != expected_holder_did
-        || response_string(method, "methodId")? != expected_binding_method
-        || response_string(method, "keyType")? != "jubjub"
+    let method = &holder.holder_did_method;
+    if response_text(method.did)? != expected_holder_did
+        || response_text(method.method_id)? != expected_binding_method
+        || response_text(method.key_type)? != "jubjub"
     {
         return Err(IssuanceProtocolError::InvalidCredentialResponse);
     }
-    let private_value = midnight
-        .get("credentialPrivateParts")
-        .filter(|value| value.is_object())
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
-    let private_json = Zeroizing::new(
-        serde_json::to_vec(private_value)
-            .map_err(|_| IssuanceProtocolError::InvalidCredentialResponse)?,
-    );
+    let private_json = compact_private_json(midnight.credential_private_parts)?;
     let private_material = decoder
         .decode(&signed, private_json.as_slice())
         .map_err(|error| match error {
@@ -224,26 +219,37 @@ pub(super) fn decode_payload(value: &str) -> Result<Vec<u8>, IssuanceProtocolErr
     Ok(bytes)
 }
 
-pub(super) fn required_response_object<'a>(
-    object: &'a Map<String, Value>,
-    key: &str,
-) -> Result<&'a Map<String, Value>, IssuanceProtocolError> {
-    object
-        .get(key)
-        .and_then(Value::as_object)
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)
+fn compact_private_json(value: &RawValue) -> Result<Zeroizing<Vec<u8>>, IssuanceProtocolError> {
+    let source = value.get();
+    if !source.trim_ascii_start().starts_with('{') {
+        return Err(IssuanceProtocolError::InvalidCredentialResponse);
+    }
+    let mut compact = Zeroizing::new(Vec::with_capacity(source.len()));
+    let mut in_string = false;
+    let mut escaped = false;
+    for byte in source.bytes() {
+        if in_string {
+            compact.push(byte);
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+        } else if byte == b'"' {
+            in_string = true;
+            compact.push(byte);
+        } else if !byte.is_ascii_whitespace() {
+            compact.push(byte);
+        }
+    }
+    Ok(compact)
 }
 
-pub(super) fn response_string<'a>(
-    object: &'a Map<String, Value>,
-    key: &str,
-) -> Result<&'a str, IssuanceProtocolError> {
-    object
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|value| {
-            !value.is_empty() && value.len() <= 2_048 && !value.chars().any(char::is_control)
-        })
+fn response_text(value: &str) -> Result<&str, IssuanceProtocolError> {
+    (!value.is_empty() && value.len() <= 2_048 && !value.chars().any(char::is_control))
+        .then_some(value)
         .ok_or(IssuanceProtocolError::InvalidCredentialResponse)
 }
 
