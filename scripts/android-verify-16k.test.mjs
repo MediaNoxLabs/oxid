@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -16,7 +16,7 @@ const script = path.join(root, "scripts", "android-verify-16k.mjs");
 const PAGE_SIZE = 16 * 1024;
 const member = "lib/arm64-v8a/liboxid.so";
 
-function elf({ alignment = PAGE_SIZE, virtualAddress = 0, programEntrySize = 56 } = {}) {
+function elf({ alignment = PAGE_SIZE, fileOffset = 0, virtualAddress = 0, programEntrySize = 56 } = {}) {
   const bytes = Buffer.alloc(64 + 56);
   bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
   bytes.writeUInt16LE(3, 16);
@@ -27,7 +27,7 @@ function elf({ alignment = PAGE_SIZE, virtualAddress = 0, programEntrySize = 56 
   bytes.writeUInt16LE(programEntrySize, 54);
   bytes.writeUInt16LE(1, 56);
   bytes.writeUInt32LE(1, 64);
-  bytes.writeBigUInt64LE(0n, 72);
+  bytes.writeBigUInt64LE(BigInt(fileOffset), 72);
   bytes.writeBigUInt64LE(BigInt(virtualAddress), 80);
   bytes.writeBigUInt64LE(BigInt(virtualAddress), 88);
   bytes.writeBigUInt64LE(0n, 96);
@@ -93,6 +93,13 @@ test("rejects a non-power-of-two ELF LOAD alignment", () => {
   );
 });
 
+test("checks ELF LOAD congruence against the declared alignment", () => {
+  assert.throws(
+    () => verifyApk(apk({ alignment: 65536, fileOffset: 16384 })),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ELF LOAD segment 0 offset and virtual address`),
+  );
+});
+
 test("rejects an ELF whose declared program-header entries are undersized", () => {
   assert.throws(
     () => verifyApk(apk({ programEntrySize: 1 })),
@@ -115,6 +122,21 @@ test("the documented command reports the exact offending archive member", async 
     const result = spawnSync(process.execPath, [script, fixture], { cwd: root, encoding: "utf8" });
     assert.equal(result.status, 1);
     assert.match(result.stderr, new RegExp(`FAIL ${member.replace(/[/.]/g, "\\$&")}: ELF LOAD`));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("the command executes when its filesystem path requires URL encoding", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "oxid android 16k-"));
+  try {
+    const encodedScript = path.join(directory, "verifier #1.mjs");
+    const fixture = path.join(directory, "compliant.apk");
+    await copyFile(script, encodedScript);
+    await writeFile(fixture, apk());
+    const result = spawnSync(process.execPath, [encodedScript, fixture], { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /PASS.*native-libraries=1/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

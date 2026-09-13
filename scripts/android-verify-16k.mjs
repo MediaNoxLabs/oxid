@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { inflateRawSync } from "node:zlib";
 
 const PAGE_SIZE = 16 * 1024;
@@ -90,7 +91,7 @@ function verifyElf(bytes, member) {
     ) {
       fail(member, `ELF LOAD segment ${load.index} alignment ${load.align} is not 16 KiB compatible`);
     }
-    if (load.offset % PAGE_SIZE !== load.virtualAddress % PAGE_SIZE) {
+    if (load.offset % load.align !== load.virtualAddress % load.align) {
       fail(member, `ELF LOAD segment ${load.index} offset and virtual address are not 16 KiB congruent`);
     }
   }
@@ -188,4 +189,4 @@ function main() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+if (import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) main();
