@@ -23,6 +23,7 @@ use oxid_credential_domain::{
     MAX_CREDENTIAL_PRIVATE_MATERIAL_BYTES, MAX_SIGNED_CREDENTIAL_BYTES,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use sha2::{Digest as _, Sha256};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
@@ -378,31 +379,42 @@ impl std::fmt::Display for PortalPrivateMaterialError {
 
 impl std::error::Error for PortalPrivateMaterialError {}
 
-#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct PortalClaimValues {
-    first_name_value_padded: Zeroizing<String>,
-    last_name_value_padded: Zeroizing<String>,
+struct PortalClaimValues<'a> {
+    #[serde(borrow)]
+    first_name_value_padded: &'a RawValue,
+    #[serde(borrow)]
+    last_name_value_padded: &'a RawValue,
     date_of_birth_days: u32,
-    document_number_value: Zeroizing<String>,
-    issuing_state_value: Zeroizing<String>,
+    #[serde(borrow)]
+    document_number_value: &'a RawValue,
+    #[serde(borrow)]
+    issuing_state_value: &'a RawValue,
 }
 
-#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct PortalOpenings {
-    first_name_opening: Zeroizing<String>,
-    last_name_opening: Zeroizing<String>,
-    date_of_birth_opening: Zeroizing<String>,
-    document_number_opening: Zeroizing<String>,
-    issuing_state_opening: Zeroizing<String>,
+struct PortalOpenings<'a> {
+    #[serde(borrow)]
+    first_name_opening: &'a RawValue,
+    #[serde(borrow)]
+    last_name_opening: &'a RawValue,
+    #[serde(borrow)]
+    date_of_birth_opening: &'a RawValue,
+    #[serde(borrow)]
+    document_number_opening: &'a RawValue,
+    #[serde(borrow)]
+    issuing_state_opening: &'a RawValue,
 }
 
-#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct PortalPrivateParts {
-    claim_values: PortalClaimValues,
-    openings: PortalOpenings,
+struct PortalPrivateParts<'a> {
+    #[serde(borrow)]
+    claim_values: PortalClaimValues<'a>,
+    #[serde(borrow)]
+    openings: PortalOpenings<'a>,
 }
 
 /// Strictly converts Portal's `credentialPrivateParts` JSON object to the
@@ -425,23 +437,73 @@ pub fn convert_portal_private_parts(
         .end()
         .map_err(|_| PortalPrivateMaterialError::Invalid)?;
 
+    fn decode_json_string(
+        raw: &RawValue,
+    ) -> Result<Zeroizing<Vec<u8>>, PortalPrivateMaterialError> {
+        let source = raw.get().as_bytes();
+        if source.len() < 2 || source[0] != b'"' || source[source.len() - 1] != b'"' {
+            return Err(PortalPrivateMaterialError::Invalid);
+        }
+        let mut decoded = Zeroizing::new(Vec::with_capacity(source.len() - 2));
+        let mut index = 1;
+        while index < source.len() - 1 {
+            let byte = source[index];
+            index += 1;
+            if byte != b'\\' {
+                if byte < 0x20 || byte == b'"' {
+                    return Err(PortalPrivateMaterialError::Invalid);
+                }
+                decoded.push(byte);
+                continue;
+            }
+            if index >= source.len() - 1 {
+                return Err(PortalPrivateMaterialError::Invalid);
+            }
+            let escaped = source[index];
+            index += 1;
+            match escaped {
+                b'"' | b'\\' | b'/' => decoded.push(escaped),
+                b'b' => decoded.push(0x08),
+                b'f' => decoded.push(0x0c),
+                b'n' => decoded.push(b'\n'),
+                b'r' => decoded.push(b'\r'),
+                b't' => decoded.push(b'\t'),
+                b'u' => {
+                    let end = index
+                        .checked_add(4)
+                        .filter(|end| *end < source.len())
+                        .ok_or(PortalPrivateMaterialError::Invalid)?;
+                    let code = std::str::from_utf8(&source[index..end])
+                        .ok()
+                        .and_then(|digits| u16::from_str_radix(digits, 16).ok())
+                        .filter(|code| *code <= 0x7f)
+                        .ok_or(PortalPrivateMaterialError::Invalid)?;
+                    decoded.push(code as u8);
+                    index = end;
+                }
+                _ => return Err(PortalPrivateMaterialError::Invalid),
+            }
+        }
+        Ok(decoded)
+    }
+
     fn decode<const N: usize>(
-        input: &str,
+        input: &RawValue,
     ) -> Result<Zeroizing<[u8; N]>, PortalPrivateMaterialError> {
         use base64::{Engine as _, engine::general_purpose};
 
-        let decoded = Zeroizing::new(
-            general_purpose::URL_SAFE_NO_PAD
-                .decode(input)
-                .map_err(|_| PortalPrivateMaterialError::Invalid)?,
-        );
+        let input = decode_json_string(input)?;
+        let mut decoded = Zeroizing::new(Vec::new());
+        general_purpose::URL_SAFE_NO_PAD
+            .decode_vec(&input, &mut decoded)
+            .map_err(|_| PortalPrivateMaterialError::Invalid)?;
         if decoded.len() != N {
             return Err(PortalPrivateMaterialError::Invalid);
         }
         let mut bytes = Zeroizing::new([0_u8; N]);
         bytes.copy_from_slice(&decoded);
         let canonical = Zeroizing::new(general_purpose::URL_SAFE_NO_PAD.encode(*bytes));
-        if canonical.as_str() != input {
+        if canonical.as_bytes() != input.as_slice() {
             return Err(PortalPrivateMaterialError::Invalid);
         }
         Ok(bytes)
@@ -449,15 +511,15 @@ pub fn convert_portal_private_parts(
 
     // Keep every independently decoded value in a zeroizing owner so that a
     // later-field failure also wipes values decoded earlier in this sequence.
-    let first_name = decode(&value.claim_values.first_name_value_padded)?;
-    let last_name = decode(&value.claim_values.last_name_value_padded)?;
-    let document_number = decode(&value.claim_values.document_number_value)?;
-    let issuing_state = decode(&value.claim_values.issuing_state_value)?;
-    let first_name_opening = decode(&value.openings.first_name_opening)?;
-    let last_name_opening = decode(&value.openings.last_name_opening)?;
-    let date_of_birth_opening = decode(&value.openings.date_of_birth_opening)?;
-    let document_number_opening = decode(&value.openings.document_number_opening)?;
-    let issuing_state_opening = decode(&value.openings.issuing_state_opening)?;
+    let first_name = decode(value.claim_values.first_name_value_padded)?;
+    let last_name = decode(value.claim_values.last_name_value_padded)?;
+    let document_number = decode(value.claim_values.document_number_value)?;
+    let issuing_state = decode(value.claim_values.issuing_state_value)?;
+    let first_name_opening = decode(value.openings.first_name_opening)?;
+    let last_name_opening = decode(value.openings.last_name_opening)?;
+    let date_of_birth_opening = decode(value.openings.date_of_birth_opening)?;
+    let document_number_opening = decode(value.openings.document_number_opening)?;
+    let issuing_state_opening = decode(value.openings.issuing_state_opening)?;
     let parts = PrivateParts {
         values: ClaimValues {
             first_name: *first_name,
@@ -816,6 +878,22 @@ mod tests {
         assert_eq!(converted, standalone_private_material());
         validated_private_parts(&standalone_credential(), &converted)
             .expect("converted material must satisfy signed commitments");
+    }
+
+    #[test]
+    fn portal_private_parts_accept_equivalent_escaped_base64url_text() {
+        let fixture = String::from_utf8(portal_private_parts_fixture()).expect("fixture UTF-8");
+        let marker = r#""firstNameValuePadded":""#;
+        let value_index = fixture.find(marker).expect("first-name field") + marker.len();
+        let escaped = format!(
+            "{}\\u{:04x}{}",
+            &fixture[..value_index],
+            fixture.as_bytes()[value_index],
+            &fixture[value_index + 1..],
+        );
+        let converted = convert_portal_private_parts(&standalone_credential(), escaped.as_bytes())
+            .expect("equivalent JSON escape should preserve protocol behavior");
+        assert_eq!(converted, standalone_private_material());
     }
 
     #[test]

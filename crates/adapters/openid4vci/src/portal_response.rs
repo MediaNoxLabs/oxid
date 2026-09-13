@@ -157,6 +157,7 @@ pub(super) fn parse_portal_credential_response(
     if bytes.is_empty() || bytes.len() > MAX_CREDENTIAL_BYTES {
         return Err(IssuanceProtocolError::InvalidCredentialResponse);
     }
+    validate_credential_response_depth(bytes)?;
     let response: CredentialResponse<'_> = serde_json::from_slice(bytes)
         .map_err(|_| IssuanceProtocolError::InvalidCredentialResponse)?;
     let item = &response.credentials[0];
@@ -207,6 +208,45 @@ pub(super) fn parse_portal_credential_response(
         detached_proof: Some(detached_proof),
         private_material: Some(private_material),
     })
+}
+
+fn validate_credential_response_depth(bytes: &[u8]) -> Result<(), IssuanceProtocolError> {
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut depth = 0_usize;
+    for byte in bytes.iter().copied() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'{' | b'[' => {
+                depth = depth
+                    .checked_add(1)
+                    .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
+                if depth > super::super::MAX_JSON_DEPTH {
+                    return Err(IssuanceProtocolError::InvalidCredentialResponse);
+                }
+            }
+            b'}' | b']' => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
+            }
+            _ => {}
+        }
+    }
+    if in_string || escaped || depth != 0 {
+        return Err(IssuanceProtocolError::InvalidCredentialResponse);
+    }
+    Ok(())
 }
 
 pub(super) fn decode_payload(value: &str) -> Result<Vec<u8>, IssuanceProtocolError> {

@@ -36,8 +36,8 @@ sha2.workspace = true
 serde.workspace = true
 serde_arrays.workspace = true
 serde_bytes.workspace = true
-serde_json.workspace = true
-zeroize = { workspace = true, features = ["serde"] }
+serde_json = { workspace = true, features = ["raw_value"] }
+zeroize.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 futures.workspace = true
