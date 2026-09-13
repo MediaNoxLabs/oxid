@@ -86,6 +86,13 @@ test("names the exact archive member whose ELF LOAD alignment is insufficient", 
   assert.throws(() => verifyApk(apk({ alignment: 4096 })), new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ELF LOAD segment 0 alignment 4096`));
 });
 
+test("rejects a non-power-of-two ELF LOAD alignment", () => {
+  assert.throws(
+    () => verifyApk(apk({ alignment: 49152 })),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ELF LOAD segment 0 alignment 49152`),
+  );
+});
+
 test("rejects an ELF whose declared program-header entries are undersized", () => {
   assert.throws(
     () => verifyApk(apk({ programEntrySize: 1 })),

@@ -82,7 +82,12 @@ function elfLoadSegments(bytes, member) {
 
 function verifyElf(bytes, member) {
   for (const load of elfLoadSegments(bytes, member)) {
-    if (load.align < PAGE_SIZE || load.align % PAGE_SIZE !== 0) {
+    const alignment = BigInt(load.align);
+    if (
+      load.align < PAGE_SIZE
+      || load.align % PAGE_SIZE !== 0
+      || (alignment & (alignment - 1n)) !== 0n
+    ) {
       fail(member, `ELF LOAD segment ${load.index} alignment ${load.align} is not 16 KiB compatible`);
     }
     if (load.offset % PAGE_SIZE !== load.virtualAddress % PAGE_SIZE) {
