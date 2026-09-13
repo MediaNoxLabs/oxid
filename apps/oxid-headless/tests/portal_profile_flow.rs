@@ -17,7 +17,7 @@ use std::{
 };
 
 use base64::{Engine as _, engine::general_purpose};
-use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
+use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier as _, VerifyingKey};
 use futures::executor::block_on;
 use oxid_adapter_did_midnight::{
     STANDALONE_COMPACT_PASSPORT_ISSUER_DID, StandaloneDidResolver, resolution_to_json_value,
@@ -308,6 +308,35 @@ impl PortalServer {
         fs::write(path, &bytes).expect("manifest file");
         hex::encode(Sha256::digest(bytes))
     }
+
+    fn post_credential_request(&self, request: &Value) -> (u16, Value) {
+        let body = serde_json::to_string(request).expect("credential request JSON");
+        let mut stream = std::net::TcpStream::connect(self.origin.trim_start_matches("http://"))
+            .expect("Portal fixture connection");
+        write!(
+            stream,
+            "POST /api/issuer/credentials HTTP/1.1\r\nHost: fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .expect("credential request write");
+        stream.flush().expect("credential request flush");
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("credential response read");
+        let (headers, body) = response
+            .split_once("\r\n\r\n")
+            .expect("credential response framing");
+        let status = headers
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|value| value.parse::<u16>().ok())
+            .expect("credential response status");
+        let body = serde_json::from_str(body).expect("credential response JSON");
+        (status, body)
+    }
 }
 
 impl Drop for PortalServer {
@@ -521,16 +550,48 @@ fn validate_holder_proof(proof: &str, expected: &HolderProofExpectation, audienc
         .is_ok()
 }
 
-fn mutate_jwt_json(proof: &str, index: usize, key: &str, value: Value) -> String {
-    let mut parts = proof.split('.').map(str::to_owned).collect::<Vec<_>>();
-    let bytes = general_purpose::URL_SAFE_NO_PAD
-        .decode(&parts[index])
-        .expect("JWT JSON segment");
-    let mut json: Value = serde_json::from_slice(&bytes).expect("JWT JSON");
-    json[key] = value;
-    parts[index] = general_purpose::URL_SAFE_NO_PAD
-        .encode(serde_json::to_vec(&json).expect("JWT JSON serialization"));
-    parts.join(".")
+fn signed_holder_proof(
+    signing_key: &SigningKey,
+    method_id: &str,
+    audience: &str,
+    nonce: &str,
+) -> String {
+    let protected = general_purpose::URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "alg":"EdDSA",
+            "kid":method_id,
+            "typ":"openid4vci-proof+jwt"
+        }))
+        .expect("holder proof header"),
+    );
+    let claims = general_purpose::URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({"aud":audience,"iat":1,"nonce":nonce}))
+            .expect("holder proof claims"),
+    );
+    let signing_input = format!("{protected}.{claims}");
+    let signature = signing_key.sign(signing_input.as_bytes());
+    format!(
+        "{signing_input}.{}",
+        general_purpose::URL_SAFE_NO_PAD.encode(signature.to_bytes())
+    )
+}
+
+fn with_holder_proof(request: &Value, proof: &str) -> Value {
+    let mut request = request.clone();
+    request["proofs"]["jwt"] = json!([proof]);
+    request
+}
+
+fn assert_holder_proof_rejected(server: &PortalServer, request: &Value, proof: &str) {
+    let (status, response) = server.post_credential_request(&with_holder_proof(request, proof));
+    assert_eq!(status, 400);
+    assert_eq!(response, json!({"error":"invalid_proof"}));
+    assert!(!response.to_string().contains(SECRET_CODE));
+    assert_eq!(
+        server.state.lock().expect("state").issued_credentials,
+        1,
+        "rejected proof must stop before credential issuance"
+    );
 }
 
 fn portal_private_parts() -> Value {
@@ -712,56 +773,72 @@ fn portal_standalone_profile_issues_encrypts_restores_and_reverifies_in_a_new_pr
         }),
     );
     assert_eq!(accepted["result"]["issuance"]["state"], "succeeded");
-    let (proof, expected) = {
+    let (proof, credential_request, expected) = {
         let state = server.state.lock().expect("state");
-        let proof = state
+        let credential_request = state
             .journal
             .iter()
             .find(|(path, _)| path == "/api/issuer/credentials")
             .and_then(|(_, body)| serde_json::from_str::<Value>(body).ok())
-            .and_then(|request| request["proofs"]["jwt"][0].as_str().map(str::to_owned))
-            .expect("issued request proof");
+            .expect("issued credential request");
+        let proof = credential_request["proofs"]["jwt"][0]
+            .as_str()
+            .expect("issued request proof")
+            .to_owned();
         (
             proof,
+            credential_request,
             state.holder_proof.clone().expect("proof expectation"),
         )
     };
     assert!(validate_holder_proof(&proof, &expected, &server.origin));
-    assert!(!validate_holder_proof(
-        &mutate_jwt_json(&proof, 1, "aud", json!("http://wrong.example")),
-        &expected,
-        &server.origin
-    ));
-    assert!(!validate_holder_proof(
-        &mutate_jwt_json(&proof, 1, "nonce", json!("wrong-nonce")),
-        &expected,
-        &server.origin
-    ));
-    assert!(!validate_holder_proof(
-        &mutate_jwt_json(&proof, 0, "kid", json!("did:midnight:wrong#key")),
-        &expected,
-        &server.origin
-    ));
-    assert!(!validate_holder_proof(
-        "not-a-jwt",
-        &expected,
-        &server.origin
-    ));
+    let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
+    server.state.lock().expect("state").holder_proof = Some(HolderProofExpectation {
+        holder_did: expected.holder_did.clone(),
+        method_id: expected.method_id.clone(),
+        public_key_x: general_purpose::URL_SAFE_NO_PAD
+            .encode(signing_key.verifying_key().to_bytes()),
+    });
+    let signed = |method: &str, audience: &str, nonce: &str| {
+        signed_holder_proof(&signing_key, method, audience, nonce)
+    };
+    assert_holder_proof_rejected(
+        &server,
+        &credential_request,
+        &signed(&expected.method_id, "http://wrong.example", NONCE),
+    );
+    assert_holder_proof_rejected(
+        &server,
+        &credential_request,
+        &signed(&expected.method_id, &server.origin, "wrong-nonce"),
+    );
+    assert_holder_proof_rejected(
+        &server,
+        &credential_request,
+        &signed("did:midnight:wrong#key", &server.origin, NONCE),
+    );
+    let wrong_key = SigningKey::from_bytes(&[8_u8; 32]);
+    assert_holder_proof_rejected(
+        &server,
+        &credential_request,
+        &signed_holder_proof(&wrong_key, &expected.method_id, &server.origin, NONCE),
+    );
+    assert_holder_proof_rejected(&server, &credential_request, "not-a-jwt");
+    let valid_controlled = signed(&expected.method_id, &server.origin, NONCE);
     let invalid_signature = format!(
         "{}.{}",
-        proof.rsplit_once('.').expect("JWT signature").0,
+        valid_controlled.rsplit_once('.').expect("JWT signature").0,
         "AA"
     );
-    assert!(!validate_holder_proof(
-        &invalid_signature,
-        &expected,
-        &server.origin
-    ));
-    assert_eq!(
-        server.state.lock().expect("state").issued_credentials,
-        1,
-        "rejected proofs must not issue credentials"
-    );
+    assert_holder_proof_rejected(&server, &credential_request, &invalid_signature);
+    let credential_requests_before_replay = server
+        .state
+        .lock()
+        .expect("state")
+        .journal
+        .iter()
+        .filter(|(path, _)| path == "/api/issuer/credentials")
+        .count();
     let credential_id = accepted["result"]["issuance"]["credentialId"]
         .as_str()
         .expect("credential id")
@@ -811,7 +888,7 @@ fn portal_standalone_profile_issues_encrypts_restores_and_reverifies_in_a_new_pr
             .iter()
             .filter(|(path, _)| path == "/api/issuer/credentials")
             .count(),
-        1,
+        credential_requests_before_replay,
         "a replay must stop before the credential endpoint"
     );
     drop(server_state);
