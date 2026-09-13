@@ -208,6 +208,16 @@ test("the verifier can be imported by an eval process without a main-script argu
   assert.equal(result.stdout, "");
 });
 
+test("an eval import stays inert when argv contains the verifier path", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", `import ${JSON.stringify(pathToFileURL(script).href)}`, script, "candidate.apk"],
+    { cwd: root, encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "");
+});
+
 test("the verifier can be imported by a stdin module whose argv entry is not a path", () => {
   const result = spawnSync(process.execPath, ["--input-type=module", "-"], {
     cwd: root,

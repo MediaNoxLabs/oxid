@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { inflateRawSync } from "node:zlib";
 
 const PAGE_SIZE = 16 * 1024;
@@ -207,15 +206,4 @@ function main() {
   }
 }
 
-function isMainModule() {
-  if (!process.argv[1]) return false;
-  try {
-    const argumentUrl = pathToFileURL(path.resolve(process.argv[1])).href;
-    return import.meta.url === argumentUrl
-      || import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
-  } catch {
-    return false;
-  }
-}
-
-if (isMainModule()) main();
+if (import.meta.main) main();
