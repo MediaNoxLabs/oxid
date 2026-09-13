@@ -61,6 +61,30 @@ test("desktop driver startup contracts are phased, bounded, and payload-free", a
   assert.doesNotMatch(harness, /System Events|Accessibility/);
 });
 
+test("headless Portal source provenance is exact-pin-bound before service mutation", async () => {
+  const [harness, runbook] = await Promise.all([
+    text("scripts/e2e/portal-headless-e2e.sh"),
+    text("docs/factory/portal-macos-laptop.md"),
+  ]);
+
+  assert.match(harness, /git -C "\$RUN_TREE" fetch origin "\$PORTAL_COMMIT"/);
+  assert.match(harness, /fetch origin "\$PORTAL_COMMIT".*fail source-fetch/s);
+  assert.match(harness, /rev-parse FETCH_HEAD\^\{commit\}\)" = "\$PORTAL_COMMIT".*fail portal-commit/);
+  assert.match(harness, /rev-parse FETCH_HEAD\^\{tree\}\)" = "\$PORTAL_TREE".*fail portal-tree/);
+  assert.match(harness, /remote set-url origin "\$PORTAL_REMOTE"/);
+  assert.doesNotMatch(harness, /fetch origin integration/);
+  assert.match(harness, /portal-headless-e2e: FAIL phase=%s/);
+
+  const remoteLock = harness.indexOf('remote set-url origin "$PORTAL_REMOTE"');
+  const exactFetch = harness.indexOf('fetch origin "$PORTAL_COMMIT"');
+  const treeCheck = harness.indexOf('rev-parse FETCH_HEAD^{tree}');
+  const firstMutation = harness.indexOf('portal-consumer-lifecycle.sh" prerequisite');
+  assert.ok(remoteLock >= 0 && remoteLock < exactFetch);
+  assert.ok(exactFetch < treeCheck && treeCheck < firstMutation);
+  assert.match(runbook, /exact pinned Portal commit and tree,\s+independently of the mutable upstream branch head/);
+  assert.match(runbook, /fails before Docker or service\s+mutation/);
+});
+
 test("canonical macOS laptop lane runs headless before desktop and validates both exact-head records", async () => {
   const [justfile, runner] = await Promise.all([text("Justfile"), text("run.sh")]);
   const match = justfile.match(/^portal-macos-laptop-e2e:\n((?:    .*\n)+)/m);
