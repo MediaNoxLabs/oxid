@@ -656,6 +656,195 @@ fn native_transport_source_disables_ambient_routing_and_automatic_replay() {
 }
 
 #[test]
+fn token_and_nonce_responses_remain_strictly_typed() {
+    assert_eq!(
+        parse_token_response(br#"{"access_token":"token","expires_in":300,"token_type":"Bearer"}"#)
+            .as_ref()
+            .map(|value| value.as_str()),
+        Ok("token")
+    );
+    assert_eq!(
+        parse_nonce_response(br#"{"c_nonce":"nonce","c_nonce_expires_in":300}"#)
+            .as_ref()
+            .map(|value| value.as_str()),
+        Ok("nonce")
+    );
+    assert_eq!(
+        parse_token_response(
+            br#"{"access_token":"token","expires_in":300,"token_type":"B\u0065arer"}"#
+        )
+        .as_ref()
+        .map(|value| value.as_str()),
+        Ok("token")
+    );
+
+    for response in [
+        br#"{"access_token":"token","expires_in":"300","token_type":"Bearer"}"#.as_slice(),
+        br#"{"access_token":"token","expires_in":300,"token_type":"Basic"}"#,
+        br#"{"access_token":"","expires_in":300,"token_type":"Bearer"}"#,
+        br#"{"access_token":7,"expires_in":300,"token_type":"Bearer"}"#,
+        br#"{"access_token":"token","expires_in":300,"token_type":"Bearer","extra":true}"#,
+        br#"{"expires_in":300,"token_type":"Bearer"}"#,
+        br#"{"access_token":"token","token_type":"Bearer"}"#,
+        br#"{"access_token":"token","expires_in":300}"#,
+    ] {
+        assert_eq!(
+            parse_token_response(response),
+            Err(IssuanceProtocolError::IssuerRejected)
+        );
+    }
+    for response in [
+        br#"{"c_nonce":"nonce","c_nonce_expires_in":"300"}"#.as_slice(),
+        br#"{"c_nonce":"","c_nonce_expires_in":300}"#,
+        br#"{"c_nonce":7,"c_nonce_expires_in":300}"#,
+        br#"{"c_nonce":"nonce","c_nonce_expires_in":300,"extra":true}"#,
+        br#"{"c_nonce_expires_in":300}"#,
+        br#"{"c_nonce":"nonce"}"#,
+    ] {
+        assert_eq!(
+            parse_nonce_response(response),
+            Err(IssuanceProtocolError::IssuerRejected)
+        );
+    }
+}
+
+#[test]
+fn secret_response_strings_decode_escaped_ascii_and_unicode_without_serde_ownership() {
+    assert_eq!(
+        parse_token_response(
+            br#"{"access_token":"quote:\" slash:\\ solidus:\/ controls:\b\f\n\r\t","expires_in":300,"token_type":"Bearer"}"#
+        )
+        .as_ref()
+        .map(|value| value.as_str()),
+        Ok("quote:\" slash:\\ solidus:/ controls:\u{0008}\u{000c}\n\r\t")
+    );
+    assert_eq!(
+        parse_nonce_response(
+            br#"{"c_nonce":"caf\u00e9-\u6c34-\ud83d\ude80","c_nonce_expires_in":300}"#
+        )
+        .as_ref()
+        .map(|value| value.as_str()),
+        Ok("café-水-🚀")
+    );
+    assert_eq!(
+        parse_nonce_response(
+            "{\"c_nonce\":\"direct-水-🚀\",\"c_nonce_expires_in\":300}".as_bytes()
+        )
+        .as_ref()
+        .map(|value| value.as_str()),
+        Ok("direct-水-🚀")
+    );
+}
+
+#[test]
+fn secret_response_strings_reject_malformed_escapes_and_decoded_bounds() {
+    for response in [
+        br#"{"access_token":"prefix\xsuffix","expires_in":300,"token_type":"Bearer"}"#.as_slice(),
+        br#"{"access_token":"prefix\u12","expires_in":300,"token_type":"Bearer"}"#,
+        br#"{"access_token":"prefix\ud800suffix","expires_in":300,"token_type":"Bearer"}"#,
+        br#"{"access_token":"prefix\ud800\u0041","expires_in":300,"token_type":"Bearer"}"#,
+        br#"{"access_token":"prefix\udc00","expires_in":300,"token_type":"Bearer"}"#,
+    ] {
+        assert_eq!(
+            parse_token_response(response),
+            Err(IssuanceProtocolError::InvalidMetadata)
+        );
+    }
+
+    let oversized_ascii = format!(
+        r#"{{"access_token":"{}","expires_in":300,"token_type":"Bearer"}}"#,
+        "a".repeat(MAX_SECRET_BYTES + 1)
+    );
+    assert_eq!(
+        parse_token_response(oversized_ascii.as_bytes()),
+        Err(IssuanceProtocolError::IssuerRejected)
+    );
+
+    let oversized_escaped = format!(
+        r#"{{"c_nonce":"{}","c_nonce_expires_in":300}}"#,
+        "\\u00e9".repeat(MAX_SECRET_BYTES / 2 + 1)
+    );
+    assert_eq!(
+        parse_nonce_response(oversized_escaped.as_bytes()),
+        Err(IssuanceProtocolError::IssuerRejected)
+    );
+}
+
+#[test]
+fn secret_response_partial_failures_and_full_document_limits_are_payload_free() {
+    for response in [
+        br#"{"access_token":"decoded\nsecret","expires_in":300,"token_type":"Basic"}"#.as_slice(),
+        br#"{"access_token":"borrowed\u0020secret","expires_in":"invalid","token_type":"Bearer"}"#,
+    ] {
+        let error = parse_token_response(response).expect_err("response must be rejected");
+        assert_eq!(error, IssuanceProtocolError::IssuerRejected);
+        assert_eq!(error.code(), "issuer_rejected");
+    }
+    let nonce_error = parse_nonce_response(
+        br#"{"c_nonce":"borrowed\ud83d\ude80secret","c_nonce_expires_in":"invalid"}"#,
+    )
+    .expect_err("partially parsed nonce response must be rejected");
+    assert_eq!(nonce_error, IssuanceProtocolError::IssuerRejected);
+    assert_eq!(nonce_error.code(), "issuer_rejected");
+
+    for response in [
+        br#"{"access_token":"borrowed-secret","expires_in":300,"token_type":"Bearer"} trailing"#.as_slice(),
+        br#"{"access_token":"partially\xsensitive","expires_in":300,"token_type":"Bearer"}"#,
+        br#"{"access_token":"first","access_token":"second","expires_in":300,"token_type":"Bearer"}"#,
+        br#"{"access_token":"first","\u0061ccess_token":"second","expires_in":300,"token_type":"Bearer"}"#,
+        br#"{"access_token":"borrowed-secret","expires_in":300,"token_type":"Bearer","extra":{"key":1,"key":2}}"#,
+    ] {
+        let error = parse_token_response(response).expect_err("response must be rejected");
+        assert_eq!(error, IssuanceProtocolError::InvalidMetadata);
+        assert_eq!(error.code(), "invalid_metadata");
+    }
+    assert_eq!(
+        parse_nonce_response(br#"{"c_nonce":"first","c_nonce":"second","c_nonce_expires_in":300}"#),
+        Err(IssuanceProtocolError::InvalidMetadata)
+    );
+
+    let nesting = super::super::MAX_JSON_DEPTH;
+    let too_deep = format!(
+        r#"{{"access_token":"borrowed-secret","expires_in":300,"token_type":"Bearer","extra":{}0{}}}"#,
+        "[".repeat(nesting),
+        "]".repeat(nesting)
+    );
+    assert_eq!(
+        parse_token_response(too_deep.as_bytes()),
+        Err(IssuanceProtocolError::InvalidMetadata)
+    );
+    let stack_hostile = format!(
+        r#"{{"access_token":"borrowed-secret","expires_in":300,"token_type":"Bearer","extra":{}0{}}}"#,
+        "[".repeat(4_096),
+        "]".repeat(4_096)
+    );
+    assert_eq!(
+        parse_token_response(stack_hostile.as_bytes()),
+        Err(IssuanceProtocolError::InvalidMetadata),
+        "depth must be rejected before recursively traversing a size-bounded hostile value"
+    );
+    let at_depth_limit = format!(
+        r#"{{"access_token":"borrowed-secret","expires_in":300,"token_type":"Bearer","extra":{}0{}}}"#,
+        "[".repeat(nesting - 1),
+        "]".repeat(nesting - 1)
+    );
+    assert_eq!(
+        parse_token_response(at_depth_limit.as_bytes()),
+        Err(IssuanceProtocolError::IssuerRejected),
+        "a structurally valid response at the old depth limit reaches semantic validation"
+    );
+
+    let oversized_response = format!(
+        r#"{{"access_token":"token","expires_in":300,"token_type":"Bearer","extra":"{}"}}"#,
+        "x".repeat(super::super::MAX_PROTOCOL_RESPONSE_BYTES)
+    );
+    assert_eq!(
+        parse_token_response(oversized_response.as_bytes()),
+        Err(IssuanceProtocolError::InvalidMetadata)
+    );
+}
+
+#[test]
 fn hostile_urls_content_types_sizes_and_legacy_shapes_fail_closed() {
     for url in [
         "http://issuer.example/api/issuer/token",
