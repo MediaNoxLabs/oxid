@@ -6,7 +6,7 @@ import { copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { deflateRawSync } from "node:zlib";
 
 import { verifyApk } from "./android-verify-16k.mjs";
@@ -140,4 +140,14 @@ test("the command executes when its filesystem path requires URL encoding", asyn
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("the verifier can be imported by an eval process without a main-script argument", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", `import ${JSON.stringify(pathToFileURL(script).href)}`],
+    { cwd: root, encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "");
 });
