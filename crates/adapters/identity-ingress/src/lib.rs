@@ -946,7 +946,13 @@ impl IdentityLinkIngressPort for NativeIdentityLinkIngress {
         let trigger_fetch_in_flight;
         let has_captured_link;
         {
+            #[cfg(feature = "loopback-test-offer-trigger")]
             let mut captured = self
+                .captured
+                .lock()
+                .map_err(|_| IdentityLinkIngressError::Failed)?;
+            #[cfg(not(feature = "loopback-test-offer-trigger"))]
+            let captured = self
                 .captured
                 .lock()
                 .map_err(|_| IdentityLinkIngressError::Failed)?;
