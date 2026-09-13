@@ -22,7 +22,7 @@ use oxid_credential_domain::{
     CredentialClaimPrivacy, CredentialDisclosureCandidate, CredentialDisclosureManifest,
     MAX_CREDENTIAL_PRIVATE_MATERIAL_BYTES, MAX_SIGNED_CREDENTIAL_BYTES,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de};
 use serde_json::value::RawValue;
 use sha2::{Digest as _, Sha256};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -543,62 +543,188 @@ pub fn convert_portal_private_parts(
     encode_private_parts(&parts).map_err(|_| PortalPrivateMaterialError::Invalid)
 }
 
+/// A fixed-size private CBOR byte string. This copies directly from the
+/// decoder's borrowed input into a zeroizing owner, avoiding a generic CBOR
+/// value tree (and its ordinary byte-vector owners) for stored secrets.
+struct PrivateBytes<const N: usize>(Zeroizing<[u8; N]>);
+
+impl<const N: usize> PrivateBytes<N> {
+    fn into_array(self) -> [u8; N] {
+        *self.0
+    }
+}
+
+impl<'de, const N: usize> Deserialize<'de> for PrivateBytes<N> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        struct BytesVisitor<const N: usize>;
+
+        impl<const N: usize> de::Visitor<'_> for BytesVisitor<N> {
+            type Value = PrivateBytes<N>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(formatter, "a {N}-byte CBOR byte string")
+            }
+
+            fn visit_borrowed_bytes<E>(self, value: &'_ [u8]) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                self.visit_bytes(value)
+            }
+
+            fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if value.len() != N {
+                    return Err(E::invalid_length(value.len(), &self));
+                }
+                let mut bytes = Zeroizing::new([0_u8; N]);
+                bytes.copy_from_slice(value);
+                Ok(PrivateBytes(bytes))
+            }
+        }
+
+        deserializer.deserialize_bytes(BytesVisitor::<N>)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct DecodedClaimValues {
+    first_name_value_padded: PrivateBytes<64>,
+    last_name_value_padded: PrivateBytes<64>,
+    date_of_birth_days: Zeroizing<u32>,
+    document_number_value: PrivateBytes<32>,
+    issuing_state_value: PrivateBytes<32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct DecodedOpenings {
+    first_name_opening: PrivateBytes<32>,
+    last_name_opening: PrivateBytes<32>,
+    date_of_birth_opening: PrivateBytes<32>,
+    document_number_opening: PrivateBytes<32>,
+    issuing_state_opening: PrivateBytes<32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct DecodedPrivateParts {
+    version: u64,
+    claim_values: DecodedClaimValues,
+    openings: DecodedOpenings,
+}
+
+impl From<DecodedPrivateParts> for PrivateParts {
+    fn from(decoded: DecodedPrivateParts) -> Self {
+        Self {
+            values: ClaimValues {
+                first_name: decoded.claim_values.first_name_value_padded.into_array(),
+                last_name: decoded.claim_values.last_name_value_padded.into_array(),
+                date_of_birth_days: *decoded.claim_values.date_of_birth_days,
+                document_number: decoded.claim_values.document_number_value.into_array(),
+                issuing_state: decoded.claim_values.issuing_state_value.into_array(),
+            },
+            openings: ClaimOpenings {
+                first_name: decoded.openings.first_name_opening.into_array(),
+                last_name: decoded.openings.last_name_opening.into_array(),
+                date_of_birth: decoded.openings.date_of_birth_opening.into_array(),
+                document_number: decoded.openings.document_number_opening.into_array(),
+                issuing_state: decoded.openings.issuing_state_opening.into_array(),
+            },
+        }
+    }
+}
+
 fn parse_private_parts(bytes: &[u8]) -> Result<PrivateParts, CredentialDisclosurePortError> {
     if bytes.is_empty() || bytes.len() > MAX_CREDENTIAL_PRIVATE_MATERIAL_BYTES {
         return Err(CredentialDisclosurePortError::InvalidPrivateMaterial);
     }
+    validate_private_cbor_shape(bytes)?;
     let mut input = bytes;
-    let value: Value = ciborium::de::from_reader_with_recursion_limit(&mut input, 8)
-        .map_err(|_| CredentialDisclosurePortError::InvalidPrivateMaterial)?;
-    if !input.is_empty() {
+    // Ciborium's recursion-limit convenience API owns an ordinary 4 KiB
+    // scratch array. Supply the smallest useful scratch buffer ourselves so
+    // every copied private byte is wiped when parsing returns. The typed
+    // schema accepts only the root map and its two fixed child maps; it never
+    // recursively consumes unknown values.
+    let mut scratch = Zeroizing::new([0_u8; 64]);
+    let decoded: DecodedPrivateParts =
+        ciborium::de::from_reader_with_buffer(&mut input, scratch.as_mut())
+            .map_err(|_| CredentialDisclosurePortError::InvalidPrivateMaterial)?;
+    if !input.is_empty() || decoded.version != PRIVATE_MATERIAL_VERSION {
         return Err(CredentialDisclosurePortError::InvalidPrivateMaterial);
     }
-    let root = value
-        .as_map()
-        .ok_or(CredentialDisclosurePortError::InvalidPrivateMaterial)?;
-    strict_keys(root, &["version", "claimValues", "openings"])?;
-    if required_u64(root, "version")? != PRIVATE_MATERIAL_VERSION {
-        return Err(CredentialDisclosurePortError::InvalidPrivateMaterial);
+    Ok(decoded.into())
+}
+
+fn validate_private_cbor_shape(bytes: &[u8]) -> Result<(), CredentialDisclosurePortError> {
+    fn item(bytes: &[u8], offset: usize, depth: u8) -> Option<usize> {
+        if depth > 8 {
+            return None;
+        }
+        let initial = *bytes.get(offset)?;
+        let major = initial >> 5;
+        let additional = initial & 0x1f;
+        let (argument, header_len) = match additional {
+            value @ 0..=23 => (u64::from(value), 1),
+            24 => (u64::from(*bytes.get(offset + 1)?), 2),
+            25 => (
+                u64::from(u16::from_be_bytes(
+                    bytes.get(offset + 1..offset + 3)?.try_into().ok()?,
+                )),
+                3,
+            ),
+            26 => (
+                u64::from(u32::from_be_bytes(
+                    bytes.get(offset + 1..offset + 5)?.try_into().ok()?,
+                )),
+                5,
+            ),
+            27 => (
+                u64::from_be_bytes(bytes.get(offset + 1..offset + 9)?.try_into().ok()?),
+                9,
+            ),
+            _ => return None,
+        };
+        let mut next = offset.checked_add(header_len)?;
+        match major {
+            0 | 1 | 7 => Some(next),
+            2 | 3 => next
+                .checked_add(usize::try_from(argument).ok()?)
+                .filter(|end| *end <= bytes.len()),
+            // The private envelope contains no arrays. In particular, reject
+            // Serde's positional struct representation and retain the former
+            // map-only contract.
+            4 => None,
+            5 => {
+                for _ in 0..argument {
+                    // Stored-private maps use text field names. Rejecting other
+                    // key types keeps Serde from widening the former exact-key
+                    // contract without ever copying a private value.
+                    if bytes.get(next).copied()? >> 5 != 3 {
+                        return None;
+                    }
+                    next = item(bytes, next, depth + 1)?;
+                    next = item(bytes, next, depth + 1)?;
+                }
+                Some(next)
+            }
+            // Tags would let a typed decoder accept a representation that the
+            // previous strict value parser rejected.
+            6 => None,
+            _ => None,
+        }
     }
-    let values = required_map(root, "claimValues")?;
-    strict_keys(
-        values,
-        &[
-            "firstNameValuePadded",
-            "lastNameValuePadded",
-            "dateOfBirthDays",
-            "documentNumberValue",
-            "issuingStateValue",
-        ],
-    )?;
-    let openings = required_map(root, "openings")?;
-    strict_keys(
-        openings,
-        &[
-            "firstNameOpening",
-            "lastNameOpening",
-            "dateOfBirthOpening",
-            "documentNumberOpening",
-            "issuingStateOpening",
-        ],
-    )?;
-    Ok(PrivateParts {
-        values: ClaimValues {
-            first_name: required_bytes(values, "firstNameValuePadded")?,
-            last_name: required_bytes(values, "lastNameValuePadded")?,
-            date_of_birth_days: u32::try_from(required_u64(values, "dateOfBirthDays")?)
-                .map_err(|_| CredentialDisclosurePortError::InvalidPrivateMaterial)?,
-            document_number: required_bytes(values, "documentNumberValue")?,
-            issuing_state: required_bytes(values, "issuingStateValue")?,
-        },
-        openings: ClaimOpenings {
-            first_name: required_bytes(openings, "firstNameOpening")?,
-            last_name: required_bytes(openings, "lastNameOpening")?,
-            date_of_birth: required_bytes(openings, "dateOfBirthOpening")?,
-            document_number: required_bytes(openings, "documentNumberOpening")?,
-            issuing_state: required_bytes(openings, "issuingStateOpening")?,
-        },
-    })
+
+    match item(bytes, 0, 1) {
+        Some(consumed) if consumed == bytes.len() => Ok(()),
+        _ => Err(CredentialDisclosurePortError::InvalidPrivateMaterial),
+    }
 }
 
 pub(crate) fn validated_private_parts(
@@ -745,13 +871,6 @@ fn required_bytes<const N: usize>(
         .ok_or(CredentialDisclosurePortError::InvalidPrivateMaterial)
 }
 
-fn required_u64(map: &[(Value, Value)], key: &str) -> Result<u64, CredentialDisclosurePortError> {
-    let value = required(map, key)?
-        .as_integer()
-        .ok_or(CredentialDisclosurePortError::InvalidPrivateMaterial)?;
-    u64::try_from(value).map_err(|_| CredentialDisclosurePortError::InvalidPrivateMaterial)
-}
-
 fn decode_padded_text<const N: usize>(
     bytes: &[u8; N],
 ) -> Result<String, CredentialDisclosurePortError> {
@@ -809,7 +928,7 @@ mod tests {
     }
 
     #[test]
-    fn private_codec_rejects_malformed_oversized_tampered_and_duplicate_fields() {
+    fn private_codec_preserves_valid_canonical_envelope_and_rejects_malformed_inputs() {
         let material = standalone_private_material();
         let parts = parse_private_parts(&material).expect("private parts");
         let expected = standalone_commitments();
@@ -849,6 +968,61 @@ mod tests {
         ciborium::into_writer(&duplicate, &mut bytes).expect("encode malformed fixture");
         assert_eq!(
             parse_private_parts(&bytes).err(),
+            Some(CredentialDisclosurePortError::InvalidPrivateMaterial)
+        );
+    }
+
+    #[test]
+    fn private_codec_rejects_deep_and_partial_private_material() {
+        let material = standalone_private_material();
+        let partial = &material[..material.len() - 1];
+        assert_eq!(
+            parse_private_parts(partial).err(),
+            Some(CredentialDisclosurePortError::InvalidPrivateMaterial)
+        );
+
+        let mut deep = Vec::new();
+        for _ in 0..9 {
+            deep.extend_from_slice(b"\xa1\x61x");
+        }
+        deep.push(0);
+        assert_eq!(
+            parse_private_parts(&deep).err(),
+            Some(CredentialDisclosurePortError::InvalidPrivateMaterial)
+        );
+
+        let mut tagged = material.clone();
+        tagged.insert(0, 0xc0);
+        assert_eq!(
+            parse_private_parts(&tagged).err(),
+            Some(CredentialDisclosurePortError::InvalidPrivateMaterial)
+        );
+
+        let version_key = b"\x67version";
+        let key_offset = material
+            .windows(version_key.len())
+            .position(|window| window == version_key)
+            .expect("canonical text key");
+        let mut byte_string_key = material;
+        byte_string_key[key_offset] = 0x47;
+        assert_eq!(
+            parse_private_parts(&byte_string_key).err(),
+            Some(CredentialDisclosurePortError::InvalidPrivateMaterial)
+        );
+
+        let value: Value = ciborium::from_reader(byte_string_key.as_slice())
+            .expect("decode canonical private fixture");
+        let positional = match value {
+            Value::Map(entries) => {
+                Value::Array(entries.into_iter().map(|(_, value)| value).collect())
+            }
+            _ => panic!("canonical private fixture must be a map"),
+        };
+        let mut positional_bytes = Vec::new();
+        ciborium::into_writer(&positional, &mut positional_bytes)
+            .expect("encode positional private fixture");
+        assert_eq!(
+            parse_private_parts(&positional_bytes).err(),
             Some(CredentialDisclosurePortError::InvalidPrivateMaterial)
         );
     }
