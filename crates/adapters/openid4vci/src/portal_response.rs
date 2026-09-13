@@ -154,6 +154,9 @@ pub(super) fn parse_portal_credential_response(
     expected_nonce: &str,
     decoder: &dyn PortalCredentialMaterialDecoder,
 ) -> Result<IssuedCredentialBytes, IssuanceProtocolError> {
+    if bytes.is_empty() || bytes.len() > MAX_CREDENTIAL_BYTES {
+        return Err(IssuanceProtocolError::InvalidCredentialResponse);
+    }
     let response: CredentialResponse<'_> = serde_json::from_slice(bytes)
         .map_err(|_| IssuanceProtocolError::InvalidCredentialResponse)?;
     let item = &response.credentials[0];
@@ -227,6 +230,7 @@ fn compact_private_json(value: &RawValue) -> Result<Zeroizing<Vec<u8>>, Issuance
     let mut compact = Zeroizing::new(Vec::with_capacity(source.len()));
     let mut in_string = false;
     let mut escaped = false;
+    let mut depth = 0_usize;
     for byte in source.bytes() {
         if in_string {
             compact.push(byte);
@@ -241,8 +245,27 @@ fn compact_private_json(value: &RawValue) -> Result<Zeroizing<Vec<u8>>, Issuance
             in_string = true;
             compact.push(byte);
         } else if !byte.is_ascii_whitespace() {
+            match byte {
+                b'{' | b'[' => {
+                    depth = depth
+                        .checked_add(1)
+                        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
+                    if depth > super::super::MAX_JSON_DEPTH {
+                        return Err(IssuanceProtocolError::InvalidCredentialResponse);
+                    }
+                }
+                b'}' | b']' => {
+                    depth = depth
+                        .checked_sub(1)
+                        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
+                }
+                _ => {}
+            }
             compact.push(byte);
         }
+    }
+    if in_string || depth != 0 {
+        return Err(IssuanceProtocolError::InvalidCredentialResponse);
     }
     Ok(compact)
 }

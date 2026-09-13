@@ -374,6 +374,38 @@ fn credential_response_rejects_duplicate_fields_and_preserves_decoder_errors() {
     );
     assert_eq!(
         parse_portal_credential_response(
+            &vec![b' '; MAX_CREDENTIAL_BYTES + 1],
+            HOLDER_DID,
+            BINDING_METHOD,
+            "SYNTHETIC_NONCE",
+            &Decoder,
+        ),
+        Err(IssuanceProtocolError::InvalidCredentialResponse),
+    );
+
+    let too_deep = String::from_utf8(response.clone())
+        .expect("fixture UTF-8")
+        .replacen(
+            r#""private-parts-contract-value""#,
+            &format!(
+                "{}0{}",
+                "[".repeat(super::super::MAX_JSON_DEPTH),
+                "]".repeat(super::super::MAX_JSON_DEPTH)
+            ),
+            1,
+        );
+    assert_eq!(
+        parse_portal_credential_response(
+            too_deep.as_bytes(),
+            HOLDER_DID,
+            BINDING_METHOD,
+            "SYNTHETIC_NONCE",
+            &Decoder,
+        ),
+        Err(IssuanceProtocolError::InvalidCredentialResponse),
+    );
+    assert_eq!(
+        parse_portal_credential_response(
             &response,
             HOLDER_DID,
             BINDING_METHOD,
