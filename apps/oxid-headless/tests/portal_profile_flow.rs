@@ -640,12 +640,20 @@ fn portal_standalone_profile_issues_encrypts_restores_and_reverifies_in_a_new_pr
         replayed["ok"], false,
         "a redeemed grant must not issue again"
     );
+    assert_eq!(replayed["error"]["code"], "issuer_rejected");
     assert!(!replayed.to_string().contains(SECRET_CODE));
+    let server_state = server.state.lock().expect("state");
     assert_eq!(
-        server
-            .state
-            .lock()
-            .expect("state")
+        server_state
+            .journal
+            .iter()
+            .filter(|(path, _)| path == "/api/issuer/token")
+            .count(),
+        2,
+        "a replay must reach token exchange"
+    );
+    assert_eq!(
+        server_state
             .journal
             .iter()
             .filter(|(path, _)| path == "/api/issuer/credentials")
@@ -653,6 +661,7 @@ fn portal_standalone_profile_issues_encrypts_restores_and_reverifies_in_a_new_pr
         1,
         "a replay must stop before the credential endpoint"
     );
+    drop(server_state);
 
     let listed = request(&mut first, "list", "credential.list", json!({}));
     assert_eq!(
