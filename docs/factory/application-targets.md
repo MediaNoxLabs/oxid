@@ -86,6 +86,8 @@ have 16 KiB-aligned ZIP data placement; a Deflate-compressed member is decoded
 before inspection because Android extracts it instead of directly mapping the
 archive entry. Every decoded ELF must have compatible `LOAD` alignment and
 congruent file/virtual offsets. Failures name the exact archive-member path.
+Compressed native members are bounded to 512 MiB during inspection so malformed
+archive metadata cannot request multi-gigabyte decompression.
 The default is the existing local Android build output; a release candidate
 must be passed explicitly. The hermetic fixtures cover compliant and
 non-compliant ZIP/ELF cases, so neither an APK build nor an Android SDK is

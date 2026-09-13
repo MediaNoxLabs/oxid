@@ -152,6 +152,13 @@ test("bounds compressed native members by their declared uncompressed size", () 
   );
 });
 
+test("rejects an attacker-controlled compressed size above the inspection limit", () => {
+  assert.throws(
+    () => verifyApk(apk({ method: 8, declaredUncompressedSize: 0xffffffff })),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: compressed ZIP member exceeds the 512 MiB inspection safety limit`),
+  );
+});
+
 test("the documented command reports the exact offending archive member", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "oxid-android-16k-"));
   try {

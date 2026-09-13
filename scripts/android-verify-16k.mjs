@@ -7,6 +7,7 @@ import { inflateRawSync } from "node:zlib";
 
 const PAGE_SIZE = 16 * 1024;
 const LOAD = 1;
+const MAX_INFLATED_NATIVE_BYTES = 512 * 1024 * 1024;
 
 function fail(member, message) {
   throw new Error(`${member}: ${message}`);
@@ -174,6 +175,9 @@ export function verifyApk(archive, archiveName = "APK") {
       }
       elfBytes = stored;
     } else if (member.method === 8) {
+      if (member.uncompressedSize > MAX_INFLATED_NATIVE_BYTES) {
+        fail(member.name, "compressed ZIP member exceeds the 512 MiB inspection safety limit");
+      }
       try {
         elfBytes = inflateRawSync(stored, { maxOutputLength: member.uncompressedSize + 1 });
       } catch {
