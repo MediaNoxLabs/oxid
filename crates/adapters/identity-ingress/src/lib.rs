@@ -250,7 +250,7 @@ mod loopback_test_offer_trigger {
     pub const TRIGGER: &str = "openid-credential-offer://standalone-portal-test-fetch";
 
     const LOOPBACK_OFFER_PORT: u16 = 18091;
-    const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
+    pub(super) const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
     const MAX_RESPONSE_BYTES: usize = 32 * 1_024;
     const CAPABILITY_BYTES: usize = 64;
     #[cfg(any(
@@ -712,30 +712,63 @@ pub struct NativeIdentityLinkIngress {
 struct CapturedIdentityLinks {
     links: VecDeque<InboundIdentityLink>,
     #[cfg(feature = "loopback-test-offer-trigger")]
-    trigger_fetch_in_flight: bool,
+    trigger_fetch_reservation: Option<TriggerFetchReservation>,
+    #[cfg(feature = "loopback-test-offer-trigger")]
+    next_trigger_fetch_reservation_id: u64,
+}
+
+#[cfg(feature = "loopback-test-offer-trigger")]
+struct TriggerFetchReservation {
+    id: u64,
+    deadline: std::time::Instant,
+}
+
+#[cfg(feature = "loopback-test-offer-trigger")]
+impl CapturedIdentityLinks {
+    fn expire_trigger_fetch_reservation(&mut self) {
+        if self
+            .trigger_fetch_reservation
+            .as_ref()
+            .is_some_and(|reservation| reservation.deadline <= std::time::Instant::now())
+        {
+            self.trigger_fetch_reservation = None;
+        }
+    }
 }
 
 #[cfg(feature = "loopback-test-offer-trigger")]
 struct TriggerFetchInFlightReset {
     captured: Arc<Mutex<CapturedIdentityLinks>>,
+    reservation_id: u64,
     armed: bool,
 }
 
 #[cfg(feature = "loopback-test-offer-trigger")]
 impl TriggerFetchInFlightReset {
-    fn new(captured: Arc<Mutex<CapturedIdentityLinks>>) -> Self {
+    fn new(captured: Arc<Mutex<CapturedIdentityLinks>>, reservation_id: u64) -> Self {
         Self {
             captured,
+            reservation_id,
             armed: true,
         }
     }
 
     fn complete(mut self, link: InboundIdentityLink) {
         let completed = if let Ok(mut captured) = self.captured.lock() {
-            captured.trigger_fetch_in_flight = false;
-            if captured.links.is_empty() {
-                captured.links.push_back(link);
+            captured.expire_trigger_fetch_reservation();
+            let is_current = captured
+                .trigger_fetch_reservation
+                .as_ref()
+                .is_some_and(|reservation| reservation.id == self.reservation_id);
+            if !is_current {
+                return;
             }
+            assert!(
+                captured.links.is_empty(),
+                "current trigger reservation completed with an occupied identity-link queue"
+            );
+            captured.trigger_fetch_reservation = None;
+            captured.links.push_back(link);
             true
         } else {
             false
@@ -751,8 +784,12 @@ impl Drop for TriggerFetchInFlightReset {
     fn drop(&mut self) {
         if self.armed
             && let Ok(mut captured) = self.captured.lock()
+            && captured
+                .trigger_fetch_reservation
+                .as_ref()
+                .is_some_and(|reservation| reservation.id == self.reservation_id)
         {
-            captured.trigger_fetch_in_flight = false;
+            captured.trigger_fetch_reservation = None;
         }
     }
 }
@@ -786,8 +823,11 @@ impl NativeIdentityLinkIngress {
             .lock()
             .map_err(|_| IdentityLinkIngressError::Failed)?;
         #[cfg(feature = "loopback-test-offer-trigger")]
-        if captured.trigger_fetch_in_flight {
-            return Err(IdentityLinkIngressError::QueueFull);
+        {
+            captured.expire_trigger_fetch_reservation();
+            if captured.trigger_fetch_reservation.is_some() {
+                return Err(IdentityLinkIngressError::QueueFull);
+            }
         }
         if captured.links.len() >= IDENTITY_LINK_QUEUE_LIMIT {
             return Err(IdentityLinkIngressError::QueueFull);
@@ -815,24 +855,32 @@ impl NativeIdentityLinkIngress {
         // Validate the fixed literal before reserving the one-item queue. The
         // worker validates its fetched result again before it can enqueue.
         let literal = InboundIdentityLink::new(value)?;
-        {
+        let reservation_id = {
             let mut captured = self
                 .captured
                 .lock()
                 .map_err(|_| IdentityLinkIngressError::Failed)?;
-            if captured.trigger_fetch_in_flight || captured.links.len() >= IDENTITY_LINK_QUEUE_LIMIT
+            captured.expire_trigger_fetch_reservation();
+            if captured.trigger_fetch_reservation.is_some()
+                || captured.links.len() >= IDENTITY_LINK_QUEUE_LIMIT
             {
                 return Err(IdentityLinkIngressError::QueueFull);
             }
-            captured.trigger_fetch_in_flight = true;
-        }
+            let reservation_id = captured.next_trigger_fetch_reservation_id;
+            captured.next_trigger_fetch_reservation_id = reservation_id.wrapping_add(1);
+            captured.trigger_fetch_reservation = Some(TriggerFetchReservation {
+                id: reservation_id,
+                deadline: std::time::Instant::now() + loopback_test_offer_trigger::CONTROL_TIMEOUT,
+            });
+            reservation_id
+        };
 
         let captured = Arc::clone(&self.captured);
         let fallback = literal.clone();
         let worker = std::thread::Builder::new()
             .name("oxid-portal-offer-fetch".to_owned())
             .spawn(move || {
-                let reset = TriggerFetchInFlightReset::new(captured);
+                let reset = TriggerFetchInFlightReset::new(captured, reservation_id);
                 let resolved = resolver();
                 let resolved = validated_trigger_result(&resolved).unwrap_or(fallback);
                 reset.complete(resolved);
@@ -842,8 +890,16 @@ impl NativeIdentityLinkIngress {
                 .captured
                 .lock()
                 .map_err(|_| IdentityLinkIngressError::Failed)?;
-            captured.trigger_fetch_in_flight = false;
-            if captured.links.is_empty() {
+            if captured
+                .trigger_fetch_reservation
+                .as_ref()
+                .is_some_and(|reservation| reservation.id == reservation_id)
+            {
+                captured.trigger_fetch_reservation = None;
+                assert!(
+                    captured.links.is_empty(),
+                    "trigger worker could not start with an occupied identity-link queue"
+                );
                 captured.links.push_back(literal);
             }
         }
@@ -890,14 +946,15 @@ impl IdentityLinkIngressPort for NativeIdentityLinkIngress {
         let trigger_fetch_in_flight;
         let has_captured_link;
         {
-            let captured = self
+            let mut captured = self
                 .captured
                 .lock()
                 .map_err(|_| IdentityLinkIngressError::Failed)?;
             has_captured_link = !captured.links.is_empty();
             #[cfg(feature = "loopback-test-offer-trigger")]
             {
-                trigger_fetch_in_flight = captured.trigger_fetch_in_flight;
+                captured.expire_trigger_fetch_reservation();
+                trigger_fetch_in_flight = captured.trigger_fetch_reservation.is_some();
             }
         }
         if has_captured_link {
@@ -1274,6 +1331,81 @@ mod tests {
             "openid-credential-offer://?credential_offer=%7B%7D"
         );
         assert_eq!(ingress.take_pending(), Ok(None));
+    }
+
+    #[cfg(feature = "loopback-test-offer-trigger")]
+    #[test]
+    fn expired_trigger_reservation_allows_reuse_and_ignores_late_completion() {
+        use std::sync::mpsc;
+
+        let ingress = NativeIdentityLinkIngress::standalone_portal_test();
+        let (first_started_tx, first_started_rx) = mpsc::sync_channel(1);
+        let (first_release_tx, first_release_rx) = mpsc::sync_channel(1);
+        ingress
+            .capture_with_trigger_resolver(
+                loopback_test_offer_trigger::TRIGGER.to_owned(),
+                move || {
+                    first_started_tx.send(()).expect("signal first worker start");
+                    first_release_rx.recv().expect("release first worker");
+                    Zeroizing::new(
+                        "openid-credential-offer://?credential_offer=%7B%22worker%22%3A%22first%22%7D"
+                            .to_owned(),
+                    )
+                },
+            )
+            .expect("schedule first trigger");
+        first_started_rx.recv().expect("first worker started");
+
+        {
+            let mut captured = ingress.captured.lock().expect("captured queue");
+            captured
+                .trigger_fetch_reservation
+                .as_mut()
+                .expect("first reservation")
+                .deadline = std::time::Instant::now();
+        }
+        ingress
+            .capture(LOGIN.to_owned())
+            .expect("expired slot reused");
+        assert_eq!(
+            ingress
+                .take_pending()
+                .expect("take replacement")
+                .expect("replacement link")
+                .into_inner(),
+            LOGIN
+        );
+
+        let (second_started_tx, second_started_rx) = mpsc::sync_channel(1);
+        let (second_release_tx, second_release_rx) = mpsc::sync_channel(1);
+        ingress
+            .capture_with_trigger_resolver(
+                loopback_test_offer_trigger::TRIGGER.to_owned(),
+                move || {
+                    second_started_tx.send(()).expect("signal second worker start");
+                    second_release_rx.recv().expect("release second worker");
+                    Zeroizing::new(
+                        "openid-credential-offer://?credential_offer=%7B%22worker%22%3A%22second%22%7D"
+                            .to_owned(),
+                    )
+                },
+            )
+            .expect("schedule second trigger");
+        second_started_rx.recv().expect("second worker started");
+
+        first_release_tx
+            .send(())
+            .expect("release late first worker");
+        assert_eq!(
+            ingress.capture(LOGIN.to_owned()),
+            Err(IdentityLinkIngressError::QueueFull),
+            "late completion must not release the newer reservation"
+        );
+        second_release_tx.send(()).expect("release second worker");
+        assert_eq!(
+            wait_for_pending(&ingress).into_inner(),
+            "openid-credential-offer://?credential_offer=%7B%22worker%22%3A%22second%22%7D"
+        );
     }
 
     #[cfg(feature = "loopback-test-offer-trigger")]
