@@ -70,6 +70,32 @@ Android deployment supports an explicitly selected physical device or emulator
 accepted by the existing launcher policy. The default local profile accepts an
 emulator; the reviewed Tailnet Portal path owns physical-device configuration.
 
+## Android 16 KiB native-library inspection
+
+Inspect an already-built APK without building, installing, launching, or
+selecting an Android target:
+
+```bash
+just android-verify-16k
+# For a milestone/release candidate:
+just android-verify-16k /path/to/app-release.apk
+```
+
+The command checks every packaged `.so` member. It fails closed with that exact
+archive-member path when the member is compressed, its ZIP data placement is
+not 16 KiB aligned, or any ELF `LOAD` segment has insufficient alignment or
+non-congruent file/virtual offsets. Its default is the existing local Android
+build output; the release candidate must be passed explicitly. The hermetic
+fixtures cover compliant and non-compliant ZIP/ELF cases, so neither an APK
+build nor an Android SDK is needed to test the verifier.
+
+This is an on-demand static artifact check. It is not evidence that an APK was
+built with the pinned Android/Gradle/NDK toolchain and it does not replace the
+supervisor-owned bounded 16 KiB-capable virtual/physical target smoke. Keep
+artifact hashes, ABI set, tool versions, and target page-size evidence in the
+final private/public review receipt as appropriate; never include device serials
+or local SDK paths.
+
 `ios-deploy` installs only into iOS Simulator. Physical iOS deployment is not
 implemented because it requires an owner-approved signing, provisioning, and
 device policy. These commands do not publish to an application store and do
