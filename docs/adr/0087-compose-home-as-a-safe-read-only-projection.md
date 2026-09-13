@@ -8,6 +8,7 @@
 - Tracking: issues #2, #65, and #79
 - Implementation state: Home projects existing safe account, security, shielded-sync, credential, and Passport Vault views while Wallet retains every operational control
 - Amended by: ADR-0106
+- Amended by: ADR-0109 (Proposed)
 
 ## Context
 
