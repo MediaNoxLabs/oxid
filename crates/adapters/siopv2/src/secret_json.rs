@@ -5,7 +5,7 @@ use zeroize::Zeroizing;
 
 pub(super) fn decode_json_string(
     raw: &[u8],
-    max_bytes: usize,
+    max_characters: usize,
     reject_empty: bool,
 ) -> Result<Zeroizing<String>, SelfIssuedProtocolError> {
     if raw.len() < 2 || raw.first() != Some(&b'"') || raw.last() != Some(&b'"') {
@@ -14,6 +14,7 @@ pub(super) fn decode_json_string(
 
     let end = raw.len() - 1;
     let mut decoded = Zeroizing::new(String::with_capacity(end.saturating_sub(1)));
+    let mut character_count = 0;
     let mut index = 1;
     while index < end {
         let byte = raw[index];
@@ -81,10 +82,11 @@ pub(super) fn decode_json_string(
                 character
             }
         };
-        decoded.push(character);
-        if decoded.len() > max_bytes {
+        if character.is_control() || character_count >= max_characters {
             return Err(SelfIssuedProtocolError::InvalidProof);
         }
+        decoded.push(character);
+        character_count += 1;
     }
     if reject_empty && decoded.is_empty() {
         return Err(SelfIssuedProtocolError::InvalidProof);

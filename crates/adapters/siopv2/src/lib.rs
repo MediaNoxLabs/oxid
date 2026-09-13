@@ -44,12 +44,12 @@ const TOKEN_LIFETIME_SECONDS: u64 = 300;
 
 #[derive(Serialize)]
 struct SelfIssuedProofClaims<'a> {
-    iss: &'a str,
-    sub: &'a str,
     aud: &'a str,
-    nonce: &'a str,
-    iat: u64,
     exp: u64,
+    iat: u64,
+    iss: &'a str,
+    nonce: &'a str,
+    sub: &'a str,
 }
 
 #[derive(Serialize)]
@@ -61,15 +61,15 @@ struct SelfIssuedResponse<'a> {
 #[derive(Serialize)]
 struct SelfIssuedRequestObject<'a> {
     client_id: &'a str,
-    response_type: &'a str,
+    exp: u64,
+    iat: u64,
+    nonce: &'a str,
+    purpose: &'a str,
     response_mode: &'a str,
+    response_type: &'a str,
     response_uri: &'a str,
     scope: &'a str,
-    nonce: &'a str,
     state: &'a str,
-    iat: u64,
-    exp: u64,
-    purpose: &'a str,
 }
 
 #[derive(Deserialize)]
@@ -119,17 +119,52 @@ struct BorrowedSelfIssuedClaims<'a> {
     exp: u64,
 }
 
+struct BoundedSensitiveJsonWriter {
+    bytes: Zeroizing<Vec<u8>>,
+}
+
+impl BoundedSensitiveJsonWriter {
+    fn new() -> Self {
+        Self {
+            bytes: Zeroizing::new(Vec::with_capacity(MAX_PROTOCOL_BYTES)),
+        }
+    }
+
+    fn into_bytes(self) -> Zeroizing<Vec<u8>> {
+        self.bytes
+    }
+}
+
+impl std::io::Write for BoundedSensitiveJsonWriter {
+    fn write(&mut self, input: &[u8]) -> std::io::Result<usize> {
+        if input.len() > MAX_PROTOCOL_BYTES.saturating_sub(self.bytes.len()) {
+            return Err(std::io::Error::other(
+                "sensitive JSON exceeds the protocol bound",
+            ));
+        }
+        self.bytes.extend_from_slice(input);
+        Ok(input.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 fn serialize_sensitive_json<T: Serialize + ?Sized>(
     value: &T,
 ) -> Result<Zeroizing<Vec<u8>>, serde_json::Error> {
-    let mut bytes = Zeroizing::new(Vec::new());
-    serde_json::to_writer(&mut *bytes, value)?;
-    Ok(bytes)
+    let mut writer = BoundedSensitiveJsonWriter::new();
+    serde_json::to_writer(&mut writer, value)?;
+    Ok(writer.into_bytes())
 }
 
 fn encode_sensitive_base64(input: &[u8]) -> Zeroizing<String> {
-    let mut encoded = Zeroizing::new(String::new());
+    let encoded_length = base64::encoded_len(input.len(), false)
+        .expect("bounded sensitive JSON has a representable base64 length");
+    let mut encoded = Zeroizing::new(String::with_capacity(encoded_length));
     general_purpose::URL_SAFE_NO_PAD.encode_string(input, &mut encoded);
+    debug_assert_eq!(encoded.len(), encoded_length);
     encoded
 }
 
@@ -927,24 +962,36 @@ impl SelfIssuedIdentityProofPort for DidSelfIssuedIdentityProof {
                 "typ": "JWT"
             });
             let payload = SelfIssuedProofClaims {
-                iss: &request.holder_did,
-                sub: &request.holder_did,
                 aud: &request.audience,
-                nonce: request.nonce,
-                iat: request.issued_at_seconds,
                 exp: request.expires_at_seconds,
+                iat: request.issued_at_seconds,
+                iss: &request.holder_did,
+                nonce: request.nonce,
+                sub: &request.holder_did,
             };
             let protected = general_purpose::URL_SAFE_NO_PAD
                 .encode(serde_json::to_vec(&header).map_err(|_| SelfIssuedProofError::Rejected)?);
             let payload =
                 serialize_sensitive_json(&payload).map_err(|_| SelfIssuedProofError::Rejected)?;
             let claims = encode_sensitive_base64(&payload);
-            let mut signing_input =
-                Zeroizing::new(String::with_capacity(protected.len() + claims.len() + 1));
+            let signature_length = base64::encoded_len(64, false)
+                .expect("the fixed JWT signature has a representable base64 length");
+            let signing_input_length = protected
+                .len()
+                .checked_add(1)
+                .and_then(|length| length.checked_add(claims.len()))
+                .ok_or(SelfIssuedProofError::Rejected)?;
+            let jwt_length = signing_input_length
+                .checked_add(1)
+                .and_then(|length| length.checked_add(signature_length))
+                .filter(|length| *length <= MAX_PROTOCOL_BYTES)
+                .ok_or(SelfIssuedProofError::Rejected)?;
+            let mut signing_input = Zeroizing::new(String::with_capacity(signing_input_length));
             signing_input.push_str(&protected);
             signing_input.push('.');
             signing_input.push_str(&claims);
-            let mut signing_payload = Zeroizing::new(Vec::with_capacity(signing_input.len()));
+            debug_assert_eq!(signing_input.len(), signing_input_length);
+            let mut signing_payload = Zeroizing::new(Vec::with_capacity(signing_input_length));
             signing_payload.extend_from_slice(signing_input.as_bytes());
             let signature = self
                 .sign
@@ -969,10 +1016,12 @@ impl SelfIssuedIdentityProofPort for DidSelfIssuedIdentityProof {
             {
                 return Err(SelfIssuedProofError::Rejected);
             }
-            signing_input.push('.');
-            general_purpose::URL_SAFE_NO_PAD
-                .encode_string(signature.signature_bytes, &mut signing_input);
-            Ok(Box::new(ZeroizingSelfIssuedProofJwt(signing_input)) as Box<dyn SelfIssuedProofJwt>)
+            let mut jwt = Zeroizing::new(String::with_capacity(jwt_length));
+            jwt.push_str(&signing_input);
+            jwt.push('.');
+            general_purpose::URL_SAFE_NO_PAD.encode_string(signature.signature_bytes, &mut jwt);
+            debug_assert_eq!(jwt.len(), jwt_length);
+            Ok(Box::new(ZeroizingSelfIssuedProofJwt(jwt)) as Box<dyn SelfIssuedProofJwt>)
         })
     }
 }
@@ -1149,6 +1198,80 @@ mod tests {
     }
 
     #[test]
+    fn sensitive_json_preserves_legacy_lexicographic_field_order() {
+        let claims = serialize_sensitive_json(&SelfIssuedProofClaims {
+            aud: "audience",
+            exp: 2,
+            iat: 1,
+            iss: "issuer",
+            nonce: "nonce",
+            sub: "subject",
+        })
+        .expect("claims should serialize");
+        assert_eq!(
+            claims.as_slice(),
+            br#"{"aud":"audience","exp":2,"iat":1,"iss":"issuer","nonce":"nonce","sub":"subject"}"#
+        );
+
+        let request = serialize_sensitive_json(&SelfIssuedRequestObject {
+            client_id: "client",
+            exp: 2,
+            iat: 1,
+            nonce: "nonce",
+            purpose: "purpose",
+            response_mode: "mode",
+            response_type: "type",
+            response_uri: "uri",
+            scope: "scope",
+            state: "state",
+        })
+        .expect("request should serialize");
+        assert_eq!(
+            request.as_slice(),
+            br#"{"client_id":"client","exp":2,"iat":1,"nonce":"nonce","purpose":"purpose","response_mode":"mode","response_type":"type","response_uri":"uri","scope":"scope","state":"state"}"#
+        );
+
+        let response = serialize_sensitive_json(&SelfIssuedResponse {
+            id_token: "token",
+            state: "state",
+        })
+        .expect("response should serialize");
+        assert_eq!(
+            response.as_slice(),
+            br#"{"id_token":"token","state":"state"}"#
+        );
+    }
+
+    #[test]
+    fn json_string_validation_rejects_escaped_controls() {
+        let escaped_controls: &[&[u8]] = &[
+            br#""line\nbreak""#,
+            br#""tab\tbreak""#,
+            br#""backspace\b""#,
+            br#""unicode\u000aescape""#,
+            br#""unicode\u0085escape""#,
+        ];
+        for raw in escaped_controls {
+            assert_eq!(
+                decode_json_string(raw, MAX_SECRET_CHARACTERS, true).err(),
+                Some(SelfIssuedProtocolError::InvalidProof)
+            );
+        }
+    }
+
+    #[test]
+    fn json_string_limit_counts_unicode_characters_not_utf8_bytes() {
+        let raw = r#""é界🙂""#.as_bytes();
+        let decoded = decode_json_string(raw, 3, true)
+            .expect("three multibyte characters should fit a three-character limit");
+        assert_eq!(decoded.as_str(), "é界🙂");
+        assert_eq!(
+            decode_json_string(raw, 2, true).err(),
+            Some(SelfIssuedProtocolError::InvalidProof)
+        );
+    }
+
+    #[test]
     fn duplicate_request_members_and_vp_mode_fail_closed() {
         let duplicate = br#"{"client_id":"http://127.0.0.1:32192/verifier","client_id":"https://attacker.example","response_type":"id_token","response_mode":"direct_post","response_uri":"http://127.0.0.1:32192/verifier/response","scope":"openid","nonce":"n","state":"s","iat":1,"exp":2,"purpose":"Authenticate"}"#;
         assert_eq!(
@@ -1317,6 +1440,12 @@ mod tests {
             map.serialize_entry("nonce", "sensitive-nonce")?;
             Err(serde::ser::Error::custom("rejected"))
         }
+    }
+
+    #[test]
+    fn sensitive_json_serialization_refuses_protocol_bound_overflow() {
+        let oversized = "x".repeat(MAX_PROTOCOL_BYTES);
+        assert!(serialize_sensitive_json(oversized.as_str()).is_err());
     }
 
     #[test]
