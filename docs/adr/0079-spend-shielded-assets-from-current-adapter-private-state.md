@@ -1,6 +1,7 @@
 # ADR-0079: Spend shielded assets from current adapter-private state
 
 - Status: Accepted
+- Amended by: ADR-0110
 - Date: 2026-08-18
 - Blueprint source: Sections 3–8, 12–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/tx/balance.rs`, `tx/prove.rs`, and the shielded wallet state
