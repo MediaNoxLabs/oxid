@@ -32,6 +32,7 @@ function elfLoadSegments(bytes, member) {
   let programCount;
   let offsetAt;
   let virtualAddressAt;
+  let fileSizeAt;
   let alignAt;
   let minimumProgramEntrySize;
 
@@ -41,6 +42,7 @@ function elfLoadSegments(bytes, member) {
     programCount = view.getUint16(44, true);
     offsetAt = 4;
     virtualAddressAt = 8;
+    fileSizeAt = 16;
     alignAt = 28;
     minimumProgramEntrySize = 32;
   } else if (elfClass === 2) {
@@ -50,6 +52,7 @@ function elfLoadSegments(bytes, member) {
     programCount = view.getUint16(56, true);
     offsetAt = 8;
     virtualAddressAt = 16;
+    fileSizeAt = 32;
     alignAt = 48;
     minimumProgramEntrySize = 56;
   } else {
@@ -74,6 +77,7 @@ function elfLoadSegments(bytes, member) {
       index,
       offset: read(offsetAt, "LOAD offset"),
       virtualAddress: read(virtualAddressAt, "LOAD virtual address"),
+      fileSize: read(fileSizeAt, "LOAD file size"),
       align: read(alignAt, "LOAD alignment"),
     });
   }
@@ -83,6 +87,9 @@ function elfLoadSegments(bytes, member) {
 
 function verifyElf(bytes, member) {
   for (const load of elfLoadSegments(bytes, member)) {
+    if (load.offset > bytes.length || load.fileSize > bytes.length - load.offset) {
+      fail(member, `ELF LOAD segment ${load.index} extends beyond the shared library`);
+    }
     const alignment = BigInt(load.align);
     if (
       load.align < PAGE_SIZE
@@ -112,7 +119,11 @@ function zipMembers(archive) {
   }
   if (end < 0) throw new Error("APK: ZIP end-of-central-directory record is missing");
   const entries = view.getUint16(end + 10, true);
+  const centralSize = view.getUint32(end + 12, true);
   const centralOffset = view.getUint32(end + 16, true);
+  if (centralOffset + centralSize !== end) {
+    throw new Error("APK: ZIP central-directory extent is inconsistent");
+  }
   const members = [];
   let offset = centralOffset;
   for (let index = 0; index < entries; index += 1) {
@@ -126,6 +137,10 @@ function zipMembers(archive) {
     const extraLength = view.getUint16(offset + 30, true);
     const commentLength = view.getUint16(offset + 32, true);
     const localOffset = view.getUint32(offset + 42, true);
+    const recordEnd = offset + 46 + nameLength + extraLength + commentLength;
+    if (recordEnd > end) {
+      throw new Error("APK: ZIP central-directory variable fields are truncated");
+    }
     const name = new TextDecoder().decode(archive.subarray(offset + 46, offset + 46 + nameLength));
     if (localOffset + 30 > archive.length || view.getUint32(localOffset, true) !== 0x04034b50) {
       fail(name, "ZIP local header is missing");
@@ -135,8 +150,9 @@ function zipMembers(archive) {
     const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
     if (dataOffset + compressedSize > archive.length) fail(name, "ZIP member data is truncated");
     members.push({ name, method, compressedSize, uncompressedSize, dataOffset });
-    offset += 46 + nameLength + extraLength + commentLength;
+    offset = recordEnd;
   }
+  if (offset !== end) throw new Error("APK: ZIP central-directory entry count is inconsistent");
   return members;
 }
 

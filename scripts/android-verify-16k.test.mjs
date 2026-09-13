@@ -16,7 +16,7 @@ const script = path.join(root, "scripts", "android-verify-16k.mjs");
 const PAGE_SIZE = 16 * 1024;
 const member = "lib/arm64-v8a/liboxid.so";
 
-function elf({ alignment = PAGE_SIZE, fileOffset = 0, virtualAddress = 0, programEntrySize = 56 } = {}) {
+function elf({ alignment = PAGE_SIZE, fileOffset = 0, fileSize = 0, virtualAddress = 0, programEntrySize = 56 } = {}) {
   const bytes = Buffer.alloc(64 + 56);
   bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
   bytes.writeUInt16LE(3, 16);
@@ -30,13 +30,13 @@ function elf({ alignment = PAGE_SIZE, fileOffset = 0, virtualAddress = 0, progra
   bytes.writeBigUInt64LE(BigInt(fileOffset), 72);
   bytes.writeBigUInt64LE(BigInt(virtualAddress), 80);
   bytes.writeBigUInt64LE(BigInt(virtualAddress), 88);
-  bytes.writeBigUInt64LE(0n, 96);
+  bytes.writeBigUInt64LE(BigInt(fileSize), 96);
   bytes.writeBigUInt64LE(0n, 104);
   bytes.writeBigUInt64LE(BigInt(alignment), 112);
   return bytes;
 }
 
-function apk({ archiveAligned = true, method = 0, memberName = member, ...elfOptions } = {}) {
+function apk({ archiveAligned = true, centralExtraLength = 0, method = 0, memberName = member, ...elfOptions } = {}) {
   const payload = elf(elfOptions);
   const stored = method === 8 ? deflateRawSync(payload) : payload;
   const name = Buffer.from(memberName);
@@ -52,6 +52,7 @@ function apk({ archiveAligned = true, method = 0, memberName = member, ...elfOpt
   central.writeUInt32LE(0x02014b50, 0);
   central.writeUInt16LE(method, 10);
   central.writeUInt16LE(name.length, 28);
+  central.writeUInt16LE(centralExtraLength, 30);
   central.writeUInt32LE(stored.length, 20);
   central.writeUInt32LE(payload.length, 24);
   const end = Buffer.alloc(22);
@@ -95,8 +96,15 @@ test("rejects a non-power-of-two ELF LOAD alignment", () => {
 
 test("checks ELF LOAD congruence against the declared alignment", () => {
   assert.throws(
-    () => verifyApk(apk({ alignment: 65536, fileOffset: 16384 })),
+    () => verifyApk(apk({ alignment: 65536, fileOffset: 64 })),
     new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ELF LOAD segment 0 offset and virtual address`),
+  );
+});
+
+test("rejects a LOAD segment whose file extent exceeds the decoded ELF", () => {
+  assert.throws(
+    () => verifyApk(apk({ fileOffset: PAGE_SIZE, fileSize: PAGE_SIZE })),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ELF LOAD segment 0 extends beyond`),
   );
 });
 
@@ -111,6 +119,13 @@ test("fails closed when an APK contains no native shared libraries", () => {
   assert.throws(
     () => verifyApk(apk({ memberName: "assets/not-a-library.bin" }), "empty.apk"),
     /empty\.apk: APK contains no native shared libraries/,
+  );
+});
+
+test("rejects truncated central-directory variable fields", () => {
+  assert.throws(
+    () => verifyApk(apk({ centralExtraLength: 65535 })),
+    /APK: ZIP central-directory variable fields are truncated/,
   );
 });
 
