@@ -2934,7 +2934,8 @@ mod tests {
     use oxid_foundation::UnixTimestampMillis;
     use oxid_wallet_application::WalletTransactionPort;
     use oxid_wallet_domain::{
-        ChainAccountId, ChainAddressKind, PublicKeyEncoding, WalletKeyReference, WalletPublicKey,
+        AssetBalance, AssetSymbol, ChainAccountId, ChainAddress, ChainAddressKind, ChainAsset,
+        ChainAssetId, ChainNetworkId, PublicKeyEncoding, WalletKeyReference, WalletPublicKey,
     };
 
     use super::*;
@@ -3764,6 +3765,53 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct AuthorizationPreviewFields {
+        network_id: ChainNetworkId,
+        account_id: ChainAccountId,
+        recipient: ChainAddress,
+        amount: AssetBalance,
+        change: AssetBalance,
+        fee: Option<AssetBalance>,
+        fee_state: WalletTransactionFeeState,
+        input_count: u16,
+        expires_at: UnixTimestampMillis,
+    }
+
+    impl AuthorizationPreviewFields {
+        fn from_preview(preview: &WalletTransferPreview) -> Self {
+            Self {
+                network_id: preview.network_id().clone(),
+                account_id: preview.account_id().clone(),
+                recipient: preview.recipient().clone(),
+                amount: preview.amount().clone(),
+                change: preview.change().clone(),
+                fee: preview.fee().cloned(),
+                fee_state: preview.fee_state(),
+                input_count: preview.input_count(),
+                expires_at: preview.expires_at(),
+            }
+        }
+
+        fn build(self, baseline: &WalletTransferPreview) -> WalletTransferPreview {
+            WalletTransferPreview::new(
+                baseline.draft_id().clone(),
+                baseline.authorization_challenge().clone(),
+                self.network_id,
+                self.account_id,
+                self.recipient,
+                self.amount,
+                self.change,
+                self.fee,
+                self.fee_state,
+                self.input_count,
+                self.expires_at,
+                baseline.state(),
+            )
+            .expect("mutation preserves preview invariants")
+        }
+    }
+
     #[test]
     fn planning_matches_prototype_greedy_selection_and_is_idempotent() {
         let adapter = adapter();
@@ -3789,16 +3837,160 @@ mod tests {
         let prepared = adapter
             .prepare(&profile(), request(2_000))
             .expect("transfer prepares");
-        let changed_fee = prepared.with_final_fee(AssetBalance::new(
+        let prepared_with_fee = prepared.with_final_fee(AssetBalance::new(
             midnight_asset("midnight:dust", "DUST", SPECKS_PER_DUST).expect("asset is valid"),
             1,
         ));
-        assert_ne!(
-            authorization_challenge(prepared.draft_id(), b"same signing payload", &prepared,)
-                .expect("challenge encodes preview"),
-            authorization_challenge(prepared.draft_id(), b"same signing payload", &changed_fee,)
-                .expect("changed preview encodes differently")
+        let baseline = AuthorizationPreviewFields::from_preview(&prepared_with_fee);
+        let amount_asset = prepared_with_fee.amount().asset();
+        let fee_asset = prepared_with_fee.fee().expect("baseline fee").asset();
+        let mut cases = Vec::new();
+        let mut add = |name, fields: AuthorizationPreviewFields| {
+            cases.push((
+                name,
+                fields.build(&prepared_with_fee),
+                b"same signing payload".as_slice(),
+            ));
+        };
+
+        let mut fields = baseline.clone();
+        fields.recipient = fixture_addresses(&network_id("preprod").expect("network is valid"))
+            .expect("fixture addresses encode")
+            .remove(0);
+        add("recipient-value", fields);
+
+        let mut fields = baseline.clone();
+        fields.recipient = fixture_addresses(prepared_with_fee.network_id())
+            .expect("fixture addresses encode")
+            .remove(1);
+        add("recipient-kind", fields);
+
+        let mut fields = baseline.clone();
+        fields.network_id = network_id("preprod").expect("network is valid");
+        add("network", fields);
+
+        let mut fields = baseline.clone();
+        fields.account_id =
+            ChainAccountId::parse("midnight_account_0_1").expect("account id is valid");
+        add("account", fields);
+
+        let mut fields = baseline.clone();
+        let asset = ChainAsset::new(
+            ChainAssetId::parse("midnight:night-alternate").expect("asset id is valid"),
+            amount_asset.symbol().clone(),
+            amount_asset.decimals(),
         );
+        fields.amount = AssetBalance::new(asset.clone(), prepared_with_fee.amount().atomic_units());
+        fields.change = AssetBalance::new(asset, prepared_with_fee.change().atomic_units());
+        add("amount-and-change-asset-id", fields);
+
+        let mut fields = baseline.clone();
+        let asset = ChainAsset::new(
+            amount_asset.id().clone(),
+            AssetSymbol::parse("NIGHT-ALT").expect("asset symbol is valid"),
+            amount_asset.decimals(),
+        );
+        fields.amount = AssetBalance::new(asset.clone(), prepared_with_fee.amount().atomic_units());
+        fields.change = AssetBalance::new(asset, prepared_with_fee.change().atomic_units());
+        add("amount-and-change-asset-symbol", fields);
+
+        let mut fields = baseline.clone();
+        let asset = ChainAsset::new(
+            amount_asset.id().clone(),
+            amount_asset.symbol().clone(),
+            amount_asset.decimals() + 1,
+        );
+        fields.amount = AssetBalance::new(asset.clone(), prepared_with_fee.amount().atomic_units());
+        fields.change = AssetBalance::new(asset, prepared_with_fee.change().atomic_units());
+        add("amount-and-change-decimals", fields);
+
+        let mut fields = baseline.clone();
+        fields.amount = AssetBalance::new(
+            amount_asset.clone(),
+            prepared_with_fee.amount().atomic_units() + 1,
+        );
+        add("amount-value", fields);
+
+        let mut fields = baseline.clone();
+        fields.change = AssetBalance::new(
+            amount_asset.clone(),
+            prepared_with_fee.change().atomic_units() + 1,
+        );
+        add("change-value", fields);
+
+        let mut fields = baseline.clone();
+        fields.fee = None;
+        fields.fee_state = WalletTransactionFeeState::RequiresBalancing;
+        add("fee-presence", fields);
+
+        let mut fields = baseline.clone();
+        fields.fee = Some(AssetBalance::new(
+            ChainAsset::new(
+                ChainAssetId::parse("midnight:dust-alternate").expect("asset id is valid"),
+                fee_asset.symbol().clone(),
+                fee_asset.decimals(),
+            ),
+            prepared_with_fee
+                .fee()
+                .expect("baseline fee")
+                .atomic_units(),
+        ));
+        add("fee-asset", fields);
+
+        let mut fields = baseline.clone();
+        fields.fee = Some(AssetBalance::new(
+            ChainAsset::new(
+                fee_asset.id().clone(),
+                fee_asset.symbol().clone(),
+                fee_asset.decimals() + 1,
+            ),
+            prepared_with_fee
+                .fee()
+                .expect("baseline fee")
+                .atomic_units(),
+        ));
+        add("fee-decimals", fields);
+
+        let mut fields = baseline.clone();
+        fields.fee = Some(AssetBalance::new(
+            fee_asset.clone(),
+            prepared_with_fee
+                .fee()
+                .expect("baseline fee")
+                .atomic_units()
+                + 1,
+        ));
+        add("fee-value", fields);
+
+        let mut fields = baseline.clone();
+        fields.fee_state = WalletTransactionFeeState::Estimated;
+        add("fee-state", fields);
+
+        let mut fields = baseline.clone();
+        fields.input_count += 1;
+        add("input-count", fields);
+
+        let mut fields = baseline.clone();
+        fields.expires_at = UnixTimestampMillis::new(prepared_with_fee.expires_at().value() + 1);
+        add("expiry", fields);
+        drop(add);
+
+        cases.push((
+            "payload",
+            prepared_with_fee.clone(),
+            b"different signing payload",
+        ));
+        let baseline_challenge = authorization_challenge(
+            prepared_with_fee.draft_id(),
+            b"same signing payload",
+            &prepared_with_fee,
+        )
+        .expect("baseline challenge encodes");
+        for (name, preview, payload) in cases {
+            let changed = authorization_challenge(preview.draft_id(), payload, &preview)
+                .expect("changed challenge encodes");
+            assert!(baseline_challenge != changed, "{name}");
+        }
 
         let request = AuthorizeWalletTransferRequest {
             draft_id: prepared.draft_id().clone(),
