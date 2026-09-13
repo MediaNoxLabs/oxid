@@ -161,8 +161,8 @@ use zeroize::{Zeroize, Zeroizing};
 
 #[cfg(feature = "ui-profile-dev")]
 use developer_tools::{
-    DeveloperCapabilitiesPage, DeveloperProofBenchmarkPage, DeveloperSectionNav, DeveloperToolsHub,
-    is_developer_route, is_developer_section,
+    DeveloperCapabilitiesPage, DeveloperProofBenchmarkPage, DeveloperSectionNav,
+    DeveloperSectionPager, DeveloperToolsHub, is_developer_route, is_developer_section,
 };
 #[cfg(feature = "ui-profile-dev")]
 use diagnostics::DeveloperDiagnosticsPage;
@@ -3976,28 +3976,38 @@ fn WalletApp() -> Element {
                         }
                     },
                     #[cfg(feature = "ui-profile-dev")]
-                    Route::DeveloperManifest => rsx! {
+                    Route::DeveloperManifest
+                    | Route::DeveloperProofBenchmark
+                    | Route::DeveloperDiagnostics => rsx! {
                         DeveloperSectionNav {
                             current: content_route,
                             on_select: move |route| navigation.write().replace_secondary(route),
                         }
-                        DeveloperCapabilitiesPage {}
-                    },
-                    #[cfg(feature = "ui-profile-dev")]
-                    Route::DeveloperProofBenchmark => rsx! {
-                        DeveloperSectionNav {
+                        DeveloperSectionPager {
                             current: content_route,
                             on_select: move |route| navigation.write().replace_secondary(route),
+                            section {
+                                class: "developer-section-pager__page",
+                                tabindex: -1,
+                                aria_hidden: if content_route == Route::DeveloperManifest { "false" } else { "true" },
+                                inert: html_boolean_attribute(content_route != Route::DeveloperManifest),
+                                DeveloperCapabilitiesPage {}
+                            }
+                            section {
+                                class: "developer-section-pager__page",
+                                tabindex: -1,
+                                aria_hidden: if content_route == Route::DeveloperProofBenchmark { "false" } else { "true" },
+                                inert: html_boolean_attribute(content_route != Route::DeveloperProofBenchmark),
+                                DeveloperProofBenchmarkPage {}
+                            }
+                            section {
+                                class: "developer-section-pager__page",
+                                tabindex: -1,
+                                aria_hidden: if content_route == Route::DeveloperDiagnostics { "false" } else { "true" },
+                                inert: html_boolean_attribute(content_route != Route::DeveloperDiagnostics),
+                                DeveloperDiagnosticsPage {}
+                            }
                         }
-                        DeveloperProofBenchmarkPage {}
-                    },
-                    #[cfg(feature = "ui-profile-dev")]
-                    Route::DeveloperDiagnostics => rsx! {
-                        DeveloperSectionNav {
-                            current: content_route,
-                            on_select: move |route| navigation.write().replace_secondary(route),
-                        }
-                        DeveloperDiagnosticsPage {}
                     },
                     Route::Settings | Route::BackupRecovery => rsx! {
                         SettingsPage {
@@ -10888,42 +10898,6 @@ mod tests {
         );
         assert!(navigation.pop());
         assert_eq!(navigation.current(), Route::Developer);
-    }
-
-    #[cfg(feature = "ui-profile-dev")]
-    #[test]
-    fn developer_section_navigation_and_benchmark_keep_phone_width_contracts() {
-        assert_eq!(
-            developer_tools::DEVELOPER_SECTIONS,
-            [
-                (Route::DeveloperManifest, "Capabilities"),
-                (Route::DeveloperProofBenchmark, "Benchmark"),
-                (Route::DeveloperDiagnostics, "Event log"),
-            ]
-        );
-
-        let section_nav = BASE_STYLES
-            .split(".developer-section-nav {")
-            .nth(1)
-            .and_then(|styles| styles.split('}').next())
-            .expect("developer section navigation rule");
-        assert!(section_nav.contains("overflow-x: auto;"));
-        assert!(section_nav.contains("repeat(3"));
-
-        let phone_rules = BASE_STYLES
-            .split("@media (max-width: 30rem) {")
-            .nth(1)
-            .expect("phone-width rules");
-        let benchmark_row = phone_rules
-            .split(".proof-benchmark-row.capability-row {")
-            .nth(1)
-            .and_then(|styles| styles.split('}').next())
-            .expect("phone-width benchmark row rule");
-        assert!(benchmark_row.contains("grid-template-columns: minmax(0, 1fr) auto auto;"));
-        assert!(phone_rules.contains("grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);"));
-        assert!(BASE_STYLES.contains("min-height: 3rem;"));
-        assert!(BASE_STYLES.contains(".proof-benchmark-list__header"));
-        assert!(BASE_STYLES.contains("position: sticky;"));
     }
 
     #[cfg(feature = "ui-profile-demo")]

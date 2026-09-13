@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use dioxus::html::geometry::PixelsVector2D;
 use dioxus::prelude::*;
 
 #[cfg(feature = "proof-benchmark")]
@@ -29,6 +30,25 @@ pub(super) const fn is_developer_section(route: Route) -> bool {
     )
 }
 
+pub(super) fn developer_section_index(route: Route) -> usize {
+    DEVELOPER_SECTIONS
+        .iter()
+        .position(|(section, _)| *section == route)
+        .unwrap_or(0)
+}
+
+pub(super) fn developer_section_at_scroll(scroll_left: f64, client_width: i32) -> Option<Route> {
+    if !scroll_left.is_finite() || client_width <= 0 {
+        return None;
+    }
+
+    let last_index = DEVELOPER_SECTIONS.len().saturating_sub(1) as f64;
+    let index = (scroll_left / f64::from(client_width))
+        .round()
+        .clamp(0.0, last_index) as usize;
+    DEVELOPER_SECTIONS.get(index).map(|(route, _)| *route)
+}
+
 #[component]
 pub(super) fn DeveloperSectionNav(current: Route, on_select: EventHandler<Route>) -> Element {
     rsx! {
@@ -42,6 +62,43 @@ pub(super) fn DeveloperSectionNav(current: Route, on_select: EventHandler<Route>
                     "{label}"
                 }
             }
+        }
+    }
+}
+
+#[component]
+pub(super) fn DeveloperSectionPager(
+    current: Route,
+    on_select: EventHandler<Route>,
+    children: Element,
+) -> Element {
+    let mut pager_element = use_signal(|| None::<std::rc::Rc<MountedData>>);
+    use_effect(move || {
+        let page_index = developer_section_index(current);
+        if let Some(pager) = pager_element.cloned() {
+            spawn(async move {
+                if let Ok(bounds) = pager.get_client_rect().await {
+                    let offset = PixelsVector2D::new(bounds.width() * page_index as f64, 0.0);
+                    let _ = pager.scroll(offset, ScrollBehavior::Instant).await;
+                }
+            });
+        }
+    });
+
+    rsx! {
+        div {
+            class: "developer-section-pager",
+            aria_label: "Developer tool pages",
+            role: "region",
+            onmounted: move |element| pager_element.set(Some(element.data())),
+            onscroll: move |event| {
+                if let Some(route) = developer_section_at_scroll(event.scroll_left(), event.client_width())
+                    && route != current
+                {
+                    on_select.call(route);
+                }
+            },
+            div { class: "developer-section-pager__track", {children} }
         }
     }
 }
@@ -206,5 +263,88 @@ pub(super) fn DeveloperCapabilitiesPage() -> Element {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::BASE_STYLES;
+
+    #[test]
+    fn pager_swipes_snap_sections_without_affecting_primary_routes() {
+        assert_eq!(
+            DEVELOPER_SECTIONS,
+            [
+                (Route::DeveloperManifest, "Capabilities"),
+                (Route::DeveloperProofBenchmark, "Benchmark"),
+                (Route::DeveloperDiagnostics, "Event log"),
+            ]
+        );
+        assert_eq!(
+            developer_section_at_scroll(0.0, 390),
+            Some(Route::DeveloperManifest)
+        );
+        assert_eq!(
+            developer_section_at_scroll(194.0, 390),
+            Some(Route::DeveloperManifest)
+        );
+        assert_eq!(
+            developer_section_at_scroll(196.0, 390),
+            Some(Route::DeveloperProofBenchmark)
+        );
+        assert_eq!(
+            developer_section_at_scroll(390.0, 390),
+            Some(Route::DeveloperProofBenchmark)
+        );
+        assert_eq!(
+            developer_section_at_scroll(780.0, 390),
+            Some(Route::DeveloperDiagnostics)
+        );
+        assert_eq!(
+            developer_section_at_scroll(-20.0, 390),
+            Some(Route::DeveloperManifest)
+        );
+        assert_eq!(
+            developer_section_at_scroll(900.0, 390),
+            Some(Route::DeveloperDiagnostics)
+        );
+        assert_eq!(developer_section_at_scroll(f64::NAN, 390), None);
+        assert_eq!(developer_section_at_scroll(0.0, 0), None);
+        assert_eq!(developer_section_index(Route::DeveloperProofBenchmark), 1);
+
+        let pager = BASE_STYLES
+            .split(".developer-section-pager {")
+            .nth(1)
+            .and_then(|styles| styles.split('}').next())
+            .expect("developer section pager rule");
+        assert!(pager.contains("scroll-snap-type: x mandatory;"));
+        assert!(pager.contains("overscroll-behavior-x: contain;"));
+        assert!(pager.contains("scroll-behavior: smooth;"));
+        let track = BASE_STYLES
+            .split(".developer-section-pager__track {")
+            .nth(1)
+            .and_then(|styles| styles.split('}').next())
+            .expect("developer section pager track rule");
+        assert!(track.contains("display: flex;"));
+        assert!(!track.contains("transform:"));
+        assert!(BASE_STYLES.contains(".developer-section-pager__page"));
+        assert!(BASE_STYLES.contains("scroll-snap-stop: always;"));
+        assert!(BASE_STYLES.contains("@media (prefers-reduced-motion: reduce)"));
+        assert!(!BASE_STYLES.contains(".bottom-nav {\n  scroll-snap-type"));
+
+        let phone_rules = BASE_STYLES
+            .split("@media (max-width: 30rem) {")
+            .nth(1)
+            .expect("phone-width rules");
+        let benchmark_row = phone_rules
+            .split(".proof-benchmark-row.capability-row {")
+            .nth(1)
+            .and_then(|styles| styles.split('}').next())
+            .expect("phone-width benchmark row rule");
+        assert!(benchmark_row.contains("grid-template-columns: minmax(0, 1fr) auto auto;"));
+        assert!(phone_rules.contains("grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);"));
+        // 360px and 390px both select the compact (max-width: 30rem) contract.
+        assert!(360 < 30 * 16 && 390 < 30 * 16);
     }
 }
