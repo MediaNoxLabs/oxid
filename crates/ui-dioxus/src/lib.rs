@@ -3986,13 +3986,25 @@ fn WalletApp() -> Element {
                         DeveloperSectionPager {
                             current: content_route,
                             on_select: move |route| navigation.write().replace_secondary(route),
-                            section { class: "developer-section-pager__page", tabindex: -1,
+                            section {
+                                class: "developer-section-pager__page",
+                                tabindex: -1,
+                                aria_hidden: if content_route == Route::DeveloperManifest { "false" } else { "true" },
+                                inert: html_boolean_attribute(content_route != Route::DeveloperManifest),
                                 DeveloperCapabilitiesPage {}
                             }
-                            section { class: "developer-section-pager__page", tabindex: -1,
+                            section {
+                                class: "developer-section-pager__page",
+                                tabindex: -1,
+                                aria_hidden: if content_route == Route::DeveloperProofBenchmark { "false" } else { "true" },
+                                inert: html_boolean_attribute(content_route != Route::DeveloperProofBenchmark),
                                 DeveloperProofBenchmarkPage {}
                             }
-                            section { class: "developer-section-pager__page", tabindex: -1,
+                            section {
+                                class: "developer-section-pager__page",
+                                tabindex: -1,
+                                aria_hidden: if content_route == Route::DeveloperDiagnostics { "false" } else { "true" },
+                                inert: html_boolean_attribute(content_route != Route::DeveloperDiagnostics),
                                 DeveloperDiagnosticsPage {}
                             }
                         }

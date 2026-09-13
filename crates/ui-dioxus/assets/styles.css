@@ -2012,6 +2012,7 @@ textarea:focus-visible {
   overflow-x: auto;
   overscroll-behavior-x: contain;
   scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
   scrollbar-width: none;
 }
 
@@ -2022,8 +2023,6 @@ textarea:focus-visible {
 .developer-section-pager__track {
   display: flex;
   width: 300%;
-  transform: translateX(calc(var(--developer-section-index) * -33.333333%));
-  transition: transform var(--motion-base) ease-out;
 }
 
 .developer-section-pager__page {
@@ -2035,8 +2034,8 @@ textarea:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .developer-section-pager__track {
-    transition: none;
+  .developer-section-pager {
+    scroll-behavior: auto;
   }
 }
 

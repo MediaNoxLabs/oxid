@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use dioxus::html::geometry::PixelsVector2D;
 use dioxus::prelude::*;
 
 #[cfg(feature = "proof-benchmark")]
@@ -29,8 +30,6 @@ pub(super) const fn is_developer_section(route: Route) -> bool {
     )
 }
 
-const SWIPE_THRESHOLD_PX: f64 = 48.0;
-
 pub(super) fn developer_section_index(route: Route) -> usize {
     DEVELOPER_SECTIONS
         .iter()
@@ -38,25 +37,16 @@ pub(super) fn developer_section_index(route: Route) -> usize {
         .unwrap_or(0)
 }
 
-pub(super) fn developer_section_after_swipe(
-    current: Route,
-    start_x: f64,
-    end_x: f64,
-) -> Option<Route> {
-    let distance = end_x - start_x;
-    if distance.abs() < SWIPE_THRESHOLD_PX {
+pub(super) fn developer_section_at_scroll(scroll_left: f64, client_width: i32) -> Option<Route> {
+    if !scroll_left.is_finite() || client_width <= 0 {
         return None;
     }
 
-    let current_index = DEVELOPER_SECTIONS
-        .iter()
-        .position(|(route, _)| *route == current)?;
-    let next_index = if distance < 0.0 {
-        current_index.checked_add(1)
-    } else {
-        current_index.checked_sub(1)
-    }?;
-    DEVELOPER_SECTIONS.get(next_index).map(|(route, _)| *route)
+    let last_index = DEVELOPER_SECTIONS.len().saturating_sub(1) as f64;
+    let index = (scroll_left / f64::from(client_width))
+        .round()
+        .clamp(0.0, last_index) as usize;
+    DEVELOPER_SECTIONS.get(index).map(|(route, _)| *route)
 }
 
 #[component]
@@ -82,32 +72,30 @@ pub(super) fn DeveloperSectionPager(
     on_select: EventHandler<Route>,
     children: Element,
 ) -> Element {
-    let mut swipe_start = use_signal(|| None::<f64>);
-    let mut wheel_offset = use_signal(|| 0.0_f64);
+    let mut pager_element = use_signal(|| None::<std::rc::Rc<MountedData>>);
+    use_effect(move || {
+        let page_index = developer_section_index(current);
+        if let Some(pager) = pager_element.cloned() {
+            spawn(async move {
+                if let Ok(bounds) = pager.get_client_rect().await {
+                    let offset = PixelsVector2D::new(bounds.width() * page_index as f64, 0.0);
+                    let _ = pager.scroll(offset, ScrollBehavior::Instant).await;
+                }
+            });
+        }
+    });
+
     rsx! {
         div {
             class: "developer-section-pager",
-            style: "--developer-section-index: {developer_section_index(current)};",
             aria_label: "Developer tool pages",
             role: "region",
-            onpointerdown: move |event| swipe_start.set(Some(event.client_coordinates().x)),
-            onpointerup: move |event| {
-                if let Some(start_x) = swipe_start.take() {
-                    if let Some(route) = developer_section_after_swipe(current, start_x, event.client_coordinates().x) {
-                        on_select.call(route);
-                    }
-                }
-            },
-            onpointercancel: move |_| swipe_start.set(None),
-            onwheel: move |event| {
-                let offset = *wheel_offset.read() + event.delta().strip_units().x;
-                if let Some(route) = developer_section_after_swipe(current, 0.0, -offset) {
-                    wheel_offset.set(0.0);
+            onmounted: move |element| pager_element.set(Some(element.data())),
+            onscroll: move |event| {
+                if let Some(route) = developer_section_at_scroll(event.scroll_left(), event.client_width())
+                    && route != current
+                {
                     on_select.call(route);
-                } else if offset.abs() >= SWIPE_THRESHOLD_PX {
-                    wheel_offset.set(0.0);
-                } else {
-                    wheel_offset.set(offset);
                 }
             },
             div { class: "developer-section-pager__track", {children} }
@@ -294,21 +282,35 @@ mod tests {
             ]
         );
         assert_eq!(
-            developer_section_after_swipe(Route::DeveloperManifest, 200.0, 100.0),
-            Some(Route::DeveloperProofBenchmark)
-        );
-        assert_eq!(
-            developer_section_after_swipe(Route::DeveloperProofBenchmark, 100.0, 200.0),
+            developer_section_at_scroll(0.0, 390),
             Some(Route::DeveloperManifest)
         );
         assert_eq!(
-            developer_section_after_swipe(Route::DeveloperDiagnostics, 200.0, 100.0),
-            None
+            developer_section_at_scroll(194.0, 390),
+            Some(Route::DeveloperManifest)
         );
         assert_eq!(
-            developer_section_after_swipe(Route::DeveloperManifest, 100.0, 130.0),
-            None
+            developer_section_at_scroll(196.0, 390),
+            Some(Route::DeveloperProofBenchmark)
         );
+        assert_eq!(
+            developer_section_at_scroll(390.0, 390),
+            Some(Route::DeveloperProofBenchmark)
+        );
+        assert_eq!(
+            developer_section_at_scroll(780.0, 390),
+            Some(Route::DeveloperDiagnostics)
+        );
+        assert_eq!(
+            developer_section_at_scroll(-20.0, 390),
+            Some(Route::DeveloperManifest)
+        );
+        assert_eq!(
+            developer_section_at_scroll(900.0, 390),
+            Some(Route::DeveloperDiagnostics)
+        );
+        assert_eq!(developer_section_at_scroll(f64::NAN, 390), None);
+        assert_eq!(developer_section_at_scroll(0.0, 0), None);
         assert_eq!(developer_section_index(Route::DeveloperProofBenchmark), 1);
 
         let pager = BASE_STYLES
@@ -318,6 +320,14 @@ mod tests {
             .expect("developer section pager rule");
         assert!(pager.contains("scroll-snap-type: x mandatory;"));
         assert!(pager.contains("overscroll-behavior-x: contain;"));
+        assert!(pager.contains("scroll-behavior: smooth;"));
+        let track = BASE_STYLES
+            .split(".developer-section-pager__track {")
+            .nth(1)
+            .and_then(|styles| styles.split('}').next())
+            .expect("developer section pager track rule");
+        assert!(track.contains("display: flex;"));
+        assert!(!track.contains("transform:"));
         assert!(BASE_STYLES.contains(".developer-section-pager__page"));
         assert!(BASE_STYLES.contains("scroll-snap-stop: always;"));
         assert!(BASE_STYLES.contains("@media (prefers-reduced-motion: reduce)"));
