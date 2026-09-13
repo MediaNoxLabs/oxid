@@ -258,11 +258,11 @@ fn validate_private_parts(
     {
         return Err(CredentialDisclosurePortError::InvalidPrivateMaterial);
     }
-    decode_padded_text(&private_parts.values.first_name)?;
-    decode_padded_text(&private_parts.values.last_name)?;
-    decode_padded_text(&private_parts.values.issuing_state)?;
+    validated_padded_text(&private_parts.values.first_name)?;
+    validated_padded_text(&private_parts.values.last_name)?;
+    validated_padded_text(&private_parts.values.issuing_state)?;
     if expected.document_number != document_number_null_commitment() {
-        decode_padded_text(&private_parts.values.document_number)?;
+        validated_padded_text(&private_parts.values.document_number)?;
     }
     Ok(())
 }
@@ -386,7 +386,7 @@ struct PortalClaimValues<'a> {
     first_name_value_padded: &'a RawValue,
     #[serde(borrow)]
     last_name_value_padded: &'a RawValue,
-    date_of_birth_days: u32,
+    date_of_birth_days: Zeroizing<u32>,
     #[serde(borrow)]
     document_number_value: &'a RawValue,
     #[serde(borrow)]
@@ -524,7 +524,7 @@ pub fn convert_portal_private_parts(
         values: ClaimValues {
             first_name: *first_name,
             last_name: *last_name,
-            date_of_birth_days: value.claim_values.date_of_birth_days,
+            date_of_birth_days: *value.claim_values.date_of_birth_days,
             document_number: *document_number,
             issuing_state: *issuing_state,
         },
@@ -621,7 +621,7 @@ fn encode_private_parts(
         first_name_value_padded: &'a [u8],
         #[serde(with = "serde_bytes")]
         last_name_value_padded: &'a [u8],
-        date_of_birth_days: u32,
+        date_of_birth_days: &'a u32,
         #[serde(with = "serde_bytes")]
         document_number_value: &'a [u8],
         #[serde(with = "serde_bytes")]
@@ -656,7 +656,7 @@ fn encode_private_parts(
         claim_values: EncodedClaimValues {
             first_name_value_padded: &private_parts.values.first_name,
             last_name_value_padded: &private_parts.values.last_name,
-            date_of_birth_days: private_parts.values.date_of_birth_days,
+            date_of_birth_days: &private_parts.values.date_of_birth_days,
             document_number_value: &private_parts.values.document_number,
             issuing_state_value: &private_parts.values.issuing_state,
         },
@@ -755,6 +755,12 @@ fn required_u64(map: &[(Value, Value)], key: &str) -> Result<u64, CredentialDisc
 fn decode_padded_text<const N: usize>(
     bytes: &[u8; N],
 ) -> Result<String, CredentialDisclosurePortError> {
+    validated_padded_text(bytes).map(str::to_owned)
+}
+
+fn validated_padded_text<const N: usize>(
+    bytes: &[u8; N],
+) -> Result<&str, CredentialDisclosurePortError> {
     let end = bytes.iter().position(|byte| *byte == 0).unwrap_or(N);
     if end == 0 || bytes[end..].iter().any(|byte| *byte != 0) {
         return Err(CredentialDisclosurePortError::InvalidPrivateMaterial);
@@ -766,7 +772,7 @@ fn decode_padded_text<const N: usize>(
     }) {
         return Err(CredentialDisclosurePortError::InvalidPrivateMaterial);
     }
-    Ok(value.to_owned())
+    Ok(value)
 }
 
 #[cfg(test)]
