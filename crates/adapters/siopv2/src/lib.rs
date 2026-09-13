@@ -168,6 +168,22 @@ fn encode_sensitive_base64(input: &[u8]) -> Zeroizing<String> {
     encoded
 }
 
+fn decode_sensitive_base64(input: &str) -> Result<Zeroizing<Vec<u8>>, SelfIssuedProtocolError> {
+    let maximum_length = input
+        .len()
+        .checked_mul(3)
+        .and_then(|length| length.checked_div(4))
+        .and_then(|length| length.checked_add(3))
+        .filter(|length| *length <= MAX_PROTOCOL_BYTES)
+        .ok_or(SelfIssuedProtocolError::InvalidProof)?;
+    let mut decoded = Zeroizing::new(vec![0; maximum_length]);
+    let written = general_purpose::URL_SAFE_NO_PAD
+        .decode_slice(input, &mut decoded)
+        .map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
+    decoded.truncate(written);
+    Ok(decoded)
+}
+
 struct ZeroizingSelfIssuedProofJwt(Zeroizing<String>);
 
 impl SelfIssuedProofJwt for ZeroizingSelfIssuedProofJwt {
@@ -550,11 +566,7 @@ fn validate_id_token(
     let header = general_purpose::URL_SAFE_NO_PAD
         .decode(parts[0])
         .map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
-    let claims = Zeroizing::new(
-        general_purpose::URL_SAFE_NO_PAD
-            .decode(parts[1])
-            .map_err(|_| SelfIssuedProtocolError::InvalidProof)?,
-    );
+    let claims = decode_sensitive_base64(parts[1])?;
     let signature = general_purpose::URL_SAFE_NO_PAD
         .decode(parts[2])
         .map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
@@ -1446,6 +1458,14 @@ mod tests {
     fn sensitive_json_serialization_refuses_protocol_bound_overflow() {
         let oversized = "x".repeat(MAX_PROTOCOL_BYTES);
         assert!(serialize_sensitive_json(oversized.as_str()).is_err());
+    }
+
+    #[test]
+    fn sensitive_base64_rejection_stays_inside_zeroizing_storage() {
+        assert_eq!(
+            decode_sensitive_base64("bm9uY2U!").err(),
+            Some(SelfIssuedProtocolError::InvalidProof)
+        );
     }
 
     #[test]
