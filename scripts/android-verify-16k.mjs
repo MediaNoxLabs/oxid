@@ -148,7 +148,9 @@ function zipMembers(archive) {
     const localNameLength = view.getUint16(localOffset + 26, true);
     const localExtraLength = view.getUint16(localOffset + 28, true);
     const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
-    if (dataOffset + compressedSize > archive.length) fail(name, "ZIP member data is truncated");
+    if (dataOffset > centralOffset || compressedSize > centralOffset - dataOffset) {
+      fail(name, "ZIP member data overlaps the central directory");
+    }
     members.push({ name, method, compressedSize, uncompressedSize, dataOffset });
     offset = recordEnd;
   }
@@ -174,9 +176,9 @@ export function verifyApk(archive, archiveName = "APK") {
       elfBytes = stored;
     } else if (member.method === 8) {
       try {
-        elfBytes = inflateRawSync(stored);
+        elfBytes = inflateRawSync(stored, { maxOutputLength: member.uncompressedSize + 1 });
       } catch {
-        fail(member.name, "compressed ZIP member cannot be decompressed");
+        fail(member.name, "compressed ZIP member exceeds its declared size or cannot be decompressed");
       }
       if (elfBytes.length !== member.uncompressedSize) {
         fail(member.name, "compressed ZIP member has inconsistent size");

@@ -36,8 +36,17 @@ function elf({ alignment = PAGE_SIZE, fileOffset = 0, fileSize = 0, virtualAddre
   return bytes;
 }
 
-function apk({ archiveAligned = true, centralExtraLength = 0, method = 0, memberName = member, ...elfOptions } = {}) {
-  const payload = elf(elfOptions);
+function apk({
+  archiveAligned = true,
+  centralExtraLength = 0,
+  compressedPadding = 0,
+  compressedSizeDelta = 0,
+  declaredUncompressedSize,
+  method = 0,
+  memberName = member,
+  ...elfOptions
+} = {}) {
+  const payload = Buffer.concat([elf(elfOptions), Buffer.alloc(compressedPadding)]);
   const stored = method === 8 ? deflateRawSync(payload) : payload;
   const name = Buffer.from(memberName);
   const extraLength = archiveAligned ? PAGE_SIZE - 30 - name.length : 0;
@@ -53,8 +62,8 @@ function apk({ archiveAligned = true, centralExtraLength = 0, method = 0, member
   central.writeUInt16LE(method, 10);
   central.writeUInt16LE(name.length, 28);
   central.writeUInt16LE(centralExtraLength, 30);
-  central.writeUInt32LE(stored.length, 20);
-  central.writeUInt32LE(payload.length, 24);
+  central.writeUInt32LE(stored.length + compressedSizeDelta, 20);
+  central.writeUInt32LE(declaredUncompressedSize ?? payload.length, 24);
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);
   end.writeUInt16LE(1, 8);
@@ -126,6 +135,20 @@ test("rejects truncated central-directory variable fields", () => {
   assert.throws(
     () => verifyApk(apk({ centralExtraLength: 65535 })),
     /APK: ZIP central-directory variable fields are truncated/,
+  );
+});
+
+test("rejects a native member whose claimed data overlaps the central directory", () => {
+  assert.throws(
+    () => verifyApk(apk({ compressedSizeDelta: 1 })),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ZIP member data overlaps the central directory`),
+  );
+});
+
+test("bounds compressed native members by their declared uncompressed size", () => {
+  assert.throws(
+    () => verifyApk(apk({ method: 8, compressedPadding: 64 * 1024, declaredUncompressedSize: 120 })),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: compressed ZIP member exceeds its declared size`),
   );
 });
 
