@@ -19,15 +19,18 @@ use oxid_protocol_application::{
     AuthenticateSelfIssuedPortFuture, PrepareSelfIssuedAuthenticationPortFuture,
     PrepareSelfIssuedAuthenticationRequest, PreparedSelfIssuedAuthentication,
     ProtocolSelfIssuedAuthenticationRequest, SelfIssuedAuthenticationProtocolPort,
-    SelfIssuedIdentityProofPort, SelfIssuedProofError, SelfIssuedProofFuture,
+    SelfIssuedIdentityProofPort, SelfIssuedProofError, SelfIssuedProofFuture, SelfIssuedProofJwt,
     SelfIssuedProofRequest, SelfIssuedProtocolError,
 };
 use oxid_protocol_domain::{SelfIssuedAuthenticationId, SelfIssuedAuthenticationPreview};
 use p256::ecdsa::{Signature as P256Signature, VerifyingKey as P256Key};
-use serde::{Deserialize, Deserializer, de};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use serde_json::{Map, Number, Value, json};
 use url::Url;
 use zeroize::Zeroizing;
+
+mod secret_json;
+use secret_json::decode_json_string;
 
 pub const STANDALONE_VERIFIER: &str = "http://127.0.0.1:32192/verifier";
 const STANDALONE_REQUEST_URI: &str = "http://127.0.0.1:32192/verifier/request";
@@ -38,6 +41,164 @@ const MAX_PROTOCOL_BYTES: usize = 64 * 1_024;
 const MAX_ENDPOINT_CHARACTERS: usize = 2_048;
 const MAX_SECRET_CHARACTERS: usize = 4_096;
 const TOKEN_LIFETIME_SECONDS: u64 = 300;
+
+#[derive(Serialize)]
+struct SelfIssuedProofClaims<'a> {
+    aud: &'a str,
+    exp: u64,
+    iat: u64,
+    iss: &'a str,
+    nonce: &'a str,
+    sub: &'a str,
+}
+
+#[derive(Serialize)]
+struct SelfIssuedResponse<'a> {
+    id_token: &'a str,
+    state: &'a str,
+}
+
+#[derive(Serialize)]
+struct SelfIssuedRequestObject<'a> {
+    client_id: &'a str,
+    exp: u64,
+    iat: u64,
+    nonce: &'a str,
+    purpose: &'a str,
+    response_mode: &'a str,
+    response_type: &'a str,
+    response_uri: &'a str,
+    scope: &'a str,
+    state: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BorrowedSelfIssuedRequestObject<'a> {
+    #[serde(borrow)]
+    client_id: &'a serde_json::value::RawValue,
+    #[serde(borrow)]
+    response_type: &'a serde_json::value::RawValue,
+    #[serde(borrow)]
+    response_mode: &'a serde_json::value::RawValue,
+    #[serde(borrow)]
+    response_uri: &'a serde_json::value::RawValue,
+    #[serde(borrow)]
+    scope: &'a serde_json::value::RawValue,
+    #[serde(borrow)]
+    nonce: &'a serde_json::value::RawValue,
+    #[serde(borrow)]
+    state: &'a serde_json::value::RawValue,
+    iat: u64,
+    exp: u64,
+    #[serde(borrow)]
+    purpose: &'a serde_json::value::RawValue,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BorrowedSelfIssuedResponse<'a> {
+    #[serde(borrow)]
+    id_token: &'a serde_json::value::RawValue,
+    #[serde(borrow)]
+    state: &'a serde_json::value::RawValue,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BorrowedSelfIssuedClaims<'a> {
+    #[serde(borrow)]
+    iss: &'a serde_json::value::RawValue,
+    #[serde(borrow)]
+    sub: &'a serde_json::value::RawValue,
+    #[serde(borrow)]
+    aud: &'a serde_json::value::RawValue,
+    #[serde(borrow)]
+    nonce: &'a serde_json::value::RawValue,
+    iat: u64,
+    exp: u64,
+}
+
+struct BoundedSensitiveJsonWriter {
+    bytes: Zeroizing<Vec<u8>>,
+}
+
+impl BoundedSensitiveJsonWriter {
+    fn new() -> Self {
+        Self {
+            bytes: Zeroizing::new(Vec::with_capacity(MAX_PROTOCOL_BYTES)),
+        }
+    }
+
+    fn into_bytes(self) -> Zeroizing<Vec<u8>> {
+        self.bytes
+    }
+}
+
+impl std::io::Write for BoundedSensitiveJsonWriter {
+    fn write(&mut self, input: &[u8]) -> std::io::Result<usize> {
+        if input.len() > MAX_PROTOCOL_BYTES.saturating_sub(self.bytes.len()) {
+            return Err(std::io::Error::other(
+                "sensitive JSON exceeds the protocol bound",
+            ));
+        }
+        self.bytes.extend_from_slice(input);
+        Ok(input.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn serialize_sensitive_json<T: Serialize + ?Sized>(
+    value: &T,
+) -> Result<Zeroizing<Vec<u8>>, serde_json::Error> {
+    let mut writer = BoundedSensitiveJsonWriter::new();
+    serde_json::to_writer(&mut writer, value)?;
+    Ok(writer.into_bytes())
+}
+
+fn encode_sensitive_base64(input: &[u8]) -> Zeroizing<String> {
+    let encoded_length = base64::encoded_len(input.len(), false)
+        .expect("bounded sensitive JSON has a representable base64 length");
+    let mut encoded = Zeroizing::new(String::with_capacity(encoded_length));
+    general_purpose::URL_SAFE_NO_PAD.encode_string(input, &mut encoded);
+    debug_assert_eq!(encoded.len(), encoded_length);
+    encoded
+}
+
+fn decode_sensitive_base64(input: &str) -> Result<Zeroizing<Vec<u8>>, SelfIssuedProtocolError> {
+    let maximum_length = input
+        .len()
+        .checked_mul(3)
+        .and_then(|length| length.checked_div(4))
+        .and_then(|length| length.checked_add(3))
+        .filter(|length| *length <= MAX_PROTOCOL_BYTES)
+        .ok_or(SelfIssuedProtocolError::InvalidProof)?;
+    let mut decoded = Zeroizing::new(vec![0; maximum_length]);
+    let written = general_purpose::URL_SAFE_NO_PAD
+        .decode_slice(input, &mut decoded)
+        .map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
+    decoded.truncate(written);
+    Ok(decoded)
+}
+
+struct ZeroizingSelfIssuedProofJwt(Zeroizing<String>);
+
+impl SelfIssuedProofJwt for ZeroizingSelfIssuedProofJwt {
+    fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl std::fmt::Debug for ZeroizingSelfIssuedProofJwt {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ZeroizingSelfIssuedProofJwt([REDACTED])")
+    }
+}
+
+impl zeroize::ZeroizeOnDrop for ZeroizingSelfIssuedProofJwt {}
 
 /// Public request-by-reference URI for the deterministic in-process verifier.
 #[must_use]
@@ -123,19 +284,20 @@ impl SelfIssuedAuthenticationProtocolPort for StandaloneSiopV2Verifier {
                 / 1_000;
             let nonce = Zeroizing::new(format!("oxid-siop-nonce-{}", id.as_str()));
             let state = Zeroizing::new(format!("oxid-siop-state-{}", id.as_str()));
-            let request_object = json!({
-                "client_id": STANDALONE_VERIFIER,
-                "response_type": "id_token",
-                "response_mode": "direct_post",
-                "response_uri": STANDALONE_RESPONSE_URI,
-                "scope": "openid",
-                "nonce": nonce.as_str(),
-                "state": state.as_str(),
-                "iat": now,
-                "exp": now + TOKEN_LIFETIME_SECONDS,
-                "purpose": STANDALONE_PURPOSE
-            });
-            let parsed = parse_request_object(request_object.to_string().as_bytes(), now)?;
+            let request_object = serialize_sensitive_json(&SelfIssuedRequestObject {
+                client_id: STANDALONE_VERIFIER,
+                response_type: "id_token",
+                response_mode: "direct_post",
+                response_uri: STANDALONE_RESPONSE_URI,
+                scope: "openid",
+                nonce: nonce.as_str(),
+                state: state.as_str(),
+                iat: now,
+                exp: now + TOKEN_LIFETIME_SECONDS,
+                purpose: STANDALONE_PURPOSE,
+            })
+            .map_err(|_| SelfIssuedProtocolError::InvalidRequest)?;
+            let parsed = parse_request_object(&request_object, now)?;
             if parsed.client_id != invocation.client_id {
                 return Err(SelfIssuedProtocolError::InvalidVerifier);
             }
@@ -190,18 +352,20 @@ impl SelfIssuedAuthenticationProtocolPort for StandaloneSiopV2Verifier {
                     holder_did: request.holder_did.clone(),
                     method_id: request.method_id.clone(),
                     audience: prepared.client_id.clone(),
-                    nonce: prepared.nonce.to_string(),
+                    nonce: prepared.nonce.as_str(),
                     issued_at_seconds: now,
                     expires_at_seconds: now + TOKEN_LIFETIME_SECONDS,
                 })
                 .await
                 .map_err(map_proof_error)?;
-            let response = json!({
-                "id_token": id_token,
-                "state": prepared.state.as_str()
-            });
+            let id_token_snapshot = id_token.as_str();
+            let response = serialize_sensitive_json(&SelfIssuedResponse {
+                id_token: id_token_snapshot,
+                state: prepared.state.as_str(),
+            })
+            .map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
             validate_response(
-                response.to_string().as_bytes(),
+                &response,
                 prepared.state.as_str(),
                 &prepared.client_id,
                 prepared.nonce.as_str(),
@@ -214,10 +378,7 @@ impl SelfIssuedAuthenticationProtocolPort for StandaloneSiopV2Verifier {
                 &request.profile_id,
                 &request.holder_did,
                 &request.method_id,
-                response
-                    .get("id_token")
-                    .and_then(Value::as_str)
-                    .ok_or(SelfIssuedProtocolError::InvalidProof)?,
+                id_token_snapshot,
             )
         })
     }
@@ -303,42 +464,56 @@ fn parse_request_object(
     bytes: &[u8],
     now: u64,
 ) -> Result<ParsedRequestObject, SelfIssuedProtocolError> {
-    let value = parse_strict_json(bytes)?;
-    let object = value
-        .as_object()
-        .ok_or(SelfIssuedProtocolError::InvalidRequest)?;
-    if object.len() != 10
-        || required_string(object, "response_type", 32)? != "id_token"
-        || required_string(object, "response_mode", 32)? != "direct_post"
-        || required_string(object, "scope", 32)? != "openid"
-        || object.contains_key("vp_token")
-        || object.contains_key("presentation_definition")
-        || object.contains_key("dcql_query")
-        || object.contains_key("redirect_uri")
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    let request = BorrowedSelfIssuedRequestObject::deserialize(&mut deserializer)
+        .map_err(|_| SelfIssuedProtocolError::InvalidRequest)?;
+    deserializer
+        .end()
+        .map_err(|_| SelfIssuedProtocolError::InvalidRequest)?;
+    let response_type = decode_json_string(request.response_type.get().as_bytes(), 32, true)
+        .map_err(|_| SelfIssuedProtocolError::InvalidRequest)?;
+    let response_mode = decode_json_string(request.response_mode.get().as_bytes(), 32, true)
+        .map_err(|_| SelfIssuedProtocolError::InvalidRequest)?;
+    let scope = decode_json_string(request.scope.get().as_bytes(), 32, true)
+        .map_err(|_| SelfIssuedProtocolError::InvalidRequest)?;
+    if response_type.as_str() != "id_token"
+        || response_mode.as_str() != "direct_post"
+        || scope.as_str() != "openid"
     {
         return Err(SelfIssuedProtocolError::UnsupportedRequest);
     }
-    let client_id = required_string(object, "client_id", MAX_ENDPOINT_CHARACTERS)?;
-    validate_endpoint(&client_id, EndpointPolicy::StandaloneLoopback)?;
-    let response_uri = required_string(object, "response_uri", MAX_ENDPOINT_CHARACTERS)?;
-    validate_exact_response_uri(&response_uri)?;
-    required_string(object, "nonce", MAX_SECRET_CHARACTERS)?;
-    required_string(object, "state", MAX_SECRET_CHARACTERS)?;
-    let purpose = required_string(object, "purpose", 512)?;
-    let iat = required_u64(object, "iat")?;
-    let exp = required_u64(object, "exp")?;
-    if iat > now.saturating_add(60)
-        || exp <= now
-        || exp < iat
-        || exp.saturating_sub(iat) > TOKEN_LIFETIME_SECONDS
+    let client_id = decode_json_string(
+        request.client_id.get().as_bytes(),
+        MAX_ENDPOINT_CHARACTERS,
+        true,
+    )
+    .map_err(|_| SelfIssuedProtocolError::InvalidRequest)?;
+    validate_endpoint(client_id.as_str(), EndpointPolicy::StandaloneLoopback)?;
+    let response_uri = decode_json_string(
+        request.response_uri.get().as_bytes(),
+        MAX_ENDPOINT_CHARACTERS,
+        true,
+    )
+    .map_err(|_| SelfIssuedProtocolError::InvalidRequest)?;
+    validate_exact_response_uri(response_uri.as_str())?;
+    let _nonce = decode_json_string(request.nonce.get().as_bytes(), MAX_SECRET_CHARACTERS, true)
+        .map_err(|_| SelfIssuedProtocolError::InvalidRequest)?;
+    let _state = decode_json_string(request.state.get().as_bytes(), MAX_SECRET_CHARACTERS, true)
+        .map_err(|_| SelfIssuedProtocolError::InvalidRequest)?;
+    let purpose = decode_json_string(request.purpose.get().as_bytes(), 512, true)
+        .map_err(|_| SelfIssuedProtocolError::InvalidRequest)?;
+    if request.iat > now.saturating_add(60)
+        || request.exp <= now
+        || request.exp < request.iat
+        || request.exp.saturating_sub(request.iat) > TOKEN_LIFETIME_SECONDS
     {
         return Err(SelfIssuedProtocolError::RequestExpired);
     }
     Ok(ParsedRequestObject {
-        client_id,
-        response_uri,
-        purpose,
-        exp,
+        client_id: client_id.to_string(),
+        response_uri: response_uri.to_string(),
+        purpose: purpose.to_string(),
+        exp: request.exp,
     })
 }
 
@@ -351,21 +526,21 @@ fn validate_response(
     expected_method: &str,
     now: u64,
 ) -> Result<(), SelfIssuedProtocolError> {
-    let value = parse_strict_json(bytes).map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
-    let object = value
-        .as_object()
-        .filter(|object| object.len() == 2)
-        .ok_or(SelfIssuedProtocolError::InvalidProof)?;
-    if required_string(object, "state", MAX_SECRET_CHARACTERS)
-        .map_err(|_| SelfIssuedProtocolError::InvalidProof)?
-        != expected_state
-    {
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    let response = BorrowedSelfIssuedResponse::deserialize(&mut deserializer)
+        .map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
+    deserializer
+        .end()
+        .map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
+    let state = decode_json_string(response.state.get().as_bytes(), MAX_SECRET_CHARACTERS, true)
+        .map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
+    if state.as_str() != expected_state {
         return Err(SelfIssuedProtocolError::VerifierRejected);
     }
-    let token = required_string(object, "id_token", MAX_PROTOCOL_BYTES)
+    let token = decode_json_string(response.id_token.get().as_bytes(), MAX_PROTOCOL_BYTES, true)
         .map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
     validate_id_token(
-        &token,
+        token.as_str(),
         expected_audience,
         expected_nonce,
         expected_subject,
@@ -392,9 +567,7 @@ fn validate_id_token(
     let header = general_purpose::URL_SAFE_NO_PAD
         .decode(parts[0])
         .map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
-    let claims = general_purpose::URL_SAFE_NO_PAD
-        .decode(parts[1])
-        .map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
+    let claims = decode_sensitive_base64(parts[1])?;
     let signature = general_purpose::URL_SAFE_NO_PAD
         .decode(parts[2])
         .map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
@@ -417,32 +590,25 @@ fn validate_id_token(
     {
         return Err(SelfIssuedProtocolError::InvalidProof);
     }
-    let claims = parse_strict_json(&claims).map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
-    let claims = claims
-        .as_object()
-        .filter(|object| object.len() == 6)
-        .ok_or(SelfIssuedProtocolError::InvalidProof)?;
-    let issuer = required_string(claims, "iss", MAX_ENDPOINT_CHARACTERS)
+    let mut claims_deserializer = serde_json::Deserializer::from_slice(&claims);
+    let claims = BorrowedSelfIssuedClaims::deserialize(&mut claims_deserializer)
         .map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
-    let subject = required_string(claims, "sub", MAX_ENDPOINT_CHARACTERS)
+    claims_deserializer
+        .end()
         .map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
-    let issued_at =
-        required_u64(claims, "iat").map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
-    let expires_at =
-        required_u64(claims, "exp").map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
-    if issuer != expected_subject
-        || subject != expected_subject
-        || issuer != subject
-        || required_string(claims, "aud", MAX_ENDPOINT_CHARACTERS)
-            .map_err(|_| SelfIssuedProtocolError::InvalidProof)?
-            != expected_audience
-        || required_string(claims, "nonce", MAX_SECRET_CHARACTERS)
-            .map_err(|_| SelfIssuedProtocolError::InvalidProof)?
-            != expected_nonce
-        || issued_at > now.saturating_add(60)
-        || expires_at <= now
-        || expires_at <= issued_at
-        || expires_at.saturating_sub(issued_at) > TOKEN_LIFETIME_SECONDS
+    let issuer = decode_json_string(claims.iss.get().as_bytes(), MAX_ENDPOINT_CHARACTERS, true)?;
+    let subject = decode_json_string(claims.sub.get().as_bytes(), MAX_ENDPOINT_CHARACTERS, true)?;
+    let audience = decode_json_string(claims.aud.get().as_bytes(), MAX_ENDPOINT_CHARACTERS, true)?;
+    let nonce = decode_json_string(claims.nonce.get().as_bytes(), MAX_SECRET_CHARACTERS, true)?;
+    if issuer.as_str() != expected_subject
+        || subject.as_str() != expected_subject
+        || issuer.as_str() != subject.as_str()
+        || audience.as_str() != expected_audience
+        || nonce.as_str() != expected_nonce
+        || claims.iat > now.saturating_add(60)
+        || claims.exp <= now
+        || claims.exp <= claims.iat
+        || claims.exp.saturating_sub(claims.iat) > TOKEN_LIFETIME_SECONDS
     {
         return Err(SelfIssuedProtocolError::InvalidProof);
     }
@@ -495,7 +661,11 @@ fn verify_id_token_signature(
     let signature = general_purpose::URL_SAFE_NO_PAD
         .decode(parts[2])
         .map_err(|_| SelfIssuedProtocolError::InvalidProof)?;
-    let signing_input = format!("{}.{}", parts[0], parts[1]);
+    let mut signing_input =
+        Zeroizing::new(String::with_capacity(parts[0].len() + parts[1].len() + 1));
+    signing_input.push_str(parts[0]);
+    signing_input.push('.');
+    signing_input.push_str(parts[1]);
     let valid = match (
         algorithm.as_str(),
         method.public_key_jwk.key_type.as_str(),
@@ -742,13 +912,6 @@ fn required_string(
     Ok(value.to_owned())
 }
 
-fn required_u64(object: &Map<String, Value>, name: &str) -> Result<u64, SelfIssuedProtocolError> {
-    object
-        .get(name)
-        .and_then(Value::as_u64)
-        .ok_or(SelfIssuedProtocolError::InvalidRequest)
-}
-
 /// Builds the draft SIOPv2 self-issued ID Token only after application-level
 /// consent, using the existing profile-scoped DID lifecycle and opaque key use.
 pub struct DidSelfIssuedIdentityProof {
@@ -767,7 +930,7 @@ impl DidSelfIssuedIdentityProof {
 }
 
 impl SelfIssuedIdentityProofPort for DidSelfIssuedIdentityProof {
-    fn create<'a>(&'a self, request: SelfIssuedProofRequest) -> SelfIssuedProofFuture<'a> {
+    fn create<'a>(&'a self, request: SelfIssuedProofRequest<'a>) -> SelfIssuedProofFuture<'a> {
         Box::pin(async move {
             let record = self
                 .get_did
@@ -811,26 +974,45 @@ impl SelfIssuedIdentityProofPort for DidSelfIssuedIdentityProof {
                 "kid": request.method_id,
                 "typ": "JWT"
             });
-            let payload = json!({
-                "iss": request.holder_did,
-                "sub": request.holder_did,
-                "aud": request.audience,
-                "nonce": request.nonce,
-                "iat": request.issued_at_seconds,
-                "exp": request.expires_at_seconds
-            });
+            let payload = SelfIssuedProofClaims {
+                aud: &request.audience,
+                exp: request.expires_at_seconds,
+                iat: request.issued_at_seconds,
+                iss: &request.holder_did,
+                nonce: request.nonce,
+                sub: &request.holder_did,
+            };
             let protected = general_purpose::URL_SAFE_NO_PAD
                 .encode(serde_json::to_vec(&header).map_err(|_| SelfIssuedProofError::Rejected)?);
-            let claims = general_purpose::URL_SAFE_NO_PAD
-                .encode(serde_json::to_vec(&payload).map_err(|_| SelfIssuedProofError::Rejected)?);
-            let signing_input = format!("{protected}.{claims}");
+            let payload =
+                serialize_sensitive_json(&payload).map_err(|_| SelfIssuedProofError::Rejected)?;
+            let claims = encode_sensitive_base64(&payload);
+            let signature_length = base64::encoded_len(64, false)
+                .expect("the fixed JWT signature has a representable base64 length");
+            let signing_input_length = protected
+                .len()
+                .checked_add(1)
+                .and_then(|length| length.checked_add(claims.len()))
+                .ok_or(SelfIssuedProofError::Rejected)?;
+            let jwt_length = signing_input_length
+                .checked_add(1)
+                .and_then(|length| length.checked_add(signature_length))
+                .filter(|length| *length <= MAX_PROTOCOL_BYTES)
+                .ok_or(SelfIssuedProofError::Rejected)?;
+            let mut signing_input = Zeroizing::new(String::with_capacity(signing_input_length));
+            signing_input.push_str(&protected);
+            signing_input.push('.');
+            signing_input.push_str(&claims);
+            debug_assert_eq!(signing_input.len(), signing_input_length);
+            let mut signing_payload = Zeroizing::new(Vec::with_capacity(signing_input_length));
+            signing_payload.extend_from_slice(signing_input.as_bytes());
             let signature = self
                 .sign
                 .execute(SignDidPayloadCommand {
                     profile_id: request.profile_id.as_str().to_owned(),
                     did: request.holder_did,
                     method_id: request.method_id,
-                    payload: signing_input.as_bytes(),
+                    payload: &signing_payload,
                     confirmation: DidOperationConfirmation {
                         title: "Authenticate with DID".to_owned(),
                         summary: "Bind the accepted self-issued authentication to this verifier."
@@ -847,10 +1029,12 @@ impl SelfIssuedIdentityProofPort for DidSelfIssuedIdentityProof {
             {
                 return Err(SelfIssuedProofError::Rejected);
             }
-            Ok(format!(
-                "{signing_input}.{}",
-                general_purpose::URL_SAFE_NO_PAD.encode(signature.signature_bytes)
-            ))
+            let mut jwt = Zeroizing::new(String::with_capacity(jwt_length));
+            jwt.push_str(&signing_input);
+            jwt.push('.');
+            general_purpose::URL_SAFE_NO_PAD.encode_string(signature.signature_bytes, &mut jwt);
+            debug_assert_eq!(jwt.len(), jwt_length);
+            Ok(Box::new(ZeroizingSelfIssuedProofJwt(jwt)) as Box<dyn SelfIssuedProofJwt>)
         })
     }
 }
@@ -912,6 +1096,36 @@ mod tests {
         profile_id: String,
         did: String,
         method: String,
+    }
+
+    struct CountingProof {
+        inner: Arc<dyn SelfIssuedIdentityProofPort>,
+        snapshot_calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl SelfIssuedIdentityProofPort for CountingProof {
+        fn create<'a>(&'a self, request: SelfIssuedProofRequest<'a>) -> SelfIssuedProofFuture<'a> {
+            Box::pin(async move {
+                let proof = self.inner.create(request).await?;
+                Ok(Box::new(CountingProofJwt {
+                    inner: proof,
+                    snapshot_calls: Arc::clone(&self.snapshot_calls),
+                }) as Box<dyn SelfIssuedProofJwt>)
+            })
+        }
+    }
+
+    struct CountingProofJwt {
+        inner: Box<dyn SelfIssuedProofJwt>,
+        snapshot_calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl SelfIssuedProofJwt for CountingProofJwt {
+        fn as_str(&self) -> &str {
+            self.snapshot_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.inner.as_str()
+        }
     }
 
     fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
@@ -1027,6 +1241,80 @@ mod tests {
     }
 
     #[test]
+    fn sensitive_json_preserves_legacy_lexicographic_field_order() {
+        let claims = serialize_sensitive_json(&SelfIssuedProofClaims {
+            aud: "audience",
+            exp: 2,
+            iat: 1,
+            iss: "issuer",
+            nonce: "nonce",
+            sub: "subject",
+        })
+        .expect("claims should serialize");
+        assert_eq!(
+            claims.as_slice(),
+            br#"{"aud":"audience","exp":2,"iat":1,"iss":"issuer","nonce":"nonce","sub":"subject"}"#
+        );
+
+        let request = serialize_sensitive_json(&SelfIssuedRequestObject {
+            client_id: "client",
+            exp: 2,
+            iat: 1,
+            nonce: "nonce",
+            purpose: "purpose",
+            response_mode: "mode",
+            response_type: "type",
+            response_uri: "uri",
+            scope: "scope",
+            state: "state",
+        })
+        .expect("request should serialize");
+        assert_eq!(
+            request.as_slice(),
+            br#"{"client_id":"client","exp":2,"iat":1,"nonce":"nonce","purpose":"purpose","response_mode":"mode","response_type":"type","response_uri":"uri","scope":"scope","state":"state"}"#
+        );
+
+        let response = serialize_sensitive_json(&SelfIssuedResponse {
+            id_token: "token",
+            state: "state",
+        })
+        .expect("response should serialize");
+        assert_eq!(
+            response.as_slice(),
+            br#"{"id_token":"token","state":"state"}"#
+        );
+    }
+
+    #[test]
+    fn json_string_validation_rejects_escaped_controls() {
+        let escaped_controls: &[&[u8]] = &[
+            br#""line\nbreak""#,
+            br#""tab\tbreak""#,
+            br#""backspace\b""#,
+            br#""unicode\u000aescape""#,
+            br#""unicode\u0085escape""#,
+        ];
+        for raw in escaped_controls {
+            assert_eq!(
+                decode_json_string(raw, MAX_SECRET_CHARACTERS, true).err(),
+                Some(SelfIssuedProtocolError::InvalidProof)
+            );
+        }
+    }
+
+    #[test]
+    fn json_string_limit_counts_unicode_characters_not_utf8_bytes() {
+        let raw = r#""é界🙂""#.as_bytes();
+        let decoded = decode_json_string(raw, 3, true)
+            .expect("three multibyte characters should fit a three-character limit");
+        assert_eq!(decoded.as_str(), "é界🙂");
+        assert_eq!(
+            decode_json_string(raw, 2, true).err(),
+            Some(SelfIssuedProtocolError::InvalidProof)
+        );
+    }
+
+    #[test]
     fn duplicate_request_members_and_vp_mode_fail_closed() {
         let duplicate = br#"{"client_id":"http://127.0.0.1:32192/verifier","client_id":"https://attacker.example","response_type":"id_token","response_mode":"direct_post","response_uri":"http://127.0.0.1:32192/verifier/response","scope":"openid","nonce":"n","state":"s","iat":1,"exp":2,"purpose":"Authenticate"}"#;
         assert_eq!(
@@ -1088,6 +1376,47 @@ mod tests {
                 })
             ),
             Err(SelfIssuedProtocolError::InvalidRequest)
+        );
+    }
+
+    #[test]
+    fn authentication_uses_one_stable_jwt_snapshot() {
+        let ProofFixture {
+            proof,
+            get_did,
+            clock,
+            profile_id,
+            did,
+            method,
+        } = proof_fixture();
+        let snapshot_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let proof: Arc<dyn SelfIssuedIdentityProofPort> = Arc::new(CountingProof {
+            inner: proof,
+            snapshot_calls: Arc::clone(&snapshot_calls),
+        });
+        let adapter = StandaloneSiopV2Verifier::new(proof, get_did, clock);
+        let profile = oxid_protocol_domain::ProtocolProfileId::parse(profile_id)
+            .expect("fixture profile id is valid");
+        let prepared = block_on(adapter.prepare(PrepareSelfIssuedAuthenticationRequest {
+            profile_id: profile.clone(),
+            request: standalone_self_issued_request(),
+        }))
+        .expect("request should prepare");
+
+        block_on(
+            adapter.authenticate(ProtocolSelfIssuedAuthenticationRequest {
+                profile_id: profile,
+                authentication_id: prepared.id,
+                holder_did: did,
+                method_id: method,
+            }),
+        )
+        .expect("managed DID should authenticate from one JWT snapshot");
+
+        assert_eq!(
+            snapshot_calls.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "the claims and signature must be checked against one JWT snapshot"
         );
     }
 
@@ -1182,6 +1511,67 @@ mod tests {
         );
     }
 
+    struct FailingSensitiveSerialization;
+
+    impl Serialize for FailingSensitiveSerialization {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            use serde::ser::SerializeMap as _;
+
+            let mut map = serializer.serialize_map(Some(2))?;
+            map.serialize_entry("nonce", "sensitive-nonce")?;
+            Err(serde::ser::Error::custom("rejected"))
+        }
+    }
+
+    #[test]
+    fn sensitive_json_serialization_refuses_protocol_bound_overflow() {
+        let oversized = "x".repeat(MAX_PROTOCOL_BYTES);
+        assert!(serialize_sensitive_json(oversized.as_str()).is_err());
+    }
+
+    #[test]
+    fn sensitive_base64_rejection_stays_inside_zeroizing_storage() {
+        assert_eq!(
+            decode_sensitive_base64("bm9uY2U!").err(),
+            Some(SelfIssuedProtocolError::InvalidProof)
+        );
+    }
+
+    #[test]
+    fn self_issued_serialization_failures_are_payload_free() {
+        let error = serialize_sensitive_json(&FailingSensitiveSerialization)
+            .expect_err("fixture serializer must reject after writing sensitive bytes");
+        let public_surface = format!("{error:?} {error}");
+        assert!(!public_surface.contains("sensitive-nonce"));
+    }
+
+    #[test]
+    fn self_issued_proof_future_drops_borrowed_nonce_before_polling() {
+        let ProofFixture {
+            proof,
+            profile_id,
+            did,
+            method,
+            ..
+        } = proof_fixture();
+        let profile = oxid_protocol_domain::ProtocolProfileId::parse(profile_id)
+            .expect("fixture profile id is valid");
+        let nonce = "sensitive-nonce";
+        let future = proof.create(SelfIssuedProofRequest {
+            profile_id: profile,
+            holder_did: did,
+            method_id: method,
+            audience: STANDALONE_VERIFIER.to_owned(),
+            nonce,
+            issued_at_seconds: 1,
+            expires_at_seconds: 2,
+        });
+        drop(future);
+    }
+
     #[test]
     fn verifier_rejects_a_tampered_signature() {
         let ProofFixture {
@@ -1200,14 +1590,22 @@ mod tests {
             holder_did: did.clone(),
             method_id: method.clone(),
             audience: STANDALONE_VERIFIER.to_owned(),
-            nonce: "nonce".to_owned(),
+            nonce: "nonce",
             issued_at_seconds: now,
             expires_at_seconds: now + TOKEN_LIFETIME_SECONDS,
         }))
         .expect("proof should be created");
-        validate_id_token(&token, STANDALONE_VERIFIER, "nonce", &did, &method, now)
-            .expect("token claims should validate");
-        let mut tampered = token.into_bytes();
+        validate_id_token(
+            token.as_str(),
+            STANDALONE_VERIFIER,
+            "nonce",
+            &did,
+            &method,
+            now,
+        )
+        .expect("token claims should validate");
+        let mut tampered = Zeroizing::new(Vec::with_capacity(token.as_str().len()));
+        tampered.extend_from_slice(token.as_str().as_bytes());
         let signature_start = tampered
             .iter()
             .rposition(|byte| *byte == b'.')
@@ -1218,9 +1616,9 @@ mod tests {
         } else {
             b'A'
         };
-        let tampered = String::from_utf8(tampered).expect("ASCII token");
+        let tampered = std::str::from_utf8(&tampered).expect("ASCII token");
         assert_eq!(
-            verify_id_token_signature(get_did.as_ref(), &profile, &did, &method, &tampered,),
+            verify_id_token_signature(get_did.as_ref(), &profile, &did, &method, tampered),
             Err(SelfIssuedProtocolError::InvalidProof)
         );
     }

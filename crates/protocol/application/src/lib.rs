@@ -796,8 +796,13 @@ pub type PrepareSelfIssuedAuthenticationPortFuture<'a> = Pin<
 >;
 pub type AuthenticateSelfIssuedPortFuture<'a> =
     Pin<Box<dyn Future<Output = Result<(), SelfIssuedProtocolError>> + Send + 'a>>;
-pub type SelfIssuedProofFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<String, SelfIssuedProofError>> + Send + 'a>>;
+pub trait SelfIssuedProofJwt: Send {
+    fn as_str(&self) -> &str;
+}
+
+pub type SelfIssuedProofFuture<'a> = Pin<
+    Box<dyn Future<Output = Result<Box<dyn SelfIssuedProofJwt>, SelfIssuedProofError>> + Send + 'a>,
+>;
 pub type SelfIssuedAuthenticationViewFuture<'a> = Pin<
     Box<
         dyn Future<Output = Result<SelfIssuedAuthenticationView, SelfIssuedAuthenticationError>>
@@ -843,19 +848,34 @@ pub trait SelfIssuedAuthenticationProtocolPort: Send + Sync {
     ) -> Result<(), SelfIssuedProtocolError>;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SelfIssuedProofRequest {
+#[derive(Clone, PartialEq, Eq)]
+pub struct SelfIssuedProofRequest<'a> {
     pub profile_id: ProtocolProfileId,
     pub holder_did: String,
     pub method_id: String,
     pub audience: String,
-    pub nonce: String,
+    pub nonce: &'a str,
     pub issued_at_seconds: u64,
     pub expires_at_seconds: u64,
 }
 
+impl fmt::Debug for SelfIssuedProofRequest<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SelfIssuedProofRequest")
+            .field("profile_id", &self.profile_id)
+            .field("holder_did", &self.holder_did)
+            .field("method_id", &self.method_id)
+            .field("audience", &self.audience)
+            .field("nonce", &"[REDACTED]")
+            .field("issued_at_seconds", &self.issued_at_seconds)
+            .field("expires_at_seconds", &self.expires_at_seconds)
+            .finish()
+    }
+}
+
 pub trait SelfIssuedIdentityProofPort: Send + Sync {
-    fn create<'a>(&'a self, request: SelfIssuedProofRequest) -> SelfIssuedProofFuture<'a>;
+    fn create<'a>(&'a self, request: SelfIssuedProofRequest<'a>) -> SelfIssuedProofFuture<'a>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1307,6 +1327,37 @@ mod tests {
         assert!(!request_debug.contains("sensitive-nonce"));
 
         let future = PendingHolderProof.create(request);
+        drop(future);
+    }
+
+    struct PendingSelfIssuedProof;
+
+    impl SelfIssuedIdentityProofPort for PendingSelfIssuedProof {
+        fn create<'a>(&'a self, request: SelfIssuedProofRequest<'a>) -> SelfIssuedProofFuture<'a> {
+            Box::pin(async move {
+                let _request = request;
+                std::future::pending().await
+            })
+        }
+    }
+
+    #[test]
+    fn self_issued_proof_nonce_is_borrowed_and_redacted_when_future_is_dropped() {
+        let nonce = "sensitive-nonce";
+        let request = SelfIssuedProofRequest {
+            profile_id: ProtocolProfileId::parse("profile_test").expect("profile"),
+            holder_did: "did:example:holder".to_owned(),
+            method_id: "did:example:holder#key-1".to_owned(),
+            audience: "https://verifier.example".to_owned(),
+            nonce,
+            issued_at_seconds: 1,
+            expires_at_seconds: 2,
+        };
+        let request_debug = format!("{request:?}");
+        assert!(request_debug.contains("[REDACTED]"));
+        assert!(!request_debug.contains(nonce));
+
+        let future = PendingSelfIssuedProof.create(request);
         drop(future);
     }
 
