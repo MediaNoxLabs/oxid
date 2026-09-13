@@ -29,6 +29,36 @@ pub(super) const fn is_developer_section(route: Route) -> bool {
     )
 }
 
+const SWIPE_THRESHOLD_PX: f64 = 48.0;
+
+pub(super) fn developer_section_index(route: Route) -> usize {
+    DEVELOPER_SECTIONS
+        .iter()
+        .position(|(section, _)| *section == route)
+        .unwrap_or(0)
+}
+
+pub(super) fn developer_section_after_swipe(
+    current: Route,
+    start_x: f64,
+    end_x: f64,
+) -> Option<Route> {
+    let distance = end_x - start_x;
+    if distance.abs() < SWIPE_THRESHOLD_PX {
+        return None;
+    }
+
+    let current_index = DEVELOPER_SECTIONS
+        .iter()
+        .position(|(route, _)| *route == current)?;
+    let next_index = if distance < 0.0 {
+        current_index.checked_add(1)
+    } else {
+        current_index.checked_sub(1)
+    }?;
+    DEVELOPER_SECTIONS.get(next_index).map(|(route, _)| *route)
+}
+
 #[component]
 pub(super) fn DeveloperSectionNav(current: Route, on_select: EventHandler<Route>) -> Element {
     rsx! {
@@ -42,6 +72,45 @@ pub(super) fn DeveloperSectionNav(current: Route, on_select: EventHandler<Route>
                     "{label}"
                 }
             }
+        }
+    }
+}
+
+#[component]
+pub(super) fn DeveloperSectionPager(
+    current: Route,
+    on_select: EventHandler<Route>,
+    children: Element,
+) -> Element {
+    let mut swipe_start = use_signal(|| None::<f64>);
+    let mut wheel_offset = use_signal(|| 0.0_f64);
+    rsx! {
+        div {
+            class: "developer-section-pager",
+            style: "--developer-section-index: {developer_section_index(current)};",
+            aria_label: "Developer tool pages",
+            role: "region",
+            onpointerdown: move |event| swipe_start.set(Some(event.client_coordinates().x)),
+            onpointerup: move |event| {
+                if let Some(start_x) = swipe_start.take() {
+                    if let Some(route) = developer_section_after_swipe(current, start_x, event.client_coordinates().x) {
+                        on_select.call(route);
+                    }
+                }
+            },
+            onpointercancel: move |_| swipe_start.set(None),
+            onwheel: move |event| {
+                let offset = *wheel_offset.read() + event.delta().strip_units().x;
+                if let Some(route) = developer_section_after_swipe(current, 0.0, -offset) {
+                    wheel_offset.set(0.0);
+                    on_select.call(route);
+                } else if offset.abs() >= SWIPE_THRESHOLD_PX {
+                    wheel_offset.set(0.0);
+                } else {
+                    wheel_offset.set(offset);
+                }
+            },
+            div { class: "developer-section-pager__track", {children} }
         }
     }
 }
@@ -206,5 +275,66 @@ pub(super) fn DeveloperCapabilitiesPage() -> Element {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::BASE_STYLES;
+
+    #[test]
+    fn pager_swipes_snap_sections_without_affecting_primary_routes() {
+        assert_eq!(
+            DEVELOPER_SECTIONS,
+            [
+                (Route::DeveloperManifest, "Capabilities"),
+                (Route::DeveloperProofBenchmark, "Benchmark"),
+                (Route::DeveloperDiagnostics, "Event log"),
+            ]
+        );
+        assert_eq!(
+            developer_section_after_swipe(Route::DeveloperManifest, 200.0, 100.0),
+            Some(Route::DeveloperProofBenchmark)
+        );
+        assert_eq!(
+            developer_section_after_swipe(Route::DeveloperProofBenchmark, 100.0, 200.0),
+            Some(Route::DeveloperManifest)
+        );
+        assert_eq!(
+            developer_section_after_swipe(Route::DeveloperDiagnostics, 200.0, 100.0),
+            None
+        );
+        assert_eq!(
+            developer_section_after_swipe(Route::DeveloperManifest, 100.0, 130.0),
+            None
+        );
+        assert_eq!(developer_section_index(Route::DeveloperProofBenchmark), 1);
+
+        let pager = BASE_STYLES
+            .split(".developer-section-pager {")
+            .nth(1)
+            .and_then(|styles| styles.split('}').next())
+            .expect("developer section pager rule");
+        assert!(pager.contains("scroll-snap-type: x mandatory;"));
+        assert!(pager.contains("overscroll-behavior-x: contain;"));
+        assert!(BASE_STYLES.contains(".developer-section-pager__page"));
+        assert!(BASE_STYLES.contains("scroll-snap-stop: always;"));
+        assert!(BASE_STYLES.contains("@media (prefers-reduced-motion: reduce)"));
+        assert!(!BASE_STYLES.contains(".bottom-nav {\n  scroll-snap-type"));
+
+        let phone_rules = BASE_STYLES
+            .split("@media (max-width: 30rem) {")
+            .nth(1)
+            .expect("phone-width rules");
+        let benchmark_row = phone_rules
+            .split(".proof-benchmark-row.capability-row {")
+            .nth(1)
+            .and_then(|styles| styles.split('}').next())
+            .expect("phone-width benchmark row rule");
+        assert!(benchmark_row.contains("grid-template-columns: minmax(0, 1fr) auto auto;"));
+        assert!(phone_rules.contains("grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);"));
+        // 360px and 390px both select the compact (max-width: 30rem) contract.
+        assert!(360 < 30 * 16 && 390 < 30 * 16);
     }
 }

@@ -2008,6 +2008,38 @@ textarea:focus-visible {
   color: var(--accent);
 }
 
+.developer-section-pager {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+
+.developer-section-pager::-webkit-scrollbar {
+  display: none;
+}
+
+.developer-section-pager__track {
+  display: flex;
+  width: 300%;
+  transform: translateX(calc(var(--developer-section-index) * -33.333333%));
+  transition: transform var(--motion-base) ease-out;
+}
+
+.developer-section-pager__page {
+  width: 33.333333%;
+  flex: 0 0 33.333333%;
+  min-width: 0;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .developer-section-pager__track {
+    transition: none;
+  }
+}
+
 .proof-benchmark-list {
   display: grid;
   gap: var(--space-1);
