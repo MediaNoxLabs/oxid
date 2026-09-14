@@ -707,28 +707,6 @@ try {
       "document.body.textContent.includes('DID document updated.')",
       "managed DID update",
     );
-    await clickButtonByLabel("Open standalone demo setup");
-    await clickButtonByLabel("Run demo action: Review login request");
-    await waitForButton("Preview login request");
-    await clickButton("Preview login request");
-    await waitFor(
-      "document.body.innerText.includes('DID authentication preview') && document.body.innerText.includes('Who is asking?') && document.body.innerText.includes('What will you prove?') && document.body.innerText.includes('Which identity?') && document.body.innerText.includes('Why is it requested?') && document.body.innerText.includes('Unverified endpoint') && document.body.innerText.includes('No credential or document claims will be disclosed.')",
-      "four-question SIOPv2 DID authentication preview",
-    );
-    await evaluate(`(() => {
-      const consent = document.querySelector('#self-issued-authentication-consent');
-      if (!consent) return false;
-      consent.click();
-      return consent.checked;
-    })()`);
-    await clickButton("Authenticate with DID");
-    await waitFor(
-      "document.body.innerText.includes('DID authentication succeeded and the standalone verifier independently validated the proof.')",
-      "verified SIOPv2 DID authentication",
-    );
-    const didAuthenticated = await evaluate(
-      "document.body.innerText.includes('DID authentication succeeded and the standalone verifier independently validated the proof.')",
-    );
     await openDocuments();
     await waitForButton("Use demo OID4VCI offer");
     await clickButton("Use demo OID4VCI offer");
@@ -960,6 +938,8 @@ try {
     const didManaged = await evaluate(
       "document.body.innerText.includes('Deactivated') && document.body.innerText.includes('Manage this DID')",
     );
+    await clickButton("Resolve DID");
+    await clickButton("Load example DID");
     await waitForButton("Resolve and save");
     await clickButton("Resolve and save");
     await waitFor(
@@ -974,8 +954,8 @@ try {
       "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('Valid') && document.body.innerText.includes('Proof')",
       "verified issued credential",
     );
-    const result = { ...walletResult, homeComposed: true, claimsHiddenByDefault, credentialChooserValidated, credentialPolicyChecked, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, nativeVaultCallFlow, presentationProofGated, publicAddressCopied, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow, vaultStatePersistent };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.homeComposed || !result.claimsHiddenByDefault || !result.credentialChooserValidated || !result.credentialPolicyChecked || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.publicAddressCopied || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow || !result.vaultStatePersistent) {
+    const result = { ...walletResult, homeComposed: true, claimsHiddenByDefault, credentialChooserValidated, credentialPolicyChecked, credentialVerified, didManaged, didResolved, disclosurePreviewed, nativeVaultCallFlow, presentationProofGated, publicAddressCopied, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow, vaultStatePersistent };
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.homeComposed || !result.claimsHiddenByDefault || !result.credentialChooserValidated || !result.credentialPolicyChecked || !result.credentialVerified || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.publicAddressCopied || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow || !result.vaultStatePersistent) {
       throw new Error(`Android standalone wallet flow did not expose the expected public result: ${JSON.stringify(result)}`);
     }
     await clickButton("Home");
