@@ -45,6 +45,7 @@ function elf({
 
 function apk({
   archiveAligned = true,
+  centralCopies = 1,
   centralExtraLength = 0,
   compressedPadding = 0,
   compressedSizeDelta = 0,
@@ -73,11 +74,12 @@ function apk({
   central.writeUInt32LE(declaredUncompressedSize ?? payload.length, 24);
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(1, 8);
-  end.writeUInt16LE(1, 10);
-  end.writeUInt32LE(central.length + name.length, 12);
+  end.writeUInt16LE(centralCopies, 8);
+  end.writeUInt16LE(centralCopies, 10);
+  end.writeUInt32LE((central.length + name.length) * centralCopies, 12);
   end.writeUInt32LE(centralOffset, 16);
-  return Buffer.concat([local, name, Buffer.alloc(extraLength), stored, central, name, end]);
+  const centralRecords = Array.from({ length: centralCopies }, () => [central, name]).flat();
+  return Buffer.concat([local, name, Buffer.alloc(extraLength), stored, ...centralRecords, end]);
 }
 
 test("accepts a hermetic APK with a 16 KiB ZIP placement and ELF LOAD alignment", () => {
@@ -170,6 +172,13 @@ test("rejects an attacker-controlled compressed size above the inspection limit"
   assert.throws(
     () => verifyApk(apk({ method: 8, declaredUncompressedSize: 0xffffffff })),
     new RegExp(`${member.replace(/[/.]/g, "\\$&")}: compressed ZIP member exceeds the 512 MiB inspection safety limit`),
+  );
+});
+
+test("bounds aggregate decompression across repeated native members", () => {
+  assert.throws(
+    () => verifyApk(apk({ method: 8, centralCopies: 2, declaredUncompressedSize: 300 * 1024 * 1024 })),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: compressed native members exceed the aggregate 512 MiB inspection safety limit`),
   );
 });
 

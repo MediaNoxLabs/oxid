@@ -170,6 +170,16 @@ export function verifyApk(archive, archiveName = "APK") {
   if (nativeMembers.length === 0) {
     throw new Error(`${archiveName}: APK contains no native shared libraries`);
   }
+  let declaredInflatedBytes = 0;
+  for (const member of nativeMembers.filter(({ method }) => method === 8)) {
+    if (member.uncompressedSize > MAX_INFLATED_NATIVE_BYTES) {
+      fail(member.name, "compressed ZIP member exceeds the 512 MiB inspection safety limit");
+    }
+    if (declaredInflatedBytes > MAX_INFLATED_NATIVE_BYTES - member.uncompressedSize) {
+      fail(member.name, "compressed native members exceed the aggregate 512 MiB inspection safety limit");
+    }
+    declaredInflatedBytes += member.uncompressedSize;
+  }
   for (const member of nativeMembers) {
     const stored = archive.subarray(member.dataOffset, member.dataOffset + member.compressedSize);
     let elfBytes;
@@ -182,9 +192,6 @@ export function verifyApk(archive, archiveName = "APK") {
       }
       elfBytes = stored;
     } else if (member.method === 8) {
-      if (member.uncompressedSize > MAX_INFLATED_NATIVE_BYTES) {
-        fail(member.name, "compressed ZIP member exceeds the 512 MiB inspection safety limit");
-      }
       try {
         elfBytes = inflateRawSync(stored, { maxOutputLength: member.uncompressedSize + 1 });
       } catch {
