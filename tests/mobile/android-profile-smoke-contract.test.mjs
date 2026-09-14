@@ -84,6 +84,7 @@ test("Android Home automation follows the realm-scoped product composition", asy
   assert.match(flow, /settled protected Receive state/);
   assert.match(flow, /receiveNeedsActivation/);
   assert.match(flow, /protected Receive state failed closed/);
+  assert.doesNotMatch(home, /Use my receive address/);
 });
 
 test("Android smoke owns only disposable-emulator credential and app state", async () => {

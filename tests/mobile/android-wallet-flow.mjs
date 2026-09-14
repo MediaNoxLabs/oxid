@@ -581,7 +581,7 @@ try {
       await clickButtonByLabel("Close Receive");
       await openWallet();
     }
-    await waitForButton("Use my receive address", 90_000);
+    await waitForButton("Sync now", 90_000);
     await waitForButton("Scan");
 
     await clickButton("Sync now");
