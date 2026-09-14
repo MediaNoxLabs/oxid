@@ -23,6 +23,14 @@ fail() {
   exit 1
 }
 
+# HEAD and its tree identify source inputs only when no tracked or untracked
+# source changes exist. Ignored generated outputs (including target/) remain
+# allowed so this command can write its artifact and receipt.
+[ -z "$(git status --porcelain --untracked-files=all)" ] \
+  || fail "source worktree is not clean; refusing to build an unverifiable receipt"
+head="$(git rev-parse HEAD)"
+tree="$(git rev-parse 'HEAD^{tree}')"
+
 for command_name in nix rustup java node jq shasum; do
   command -v "$command_name" >/dev/null 2>&1 || fail "required command '$command_name' is missing"
 done
@@ -69,16 +77,11 @@ build() {
       --locked
 }
 
-# NDK r27 alone does not guarantee 16 KiB ELF LOAD alignment. Measure its
-# ordinary output first; only then use Android's documented linker flags.
-linker_flags=""
+# The measured NDK r27 build requires both documented flags for 16 KiB ELF
+# LOAD alignment. Build exactly once with the permanent configuration.
+linker_flags="-C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-z,common-page-size=16384"
 build "$linker_flags"
 [ -f "$raw_artifact" ] || fail "Dioxus did not create the release APK"
-if ! node scripts/android-verify-16k.mjs "$raw_artifact"; then
-  linker_flags="-C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-z,common-page-size=16384"
-  build "$linker_flags"
-  [ -f "$raw_artifact" ] || fail "Dioxus did not create the remediated release APK"
-fi
 
 node scripts/android-verify-16k.mjs "$raw_artifact"
 "$zipalign" -c -P 16 -v 4 "$raw_artifact"
@@ -91,9 +94,6 @@ cp "$raw_artifact" "$artifact"
 chmod 600 "$artifact"
 artifact_sha256="$(shasum -a 256 "$artifact" | awk '{ print $1 }')"
 artifact_bytes="$(wc -c < "$artifact" | tr -d ' ')"
-head="$(git rev-parse HEAD)"
-tree="$(git rev-parse 'HEAD^{tree}')"
-
 umask 077
 jq -n \
   --arg head "$head" --arg tree "$tree" \
@@ -102,8 +102,9 @@ jq -n \
   --arg rustc "$rustc_version" --arg cargo "$cargo_version" --arg gradle "$gradle_version" \
   --arg compileSdk "$compile_sdk" --arg sdkPlatformRevision "$sdk_platform_revision" \
   --arg buildTools "$build_tools_version" --arg ndk "$ndk_version" \
-  --arg linkerFlags "$linker_flags" \
-  '{schema:"oxid-android-release-candidate-receipt-v1",source:{head:$head,tree:$tree},artifact:{name:"oxid-app-arm64-v8a-release.apk",sha256:$artifactSha256,bytes:$artifactBytes,abis:["arm64-v8a"]},tools:{nix:$nix,nixpkgsRevision:$nixpkgsRevision,rustc:$rustc,cargo:$cargo,gradle:$gradle,android:{compileSdk:$compileSdk,sdkPlatformRevision:$sdkPlatformRevision,buildTools:$buildTools,ndk:$ndk}},build:{linkerFlags:$linkerFlags},checks:{androidVerify16k:"pass",zipalignPage16k:"pass"}}' \
+  --arg linkerFlags "$linker_flags" --arg rustProfile "android-release" \
+  --arg gradleVariant "debug" --arg signing "generated-debug" \
+  '{schema:"oxid-android-release-candidate-receipt-v1",source:{head:$head,tree:$tree},artifact:{name:"oxid-app-arm64-v8a-release.apk",sha256:$artifactSha256,bytes:$artifactBytes,abis:["arm64-v8a"]},tools:{nix:$nix,nixpkgsRevision:$nixpkgsRevision,rustc:$rustc,cargo:$cargo,gradle:$gradle,android:{compileSdk:$compileSdk,sdkPlatformRevision:$sdkPlatformRevision,buildTools:$buildTools,ndk:$ndk}},build:{dioxus:{release:true,rustProfile:$rustProfile},androidWrapper:{gradleVariant:$gradleVariant,signing:$signing},linkerFlags:$linkerFlags},checks:{androidVerify16k:"pass",zipalignPage16k:"pass"}}' \
   >"$receipt"
 chmod 600 "$receipt"
 

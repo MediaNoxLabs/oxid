@@ -89,12 +89,17 @@ set `OXID_ANDROID_COMPILE_SDK`, `OXID_ANDROID_BUILD_TOOLS_VERSION`, or
 private receipt binds the exact source head/tree, artifact digest/size/ABI, Nix
 and nixpkgs revision, Rust/Cargo, Gradle, Android SDK/build-tools, and NDK
 versions. It records no local paths, device IDs, signing material, or app data.
+It does record the generated wrapper's signing *kind*: Dioxus `--release` uses
+Rust profile `android-release`, while the generated Android wrapper packages
+Gradle variant `debug` with generated debug signing. This is a review
+candidate, not a Play-signed or Gradle-release artifact.
 
-The first build uses NDK r27 without extra linker flags and runs the existing
-static verifier. Only if that measured APK fails does it rebuild through this
-release-candidate command with Android's documented
-`-Wl,-z,max-page-size=16384` and `-Wl,-z,common-page-size=16384` flags. The
-final APK must pass both `just android-verify-16k` and the selected official
+The command fails closed unless the issue worktree is clean (ignored generated
+outputs such as `target/` may remain), so its recorded HEAD/tree identifies all
+source inputs. It performs exactly one Dioxus build using both documented
+16 KiB linker flags: `-Wl,-z,max-page-size=16384` and
+`-Wl,-z,common-page-size=16384`. The resulting APK must independently pass
+both `just android-verify-16k` and the selected official
 `zipalign -c -P 16 -v 4` check before the receipt is written.
 
 This command does not select, boot, install to, or launch an Android target.
