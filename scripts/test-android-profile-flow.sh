@@ -52,6 +52,8 @@ done
 
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
+# shellcheck source=scripts/lib/android-test-credential.sh
+source "$repository_root/scripts/lib/android-test-credential.sh"
 if [ -n "$prebuilt_apk" ]; then
   case "$prebuilt_apk" in
     /*) ;;
@@ -74,19 +76,20 @@ fi
 adb_command="$android_sdk/platform-tools/adb"
 devtools_port=9223
 device=""
-test_pin=""
-credential_owned=0
 app_state_owned=0
+onboarding_authorizer=""
 cleanup() {
+  if [ -n "$onboarding_authorizer" ] && kill -0 "$onboarding_authorizer" >/dev/null 2>&1; then
+    kill "$onboarding_authorizer" >/dev/null 2>&1 || true
+    wait "$onboarding_authorizer" >/dev/null 2>&1 || true
+  fi
   if [ -n "$device" ]; then
     "$adb_command" -s "$device" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
     if [ "$app_state_owned" -eq 1 ]; then
       "$adb_command" -s "$device" shell am force-stop io.medianox.oxid >/dev/null 2>&1 || true
       "$adb_command" -s "$device" shell pm clear io.medianox.oxid >/dev/null 2>&1 || true
     fi
-    if [ "$credential_owned" -eq 1 ]; then
-      "$adb_command" -s "$device" shell locksettings clear --old "$test_pin" >/dev/null 2>&1 || true
-    fi
+    oxid_android_test_credential_cleanup "$adb_command" "$device"
   fi
 }
 trap cleanup EXIT
@@ -132,20 +135,7 @@ if [ "$($adb_command -s "$device" shell getprop ro.kernel.qemu 2>/dev/null | tr 
   echo "The selected Android target is not a disposable QEMU emulator." >&2
   exit 1
 fi
-if [ "$($adb_command -s "$device" shell locksettings get-disabled | tr -d '\r')" != "true" ]; then
-  echo "The emulator already has a device credential; refusing to replace it." >&2
-  exit 1
-fi
-test_pin="${OXID_ANDROID_TEST_PIN:-}"
-if [ -z "$test_pin" ]; then
-  test_pin="$(od -An -N4 -tu4 /dev/urandom | awk '{ printf "%06d", ($1 % 900000) + 100000 }')"
-fi
-if ! [[ "$test_pin" =~ ^[0-9]{6,12}$ ]]; then
-  echo "OXID_ANDROID_TEST_PIN must contain 6 to 12 digits." >&2
-  exit 1
-fi
-"$adb_command" -s "$device" shell locksettings set-pin "$test_pin" >/dev/null
-credential_owned=1
+oxid_android_test_credential_prepare "$adb_command" "$device"
 
 echo "Resetting Android application data for the smoke flow."
 "$adb_command" -s "$device" shell pm clear io.medianox.oxid >/dev/null
@@ -192,62 +182,6 @@ run_webview_wallet_flow() {
 
   node "$repository_root/tests/mobile/android-wallet-flow.mjs" "$websocket_url" "$mode"
   "$adb_command" forward --remove "tcp:$devtools_port" >/dev/null
-}
-
-credential_prompt_focused() {
-  local focused
-  focused="$($adb_command -s "$device" shell dumpsys activity activities 2>/dev/null \
-    | rg 'topResumedActivity|ResumedActivity' || true)"
-  rg -q 'ConfirmDeviceCredential|ConfirmLockPassword|ConfirmLockPattern|Keyguard' <<<"$focused"
-}
-
-resume_onboarding_after_authorization() {
-  local resumed=""
-  for _attempt in $(seq 1 20); do
-    resumed="$($adb_command -s "$device" shell dumpsys activity activities 2>/dev/null \
-      | rg 'topResumedActivity|ResumedActivity' || true)"
-    if rg -q 'io\.medianox\.oxid/dev\.dioxus\.main\.MainActivity' <<<"$resumed"; then
-      return 0
-    fi
-    if credential_prompt_focused; then
-      sleep 0.2
-      continue
-    fi
-    break
-  done
-  if credential_prompt_focused; then
-    echo "Android device-credential prompt did not close after authorization." >&2
-    return 1
-  fi
-  "$adb_command" -s "$device" shell am start -W \
-    -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
-  wait_for_main_activity
-}
-
-authorize_onboarding_prompt() {
-  for _attempt in $(seq 1 90); do
-    if credential_prompt_focused; then
-      echo "Android device-credential prompt observed." >&2
-      # Focus is reported before the system transition has necessarily made
-      # the PIN field ready for injected key events. Let that owned surface
-      # settle, then submit explicitly and require it to close.
-      sleep 1
-      "$adb_command" -s "$device" shell input text "$test_pin" >/dev/null
-      "$adb_command" -s "$device" shell input keyevent ENTER >/dev/null
-      for _settle_attempt in $(seq 1 50); do
-        if ! credential_prompt_focused; then
-          resume_onboarding_after_authorization
-          return
-        fi
-        sleep 0.2
-      done
-      echo "Android device-credential prompt remained open after PIN submission." >&2
-      return 1
-    fi
-    sleep 1
-  done
-  echo "Android device-credential prompt did not appear." >&2
-  return 1
 }
 
 wait_for_main_activity() {
@@ -345,10 +279,11 @@ assert_screen_privacy_flag() {
   fi
 }
 
-authorize_onboarding_prompt &
+oxid_android_test_credential_authorize "$adb_command" "$device" &
 onboarding_authorizer=$!
 run_webview_wallet_flow privacy-reveal
 wait "$onboarding_authorizer"
+onboarding_authorizer=""
 assert_screen_privacy_flag unprotected
 background_to_android_home
 "$adb_command" -s "$device" shell am start -W \

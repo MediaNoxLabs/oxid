@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-for command_name in curl jq node rg; do
+for command_name in curl jq node od rg; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Required command '$command_name' is missing." >&2
     exit 1
@@ -12,6 +12,8 @@ done
 
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
+# shellcheck source=scripts/lib/android-test-credential.sh
+source "$repository_root/scripts/lib/android-test-credential.sh"
 
 android_sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 if [ -z "$android_sdk" ] && [ "$(uname -s)" = "Darwin" ]; then
@@ -23,24 +25,41 @@ if [ -z "$android_sdk" ] || [ ! -x "$android_sdk/platform-tools/adb" ]; then
 fi
 adb_command="$android_sdk/platform-tools/adb"
 devtools_port=9225
-trap '"$adb_command" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true' EXIT
+authorization_pid=""
+cleanup() {
+  if [ -n "$authorization_pid" ] && kill -0 "$authorization_pid" >/dev/null 2>&1; then
+    kill "$authorization_pid" >/dev/null 2>&1 || true
+    wait "$authorization_pid" >/dev/null 2>&1 || true
+  fi
+  "$adb_command" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
+  if [ -n "${device:-}" ]; then
+    "$adb_command" -s "$device" shell pm clear io.medianox.oxid >/dev/null 2>&1 || true
+    oxid_android_test_credential_cleanup "$adb_command" "$device"
+  fi
+}
+trap cleanup EXIT
 
 device="${OXID_ANDROID_DEVICE:-}"
 if [ -z "$device" ]; then
-  device="$($adb_command devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')"
+  device="$($adb_command devices | awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { print $1; exit }')"
+fi
+if [ -n "$device" ]; then
+  oxid_android_test_credential_require_emulator "$adb_command" "$device"
 fi
 
 if [ -n "$device" ]; then
-  OXID_ANDROID_DEVICE="$device" OXID_UI_PROFILE=dev \
+  OXID_ANDROID_DEVICE="$device" OXID_ANDROID_REQUIRE_EMULATOR=1 OXID_UI_PROFILE=dev \
     "$repository_root/scripts/run-android-emulator.sh"
 else
-  OXID_UI_PROFILE=dev "$repository_root/scripts/run-android-emulator.sh"
-  device="$($adb_command devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')"
+  OXID_ANDROID_REQUIRE_EMULATOR=1 OXID_UI_PROFILE=dev \
+    "$repository_root/scripts/run-android-emulator.sh"
+  device="$($adb_command devices | awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { print $1; exit }')"
 fi
 if [ -z "$device" ]; then
   echo "The Android developer-profile harness did not find an online device." >&2
   exit 1
 fi
+oxid_android_test_credential_prepare "$adb_command" "$device"
 
 echo "Resetting Oxid application data on Android device $device for the developer-profile smoke."
 "$adb_command" -s "$device" shell pm clear io.medianox.oxid >/dev/null
@@ -81,6 +100,10 @@ if [ -z "$websocket_url" ]; then
   exit 1
 fi
 
+oxid_android_test_credential_authorize "$adb_command" "$device" &
+authorization_pid=$!
 node "$repository_root/tests/mobile/android-wallet-flow.mjs" "$websocket_url" developer
+wait "$authorization_pid"
+authorization_pid=""
 
 echo "Android standalone developer-profile manifest smoke passed on $device."

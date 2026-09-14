@@ -53,6 +53,10 @@ fn may_admit_authorization_lifecycle(state: &WalletOnboardingState, expected: bo
         )
 }
 
+const fn prepare_requires_native_authorization(intent: WalletOnboardingIntent) -> bool {
+    matches!(intent, WalletOnboardingIntent::Create)
+}
+
 #[component]
 pub(crate) fn WalletOnboarding(
     profile: WalletProfileView,
@@ -226,7 +230,8 @@ pub(crate) fn WalletOnboarding(
                         // Wry may report several lifecycle events around one
                         // app-owned credential surface. Admit them only while the
                         // blocking native authorization operation owns the transition.
-                        authorization_in_flight_for_prepare.set(true);
+                        authorization_in_flight_for_prepare
+                            .set(prepare_requires_native_authorization(intent));
                         authorized_resume_for_prepare.set(None);
                         state.set(WalletOnboardingState::Working);
                         spawn(async move {
@@ -394,6 +399,16 @@ mod tests {
         assert!(!may_admit_authorization_lifecycle(
             &WalletOnboardingState::Working,
             false
+        ));
+    }
+
+    #[test]
+    fn mnemonic_restore_does_not_admit_unrelated_lifecycle_churn() {
+        assert!(prepare_requires_native_authorization(
+            WalletOnboardingIntent::Create
+        ));
+        assert!(!prepare_requires_native_authorization(
+            WalletOnboardingIntent::RestorePhrase
         ));
     }
 

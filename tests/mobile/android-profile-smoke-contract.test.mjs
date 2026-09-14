@@ -41,15 +41,61 @@ test("Android profile automation follows native-authorized recovery onboarding",
       onboarding.indexOf("I have securely saved or verified this recovery phrase."),
   );
 
-  const launcher = await readFile(
-    path.join(root, "scripts", "test-android-profile-flow.sh"),
+  const credentialHelper = await readFile(
+    path.join(root, "scripts", "lib", "android-test-credential.sh"),
     "utf8",
   );
   assert.match(
-    launcher,
+    credentialHelper,
     /device-credential prompt observed[\s\S]*sleep 1[\s\S]*input text[\s\S]*keyevent ENTER[\s\S]*seq 1 50/,
   );
-  assert.match(launcher, /device-credential prompt remained open after PIN submission/);
+  assert.match(credentialHelper, /device-credential prompt remained open after PIN submission/);
+});
+
+test("shared Android profile callers own the native authorization ceremony", async () => {
+  const helper = await readFile(
+    path.join(root, "scripts", "lib", "android-test-credential.sh"),
+    "utf8",
+  );
+  assert.match(helper, /requires a disposable QEMU emulator/);
+  assert.match(helper, /oxid_android_test_credential_require_emulator/);
+  assert.match(helper, /locksettings set-pin/);
+  assert.match(helper, /device-credential prompt observed/);
+  assert.match(helper, /oxid_android_test_credential_resume_app/);
+  assert.match(helper, /locksettings clear/);
+  assert.match(helper, /Failed to remove the disposable emulator PIN/);
+  assert.match(helper, /Credential ownership remains recorded/);
+  assert.match(helper, /private recovery helper retained at/);
+  assert.match(helper, /mktemp -d/);
+  assert.match(helper, /chmod 700/);
+  assert.doesNotMatch(helper, /recover it with:[\s\S]*oxid_android_test_credential_pin/);
+  assert.doesNotMatch(helper, /locksettings clear[\s\S]{0,100}\|\| true/);
+
+  for (const script of [
+    "test-android-backup-flow.sh",
+    "test-android-developer-profile.sh",
+    "test-android-standalone-local.sh",
+  ]) {
+    const source = await readFile(path.join(root, "scripts", script), "utf8");
+    assert.match(source, /source .*android-test-credential\.sh/);
+    assert.match(source, /oxid_android_test_credential_prepare/);
+    assert.match(source, /oxid_android_test_credential_authorize/);
+    assert.match(source, /oxid_android_test_credential_cleanup/);
+  }
+
+  const developer = await readFile(
+    path.join(root, "scripts", "test-android-developer-profile.sh"),
+    "utf8",
+  );
+  assert.match(
+    developer,
+    /oxid_android_test_credential_require_emulator[\s\S]*run-android-emulator\.sh/,
+  );
+  assert.match(developer, /OXID_ANDROID_REQUIRE_EMULATOR=1/);
+  assert.doesNotMatch(
+    developer,
+    /awk 'NR > 1 && \$2 == "device" \{ print \$1; exit \}'/,
+  );
 });
 
 test("Android privacy automation uses the current global application menu", async () => {
@@ -112,20 +158,17 @@ test("Android smoke owns only disposable-emulator credential and app state", asy
   assert.match(smoke, /OXID_ANDROID_REQUIRE_EMULATOR=1/);
   assert.match(smoke, /case "\$device" in\n  emulator-\*\)/);
   assert.match(smoke, /getprop ro\.kernel\.qemu/);
-  assert.match(smoke, /locksettings get-disabled/);
-  assert.match(smoke, /refusing to replace it/);
-  assert.match(smoke, /test_pin="\$\(od -An -N4 -tu4 \/dev\/urandom/);
+  assert.match(smoke, /source .*android-test-credential\.sh/);
+  assert.match(smoke, /oxid_android_test_credential_prepare/);
+  assert.match(smoke, /oxid_android_test_credential_authorize/);
+  assert.match(smoke, /oxid_android_test_credential_cleanup/);
   assert.doesNotMatch(smoke, /246810/);
-  assert.match(smoke, /credential_owned=0/);
-  assert.match(smoke, /if \[ "\$credential_owned" -eq 1 \]/);
-  assert.match(smoke, /locksettings clear --old "\$test_pin"/);
   assert.match(smoke, /if \[ "\$app_state_owned" -eq 1 \]/);
   assert.match(smoke, /shell pm clear io\.medianox\.oxid/);
-  assert.match(smoke, /authorize_onboarding_prompt &/);
-  assert.match(smoke, /resume_onboarding_after_authorization/);
+  assert.match(smoke, /onboarding_authorizer=""/);
   assert.match(
     smoke,
-    /resume_onboarding_after_authorization\(\).*shell am start -W.*io\.medianox\.oxid\/dev\.dioxus\.main\.MainActivity/s,
+    /if \[ -n "\$onboarding_authorizer" \].*kill "\$onboarding_authorizer".*wait "\$onboarding_authorizer"/s,
   );
   assert.doesNotMatch(smoke, /passed on \$device|device \$device|device '\$device'/);
   assert.doesNotMatch(smoke, /recovery phrase.*echo|echo.*recovery phrase/i);
