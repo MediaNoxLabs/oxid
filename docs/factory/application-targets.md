@@ -82,13 +82,16 @@ target/android-release-candidate/oxid-app-arm64-v8a-release.apk
 target/android-release-candidate/receipt.json
 ```
 
-It requires the selected Android platform, build-tools, and NDK to be present.
-By default those are API 35, build-tools `35.0.0`, and NDK `27.0.12077973`;
-set `OXID_ANDROID_COMPILE_SDK`, `OXID_ANDROID_BUILD_TOOLS_VERSION`, or
-`OXID_ANDROID_NDK_VERSION` only to select an installed reviewed version. The
-private receipt binds the exact source head/tree, artifact digest/size/ABI, Nix
-and nixpkgs revision, Rust/Cargo, Gradle, Android SDK/build-tools, and NDK
-versions. It records no local paths, device IDs, signing material, or app data.
+It requires both reviewed Android platforms: API 34 for the Dioxus-generated
+application and API 35 for the tracked native plugin, plus build-tools `35.0.0`
+with both `aapt` and `zipalign`, and NDK `27.0.12077973`. Only
+`OXID_ANDROID_BUILD_TOOLS_VERSION` and `OXID_ANDROID_NDK_VERSION` select
+installed reviewed tool versions; there is no application compile-SDK override,
+because it does not control Dioxus's generated application project. The private
+receipt binds the exact source head/tree, artifact digest/size/ABI, Nix and
+nixpkgs revision, Rust/Cargo, Gradle, both Android platform revisions with their
+application/native-plugin roles, build-tools, and NDK versions. It records no
+local paths, device IDs, signing material, or app data.
 It does record the generated wrapper's signing *kind*: Dioxus `--release` uses
 Rust profile `android-release`, while the generated Android wrapper packages
 Gradle variant `debug` with generated debug signing. This is a review
@@ -100,7 +103,11 @@ source inputs. It performs exactly one Dioxus build using both documented
 16 KiB linker flags: `-Wl,-z,max-page-size=16384` and
 `-Wl,-z,common-page-size=16384`. The resulting APK must independently pass
 both `just android-verify-16k` and the selected official
-`zipalign -c -P 16 -v 4` check before the receipt is written.
+`zipalign -c -P 16 -v 4` check before the receipt is written. It then uses that
+build-tools `aapt` to inspect the exact APK and fails closed unless its package
+is `io.medianox.oxid`, only native ABI is `arm64-v8a`, application compile SDK
+is 34, min SDK is 23, and target SDK is 35. The receipt records those observed
+APK badging values rather than inferring them from an installed platform.
 
 This command does not select, boot, install to, or launch an Android target.
 The supervisor separately owns the reviewed Android 15+ 16 KiB target,

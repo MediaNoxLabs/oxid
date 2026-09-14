@@ -11,7 +11,8 @@ cd "$repository_root"
 android_sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 build_tools_version="${OXID_ANDROID_BUILD_TOOLS_VERSION:-35.0.0}"
 ndk_version="${OXID_ANDROID_NDK_VERSION:-27.0.12077973}"
-compile_sdk="${OXID_ANDROID_COMPILE_SDK:-35}"
+application_compile_sdk="34"
+plugin_compile_sdk="35"
 artifact_directory="$repository_root/target/android-release-candidate"
 artifact="$artifact_directory/oxid-app-arm64-v8a-release.apk"
 receipt="$artifact_directory/receipt.json"
@@ -35,11 +36,19 @@ for command_name in nix rustup java node jq shasum; do
   command -v "$command_name" >/dev/null 2>&1 || fail "required command '$command_name' is missing"
 done
 [ -n "$android_sdk" ] || fail "ANDROID_HOME or ANDROID_SDK_ROOT is required"
-[ -d "$android_sdk/platforms/android-$compile_sdk" ] || fail "Android platform android-$compile_sdk is not installed"
-sdk_platform_revision="$(awk -F= '$1 ~ /^[[:space:]]*Pkg.Revision[[:space:]]*$/ { value=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); print value; exit }' "$android_sdk/platforms/android-$compile_sdk/source.properties")"
-[ -n "$sdk_platform_revision" ] || fail "Android platform android-$compile_sdk has no package revision"
+platform_revision() {
+  local api="$1" role="$2" revision
+  [ -d "$android_sdk/platforms/android-$api" ] || fail "$role Android platform API $api is not installed"
+  [ -f "$android_sdk/platforms/android-$api/source.properties" ] || fail "$role Android platform API $api has no package revision"
+  revision="$(awk -F= '$1 ~ /^[[:space:]]*Pkg.Revision[[:space:]]*$/ { value=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); print value; exit }' "$android_sdk/platforms/android-$api/source.properties")"
+  [ -n "$revision" ] || fail "$role Android platform API $api has no package revision"
+  printf '%s' "$revision"
+}
+application_sdk_platform_revision="$(platform_revision "$application_compile_sdk" application)"
+plugin_sdk_platform_revision="$(platform_revision "$plugin_compile_sdk" native-plugin)"
+aapt="$android_sdk/build-tools/$build_tools_version/aapt"
 zipalign="$android_sdk/build-tools/$build_tools_version/zipalign"
-[ -x "$zipalign" ] || fail "Android build-tools $build_tools_version with zipalign is not installed"
+[ -x "$aapt" ] && [ -x "$zipalign" ] || fail "Android build-tools $build_tools_version with aapt and zipalign is not installed"
 android_ndk="$android_sdk/ndk/$ndk_version"
 [ -d "$android_ndk" ] || fail "Android NDK $ndk_version is not installed"
 [ "$(awk -F= '$1 ~ /^[[:space:]]*Pkg.Revision[[:space:]]*$/ { value=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); print value; exit }' "$android_ndk/source.properties")" = "$ndk_version" ] \
@@ -85,6 +94,17 @@ build "$linker_flags"
 
 node scripts/android-verify-16k.mjs "$raw_artifact"
 "$zipalign" -c -P 16 -v 4 "$raw_artifact"
+apk_badging="$("$aapt" dump badging "$raw_artifact")" || fail "could not inspect APK badging"
+apk_package="$(printf '%s\n' "$apk_badging" | awk -F"'" '/^package: / { print $2; exit }')"
+apk_abi="$(printf '%s\n' "$apk_badging" | awk -F"'" '/^native-code: / { print $2; exit }')"
+apk_compile_sdk="$(printf '%s\n' "$apk_badging" | awk -F"'" '/^compileSdkVersion:/{ print $2; exit }')"
+apk_min_sdk="$(printf '%s\n' "$apk_badging" | awk -F"'" '/^sdkVersion:/{ print $2; exit }')"
+apk_target_sdk="$(printf '%s\n' "$apk_badging" | awk -F"'" '/^targetSdkVersion:/{ print $2; exit }')"
+[ "$apk_package" = "io.medianox.oxid" ] || fail "APK package is not io.medianox.oxid"
+[ "$apk_abi" = "arm64-v8a" ] || fail "APK native ABI is not arm64-v8a"
+[ "$apk_compile_sdk" = "$application_compile_sdk" ] || fail "APK application compileSdk is not $application_compile_sdk"
+[ "$apk_min_sdk" = "23" ] || fail "APK minSdk is not 23"
+[ "$apk_target_sdk" = "35" ] || fail "APK targetSdk is not 35"
 
 gradle_version="$(awk -F= '/^distributionUrl=/ { value=$2; sub(/^.*gradle-/, "", value); sub(/-bin\.zip$/, "", value); print value; exit }' "$gradle_wrapper_properties")"
 [ -n "$gradle_version" ] || fail "could not determine the generated Gradle wrapper version"
@@ -100,11 +120,14 @@ jq -n \
   --arg artifactSha256 "$artifact_sha256" --argjson artifactBytes "$artifact_bytes" \
   --arg nix "$nix_version" --arg nixpkgsRevision "$nixpkgs_revision" \
   --arg rustc "$rustc_version" --arg cargo "$cargo_version" --arg gradle "$gradle_version" \
-  --arg compileSdk "$compile_sdk" --arg sdkPlatformRevision "$sdk_platform_revision" \
+  --arg applicationCompileSdk "$application_compile_sdk" --arg applicationSdkPlatformRevision "$application_sdk_platform_revision" \
+  --arg pluginCompileSdk "$plugin_compile_sdk" --arg pluginSdkPlatformRevision "$plugin_sdk_platform_revision" \
   --arg buildTools "$build_tools_version" --arg ndk "$ndk_version" \
+  --arg apkPackage "$apk_package" --arg apkAbi "$apk_abi" --arg apkCompileSdk "$apk_compile_sdk" \
+  --arg apkMinSdk "$apk_min_sdk" --arg apkTargetSdk "$apk_target_sdk" \
   --arg linkerFlags "$linker_flags" --arg rustProfile "android-release" \
   --arg gradleVariant "debug" --arg signing "generated-debug" \
-  '{schema:"oxid-android-release-candidate-receipt-v1",source:{head:$head,tree:$tree},artifact:{name:"oxid-app-arm64-v8a-release.apk",sha256:$artifactSha256,bytes:$artifactBytes,abis:["arm64-v8a"]},tools:{nix:$nix,nixpkgsRevision:$nixpkgsRevision,rustc:$rustc,cargo:$cargo,gradle:$gradle,android:{compileSdk:$compileSdk,sdkPlatformRevision:$sdkPlatformRevision,buildTools:$buildTools,ndk:$ndk}},build:{dioxus:{release:true,rustProfile:$rustProfile},androidWrapper:{gradleVariant:$gradleVariant,signing:$signing},linkerFlags:$linkerFlags},checks:{androidVerify16k:"pass",zipalignPage16k:"pass"}}' \
+  '{schema:"oxid-android-release-candidate-receipt-v1",source:{head:$head,tree:$tree},artifact:{name:"oxid-app-arm64-v8a-release.apk",sha256:$artifactSha256,bytes:$artifactBytes,abis:["arm64-v8a"]},tools:{nix:$nix,nixpkgsRevision:$nixpkgsRevision,rustc:$rustc,cargo:$cargo,gradle:$gradle,android:{platforms:{application:{api:$applicationCompileSdk,revision:$applicationSdkPlatformRevision},nativePlugin:{api:$pluginCompileSdk,revision:$pluginSdkPlatformRevision}},buildTools:$buildTools,ndk:$ndk}},apk:{package:$apkPackage,abi:$apkAbi,compileSdk:$apkCompileSdk,minSdk:$apkMinSdk,targetSdk:$apkTargetSdk},build:{dioxus:{release:true,rustProfile:$rustProfile},androidWrapper:{gradleVariant:$gradleVariant,signing:$signing},linkerFlags:$linkerFlags},checks:{androidVerify16k:"pass",zipalignPage16k:"pass",apkBadging:"pass"}}' \
   >"$receipt"
 chmod 600 "$receipt"
 
