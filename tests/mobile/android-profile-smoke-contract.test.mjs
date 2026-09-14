@@ -42,6 +42,21 @@ test("Android profile automation follows native-authorized recovery onboarding",
   );
 });
 
+test("Android privacy automation uses the current global application menu", async () => {
+  const flow = await readFile(
+    path.join(root, "tests", "mobile", "android-wallet-flow.mjs"),
+    "utf8",
+  );
+  const start = flow.indexOf('mode === "privacy-reveal"');
+  const end = flow.indexOf('mode === "backup-export"', start);
+  const privacy = flow.slice(start, end);
+
+  assert.match(privacy, /await openWallet\(\)/);
+  assert.match(privacy, /Open global application menu/);
+  assert.match(privacy, /Session privacy/);
+  assert.doesNotMatch(privacy, /Show private values for 30 seconds|Hide private values/);
+});
+
 test("Android smoke owns only disposable-emulator credential and app state", async () => {
   const smoke = await readFile(
     path.join(root, "scripts", "test-android-profile-flow.sh"),

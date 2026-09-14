@@ -319,6 +319,7 @@ try {
     process.stdout.write(`${JSON.stringify({ mode, ...modal, ...review, safeSetup: true })}\n`);
   } else if (mode === "privacy-reveal") {
     await createFreshProfile();
+    await openWallet();
     await waitFor(
       `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'masked'`,
       "default masked secret mode",
@@ -332,17 +333,17 @@ try {
       })()`,
       "visually masked private value",
     );
-    await clickButtonByLabel("Show private values for 30 seconds");
+    await clickButtonByLabel("Open global application menu");
+    await clickButton("Session privacy");
     await waitFor(
       `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'revealed'
-        && Boolean(document.querySelector('button[aria-label="Hide private values"]'))`,
+        && !Boolean(document.querySelector('#global-application-menu'))`,
       "explicit timed secret-mode reveal",
     );
     process.stdout.write(`${JSON.stringify({ mode, revealed: true })}\n`);
   } else if (mode === "privacy-rearmed") {
     await waitFor(
-      `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'masked'
-        && Boolean(document.querySelector('button[aria-label="Show private values for 30 seconds"]'))`,
+      `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'masked'`,
       "background-rearmed secret mode",
     );
     process.stdout.write(`${JSON.stringify({ mode, rearmed: true })}\n`);
