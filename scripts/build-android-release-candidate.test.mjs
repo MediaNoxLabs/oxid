@@ -106,6 +106,7 @@ test("release-candidate source and artifact guards are statically fail-closed", 
   assert.match(script, /\[ "\$\(git rev-parse 'HEAD\^\{tree\}'\)" = "\$tree" \] \\\n  \|\| fail "source tree changed during build; refusing to publish receipt"/);
   assert.match(script, />"\$receipt\.tmp"/);
   assert.match(script, /mv "\$receipt\.tmp" "\$receipt"/);
+  assert.doesNotMatch(script, /\[\[\s+-v\s+/, "macOS Bash 3.2 does not support [[ -v VAR ]]");
 });
 
 test("release-candidate build rejects ambient Rust overrides without disclosing their values", async (t) => {

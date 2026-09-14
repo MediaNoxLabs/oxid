@@ -29,7 +29,7 @@ fail() {
 # Cargo honors these ambient settings ahead of the certified rustup toolchain
 # and fixed linker flags, so their presence makes the build non-hermetic.
 for cargo_override in RUSTC RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_ENCODED_RUSTFLAGS; do
-  if [[ -v "$cargo_override" ]]; then
+  if [[ -n "${!cargo_override+x}" ]]; then
     fail "ambient Rust override $cargo_override is not allowed"
   fi
 done
