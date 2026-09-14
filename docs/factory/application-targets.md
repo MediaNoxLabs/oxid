@@ -163,13 +163,22 @@ have 16 KiB-aligned ZIP data placement; a Deflate-compressed member is decoded
 before inspection because Android extracts it instead of directly mapping the
 archive entry. Every decoded ELF must have compatible `LOAD` alignment and
 congruent file/virtual offsets. Failures name the exact archive-member path.
-Compressed native members are bounded to 512 MiB individually and in aggregate
-during inspection so malformed archive metadata cannot request multi-gigabyte
-decompression.
+Native members are bounded to 512 MiB individually and in aggregate during
+inspection, so neither a real debug library nor malformed compressed metadata
+can demand an unbounded loader/decompression allocation.
 The default is the existing local Android build output; a release candidate
 must be passed explicitly. The hermetic fixtures cover compliant and
 non-compliant ZIP/ELF cases, so neither an APK build nor an Android SDK is
 needed to test the verifier.
+
+The non-release Android path uses Dioxus's `android-dev` Cargo profile. Oxid
+keeps incremental compilation and development assertions, enables light
+optimization, retains limited line information, and strips full debug objects.
+After every development build, the launcher checks 16 KiB ZIP/ELF alignment,
+requires a non-empty SysV or GNU dynamic hash table, and bounds both native
+library bytes and dynamic symbols **before** it writes an artifact receipt or
+installs the APK. This is a development profile, not a disguised release build;
+the independently receipt-bound `android-release` candidate remains unchanged.
 
 This is an on-demand static artifact check. It is not evidence that an APK was
 built with the pinned Android/Gradle/NDK toolchain and it does not replace the

@@ -623,6 +623,10 @@ elif [ "$operation" != "deploy" ]; then
     echo "Dioxus did not create the expected APK: $apk" >&2
     exit 1
   fi
+  # Reject an unloadable Rust library before writing a receipt, installing the
+  # APK, or spending emulator time. This also records the bounded ELF/hash
+  # shape selected by the dedicated android-dev Cargo profile.
+  node "$repository_root/scripts/android-verify-16k.mjs" "$apk"
   if [ "$mobile_presentation_proving" = "artifacts" ]; then
     packaged_bytes="$(wc -c < "$apk" | tr -d ' ')"
     echo "Authenticated Compact artifact measurement APK: $packaged_bytes bytes."

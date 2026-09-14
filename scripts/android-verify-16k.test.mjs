@@ -15,6 +15,11 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const script = path.join(root, "scripts", "android-verify-16k.mjs");
 const PAGE_SIZE = 16 * 1024;
 const member = "lib/arm64-v8a/liboxid.so";
+const ELF_HEADER_SIZE = 64;
+const PROGRAM_HEADER_SIZE = 56;
+const PROGRAM_HEADER_COUNT = 2;
+const SECTION_HEADER_SIZE = 64;
+const DYNAMIC_SYMBOL_ENTRY_SIZE = 24;
 
 function elf({
   alignment = PAGE_SIZE,
@@ -23,16 +28,30 @@ function elf({
   memorySize = fileSize,
   virtualAddress = 0,
   programEntrySize = 56,
+  dynamicSymbolCount = 1,
+  hash = "gnu",
+  dynamicHash = true,
 } = {}) {
-  const bytes = Buffer.alloc(64 + 56);
+  const dynamicSymbolsSize = dynamicSymbolCount * DYNAMIC_SYMBOL_ENTRY_SIZE;
+  const hashSize = 32;
+  const dynamicOffset = ELF_HEADER_SIZE + PROGRAM_HEADER_SIZE * PROGRAM_HEADER_COUNT;
+  const dynamicSize = hash === "missing" ? 16 : 32;
+  const dynamicSymbolsOffset = dynamicOffset + dynamicSize;
+  const hashOffset = dynamicSymbolsOffset + dynamicSymbolsSize;
+  const sectionOffset = hashOffset + (hash === "missing" ? 0 : hashSize);
+  const sectionCount = hash === "missing" ? 2 : 3;
+  const bytes = Buffer.alloc(sectionOffset + sectionCount * SECTION_HEADER_SIZE);
   bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
   bytes.writeUInt16LE(3, 16);
   bytes.writeUInt16LE(183, 18);
   bytes.writeUInt32LE(1, 20);
   bytes.writeBigUInt64LE(64n, 32);
+  bytes.writeBigUInt64LE(BigInt(sectionOffset), 40);
   bytes.writeUInt16LE(64, 52);
   bytes.writeUInt16LE(programEntrySize, 54);
-  bytes.writeUInt16LE(1, 56);
+  bytes.writeUInt16LE(PROGRAM_HEADER_COUNT, 56);
+  bytes.writeUInt16LE(SECTION_HEADER_SIZE, 58);
+  bytes.writeUInt16LE(sectionCount, 60);
   bytes.writeUInt32LE(1, 64);
   bytes.writeBigUInt64LE(BigInt(fileOffset), 72);
   bytes.writeBigUInt64LE(BigInt(virtualAddress), 80);
@@ -40,6 +59,31 @@ function elf({
   bytes.writeBigUInt64LE(BigInt(fileSize), 96);
   bytes.writeBigUInt64LE(BigInt(memorySize), 104);
   bytes.writeBigUInt64LE(BigInt(alignment), 112);
+
+  const dynamicProgramHeader = ELF_HEADER_SIZE + PROGRAM_HEADER_SIZE;
+  bytes.writeUInt32LE(2, dynamicProgramHeader);
+  bytes.writeBigUInt64LE(BigInt(dynamicOffset), dynamicProgramHeader + 8);
+  bytes.writeBigUInt64LE(BigInt(dynamicOffset), dynamicProgramHeader + 16);
+  bytes.writeBigUInt64LE(BigInt(dynamicOffset), dynamicProgramHeader + 24);
+  bytes.writeBigUInt64LE(BigInt(dynamicSize), dynamicProgramHeader + 32);
+  bytes.writeBigUInt64LE(BigInt(dynamicSize), dynamicProgramHeader + 40);
+  bytes.writeBigUInt64LE(8n, dynamicProgramHeader + 48);
+  if (hash !== "missing" && dynamicHash) {
+    bytes.writeBigUInt64LE(hash === "sysv" ? 4n : 0x6ffffef5n, dynamicOffset);
+    bytes.writeBigUInt64LE(BigInt(hashOffset), dynamicOffset + 8);
+  }
+
+  const dynamicSymbols = sectionOffset + SECTION_HEADER_SIZE;
+  bytes.writeUInt32LE(11, dynamicSymbols + 4);
+  bytes.writeBigUInt64LE(BigInt(dynamicSymbolsOffset), dynamicSymbols + 24);
+  bytes.writeBigUInt64LE(BigInt(dynamicSymbolsSize), dynamicSymbols + 32);
+  bytes.writeBigUInt64LE(BigInt(DYNAMIC_SYMBOL_ENTRY_SIZE), dynamicSymbols + 56);
+  if (hash !== "missing") {
+    const dynamicHash = dynamicSymbols + SECTION_HEADER_SIZE;
+    bytes.writeUInt32LE(hash === "sysv" ? 5 : 0x6ffffff6, dynamicHash + 4);
+    bytes.writeBigUInt64LE(BigInt(hashOffset), dynamicHash + 24);
+    bytes.writeBigUInt64LE(BigInt(hashSize), dynamicHash + 32);
+  }
   return bytes;
 }
 
@@ -95,6 +139,41 @@ function apk({
 
 test("accepts a hermetic APK with a 16 KiB ZIP placement and ELF LOAD alignment", () => {
   assert.equal(verifyApk(apk()), 1);
+});
+
+test("accepts either Android loader hash-table format", () => {
+  assert.equal(verifyApk(apk({ hash: "sysv" })), 1);
+});
+
+test("rejects a native library without a dynamic hash table", () => {
+  assert.throws(
+    () => verifyApk(apk({ hash: "missing" })),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ELF dynamic hash table is missing`),
+  );
+});
+
+test("rejects an orphan hash section that the loader cannot discover", () => {
+  assert.throws(
+    () => verifyApk(apk({ dynamicHash: false })),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ELF DT_HASH/DT_GNU_HASH entry is missing`),
+  );
+});
+
+test("rejects a native library without inspectable section headers", () => {
+  const bytes = apk();
+  bytes.writeBigUInt64LE(0n, PAGE_SIZE + 40);
+  bytes.writeUInt16LE(0, PAGE_SIZE + 60);
+  assert.throws(
+    () => verifyApk(bytes),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ELF section headers are missing or truncated`),
+  );
+});
+
+test("bounds the dynamic symbol surface before Android installation", () => {
+  assert.throws(
+    () => verifyApk(apk({ dynamicSymbolCount: 65_537 })),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ELF dynamic symbol count 65537 exceeds 65536`),
+  );
 });
 
 test("names the exact archive member whose ZIP placement is not 16 KiB aligned", () => {
