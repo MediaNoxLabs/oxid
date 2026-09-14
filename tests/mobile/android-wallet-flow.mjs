@@ -173,16 +173,25 @@ async function createFreshProfile() {
 
 async function assertHomeComposition() {
   await clickButton("Home");
-  await waitFor(
-    `document.querySelector('.home-hero')?.innerText.includes("Current realm")
-      && Boolean(document.querySelector('.home-quick-actions'))
-      && Boolean(document.querySelector('button.home-card--assets[aria-label^="Open Wallet for "]'))
-      && Boolean(document.querySelector('button[aria-label="Open newest document"]'))
-      && Boolean(document.querySelector('button[aria-label="Open Passport Vault"]'))
-      && Boolean(document.querySelector('button[aria-label="Open wallet security settings"]'))
-      && Boolean(document.querySelector('button[aria-label="See all activity"]'))`,
-    "five-part Home composition",
-  );
+  const compositionExpression = `(() => ({
+    realm: document.querySelector('.home-hero')?.innerText.includes("Current realm") === true,
+    actions: Boolean(document.querySelector('.home-quick-actions')),
+    wallet: Boolean(document.querySelector('button.home-card--assets[aria-label^="Open Wallet for "]')),
+    document: Boolean(document.querySelector('button[aria-label="Open newest document"]')),
+    vault: Boolean(document.querySelector('button[aria-label="Open Passport Vault"]')),
+    security: Boolean(document.querySelector('button[aria-label="Open wallet security settings"]')),
+    activity: Boolean(document.querySelector('button[aria-label="See all activity"]')),
+  }))()`;
+  const deadline = Date.now() + 15_000;
+  let composition;
+  do {
+    composition = await evaluate(compositionExpression);
+    if (Object.values(composition).every(Boolean)) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  } while (Date.now() < deadline);
+  if (!Object.values(composition).every(Boolean)) {
+    throw new Error(`five-part Home composition was incomplete: ${JSON.stringify(composition)}`);
+  }
   const truthful = await evaluate(`(() => {
     const labels = Array.from(document.querySelectorAll('.home-quick-action'))
       .map((element) => element.textContent.trim());
