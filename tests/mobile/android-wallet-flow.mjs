@@ -148,6 +148,20 @@ async function openWallet() {
   await clickButton("Wallet");
 }
 
+async function openReceiveSheet() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await clickButtonByLabel("Receive");
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      if (await evaluate("Boolean(document.querySelector('.receive-sheet[role=\"dialog\"]'))")) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  throw new Error("Home Receive action did not open the Receive sheet after two attempts");
+}
+
 async function createFreshProfile() {
   await waitFor(
     `Boolean(${buttonExpression("Create private wallet")}) || Boolean(${buttonExpression("Wallet")})`,
@@ -555,7 +569,7 @@ try {
       "document.querySelector('.home-hero')?.textContent.includes('Current realm')",
       "Home route after presentation shortcut",
     );
-    await clickButton("Receive");
+    await openReceiveSheet();
     await waitFor(
       "document.body.innerText.includes('Receive NIGHT') && Boolean(document.querySelector('[role=dialog]'))",
       "one-tap Home Receive sheet",
@@ -599,7 +613,7 @@ try {
         && Boolean(${buttonExpression("Receive")})`,
       "populated Home route before Receive",
     );
-    await clickButton("Receive");
+    await openReceiveSheet();
     const receiveExpression = `(() => ({
       public: Boolean(document.querySelector('button[aria-label="Use Public receive address"]')),
       private: Boolean(document.querySelector('button[aria-label="Use Private receive address"]')),
