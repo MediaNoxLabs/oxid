@@ -979,7 +979,7 @@ try {
         && Boolean(${buttonExpression("Receive")})`,
       "populated Home route before native share",
     );
-    await clickButton("Receive");
+    await openReceiveSheet();
     await waitForButton("Share");
     await clickButtonByLabel("Share Unshielded receive address");
     process.stdout.write(`${JSON.stringify(result)}\n`);
