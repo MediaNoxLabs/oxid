@@ -92,7 +92,7 @@ cleanup() {
     wait "$authorization_pid" >/dev/null 2>&1 || true
   fi
   oxid_android_test_credential_cleanup "$adb_command" "$device"
-  "$adb_command" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
+  "$adb_command" -s "$device" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
   "$adb_command" -s "$device" shell rm -f "$remote_ui_dump" >/dev/null 2>&1 || true
   if [ "$exit_status" -ne 0 ] && [ "${OXID_ANDROID_KEEP_FAILED_BACKUP_STATE:-0}" = "1" ]; then
     echo "Keeping failed Android backup state in $remote_directory on $device." >&2
@@ -150,7 +150,7 @@ prepare_webview_wallet_flow() {
     return 1
   fi
 
-  "$adb_command" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
+  "$adb_command" -s "$device" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
   "$adb_command" -s "$device" forward \
     "tcp:$devtools_port" "localabstract:webview_devtools_remote_$process_id" >/dev/null
   for _attempt in $(seq 1 60); do
@@ -254,7 +254,7 @@ open_backup_directory
 tap_ui_fragment 'text="SAVE" resource-id="android:id/button1"'
 wait "$flow_pid"
 flow_pid=""
-"$adb_command" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
+"$adb_command" -s "$device" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
 
 backup_size="$($adb_command -s "$device" shell stat -c %s "$remote_backup" 2>/dev/null | tr -d '\r')"
 if [[ ! "$backup_size" =~ ^[0-9]+$ ]] || [ "$backup_size" -le 32 ]; then
@@ -286,7 +286,7 @@ open_backup_directory
 tap_ui_fragment 'text="oxid-wallet.oxidbak"'
 wait "$flow_pid"
 flow_pid=""
-"$adb_command" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
+"$adb_command" -s "$device" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
 
 profile_document="$($adb_command -s "$device" shell run-as io.medianox.oxid \
   cat files/oxid/wallet-profiles.json 2>/dev/null || true)"

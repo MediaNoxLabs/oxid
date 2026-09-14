@@ -41,8 +41,9 @@ fn lifecycle_generation_is_current(
     started: u64,
     current: u64,
     authorized_resume: Option<u64>,
+    authorization_in_flight: bool,
 ) -> bool {
-    started == current || authorized_resume == Some(current)
+    started == current || authorized_resume == Some(current) || authorization_in_flight
 }
 
 fn may_admit_authorization_lifecycle(state: &WalletOnboardingState, expected: bool) -> bool {
@@ -243,6 +244,7 @@ pub(crate) fn WalletOnboarding(
                                 lifecycle_generation,
                                 lifecycle_wake_for_prepare(),
                                 authorized_resume_for_prepare(),
+                                authorization_in_flight_for_prepare(),
                             );
                             authorization_in_flight_for_prepare.set(false);
                             authorized_resume_for_prepare.set(None);
@@ -311,6 +313,7 @@ pub(crate) fn WalletOnboarding(
                                 lifecycle_generation,
                                 lifecycle_wake_for_completion(),
                                 authorized_resume_for_completion(),
+                                authorization_in_flight_for_completion(),
                             );
                             authorization_in_flight_for_completion.set(false);
                             authorized_resume_for_completion.set(None);
@@ -376,10 +379,11 @@ mod tests {
 
     #[test]
     fn lifecycle_generation_rejects_late_ui_updates() {
-        assert!(lifecycle_generation_is_current(7, 7, None));
-        assert!(lifecycle_generation_is_current(7, 8, Some(8)));
-        assert!(!lifecycle_generation_is_current(7, 8, None));
-        assert!(!lifecycle_generation_is_current(7, 9, Some(8)));
+        assert!(lifecycle_generation_is_current(7, 7, None, false));
+        assert!(lifecycle_generation_is_current(7, 8, Some(8), false));
+        assert!(lifecycle_generation_is_current(7, 9, Some(8), true));
+        assert!(!lifecycle_generation_is_current(7, 8, None, false));
+        assert!(!lifecycle_generation_is_current(7, 9, Some(8), false));
     }
 
     #[test]

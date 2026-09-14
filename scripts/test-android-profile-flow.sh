@@ -164,7 +164,7 @@ run_webview_wallet_flow() {
     exit 1
   fi
 
-  "$adb_command" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
+  "$adb_command" -s "$device" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
   "$adb_command" -s "$device" forward \
     "tcp:$devtools_port" "localabstract:webview_devtools_remote_$process_id" >/dev/null
   for _attempt in $(seq 1 30); do
@@ -181,7 +181,7 @@ run_webview_wallet_flow() {
   fi
 
   node "$repository_root/tests/mobile/android-wallet-flow.mjs" "$websocket_url" "$mode"
-  "$adb_command" forward --remove "tcp:$devtools_port" >/dev/null
+  "$adb_command" -s "$device" forward --remove "tcp:$devtools_port" >/dev/null
 }
 
 wait_for_main_activity() {

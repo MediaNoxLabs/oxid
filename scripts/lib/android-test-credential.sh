@@ -12,7 +12,7 @@ oxid_android_test_credential_require_emulator() {
   case "$device" in
     emulator-*) ;;
     *)
-      echo "The Android credential smoke helper refuses non-emulator device '$device'." >&2
+      echo "The Android credential smoke helper refuses a non-emulator target." >&2
       return 1
       ;;
   esac

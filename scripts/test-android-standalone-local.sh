@@ -26,6 +26,7 @@ fi
 adb_command="$android_sdk/platform-tools/adb"
 devtools_port=9229
 authorization_pid=""
+app_state_owned=0
 
 cleanup() {
   if [ -n "$authorization_pid" ] && kill -0 "$authorization_pid" >/dev/null 2>&1; then
@@ -34,7 +35,11 @@ cleanup() {
   fi
   if [ -n "${device:-}" ]; then
     "$adb_command" -s "$device" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
+  fi
+  if [ "${app_state_owned:-0}" -eq 1 ]; then
     "$adb_command" -s "$device" shell pm clear io.medianox.oxid >/dev/null 2>&1 || true
+  fi
+  if [ -n "${device:-}" ]; then
     oxid_android_test_credential_cleanup "$adb_command" "$device"
   fi
 }
@@ -71,8 +76,9 @@ for local_port in 8088 9944 6300; do
   fi
 done
 
-echo "Resetting only Oxid application data on Android emulator $device."
+echo "Resetting only Oxid application data on the admitted Android emulator."
 "$adb_command" -s "$device" shell pm clear io.medianox.oxid >/dev/null
+app_state_owned=1
 "$adb_command" -s "$device" shell am start \
   -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
 
@@ -87,7 +93,7 @@ for _attempt in $(seq 1 60); do
   sleep 0.5
 done
 if [ -z "$process_id" ] || ! rg -q "@webview_devtools_remote_${process_id}$" <<<"$socket_list"; then
-  echo "Oxid WebView process did not become available on Android emulator '$device'." >&2
+  echo "Oxid WebView process did not become available on the admitted Android emulator." >&2
   exit 1
 fi
 

@@ -83,6 +83,7 @@ test("shared Android profile callers own the native authorization ceremony", asy
   assert.match(helper, /chmod 700/);
   assert.doesNotMatch(helper, /recover it with:[\s\S]*oxid_android_test_credential_pin/);
   assert.doesNotMatch(helper, /locksettings clear[\s\S]{0,100}\|\| true/);
+  assert.doesNotMatch(helper, /non-emulator device '\$device'/);
 
   for (const script of [
     "test-android-backup-flow.sh",
@@ -94,6 +95,19 @@ test("shared Android profile callers own the native authorization ceremony", asy
     assert.match(source, /oxid_android_test_credential_prepare/);
     assert.match(source, /oxid_android_test_credential_authorize/);
     assert.match(source, /oxid_android_test_credential_cleanup/);
+    assert.doesNotMatch(source, /"\$adb_command" forward --remove/);
+  }
+
+  for (const script of [
+    "test-android-developer-profile.sh",
+    "test-android-standalone-local.sh",
+  ]) {
+    const source = await readFile(path.join(root, "scripts", script), "utf8");
+    assert.match(source, /app_state_owned=0/);
+    assert.match(source, /if \[ "\$\{app_state_owned:-0\}" -eq 1 \]/);
+    assert.match(source, /shell pm clear io\.medianox\.oxid/);
+    assert.match(source, /app_state_owned=1/);
+    assert.doesNotMatch(source, /device \$device|device '\$device'|passed on \$device/);
   }
 
   const developer = await readFile(
