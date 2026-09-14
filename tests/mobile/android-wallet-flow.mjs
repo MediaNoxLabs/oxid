@@ -670,8 +670,10 @@ try {
     await openIdentities();
     await waitForButton("Create a DID");
     await clickButton("Create a DID");
+    await waitForButton("Create DID");
+    await clickButton("Create DID");
     await waitFor(
-      "document.body.innerText.includes('standalone-1') && document.body.innerText.includes('Manage this DID')",
+      "document.body.textContent.includes('standalone-1') && document.body.textContent.includes('Manage this DID')",
       "created managed standalone DID",
     );
     await evaluate(`(() => {
@@ -699,7 +701,7 @@ try {
       "document.body.innerText.includes('standalone-2')",
       "managed DID update",
     );
-    await clickButton("Use standalone login request");
+    await clickButton("Use login request");
     await clickButton("Preview login request");
     await waitFor(
       "document.body.innerText.includes('DID authentication preview') && document.body.innerText.includes('Who is asking?') && document.body.innerText.includes('What will you prove?') && document.body.innerText.includes('Which identity?') && document.body.innerText.includes('Why is it requested?') && document.body.innerText.includes('Unverified endpoint') && document.body.innerText.includes('No credential or document claims will be disclosed.')",
