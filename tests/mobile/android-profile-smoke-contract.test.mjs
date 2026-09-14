@@ -68,6 +68,8 @@ test("shared Android profile callers own the native authorization ceremony", asy
   assert.match(helper, /requires a disposable QEMU emulator/);
   assert.match(helper, /oxid_android_test_credential_require_emulator/);
   assert.match(helper, /locksettings set-pin/);
+  assert.doesNotMatch(helper, /locksettings get-disabled/);
+  assert.match(helper, /an existing credential was not replaced/);
   assert.match(helper, /device-credential prompt observed/);
   assert.match(helper, /oxid_android_test_credential_resume_app/);
   assert.match(helper, /locksettings clear/);

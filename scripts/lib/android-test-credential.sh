@@ -28,11 +28,6 @@ oxid_android_test_credential_prepare() {
   local recovery_script
 
   oxid_android_test_credential_require_emulator "$adb_command" "$device"
-  if [ "$($adb_command -s "$device" shell locksettings get-disabled | tr -d '\r')" != "true" ]; then
-    echo "The emulator already has a device credential; refusing to replace it." >&2
-    return 1
-  fi
-
   oxid_android_test_credential_pin="${OXID_ANDROID_TEST_PIN:-}"
   if [ -z "$oxid_android_test_credential_pin" ]; then
     oxid_android_test_credential_pin="$(od -An -N4 -tu4 /dev/urandom | awk '{ printf "%06d", ($1 % 900000) + 100000 }')"
@@ -63,6 +58,7 @@ oxid_android_test_credential_prepare() {
 
   if ! "$adb_command" -s "$device" shell locksettings set-pin \
     "$oxid_android_test_credential_pin" >/dev/null; then
+    echo "The disposable emulator did not admit a temporary PIN; an existing credential was not replaced." >&2
     rm -f -- "$oxid_android_test_credential_recovery_script"
     rmdir -- "$oxid_android_test_credential_recovery_directory"
     oxid_android_test_credential_recovery_script=""
