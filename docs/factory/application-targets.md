@@ -66,6 +66,41 @@ target/dx/oxid-app/debug/android/oxid-app-artifact-receipt.json
 target/dx/oxid-app/debug/ios/oxid-app-artifact-receipt.json
 ```
 
+## Android release candidate
+
+For owner/supervisor review, build one arm64 release candidate without any ADB,
+device, or AVD interaction:
+
+```bash
+nix develop --command just android-release-build
+```
+
+The command writes its deterministic artifact and a mode-`0600` receipt at:
+
+```text
+target/android-release-candidate/oxid-app-arm64-v8a-release.apk
+target/android-release-candidate/receipt.json
+```
+
+It requires the selected Android platform, build-tools, and NDK to be present.
+By default those are API 35, build-tools `35.0.0`, and NDK `27.0.12077973`;
+set `OXID_ANDROID_COMPILE_SDK`, `OXID_ANDROID_BUILD_TOOLS_VERSION`, or
+`OXID_ANDROID_NDK_VERSION` only to select an installed reviewed version. The
+private receipt binds the exact source head/tree, artifact digest/size/ABI, Nix
+and nixpkgs revision, Rust/Cargo, Gradle, Android SDK/build-tools, and NDK
+versions. It records no local paths, device IDs, signing material, or app data.
+
+The first build uses NDK r27 without extra linker flags and runs the existing
+static verifier. Only if that measured APK fails does it rebuild through this
+release-candidate command with Android's documented
+`-Wl,-z,max-page-size=16384` and `-Wl,-z,common-page-size=16384` flags. The
+final APK must pass both `just android-verify-16k` and the selected official
+`zipalign -c -P 16 -v 4` check before the receipt is written.
+
+This command does not select, boot, install to, or launch an Android target.
+The supervisor separately owns the reviewed Android 15+ 16 KiB target,
+page-size observation, install, launch, and smoke evidence.
+
 Android deployment supports an explicitly selected physical device or emulator
 accepted by the existing launcher policy. The default local profile accepts an
 emulator; the reviewed Tailnet Portal path owns physical-device configuration.
