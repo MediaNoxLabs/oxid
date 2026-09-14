@@ -115,8 +115,9 @@ keeps small fixtures reviewable in-tree and removes chain-state distribution,
 signing, retention, revocation, and freshness governance from the testkit.
 
 DUST synchronization performance is not solved by a wallet-owned snapshot or
-startup shortcut. Oxid measures its real adapter behavior and prefers upstream
-Rust ledger improvements that benefit every consumer.
+startup shortcut. Oxid measures and validates its real adapter behavior;
+reusable synchronization-state optimizations belong in the `midnight-ledger`
+Rust codebase so they benefit every consumer.
 
 ## Alternatives rejected
 

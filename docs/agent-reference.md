@@ -2439,9 +2439,10 @@ to silence the shell probe.
   Oxid will not implement a birthday-gated, cold-start, preseed, or public
   replay-reference shortcut. Keep fresh and imported wallet synchronization on
   the authenticated full-replay/private-checkpoint path. Optimize measurable
-  DUST/Zswap replay bottlenecks through issue #115 and prefer reusable fixes in
-  the Midnight Rust ledger or wallet libraries; consume those only through the
-  reviewed pinned-dependency boundary.
+  Issue #115 owns Oxid-side measurement and integration validation. Implement
+  reusable synchronization-state optimizations in the `midnight-ledger` Rust
+  codebase and consume them only through the reviewed pinned-dependency
+  boundary.
   All attempts failed before public output and created no
   write marker, checkpoint/journal file, proof, transaction, prover contact,
   or chain write. Do not treat these transport observations as a funding

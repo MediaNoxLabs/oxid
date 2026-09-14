@@ -32,7 +32,7 @@ publication remains excluded. No dependency source was copied into Oxid.
 | Midnight accounts and unshielded NIGHT | Protected addresses, exact balances, live/cached sync, durable checkpoints, prepare/authorize/prove/submit/reconcile, cancellation and unknown-outcome barriers | `crates/adapters/midnight`, funded standalone headless finality and adapter-reconstruction evidence | [#6–#20](https://github.com/MediaNoxLabs/oxid/issues/6) closed for their bounded scopes |
 | Shielded wallet | Protected role-3 address, bounded Zswap replay, resumable checkpoints, exact token balances, protected shielded spend, nullifier-safe restart | `shielded.rs`, `shielded_transport.rs`, `shielded_sync.rs`, `transaction.rs`, funded genesis-authority standalone finality | [#18](https://github.com/MediaNoxLabs/oxid/issues/18), [#59](https://github.com/MediaNoxLabs/oxid/issues/59), [#91](https://github.com/MediaNoxLabs/oxid/issues/91) closed |
 | Protected DUST registration | Separate domain/application/adapter/UI/headless state machine, protected DUST child metadata, canonical planning/composition, explicit two-step consent, restart/reconciliation boundaries, and guarded PreProd A/B harness | `crates/wallet/*/dust_registration.rs`, `crates/adapters/midnight/src/dust_registration.rs`, `crates/composition/src/standalone_funding_tests.rs`, Dioxus tests | Implemented; funded PreProd write/recovery and fresh-wallet spend evidence remain [#92](https://github.com/MediaNoxLabs/oxid/issues/92) |
-| Cold replay safety | DUST and Zswap observers close bounded segments before CPU replay/checkpoint work; cached progress resumes without transport backpressure | `submission.rs`, `dust_sync.rs`, `shielded_transport.rs`, `shielded_sync.rs`; 119 focused Midnight adapter tests | Delivered safety/correctness slice; measured throughput optimization remains [#115](https://github.com/MediaNoxLabs/oxid/issues/115), while wallet-owned preseed/replay-reference acceleration is intentionally excluded |
+| Cold replay safety | DUST and Zswap observers close bounded segments before CPU replay/checkpoint work; cached progress resumes without transport backpressure | `submission.rs`, `dust_sync.rs`, `shielded_transport.rs`, `shielded_sync.rs`; 119 focused Midnight adapter tests | Delivered safety/correctness slice; Oxid-side measurement and validation remain [#115](https://github.com/MediaNoxLabs/oxid/issues/115), reusable synchronization-state optimization belongs in `midnight-ledger`, and wallet-owned preseed/replay-reference acceleration is intentionally excluded |
 | DID and credentials | `did:midnight` inventory/lifecycle/signing, encrypted credential storage, structured verification, Digital Passport policy and disclosure planning | `crates/identity`, `crates/credential`, `crates/adapters/did-midnight`, `crates/adapters/vc-midnight` | Standalone scopes [#21–#26](https://github.com/MediaNoxLabs/oxid/issues/21) delivered |
 | SSI protocols | Standalone OpenID4VCI, SIOPv2, strict OpenID4VP request/consent/proof boundary and independent proof verification | `crates/protocol`, `crates/presentation`, `crates/adapters/openid4vci`, `openid4vp`, `siopv2` | Core standalone paths delivered; production delivery remains [#27](https://github.com/MediaNoxLabs/oxid/issues/27)/[#29](https://github.com/MediaNoxLabs/oxid/issues/29)/[#34](https://github.com/MediaNoxLabs/oxid/issues/34) |
 | Passport Vault | Typed standalone accounting, four wallet operations, authenticated artifact/state boundaries, protected claim, durable recovery and headless/mobile journeys | `crates/passport-vault`, `crates/adapters/passport-vault` | Standalone delivered; live deployment/device evidence remains [#31](https://github.com/MediaNoxLabs/oxid/issues/31) |
@@ -71,9 +71,10 @@ checks, not to the failed predecessor run.
 
 ## Remaining work, in dependency order
 
-1. **Measure and accelerate full-history replay.** Add a guarded, read-only,
-   reproducible PreProd corpus/capacity test and complete at least two measured
-   optimization iterations without raising safety caps blindly
+1. **Measure and validate full-history replay.** Add a guarded, read-only,
+   reproducible PreProd corpus/capacity test, profile the Rust path, implement
+   reusable synchronization-state optimizations in `midnight-ledger`, and
+   validate pinned candidates in Oxid without raising safety caps blindly
    ([#115](https://github.com/MediaNoxLabs/oxid/issues/115)).
 2. **Complete the funded PreProd DUST acceptance.** Once funding is observable,
    prove the exact A/B topology read-only, then—only after the explicit public
@@ -132,8 +133,9 @@ checks, not to the failed predecessor run.
 
 - The current optimized full DUST replay reached 541,357 events and cursor
   553,478 of target 1,446,220 without failure at the 900-second observer bound;
-  it did not finish. Throughput optimization is real engineering work, owned by
-  [#115](https://github.com/MediaNoxLabs/oxid/issues/115).
+  it did not finish. Oxid-side measurement and pinned-candidate validation are
+  owned by [#115](https://github.com/MediaNoxLabs/oxid/issues/115); reusable
+  synchronization-state changes belong in `midnight-ledger`.
 - Birthday/preseed/replay-reference startup acceleration is intentionally not
   an Oxid wallet feature. Issue #115 measures and optimizes the existing
   authenticated replay path; reusable ledger improvements belong upstream.
