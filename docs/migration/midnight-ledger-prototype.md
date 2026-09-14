@@ -377,9 +377,10 @@ explicit same-method rotation semantics. ADR-0050 wires credential-family proof
 execution and an independent proof verifier for native headless mode; ADR-0083
 reuses them only in the explicit mobile conformance build.
 ADR-0073 separately hardens acceptance of each newly issued standalone Compact
-credential: the exact issuer DID assertion method must resolve to the detached
-proof's Jubjub key, issuance/proof/expiry times must be current, and the pinned
-standalone trust anchor must match. Revocation remains visibly not checked.
+credential: the exact issuer DID assertion method must resolve to the Jubjub
+verification material used by the detached proof; issuance, proof, and expiry
+times must be current, and the pinned standalone trust anchor must match.
+Revocation remains visibly not checked.
 
 ADR-0074 begins the prototype backup migration without copying its unsafe
 storage boundary. The reviewed `WalletBackupCard` and
