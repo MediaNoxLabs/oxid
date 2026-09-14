@@ -57,6 +57,32 @@ test("Android privacy automation uses the current global application menu", asyn
   assert.doesNotMatch(privacy, /Show private values for 30 seconds|Hide private values/);
 });
 
+test("Android Home automation follows the realm-scoped product composition", async () => {
+  const flow = await readFile(
+    path.join(root, "tests", "mobile", "android-wallet-flow.mjs"),
+    "utf8",
+  );
+  const start = flow.indexOf("async function assertHomeComposition()");
+  const end = flow.indexOf("\nasync function setInput", start);
+  const home = flow.slice(start, end);
+
+  assert.match(home, /\.home-hero.*Current realm/s);
+  assert.match(home, /\.home-quick-actions/);
+  assert.match(home, /button\.home-card--assets\[aria-label\^="Open Wallet for "\]/);
+  for (const label of [
+    "Open newest document",
+    "Open Passport Vault",
+    "Open wallet security settings",
+    "See all activity",
+  ]) {
+    assert.match(home, new RegExp(label));
+  }
+  assert.doesNotMatch(
+    flow,
+    /Everything in one place|Open Wallet NIGHT account|Open Wallet shielded account/,
+  );
+});
+
 test("Android smoke owns only disposable-emulator credential and app state", async () => {
   const smoke = await readFile(
     path.join(root, "scripts", "test-android-profile-flow.sh"),

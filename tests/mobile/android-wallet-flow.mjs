@@ -174,10 +174,9 @@ async function createFreshProfile() {
 async function assertHomeComposition() {
   await clickButton("Home");
   await waitFor(
-    `document.body.innerText.includes("Everything in one place")
+    `document.querySelector('.home-hero')?.innerText.includes("Current realm")
       && Boolean(document.querySelector('.home-quick-actions'))
-      && Boolean(document.querySelector('button[aria-label="Open Wallet NIGHT account"]'))
-      && Boolean(document.querySelector('button[aria-label="Open Wallet shielded account"]'))
+      && Boolean(document.querySelector('button.home-card--assets[aria-label^="Open Wallet for "]'))
       && Boolean(document.querySelector('button[aria-label="Open newest document"]'))
       && Boolean(document.querySelector('button[aria-label="Open Passport Vault"]'))
       && Boolean(document.querySelector('button[aria-label="Open wallet security settings"]'))
@@ -543,7 +542,7 @@ try {
     await waitForButton("Manage identities");
     await clickButton("Home");
     await waitFor(
-      "document.body.innerText.includes('Everything in one place')",
+      "document.querySelector('.home-hero')?.innerText.includes('Current realm')",
       "Home route after presentation shortcut",
     );
     await clickButton("Receive");
@@ -567,7 +566,7 @@ try {
     await clickButton("Home");
     await waitFor(
       `document.querySelector('.app-header__title strong')?.textContent === 'Home'
-        && document.body.innerText.includes('Everything in one place')
+        && document.querySelector('.home-hero')?.innerText.includes('Current realm')
         && Boolean(${buttonExpression("Receive")})`,
       "populated Home route before Receive",
     );
@@ -924,7 +923,7 @@ try {
     await clickButton("Home");
     await waitFor(
       `document.querySelector('.app-header__title strong')?.textContent === 'Home'
-        && document.body.innerText.includes('Everything in one place')
+        && document.querySelector('.home-hero')?.innerText.includes('Current realm')
         && Boolean(${buttonExpression("Receive")})`,
       "populated Home route before native share",
     );
