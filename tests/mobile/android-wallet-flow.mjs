@@ -707,7 +707,9 @@ try {
       "document.body.textContent.includes('DID document updated.')",
       "managed DID update",
     );
-    await clickButton("Use login request");
+    await clickButtonByLabel("Open standalone demo setup");
+    await clickButtonByLabel("Run demo action: Review login request");
+    await waitForButton("Preview login request");
     await clickButton("Preview login request");
     await waitFor(
       "document.body.innerText.includes('DID authentication preview') && document.body.innerText.includes('Who is asking?') && document.body.innerText.includes('What will you prove?') && document.body.innerText.includes('Which identity?') && document.body.innerText.includes('Why is it requested?') && document.body.innerText.includes('Unverified endpoint') && document.body.innerText.includes('No credential or document claims will be disclosed.')",
