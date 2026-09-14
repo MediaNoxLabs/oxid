@@ -72,6 +72,9 @@ test("shared Android profile callers own the native authorization ceremony", asy
   assert.match(helper, /an existing credential was not replaced/);
   assert.match(helper, /device-credential prompt observed/);
   assert.match(helper, /oxid_android_test_credential_resume_app/);
+  assert.match(helper, /seq 1 75/);
+  assert.match(helper, /Do not race that delivery with a synthetic `am start`/);
+  assert.doesNotMatch(helper, /shell am start -W/);
   assert.match(helper, /locksettings clear/);
   assert.match(helper, /Failed to remove the disposable emulator PIN/);
   assert.match(helper, /Credential ownership remains recorded/);

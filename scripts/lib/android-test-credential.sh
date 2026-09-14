@@ -85,25 +85,24 @@ oxid_android_test_credential_resume_app() {
   local device="$2"
   local resumed
 
-  for _oxid_resume_attempt in $(seq 1 20); do
+  # startActivityForResult must deliver its result before the calling activity
+  # resumes. Do not race that delivery with a synthetic `am start`: transiently
+  # seeing neither activity is the normal system transition on a cold AVD.
+  for _oxid_resume_attempt in $(seq 1 75); do
     resumed="$($adb_command -s "$device" shell dumpsys activity activities 2>/dev/null \
       | rg 'topResumedActivity|ResumedActivity' || true)"
     if rg -q 'io\.medianox\.oxid/dev\.dioxus\.main\.MainActivity' <<<"$resumed"; then
       return 0
     fi
     if oxid_android_test_credential_prompt_focused "$adb_command" "$device"; then
-      sleep 0.2
-      continue
+      # A second owned onboarding request replaced the first surface before
+      # MainActivity resumed. Let the bounded authorizer service it.
+      return 2
     fi
-    break
+    sleep 0.2
   done
-  if oxid_android_test_credential_prompt_focused "$adb_command" "$device"; then
-    # A second owned onboarding request may replace the first surface before
-    # MainActivity is resumed. Let the bounded authorizer service it.
-    return 2
-  fi
-  "$adb_command" -s "$device" shell am start -W \
-    -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
+  echo "Android did not resume the app after owned device authorization." >&2
+  return 1
 }
 
 oxid_android_test_credential_authorize() {
