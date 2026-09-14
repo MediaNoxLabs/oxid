@@ -26,6 +26,21 @@ fail() {
   exit 1
 }
 
+# Cargo honors these ambient settings ahead of the certified rustup toolchain
+# and fixed linker flags, so their presence makes the build non-hermetic.
+for cargo_override in \
+  RUSTC \
+  RUSTC_WRAPPER \
+  RUSTC_WORKSPACE_WRAPPER \
+  CARGO_BUILD_RUSTC \
+  CARGO_BUILD_RUSTC_WRAPPER \
+  CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER \
+  CARGO_ENCODED_RUSTFLAGS; do
+  if [[ -n "${!cargo_override+x}" ]]; then
+    fail "ambient Rust override $cargo_override is not allowed"
+  fi
+done
+
 # HEAD and its tree identify source inputs only when no tracked or untracked
 # source changes exist. Ignored generated outputs (including target/) remain
 # allowed so this command can write its artifact and receipt.
@@ -95,6 +110,9 @@ build() {
   ANDROID_SDK_ROOT="$android_sdk" \
   ANDROID_NDK_HOME="$android_ndk" \
   JAVA_HOME="$java_home" \
+  RUSTC="$rust_toolchain_bin/rustc" \
+  RUSTC_WRAPPER= \
+  RUSTC_WORKSPACE_WRAPPER= \
   RUSTFLAGS="$rustflags" \
   GRADLE_OPTS="-Dorg.gradle.daemon=false" \
   KOTLIN_COMPILER_EXECUTION_STRATEGY=in-process \

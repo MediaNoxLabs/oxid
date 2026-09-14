@@ -9,6 +9,21 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const rustOverrides = [
+  "RUSTC",
+  "RUSTC_WRAPPER",
+  "RUSTC_WORKSPACE_WRAPPER",
+  "CARGO_BUILD_RUSTC",
+  "CARGO_BUILD_RUSTC_WRAPPER",
+  "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
+  "CARGO_ENCODED_RUSTFLAGS",
+];
+
+function cleanEnvironment(overrides = {}) {
+  const environment = { ...process.env };
+  for (const variable of rustOverrides) delete environment[variable];
+  return { ...environment, ...overrides };
+}
 
 test("release-candidate build is arm64-only, statically verified, and device-free", async () => {
   const [script, justfile, guide, nativePluginGradle] = await Promise.all([
@@ -18,7 +33,10 @@ test("release-candidate build is arm64-only, statically verified, and device-fre
     readFile(path.join(root, "crates", "adapters", "mobile-native-plugin", "android", "build.gradle.kts"), "utf8"),
   ]);
 
-  assert.match(justfile, /^android-release-build:\n    \.\/scripts\/build-android-release-candidate\.sh$/m);
+  assert.match(
+    justfile,
+    /^android-release-build:\n    env -u RUSTC_WRAPPER \.\/scripts\/build-android-release-candidate\.sh$/m,
+  );
   assert.match(script, /--release/);
   assert.match(script, /--target aarch64-linux-android/);
   assert.match(script, /target\/android-release-candidate\/oxid-app-arm64-v8a-release\.apk/);
@@ -57,6 +75,9 @@ test("release-candidate build is arm64-only, statically verified, and device-fre
   assert.match(script, /cargo_version="\$\("\$rust_toolchain_bin\/cargo" --version\)"/);
   assert.match(script, /java_home="\$\("\$java_command" -XshowSettings:properties -version/);
   assert.match(script, /JAVA_HOME="\$java_home"/);
+  assert.match(script, /RUSTC="\$rust_toolchain_bin\/rustc"/);
+  assert.match(script, /^  RUSTC_WRAPPER= \\$/m);
+  assert.match(script, /^  RUSTC_WORKSPACE_WRAPPER= \\$/m);
   assert.match(script, /PATH="\$rust_toolchain_bin:\$java_home\/bin:/);
   assert.match(script, /java:\$java/);
   assert.match(script, /rustProfile "android-release"/);
@@ -99,6 +120,33 @@ test("release-candidate source and artifact guards are statically fail-closed", 
   assert.match(script, /\[ "\$\(git rev-parse 'HEAD\^\{tree\}'\)" = "\$tree" \] \\\n  \|\| fail "source tree changed during build; refusing to publish receipt"/);
   assert.match(script, />"\$receipt\.tmp"/);
   assert.match(script, /mv "\$receipt\.tmp" "\$receipt"/);
+  assert.doesNotMatch(script, /\[\[\s+-v\s+/, "macOS Bash 3.2 does not support [[ -v VAR ]]");
+});
+
+test("release-candidate build rejects ambient Rust overrides without disclosing their values", async (t) => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "oxid-android-release-overrides-"));
+  t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const scriptsDirectory = path.join(temporaryRoot, "scripts");
+  const scriptPath = path.join(scriptsDirectory, "build-android-release-candidate.sh");
+  await mkdir(scriptsDirectory, { recursive: true });
+  await copyFile(path.join(root, "scripts", "build-android-release-candidate.sh"), scriptPath);
+  await chmod(scriptPath, 0o755);
+  await run("git", ["init", "-q"], temporaryRoot);
+  await run("git", ["config", "user.email", "test@example.invalid"], temporaryRoot);
+  await run("git", ["config", "user.name", "Test"], temporaryRoot);
+  await run("git", ["add", "scripts/build-android-release-candidate.sh"], temporaryRoot);
+  await run("git", ["commit", "-qm", "fixture"], temporaryRoot);
+
+  for (const variable of rustOverrides) {
+    const sentinel = `secret-${variable}`;
+    const result = await run(scriptPath, [], temporaryRoot, cleanEnvironment({ [variable]: sentinel }), false);
+    assert.notEqual(result.code, 0, `${variable} must fail`);
+    assert.match(result.stderr, new RegExp(variable));
+    assert.doesNotMatch(`${result.stdout}${result.stderr}`, new RegExp(sentinel));
+  }
+
+  const cleanResult = await run(scriptPath, [], temporaryRoot, cleanEnvironment(), false);
+  assert.doesNotMatch(`${cleanResult.stdout}${cleanResult.stderr}`, /ambient Rust override/);
 });
 
 test("release-candidate build fails before invoking Nix when its worktree is dirty", async (t) => {
@@ -137,7 +185,7 @@ test("release-candidate build fails before invoking Nix when its worktree is dir
   await writeFile(path.join(temporaryRoot, "uncommitted-source-input"), "dirty\n");
 
   const result = await run(scriptPath, [], temporaryRoot, {
-    ...process.env,
+    ...cleanEnvironment(),
     ANDROID_HOME: sdk,
     PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
   }, false);
@@ -147,7 +195,7 @@ test("release-candidate build fails before invoking Nix when its worktree is dir
 
   await rm(path.join(temporaryRoot, "uncommitted-source-input"));
   const ignoredOnlyResult = await run(scriptPath, [], temporaryRoot, {
-    ...process.env,
+    ...cleanEnvironment(),
     ANDROID_HOME: sdk,
     PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
   }, false);
