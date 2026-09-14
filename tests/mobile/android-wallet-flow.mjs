@@ -1178,10 +1178,28 @@ try {
     }
     process.stdout.write(`${JSON.stringify({ mode, protection, receiveAddress })}\n`);
   } else {
-    await waitFor(
-      "document.body.innerText.includes('App link recognized as a credential offer. Review the request before consent.')",
-      "strictly routed credential-offer app link",
+    const appLinkNotice =
+      "App link recognized as a credential offer. Review the request before consent.";
+    const appLinkDeadline = Date.now() + 15_000;
+    while (Date.now() < appLinkDeadline) {
+      if (await evaluate(`document.body.innerText.includes(${JSON.stringify(appLinkNotice)})`)) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const appLinkObserved = await evaluate(
+      `document.body.innerText.includes(${JSON.stringify(appLinkNotice)})`,
     );
+    if (!appLinkObserved) {
+      const state = await evaluate(`(() => ({
+        title: document.querySelector('.app-header__title strong')?.textContent ?? '',
+        notices: Array.from(document.querySelectorAll('[role="alert"]'))
+          .map((element) => element.textContent.trim()).filter(Boolean),
+        buttons: Array.from(document.querySelectorAll('button'))
+          .map((element) => element.textContent.trim()).filter(Boolean).slice(0, 20),
+      }))()`);
+      throw new Error(`strictly routed credential-offer app link was absent: ${JSON.stringify(state)}`);
+    }
     await waitForButton("Dismiss identity request");
     const routed = await evaluate(`(() => ({
       credentialsPage: document.body.innerText.includes("Credentials"),
