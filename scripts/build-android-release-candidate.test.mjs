@@ -33,6 +33,7 @@ test("release-candidate build is arm64-only, statically verified, and device-fre
   assert.match(script, /with aapt and zipalign is not installed/);
   assert.match(script, /"\$zipalign" -c -P 16 -v 4 "\$raw_artifact"/);
   assert.match(script, /"\$aapt" dump badging "\$raw_artifact"/);
+  assert.match(script, /sed -n "s\/\^package: \.\*compileSdkVersion='/);
   assert.match(script, /APK package is not io\.medianox\.oxid/);
   assert.match(script, /APK native ABI is not arm64-v8a/);
   assert.match(script, /APK application compileSdk is not \$application_compile_sdk/);
