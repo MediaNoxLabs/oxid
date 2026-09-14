@@ -243,7 +243,7 @@ android-build:
 # Build an arm64 release candidate and write a private static-check receipt.
 # This command never selects, boots, installs to, or launches an Android target.
 android-release-build:
-    ./scripts/build-android-release-candidate.sh
+    env -u RUSTC_WRAPPER ./scripts/build-android-release-candidate.sh
 
 android-deploy:
     ./scripts/run-android-emulator.sh deploy

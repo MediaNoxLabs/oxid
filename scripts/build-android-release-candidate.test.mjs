@@ -9,7 +9,15 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const rustOverrides = ["RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_ENCODED_RUSTFLAGS"];
+const rustOverrides = [
+  "RUSTC",
+  "RUSTC_WRAPPER",
+  "RUSTC_WORKSPACE_WRAPPER",
+  "CARGO_BUILD_RUSTC",
+  "CARGO_BUILD_RUSTC_WRAPPER",
+  "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
+  "CARGO_ENCODED_RUSTFLAGS",
+];
 
 function cleanEnvironment(overrides = {}) {
   const environment = { ...process.env };
@@ -25,7 +33,10 @@ test("release-candidate build is arm64-only, statically verified, and device-fre
     readFile(path.join(root, "crates", "adapters", "mobile-native-plugin", "android", "build.gradle.kts"), "utf8"),
   ]);
 
-  assert.match(justfile, /^android-release-build:\n    \.\/scripts\/build-android-release-candidate\.sh$/m);
+  assert.match(
+    justfile,
+    /^android-release-build:\n    env -u RUSTC_WRAPPER \.\/scripts\/build-android-release-candidate\.sh$/m,
+  );
   assert.match(script, /--release/);
   assert.match(script, /--target aarch64-linux-android/);
   assert.match(script, /target\/android-release-candidate\/oxid-app-arm64-v8a-release\.apk/);
