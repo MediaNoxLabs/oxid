@@ -174,7 +174,7 @@ async function createFreshProfile() {
 async function assertHomeComposition() {
   await clickButton("Home");
   const compositionExpression = `(() => ({
-    realm: document.querySelector('.home-hero')?.innerText.includes("Current realm") === true,
+    realm: document.querySelector('.home-hero')?.textContent.includes("Current realm") === true,
     actions: Boolean(document.querySelector('.home-quick-actions')),
     wallet: Boolean(document.querySelector('button.home-card--assets[aria-label^="Open Wallet for "]')),
     document: Boolean(document.querySelector('button[aria-label="Open newest document"]')),
@@ -551,7 +551,7 @@ try {
     await waitForButton("Manage identities");
     await clickButton("Home");
     await waitFor(
-      "document.querySelector('.home-hero')?.innerText.includes('Current realm')",
+      "document.querySelector('.home-hero')?.textContent.includes('Current realm')",
       "Home route after presentation shortcut",
     );
     await clickButton("Receive");
@@ -575,7 +575,7 @@ try {
     await clickButton("Home");
     await waitFor(
       `document.querySelector('.app-header__title strong')?.textContent === 'Home'
-        && document.querySelector('.home-hero')?.innerText.includes('Current realm')
+        && document.querySelector('.home-hero')?.textContent.includes('Current realm')
         && Boolean(${buttonExpression("Receive")})`,
       "populated Home route before Receive",
     );
@@ -932,7 +932,7 @@ try {
     await clickButton("Home");
     await waitFor(
       `document.querySelector('.app-header__title strong')?.textContent === 'Home'
-        && document.querySelector('.home-hero')?.innerText.includes('Current realm')
+        && document.querySelector('.home-hero')?.textContent.includes('Current realm')
         && Boolean(${buttonExpression("Receive")})`,
       "populated Home route before native share",
     );
