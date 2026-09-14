@@ -362,6 +362,13 @@ fi
 dismiss_native_share_chooser
 run_webview_wallet_flow close-receive
 
+# Identity ingress is an independent native lifecycle scenario. Establish a
+# clean host process after the long wallet journey, then prove both warm and
+# cold custom-scheme delivery without coupling the result to prior WebView work.
+"$adb_command" -s "$device" shell am force-stop io.medianox.oxid
+"$adb_command" -s "$device" shell am start -W \
+  -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
+wait_for_main_activity
 credential_offer_uri='openid-credential-offer://?credential_offer=%7B%7D'
 "$adb_command" -s "$device" shell am start -W \
   -a android.intent.action.VIEW \
