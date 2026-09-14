@@ -75,6 +75,9 @@ test("release-candidate build is arm64-only, statically verified, and device-fre
   assert.match(script, /cargo_version="\$\("\$rust_toolchain_bin\/cargo" --version\)"/);
   assert.match(script, /java_home="\$\("\$java_command" -XshowSettings:properties -version/);
   assert.match(script, /JAVA_HOME="\$java_home"/);
+  assert.match(script, /RUSTC="\$rust_toolchain_bin\/rustc"/);
+  assert.match(script, /^  RUSTC_WRAPPER= \\$/m);
+  assert.match(script, /^  RUSTC_WORKSPACE_WRAPPER= \\$/m);
   assert.match(script, /PATH="\$rust_toolchain_bin:\$java_home\/bin:/);
   assert.match(script, /java:\$java/);
   assert.match(script, /rustProfile "android-release"/);

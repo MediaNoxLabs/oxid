@@ -110,6 +110,9 @@ build() {
   ANDROID_SDK_ROOT="$android_sdk" \
   ANDROID_NDK_HOME="$android_ndk" \
   JAVA_HOME="$java_home" \
+  RUSTC="$rust_toolchain_bin/rustc" \
+  RUSTC_WRAPPER= \
+  RUSTC_WORKSPACE_WRAPPER= \
   RUSTFLAGS="$rustflags" \
   GRADLE_OPTS="-Dorg.gradle.daemon=false" \
   KOTLIN_COMPILER_EXECUTION_STRATEGY=in-process \
