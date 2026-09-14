@@ -83,10 +83,21 @@ recognizable navigation, design tokens, safe-area layout, and capability-status
 surfaces. The precise source mapping and exclusions are recorded in
 [ui-shell-provenance.md](ui-shell-provenance.md).
 
-This is presentation parity, not functional parity. Assets, DIDs, credentials,
-diagnostics, and settings expose only composed behavior and label missing
-adapters as queued. Create Wallet Profile remains the only complete use case
-until subsequent vertical slices land.
+This was a bounded bootstrap slice, not an enduring visual-parity target. The
+prototype remains useful evidence for Android/iOS TLS initialization, Dioxus
+UI-thread and worker boundaries, native lifecycle handling, safe areas,
+accessibility, and other already-solved engineering patterns. Oxid retains
+those patterns only behind focused Oxid-owned ports, adapters, presenters, and
+components with regression evidence.
+
+The prototype's screen composition, information architecture, copy density,
+developer controls, and monolithic UI state are not product requirements.
+The [Oxid design specification](../design/README.md) is the current presentation
+authority. [Issue #528](https://github.com/MediaNoxLabs/oxid/issues/528) tracks
+an evidence-preserving inventory and incremental removal or redesign of
+prototype-shaped presentation debt. Product capabilities remain governed by
+the [capability matrix](midnight-prototype-capability-matrix.md); provenance
+alone is never a reason either to preserve or delete a capability.
 
 ## Second post-M0 slice: standalone headless harness
 

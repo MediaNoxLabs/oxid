@@ -16,6 +16,23 @@ The source repository and the reimplemented Oxid code are Apache-2.0 licensed.
 The selected Lucide icons retain their ISC notice in
 [`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md).
 
+## Current design authority
+
+This document records historical provenance; it does not make the prototype
+shell an ongoing product target. The [Oxid design specification](../design/README.md)
+owns current information architecture, visual composition, copy, interaction,
+accessibility, density, and UI-profile requirements.
+
+Prototype-derived elements must be classified before further investment or
+removal. Product capabilities keep their state-machine and consent semantics;
+reusable Android/iOS TLS, native lifecycle, Dioxus UI-thread/worker, safe-area,
+screen-privacy, and bridge patterns retain focused regression evidence behind
+Oxid boundaries. Prototype-specific routes, controls, styling, copy, and
+aggregate component state are redesign or removal candidates. The incremental
+classification and cleanup is tracked by
+[#528](https://github.com/MediaNoxLabs/oxid/issues/528); it is explicitly not a
+wholesale UI rewrite.
+
 ## Retained behavior and presentation
 
 - primary Assets, DIDs, Credentials, Diagnostics, and Settings destinations;
