@@ -605,6 +605,10 @@ try {
       qr: Boolean(document.querySelector('.receive-sheet .address-qr__frame svg')),
       activate: Boolean(${buttonExpression("Open Wallet to activate")}),
       failed: Boolean(document.querySelector('.receive-sheet [role="alert"]')),
+      dialog: Boolean(document.querySelector('.receive-sheet[role="dialog"]')),
+      loading: Boolean(document.querySelector('.receive-sheet [aria-busy="true"]')),
+      homeTitle: document.querySelector('.app-header__title strong')?.textContent === 'Home',
+      receiveAction: Boolean(document.querySelector('.home-quick-action[aria-label="Receive"]')),
     }))()`;
     const receiveDeadline = Date.now() + 15_000;
     let receiveState;
