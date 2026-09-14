@@ -25,6 +25,10 @@ usage() {
 
 readonly nix_daemon_profile_bin="/nix/var/nix/profiles/default/bin"
 nix_nested_profile_bin=""
+if [[ "${OXID_BOOTSTRAP_NIX_PROFILE_BIN:-}" == "$nix_daemon_profile_bin" ]]; then
+  nix_nested_profile_bin="$nix_daemon_profile_bin"
+fi
+unset OXID_BOOTSTRAP_NIX_PROFILE_BIN
 if ! command -v nix >/dev/null 2>&1 && [[ -x "$nix_daemon_profile_bin/nix" ]]; then
   export PATH="$nix_daemon_profile_bin:$PATH"
   nix_nested_profile_bin="$nix_daemon_profile_bin"
@@ -52,11 +56,41 @@ case "${1:-}" in
     ;;
   --pi)
     shift
+    pi_arguments=("$@")
+    dev_loop_requested=false
+    for ((index = 0; index < ${#pi_arguments[@]}; index += 1)); do
+      argument="${pi_arguments[$index]}"
+      print_value=""
+      if [[ "$argument" == "--print" ]] && ((index + 1 < ${#pi_arguments[@]})); then
+        print_value="${pi_arguments[$((index + 1))]}"
+      elif [[ "$argument" == --print=* ]]; then
+        print_value="${argument#--print=}"
+      fi
+      if [[ "$print_value" == /dev-loop* ]]; then
+        dev_loop_requested=true
+        break
+      fi
+    done
+    if [[ "$dev_loop_requested" == true ]]; then
+      if ! command -v node >/dev/null 2>&1; then
+        echo "Node.js is required outside the Nix shell to resolve an initial /dev-loop worktree." >&2
+        exit 1
+      fi
+      pi_cwd="$(node "$repo_root/scripts/loop/bootstrap-dev-loop.mjs" --repo-root "$repo_root" -- "$@")" || exit $?
+      if [[ "$pi_cwd" != "$repo_root" ]]; then
+        canonical_bootstrap="$pi_cwd/bootstrap.sh"
+        if [[ ! -x "$canonical_bootstrap" ]]; then
+          echo "resolved canonical worktree has no executable bootstrap: $canonical_bootstrap" >&2
+          exit 1
+        fi
+        export OXID_BOOTSTRAP_NIX_PROFILE_BIN="$nix_nested_profile_bin"
+        exec "$canonical_bootstrap" --pi "$@"
+      fi
+    fi
     nix_develop_command bash -c '
       repo_root="$1"
       shift
-      pi_cwd="$(node "$repo_root/scripts/loop/bootstrap-dev-loop.mjs" --repo-root "$repo_root" -- "$@")" || exit $?
-      cd "$pi_cwd"
+      cd "$repo_root"
       node scripts/factory/audit-pi.mjs --config-only --enforce-config || {
         echo "Pi startup audit failed. If user-subagent-policy is red, run ./bootstrap.sh --configure-pi; otherwise fix the reported control, then retry ./bootstrap.sh --pi." >&2
         exit 1
