@@ -2436,17 +2436,12 @@ to silence the shell probe.
   two profile-backed optimization iterations before repeating the read-only
   PreProd observation. Keep its aggregate report closed and public-safe. Never
   raise an event, byte, or time cap from a partial-prefix extrapolation.
-  Issue #116 separately owns an ADR-first, birthday-gated replay-reference
-  design inspired by Moth Wallet's "pre-seed reference" pattern. Its immutable
-  research baseline is Moth commit
-  `f17a8bd9ff57fe58854c86e2a61f92cb20e8eb14`; Moth calls the cacheless
-  genesis benchmark a genuine cold start, while the fast fresh-wallet path
-  starts from a reviewed reference and then catches up live. Oxid must define
-  its own authenticated, bounded Rust artifact and chain-derived account
-  birthday. Imported, restored, legacy, or unknown-birthday wallets must keep
-  full replay, and upstream authenticated sparse synchronization may supersede
-  the proposal. Do not copy Moth's JavaScript, JSON/key-swapping state format,
-  NPM dependencies, generated caches, or pre-seed artifacts.
+  Oxid will not implement a birthday-gated, cold-start, preseed, or public
+  replay-reference shortcut. Keep fresh and imported wallet synchronization on
+  the authenticated full-replay/private-checkpoint path. Optimize measurable
+  DUST/Zswap replay bottlenecks through issue #115 and prefer reusable fixes in
+  the Midnight Rust ledger or wallet libraries; consume those only through the
+  reviewed pinned-dependency boundary.
   All attempts failed before public output and created no
   write marker, checkpoint/journal file, proof, transaction, prover contact,
   or chain write. Do not treat these transport observations as a funding
