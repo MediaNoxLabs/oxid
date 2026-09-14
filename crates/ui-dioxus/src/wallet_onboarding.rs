@@ -37,8 +37,20 @@ fn ceremony_id(state: &WalletOnboardingState) -> Option<String> {
     }
 }
 
-fn lifecycle_generation_is_current(started: u64, current: u64) -> bool {
-    started == current
+fn lifecycle_generation_is_current(
+    started: u64,
+    current: u64,
+    authorized_resume: Option<u64>,
+) -> bool {
+    started == current || authorized_resume == Some(current)
+}
+
+fn may_consume_authorization_resume(state: &WalletOnboardingState, expected: bool) -> bool {
+    expected
+        && matches!(
+            state,
+            WalletOnboardingState::Working | WalletOnboardingState::Completing
+        )
 }
 
 #[component]
@@ -62,6 +74,8 @@ pub(crate) fn WalletOnboarding(
     let mut acknowledged = use_signal(|| false);
     let initial_lifecycle = lifecycle_wake();
     let mut last_lifecycle = use_signal(move || initial_lifecycle);
+    let mut authorization_resume_expected = use_signal(|| false);
+    let mut authorized_resume = use_signal(|| None::<u64>);
 
     let screen_privacy = services.screen_privacy();
     use_effect(move || {
@@ -73,6 +87,17 @@ pub(crate) fn WalletOnboarding(
         let generation = lifecycle_wake();
         if generation != last_lifecycle() {
             last_lifecycle.set(generation);
+            // The app-owned Android/iOS authorization surface suspends and
+            // resumes the host once. Consume only that expected wake while
+            // the corresponding command is still in flight; any later wake
+            // retains the ordinary fail-closed ceremony cancellation.
+            if may_consume_authorization_resume(&state.read(), authorization_resume_expected()) {
+                authorization_resume_expected.set(false);
+                authorized_resume.set(Some(generation));
+                return;
+            }
+            authorization_resume_expected.set(false);
+            authorized_resume.set(None);
             suspend.suspend();
             phrase_input.write().zeroize();
             phrase_input.set(Zeroizing::new(String::new()));
@@ -198,6 +223,11 @@ pub(crate) fn WalletOnboarding(
                         let cancel_stale_prepare = cancel_after_stale_prepare.clone();
                         let lifecycle_generation = lifecycle_wake();
                         let lifecycle_wake_for_prepare = lifecycle_wake;
+                        let mut authorization_resume_expected_for_prepare =
+                            authorization_resume_expected;
+                        let mut authorized_resume_for_prepare = authorized_resume;
+                        authorization_resume_expected_for_prepare.set(true);
+                        authorized_resume_for_prepare.set(None);
                         state.set(WalletOnboardingState::Working);
                         spawn(async move {
                             let result = run_ui_blocking(move || {
@@ -207,7 +237,10 @@ pub(crate) fn WalletOnboarding(
                             let lifecycle_is_current = lifecycle_generation_is_current(
                                 lifecycle_generation,
                                 lifecycle_wake_for_prepare(),
+                                authorized_resume_for_prepare(),
                             );
+                            authorization_resume_expected_for_prepare.set(false);
+                            authorized_resume_for_prepare.set(None);
                             match result {
                                 Ok(Ok(prepared)) if lifecycle_is_current => {
                                     state.set(WalletOnboardingState::Prepared(prepared));
@@ -250,6 +283,11 @@ pub(crate) fn WalletOnboarding(
                         let ceremony_id_for_failure = ceremony_id.clone();
                         let lifecycle_generation = lifecycle_wake();
                         let lifecycle_wake_for_completion = lifecycle_wake;
+                        let mut authorization_resume_expected_for_completion =
+                            authorization_resume_expected;
+                        let mut authorized_resume_for_completion = authorized_resume;
+                        authorization_resume_expected_for_completion.set(true);
+                        authorized_resume_for_completion.set(None);
                         state.set(WalletOnboardingState::Completing);
                         spawn(async move {
                             let result = run_ui_blocking(move || {
@@ -268,7 +306,10 @@ pub(crate) fn WalletOnboarding(
                             let lifecycle_is_current = lifecycle_generation_is_current(
                                 lifecycle_generation,
                                 lifecycle_wake_for_completion(),
+                                authorized_resume_for_completion(),
                             );
+                            authorization_resume_expected_for_completion.set(false);
+                            authorized_resume_for_completion.set(None);
                             match result {
                                 Ok(Ok(_)) if lifecycle_is_current => on_complete.call(profile),
                                 Ok(Ok(_)) => {}
@@ -331,8 +372,30 @@ mod tests {
 
     #[test]
     fn lifecycle_generation_rejects_late_ui_updates() {
-        assert!(lifecycle_generation_is_current(7, 7));
-        assert!(!lifecycle_generation_is_current(7, 8));
+        assert!(lifecycle_generation_is_current(7, 7, None));
+        assert!(lifecycle_generation_is_current(7, 8, Some(8)));
+        assert!(!lifecycle_generation_is_current(7, 8, None));
+        assert!(!lifecycle_generation_is_current(7, 9, Some(8)));
+    }
+
+    #[test]
+    fn only_busy_native_authorization_consumes_one_resume() {
+        assert!(may_consume_authorization_resume(
+            &WalletOnboardingState::Working,
+            true
+        ));
+        assert!(may_consume_authorization_resume(
+            &WalletOnboardingState::Completing,
+            true
+        ));
+        assert!(!may_consume_authorization_resume(
+            &WalletOnboardingState::Idle,
+            true
+        ));
+        assert!(!may_consume_authorization_resume(
+            &WalletOnboardingState::Working,
+            false
+        ));
     }
 
     #[test]
