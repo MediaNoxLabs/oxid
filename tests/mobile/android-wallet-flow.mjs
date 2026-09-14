@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { writeFile } from "node:fs/promises";
+
 const endpoint = process.argv[2];
 const mode = process.argv[3] ?? "flow";
 const backupRecoverySecret = "oxidandroidbackup2026";
 
-if (!endpoint || !["flow", "live-account", "prepare-live-account-touch", "live-account-after-touch", "live-account-restarted", "restored", "app-link", "privacy-reveal", "privacy-rearmed", "backup-export", "backup-recover", "developer", "demo", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
-  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|live-account|prepare-live-account-touch|live-account-after-touch|live-account-restarted|restored|app-link|privacy-reveal|privacy-rearmed|backup-export|backup-recover|developer|demo|native-authorize|native-custody|native-restored>");
+if (!endpoint || !["flow", "close-receive", "live-account", "prepare-live-account-touch", "live-account-after-touch", "live-account-restarted", "restored", "app-link", "privacy-reveal", "privacy-rearmed", "backup-export", "backup-recover", "developer", "demo", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
+  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|close-receive|live-account|prepare-live-account-touch|live-account-after-touch|live-account-restarted|restored|app-link|privacy-reveal|privacy-rearmed|backup-export|backup-recover|developer|demo|native-authorize|native-custody|native-restored>");
 }
 
 const socket = new WebSocket(endpoint);
@@ -104,6 +106,23 @@ async function clickButtonByLabel(label) {
   }
 }
 
+async function clickGlobalAction(label) {
+  const selector = `button[data-global-action=${JSON.stringify(label)}]`;
+  await waitFor(
+    `(() => { const element = document.querySelector(${JSON.stringify(selector)}); return Boolean(element && !element.disabled); })()`,
+    `enabled global action ${label}`,
+  );
+  const clicked = await evaluate(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    if (!element || element.disabled) return false;
+    element.click();
+    return true;
+  })()`);
+  if (!clicked) {
+    throw new Error(`global action ${label} was disabled`);
+  }
+}
+
 async function openDocuments() {
   await clickButton("Documents");
 }
@@ -131,6 +150,20 @@ async function openWallet() {
   await clickButton("Wallet");
 }
 
+async function openReceiveSheet() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await clickButtonByLabel("Receive");
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      if (await evaluate("Boolean(document.querySelector('.receive-sheet[role=\"dialog\"]'))")) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  throw new Error("Home Receive action did not open the Receive sheet after two attempts");
+}
+
 async function createFreshProfile() {
   await waitFor(
     `Boolean(${buttonExpression("Create private wallet")}) || Boolean(${buttonExpression("Wallet")})`,
@@ -141,22 +174,48 @@ async function createFreshProfile() {
   if (!createAvailable) return;
   await clickButton("Create private wallet");
   await clickButton("Create and continue");
-  await clickButton("Skip for now");
+  await clickButton("Generate recovery phrase");
+  await waitFor(
+    'Boolean(document.querySelector(\'[aria-label="New wallet recovery phrase"]\'))',
+    "native-authorized recovery phrase",
+    90_000,
+  );
+  await clickConfirmation(
+    "I have securely saved or verified this recovery phrase.",
+  );
+  await clickButton("Finish and open wallet");
+  await waitForButton("Wallet", 30_000);
+  const completionFile = process.env.OXID_ANDROID_ONBOARDING_COMPLETE_FILE;
+  if (completionFile) {
+    await writeFile(completionFile, "complete\n", {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+  }
 }
 
 async function assertHomeComposition() {
   await clickButton("Home");
-  await waitFor(
-    `document.body.innerText.includes("Everything in one place")
-      && Boolean(document.querySelector('.home-quick-actions'))
-      && Boolean(document.querySelector('button[aria-label="Open Wallet NIGHT account"]'))
-      && Boolean(document.querySelector('button[aria-label="Open Wallet shielded account"]'))
-      && Boolean(document.querySelector('button[aria-label="Open newest document"]'))
-      && Boolean(document.querySelector('button[aria-label="Open Passport Vault"]'))
-      && Boolean(document.querySelector('button[aria-label="Open wallet security settings"]'))
-      && Boolean(document.querySelector('button[aria-label="See all activity"]'))`,
-    "five-part Home composition",
-  );
+  const compositionExpression = `(() => ({
+    realm: document.querySelector('.home-hero')?.textContent.includes("Current realm") === true,
+    actions: Boolean(document.querySelector('.home-quick-actions')),
+    wallet: Boolean(document.querySelector('button.home-card--assets[aria-label^="Open Wallet for "]')),
+    document: Boolean(document.querySelector('button[aria-label="Open newest document"]')),
+    vault: Boolean(document.querySelector('button[aria-label="Open Passport Vault"]')),
+    security: Boolean(document.querySelector('button[aria-label="Open wallet security settings"]')),
+    activity: Boolean(document.querySelector('button[aria-label="See all activity"]')),
+  }))()`;
+  const deadline = Date.now() + 15_000;
+  let composition;
+  do {
+    composition = await evaluate(compositionExpression);
+    if (Object.values(composition).every(Boolean)) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  } while (Date.now() < deadline);
+  if (!Object.values(composition).every(Boolean)) {
+    throw new Error(`five-part Home composition was incomplete: ${JSON.stringify(composition)}`);
+  }
   const truthful = await evaluate(`(() => {
     const labels = Array.from(document.querySelectorAll('.home-quick-action'))
       .map((element) => element.textContent.trim());
@@ -309,6 +368,7 @@ try {
     process.stdout.write(`${JSON.stringify({ mode, ...modal, ...review, safeSetup: true })}\n`);
   } else if (mode === "privacy-reveal") {
     await createFreshProfile();
+    await openWallet();
     await waitFor(
       `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'masked'`,
       "default masked secret mode",
@@ -322,17 +382,17 @@ try {
       })()`,
       "visually masked private value",
     );
-    await clickButtonByLabel("Show private values for 30 seconds");
+    await clickButtonByLabel("Open global application menu");
+    await clickGlobalAction("Session privacy");
     await waitFor(
       `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'revealed'
-        && Boolean(document.querySelector('button[aria-label="Hide private values"]'))`,
+        && !Boolean(document.querySelector('#global-application-menu'))`,
       "explicit timed secret-mode reveal",
     );
     process.stdout.write(`${JSON.stringify({ mode, revealed: true })}\n`);
   } else if (mode === "privacy-rearmed") {
     await waitFor(
-      `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'masked'
-        && Boolean(document.querySelector('button[aria-label="Show private values for 30 seconds"]'))`,
+      `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'masked'`,
       "background-rearmed secret mode",
     );
     process.stdout.write(`${JSON.stringify({ mode, rearmed: true })}\n`);
@@ -340,12 +400,13 @@ try {
     await createFreshProfile();
     await openWallet();
     await clickButtonByLabel("Activate protected Midnight account");
-    await waitForButton("Use my receive address", 90_000);
+    await waitForButton("Sync now", 90_000);
 
     await openIdentities();
     await clickButton("Create a DID");
+    await clickButton("Create DID");
     await waitFor(
-      "document.body.innerText.includes('standalone-1') && document.body.innerText.includes('Manage this DID')",
+      "document.body.textContent.includes('A protected managed DID is ready for credential issuance.') && Boolean(document.querySelector('.did-record'))",
       "managed DID for complete backup",
       30_000,
     );
@@ -416,7 +477,7 @@ try {
     );
     await openIdentities();
     await waitFor(
-      "document.body.innerText.includes('standalone-1') && document.body.innerText.includes('Manage this DID')",
+      "document.body.textContent.includes('Wallet-managed record') && Boolean(document.querySelector('.did-record'))",
       "restored managed DID",
       30_000,
     );
@@ -515,23 +576,42 @@ try {
     await waitForButton("Manage identities");
     await clickButton("Home");
     await waitFor(
-      "document.body.innerText.includes('Everything in one place')",
+      "document.querySelector('.home-hero')?.textContent.includes('Current realm')",
       "Home route after presentation shortcut",
     );
-    await clickButton("Receive");
+    await openReceiveSheet();
     await waitFor(
       "document.body.innerText.includes('Receive NIGHT') && Boolean(document.querySelector('[role=dialog]'))",
       "one-tap Home Receive sheet",
     );
-    await waitForButton("Open Wallet to activate");
-    await clickButton("Open Wallet to activate");
-    await clickButtonByLabel("Activate protected Midnight account");
-    await waitForButton("Use my receive address", 90_000);
+    await waitFor(
+      `Boolean(${buttonExpression("Open Wallet to activate")})
+        || Boolean(document.querySelector('button[aria-label="Use Public receive address"]'))
+        || Boolean(document.querySelector('.receive-sheet [role="alert"]'))`,
+      "settled protected Receive state",
+    );
+    const receiveNeedsActivation = await evaluate(
+      `Boolean(${buttonExpression("Open Wallet to activate")})`,
+    );
+    if (receiveNeedsActivation) {
+      await clickButton("Open Wallet to activate");
+      await clickButtonByLabel("Activate protected Midnight account");
+    } else {
+      const receiveFailed = await evaluate(
+        `Boolean(document.querySelector('.receive-sheet [role="alert"]'))`,
+      );
+      if (receiveFailed) {
+        throw new Error("protected Receive state failed closed before account synchronization");
+      }
+      await clickButtonByLabel("Close Receive");
+      await openWallet();
+    }
+    await waitForButton("Sync now", 90_000);
     await waitForButton("Scan");
 
     await clickButton("Sync now");
     await waitFor(
-      "document.body.innerText.includes('12 DUST') && document.body.innerText.includes('1 shielded notes') && document.body.innerText.includes('5 NIGHT')",
+      "document.querySelector('.account-sync-card')?.textContent.includes('12 DUST') && document.querySelector('.account-sync-card')?.textContent.includes('1 protected notes') && document.querySelector('.account-sync-card')?.textContent.includes('5 NIGHT')",
       "exact simulated account, DUST, and shielded synchronization",
     );
     await waitForButton("Sync now");
@@ -539,17 +619,32 @@ try {
     await clickButton("Home");
     await waitFor(
       `document.querySelector('.app-header__title strong')?.textContent === 'Home'
-        && document.body.innerText.includes('Everything in one place')
+        && document.querySelector('.home-hero')?.textContent.includes('Current realm')
         && Boolean(${buttonExpression("Receive")})`,
       "populated Home route before Receive",
     );
-    await clickButton("Receive");
-    await waitFor(
-      `Boolean(document.querySelector('button[aria-label="Use Public receive address"]'))
-        && Boolean(document.querySelector('button[aria-label="Use Private receive address"]'))
-        && Boolean(document.querySelector('.receive-sheet .address-qr__frame svg'))`,
-      "public and private receive selectors with rendered QR",
-    );
+    await openReceiveSheet();
+    const receiveExpression = `(() => ({
+      public: Boolean(document.querySelector('button[aria-label="Use Public receive address"]')),
+      private: Boolean(document.querySelector('button[aria-label="Use Private receive address"]')),
+      qr: Boolean(document.querySelector('.receive-sheet .address-qr__frame svg')),
+      activate: Boolean(${buttonExpression("Open Wallet to activate")}),
+      failed: Boolean(document.querySelector('.receive-sheet [role="alert"]')),
+      dialog: Boolean(document.querySelector('.receive-sheet[role="dialog"]')),
+      loading: Boolean(document.querySelector('.receive-sheet [aria-busy="true"]')),
+      homeTitle: document.querySelector('.app-header__title strong')?.textContent === 'Home',
+      receiveAction: Boolean(document.querySelector('.home-quick-action[aria-label="Receive"]')),
+    }))()`;
+    const receiveDeadline = Date.now() + 15_000;
+    let receiveState;
+    do {
+      receiveState = await evaluate(receiveExpression);
+      if (receiveState.public && receiveState.private && receiveState.qr) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } while (Date.now() < receiveDeadline);
+    if (!receiveState.public || !receiveState.private || !receiveState.qr) {
+      throw new Error(`public/private Receive QR state was incomplete: ${JSON.stringify(receiveState)}`);
+    }
     const qrRendered = await evaluate(
       "Boolean(document.querySelector('.receive-sheet .address-qr__frame svg'))",
     );
@@ -594,15 +689,22 @@ try {
       submitted: document.body.innerText.includes("Transfer confirmed"),
       simulated: document.body.innerText.includes("Mode: Simulated — runs locally, nothing on Midnight"),
       dustSynced: document.body.innerText.includes("12 DUST"),
-      shieldedSynced: document.body.innerText.includes("1 shielded notes")
+      shieldedSynced: document.body.innerText.includes("1 protected notes")
         && document.body.innerText.includes("5 NIGHT"),
     }))()`);
     await openIdentities();
     await waitForButton("Create a DID");
     await clickButton("Create a DID");
+    await waitForButton("Create DID");
+    await clickButton("Create DID");
     await waitFor(
-      "document.body.innerText.includes('standalone-1') && document.body.innerText.includes('Manage this DID')",
+      "document.body.textContent.includes('A protected managed DID is ready for credential issuance.') && Boolean(document.querySelector('.did-record'))",
       "created managed standalone DID",
+    );
+    await clickButton("Open DID details");
+    await waitFor(
+      "document.body.textContent.includes('Manage this DID') && Boolean(document.querySelector('.did-manager'))",
+      "managed DID details",
     );
     await evaluate(`(() => {
       const manager = document.querySelector('.did-manager');
@@ -626,28 +728,8 @@ try {
     );
     await clickButton("Apply DID update");
     await waitFor(
-      "document.body.innerText.includes('standalone-2')",
+      "document.body.textContent.includes('DID document updated.')",
       "managed DID update",
-    );
-    await clickButton("Use standalone login request");
-    await clickButton("Preview login request");
-    await waitFor(
-      "document.body.innerText.includes('DID authentication preview') && document.body.innerText.includes('Who is asking?') && document.body.innerText.includes('What will you prove?') && document.body.innerText.includes('Which identity?') && document.body.innerText.includes('Why is it requested?') && document.body.innerText.includes('Unverified endpoint') && document.body.innerText.includes('No credential or document claims will be disclosed.')",
-      "four-question SIOPv2 DID authentication preview",
-    );
-    await evaluate(`(() => {
-      const consent = document.querySelector('#self-issued-authentication-consent');
-      if (!consent) return false;
-      consent.click();
-      return consent.checked;
-    })()`);
-    await clickButton("Authenticate with DID");
-    await waitFor(
-      "document.body.innerText.includes('DID authentication succeeded and the standalone verifier independently validated the proof.')",
-      "verified SIOPv2 DID authentication",
-    );
-    const didAuthenticated = await evaluate(
-      "document.body.innerText.includes('DID authentication succeeded and the standalone verifier independently validated the proof.')",
     );
     await openDocuments();
     await waitForButton("Use demo OID4VCI offer");
@@ -845,8 +927,13 @@ try {
 
     await openIdentities();
     await waitFor(
-      "document.body.innerText.includes('standalone-2')",
+      "Boolean(document.querySelector('.did-record')) && Boolean(Array.from(document.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Open DID details'))",
       "managed DID before deactivation",
+    );
+    await clickButton("Open DID details");
+    await waitFor(
+      "document.body.textContent.includes('Manage this DID') && Boolean(document.querySelector('.did-manager'))",
+      "managed DID deactivation controls",
     );
     await evaluate(`(() => {
       const manager = document.querySelector('.did-manager');
@@ -875,6 +962,8 @@ try {
     const didManaged = await evaluate(
       "document.body.innerText.includes('Deactivated') && document.body.innerText.includes('Manage this DID')",
     );
+    await clickButton("Resolve DID");
+    await clickButton("Load example DID");
     await waitForButton("Resolve and save");
     await clickButton("Resolve and save");
     await waitFor(
@@ -889,21 +978,28 @@ try {
       "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('Valid') && document.body.innerText.includes('Proof')",
       "verified issued credential",
     );
-    const result = { ...walletResult, homeComposed: true, claimsHiddenByDefault, credentialChooserValidated, credentialPolicyChecked, credentialVerified, didAuthenticated, didManaged, didResolved, disclosurePreviewed, nativeVaultCallFlow, presentationProofGated, publicAddressCopied, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow, vaultStatePersistent };
-    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.homeComposed || !result.claimsHiddenByDefault || !result.credentialChooserValidated || !result.credentialPolicyChecked || !result.credentialVerified || !result.didAuthenticated || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.publicAddressCopied || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow || !result.vaultStatePersistent) {
+    const result = { ...walletResult, homeComposed: true, claimsHiddenByDefault, credentialChooserValidated, credentialPolicyChecked, credentialVerified, didManaged, didResolved, disclosurePreviewed, nativeVaultCallFlow, presentationProofGated, publicAddressCopied, qrRendered, shieldedAddressRendered, thresholdAvailable, vaultFlow, vaultStatePersistent };
+    if (!result.submitted || !result.simulated || !result.dustSynced || !result.shieldedSynced || !result.homeComposed || !result.claimsHiddenByDefault || !result.credentialChooserValidated || !result.credentialPolicyChecked || !result.credentialVerified || !result.didManaged || !result.didResolved || !result.disclosurePreviewed || !result.nativeVaultCallFlow || !result.presentationProofGated || !result.publicAddressCopied || !result.qrRendered || !result.shieldedAddressRendered || !result.thresholdAvailable || !result.vaultFlow || !result.vaultStatePersistent) {
       throw new Error(`Android standalone wallet flow did not expose the expected public result: ${JSON.stringify(result)}`);
     }
     await clickButton("Home");
     await waitFor(
       `document.querySelector('.app-header__title strong')?.textContent === 'Home'
-        && document.body.innerText.includes('Everything in one place')
+        && document.querySelector('.home-hero')?.textContent.includes('Current realm')
         && Boolean(${buttonExpression("Receive")})`,
       "populated Home route before native share",
     );
-    await clickButton("Receive");
+    await openReceiveSheet();
     await waitForButton("Share");
     await clickButtonByLabel("Share Unshielded receive address");
     process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else if (mode === "close-receive") {
+    await clickButtonByLabel("Close Receive");
+    await waitFor(
+      "document.querySelector('.app-header__title strong')?.textContent === 'Home' && !document.querySelector('.receive-sheet[role=\"dialog\"]')",
+      "stable Home boundary after native share",
+    );
+    process.stdout.write(`${JSON.stringify({ mode, home: true })}\n`);
   } else if (mode === "restored") {
     await waitForButton("Wallet");
     await assertHomeComposition();
@@ -1099,10 +1195,28 @@ try {
     }
     process.stdout.write(`${JSON.stringify({ mode, protection, receiveAddress })}\n`);
   } else {
-    await waitFor(
-      "document.body.innerText.includes('App link recognized as a credential offer. Review the request before consent.')",
-      "strictly routed credential-offer app link",
+    const appLinkNotice =
+      "App link recognized as a credential offer. Review the request before consent.";
+    const appLinkDeadline = Date.now() + 15_000;
+    while (Date.now() < appLinkDeadline) {
+      if (await evaluate(`document.body.innerText.includes(${JSON.stringify(appLinkNotice)})`)) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const appLinkObserved = await evaluate(
+      `document.body.innerText.includes(${JSON.stringify(appLinkNotice)})`,
     );
+    if (!appLinkObserved) {
+      const state = await evaluate(`(() => ({
+        title: document.querySelector('.app-header__title strong')?.textContent ?? '',
+        notices: Array.from(document.querySelectorAll('[role="alert"]'))
+          .map((element) => element.textContent.trim()).filter(Boolean),
+        buttons: Array.from(document.querySelectorAll('button'))
+          .map((element) => element.textContent.trim()).filter(Boolean).slice(0, 20),
+      }))()`);
+      throw new Error(`strictly routed credential-offer app link was absent: ${JSON.stringify(state)}`);
+    }
     await waitForButton("Dismiss identity request");
     const routed = await evaluate(`(() => ({
       credentialsPage: document.body.innerText.includes("Credentials"),

@@ -120,6 +120,29 @@ This command does not select, boot, install to, or launch an Android target.
 The supervisor separately owns the reviewed Android 15+ 16 KiB target,
 page-size observation, install, launch, and smoke evidence.
 
+Smoke that exact candidate on a disposable Android emulator without rebuilding
+or selecting a different artifact:
+
+```bash
+nix develop --command just android-smoke-prebuilt
+```
+
+The recipe admits only the exact mode-`0600` release receipt and APK produced
+by `just android-release-build`. It verifies the receipt's source head/tree and
+APK SHA-256, then independently checks the package, arm64 ABI, and launch
+activity before installation. The smoke refuses physical devices and emulators
+that already have a device credential. It creates an ephemeral credential for
+the native-authorized recovery-phrase journey, never prints that credential or
+the device identifier, and clears only its application data, forwarding, and
+harness-owned credential on exit. To select another receipt-bound copy, pass
+both paths explicitly:
+
+```bash
+nix develop --command just android-smoke-prebuilt \
+  /absolute/path/to/oxid-app-arm64-v8a-release.apk \
+  /absolute/path/to/receipt.json
+```
+
 Android deployment supports an explicitly selected physical device or emulator
 accepted by the existing launcher policy. The default local profile accepts an
 emulator; the reviewed Tailnet Portal path owns physical-device configuration.

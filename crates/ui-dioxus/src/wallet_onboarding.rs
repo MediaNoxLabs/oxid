@@ -37,8 +37,25 @@ fn ceremony_id(state: &WalletOnboardingState) -> Option<String> {
     }
 }
 
-fn lifecycle_generation_is_current(started: u64, current: u64) -> bool {
-    started == current
+fn lifecycle_generation_is_current(
+    started: u64,
+    current: u64,
+    authorized_resume: Option<u64>,
+    authorization_in_flight: bool,
+) -> bool {
+    started == current || authorized_resume == Some(current) || authorization_in_flight
+}
+
+fn may_admit_authorization_lifecycle(state: &WalletOnboardingState, expected: bool) -> bool {
+    expected
+        && matches!(
+            state,
+            WalletOnboardingState::Working | WalletOnboardingState::Completing
+        )
+}
+
+const fn prepare_requires_native_authorization(intent: WalletOnboardingIntent) -> bool {
+    matches!(intent, WalletOnboardingIntent::Create)
 }
 
 #[component]
@@ -62,6 +79,8 @@ pub(crate) fn WalletOnboarding(
     let mut acknowledged = use_signal(|| false);
     let initial_lifecycle = lifecycle_wake();
     let mut last_lifecycle = use_signal(move || initial_lifecycle);
+    let mut authorization_in_flight = use_signal(|| false);
+    let mut authorized_resume = use_signal(|| None::<u64>);
 
     let screen_privacy = services.screen_privacy();
     use_effect(move || {
@@ -73,6 +92,15 @@ pub(crate) fn WalletOnboarding(
         let generation = lifecycle_wake();
         if generation != last_lifecycle() {
             last_lifecycle.set(generation);
+            // The app-owned Android/iOS authorization surface can emit several
+            // lifecycle events. Admit them only while its blocking command is
+            // in flight; every later wake retains fail-closed cancellation.
+            if may_admit_authorization_lifecycle(&state.read(), authorization_in_flight()) {
+                authorized_resume.set(Some(generation));
+                return;
+            }
+            authorization_in_flight.set(false);
+            authorized_resume.set(None);
             suspend.suspend();
             phrase_input.write().zeroize();
             phrase_input.set(Zeroizing::new(String::new()));
@@ -198,6 +226,14 @@ pub(crate) fn WalletOnboarding(
                         let cancel_stale_prepare = cancel_after_stale_prepare.clone();
                         let lifecycle_generation = lifecycle_wake();
                         let lifecycle_wake_for_prepare = lifecycle_wake;
+                        let mut authorization_in_flight_for_prepare = authorization_in_flight;
+                        let mut authorized_resume_for_prepare = authorized_resume;
+                        // Wry may report several lifecycle events around one
+                        // app-owned credential surface. Admit them only while the
+                        // blocking native authorization operation owns the transition.
+                        authorization_in_flight_for_prepare
+                            .set(prepare_requires_native_authorization(intent));
+                        authorized_resume_for_prepare.set(None);
                         state.set(WalletOnboardingState::Working);
                         spawn(async move {
                             let result = run_ui_blocking(move || {
@@ -207,7 +243,11 @@ pub(crate) fn WalletOnboarding(
                             let lifecycle_is_current = lifecycle_generation_is_current(
                                 lifecycle_generation,
                                 lifecycle_wake_for_prepare(),
+                                authorized_resume_for_prepare(),
+                                authorization_in_flight_for_prepare(),
                             );
+                            authorization_in_flight_for_prepare.set(false);
+                            authorized_resume_for_prepare.set(None);
                             match result {
                                 Ok(Ok(prepared)) if lifecycle_is_current => {
                                     state.set(WalletOnboardingState::Prepared(prepared));
@@ -250,6 +290,10 @@ pub(crate) fn WalletOnboarding(
                         let ceremony_id_for_failure = ceremony_id.clone();
                         let lifecycle_generation = lifecycle_wake();
                         let lifecycle_wake_for_completion = lifecycle_wake;
+                        let mut authorization_in_flight_for_completion = authorization_in_flight;
+                        let mut authorized_resume_for_completion = authorized_resume;
+                        authorization_in_flight_for_completion.set(true);
+                        authorized_resume_for_completion.set(None);
                         state.set(WalletOnboardingState::Completing);
                         spawn(async move {
                             let result = run_ui_blocking(move || {
@@ -268,7 +312,11 @@ pub(crate) fn WalletOnboarding(
                             let lifecycle_is_current = lifecycle_generation_is_current(
                                 lifecycle_generation,
                                 lifecycle_wake_for_completion(),
+                                authorized_resume_for_completion(),
+                                authorization_in_flight_for_completion(),
                             );
+                            authorization_in_flight_for_completion.set(false);
+                            authorized_resume_for_completion.set(None);
                             match result {
                                 Ok(Ok(_)) if lifecycle_is_current => on_complete.call(profile),
                                 Ok(Ok(_)) => {}
@@ -331,8 +379,41 @@ mod tests {
 
     #[test]
     fn lifecycle_generation_rejects_late_ui_updates() {
-        assert!(lifecycle_generation_is_current(7, 7));
-        assert!(!lifecycle_generation_is_current(7, 8));
+        assert!(lifecycle_generation_is_current(7, 7, None, false));
+        assert!(lifecycle_generation_is_current(7, 8, Some(8), false));
+        assert!(lifecycle_generation_is_current(7, 9, Some(8), true));
+        assert!(!lifecycle_generation_is_current(7, 8, None, false));
+        assert!(!lifecycle_generation_is_current(7, 9, Some(8), false));
+    }
+
+    #[test]
+    fn only_busy_native_authorization_admits_lifecycle_churn() {
+        assert!(may_admit_authorization_lifecycle(
+            &WalletOnboardingState::Working,
+            true
+        ));
+        assert!(may_admit_authorization_lifecycle(
+            &WalletOnboardingState::Completing,
+            true
+        ));
+        assert!(!may_admit_authorization_lifecycle(
+            &WalletOnboardingState::Idle,
+            true
+        ));
+        assert!(!may_admit_authorization_lifecycle(
+            &WalletOnboardingState::Working,
+            false
+        ));
+    }
+
+    #[test]
+    fn mnemonic_restore_does_not_admit_unrelated_lifecycle_churn() {
+        assert!(prepare_requires_native_authorization(
+            WalletOnboardingIntent::Create
+        ));
+        assert!(!prepare_requires_native_authorization(
+            WalletOnboardingIntent::RestorePhrase
+        ));
     }
 
     #[test]

@@ -248,6 +248,10 @@ android-release-build:
 android-deploy:
     ./scripts/run-android-emulator.sh deploy
 
+# Smoke the exact receipt-bound artifact produced by `just android-release-build`.
+android-smoke-prebuilt apk="target/android-release-candidate/oxid-app-arm64-v8a-release.apk" receipt="target/android-release-candidate/receipt.json":
+    ./scripts/test-android-profile-flow.sh --apk {{quote(apk)}} --receipt {{quote(receipt)}}
+
 # Inspect an existing APK only; this does not build, install, or start Android.
 # Override apk= with the exact release artifact selected for milestone evidence.
 android-verify-16k apk="target/dx/oxid-app/debug/android/app/app/build/outputs/apk/debug/app-debug.apk":

@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-for command_name in curl jq nix node rg rustup; do
+for command_name in curl jq nix node od rg rustup; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Required command '$command_name' is missing." >&2
     exit 1
@@ -12,6 +12,8 @@ done
 
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
+# shellcheck source=scripts/lib/android-test-credential.sh
+source "$repository_root/scripts/lib/android-test-credential.sh"
 
 android_sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 if [ -z "$android_sdk" ] && [ "$(uname -s)" = "Darwin" ]; then
@@ -76,6 +78,7 @@ remote_backup="$remote_directory/oxid-wallet.oxidbak"
 remote_ui_dump="/sdcard/oxid-backup-window-$$.xml"
 devtools_port=9224
 flow_pid=""
+authorization_pid=""
 websocket_url=""
 
 cleanup() {
@@ -84,7 +87,12 @@ cleanup() {
     kill "$flow_pid" >/dev/null 2>&1 || true
     wait "$flow_pid" >/dev/null 2>&1 || true
   fi
-  "$adb_command" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
+  if [ -n "$authorization_pid" ] && kill -0 "$authorization_pid" >/dev/null 2>&1; then
+    kill "$authorization_pid" >/dev/null 2>&1 || true
+    wait "$authorization_pid" >/dev/null 2>&1 || true
+  fi
+  oxid_android_test_credential_cleanup "$adb_command" "$device"
+  "$adb_command" -s "$device" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
   "$adb_command" -s "$device" shell rm -f "$remote_ui_dump" >/dev/null 2>&1 || true
   if [ "$exit_status" -ne 0 ] && [ "${OXID_ANDROID_KEEP_FAILED_BACKUP_STATE:-0}" = "1" ]; then
     echo "Keeping failed Android backup state in $remote_directory on $device." >&2
@@ -105,6 +113,8 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+oxid_android_test_credential_prepare "$adb_command" "$device"
 
 if "$adb_command" -s "$device" shell test -e "$remote_directory"; then
   echo "Refusing to reuse existing Android backup directory '$remote_directory'." >&2
@@ -140,7 +150,7 @@ prepare_webview_wallet_flow() {
     return 1
   fi
 
-  "$adb_command" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
+  "$adb_command" -s "$device" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
   "$adb_command" -s "$device" forward \
     "tcp:$devtools_port" "localabstract:webview_devtools_remote_$process_id" >/dev/null
   for _attempt in $(seq 1 60); do
@@ -233,14 +243,18 @@ open_backup_directory() {
 }
 
 prepare_webview_wallet_flow
+oxid_android_test_credential_authorize "$adb_command" "$device" &
+authorization_pid=$!
 node "$repository_root/tests/mobile/android-wallet-flow.mjs" "$websocket_url" backup-export &
 flow_pid=$!
+wait "$authorization_pid"
+authorization_pid=""
 wait_for_documents_ui
 open_backup_directory
 tap_ui_fragment 'text="SAVE" resource-id="android:id/button1"'
 wait "$flow_pid"
 flow_pid=""
-"$adb_command" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
+"$adb_command" -s "$device" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
 
 backup_size="$($adb_command -s "$device" shell stat -c %s "$remote_backup" 2>/dev/null | tr -d '\r')"
 if [[ ! "$backup_size" =~ ^[0-9]+$ ]] || [ "$backup_size" -le 32 ]; then
@@ -255,6 +269,7 @@ if [ ! -f "$apk" ]; then
 fi
 
 "$adb_command" -s "$device" shell am force-stop io.medianox.oxid
+oxid_android_test_credential_cleanup "$adb_command" "$device"
 "$adb_command" -s "$device" uninstall io.medianox.oxid >/dev/null
 "$adb_command" -s "$device" reboot
 wait_for_boot
@@ -271,7 +286,7 @@ open_backup_directory
 tap_ui_fragment 'text="oxid-wallet.oxidbak"'
 wait "$flow_pid"
 flow_pid=""
-"$adb_command" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
+"$adb_command" -s "$device" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
 
 profile_document="$($adb_command -s "$device" shell run-as io.medianox.oxid \
   cat files/oxid/wallet-profiles.json 2>/dev/null || true)"
