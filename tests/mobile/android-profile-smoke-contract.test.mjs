@@ -61,6 +61,11 @@ test("Android smoke owns only disposable-emulator credential and app state", asy
   assert.match(smoke, /if \[ "\$app_state_owned" -eq 1 \]/);
   assert.match(smoke, /shell pm clear io\.medianox\.oxid/);
   assert.match(smoke, /authorize_onboarding_prompt &/);
+  assert.match(smoke, /resume_onboarding_after_authorization/);
+  assert.match(
+    smoke,
+    /resume_onboarding_after_authorization\(\).*shell am start -W.*io\.medianox\.oxid\/dev\.dioxus\.main\.MainActivity/s,
+  );
   assert.doesNotMatch(smoke, /passed on \$device|device \$device|device '\$device'/);
   assert.doesNotMatch(smoke, /recovery phrase.*echo|echo.*recovery phrase/i);
 });

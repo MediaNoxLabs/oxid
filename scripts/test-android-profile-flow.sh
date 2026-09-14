@@ -201,6 +201,29 @@ credential_prompt_focused() {
   rg -q 'ConfirmDeviceCredential|ConfirmLockPassword|ConfirmLockPattern|Keyguard' <<<"$focused"
 }
 
+resume_onboarding_after_authorization() {
+  local resumed=""
+  for _attempt in $(seq 1 20); do
+    resumed="$($adb_command -s "$device" shell dumpsys activity activities 2>/dev/null \
+      | rg 'topResumedActivity|ResumedActivity' || true)"
+    if rg -q 'io\.medianox\.oxid/dev\.dioxus\.main\.MainActivity' <<<"$resumed"; then
+      return 0
+    fi
+    if credential_prompt_focused; then
+      sleep 0.2
+      continue
+    fi
+    break
+  done
+  if credential_prompt_focused; then
+    echo "Android device-credential prompt did not close after authorization." >&2
+    return 1
+  fi
+  "$adb_command" -s "$device" shell am start -W \
+    -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
+  wait_for_main_activity
+}
+
 authorize_onboarding_prompt() {
   for _attempt in $(seq 1 90); do
     if credential_prompt_focused; then
@@ -208,12 +231,14 @@ authorize_onboarding_prompt() {
       "$adb_command" -s "$device" shell input text "$test_pin" >/dev/null
       for _settle_attempt in $(seq 1 10); do
         if ! credential_prompt_focused; then
-          return 0
+          resume_onboarding_after_authorization
+          return
         fi
         sleep 0.2
       done
       "$adb_command" -s "$device" shell input keyevent ENTER >/dev/null
-      return 0
+      resume_onboarding_after_authorization
+      return
     fi
     sleep 1
   done
