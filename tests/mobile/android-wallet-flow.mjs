@@ -586,7 +586,7 @@ try {
 
     await clickButton("Sync now");
     await waitFor(
-      "document.body.innerText.includes('12 DUST') && document.body.innerText.includes('1 shielded notes') && document.body.innerText.includes('5 NIGHT')",
+      "document.querySelector('.account-sync-card')?.textContent.includes('12 DUST') && document.querySelector('.account-sync-card')?.textContent.includes('1 protected notes') && document.querySelector('.account-sync-card')?.textContent.includes('5 NIGHT')",
       "exact simulated account, DUST, and shielded synchronization",
     );
     await waitForButton("Sync now");
@@ -649,7 +649,7 @@ try {
       submitted: document.body.innerText.includes("Transfer confirmed"),
       simulated: document.body.innerText.includes("Mode: Simulated — runs locally, nothing on Midnight"),
       dustSynced: document.body.innerText.includes("12 DUST"),
-      shieldedSynced: document.body.innerText.includes("1 shielded notes")
+      shieldedSynced: document.body.innerText.includes("1 protected notes")
         && document.body.innerText.includes("5 NIGHT"),
     }))()`);
     await openIdentities();
