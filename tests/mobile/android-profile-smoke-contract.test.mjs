@@ -50,9 +50,14 @@ test("Android profile automation follows native-authorized recovery onboarding",
     /device-credential prompt observed[\s\S]*sleep 1[\s\S]*input text[\s\S]*keyevent ENTER[\s\S]*seq 1 50/,
   );
   assert.match(credentialHelper, /authorization_count=\$\(\(authorization_count \+ 1\)\)/);
-  assert.match(credentialHelper, /while \[ "\$quiet_poll_count" -lt 25 \]/);
-  assert.match(credentialHelper, /recent-authentication window/);
+  assert.match(credentialHelper, /seq 1 1000/);
+  assert.match(credentialHelper, /oxid_android_test_credential_completion_file/);
+  assert.match(credentialHelper, /OXID_ANDROID_ONBOARDING_COMPLETE_FILE/);
+  assert.match(credentialHelper, /bounded onboarding completion/);
   assert.match(credentialHelper, /device-credential prompt remained open after PIN submission/);
+  assert.match(onboarding, /writeFile\(completionFile, "complete\\n"/);
+  assert.match(onboarding, /flag: "wx"/);
+  assert.match(onboarding, /mode: 0o600/);
 });
 
 test("shared Android profile callers own the native authorization ceremony", async () => {

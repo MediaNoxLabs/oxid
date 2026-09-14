@@ -47,13 +47,16 @@ oxid_android_test_credential_prepare() {
     mktemp -d "${TMPDIR:-/tmp}/oxid-android-test-credential.XXXXXX"
   )"
   chmod 700 "$oxid_android_test_credential_recovery_directory"
+  oxid_android_test_credential_completion_file="$oxid_android_test_credential_recovery_directory/onboarding-complete"
+  export OXID_ANDROID_ONBOARDING_COMPLETE_FILE="$oxid_android_test_credential_completion_file"
   recovery_script="$oxid_android_test_credential_recovery_directory/clear-owned-credential.sh"
   {
     printf '#!/usr/bin/env bash\nset -eu\n'
     printf '%q -s %q shell locksettings clear --old %q >/dev/null\n' \
       "$adb_command" "$device" "$oxid_android_test_credential_pin"
-    printf 'rm -f -- %q\nrmdir -- %q\n' \
-      "$recovery_script" "$oxid_android_test_credential_recovery_directory"
+    printf 'rm -f -- %q %q\nrmdir -- %q\n' \
+      "$recovery_script" "$oxid_android_test_credential_completion_file" \
+      "$oxid_android_test_credential_recovery_directory"
   } >"$recovery_script"
   chmod 700 "$recovery_script"
   oxid_android_test_credential_recovery_script="$recovery_script"
@@ -64,6 +67,8 @@ oxid_android_test_credential_prepare() {
     rmdir -- "$oxid_android_test_credential_recovery_directory"
     oxid_android_test_credential_recovery_script=""
     oxid_android_test_credential_recovery_directory=""
+    oxid_android_test_credential_completion_file=""
+    unset OXID_ANDROID_ONBOARDING_COMPLETE_FILE
     oxid_android_test_credential_pin=""
     return 1
   fi
@@ -109,10 +114,12 @@ oxid_android_test_credential_authorize() {
   local adb_command="$1"
   local device="$2"
   local authorization_count=0
-  local quiet_poll_count=0
   local resume_status=0
 
-  for _oxid_attempt in $(seq 1 90); do
+  # The UI owns a 90-second wait for each native preparation step. Observe the
+  # exact private completion marker for at most 200 seconds so a slow render
+  # cannot outlive the authorizer, while a stalled ceremony still terminates.
+  for _oxid_attempt in $(seq 1 1000); do
     if oxid_android_test_credential_prompt_focused "$adb_command" "$device"; then
       authorization_count=$((authorization_count + 1))
       echo "Android device-credential prompt observed (owned onboarding authorization $authorization_count)." >&2
@@ -138,27 +145,18 @@ oxid_android_test_credential_authorize() {
       if [ "$resume_status" -ne 0 ]; then
         return "$resume_status"
       fi
-      # Fresh profile creation can request authorization once to reveal the
-      # phrase and again while installing the protected root. Android may
-      # satisfy the latter from its recent-authentication window without a
-      # visible prompt, so keep a short bounded observer alive instead of
-      # requiring exactly two visible surfaces.
-      quiet_poll_count=0
-      while [ "$quiet_poll_count" -lt 25 ]; do
-        if oxid_android_test_credential_prompt_focused "$adb_command" "$device"; then
-          break
-        fi
-        quiet_poll_count=$((quiet_poll_count + 1))
-        sleep 0.2
-      done
-      if [ "$quiet_poll_count" -ge 25 ]; then
-        return 0
-      fi
       continue
     fi
-    sleep 1
+    if [ -f "$oxid_android_test_credential_completion_file" ]; then
+      if [ "$authorization_count" -eq 0 ]; then
+        echo "Android onboarding completed without an observed device-credential prompt." >&2
+        return 1
+      fi
+      return 0
+    fi
+    sleep 0.2
   done
-  echo "Android device-credential prompt did not appear." >&2
+  echo "Android device-credential authorization did not reach bounded onboarding completion." >&2
   return 1
 }
 
@@ -175,9 +173,12 @@ oxid_android_test_credential_cleanup() {
     fi
     oxid_android_test_credential_owned=0
     oxid_android_test_credential_pin=""
-    rm -f -- "$oxid_android_test_credential_recovery_script"
+    rm -f -- "$oxid_android_test_credential_recovery_script" \
+      "$oxid_android_test_credential_completion_file"
     rmdir -- "$oxid_android_test_credential_recovery_directory"
     oxid_android_test_credential_recovery_script=""
     oxid_android_test_credential_recovery_directory=""
+    oxid_android_test_credential_completion_file=""
+    unset OXID_ANDROID_ONBOARDING_COMPLETE_FILE
   fi
 }

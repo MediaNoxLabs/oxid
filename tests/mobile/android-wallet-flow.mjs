@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { writeFile } from "node:fs/promises";
+
 const endpoint = process.argv[2];
 const mode = process.argv[3] ?? "flow";
 const backupRecoverySecret = "oxidandroidbackup2026";
@@ -183,6 +185,14 @@ async function createFreshProfile() {
   );
   await clickButton("Finish and open wallet");
   await waitForButton("Wallet", 30_000);
+  const completionFile = process.env.OXID_ANDROID_ONBOARDING_COMPLETE_FILE;
+  if (completionFile) {
+    await writeFile(completionFile, "complete\n", {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+  }
 }
 
 async function assertHomeComposition() {
