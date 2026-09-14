@@ -16,7 +16,14 @@ const script = path.join(root, "scripts", "android-verify-16k.mjs");
 const PAGE_SIZE = 16 * 1024;
 const member = "lib/arm64-v8a/liboxid.so";
 
-function elf({ alignment = PAGE_SIZE, fileOffset = 0, fileSize = 0, virtualAddress = 0, programEntrySize = 56 } = {}) {
+function elf({
+  alignment = PAGE_SIZE,
+  fileOffset = 0,
+  fileSize = 0,
+  memorySize = fileSize,
+  virtualAddress = 0,
+  programEntrySize = 56,
+} = {}) {
   const bytes = Buffer.alloc(64 + 56);
   bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
   bytes.writeUInt16LE(3, 16);
@@ -31,7 +38,7 @@ function elf({ alignment = PAGE_SIZE, fileOffset = 0, fileSize = 0, virtualAddre
   bytes.writeBigUInt64LE(BigInt(virtualAddress), 80);
   bytes.writeBigUInt64LE(BigInt(virtualAddress), 88);
   bytes.writeBigUInt64LE(BigInt(fileSize), 96);
-  bytes.writeBigUInt64LE(0n, 104);
+  bytes.writeBigUInt64LE(BigInt(memorySize), 104);
   bytes.writeBigUInt64LE(BigInt(alignment), 112);
   return bytes;
 }
@@ -114,6 +121,13 @@ test("rejects a LOAD segment whose file extent exceeds the decoded ELF", () => {
   assert.throws(
     () => verifyApk(apk({ fileOffset: PAGE_SIZE, fileSize: PAGE_SIZE })),
     new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ELF LOAD segment 0 extends beyond`),
+  );
+});
+
+test("rejects a LOAD segment whose file size exceeds its memory size", () => {
+  assert.throws(
+    () => verifyApk(apk({ fileSize: 1, memorySize: 0 })),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ELF LOAD segment 0 file size exceeds its memory size`),
   );
 });
 

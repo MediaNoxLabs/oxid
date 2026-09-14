@@ -33,6 +33,7 @@ function elfLoadSegments(bytes, member) {
   let offsetAt;
   let virtualAddressAt;
   let fileSizeAt;
+  let memorySizeAt;
   let alignAt;
   let minimumProgramEntrySize;
 
@@ -43,6 +44,7 @@ function elfLoadSegments(bytes, member) {
     offsetAt = 4;
     virtualAddressAt = 8;
     fileSizeAt = 16;
+    memorySizeAt = 20;
     alignAt = 28;
     minimumProgramEntrySize = 32;
   } else if (elfClass === 2) {
@@ -53,6 +55,7 @@ function elfLoadSegments(bytes, member) {
     offsetAt = 8;
     virtualAddressAt = 16;
     fileSizeAt = 32;
+    memorySizeAt = 40;
     alignAt = 48;
     minimumProgramEntrySize = 56;
   } else {
@@ -78,6 +81,7 @@ function elfLoadSegments(bytes, member) {
       offset: read(offsetAt, "LOAD offset"),
       virtualAddress: read(virtualAddressAt, "LOAD virtual address"),
       fileSize: read(fileSizeAt, "LOAD file size"),
+      memorySize: read(memorySizeAt, "LOAD memory size"),
       align: read(alignAt, "LOAD alignment"),
     });
   }
@@ -89,6 +93,9 @@ function verifyElf(bytes, member) {
   for (const load of elfLoadSegments(bytes, member)) {
     if (load.offset > bytes.length || load.fileSize > bytes.length - load.offset) {
       fail(member, `ELF LOAD segment ${load.index} extends beyond the shared library`);
+    }
+    if (load.fileSize > load.memorySize) {
+      fail(member, `ELF LOAD segment ${load.index} file size exceeds its memory size`);
     }
     const alignment = BigInt(load.align);
     if (
