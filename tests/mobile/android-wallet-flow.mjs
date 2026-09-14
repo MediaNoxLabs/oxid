@@ -140,6 +140,7 @@ async function createFreshProfile() {
   const createAvailable = await evaluate(`Boolean(${buttonExpression("Create private wallet")})`);
   if (!createAvailable) return;
   await clickButton("Create private wallet");
+  await clickButton("Create and continue");
   await clickButton("Generate recovery phrase");
   await waitFor(
     'Boolean(document.querySelector(\'[aria-label="New wallet recovery phrase"]\'))',

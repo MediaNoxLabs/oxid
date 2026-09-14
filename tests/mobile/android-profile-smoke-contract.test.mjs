@@ -19,6 +19,7 @@ test("Android profile automation follows native-authorized recovery onboarding",
 
   for (const label of [
     "Create private wallet",
+    "Create and continue",
     "Generate recovery phrase",
     "New wallet recovery phrase",
     "I have securely saved or verified this recovery phrase.",
@@ -26,7 +27,11 @@ test("Android profile automation follows native-authorized recovery onboarding",
   ]) {
     assert.match(onboarding, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
-  assert.doesNotMatch(onboarding, /Create and continue|Skip for now/);
+  assert.doesNotMatch(onboarding, /Skip for now/);
+  assert.ok(
+    onboarding.indexOf('clickButton("Create and continue")') <
+      onboarding.indexOf('clickButton("Generate recovery phrase")'),
+  );
   assert.ok(
     onboarding.indexOf('clickButton("Generate recovery phrase")') <
       onboarding.indexOf("native-authorized recovery phrase"),
