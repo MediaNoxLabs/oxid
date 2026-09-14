@@ -53,7 +53,7 @@ test("Android privacy automation uses the current global application menu", asyn
 
   assert.match(privacy, /await openWallet\(\)/);
   assert.match(privacy, /Open global application menu/);
-  assert.match(privacy, /Session privacy/);
+  assert.match(privacy, /clickGlobalAction\("Session privacy"\)/);
   assert.doesNotMatch(privacy, /Show private values for 30 seconds|Hide private values/);
 });
 

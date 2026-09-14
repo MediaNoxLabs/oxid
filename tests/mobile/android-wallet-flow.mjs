@@ -104,6 +104,23 @@ async function clickButtonByLabel(label) {
   }
 }
 
+async function clickGlobalAction(label) {
+  const selector = `button[data-global-action=${JSON.stringify(label)}]`;
+  await waitFor(
+    `(() => { const element = document.querySelector(${JSON.stringify(selector)}); return Boolean(element && !element.disabled); })()`,
+    `enabled global action ${label}`,
+  );
+  const clicked = await evaluate(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    if (!element || element.disabled) return false;
+    element.click();
+    return true;
+  })()`);
+  if (!clicked) {
+    throw new Error(`global action ${label} was disabled`);
+  }
+}
+
 async function openDocuments() {
   await clickButton("Documents");
 }
@@ -334,7 +351,7 @@ try {
       "visually masked private value",
     );
     await clickButtonByLabel("Open global application menu");
-    await clickButton("Session privacy");
+    await clickGlobalAction("Session privacy");
     await waitFor(
       `document.querySelector('.app-shell')?.getAttribute('data-secret-mode') === 'revealed'
         && !Boolean(document.querySelector('#global-application-menu'))`,
