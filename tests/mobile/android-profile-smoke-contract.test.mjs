@@ -81,6 +81,9 @@ test("Android Home automation follows the realm-scoped product composition", asy
     flow,
     /Everything in one place|Open Wallet NIGHT account|Open Wallet shielded account/,
   );
+  assert.match(flow, /settled protected Receive state/);
+  assert.match(flow, /receiveNeedsActivation/);
+  assert.match(flow, /protected Receive state failed closed/);
 });
 
 test("Android smoke owns only disposable-emulator credential and app state", async () => {

@@ -559,9 +559,28 @@ try {
       "document.body.innerText.includes('Receive NIGHT') && Boolean(document.querySelector('[role=dialog]'))",
       "one-tap Home Receive sheet",
     );
-    await waitForButton("Open Wallet to activate");
-    await clickButton("Open Wallet to activate");
-    await clickButtonByLabel("Activate protected Midnight account");
+    await waitFor(
+      `Boolean(${buttonExpression("Open Wallet to activate")})
+        || Boolean(document.querySelector('button[aria-label="Use Public receive address"]'))
+        || Boolean(document.querySelector('.receive-sheet [role="alert"]'))`,
+      "settled protected Receive state",
+    );
+    const receiveNeedsActivation = await evaluate(
+      `Boolean(${buttonExpression("Open Wallet to activate")})`,
+    );
+    if (receiveNeedsActivation) {
+      await clickButton("Open Wallet to activate");
+      await clickButtonByLabel("Activate protected Midnight account");
+    } else {
+      const receiveFailed = await evaluate(
+        `Boolean(document.querySelector('.receive-sheet [role="alert"]'))`,
+      );
+      if (receiveFailed) {
+        throw new Error("protected Receive state failed closed before account synchronization");
+      }
+      await clickButtonByLabel("Close Receive");
+      await openWallet();
+    }
     await waitForButton("Use my receive address", 90_000);
     await waitForButton("Scan");
 
