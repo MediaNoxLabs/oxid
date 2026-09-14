@@ -3973,7 +3973,6 @@ mod tests {
         let mut fields = baseline.clone();
         fields.expires_at = UnixTimestampMillis::new(prepared_with_fee.expires_at().value() + 1);
         add("expiry", fields);
-        drop(add);
 
         cases.push((
             "payload",
