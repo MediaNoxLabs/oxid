@@ -228,17 +228,21 @@ authorize_onboarding_prompt() {
   for _attempt in $(seq 1 90); do
     if credential_prompt_focused; then
       echo "Android device-credential prompt observed." >&2
+      # Focus is reported before the system transition has necessarily made
+      # the PIN field ready for injected key events. Let that owned surface
+      # settle, then submit explicitly and require it to close.
+      sleep 1
       "$adb_command" -s "$device" shell input text "$test_pin" >/dev/null
-      for _settle_attempt in $(seq 1 10); do
+      "$adb_command" -s "$device" shell input keyevent ENTER >/dev/null
+      for _settle_attempt in $(seq 1 50); do
         if ! credential_prompt_focused; then
           resume_onboarding_after_authorization
           return
         fi
         sleep 0.2
       done
-      "$adb_command" -s "$device" shell input keyevent ENTER >/dev/null
-      resume_onboarding_after_authorization
-      return
+      echo "Android device-credential prompt remained open after PIN submission." >&2
+      return 1
     fi
     sleep 1
   done

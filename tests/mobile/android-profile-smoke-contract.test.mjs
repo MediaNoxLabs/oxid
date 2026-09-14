@@ -40,6 +40,16 @@ test("Android profile automation follows native-authorized recovery onboarding",
     onboarding.indexOf("native-authorized recovery phrase") <
       onboarding.indexOf("I have securely saved or verified this recovery phrase."),
   );
+
+  const launcher = await readFile(
+    path.join(root, "scripts", "test-android-profile-flow.sh"),
+    "utf8",
+  );
+  assert.match(
+    launcher,
+    /device-credential prompt observed[\s\S]*sleep 1[\s\S]*input text[\s\S]*keyevent ENTER[\s\S]*seq 1 50/,
+  );
+  assert.match(launcher, /device-credential prompt remained open after PIN submission/);
 });
 
 test("Android privacy automation uses the current global application menu", async () => {
