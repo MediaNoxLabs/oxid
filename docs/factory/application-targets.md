@@ -174,6 +174,11 @@ needed to test the verifier.
 The non-release Android path uses Dioxus's `android-dev` Cargo profile. Oxid
 keeps incremental compilation and development assertions, enables light
 optimization, retains limited line information, and strips full debug objects.
+The launcher also supplies the NDK's documented `max-page-size=16384` and
+`common-page-size=16384` linker constraints; the profile alone does not change
+ELF LOAD alignment. Its version script preserves the Dioxus application entry,
+Java/JNI, and NativeActivity symbols in every Android `cdylib`, while keeping
+Rust implementation symbols out of Bionic's dynamic hash tables.
 After every development build, the launcher checks 16 KiB ZIP/ELF alignment,
 requires a non-empty SysV or GNU dynamic hash table, and bounds both native
 library bytes and dynamic symbols **before** it writes an artifact receipt or
