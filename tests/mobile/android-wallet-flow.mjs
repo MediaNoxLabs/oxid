@@ -599,12 +599,23 @@ try {
       "populated Home route before Receive",
     );
     await clickButton("Receive");
-    await waitFor(
-      `Boolean(document.querySelector('button[aria-label="Use Public receive address"]'))
-        && Boolean(document.querySelector('button[aria-label="Use Private receive address"]'))
-        && Boolean(document.querySelector('.receive-sheet .address-qr__frame svg'))`,
-      "public and private receive selectors with rendered QR",
-    );
+    const receiveExpression = `(() => ({
+      public: Boolean(document.querySelector('button[aria-label="Use Public receive address"]')),
+      private: Boolean(document.querySelector('button[aria-label="Use Private receive address"]')),
+      qr: Boolean(document.querySelector('.receive-sheet .address-qr__frame svg')),
+      activate: Boolean(${buttonExpression("Open Wallet to activate")}),
+      failed: Boolean(document.querySelector('.receive-sheet [role="alert"]')),
+    }))()`;
+    const receiveDeadline = Date.now() + 15_000;
+    let receiveState;
+    do {
+      receiveState = await evaluate(receiveExpression);
+      if (receiveState.public && receiveState.private && receiveState.qr) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } while (Date.now() < receiveDeadline);
+    if (!receiveState.public || !receiveState.private || !receiveState.qr) {
+      throw new Error(`public/private Receive QR state was incomplete: ${JSON.stringify(receiveState)}`);
+    }
     const qrRendered = await evaluate(
       "Boolean(document.querySelector('.receive-sheet .address-qr__frame svg'))",
     );
