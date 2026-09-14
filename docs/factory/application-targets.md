@@ -66,6 +66,60 @@ target/dx/oxid-app/debug/android/oxid-app-artifact-receipt.json
 target/dx/oxid-app/debug/ios/oxid-app-artifact-receipt.json
 ```
 
+## Android release candidate
+
+For owner/supervisor review, build one arm64 release candidate without any ADB,
+device, or AVD interaction:
+
+```bash
+nix develop --command just android-release-build
+```
+
+The command writes its deterministic artifact and a mode-`0600` receipt at:
+
+```text
+target/android-release-candidate/oxid-app-arm64-v8a-release.apk
+target/android-release-candidate/receipt.json
+```
+
+It requires both reviewed Android platforms: API 34 for the Dioxus-generated
+application and API 35 for the tracked native plugin, plus inspection
+build-tools `35.0.0` with both `aapt` and `zipalign`, and NDK `27.0.12077973`. Only
+`OXID_ANDROID_BUILD_TOOLS_VERSION` and `OXID_ANDROID_NDK_VERSION` select
+installed reviewed tool versions; there is no application compile-SDK override,
+because it does not control Dioxus's generated application project. The private
+receipt binds the exact source head/tree, artifact digest/size/ABI, Nix and
+nixpkgs revision, exact rustup Rust/Cargo binaries, Gradle wrapper and Android
+Gradle Plugin, both Android platform revisions with their application/native-
+plugin roles, inspection build-tools, and NDK versions. It records no local
+paths, device IDs, signing material, or app data. Gradle packaging keeps the
+Android Gradle Plugin's default build-tools selection; the receipt does not
+mislabel the independently selected inspection tools as packaging tools.
+It does record the generated wrapper's signing *kind*: Dioxus `--release` uses
+Rust profile `android-release`, while the generated Android wrapper packages
+Gradle variant `debug` with generated debug signing. This is a review
+candidate, not a Play-signed or Gradle-release artifact.
+
+The command captures a clean issue worktree and its HEAD/tree before the build,
+then immediately before publishing the receipt fails closed unless the worktree
+is still clean and those identities are unchanged (ignored generated outputs
+such as `target/` may remain). An exclusive candidate-build lock prevents two
+same-worktree invocations from sharing mutable build and receipt paths. It
+performs exactly one Dioxus build using both
+documented 16 KiB linker flags: `-Wl,-z,max-page-size=16384` and
+`-Wl,-z,common-page-size=16384`. It first copies the resulting APK to the
+private deterministic artifact snapshot; every subsequent 16 KiB, official
+`zipalign -c -P 16 -v 4`, `aapt`, and digest check uses that snapshot only. It
+fails closed unless `aapt` reports the complete native ABI set as exactly
+`["arm64-v8a"]`, its package is `io.medianox.oxid`, application compile SDK is
+34, min SDK is 23, and target SDK is 35. The receipt records those observed APK
+badging values, including the complete ABI array, rather than inferring them
+from an installed platform.
+
+This command does not select, boot, install to, or launch an Android target.
+The supervisor separately owns the reviewed Android 15+ 16 KiB target,
+page-size observation, install, launch, and smoke evidence.
+
 Android deployment supports an explicitly selected physical device or emulator
 accepted by the existing launcher policy. The default local profile accepts an
 emulator; the reviewed Tailnet Portal path owns physical-device configuration.
