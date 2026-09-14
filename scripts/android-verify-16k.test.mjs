@@ -47,9 +47,15 @@ function apk({
   archiveAligned = true,
   centralCopies = 1,
   centralExtraLength = 0,
+  centralFlags = 0,
+  centralStartDisk = 0,
   compressedPadding = 0,
   compressedSizeDelta = 0,
   declaredUncompressedSize,
+  endCentralDirectoryDisk = 0,
+  endDisk = 0,
+  entriesOnDisk = centralCopies,
+  localFlags = 0,
   method = 0,
   memberName = member,
   ...elfOptions
@@ -60,6 +66,7 @@ function apk({
   const extraLength = archiveAligned ? PAGE_SIZE - 30 - name.length : 0;
   const local = Buffer.alloc(30);
   local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(localFlags, 6);
   local.writeUInt16LE(method, 8);
   local.writeUInt16LE(name.length, 26);
   local.writeUInt16LE(extraLength, 28);
@@ -67,14 +74,18 @@ function apk({
   const centralOffset = dataOffset + stored.length;
   const central = Buffer.alloc(46);
   central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(centralFlags, 8);
   central.writeUInt16LE(method, 10);
   central.writeUInt16LE(name.length, 28);
   central.writeUInt16LE(centralExtraLength, 30);
+  central.writeUInt16LE(centralStartDisk, 34);
   central.writeUInt32LE(stored.length + compressedSizeDelta, 20);
   central.writeUInt32LE(declaredUncompressedSize ?? payload.length, 24);
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(centralCopies, 8);
+  end.writeUInt16LE(endDisk, 4);
+  end.writeUInt16LE(endCentralDirectoryDisk, 6);
+  end.writeUInt16LE(entriesOnDisk, 8);
   end.writeUInt16LE(centralCopies, 10);
   end.writeUInt32LE((central.length + name.length) * centralCopies, 12);
   end.writeUInt32LE(centralOffset, 16);
@@ -151,6 +162,45 @@ test("rejects truncated central-directory variable fields", () => {
   assert.throws(
     () => verifyApk(apk({ centralExtraLength: 65535 })),
     /APK: ZIP central-directory variable fields are truncated/,
+  );
+});
+
+test("rejects a native member encrypted according to its central-directory header", () => {
+  assert.throws(
+    () => verifyApk(apk({ centralFlags: 1 })),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: encrypted ZIP members are unsupported`),
+  );
+});
+
+test("rejects a native member encrypted according to its local header", () => {
+  assert.throws(
+    () => verifyApk(apk({ localFlags: 1 })),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: encrypted ZIP members are unsupported`),
+  );
+});
+
+test("rejects multi-disk end-of-central-directory metadata", () => {
+  assert.throws(
+    () => verifyApk(apk({ endDisk: 1 })),
+    /APK: ZIP end-of-central-directory uses unsupported multi-disk metadata/,
+  );
+  assert.throws(
+    () => verifyApk(apk({ endCentralDirectoryDisk: 1 })),
+    /APK: ZIP end-of-central-directory uses unsupported multi-disk metadata/,
+  );
+});
+
+test("rejects inconsistent per-disk and total ZIP entry counts", () => {
+  assert.throws(
+    () => verifyApk(apk({ entriesOnDisk: 0 })),
+    /APK: ZIP end-of-central-directory entry counts are inconsistent/,
+  );
+});
+
+test("rejects a central-directory member that starts on another disk", () => {
+  assert.throws(
+    () => verifyApk(apk({ centralStartDisk: 1 })),
+    new RegExp(`${member.replace(/[/.]/g, "\\$&")}: ZIP central-directory entry starts on unsupported disk`),
   );
 });
 

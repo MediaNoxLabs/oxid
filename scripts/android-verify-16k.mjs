@@ -125,7 +125,16 @@ function zipMembers(archive) {
     }
   }
   if (end < 0) throw new Error("APK: ZIP end-of-central-directory record is missing");
+  const endDisk = view.getUint16(end + 4, true);
+  const centralDirectoryDisk = view.getUint16(end + 6, true);
+  const entriesOnDisk = view.getUint16(end + 8, true);
   const entries = view.getUint16(end + 10, true);
+  if (endDisk !== 0 || centralDirectoryDisk !== 0) {
+    throw new Error("APK: ZIP end-of-central-directory uses unsupported multi-disk metadata");
+  }
+  if (entriesOnDisk !== entries) {
+    throw new Error("APK: ZIP end-of-central-directory entry counts are inconsistent");
+  }
   const centralSize = view.getUint32(end + 12, true);
   const centralOffset = view.getUint32(end + 16, true);
   if (centralOffset + centralSize !== end) {
@@ -137,21 +146,26 @@ function zipMembers(archive) {
     if (offset + 46 > archive.length || view.getUint32(offset, true) !== 0x02014b50) {
       throw new Error("APK: ZIP central-directory record is truncated");
     }
+    const flags = view.getUint16(offset + 8, true);
     const method = view.getUint16(offset + 10, true);
     const compressedSize = view.getUint32(offset + 20, true);
     const uncompressedSize = view.getUint32(offset + 24, true);
     const nameLength = view.getUint16(offset + 28, true);
     const extraLength = view.getUint16(offset + 30, true);
     const commentLength = view.getUint16(offset + 32, true);
+    const startDisk = view.getUint16(offset + 34, true);
     const localOffset = view.getUint32(offset + 42, true);
     const recordEnd = offset + 46 + nameLength + extraLength + commentLength;
     if (recordEnd > end) {
       throw new Error("APK: ZIP central-directory variable fields are truncated");
     }
     const name = new TextDecoder().decode(archive.subarray(offset + 46, offset + 46 + nameLength));
+    if ((flags & 1) !== 0) fail(name, "encrypted ZIP members are unsupported");
+    if (startDisk !== 0) fail(name, "ZIP central-directory entry starts on unsupported disk");
     if (localOffset + 30 > archive.length || view.getUint32(localOffset, true) !== 0x04034b50) {
       fail(name, "ZIP local header is missing");
     }
+    if ((view.getUint16(localOffset + 6, true) & 1) !== 0) fail(name, "encrypted ZIP members are unsupported");
     const localNameLength = view.getUint16(localOffset + 26, true);
     const localExtraLength = view.getUint16(localOffset + 28, true);
     const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
