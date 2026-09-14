@@ -26,6 +26,14 @@ fail() {
   exit 1
 }
 
+# Cargo honors these ambient settings ahead of the certified rustup toolchain
+# and fixed linker flags, so their presence makes the build non-hermetic.
+for cargo_override in RUSTC RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_ENCODED_RUSTFLAGS; do
+  if [[ -v "$cargo_override" ]]; then
+    fail "ambient Rust override $cargo_override is not allowed"
+  fi
+done
+
 # HEAD and its tree identify source inputs only when no tracked or untracked
 # source changes exist. Ignored generated outputs (including target/) remain
 # allowed so this command can write its artifact and receipt.
