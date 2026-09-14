@@ -140,8 +140,17 @@ async function createFreshProfile() {
   const createAvailable = await evaluate(`Boolean(${buttonExpression("Create private wallet")})`);
   if (!createAvailable) return;
   await clickButton("Create private wallet");
-  await clickButton("Create and continue");
-  await clickButton("Skip for now");
+  await clickButton("Generate recovery phrase");
+  await waitFor(
+    'Boolean(document.querySelector(\'[aria-label="New wallet recovery phrase"]\'))',
+    "native-authorized recovery phrase",
+    90_000,
+  );
+  await clickConfirmation(
+    "I have securely saved or verified this recovery phrase.",
+  );
+  await clickButton("Finish and open wallet");
+  await waitForButton("Wallet", 30_000);
 }
 
 async function assertHomeComposition() {

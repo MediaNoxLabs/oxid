@@ -12,9 +12,32 @@ case "$operation" in
     ;;
 esac
 
+prebuilt_apk="${OXID_ANDROID_PREBUILT_APK:-}"
+prebuilt_receipt="${OXID_ANDROID_PREBUILT_RECEIPT:-}"
+require_emulator="${OXID_ANDROID_REQUIRE_EMULATOR:-0}"
+case "$require_emulator" in
+  0|1) ;;
+  *)
+    echo "OXID_ANDROID_REQUIRE_EMULATOR must be '0' or '1'." >&2
+    exit 1
+    ;;
+esac
+if { [ -n "$prebuilt_apk" ] && [ -z "$prebuilt_receipt" ]; } || \
+  { [ -z "$prebuilt_apk" ] && [ -n "$prebuilt_receipt" ]; }; then
+  echo "OXID_ANDROID_PREBUILT_APK and OXID_ANDROID_PREBUILT_RECEIPT must be supplied together." >&2
+  exit 1
+fi
+if [ -n "$prebuilt_apk" ] && [ "$operation" != "deploy" ]; then
+  echo "A prebuilt Android artifact is admitted only by the deploy operation." >&2
+  exit 1
+fi
+
 required_commands=(node)
 if [ "$operation" != "deploy" ]; then
   required_commands+=(nix rustup java)
+fi
+if [ -n "$prebuilt_apk" ]; then
+  required_commands+=(jq shasum)
 fi
 for command_name in "${required_commands[@]}"; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -282,7 +305,7 @@ adb_call() {
 }
 
 first_online_device() {
-  if [ "$standalone_network_profile" = "local" ]; then
+  if [ "$standalone_network_profile" = "local" ] || [ "$require_emulator" = "1" ]; then
     adb_call devices | awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { print $1; exit }'
   else
     adb_call devices | awk 'NR > 1 && $2 == "device" { print $1; exit }'
@@ -394,6 +417,13 @@ if [ "$(adb_device shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" !
   exit 1
 fi
 
+if [ "$require_emulator" = "1" ] && \
+  { [[ "$device" != emulator-* ]] || \
+    [ "$(adb_device shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r')" != "1" ]; }; then
+  echo "The selected Android target is not a disposable QEMU emulator." >&2
+  exit 1
+fi
+
 if [ "$portal_profile" = "tailnet-android" ] && \
   { [[ "$device" = emulator-* ]] || \
     [ "$(adb_device shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r')" != "0" ]; }; then
@@ -476,7 +506,68 @@ artifact_configuration="$mobile_features|ui=$ui_profile|custody=$mobile_custody|
 apk="$repository_root/target/dx/oxid-app/debug/android/app/app/build/outputs/apk/debug/app-debug.apk"
 artifact_receipt="$repository_root/target/dx/oxid-app/debug/android/oxid-app-artifact-receipt.json"
 
-if [ "$operation" != "deploy" ]; then
+if [ -n "$prebuilt_apk" ]; then
+  if [[ "$prebuilt_apk" != /* ]] || [ ! -f "$prebuilt_apk" ] || [ -L "$prebuilt_apk" ]; then
+    echo "OXID_ANDROID_PREBUILT_APK must name an absolute regular non-symlink file." >&2
+    exit 1
+  fi
+  if [[ "$prebuilt_receipt" != /* ]] || [ ! -f "$prebuilt_receipt" ] || [ -L "$prebuilt_receipt" ]; then
+    echo "OXID_ANDROID_PREBUILT_RECEIPT must name an absolute regular non-symlink file." >&2
+    exit 1
+  fi
+  if receipt_mode="$(stat -c '%a' "$prebuilt_receipt" 2>/dev/null)"; then :; else
+    receipt_mode="$(stat -f '%Lp' "$prebuilt_receipt")"
+  fi
+  if [ "$receipt_mode" != "600" ]; then
+    echo "The prebuilt Android receipt must be a mode-0600 private file." >&2
+    exit 1
+  fi
+  actual_apk_sha256="$(shasum -a 256 "$prebuilt_apk" | awk '{print $1}')"
+  expected_head="$(git rev-parse HEAD)"
+  expected_tree="$(git rev-parse 'HEAD^{tree}')"
+  expected_artifact_name="$(basename -- "$prebuilt_apk")"
+  if ! jq -e \
+    --arg sha256 "$actual_apk_sha256" \
+    --arg head "$expected_head" \
+    --arg tree "$expected_tree" \
+    --arg name "$expected_artifact_name" \
+    '.schema == "oxid-android-release-candidate-receipt-v1"
+      and .source.head == $head
+      and .source.tree == $tree
+      and .artifact.name == $name
+      and .artifact.sha256 == $sha256
+      and .artifact.abis == ["arm64-v8a"]
+      and .apk.package == "io.medianox.oxid"
+      and .apk.abis == ["arm64-v8a"]
+      and .checks.androidVerify16k == "pass"
+      and .checks.zipalignPage16k == "pass"
+      and .checks.apkBadging == "pass"' \
+    "$prebuilt_receipt" >/dev/null; then
+    echo "The prebuilt Android artifact does not match its exact-source release receipt." >&2
+    exit 1
+  fi
+  aapt="$android_sdk/build-tools/${OXID_ANDROID_BUILD_TOOLS_VERSION:-35.0.0}/aapt"
+  if [ ! -x "$aapt" ]; then
+    echo "Reviewed Android aapt is required to admit a prebuilt artifact." >&2
+    exit 1
+  fi
+  apk_badging="$("$aapt" dump badging "$prebuilt_apk")" \
+    || { echo "Could not inspect the prebuilt Android artifact." >&2; exit 1; }
+  apk_package="$(printf '%s\n' "$apk_badging" | awk -F"'" '/^package: / { print $2; exit }')"
+  apk_activity="$(printf '%s\n' "$apk_badging" | awk -F"'" '/^launchable-activity: / { print $2; exit }')"
+  apk_native_code="$(printf '%s\n' "$apk_badging" | awk -F"'" '/^native-code: / { for (field = 2; field <= NF; field += 2) print $field; exit }')"
+  if [ "$apk_package" != "io.medianox.oxid" ] || \
+    [ "$apk_activity" != "dev.dioxus.main.MainActivity" ] || \
+    [ "$apk_native_code" != "arm64-v8a" ]; then
+    echo "The prebuilt Android package, launch activity, or ABI is not the reviewed target." >&2
+    exit 1
+  fi
+  if [ "$rust_target" != "aarch64-linux-android" ]; then
+    echo "The arm64 release candidate cannot be installed on the selected Android ABI." >&2
+    exit 1
+  fi
+  apk="$prebuilt_apk"
+elif [ "$operation" != "deploy" ]; then
   android_ndk="${ANDROID_NDK_HOME:-}"
   if [ -z "$android_ndk" ] && [ -d "$android_sdk/ndk" ]; then
     android_ndk="$(find "$android_sdk/ndk" -mindepth 1 -maxdepth 1 -type d | sort | tail -1)"
@@ -554,7 +645,18 @@ fi
 
 adb_device install -r "$apk"
 if [ "$operation" = "deploy" ]; then
-  echo "Deployed io.medianox.oxid to Android device $device without launching it."
+  resolved_activity="$(adb_device shell cmd package resolve-activity --brief \
+    -a android.intent.action.MAIN -c android.intent.category.LAUNCHER io.medianox.oxid \
+    2>/dev/null | tr -d '\r' | tail -1)"
+  if [ "$resolved_activity" != "io.medianox.oxid/dev.dioxus.main.MainActivity" ]; then
+    echo "The installed Android package does not expose the reviewed launch activity." >&2
+    exit 1
+  fi
+  if [ -n "$prebuilt_apk" ]; then
+    echo "Deployed exact Android artifact without launching it (sha256=$actual_apk_sha256)."
+  else
+    echo "Deployed io.medianox.oxid without launching it."
+  fi
   exit 0
 fi
 adb_device shell am force-stop io.medianox.oxid

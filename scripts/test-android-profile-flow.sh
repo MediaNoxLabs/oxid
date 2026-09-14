@@ -3,7 +3,47 @@
 
 set -euo pipefail
 
-for command_name in curl jq node rg; do
+usage() {
+  cat <<'USAGE'
+Usage: ./scripts/test-android-profile-flow.sh [--apk APK --receipt RECEIPT]
+
+Without arguments, build and smoke the ordinary Android development target.
+With --apk and --receipt, install and smoke that exact release-candidate APK
+without rebuilding it. Both options are required together.
+USAGE
+}
+
+prebuilt_apk=""
+prebuilt_receipt=""
+while (($# > 0)); do
+  case "$1" in
+    --apk)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      prebuilt_apk="$2"
+      shift 2
+      ;;
+    --receipt)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      prebuilt_receipt="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+if { [ -n "$prebuilt_apk" ] && [ -z "$prebuilt_receipt" ]; } || \
+  { [ -z "$prebuilt_apk" ] && [ -n "$prebuilt_receipt" ]; }; then
+  echo "--apk and --receipt must be supplied together." >&2
+  exit 2
+fi
+
+for command_name in curl jq node rg od awk; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Required command '$command_name' is missing." >&2
     exit 1
@@ -12,6 +52,16 @@ done
 
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
+if [ -n "$prebuilt_apk" ]; then
+  case "$prebuilt_apk" in
+    /*) ;;
+    *) prebuilt_apk="$repository_root/$prebuilt_apk" ;;
+  esac
+  case "$prebuilt_receipt" in
+    /*) ;;
+    *) prebuilt_receipt="$repository_root/$prebuilt_receipt" ;;
+  esac
+fi
 
 android_sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 if [ -z "$android_sdk" ] && [ "$(uname -s)" = "Darwin" ]; then
@@ -23,27 +73,83 @@ if [ -z "$android_sdk" ] || [ ! -x "$android_sdk/platform-tools/adb" ]; then
 fi
 adb_command="$android_sdk/platform-tools/adb"
 devtools_port=9223
-trap '"$adb_command" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true' EXIT
+device=""
+test_pin=""
+credential_owned=0
+app_state_owned=0
+cleanup() {
+  if [ -n "$device" ]; then
+    "$adb_command" -s "$device" forward --remove "tcp:$devtools_port" >/dev/null 2>&1 || true
+    if [ "$app_state_owned" -eq 1 ]; then
+      "$adb_command" -s "$device" shell am force-stop io.medianox.oxid >/dev/null 2>&1 || true
+      "$adb_command" -s "$device" shell pm clear io.medianox.oxid >/dev/null 2>&1 || true
+    fi
+    if [ "$credential_owned" -eq 1 ]; then
+      "$adb_command" -s "$device" shell locksettings clear --old "$test_pin" >/dev/null 2>&1 || true
+    fi
+  fi
+}
+trap cleanup EXIT
 
 device="${OXID_ANDROID_DEVICE:-}"
 if [ -z "$device" ]; then
-  device="$($adb_command devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')"
+  device="$($adb_command devices | awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { print $1; exit }')"
 fi
 
 if [ -n "$device" ]; then
-  OXID_ANDROID_DEVICE="$device" OXID_ANDROID_JNI_RECOVERY_TEST=1 \
-    "$repository_root/scripts/run-android-emulator.sh"
+  if [ -n "$prebuilt_apk" ]; then
+    OXID_ANDROID_DEVICE="$device" OXID_ANDROID_REQUIRE_EMULATOR=1 \
+      OXID_ANDROID_PREBUILT_APK="$prebuilt_apk" \
+      OXID_ANDROID_PREBUILT_RECEIPT="$prebuilt_receipt" \
+      "$repository_root/scripts/run-android-emulator.sh" deploy
+  else
+    OXID_ANDROID_DEVICE="$device" OXID_ANDROID_REQUIRE_EMULATOR=1 OXID_ANDROID_JNI_RECOVERY_TEST=1 \
+      "$repository_root/scripts/run-android-emulator.sh"
+  fi
 else
-  OXID_ANDROID_JNI_RECOVERY_TEST=1 "$repository_root/scripts/run-android-emulator.sh"
-  device="$($adb_command devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')"
+  if [ -n "$prebuilt_apk" ]; then
+    OXID_ANDROID_REQUIRE_EMULATOR=1 OXID_ANDROID_PREBUILT_APK="$prebuilt_apk" \
+      OXID_ANDROID_PREBUILT_RECEIPT="$prebuilt_receipt" \
+      "$repository_root/scripts/run-android-emulator.sh" deploy
+  else
+    OXID_ANDROID_REQUIRE_EMULATOR=1 OXID_ANDROID_JNI_RECOVERY_TEST=1 \
+      "$repository_root/scripts/run-android-emulator.sh"
+  fi
+  device="$($adb_command devices | awk 'NR > 1 && $2 == "device" && $1 ~ /^emulator-/ { print $1; exit }')"
 fi
 if [ -z "$device" ]; then
   echo "The Android smoke harness did not find an online device." >&2
   exit 1
 fi
+case "$device" in
+  emulator-*) ;;
+  *)
+    echo "The profile smoke changes the device credential and runs only on a disposable emulator." >&2
+    exit 1
+    ;;
+esac
+if [ "$($adb_command -s "$device" shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r')" != "1" ]; then
+  echo "The selected Android target is not a disposable QEMU emulator." >&2
+  exit 1
+fi
+if [ "$($adb_command -s "$device" shell locksettings get-disabled | tr -d '\r')" != "true" ]; then
+  echo "The emulator already has a device credential; refusing to replace it." >&2
+  exit 1
+fi
+test_pin="${OXID_ANDROID_TEST_PIN:-}"
+if [ -z "$test_pin" ]; then
+  test_pin="$(od -An -N4 -tu4 /dev/urandom | awk '{ printf "%06d", ($1 % 900000) + 100000 }')"
+fi
+if ! [[ "$test_pin" =~ ^[0-9]{6,12}$ ]]; then
+  echo "OXID_ANDROID_TEST_PIN must contain 6 to 12 digits." >&2
+  exit 1
+fi
+"$adb_command" -s "$device" shell locksettings set-pin "$test_pin" >/dev/null
+credential_owned=1
 
-echo "Resetting Oxid application data on Android device $device for the smoke flow."
+echo "Resetting Android application data for the smoke flow."
 "$adb_command" -s "$device" shell pm clear io.medianox.oxid >/dev/null
+app_state_owned=1
 "$adb_command" -s "$device" shell am start \
   -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
 sleep 2
@@ -64,7 +170,7 @@ run_webview_wallet_flow() {
     sleep 1
   done
   if [ -z "$process_id" ]; then
-    echo "Oxid WebView process did not become available on Android device '$device'." >&2
+    echo "Oxid WebView process did not become available." >&2
     exit 1
   fi
 
@@ -86,6 +192,33 @@ run_webview_wallet_flow() {
 
   node "$repository_root/tests/mobile/android-wallet-flow.mjs" "$websocket_url" "$mode"
   "$adb_command" forward --remove "tcp:$devtools_port" >/dev/null
+}
+
+credential_prompt_focused() {
+  local focused
+  focused="$($adb_command -s "$device" shell dumpsys activity activities 2>/dev/null \
+    | rg 'topResumedActivity|ResumedActivity' || true)"
+  rg -q 'ConfirmDeviceCredential|ConfirmLockPassword|ConfirmLockPattern|Keyguard' <<<"$focused"
+}
+
+authorize_onboarding_prompt() {
+  for _attempt in $(seq 1 90); do
+    if credential_prompt_focused; then
+      echo "Android device-credential prompt observed." >&2
+      "$adb_command" -s "$device" shell input text "$test_pin" >/dev/null
+      for _settle_attempt in $(seq 1 10); do
+        if ! credential_prompt_focused; then
+          return 0
+        fi
+        sleep 0.2
+      done
+      "$adb_command" -s "$device" shell input keyevent ENTER >/dev/null
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Android device-credential prompt did not appear." >&2
+  return 1
 }
 
 wait_for_main_activity() {
@@ -183,7 +316,10 @@ assert_screen_privacy_flag() {
   fi
 }
 
+authorize_onboarding_prompt &
+onboarding_authorizer=$!
 run_webview_wallet_flow privacy-reveal
+wait "$onboarding_authorizer"
 assert_screen_privacy_flag unprotected
 background_to_android_home
 "$adb_command" -s "$device" shell am start -W \
@@ -271,4 +407,9 @@ if [ "$credential_header" != "4f58494456433031" ] || [ "$credential_key_size" !=
   exit 1
 fi
 
-echo "Android protected account, Digital Passport OpenID4VP proof gate/local reveal/disclosure preview/restore, DUST/shielded sync, receive QR/copy/share, cold/warm app links, transfer, and profile-restore smoke flow passed on $device."
+if [ -n "$prebuilt_apk" ]; then
+  prebuilt_sha256="$(shasum -a 256 "$prebuilt_apk" | awk '{print $1}')"
+  echo "Android exact-artifact profile smoke passed (sha256=$prebuilt_sha256)."
+else
+  echo "Android protected account, Digital Passport OpenID4VP proof gate/local reveal/disclosure preview/restore, DUST/shielded sync, receive QR/copy/share, cold/warm app links, transfer, and profile-restore smoke flow passed."
+fi

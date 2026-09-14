@@ -55,6 +55,7 @@ run_repository() {
   node --test scripts/app-artifact-receipt.test.mjs
   node --test scripts/android-verify-16k.test.mjs
   node --test scripts/build-android-release-candidate.test.mjs
+  node --test tests/mobile/android-profile-smoke-contract.test.mjs
   node --test tests/repository/tailnet-identity-demo-kit-contract.test.mjs
   node --test tests/repository/demo-inventory-contract.test.mjs
   node --test scripts/e2e/portal-tailnet-manual-lifecycle.test.mjs
