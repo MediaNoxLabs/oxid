@@ -45,8 +45,8 @@ fn lifecycle_generation_is_current(
     started == current || authorized_resume == Some(current)
 }
 
-fn may_consume_authorization_resume(state: &WalletOnboardingState, expected: bool) -> bool {
-    expected
+fn may_consume_authorization_resume(state: &WalletOnboardingState, remaining: u8) -> bool {
+    remaining > 0
         && matches!(
             state,
             WalletOnboardingState::Working | WalletOnboardingState::Completing
@@ -74,7 +74,7 @@ pub(crate) fn WalletOnboarding(
     let mut acknowledged = use_signal(|| false);
     let initial_lifecycle = lifecycle_wake();
     let mut last_lifecycle = use_signal(move || initial_lifecycle);
-    let mut authorization_resume_expected = use_signal(|| false);
+    let mut authorization_resume_budget = use_signal(|| 0_u8);
     let mut authorized_resume = use_signal(|| None::<u64>);
 
     let screen_privacy = services.screen_privacy();
@@ -91,12 +91,12 @@ pub(crate) fn WalletOnboarding(
             // resumes the host once. Consume only that expected wake while
             // the corresponding command is still in flight; any later wake
             // retains the ordinary fail-closed ceremony cancellation.
-            if may_consume_authorization_resume(&state.read(), authorization_resume_expected()) {
-                authorization_resume_expected.set(false);
+            if may_consume_authorization_resume(&state.read(), authorization_resume_budget()) {
+                authorization_resume_budget.set(authorization_resume_budget().saturating_sub(1));
                 authorized_resume.set(Some(generation));
                 return;
             }
-            authorization_resume_expected.set(false);
+            authorization_resume_budget.set(0);
             authorized_resume.set(None);
             suspend.suspend();
             phrase_input.write().zeroize();
@@ -223,10 +223,13 @@ pub(crate) fn WalletOnboarding(
                         let cancel_stale_prepare = cancel_after_stale_prepare.clone();
                         let lifecycle_generation = lifecycle_wake();
                         let lifecycle_wake_for_prepare = lifecycle_wake;
-                        let mut authorization_resume_expected_for_prepare =
-                            authorization_resume_expected;
+                        let mut authorization_resume_budget_for_prepare =
+                            authorization_resume_budget;
                         let mut authorized_resume_for_prepare = authorized_resume;
-                        authorization_resume_expected_for_prepare.set(true);
+                        // Wry can report both Opened and Resumed when Android returns
+                        // from one app-owned credential surface. Admit only that bounded
+                        // pair; a third transition still cancels the ceremony fail-closed.
+                        authorization_resume_budget_for_prepare.set(2);
                         authorized_resume_for_prepare.set(None);
                         state.set(WalletOnboardingState::Working);
                         spawn(async move {
@@ -239,7 +242,7 @@ pub(crate) fn WalletOnboarding(
                                 lifecycle_wake_for_prepare(),
                                 authorized_resume_for_prepare(),
                             );
-                            authorization_resume_expected_for_prepare.set(false);
+                            authorization_resume_budget_for_prepare.set(0);
                             authorized_resume_for_prepare.set(None);
                             match result {
                                 Ok(Ok(prepared)) if lifecycle_is_current => {
@@ -283,10 +286,10 @@ pub(crate) fn WalletOnboarding(
                         let ceremony_id_for_failure = ceremony_id.clone();
                         let lifecycle_generation = lifecycle_wake();
                         let lifecycle_wake_for_completion = lifecycle_wake;
-                        let mut authorization_resume_expected_for_completion =
-                            authorization_resume_expected;
+                        let mut authorization_resume_budget_for_completion =
+                            authorization_resume_budget;
                         let mut authorized_resume_for_completion = authorized_resume;
-                        authorization_resume_expected_for_completion.set(true);
+                        authorization_resume_budget_for_completion.set(2);
                         authorized_resume_for_completion.set(None);
                         state.set(WalletOnboardingState::Completing);
                         spawn(async move {
@@ -308,7 +311,7 @@ pub(crate) fn WalletOnboarding(
                                 lifecycle_wake_for_completion(),
                                 authorized_resume_for_completion(),
                             );
-                            authorization_resume_expected_for_completion.set(false);
+                            authorization_resume_budget_for_completion.set(0);
                             authorized_resume_for_completion.set(None);
                             match result {
                                 Ok(Ok(_)) if lifecycle_is_current => on_complete.call(profile),
@@ -379,22 +382,22 @@ mod tests {
     }
 
     #[test]
-    fn only_busy_native_authorization_consumes_one_resume() {
+    fn only_busy_native_authorization_consumes_a_bounded_resume() {
         assert!(may_consume_authorization_resume(
             &WalletOnboardingState::Working,
-            true
+            2
         ));
         assert!(may_consume_authorization_resume(
             &WalletOnboardingState::Completing,
-            true
+            1
         ));
         assert!(!may_consume_authorization_resume(
             &WalletOnboardingState::Idle,
-            true
+            2
         ));
         assert!(!may_consume_authorization_resume(
             &WalletOnboardingState::Working,
-            false
+            0
         ));
     }
 
