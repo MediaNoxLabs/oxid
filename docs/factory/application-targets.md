@@ -70,6 +70,42 @@ Android deployment supports an explicitly selected physical device or emulator
 accepted by the existing launcher policy. The default local profile accepts an
 emulator; the reviewed Tailnet Portal path owns physical-device configuration.
 
+## Android 16 KiB native-library inspection
+
+Inspect an already-built APK without building, installing, launching, or
+selecting an Android target:
+
+```bash
+just android-verify-16k
+# For a milestone/release candidate:
+just android-verify-16k /path/to/app-release.apk
+```
+
+The command checks every packaged `.so` member. An uncompressed member must
+have 16 KiB-aligned ZIP data placement; a Deflate-compressed member is decoded
+before inspection because Android extracts it instead of directly mapping the
+archive entry. Every decoded ELF must have compatible `LOAD` alignment and
+congruent file/virtual offsets. Failures name the exact archive-member path.
+Compressed native members are bounded to 512 MiB individually and in aggregate
+during inspection so malformed archive metadata cannot request multi-gigabyte
+decompression.
+The default is the existing local Android build output; a release candidate
+must be passed explicitly. The hermetic fixtures cover compliant and
+non-compliant ZIP/ELF cases, so neither an APK build nor an Android SDK is
+needed to test the verifier.
+
+This is an on-demand static artifact check. It is not evidence that an APK was
+built with the pinned Android/Gradle/NDK toolchain and it does not replace the
+supervisor-owned bounded 16 KiB-capable virtual/physical target smoke. Keep
+artifact hashes, ABI set, tool versions, and target page-size evidence in the
+final private/public review receipt as appropriate; never include device serials
+or local SDK paths.
+
+The release evidence follows Android's official
+[16 KiB page-size guidance](https://developer.android.com/guide/practices/page-sizes),
+including an independent `zipalign -c -P 16 -v 4 <apk>` cross-check when the
+pinned Android build tools are available.
+
 `ios-deploy` installs only into iOS Simulator. Physical iOS deployment is not
 implemented because it requires an owner-approved signing, provisioning, and
 device policy. These commands do not publish to an application store and do

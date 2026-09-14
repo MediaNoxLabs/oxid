@@ -243,6 +243,11 @@ android-build:
 android-deploy:
     ./scripts/run-android-emulator.sh deploy
 
+# Inspect an existing APK only; this does not build, install, or start Android.
+# Override apk= with the exact release artifact selected for milestone evidence.
+android-verify-16k apk="target/dx/oxid-app/debug/android/app/app/build/outputs/apk/debug/app-debug.apk":
+    node ./scripts/android-verify-16k.mjs {{quote(apk)}}
+
 android-standalone-local:
     OXID_STANDALONE_NETWORK_PROFILE=local ./scripts/run-android-emulator.sh
 
