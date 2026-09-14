@@ -17,7 +17,7 @@ before migrating later work.
 
 ## Source inventory and destinations
 
-| Prototype area | Capabilities observed | Oxid destination | Migration state |
+| Prototype area | Capabilities observed | Oxid destination | Historical migration notes |
 | --- | --- | --- | --- |
 | `wallet-core` profile/wallet service concepts | Wallet construction, service façade, UI port | `wallet/domain`, `wallet/application`, focused ports | Create/list/select/restore profile lifecycle implemented |
 | `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded plus private DUST/Zswap checkpoint/resume, protected NIGHT/DUST/Zswap receive derivation, native shielded replay, fresh-sync-gated shielded spend, and staged public/private transfer through DUST/Zswap proof, safe pre-broadcast cancellation, and finalized node inclusion implemented for standalone/headless/mobile; ADR-0098/#91 prove funded unshielded and genesis-authority shielded headless finality/adapter-reconstruction flows and add signed-profile plus node-genesis production gates; ADR-0100 implements the distinct protected DUST-registration repository/headless/Dioxus boundary, guarded public PreProd funding manifest/read-only observer, test-only signed Midnight profile, and amount-observed one-output/one-note acceptance harness, while the funded PreProd write/recovery, durable production custody, provisioned deployment, funded mobile flows, and physical-device proof budgets remain gated |
@@ -32,7 +32,7 @@ before migrating later work.
 | `dioxus-wallet/src/logs.rs`, `telemetry_panel.rs`, `proc_stats.rs`, and worker boundaries | Persistent tracing, free-form fields, HTTP/operation/process measurements, and background worker visibility | `diagnostics/application`, `adapters/diagnostics-memory`, composed closed-code sinks, headless snapshot/reset, and the Dioxus Diagnostics page | ADR-0080 reimplements only bounded payload-free runtime health and worker recovery; issue #276 adds a newest-first Dioxus event view with Warning/Error filters, closed-label search, and confirmed process-local clearing. Storage, upload, tracing strings, endpoints, arbitrary fields, timestamps, process statistics, and benchmark telemetry remain excluded |
 | capability/worker visibility adjacent to the prototype diagnostics tabs | Useful development discovery was mixed with unsafe log and benchmark surfaces | `capabilities/application`, headless `system.capabilities`, and the opt-in standalone Dioxus developer profile | ADR-0095 keeps only closed public composition facts, corrects confirmation declarations, reports timing as `not_collected`, and proves the normal release excludes the developer marker; ADR-0096 adds a separate compile-time demo drawer that serializes safe setup and stops every protocol fixture at unchanged review |
 | `prover-core` | Local/HTTP proof execution and benchmark paths | Midnight proving adapter | Private local DUST proving implemented with an authenticated bounded cache; remote proving retained for explicit development |
-| benchmark crates and fixtures | Mobile proving measurements and test circuits | dedicated opt-in adapter harness | Issue #275 ports the parameterized synthetic proof benchmark through k=21 behind an explicit developer feature, a single process-wide worker, a safe k=17 sweep default, and a high-resource acknowledgement; CI compiles and unit-tests the path but executes no proof or parameter download. One real DUST proof/seal/codec harness remains measured on iOS/Android; physical-device high-k budgets remain gated and generated artifacts remain uncommitted |
+| benchmark crates and fixtures | Mobile proving measurements and test circuits | Intentionally excluded from Oxid; retain in `midnight-ledger`, preferably extract to `midnight-zk` | Issue #275 records a historical Oxid port that is now transitional and tracked for removal by #527. Synthetic benchmark ownership is distinct from focused Oxid conformance and smoke evidence for real wallet proving paths. |
 | Android/iOS projects | WebView hosts, permissions, QR bridges | `apps/oxid` platform hosts plus the shared `adapters/mobile-native-plugin` | Dioxus-generated hosts build and launch explicit development or native-custody standalone composition; the single static Swift/Kotlin plugin packages QR, links, typed clipboard/share, device custody, bounded backup documents, and one boolean screen-privacy operation (`FLAG_SECURE`/iOS background overlay); Android JNI failures clear pending Java exceptions without exposing details, and an emulator throw-then-full-wallet regression covers continued bridge use; disposable iOS Simulator and Android emulator flows verify complete native export/reset/import/recovery round trips through their system document pickers; Samsung SM-S928B / Android 16 physical evidence proves QR success/cancel/timeout, post-return liveness, consent isolation, warm/cold custom schemes, numeric `FLAG_SECURE`, protected tailnet account sync, durable public binding, honest process-local restart state, and real-touch Scan/activation separation; ADR-0097 adds a development-only MagicDNS/TLS physical-phone launcher without copying the prototype's personal endpoint, while physical iOS, multi-vendor screenshot behavior, universal links, funded live transactions, and resource baselines remain deferred |
 
 ## M0 migration decisions
@@ -51,44 +51,28 @@ before migrating later work.
   and mutable fork branches with the official GitHub sources and full commit
   pins defined in [the Midnight Git source policy](../dependencies/midnight-git-sources.md).
 
-## Development proof benchmark
+## Development proof benchmark — superseded boundary
 
-The opt-in `developer-proof-benchmark` app feature reimplements the reviewed
-`mobile-bench/contract-benchmark` and Dioxus Benchmark tab from source commit
-`074b1a4bccbfee1740ee188374b606a022ecef42`. Oxid deliberately stops at k=21,
-uses the repository's pinned public Midnight revision, and does not adopt the
-prototype's experimental personal `midnight-zk` fork or its mmap/disk-spill
-extensions.
+The product decision recorded while reviewing
+[#288](https://github.com/MediaNoxLabs/oxid/issues/288) supersedes the earlier
+migration direction: the synthetic development proof benchmark is not an Oxid
+wallet capability. Its acceptable current home is `midnight-ledger`; the
+preferred reusable home is `midnight-zk`, which owns proving behavior and
+performance concerns.
 
-Compile the desktop development artifact without running proofs:
+The opt-in Oxid implementation delivered by
+[#275](https://github.com/MediaNoxLabs/oxid/issues/275) is transitional
+duplication and is tracked for removal by
+[#527](https://github.com/MediaNoxLabs/oxid/issues/527). Oxid must not add more
+benchmark UI, launcher, physical-device, or CI surface while that removal is
+pending.
 
-```console
-cargo check -p oxid-app --no-default-features \
-  --features desktop,developer-proof-benchmark
-```
-
-The Developer page runs k=1 through k=21 sequentially. Its default sweep ends
-at k=17. Any sweep or individual run at k=18 or above requires the visible
-resource acknowledgement. A run owns the process-wide admission slot until
-its worker actually exits; navigating away does not cancel it. Results are
-process-local and contain only circuit size, row/hash counts, timings,
-verification state, and proof size. They are neither persisted nor emitted to
-the diagnostic event ring.
-
-While this page is mounted, development desktop, Linux, and Android artifacts
-also sample only the hosting process's resident memory and CPU every 500 ms.
-The UI shows current RSS, current-process CPU, and the page-session RSS peak;
-it never exposes a PID, executable path, command line, or system-wide process
-list, and it never persists or forwards samples to diagnostics. Unsupported
-targets show an explicit unavailable state. Per-run cards separate the primary
-key-generation, proving, and verification timings from secondary circuit facts
-so measurements remain readable on a phone-width viewport.
-
-The first run may download public proving parameters from
-`srs.midnight.network` into the app-private cache. CI validates construction,
-feature isolation, and low-cost model shapes only: it never downloads proving
-parameters and never executes a high-k proof. Real-device measurements require
-an owner-invoked resource receipt and remain evidence rather than a merge gate.
+This exclusion does not remove focused proving evidence tied to wallet product
+behavior. DUST transfers, OpenID4VP presentations, Passport Vault operations,
+artifact authentication, and verifier integration retain bounded conformance
+and smoke tests in Oxid. General-purpose circuit scaling, SRS experiments,
+high-k resource characterization, and synthetic benchmark presentation belong
+upstream.
 
 ## First post-M0 slice: wallet presentation shell
 
@@ -99,10 +83,21 @@ recognizable navigation, design tokens, safe-area layout, and capability-status
 surfaces. The precise source mapping and exclusions are recorded in
 [ui-shell-provenance.md](ui-shell-provenance.md).
 
-This is presentation parity, not functional parity. Assets, DIDs, credentials,
-diagnostics, and settings expose only composed behavior and label missing
-adapters as queued. Create Wallet Profile remains the only complete use case
-until subsequent vertical slices land.
+This was a bounded bootstrap slice, not an enduring visual-parity target. The
+prototype remains useful evidence for Android/iOS TLS initialization, Dioxus
+UI-thread and worker boundaries, native lifecycle handling, safe areas,
+accessibility, and other already-solved engineering patterns. Oxid retains
+those patterns only behind focused Oxid-owned ports, adapters, presenters, and
+components with regression evidence.
+
+The prototype's screen composition, information architecture, copy density,
+developer controls, and monolithic UI state are not product requirements.
+The [Oxid design specification](../design/README.md) is the current presentation
+authority. [Issue #528](https://github.com/MediaNoxLabs/oxid/issues/528) tracks
+an evidence-preserving inventory and incremental removal or redesign of
+prototype-shaped presentation debt. Product capabilities remain governed by
+the [capability matrix](midnight-prototype-capability-matrix.md); provenance
+alone is never a reason either to preserve or delete a capability.
 
 ## Second post-M0 slice: standalone headless harness
 
@@ -382,9 +377,10 @@ explicit same-method rotation semantics. ADR-0050 wires credential-family proof
 execution and an independent proof verifier for native headless mode; ADR-0083
 reuses them only in the explicit mobile conformance build.
 ADR-0073 separately hardens acceptance of each newly issued standalone Compact
-credential: the exact issuer DID assertion method must resolve to the detached
-proof's Jubjub key, issuance/proof/expiry times must be current, and the pinned
-standalone trust anchor must match. Revocation remains visibly not checked.
+credential: the exact issuer DID assertion method must resolve to the Jubjub
+verification material used by the detached proof; issuance, proof, and expiry
+times must be current, and the pinned standalone trust anchor must match.
+Revocation remains visibly not checked.
 
 ADR-0074 begins the prototype backup migration without copying its unsafe
 storage boundary. The reviewed `WalletBackupCard` and
@@ -700,3 +696,13 @@ Every migrated capability needs:
 5. security/privacy review for sensitive data or authorization;
 6. an ADR when the architecture or dependency direction changes;
 7. a Tier-1 mobile smoke test when user-facing.
+
+## Current status authority
+
+The capability state claims in this historical provenance inventory are
+superseded by the evidence-linked
+[prototype capability matrix](midnight-prototype-capability-matrix.md). In
+particular, issue checkbox state is not evidence of completion, and simulator,
+mock, or headless evidence does not substitute for a matrix row that names live
+or physical-device evidence as open. This document retains source mappings,
+architecture decisions, and provenance only.
