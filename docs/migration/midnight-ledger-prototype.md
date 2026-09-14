@@ -17,7 +17,7 @@ before migrating later work.
 
 ## Source inventory and destinations
 
-| Prototype area | Capabilities observed | Oxid destination | Migration state |
+| Prototype area | Capabilities observed | Oxid destination | Historical migration notes |
 | --- | --- | --- | --- |
 | `wallet-core` profile/wallet service concepts | Wallet construction, service façade, UI port | `wallet/domain`, `wallet/application`, focused ports | Create/list/select/restore profile lifecycle implemented |
 | `wallet-core` address, HD, balances, transaction, sync | Midnight addresses, derivation, NIGHT/DUST, build/sign/submit, indexer/node access | chain-neutral chain domain/use cases plus `adapters/midnight` | Network/account reads, simulated/live sync, durable public unshielded plus private DUST/Zswap checkpoint/resume, protected NIGHT/DUST/Zswap receive derivation, native shielded replay, fresh-sync-gated shielded spend, and staged public/private transfer through DUST/Zswap proof, safe pre-broadcast cancellation, and finalized node inclusion implemented for standalone/headless/mobile; ADR-0098/#91 prove funded unshielded and genesis-authority shielded headless finality/adapter-reconstruction flows and add signed-profile plus node-genesis production gates; ADR-0100 implements the distinct protected DUST-registration repository/headless/Dioxus boundary, guarded public PreProd funding manifest/read-only observer, test-only signed Midnight profile, and amount-observed one-output/one-note acceptance harness, while the funded PreProd write/recovery, durable production custody, provisioned deployment, funded mobile flows, and physical-device proof budgets remain gated |
@@ -700,3 +700,13 @@ Every migrated capability needs:
 5. security/privacy review for sensitive data or authorization;
 6. an ADR when the architecture or dependency direction changes;
 7. a Tier-1 mobile smoke test when user-facing.
+
+## Current status authority
+
+The capability state claims in this historical provenance inventory are
+superseded by the evidence-linked
+[prototype capability matrix](midnight-prototype-capability-matrix.md). In
+particular, issue checkbox state is not evidence of completion, and simulator,
+mock, or headless evidence does not substitute for a matrix row that names live
+or physical-device evidence as open. This document retains source mappings,
+architecture decisions, and provenance only.
