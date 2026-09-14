@@ -376,12 +376,13 @@ try {
     await createFreshProfile();
     await openWallet();
     await clickButtonByLabel("Activate protected Midnight account");
-    await waitForButton("Use my receive address", 90_000);
+    await waitForButton("Sync now", 90_000);
 
     await openIdentities();
     await clickButton("Create a DID");
+    await clickButton("Create DID");
     await waitFor(
-      "document.body.innerText.includes('standalone-1') && document.body.innerText.includes('Manage this DID')",
+      "document.body.textContent.includes('A protected managed DID is ready for credential issuance.') && Boolean(document.querySelector('.did-record'))",
       "managed DID for complete backup",
       30_000,
     );
@@ -452,7 +453,7 @@ try {
     );
     await openIdentities();
     await waitFor(
-      "document.body.innerText.includes('standalone-1') && document.body.innerText.includes('Manage this DID')",
+      "document.body.textContent.includes('Wallet-managed record') && Boolean(document.querySelector('.did-record'))",
       "restored managed DID",
       30_000,
     );
@@ -673,8 +674,13 @@ try {
     await waitForButton("Create DID");
     await clickButton("Create DID");
     await waitFor(
-      "document.body.textContent.includes('standalone-1') && document.body.textContent.includes('Manage this DID')",
+      "document.body.textContent.includes('A protected managed DID is ready for credential issuance.') && Boolean(document.querySelector('.did-record'))",
       "created managed standalone DID",
+    );
+    await clickButton("Open DID details");
+    await waitFor(
+      "document.body.textContent.includes('Manage this DID') && Boolean(document.querySelector('.did-manager'))",
+      "managed DID details",
     );
     await evaluate(`(() => {
       const manager = document.querySelector('.did-manager');
@@ -698,7 +704,7 @@ try {
     );
     await clickButton("Apply DID update");
     await waitFor(
-      "document.body.innerText.includes('standalone-2')",
+      "document.body.textContent.includes('DID document updated.')",
       "managed DID update",
     );
     await clickButton("Use login request");
@@ -917,8 +923,13 @@ try {
 
     await openIdentities();
     await waitFor(
-      "document.body.innerText.includes('standalone-2')",
+      "Boolean(document.querySelector('.did-record')) && Boolean(Array.from(document.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Open DID details'))",
       "managed DID before deactivation",
+    );
+    await clickButton("Open DID details");
+    await waitFor(
+      "document.body.textContent.includes('Manage this DID') && Boolean(document.querySelector('.did-manager'))",
+      "managed DID deactivation controls",
     );
     await evaluate(`(() => {
       const manager = document.querySelector('.did-manager');
