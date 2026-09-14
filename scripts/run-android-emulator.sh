@@ -507,6 +507,10 @@ apk="$repository_root/target/dx/oxid-app/debug/android/app/app/build/outputs/apk
 artifact_receipt="$repository_root/target/dx/oxid-app/debug/android/oxid-app-artifact-receipt.json"
 
 if [ -n "$prebuilt_apk" ]; then
+  if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+    echo "The prebuilt Android smoke requires a clean source worktree." >&2
+    exit 1
+  fi
   if [[ "$prebuilt_apk" != /* ]] || [ ! -f "$prebuilt_apk" ] || [ -L "$prebuilt_apk" ]; then
     echo "OXID_ANDROID_PREBUILT_APK must name an absolute regular non-symlink file." >&2
     exit 1

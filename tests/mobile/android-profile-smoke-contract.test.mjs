@@ -214,6 +214,8 @@ test("prebuilt Android smoke is explicit, exact-source, and digest-bound", async
   assert.match(smoke, /--apk APK --receipt RECEIPT/);
   assert.match(smoke, /run-android-emulator\.sh" deploy/);
   assert.match(launcher, /A prebuilt Android artifact is admitted only by the deploy operation/);
+  assert.match(launcher, /git status --porcelain --untracked-files=all/);
+  assert.match(launcher, /prebuilt Android smoke requires a clean source worktree/);
   assert.match(launcher, /OXID_ANDROID_PREBUILT_APK must name an absolute regular non-symlink file/);
   assert.match(launcher, /The prebuilt Android receipt must be a mode-0600 private file/);
   assert.match(launcher, /\.source\.head == \$head/);
