@@ -4,8 +4,8 @@ const endpoint = process.argv[2];
 const mode = process.argv[3] ?? "flow";
 const backupRecoverySecret = "oxidandroidbackup2026";
 
-if (!endpoint || !["flow", "live-account", "prepare-live-account-touch", "live-account-after-touch", "live-account-restarted", "restored", "app-link", "privacy-reveal", "privacy-rearmed", "backup-export", "backup-recover", "developer", "demo", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
-  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|live-account|prepare-live-account-touch|live-account-after-touch|live-account-restarted|restored|app-link|privacy-reveal|privacy-rearmed|backup-export|backup-recover|developer|demo|native-authorize|native-custody|native-restored>");
+if (!endpoint || !["flow", "close-receive", "live-account", "prepare-live-account-touch", "live-account-after-touch", "live-account-restarted", "restored", "app-link", "privacy-reveal", "privacy-rearmed", "backup-export", "backup-recover", "developer", "demo", "native-authorize", "native-custody", "native-restored"].includes(mode)) {
+  throw new Error("usage: node android-wallet-flow.mjs <cdp-websocket-url> <flow|close-receive|live-account|prepare-live-account-touch|live-account-after-touch|live-account-restarted|restored|app-link|privacy-reveal|privacy-rearmed|backup-export|backup-recover|developer|demo|native-authorize|native-custody|native-restored>");
 }
 
 const socket = new WebSocket(endpoint);
@@ -983,6 +983,13 @@ try {
     await waitForButton("Share");
     await clickButtonByLabel("Share Unshielded receive address");
     process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else if (mode === "close-receive") {
+    await clickButtonByLabel("Close Receive");
+    await waitFor(
+      "document.querySelector('.app-header__title strong')?.textContent === 'Home' && !document.querySelector('.receive-sheet[role=\"dialog\"]')",
+      "stable Home boundary after native share",
+    );
+    process.stdout.write(`${JSON.stringify({ mode, home: true })}\n`);
   } else if (mode === "restored") {
     await waitForButton("Wallet");
     await assertHomeComposition();

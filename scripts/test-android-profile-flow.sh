@@ -360,6 +360,7 @@ if ! rg -q 'ResolverActivity|ChooserActivity|IntentResolverActivity' <<<"$choose
   exit 1
 fi
 dismiss_native_share_chooser
+run_webview_wallet_flow close-receive
 
 credential_offer_uri='openid-credential-offer://?credential_offer=%7B%7D'
 "$adb_command" -s "$device" shell am start -W \
