@@ -49,6 +49,9 @@ test("Android profile automation follows native-authorized recovery onboarding",
     credentialHelper,
     /device-credential prompt observed[\s\S]*sleep 1[\s\S]*input text[\s\S]*keyevent ENTER[\s\S]*seq 1 50/,
   );
+  assert.match(credentialHelper, /authorization_count=\$\(\(authorization_count \+ 1\)\)/);
+  assert.match(credentialHelper, /while \[ "\$quiet_poll_count" -lt 25 \]/);
+  assert.match(credentialHelper, /recent-authentication window/);
   assert.match(credentialHelper, /device-credential prompt remained open after PIN submission/);
 });
 

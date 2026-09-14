@@ -97,8 +97,9 @@ oxid_android_test_credential_resume_app() {
     break
   done
   if oxid_android_test_credential_prompt_focused "$adb_command" "$device"; then
-    echo "Android device-credential prompt did not close after authorization." >&2
-    return 1
+    # A second owned onboarding request may replace the first surface before
+    # MainActivity is resumed. Let the bounded authorizer service it.
+    return 2
   fi
   "$adb_command" -s "$device" shell am start -W \
     -n io.medianox.oxid/dev.dioxus.main.MainActivity >/dev/null
@@ -107,23 +108,53 @@ oxid_android_test_credential_resume_app() {
 oxid_android_test_credential_authorize() {
   local adb_command="$1"
   local device="$2"
+  local authorization_count=0
+  local quiet_poll_count=0
+  local resume_status=0
 
   for _oxid_attempt in $(seq 1 90); do
     if oxid_android_test_credential_prompt_focused "$adb_command" "$device"; then
-      echo "Android device-credential prompt observed." >&2
+      authorization_count=$((authorization_count + 1))
+      echo "Android device-credential prompt observed (owned onboarding authorization $authorization_count)." >&2
       sleep 1
       "$adb_command" -s "$device" shell input text \
         "$oxid_android_test_credential_pin" >/dev/null
       "$adb_command" -s "$device" shell input keyevent ENTER >/dev/null
       for _oxid_settle_attempt in $(seq 1 50); do
         if ! oxid_android_test_credential_prompt_focused "$adb_command" "$device"; then
-          oxid_android_test_credential_resume_app "$adb_command" "$device"
-          return
+          break
         fi
         sleep 0.2
       done
-      echo "Android device-credential prompt remained open after PIN submission." >&2
-      return 1
+      if oxid_android_test_credential_prompt_focused "$adb_command" "$device"; then
+        echo "Android device-credential prompt remained open after PIN submission." >&2
+        return 1
+      fi
+      resume_status=0
+      oxid_android_test_credential_resume_app "$adb_command" "$device" || resume_status=$?
+      if [ "$resume_status" -eq 2 ]; then
+        continue
+      fi
+      if [ "$resume_status" -ne 0 ]; then
+        return "$resume_status"
+      fi
+      # Fresh profile creation can request authorization once to reveal the
+      # phrase and again while installing the protected root. Android may
+      # satisfy the latter from its recent-authentication window without a
+      # visible prompt, so keep a short bounded observer alive instead of
+      # requiring exactly two visible surfaces.
+      quiet_poll_count=0
+      while [ "$quiet_poll_count" -lt 25 ]; do
+        if oxid_android_test_credential_prompt_focused "$adb_command" "$device"; then
+          break
+        fi
+        quiet_poll_count=$((quiet_poll_count + 1))
+        sleep 0.2
+      done
+      if [ "$quiet_poll_count" -ge 25 ]; then
+        return 0
+      fi
+      continue
     fi
     sleep 1
   done
