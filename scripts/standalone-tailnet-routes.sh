@@ -25,7 +25,7 @@ write_receipt_update() {
 }
 append_progress() {
   jq --arg active "$1" --argjson configured "$2" \
-    '.active = $active | .configured = $configured | .states += [$active] | .pending = null' \
+    '.active = $active | .configured = $configured | .states += [$active] | .pending = null | .removing = null' \
     "$receipt" >"$receipt_next" && write_receipt_update
 }
 mark_pending() {
@@ -35,9 +35,16 @@ mark_pending() {
 clear_pending() {
   jq '.pending = null' "$receipt" >"$receipt_next" && write_receipt_update
 }
+mark_removing() {
+  jq --argjson removing "$1" '.removing = $removing' \
+    "$receipt" >"$receipt_next" && write_receipt_update
+}
+clear_removing() {
+  jq '.removing = null' "$receipt" >"$receipt_next" && write_receipt_update
+}
 rewind_progress() {
   jq --arg active "$1" --argjson configured "$2" \
-    '.active = $active | .configured = $configured | .states = .states[0:($configured + 1)]' \
+    '.active = $active | .configured = $configured | .states = .states[0:($configured + 1)] | .removing = null' \
     "$receipt" >"$receipt_next" && write_receipt_update
 }
 route_transition_matches() {
@@ -62,6 +69,8 @@ load_receipt() {
     and (.routes | type == "array" and length == 3)
     and (.configured | type == "number" and floor == . and . >= 0 and . <= 3)
     and ((.pending == null) or ((.pending | type) == "number" and .pending == .configured and .pending >= 0 and .pending < 3))
+    and ((.removing == null) or ((.removing | type) == "number" and .removing == (.configured - 1) and .removing >= 0 and .removing < 3))
+    and ((.pending == null) or (.removing == null))
     and (.states | type == "array")
     and (.states | length) == (.configured + 1)
     and all(.states[]; type == "string")
@@ -90,7 +99,7 @@ start)
   targets=(http://127.0.0.1:8088 http://127.0.0.1:9944 http://127.0.0.1:6300)
   jq -cn --arg baseline "$baseline" --arg dns "$dns" \
     --argjson routes "$(jq -cn --argjson indexer "${ports[0]}" --argjson node "${ports[1]}" --argjson proof "${ports[2]}" '[{name:"indexer",port:$indexer,target:"http://127.0.0.1:8088"},{name:"node",port:$node,target:"http://127.0.0.1:9944"},{name:"proof",port:$proof,target:"http://127.0.0.1:6300"}]')" \
-    '{schema:"oxid-standalone-tailnet-routes-v1",realm:"undeployed",fingerprint:"undeployed",baseline:$baseline,active:$baseline,dnsName:$dns,routes:$routes,configured:0,pending:null,states:[$baseline]}' >"$receipt"
+    '{schema:"oxid-standalone-tailnet-routes-v1",realm:"undeployed",fingerprint:"undeployed",baseline:$baseline,active:$baseline,dnsName:$dns,routes:$routes,configured:0,pending:null,removing:null,states:[$baseline]}' >"$receipt"
   chmod 600 "$receipt"
   cleanup_start() {
     local status="$1"
@@ -146,6 +155,19 @@ status)
   ;;
 stop)
   load_receipt || fail receipt
+  removing="$(jq -r '.removing // "none"' "$receipt")"
+  if [ "$removing" != none ]; then
+    previous="$(jq -r '.active' "$receipt")"
+    expected="$(jq -r --argjson index "$removing" '.states[$index]' "$receipt")"
+    current="$(canonical_serve)" || fail serve-status
+    if [ "$current" = "$expected" ]; then
+      rewind_progress "$current" "$removing" || fail receipt-write
+    elif [ "$current" = "$previous" ]; then
+      clear_removing || fail receipt-write
+    else
+      fail serve-drift
+    fi
+  fi
   pending="$(jq -r '.pending // "none"' "$receipt")"
   if [ "$pending" != none ]; then
     previous="$(jq -r '.active' "$receipt")"
@@ -167,6 +189,7 @@ stop)
     port="$(jq -r --argjson index "$index" '.routes[$index].port' "$receipt")"
     expected="$(jq -r --argjson index "$index" '.states[$index]' "$receipt")"
     current="$(jq -r '.active' "$receipt")"
+    mark_removing "$index" || fail receipt-write
     tailscale serve --yes --https="$port" off >/dev/null 2>&1 || true
     after="$(canonical_serve)" || fail serve-status
     if [ "$after" = "$expected" ]; then
