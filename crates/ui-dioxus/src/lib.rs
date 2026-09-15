@@ -27,6 +27,7 @@ mod proof_benchmark;
 mod receive;
 mod screen_privacy;
 mod selected_realm_sync;
+mod send_recipient;
 mod wallet_onboarding;
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
@@ -54,6 +55,9 @@ pub use passport_vault::{
 use receive::standalone_funding_action;
 use receive::{
     default_receive_kind, grouped_address_preview, protected_receive_addresses, render_qr_svg,
+};
+use send_recipient::{
+    SendWizardProgress, SendWizardStep, scanned_recipient_update, start_recipient_scan,
 };
 use wallet_onboarding::{WalletOnboarding, WalletOnboardingIntent};
 #[cfg(feature = "preprod-observation")]
@@ -2555,28 +2559,6 @@ enum TransferPanelState {
         retained: Option<Box<WalletTransferPreviewView>>,
         recovery: TransferRecovery,
     },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SendWizardStep {
-    Recipient,
-    Amount,
-}
-
-impl SendWizardStep {
-    const fn number(self) -> u8 {
-        match self {
-            Self::Recipient => 1,
-            Self::Amount => 2,
-        }
-    }
-
-    const fn title(self) -> &'static str {
-        match self {
-            Self::Recipient => "Recipient",
-            Self::Amount => "Amount",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -7106,37 +7088,9 @@ fn public_export_message(result: Result<(), PublicTextExportError>, share: bool)
 }
 
 #[component]
-fn SendWizardProgress(current: SendWizardStep) -> Element {
-    let steps = [SendWizardStep::Recipient, SendWizardStep::Amount];
-    rsx! {
-        ol { class: "send-wizard__progress", aria_label: "Send progress",
-            for step in steps {
-                {
-                    let class = if step == current {
-                        "send-wizard__step is-active"
-                    } else if step.number() < current.number() {
-                        "send-wizard__step is-complete"
-                    } else {
-                        "send-wizard__step"
-                    };
-                    rsx! {
-                        li {
-                            key: "{step.number()}",
-                            class,
-                            aria_current: if step == current { "step" } else { "false" },
-                            span { class: "send-wizard__step-mark", aria_hidden: "true", "{step.number()}" }
-                            strong { "{step.title()}" }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[component]
 fn SendTransferPanel(
     profile_id: String,
+    active_network_id: String,
     unshielded_receive_address: String,
     shielded_receive_address: String,
     night_balance: Option<oxid_wallet_application::WalletAssetBalanceView>,
@@ -7150,11 +7104,19 @@ fn SendTransferPanel(
     let mut using_own_address = use_signal(|| false);
     let mut amount = use_signal(String::new);
     let mut shielded = use_signal(|| false);
+    let recipient_scan_busy = use_signal(|| false);
+    let mut recipient_scan_notice = use_signal(|| None::<String>);
+    let recipient_scanner = services.qr_scanner();
 
     match panel.read().clone() {
         TransferPanelState::Editing => match wizard_step() {
             SendWizardStep::Recipient => {
                 let can_continue = !recipient.read().trim().is_empty();
+                let scan_busy = recipient_scan_busy();
+                let scan_notice = recipient_scan_notice();
+                let active_network_id = active_network_id.clone();
+                let manual_network_id = active_network_id.clone();
+                let scanner = Arc::clone(&recipient_scanner);
                 rsx! {
                     article { class: "surface-card transfer-card send-wizard",
                         p { class: "card-eyebrow", "Send NIGHT" }
@@ -7179,6 +7141,27 @@ fn SendTransferPanel(
                                 "Address entered. {brand.product_name()} validates its network and privacy kind before review."
                             }
                         }
+                        p { class: "send-wizard__recipient-note",
+                            "Public NIGHT · {ui::midnight_network(&active_network_id)}"
+                        }
+                        button {
+                            class: "inline-action",
+                            r#type: "button",
+                            aria_label: "Scan public NIGHT receive request",
+                            disabled: scan_busy,
+                            onclick: move |_| start_recipient_scan(
+                                Arc::clone(&scanner),
+                                active_network_id.clone(),
+                                recipient_scan_busy,
+                                recipient_scan_notice,
+                                recipient,
+                                using_own_address,
+                            ),
+                            if scan_busy { "Scanning…" } else { "Scan receive request" }
+                        }
+                        if let Some(message) = scan_notice {
+                            p { class: "send-wizard__recipient-note", role: "status", "{message}" }
+                        }
                         button {
                             class: "inline-action",
                             r#type: "button",
@@ -7197,7 +7180,19 @@ fn SendTransferPanel(
                             r#type: "button",
                             disabled: !can_continue,
                             aria_label: "Continue to transfer amount",
-                            onclick: move |_| wizard_step.set(SendWizardStep::Amount),
+                            onclick: move |_| {
+                                let value = recipient();
+                                if value.starts_with("mn_addr") || value.starts_with("midnight-receive:") {
+                                    match scanned_recipient_update(&manual_network_id, value) {
+                                        Ok(update) => recipient.set(update.recipient),
+                                        Err(message) => {
+                                            recipient_scan_notice.set(Some(message));
+                                            return;
+                                        }
+                                    }
+                                }
+                                wizard_step.set(SendWizardStep::Amount);
+                            },
                             "Continue to amount"
                         }
                     }
