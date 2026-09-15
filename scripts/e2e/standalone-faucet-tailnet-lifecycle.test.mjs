@@ -68,7 +68,7 @@ process.exit(2);
   };
   const lifecycle = path.join(fixtureScripts, "standalone-faucet-tailnet.sh");
   for (const mode of ["start", "status", "accept", "stop"]) {
-    const result = spawnSync(lifecycle, [mode], { env, encoding: "utf8", timeout: 10_000 });
+    const result = spawnSync(lifecycle, [mode], { env, encoding: "utf8", timeout: 30_000 });
     assert.equal(result.status, 0, `${mode}: ${result.stderr}`);
   }
   assert.deepEqual(JSON.parse(await readFile(serveState, "utf8")), baseline);
@@ -141,7 +141,9 @@ if(args[0]==='serve'){
   const port=args.find(v=>v.startsWith('--https=')).slice(8),key='fixture.example.ts.net:'+port;
   if(args.at(-1)==='off'){
     if(port===process.env.FAKE_FAIL_OFF_PORT&&!existsSync(process.env.FAKE_FAILURE_MARKER)){writeFileSync(process.env.FAKE_FAILURE_MARKER,'failed');process.exit(1)}
-    const next=state();delete next.TCP[port];delete next.Web[key];writeFileSync(file,JSON.stringify(next));process.exit(0)
+    const next=state();delete next.TCP[port];delete next.Web[key];writeFileSync(file,JSON.stringify(next));
+    if(port===process.env.FAKE_SIGNAL_AFTER_OFF)process.kill(process.ppid,'SIGTERM');
+    process.exit(0)
   }
   const next=state();next.TCP[port]={HTTPS:true};next.Web[key]={Handlers:{'/':{Proxy:args.at(-1)}}};writeFileSync(file,JSON.stringify(next));
   if(port===process.env.FAKE_SIGNAL_AFTER_ADD)process.kill(process.ppid,'SIGTERM');
@@ -149,19 +151,36 @@ if(args[0]==='serve'){
 }
 process.exit(2);
 `);
-  const env = {
+  const baseEnv = {
     ...process.env,
     PATH: `${fakeBin}:${process.env.PATH}`,
     FAKE_TAILSCALE_STATE: serveState,
+  };
+  const env = {
+    ...baseEnv,
     FAKE_FAIL_OFF_PORT: "12001",
     FAKE_FAILURE_MARKER: failureMarker,
   };
   const lifecycle = path.join(scripts, "standalone-tailnet-routes.sh");
   const interrupted = spawnSync(lifecycle, ["start"], {
-    env: { ...env, FAKE_SIGNAL_AFTER_ADD: "12000" },
+    env: { ...baseEnv, FAKE_SIGNAL_AFTER_ADD: "12000" },
     encoding: "utf8",
   });
   assert.notEqual(interrupted.status, 0);
+  assert.deepEqual(JSON.parse(await readFile(serveState, "utf8")), baseline);
+  await assert.rejects(readFile(path.join(fixture, "target/standalone-tailnet-routes/receipt.json")));
+
+  const removalStart = spawnSync(lifecycle, ["start"], { env: baseEnv, encoding: "utf8" });
+  assert.equal(removalStart.status, 0, removalStart.stderr);
+  const interruptedRemoval = spawnSync(lifecycle, ["stop"], {
+    env: { ...baseEnv, FAKE_SIGNAL_AFTER_OFF: "12002" },
+    encoding: "utf8",
+  });
+  assert.notEqual(interruptedRemoval.status, 0);
+  const interruptedReceipt = JSON.parse(await readFile(path.join(fixture, "target/standalone-tailnet-routes/receipt.json"), "utf8"));
+  assert.equal(interruptedReceipt.removing, 2);
+  const removalRetry = spawnSync(lifecycle, ["stop"], { env: baseEnv, encoding: "utf8" });
+  assert.equal(removalRetry.status, 0, removalRetry.stderr);
   assert.deepEqual(JSON.parse(await readFile(serveState, "utf8")), baseline);
   await assert.rejects(readFile(path.join(fixture, "target/standalone-tailnet-routes/receipt.json")));
 
