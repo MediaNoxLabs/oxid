@@ -16,7 +16,15 @@ use oxid_adapter_storage_dev::{DevelopmentWalletFixtureProtection, DevelopmentWa
 #[cfg(feature = "standalone-development")]
 use oxid_wallet_application::WalletProfileRepository;
 
+/// Unique profile name admitted by the public standalone funding authority.
 pub(super) const PUBLIC_STANDALONE_PROFILE_NAME: &str = "Demo Wallet";
+
+/// Returns the exact public fixture profile name for narrow development adapters.
+#[cfg(feature = "standalone-development")]
+#[must_use]
+pub const fn public_standalone_profile_name() -> &'static str {
+    PUBLIC_STANDALONE_PROFILE_NAME
+}
 
 #[cfg(feature = "standalone-development")]
 #[derive(Clone, Copy)]

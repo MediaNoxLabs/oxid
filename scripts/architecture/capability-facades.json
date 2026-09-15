@@ -85,6 +85,16 @@
           ]
         },
         {
+          "name": "standalone-funding",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/faucet",
+            "apps/oxid-headless/src/faucet_application",
+            "apps/oxid-headless/src/faucet_errors",
+            "apps/oxid-headless/src/faucet_main",
+            "apps/oxid-headless/src/faucet_tests"
+          ]
+        },
+        {
           "name": "executable-shell",
           "modulePathPrefixes": [
             "apps/oxid-headless/src/main"
@@ -230,9 +240,9 @@
       "facadeFiles": [
         "crates/composition/src/lib.rs"
       ],
-      "facadeMaximumPhysicalLines": 53,
+      "facadeMaximumPhysicalLines": 55,
       "facadeMaximumPhysicalLinesByPath": {
-        "crates/composition/src/lib.rs": 53
+        "crates/composition/src/lib.rs": 55
       },
       "capabilityOwners": [
         {

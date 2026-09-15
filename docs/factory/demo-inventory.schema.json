@@ -45,7 +45,8 @@
       "properties": {
         "OXID_MOBILE_CUSTODY": {"enum": ["development", "native"]},
         "OXID_UI_PROFILE": {"enum": ["user", "dev", "demo"]},
-        "OXID_STANDALONE_NETWORK_PROFILE": {"enum": ["simulated", "local", "tailnet"]}
+        "OXID_STANDALONE_NETWORK_PROFILE": {"enum": ["simulated", "local", "tailnet"]},
+        "OXID_ENABLE_LIVE_STANDALONE_FAUCET_E2E": {"const": "1"}
       }
     },
     "command": {

@@ -17,6 +17,8 @@ use oxid_adapter_midnight::{
     protected_standalone_midnight_wallet_with_dust_checkpoints,
 };
 
+#[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
+use super::environment::HeadlessCompositionError;
 use super::identity::{CredentialPresentationComposition, HeadlessCredentialProfile};
 #[cfg(not(target_arch = "wasm32"))]
 use super::passport_vault::{
@@ -366,6 +368,27 @@ pub(super) fn compose_public_genesis_standalone(
             )) as Arc<dyn WalletProtectionPort>
         },
     ))
+}
+
+/// Wires the development-only public genesis authority to the repository's
+/// fixed localhost standalone routes.
+///
+/// This constructor is deliberately separate from ordinary environment-based
+/// headless composition. Runtime input cannot select the authority or change
+/// its realm and route set.
+#[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
+pub fn compose_headless_public_genesis_local_standalone()
+-> Result<ApplicationServices, HeadlessCompositionError> {
+    let config = MidnightStandaloneConfig::new_without_unshielded_address(
+        "undeployed",
+        "ws://127.0.0.1:8088/api/v4/graphql/ws",
+        "http://127.0.0.1:8088/api/v4/graphql",
+        "ws://127.0.0.1:9944",
+        "http://127.0.0.1:6300",
+    )
+    .map_err(HeadlessCompositionError::InvalidMidnightStandaloneConfiguration)?;
+    compose_public_genesis_standalone(config)
+        .ok_or(HeadlessCompositionError::PublicStandaloneGenesisRequiresUndeployed)
 }
 
 /// Wires the complete standalone stack with durable public account checkpoints.
