@@ -347,15 +347,21 @@ cargo check -p oxid-app --no-default-features \
   --features desktop,developer-proof-benchmark
 
 # The physical launcher owns service selection. Keep the current laptop
-# MagicDNS lookup and the complete route set in one process; the app receives
-# no runtime discovery input.
+# MagicDNS lookup and receipt-scoped route set in one process; the app receives
+# no runtime discovery input. The receipt ports are intentionally dynamic so
+# concurrent Tailscale Serve users do not contend for a fixed global route.
 for launcher_contract in \
   'status="$(tailscale status --json)"' \
   "tailnet_dns_name=\"\$(jq -r '.Self.DNSName | rtrimstr(\".\")' <<<\"\$status\")\"" \
-  'export OXID_BUILD_MIDNIGHT_INDEXER_WS_URL="wss://$tailnet_dns_name:8443/api/v4/graphql/ws"' \
-  'export OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL="https://$tailnet_dns_name:8443/api/v4/graphql"' \
-  'export OXID_BUILD_MIDNIGHT_NODE_WS_URL="wss://$tailnet_dns_name:10000"' \
-  'export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$tailnet_dns_name"' \
+  'route_receipt="$repository_root/target/standalone-tailnet-routes/receipt.json"' \
+  '"$repository_root/scripts/standalone-tailnet-routes.sh" status' \
+  'indexer_port="$(jq -r '\''.routes[] | select(.name == "indexer") | .port'\'' "$route_receipt")"' \
+  'node_port="$(jq -r '\''.routes[] | select(.name == "node") | .port'\'' "$route_receipt")"' \
+  'proof_port="$(jq -r '\''.routes[] | select(.name == "proof") | .port'\'' "$route_receipt")"' \
+  'export OXID_BUILD_MIDNIGHT_INDEXER_WS_URL="wss://$tailnet_dns_name:$indexer_port/api/v4/graphql/ws"' \
+  'export OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL="https://$tailnet_dns_name:$indexer_port/api/v4/graphql"' \
+  'export OXID_BUILD_MIDNIGHT_NODE_WS_URL="wss://$tailnet_dns_name:$node_port"' \
+  'export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$tailnet_dns_name:$proof_port"' \
   'exec "$repository_root/scripts/run-android-emulator.sh"'; do
   if ! rg -qF "$launcher_contract" scripts/run-android-tailnet.sh; then
     echo "physical Tailnet launcher contract drifted: $launcher_contract" >&2
