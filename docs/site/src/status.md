@@ -59,9 +59,11 @@ recovery interruption/resource evidence
 ([#33](https://github.com/MediaNoxLabs/oxid/issues/33)), standalone
 issuer time policy ([#34](https://github.com/MediaNoxLabs/oxid/issues/34)),
 plus live protocol transport and production issuer trust policy. Full-history
-PreProd replay measurement/optimization is [#115](https://github.com/MediaNoxLabs/oxid/issues/115),
-and birthday-gated fast fresh-wallet replay is
-[#116](https://github.com/MediaNoxLabs/oxid/issues/116).
+PreProd replay measurement and optimization is
+[#115](https://github.com/MediaNoxLabs/oxid/issues/115): Oxid owns measurement
+and pinned-candidate validation, while reusable synchronization-state changes
+belong in the `midnight-ledger` Rust codebase. Oxid intentionally does not add
+a wallet-owned birthday, preseed, or public replay-reference startup shortcut.
 
 An independent architecture and quality review of the whole codebase (11
 dimensions, adversarially verified findings) is published as

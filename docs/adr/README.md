@@ -132,6 +132,7 @@ ADR status and delivery state answer different questions:
 | [0106](0106-bind-wallet-profiles-to-one-network.md) Bind each wallet profile to one concrete network | Proposed | §§1, 3–8, 12–13, 16–18, 21; issues #335/#337/#340 | Defines the proposed `network profile -> wallet -> typed assets` aggregate, no global asset store, route/genesis checks, atomic quick switching, and an explicit migration from multi-network associations |
 | [0107](0107-bind-prepared-transfer-review-to-authorization.md) Bind prepared transfer review to authorization | Accepted | issue #108 | Transfer authorization consumes a single-use challenge bound by unambiguous encoding to every rendered prepared-preview semantic field; caller prose cannot reach the application boundary |
 | [0108](0108-adopt-seedless-ux-with-multi-factor-recovery.md) Adopt a seedless UX with passkey recovery | Proposed | ADR-0017/0074–0078/0090/0105; issues #359/#364 | Research selects an Oxid-owned random-secret envelope with Apple/Google-synchronized passkeys and capability-detected PRF wrapping; advanced recovery and providers remain unapproved |
+| [0111](0111-keep-testkit-in-tree-and-out-of-product-closures.md) Keep testkit in-tree and out of product closures | Proposed | ADR-0003–0005/0020/0096; issue #518 | Reserves a non-published in-tree `oxid-testkit`, keeps small synthetic fixtures in Oxid, forbids production dependencies and chain-state distribution, and leaves reusable DUST synchronization optimization to the Midnight Rust stack |
 
 ## Current boundaries
 
