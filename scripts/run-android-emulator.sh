@@ -33,6 +33,9 @@ if [ -n "$prebuilt_apk" ] && [ "$operation" != "deploy" ]; then
 fi
 
 required_commands=(node)
+if [ "${OXID_STANDALONE_NETWORK_PROFILE:-simulated}" = "tailnet" ]; then
+  required_commands+=(shasum)
+fi
 if [ "$operation" != "deploy" ]; then
   required_commands+=(nix rustup java)
 fi
@@ -115,6 +118,7 @@ fi
 
 standalone_network_profile="${OXID_STANDALONE_NETWORK_PROFILE:-simulated}"
 requested_portal_profile="${OXID_MOBILE_PORTAL_PROFILE:-unavailable}"
+tailnet_artifact_binding="none"
 case "$standalone_network_profile" in
   simulated)
     ;;
@@ -140,6 +144,14 @@ case "$standalone_network_profile" in
         exit 1
       fi
     done
+    tailnet_artifact_binding="$(
+      printf '%s\n' \
+        "$OXID_BUILD_MIDNIGHT_INDEXER_WS_URL" \
+        "$OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL" \
+        "$OXID_BUILD_MIDNIGHT_NODE_WS_URL" \
+        "$OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL" \
+        | shasum -a 256 | awk '{print $1}'
+    )"
     if [ "$requested_portal_profile" != "tailnet-android" ]; then
       mobile_features="$mobile_features,standalone-tailnet"
     fi
@@ -502,7 +514,7 @@ case "$(adb_device shell getprop ro.product.cpu.abi | tr -d '\r')" in
     ;;
 esac
 
-artifact_configuration="$mobile_features|ui=$ui_profile|custody=$mobile_custody|network=$standalone_network_profile|portal=$portal_profile|preprod=$preprod_observation|proving=$mobile_presentation_proving"
+artifact_configuration="$mobile_features|ui=$ui_profile|custody=$mobile_custody|network=$standalone_network_profile|tailnet=$tailnet_artifact_binding|portal=$portal_profile|preprod=$preprod_observation|proving=$mobile_presentation_proving"
 apk="$repository_root/target/dx/oxid-app/debug/android/app/app/build/outputs/apk/debug/app-debug.apk"
 artifact_receipt="$repository_root/target/dx/oxid-app/debug/android/oxid-app-artifact-receipt.json"
 

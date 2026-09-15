@@ -27,11 +27,17 @@ process_matches() {
   actual="$(ps -p "$pid" -o command= 2>/dev/null | shasum -a 256 | awk '{print $1}')" || return 1
   [ "$actual" = "$expected" ]
 }
+process_has_exited() {
+  local pid="$1" state
+  if ! kill -0 "$pid" 2>/dev/null; then return 0; fi
+  state="$(ps -p "$pid" -o stat= 2>/dev/null || true)"
+  [[ "$state" == Z* ]]
+}
 stop_owned_process() {
   local pid="$1"
   kill -TERM "$pid" >/dev/null 2>&1 || true
   for _ in $(seq 1 30); do
-    kill -0 "$pid" 2>/dev/null || return 0
+    process_has_exited "$pid" && return 0
     sleep 1
   done
   return 1

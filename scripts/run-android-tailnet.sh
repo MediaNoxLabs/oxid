@@ -62,7 +62,8 @@ OXID_TAILNET_ORIGIN_POLICY_INPUT="$tailnet_dns_name" node "$origin_policy" --hos
   exit 1
 }
 route_receipt="$repository_root/target/standalone-tailnet-routes/receipt.json"
-if [ -f "$route_receipt" ] && [ ! -L "$route_receipt" ]; then
+if [ "${OXID_MOBILE_PORTAL_PROFILE:-unavailable}" != "tailnet-android" ] && \
+  [ -f "$route_receipt" ] && [ ! -L "$route_receipt" ]; then
   "$repository_root/scripts/standalone-tailnet-routes.sh" status >/dev/null || {
     echo "The receipt-owned standalone Tailnet routes are unavailable." >&2
     exit 1
