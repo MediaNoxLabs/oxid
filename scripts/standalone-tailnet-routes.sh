@@ -7,6 +7,7 @@ export LC_ALL=C
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state="$root/target/standalone-tailnet-routes"
 receipt="$state/receipt.json"
+receipt_next="$state/receipt.next"
 mode="${1:-}"
 
 fail() { printf 'standalone-tailnet-routes: FAIL phase=%s\n' "$1" >&2; exit 1; }
@@ -17,7 +18,29 @@ private_file() {
   [ "$mode" = 600 ]
 }
 canonical_serve() { tailscale serve status --json | jq -S -c '.'; }
-remove_owned_state() { rm -f -- "$receipt"; rmdir -- "$state"; }
+remove_owned_state() { rm -f -- "$receipt" "$receipt_next"; rmdir -- "$state"; }
+write_receipt_update() {
+  chmod 600 "$receipt_next"
+  mv -f -- "$receipt_next" "$receipt"
+}
+append_progress() {
+  jq --arg active "$1" --argjson configured "$2" \
+    '.active = $active | .configured = $configured | .states += [$active]' \
+    "$receipt" >"$receipt_next" && write_receipt_update
+}
+rewind_progress() {
+  jq --arg active "$1" --argjson configured "$2" \
+    '.active = $active | .configured = $configured | .states = .states[0:($configured + 1)]' \
+    "$receipt" >"$receipt_next" && write_receipt_update
+}
+route_transition_matches() {
+  jq -en --argjson before "$1" --argjson after "$2" --arg port "$3" \
+    --arg host "$4:$3" --arg target "$5" '
+      $after.TCP[$port].HTTPS == true
+      and $after.Web[$host].Handlers["/"].Proxy == $target
+      and ($after | del(.TCP[$port]) | del(.Web[$host])) == $before
+    ' >/dev/null
+}
 
 for command in curl jq tailscale; do command -v "$command" >/dev/null 2>&1 || fail "missing-${command}"; done
 case "$mode" in start|status|stop) ;; *) fail usage ;; esac
@@ -30,6 +53,11 @@ load_receipt() {
     and (.dnsName | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9.-]*$"))
     and (.baseline | type == "string") and (.active | type == "string")
     and (.routes | type == "array" and length == 3)
+    and (.configured | type == "number" and floor == . and . >= 0 and . <= 3)
+    and (.states | type == "array")
+    and (.states | length) == (.configured + 1)
+    and all(.states[]; type == "string")
+    and .states[0] == .baseline and .states[-1] == .active
     and all(.routes[]; (.port | type == "number" and . >= 12000 and . <= 12999) and (.target | type == "string" and test("^http://127\\.0\\.0\\.1:(6300|8088|9944)$")))
   ' "$receipt" >/dev/null
 }
@@ -51,34 +79,34 @@ start)
   done
   [ "${#ports[@]}" -eq 3 ] || fail route-unavailable
   umask 077; mkdir -p "$state"; chmod 700 "$state"
-  configured=()
+  targets=(http://127.0.0.1:8088 http://127.0.0.1:9944 http://127.0.0.1:6300)
+  jq -cn --arg baseline "$baseline" --arg dns "$dns" \
+    --argjson routes "$(jq -cn --argjson indexer "${ports[0]}" --argjson node "${ports[1]}" --argjson proof "${ports[2]}" '[{name:"indexer",port:$indexer,target:"http://127.0.0.1:8088"},{name:"node",port:$node,target:"http://127.0.0.1:9944"},{name:"proof",port:$proof,target:"http://127.0.0.1:6300"}]')" \
+    '{schema:"oxid-standalone-tailnet-routes-v1",realm:"undeployed",fingerprint:"undeployed",baseline:$baseline,active:$baseline,dnsName:$dns,routes:$routes,configured:0,states:[$baseline]}' >"$receipt"
+  chmod 600 "$receipt"
   cleanup_start() {
-    local status="$1" after=""
+    local status="$1"
     trap - EXIT INT TERM HUP
-    for port in "${configured[@]}"; do tailscale serve --yes --https="$port" off >/dev/null 2>&1 || true; done
-    after="$(canonical_serve 2>/dev/null || true)"
-    [ "$after" = "$baseline" ] && remove_owned_state >/dev/null 2>&1 || true
+    "$root/scripts/standalone-tailnet-routes.sh" stop >/dev/null 2>&1 || true
     exit "$status"
   }
   trap 'cleanup_start $?' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
   trap 'exit 129' HUP
-  targets=(http://127.0.0.1:8088 http://127.0.0.1:9944 http://127.0.0.1:6300)
   for index in 0 1 2; do
-    tailscale serve --yes --bg --https="${ports[$index]}" "${targets[$index]}" >/dev/null || fail serve-add
-    configured+=("${ports[$index]}")
+    previous="$(jq -r '.active' "$receipt")"
+    tailscale serve --yes --bg --https="${ports[$index]}" "${targets[$index]}" >/dev/null 2>&1 || true
+    after="$(canonical_serve)" || fail serve-active
+    route_transition_matches "$previous" "$after" "${ports[$index]}" "$dns" "${targets[$index]}" || fail serve-add
+    append_progress "$after" "$((index + 1))" || fail receipt-write
   done
-  active="$(canonical_serve)" || fail serve-active
-  jq -cn --arg baseline "$baseline" --arg active "$active" --arg dns "$dns" \
-    --argjson routes "$(jq -cn --argjson indexer "${ports[0]}" --argjson node "${ports[1]}" --argjson proof "${ports[2]}" '[{name:"indexer",port:$indexer,target:"http://127.0.0.1:8088"},{name:"node",port:$node,target:"http://127.0.0.1:9944"},{name:"proof",port:$proof,target:"http://127.0.0.1:6300"}]')" \
-    '{schema:"oxid-standalone-tailnet-routes-v1",realm:"undeployed",fingerprint:"undeployed",baseline:$baseline,active:$active,dnsName:$dns,routes:$routes}' >"$receipt"
-  chmod 600 "$receipt"
   trap - EXIT INT TERM HUP
   printf '%s\n' 'standalone-tailnet-routes: READY (private Tailnet routes configured)'
   ;;
 status)
   load_receipt || fail receipt
+  [ "$(jq -r '.configured' "$receipt")" -eq 3 ] || fail incomplete
   current="$(canonical_serve)" || fail serve-status
   expected="$(jq -r '.active' "$receipt")"
   if [ "$current" != "$expected" ]; then
@@ -106,7 +134,23 @@ status)
 stop)
   load_receipt || fail receipt
   [ "$(canonical_serve)" = "$(jq -r '.active' "$receipt")" ] || fail serve-drift
-  while read -r port; do tailscale serve --yes --https="$port" off >/dev/null || fail serve-remove; done < <(jq -r '.routes[].port' "$receipt")
+  configured="$(jq -r '.configured' "$receipt")"
+  while [ "$configured" -gt 0 ]; do
+    index="$((configured - 1))"
+    port="$(jq -r --argjson index "$index" '.routes[$index].port' "$receipt")"
+    expected="$(jq -r --argjson index "$index" '.states[$index]' "$receipt")"
+    current="$(jq -r '.active' "$receipt")"
+    tailscale serve --yes --https="$port" off >/dev/null 2>&1 || true
+    after="$(canonical_serve)" || fail serve-status
+    if [ "$after" = "$expected" ]; then
+      configured="$index"
+      rewind_progress "$after" "$configured" || fail receipt-write
+    elif [ "$after" = "$current" ]; then
+      fail serve-remove
+    else
+      fail serve-drift
+    fi
+  done
   [ "$(canonical_serve)" = "$(jq -r '.baseline' "$receipt")" ] || fail serve-restore
   remove_owned_state || fail state-cleanup
   printf '%s\n' 'standalone-tailnet-routes: STOPPED'

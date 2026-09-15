@@ -127,6 +127,57 @@ test("round-trip cleanup attempts both independently owned layers", async (conte
   assert.deepEqual((await readFile(calls, "utf8")).trim().split("\n"), ["faucet", "routes"]);
 });
 
+test("service-route cleanup resumes after a later route removal fails", async (context) => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "oxid-tailnet-routes-"));
+  context.after(() => rm(fixture, { recursive: true, force: true }));
+  const scripts = path.join(fixture, "scripts");
+  const fakeBin = path.join(fixture, "bin");
+  const serveState = path.join(fixture, "serve.json");
+  const failureMarker = path.join(fixture, "failed-once");
+  const baseline = { TCP: { "2222": { TCPForward: "127.0.0.1:22" } }, Web: {} };
+  await mkdir(scripts);
+  await mkdir(fakeBin);
+  await writeFile(serveState, JSON.stringify(baseline));
+  await cp(path.join(root, "scripts/standalone-tailnet-routes.sh"), path.join(scripts, "standalone-tailnet-routes.sh"));
+  await chmod(path.join(scripts, "standalone-tailnet-routes.sh"), 0o700);
+  await executable(path.join(scripts, "standalone-status.sh"), "#!/bin/sh\nexit 0\n");
+  await executable(path.join(fakeBin, "curl"), "#!/bin/sh\nexit 0\n");
+  await executable(path.join(fakeBin, "tailscale"), `#!/usr/bin/env node
+import{existsSync,readFileSync,writeFileSync}from'node:fs';
+const args=process.argv.slice(2),file=process.env.FAKE_TAILSCALE_STATE;
+const state=()=>JSON.parse(readFileSync(file,'utf8'));
+if(args[0]==='status'){console.log(JSON.stringify({BackendState:'Running',Self:{DNSName:'fixture.example.ts.net.'}}));process.exit(0)}
+if(args[0]==='serve'&&args[1]==='status'){console.log(JSON.stringify(state()));process.exit(0)}
+if(args[0]==='serve'){
+  const port=args.find(v=>v.startsWith('--https=')).slice(8),key='fixture.example.ts.net:'+port;
+  if(args.at(-1)==='off'){
+    if(port===process.env.FAKE_FAIL_OFF_PORT&&!existsSync(process.env.FAKE_FAILURE_MARKER)){writeFileSync(process.env.FAKE_FAILURE_MARKER,'failed');process.exit(1)}
+    const next=state();delete next.TCP[port];delete next.Web[key];writeFileSync(file,JSON.stringify(next));process.exit(0)
+  }
+  const next=state();next.TCP[port]={HTTPS:true};next.Web[key]={Handlers:{'/':{Proxy:args.at(-1)}}};writeFileSync(file,JSON.stringify(next));process.exit(0)
+}
+process.exit(2);
+`);
+  const env = {
+    ...process.env,
+    PATH: `${fakeBin}:${process.env.PATH}`,
+    FAKE_TAILSCALE_STATE: serveState,
+    FAKE_FAIL_OFF_PORT: "12001",
+    FAKE_FAILURE_MARKER: failureMarker,
+  };
+  const lifecycle = path.join(scripts, "standalone-tailnet-routes.sh");
+  const start = spawnSync(lifecycle, ["start"], { env, encoding: "utf8" });
+  assert.equal(start.status, 0, start.stderr);
+  const firstStop = spawnSync(lifecycle, ["stop"], { env, encoding: "utf8" });
+  assert.equal(firstStop.status, 1);
+  const partial = JSON.parse(await readFile(path.join(fixture, "target/standalone-tailnet-routes/receipt.json"), "utf8"));
+  assert.equal(partial.configured, 2, firstStop.stderr);
+  const retry = spawnSync(lifecycle, ["stop"], { env, encoding: "utf8" });
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.deepEqual(JSON.parse(await readFile(serveState, "utf8")), baseline);
+  await assert.rejects(readFile(path.join(fixture, "target/standalone-tailnet-routes/receipt.json")));
+});
+
 test("mobile Tailnet route preparation is receipt-scoped and has no committed endpoint", async () => {
   const [routes, iosRunner, androidRunner, justfile] = await Promise.all([
     readFile(path.join(root, "scripts/standalone-tailnet-routes.sh"), "utf8"),
