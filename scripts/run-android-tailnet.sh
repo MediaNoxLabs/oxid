@@ -96,6 +96,10 @@ export OXID_STANDALONE_NETWORK_PROFILE=tailnet
 export OXID_BUILD_MIDNIGHT_INDEXER_WS_URL="wss://$tailnet_dns_name:$indexer_port/api/v4/graphql/ws"
 export OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL="https://$tailnet_dns_name:$indexer_port/api/v4/graphql"
 export OXID_BUILD_MIDNIGHT_NODE_WS_URL="wss://$tailnet_dns_name:$node_port"
-export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$tailnet_dns_name:$proof_port"
+if [ "$proof_port" -eq 443 ]; then
+  export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$tailnet_dns_name"
+else
+  export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$tailnet_dns_name:$proof_port"
+fi
 
 exec "$repository_root/scripts/run-android-emulator.sh"
