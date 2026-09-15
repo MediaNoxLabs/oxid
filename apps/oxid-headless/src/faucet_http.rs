@@ -22,6 +22,7 @@ const JSON_CONTENT_TYPE: &str = "application/json";
 pub fn run_loopback_http(
     faucet: &mut StandaloneFaucet,
     address: &str,
+    setup_svg: Option<&[u8]>,
 ) -> Result<(), HttpServerError> {
     let address = address
         .parse::<SocketAddr>()
@@ -35,7 +36,7 @@ pub fn run_loopback_http(
         let mut connection = connection.map_err(HttpServerError::Io)?;
         // A client disconnect must not terminate the development authority.
         // The request is independently framed and the connection is discarded.
-        let _ = serve_connection(&mut connection, faucet);
+        let _ = serve_connection(&mut connection, faucet, setup_svg);
     }
     Ok(())
 }
@@ -66,11 +67,15 @@ impl std::error::Error for HttpServerError {
     }
 }
 
-fn serve_connection(connection: &mut TcpStream, faucet: &mut StandaloneFaucet) -> io::Result<()> {
+fn serve_connection(
+    connection: &mut TcpStream,
+    faucet: &mut StandaloneFaucet,
+    setup_svg: Option<&[u8]>,
+) -> io::Result<()> {
     connection.set_read_timeout(Some(IO_TIMEOUT))?;
     connection.set_write_timeout(Some(IO_TIMEOUT))?;
     let response = match read_request(connection) {
-        Ok(request) => handle(faucet, request),
+        Ok(request) => handle(faucet, request, setup_svg),
         Err(error) => {
             // Discard any unread oversized/malformed input so closing the
             // connection does not replace the closed JSON error with a reset.
@@ -90,7 +95,26 @@ struct HttpRequest {
 
 struct HttpResponse {
     status: u16,
-    body: Value,
+    content_type: &'static str,
+    body: Vec<u8>,
+}
+
+impl HttpResponse {
+    fn json(status: u16, body: Value) -> Self {
+        Self {
+            status,
+            content_type: "application/json",
+            body: serde_json::to_vec(&body).expect("faucet responses are serializable"),
+        }
+    }
+
+    fn html(body: &'static str) -> Self {
+        Self {
+            status: 200,
+            content_type: "text/html; charset=utf-8",
+            body: body.as_bytes().to_vec(),
+        }
+    }
 }
 
 fn read_request(connection: &mut TcpStream) -> Result<HttpRequest, RequestError> {
@@ -219,15 +243,29 @@ fn drain_header_tail(reader: &mut impl io::Read) {
     }
 }
 
-fn handle(faucet: &mut StandaloneFaucet, request: HttpRequest) -> HttpResponse {
+fn handle(
+    faucet: &mut StandaloneFaucet,
+    request: HttpRequest,
+    setup_svg: Option<&[u8]>,
+) -> HttpResponse {
     match (request.method.as_str(), request.path.as_str()) {
-        ("GET", "/health") if request.body.is_empty() => HttpResponse {
+        ("GET", "/") if request.body.is_empty() => HttpResponse::html(DISCOVERY_PAGE),
+        ("GET", "/setup.svg") if request.body.is_empty() && setup_svg.is_some() => HttpResponse {
             status: 200,
-            body: StandaloneFaucet::health_http(),
+            content_type: "image/svg+xml",
+            body: setup_svg.expect("guarded setup asset").to_vec(),
         },
-        ("GET", "/health") => rejected(400, "invalid_request", "health request body must be empty"),
+        ("GET", "/setup.svg") if request.body.is_empty() => {
+            rejected(404, "not_found", "setup QR is not configured")
+        }
+        ("GET", "/health") if request.body.is_empty() => {
+            HttpResponse::json(200, StandaloneFaucet::health_http())
+        }
+        ("GET", "/" | "/health" | "/setup.svg") => {
+            rejected(400, "invalid_request", "GET request body must be empty")
+        }
         ("POST", "/fund") => fund(faucet, request.content_type.as_deref(), &request.body),
-        (_, "/health" | "/fund") => rejected(
+        (_, "/" | "/health" | "/fund" | "/setup.svg") => rejected(
             405,
             "method_not_allowed",
             "method is not supported for this path",
@@ -259,18 +297,18 @@ fn fund(faucet: &mut StandaloneFaucet, content_type: Option<&str>, body: &[u8]) 
         Some("outcome_unknown") => 504,
         Some(_) => 400,
     };
-    HttpResponse { status, body }
+    HttpResponse::json(status, body)
 }
 
 fn write_response(connection: &mut TcpStream, response: HttpResponse) -> io::Result<()> {
-    let body = serde_json::to_vec(&response.body).map_err(io::Error::other)?;
     write!(
         connection,
-        "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\n\r\n",
+        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\n\r\n",
         status_line(response.status),
-        body.len()
+        response.content_type,
+        response.body.len()
     )?;
-    connection.write_all(&body)?;
+    connection.write_all(&response.body)?;
     connection.flush()
 }
 
@@ -315,16 +353,58 @@ impl RequestError {
 }
 
 fn rejected(status: u16, code: &'static str, message: &'static str) -> HttpResponse {
-    HttpResponse {
+    HttpResponse::json(
         status,
-        body: json!({
+        json!({
             "protocol": "oxid.standalone-faucet.v1",
             "id": null,
             "ok": false,
             "error": { "code": code, "message": message }
         }),
-    }
+    )
 }
+
+// This page contains no Tailnet identity. Serve supplies the HTTPS origin and
+// the owner-generated QR at /setup.svg; the route cannot select policy.
+const DISCOVERY_PAGE: &str = r#"<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Standalone development funding</title>
+<style>
+body{font:16px system-ui;margin:auto;max-width:38rem;padding:1.25rem;background:#10151c;color:#edf2f7}
+main{display:grid;gap:1rem}input,button{font:inherit;padding:.65rem;width:100%;box-sizing:border-box}
+button{background:#78d6b1;border:0;border-radius:.4rem;color:#102018;font-weight:700}
+button:disabled{opacity:.6}img{max-width:14rem;background:#fff;padding:.5rem}small{color:#b8c4d1}
+</style>
+<main>
+<h1>Development NIGHT funding</h1>
+<p>Undeployed realm · fixed 50,000 NIGHT grant</p>
+<img src="/setup.svg" alt="Setup QR">
+<small id="route"></small>
+<input id="address" placeholder="Undeployed unshielded address" autocomplete="off">
+<button id="fund">Request fixed grant</button>
+<output id="result" aria-live="polite"></output>
+<small>Tailnet HTTPS is private transport, not a Midnight network or public faucet.</small>
+</main>
+<script>
+const route=document.querySelector('#route');
+const address=document.querySelector('#address');
+const fund=document.querySelector('#fund');
+const result=document.querySelector('#result');
+route.textContent=location.origin;
+fund.onclick=async()=>{
+  fund.disabled=true;
+  result.textContent='Requesting grant…';
+  try {
+    const response=await fetch('/fund',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({requestId:crypto.randomUUID(),recipientAddress:address.value.trim()})});
+    const body=await response.json();
+    result.textContent=body.ok?'Grant included':'Request rejected';
+  } catch (_) {
+    result.textContent='Funding service unavailable';
+  } finally {
+    fund.disabled=false;
+  }
+};
+</script>"#;
 
 #[cfg(test)]
 mod tests {
@@ -362,14 +442,26 @@ mod tests {
     }
 
     fn exchange(faucet: StandaloneFaucet, requests: &[&[u8]]) -> Vec<String> {
+        exchange_with_setup(faucet, requests, None)
+    }
+
+    fn exchange_with_setup(
+        faucet: StandaloneFaucet,
+        requests: &[&[u8]],
+        setup_svg: Option<&'static [u8]>,
+    ) -> Vec<String> {
         let listener = TcpListener::bind("127.0.0.1:0").expect("loopback listener");
         let address = listener.local_addr().expect("listener address");
         let count = requests.len();
         let server = thread::spawn(move || {
             let mut faucet = faucet;
             for connection in listener.incoming().take(count) {
-                serve_connection(&mut connection.expect("test connection"), &mut faucet)
-                    .expect("serve response");
+                serve_connection(
+                    &mut connection.expect("test connection"),
+                    &mut faucet,
+                    setup_svg,
+                )
+                .expect("serve response");
             }
         });
         let responses = requests
@@ -418,6 +510,34 @@ mod tests {
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(responses[1].contains("\"deduplicated\":true"));
+    }
+
+    #[test]
+    fn discovery_page_is_responsive_and_has_no_personal_tailnet_identity() {
+        let (faucet, _) = faucet();
+        let response = exchange(faucet, &[&request("GET", "/", None, b"")]).remove(0);
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        assert!(response.contains("Content-Type: text/html; charset=utf-8"));
+        assert!(response.contains("Undeployed realm"));
+        assert!(response.contains("fixed 50,000 NIGHT grant"));
+        assert!(response.contains("/setup.svg"));
+        assert!(response.contains("location.origin"));
+        assert!(!response.contains(".ts.net"));
+    }
+
+    #[test]
+    fn setup_qr_is_available_only_when_supplied_by_the_owner_lifecycle() {
+        const SVG: &[u8] = b"<svg>fixture</svg>";
+        let request = request("GET", "/setup.svg", None, b"");
+        let (configured_faucet, _) = faucet();
+        let response = exchange_with_setup(configured_faucet, &[&request], Some(SVG)).remove(0);
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        assert!(response.contains("Content-Type: image/svg+xml"));
+        assert!(response.ends_with("<svg>fixture</svg>"));
+
+        let (plain_faucet, _) = faucet();
+        let missing = exchange(plain_faucet, &[&request]).remove(0);
+        assert!(missing.starts_with("HTTP/1.1 404 Not Found"));
     }
 
     #[test]
@@ -482,11 +602,11 @@ mod tests {
     fn public_server_rejects_non_loopback_binding() {
         let (mut faucet, _) = faucet();
         assert!(matches!(
-            run_loopback_http(&mut faucet, "0.0.0.0:36301"),
+            run_loopback_http(&mut faucet, "0.0.0.0:36301", None),
             Err(HttpServerError::NonLoopbackAddress)
         ));
         assert!(matches!(
-            run_loopback_http(&mut faucet, "not-an-address"),
+            run_loopback_http(&mut faucet, "not-an-address", None),
             Err(HttpServerError::InvalidAddress)
         ));
     }
