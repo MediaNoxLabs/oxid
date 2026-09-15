@@ -5,6 +5,7 @@ import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/prom
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -85,6 +86,20 @@ process.exit(2);
   }
   assert.deepEqual(JSON.parse(await readFile(serveState, "utf8")), baseline);
   await assert.rejects(readFile(path.join(fixture, "target/standalone-faucet-tailnet/receipt.json")));
+
+  const zombieStart = spawnSync(lifecycle, ["start"], { env, encoding: "utf8", timeout: 30_000 });
+  assert.equal(zombieStart.status, 0, zombieStart.stderr);
+  const receiptPath = path.join(fixture, "target/standalone-faucet-tailnet/receipt.json");
+  const zombieReceipt = JSON.parse(await readFile(receiptPath, "utf8"));
+  process.kill(zombieReceipt.faucet.pid, "SIGTERM");
+  await delay(100);
+  zombieReceipt.faucet.pid = process.pid;
+  await writeFile(receiptPath, JSON.stringify(zombieReceipt), { mode: 0o600 });
+  await executable(path.join(fakeBin, "ps"), "#!/bin/sh\nprintf 'Z\\n'\n");
+  const zombieStop = spawnSync(lifecycle, ["stop"], { env, encoding: "utf8", timeout: 30_000 });
+  assert.equal(zombieStop.status, 0, zombieStop.stderr);
+  assert.deepEqual(JSON.parse(await readFile(serveState, "utf8")), baseline);
+  await assert.rejects(readFile(receiptPath));
 
   await executable(path.join(fakeBin, "qrencode"), "#!/bin/sh\nexit 1\n");
   const failedStart = spawnSync(lifecycle, ["start"], { env, encoding: "utf8", timeout: 10_000 });
@@ -225,6 +240,10 @@ test("mobile Tailnet route preparation is receipt-scoped and has no committed en
   assert.match(routes, /tailscale status --json/u);
   assert.match(routes, /tailscale serve status --json/u);
   assert.match(routes, /seq 12000 12999/u);
+  assert.ok(
+    routes.indexOf("trap 'cleanup_start $?' EXIT") < routes.indexOf('umask 077; mkdir -p "$state"'),
+    "startup cleanup must be armed before route state becomes visible",
+  );
   assert.match(routes, /http:\/\/127\.0\.0\.1:8088/u);
   assert.match(routes, /http:\/\/127\.0\.0\.1:9944/u);
   assert.match(routes, /http:\/\/127\.0\.0\.1:6300/u);

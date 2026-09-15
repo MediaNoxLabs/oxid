@@ -155,7 +155,7 @@ stop)
   [ "$active" = "$(jq -r '.active' "$receipt")" ] || fail serve-drift
   pid="$(jq -r '.faucet.pid' "$receipt")"; command_sha="$(jq -r '.faucet.commandSha256' "$receipt")"
   process_alive=0
-  if kill -0 "$pid" 2>/dev/null; then
+  if ! process_has_exited "$pid"; then
     process_matches "$pid" "$command_sha" || fail faucet-process
     process_alive=1
   fi

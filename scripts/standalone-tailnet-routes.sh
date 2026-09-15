@@ -88,6 +88,22 @@ load_receipt() {
   ' "$receipt" >/dev/null
 }
 
+cleanup_start() {
+  local status="$1"
+  trap - EXIT INT TERM HUP
+  if [ -d "$state" ] && [ ! -L "$state" ]; then
+    if load_receipt; then
+      "$root/scripts/standalone-tailnet-routes.sh" stop >/dev/null 2>&1 || true
+    else
+      # No route changes before a complete initial receipt exists. Remove only
+      # the exact private files and directory created by this start attempt.
+      rm -f -- "$receipt" "$receipt_next"
+      rmdir -- "$state" 2>/dev/null || true
+    fi
+  fi
+  exit "$status"
+}
+
 case "$mode" in
 start)
   [ ! -e "$state" ] && [ ! -L "$state" ] || fail session-exists
@@ -104,22 +120,16 @@ start)
     fi
   done
   [ "${#ports[@]}" -eq 3 ] || fail route-unavailable
+  trap 'cleanup_start $?' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
   umask 077; mkdir -p "$state"; chmod 700 "$state"
   targets=(http://127.0.0.1:8088 http://127.0.0.1:9944 http://127.0.0.1:6300)
   jq -cn --arg baseline "$baseline" --arg dns "$dns" \
     --argjson routes "$(jq -cn --argjson indexer "${ports[0]}" --argjson node "${ports[1]}" --argjson proof "${ports[2]}" '[{name:"indexer",port:$indexer,target:"http://127.0.0.1:8088"},{name:"node",port:$node,target:"http://127.0.0.1:9944"},{name:"proof",port:$proof,target:"http://127.0.0.1:6300"}]')" \
     '{schema:"oxid-standalone-tailnet-routes-v1",realm:"undeployed",fingerprint:"undeployed",baseline:$baseline,active:$baseline,dnsName:$dns,routes:$routes,configured:0,pending:null,removing:null,states:[$baseline]}' >"$receipt"
   chmod 600 "$receipt"
-  cleanup_start() {
-    local status="$1"
-    trap - EXIT INT TERM HUP
-    "$root/scripts/standalone-tailnet-routes.sh" stop >/dev/null 2>&1 || true
-    exit "$status"
-  }
-  trap 'cleanup_start $?' EXIT
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
-  trap 'exit 129' HUP
   for index in 0 1 2; do
     previous="$(jq -r '.active' "$receipt")"
     mark_pending "$index" || fail receipt-write
