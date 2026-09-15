@@ -18,6 +18,9 @@ if [ "$(uname -s)" != "Darwin" ]; then
 fi
 
 required_commands=(jq node)
+if [ "${OXID_STANDALONE_NETWORK_PROFILE:-simulated}" = "tailnet" ]; then
+  required_commands+=(tailscale)
+fi
 if [ "$operation" != "deploy" ]; then
   required_commands+=(nix rustup)
 fi
@@ -90,8 +93,29 @@ case "$standalone_network_profile" in
     fi
     mobile_features="$mobile_features,standalone-local"
     ;;
+  tailnet)
+    if [ "$mobile_custody" != "development" ]; then
+      echo "OXID_STANDALONE_NETWORK_PROFILE=tailnet requires development custody." >&2
+      exit 1
+    fi
+    "$repository_root/scripts/standalone-tailnet-routes.sh" status >/dev/null
+    tailnet_receipt="$repository_root/target/standalone-tailnet-routes/receipt.json"
+    tailnet_dns_name="$(jq -r '.dnsName' "$tailnet_receipt")"
+    indexer_port="$(jq -r '.routes[] | select(.name == "indexer") | .port' "$tailnet_receipt")"
+    node_port="$(jq -r '.routes[] | select(.name == "node") | .port' "$tailnet_receipt")"
+    proof_port="$(jq -r '.routes[] | select(.name == "proof") | .port' "$tailnet_receipt")"
+    OXID_TAILNET_ORIGIN_POLICY_INPUT="$tailnet_dns_name" node "$repository_root/scripts/e2e/tailnet-origin-policy.mjs" --host-env >/dev/null || {
+      echo "The receipt does not contain a canonical MagicDNS identity." >&2
+      exit 1
+    }
+    export OXID_BUILD_MIDNIGHT_INDEXER_WS_URL="wss://$tailnet_dns_name:$indexer_port/api/v4/graphql/ws"
+    export OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL="https://$tailnet_dns_name:$indexer_port/api/v4/graphql"
+    export OXID_BUILD_MIDNIGHT_NODE_WS_URL="wss://$tailnet_dns_name:$node_port"
+    export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$tailnet_dns_name:$proof_port"
+    mobile_features="$mobile_features,standalone-tailnet"
+    ;;
   *)
-    echo "OXID_STANDALONE_NETWORK_PROFILE must be 'simulated' or 'local' for iOS Simulator." >&2
+    echo "OXID_STANDALONE_NETWORK_PROFILE must be 'simulated', 'local', or 'tailnet' for iOS Simulator." >&2
     exit 1
     ;;
 esac
