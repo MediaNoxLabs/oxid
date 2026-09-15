@@ -10,12 +10,14 @@ publish = false
 
 [dependencies]
 getrandom.workspace = true
-oxid-adapter-mobile-native.workspace = true
 oxid-foundation.workspace = true
 oxid-platform-ports.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sysinfo.workspace = true
+
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
+oxid-adapter-mobile-native.workspace = true
 
 [lints]
 workspace = true

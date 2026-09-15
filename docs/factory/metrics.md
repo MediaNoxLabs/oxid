@@ -157,6 +157,38 @@ private identifiers, commands/output, and provider cost/account details are
 forbidden. Owner-private raw records are retained for 90 days; deletion is an
 explicit maintenance task, never an audit side effect.
 
+## Composition-boundary measurement — 2026-09-15, issue #535
+
+Local Apple development host, warm Cargo registry, with a fresh external target
+for the first check and the same target for the warm check. The primary
+application target is `oxid-app`; the dependency inspection uses normal edges.
+
+| Target | Before | After |
+| --- | --- | --- |
+| `cargo check -p oxid-headless` (fresh target) | 59.37 s | 31.25 s* |
+| `cargo check -p oxid-headless` (warm target) | 0.70 s | 0.73 s* |
+| `cargo tree -p oxid-headless --edges normal` unique entries | 465 | 452 |
+| `cargo tree -p oxid-headless` mobile-native adapters | `backup-document-mobile`, `storage-mobile`, `mobile-native` | none |
+| `cargo tree -p oxid-app --edges normal` unique entries (desktop host) | 615 | 603 |
+| `cargo tree -p oxid-app` direct dependencies | 17 | 17 |
+
+The before tree included `oxid-adapter-backup-document-mobile` and
+`oxid-adapter-storage-mobile`, each reaching `oxid-adapter-mobile-native`.
+The final after tree contains none of those adapters. The change moves the
+direct composition dependencies and their two platform-adapter declarations
+into existing iOS/Android target boundaries; desktop/mobile source behavior and
+all feature authority remain unchanged.
+
+Unique-entry counts normalize Cargo's repeated `(*)` markers after requesting
+normal dependency edges. The desktop-host application cone becomes narrower
+because Cargo does not resolve the native adapters there; iOS/Android continue
+to select them through the target table.
+
+\* The timed after pass preceded the final manifest-only identity-ingress edge
+removal. The final complete `cargo test -p oxid-headless`, architecture check,
+and adapter-absence tree assertion passed; no additional clean timing run was
+made.
+
 ## Historical baselines — 2026-08-18, `develop` @ `ade6416`
 
 Local, Apple M2 Max (12 cores), warm cargo registry, fresh worktree target:
