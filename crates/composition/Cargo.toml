@@ -56,7 +56,6 @@ oxid-adapter-backup-complete.workspace = true
 oxid-adapter-backup-portable.workspace = true
 oxid-adapter-custody-software.workspace = true
 oxid-adapter-did-midnight.workspace = true
-oxid-adapter-backup-document-mobile.workspace = true
 oxid-adapter-diagnostics-memory.workspace = true
 oxid-adapter-deployment-profile.workspace = true
 oxid-adapter-identity-ingress.workspace = true
@@ -70,7 +69,6 @@ oxid-adapter-siopv2.workspace = true
 oxid-adapter-platform-system.workspace = true
 oxid-adapter-storage-json.workspace = true
 oxid-adapter-storage-memory.workspace = true
-oxid-adapter-storage-mobile.workspace = true
 oxid-adapter-storage-dev.workspace = true
 oxid-adapter-storage-identity-json.workspace = true
 oxid-adapter-vc-midnight.workspace = true
@@ -84,6 +82,12 @@ oxid-protocol-application.workspace = true
 oxid-wallet-application.workspace = true
 oxid-capabilities-application.workspace = true
 tokio.workspace = true
+
+# Native device adapters are available only to iOS/Android composition paths.
+# Non-mobile roots therefore do not resolve their dependency closure.
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
+oxid-adapter-backup-document-mobile.workspace = true
+oxid-adapter-storage-mobile.workspace = true
 
 [dev-dependencies]
 futures.workspace = true

@@ -36,7 +36,6 @@ tailnet-test-offer-trigger = [
 ]
 
 [dependencies]
-oxid-adapter-mobile-native.workspace = true
 oxid-platform-ports.workspace = true
 oxid-protocol-application.workspace = true
 reqwest = { workspace = true, optional = true }
@@ -47,6 +46,9 @@ tokio.workspace = true
 url.workspace = true
 webpki-root-certs = { workspace = true, optional = true }
 zeroize = { workspace = true, optional = true }
+
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
+oxid-adapter-mobile-native.workspace = true
 
 [lints]
 workspace = true
