@@ -75,13 +75,17 @@ diagnostic, not public-network or production acceptance. It records freshness
 states rather than a balance assertion because the public-genesis development
 state is mutable.
 
-`standalone-two-wallet-night-and-dust` is the first headless phase of the
-two-actor wallet demo. A separate compile- and runtime-gated localhost faucet
-gives each fresh isolated wallet one fixed NIGHT grant. Each wallet then
-explicitly registers and must observe positive DUST within ten minutes. See
-[`standalone-headless-faucet.md`](standalone-headless-faucet.md). The scenario
-does not yet claim wallet-to-wallet transfer, Tailnet, PreProd, QR, browser,
-shielded funding, UI, simulator, or physical-device behavior.
+`standalone-two-wallet-night-and-dust` is the localhost/headless two-actor
+wallet round trip. A separate compile- and runtime-gated localhost faucet gives
+each fresh isolated wallet one fixed NIGHT grant, then each wallet explicitly
+registers and observes positive DUST within ten minutes. A → B imports B's
+versioned NIGHT receive request; B → A validates A's raw Bech32m fallback.
+Both included transfers reconcile as confirmed incoming/outgoing history and
+their included submission journals remain readable. Process-local development
+custody deliberately does not make a restart or recovery claim. See
+[`standalone-headless-faucet.md`](standalone-headless-faucet.md).
+The scenario does not claim Tailnet, PreProd, QR/browser presentation, shielded
+funding, UI, simulator, or physical-device behavior.
 
 `standalone-two-wallet-http-funding` qualifies the same grant policy through a
 real loopback HTTP/1.1 listener. It starts the listener on an ephemeral local

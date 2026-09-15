@@ -77,6 +77,13 @@ fn reports_ready_and_queued_capabilities() {
             && capability["submissionReady"] == false
     }));
     assert!(methods.iter().any(|capability| {
+        capability["method"] == "wallet.receive_request.import"
+            && capability["status"] == "ready"
+            && capability["network"] == "active_undeployed"
+            && capability["asset"] == "NIGHT"
+            && capability["formats"] == json!(["midnight-receive:v1", "raw_bech32m"])
+    }));
+    assert!(methods.iter().any(|capability| {
         capability["method"] == "did.resolve"
             && capability["status"] == "ready"
             && capability["sources"] == json!(["standalone", "live"])
