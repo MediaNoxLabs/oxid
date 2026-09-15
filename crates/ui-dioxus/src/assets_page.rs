@@ -358,6 +358,7 @@ pub(super) fn AssetsPage(
                     ) {
                         SendTransferPanel {
                             profile_id: active_profile.id.clone(),
+                            active_network_id: account.network_id.clone(),
                             unshielded_receive_address: unshielded.value.clone(),
                             shielded_receive_address: shielded.value.clone(),
                             night_balance: balance_for(&account, "NIGHT").cloned(),
