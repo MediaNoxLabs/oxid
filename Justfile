@@ -177,6 +177,12 @@ standalone-public-balances:
 standalone-funded-finality:
     ./scripts/test-standalone-funded-finality.sh
 
+standalone-faucet:
+    ./scripts/run-standalone-faucet.sh
+
+standalone-faucet-headless-e2e:
+    ./scripts/e2e/standalone-faucet-headless-e2e.sh
+
 standalone-funded-shielded-finality:
     ./scripts/test-standalone-funded-shielded-finality.sh
 

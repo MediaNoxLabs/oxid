@@ -47,6 +47,17 @@ test("standalone status is read-only and checks local plus Tailnet readiness", a
   assert.doesNotMatch(status, /\b(up|down|start|stop|reset|rm)\b/);
 });
 
+test("standalone shutdown survives target-directory cleanup", async () => {
+  const shutdown = await text("scripts/standalone-down.sh");
+  assert.match(shutdown, /compose_environment_file="\$environment_file"/);
+  assert.match(shutdown, /compose_environment_file=\/dev\/null/);
+  assert.match(shutdown, /OXID_STANDALONE_ENV_FILE="\$compose_environment_file"/);
+  assert.match(
+    shutdown,
+    /docker compose -p oxid-standalone -f "\$compose_file" down --remove-orphans/,
+  );
+});
+
 test("operator runbook separates abstract OpenID roles from Midnight transport", async () => {
   const [runbook, runner, mainReadme, factoryIndex] = await Promise.all([
     text("demo/README.md"),

@@ -18,10 +18,16 @@ if [ -f "$serve_marker" ]; then
   rm -f "$serve_marker"
 fi
 
-if [ -f "$environment_file" ]; then
-  export OXID_STANDALONE_ENV_FILE="$environment_file"
-  docker compose -p oxid-standalone -f "$compose_file" down
+# `cargo clean` removes target/standalone while Docker can still retain the
+# exact named project. Compose needs a readable env-file merely to parse the
+# topology during `down`, so use an empty file when the generated secrets have
+# already been removed. The explicit command remains scoped to oxid-standalone.
+compose_environment_file="$environment_file"
+if [ ! -f "$compose_environment_file" ]; then
+  compose_environment_file=/dev/null
 fi
+export OXID_STANDALONE_ENV_FILE="$compose_environment_file"
+docker compose -p oxid-standalone -f "$compose_file" down --remove-orphans
 
 echo "Oxid standalone services and owned Tailscale Serve routes are stopped."
 echo "Generated development indexer configuration remains under target/standalone."

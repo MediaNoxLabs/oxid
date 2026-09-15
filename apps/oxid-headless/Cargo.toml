@@ -8,6 +8,19 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = []
+standalone-faucet = ["oxid-composition/standalone-development"]
+
+[[bin]]
+name = "oxid-headless"
+path = "src/main.rs"
+
+[[bin]]
+name = "oxid-standalone-faucet"
+path = "src/faucet_main.rs"
+required-features = ["standalone-faucet"]
+
 [dependencies]
 futures.workspace = true
 oxid-capabilities-application.workspace = true

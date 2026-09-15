@@ -12,6 +12,12 @@
 mod accounts;
 mod dids;
 mod errors;
+#[cfg(feature = "standalone-faucet")]
+mod faucet;
+#[cfg(feature = "standalone-faucet")]
+mod faucet_application;
+#[cfg(feature = "standalone-faucet")]
+mod faucet_errors;
 mod identity_protocols;
 mod midnight_wallet;
 mod parameters;
@@ -22,6 +28,10 @@ mod security;
 mod system;
 mod wallet_profiles;
 
+#[cfg(feature = "standalone-faucet")]
+pub use faucet::StandaloneFaucet;
+#[cfg(feature = "standalone-faucet")]
+pub use faucet_errors::{FaucetIoError, FaucetStartupError};
 pub use protocol::HeadlessIoError;
 
 use std::{io::BufRead, io::Write};
