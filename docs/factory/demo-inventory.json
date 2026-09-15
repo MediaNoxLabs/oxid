@@ -67,6 +67,7 @@
     {"id": "standalone-faucet-run","phase": "run","command": "just standalone-faucet","reference": "docs/factory/standalone-headless-faucet.md","expectedOutcome": "A compile- and runtime-gated localhost process accepts only health, fixed NIGHT grants, and graceful shutdown over its narrow NDJSON protocol."},
     {"id": "standalone-faucet-http-run","phase": "run","command": "just standalone-faucet-http","reference": "docs/factory/standalone-headless-faucet.md","expectedOutcome": "A compile- and runtime-gated loopback listener exposes only bounded HTTP health and fixed NIGHT funding through the existing faucet dispatcher."},
     {"id": "standalone-faucet-headless-e2e","phase": "run","command": "just standalone-faucet-headless-e2e","environment": {"OXID_ENABLE_LIVE_STANDALONE_FAUCET_E2E": "1"},"reference": "docs/factory/standalone-headless-faucet.md","expectedOutcome": "Two fresh isolated headless wallets each observe a finalized fixed NIGHT grant, explicitly register for DUST, and observe positive DUST within ten minutes."},
+    {"id": "standalone-night-round-trip-headless-e2e","phase": "run","command": "just standalone-night-round-trip-headless-e2e","environment": {"OXID_ENABLE_LIVE_STANDALONE_FAUCET_E2E": "1"},"reference": "docs/factory/standalone-headless-faucet.md","expectedOutcome": "Two fresh isolated headless wallets receive fixed NIGHT, establish DUST readiness, make versioned-request and raw-address unshielded NIGHT transfers in opposite directions, and reconcile final balances, indexed history, and included submission journals."},
     {"id": "standalone-faucet-http-headless-e2e","phase": "run","command": "just standalone-faucet-http-headless-e2e","environment": {"OXID_ENABLE_LIVE_STANDALONE_FAUCET_E2E": "1"},"reference": "docs/factory/standalone-headless-faucet.md","expectedOutcome": "Two fresh isolated headless wallets each observe exactly one finalized fixed NIGHT grant delivered through the loopback HTTP boundary."},
     {"id": "standalone-faucet-tailnet-start","phase": "preparation","command": "just standalone-faucet-tailnet-start","reference": "docs/factory/standalone-headless-faucet.md","expectedOutcome": "An owner-invoked receipt records one conflict-free Tailnet HTTPS route for the existing loopback faucet and preserves all unrelated Serve configuration."},
     {"id": "standalone-faucet-tailnet-status","phase": "status","command": "just standalone-faucet-tailnet-status","reference": "docs/factory/standalone-headless-faucet.md","expectedOutcome": "The receipt-proven local process and complete private Serve configuration remain ready without disclosing a peer or endpoint."},
@@ -123,7 +124,8 @@
     {"id": "bootstrap-managed-holder-did-for-test-issuer","outcome": "A physical Android development lane can create a managed undeployed holder DID and, by an explicit action, share only its public DID Resolution Result with the receipt-scoped test issuer for holder-proof verification.","sourceReferences": ["docs/adr/0037-manage-standalone-midnight-dids-with-opaque-custody.md","docs/adr/0103-compose-portal-final-for-physical-android.md","crates/ui-dioxus/src/dids.rs","docs/factory/portal-android-tailnet-physical.md"],"scenarioIds": ["portal-final-issuance-physical-tailnet"]},
     {"id": "issue-and-protect-portal-digital-passport", "outcome": "After explicit offer review and consent, a managed holder authenticates and separately binds a Digital Passport that Oxid verifies, encrypts, lists after restart, and freshly reverifies without exposing protocol secrets.", "sourceReferences": ["docs/adr/0039-accept-pre-authorized-openid4vci-offers.md", "docs/adr/0102-admit-pinned-portal-final-in-headless-development.md", "docs/adr/0103-compose-portal-final-for-physical-android.md", "docs/factory/portal-macos-laptop.md", "docs/factory/portal-mobile-simulators.md", "docs/factory/portal-android-tailnet-physical.md"], "scenarioIds": ["portal-final-issuance-localhost", "portal-final-issuance-virtual-mobile", "portal-final-issuance-physical-tailnet"]},
     {"id": "fund-fresh-standalone-wallets-with-night", "outcome": "A development-only localhost authority grants exactly 50,000 NIGHT to each fresh isolated wallet through bounded address-only process or loopback HTTP protocols and the existing finalized transaction lifecycle.", "sourceReferences": ["docs/adr/0111-isolate-fixed-standalone-night-funding.md", "docs/adr/0112-bound-standalone-funding-to-loopback-http.md", "docs/adr/0113-expose-fixed-standalone-funding-through-tailnet-discovery.md", "apps/oxid-headless/src/faucet.rs", "apps/oxid-headless/src/faucet_http.rs", "docs/factory/standalone-headless-faucet.md"], "scenarioIds": ["standalone-two-wallet-night-and-dust", "standalone-two-wallet-http-funding", "standalone-tailnet-https-funding"]},
-    {"id": "register-funded-wallets-for-dust", "outcome": "Each funded wallet explicitly authorizes DUST registration and observes positive generated DUST within ten minutes without any shielded funding claim.", "sourceReferences": ["docs/adr/0100-register-protected-dust-keys-before-fresh-wallet-submission.md", "apps/oxid-headless/tests/standalone_faucet_live.rs", "docs/factory/standalone-headless-faucet.md"], "scenarioIds": ["standalone-two-wallet-night-and-dust"]}
+    {"id": "register-funded-wallets-for-dust", "outcome": "Each funded wallet explicitly authorizes DUST registration and observes positive generated DUST within ten minutes without any shielded funding claim.", "sourceReferences": ["docs/adr/0100-register-protected-dust-keys-before-fresh-wallet-submission.md", "apps/oxid-headless/tests/standalone_faucet_live.rs", "docs/factory/standalone-headless-faucet.md"], "scenarioIds": ["standalone-two-wallet-night-and-dust"]},
+    {"id": "round-trip-funded-standalone-night", "outcome": "Two isolated funded wallets validate a versioned NIGHT receive request in one direction and a raw active-realm Bech32m fallback in the other, then reconcile included transfers as confirmed incoming and outgoing activity.", "sourceReferences": ["crates/wallet/application/src/chain.rs", "apps/oxid-headless/src/midnight_wallet.rs", "apps/oxid-headless/tests/standalone_faucet_live.rs", "docs/factory/standalone-headless-faucet.md"], "scenarioIds": ["standalone-two-wallet-night-and-dust"]}
   ],
   "scenarios": [
     {
@@ -283,11 +285,11 @@
       "title": "Fund two fresh standalone wallets and establish DUST readiness",
       "productId": "oxid-wallet",
       "defaultTargetId": "headless-development",
-      "orderedUseCaseIds": ["fund-fresh-standalone-wallets-with-night", "register-funded-wallets-for-dust"],
+      "orderedUseCaseIds": ["fund-fresh-standalone-wallets-with-night", "register-funded-wallets-for-dust", "round-trip-funded-standalone-night"],
       "targetPlans": [
         {
           "targetId": "headless-development", "status": "supported", "evidenceClass": "acceptance", "dependencyIds": ["standalone-local-stack"],
-          "commandIds": {"preparation": ["standalone-local-up"], "build": [], "deploy": [], "run": ["standalone-faucet-headless-e2e"], "status": ["standalone-local-status"], "cleanup": ["standalone-stack-cleanup"]},
+          "commandIds": {"preparation": ["standalone-local-up"], "build": [], "deploy": [], "run": ["standalone-night-round-trip-headless-e2e"], "status": ["standalone-local-status"], "cleanup": ["standalone-stack-cleanup"]},
           "healthCheckIds": ["standalone-local-ready"], "note": "The ignored owner-authorized run uses two OS-random headless wallet roots and the fixed public genesis authority on localhost. It emits no address, root, path, or transaction material and does not claim Tailnet, PreProd, shielded, UI, simulator, or device behavior."
         }
       ],
@@ -298,16 +300,17 @@
       ],
       "expectedOutcomes": [
         "Both fresh wallets observe exactly 50,000 NIGHT from exactly one finalized grant each.",
-        "Both wallets explicitly register and observe positive generated DUST within ten minutes.",
-        "The result is localhost headless development acceptance only; it establishes no transfer-between-wallets, shielded, Tailnet, PreProd, UI, simulator, physical-device, release, or production claim."
+        "Both wallets explicitly register and observe positive generated DUST within ten minutes, separately from NIGHT finality.",
+        "A → B uses a strict versioned NIGHT receive request and B → A uses a validated raw active-realm Bech32m address; both transfers reconcile as confirmed incoming/outgoing activity.",
+        "The result is localhost headless development acceptance only; it establishes no shielded, Tailnet, PreProd, UI, simulator, physical-device, release, or production claim."
       ],
       "evidenceClass": "acceptance",
       "cadence": "on-demand",
       "testMapping": {
         "status": "automated",
-        "automated": ["apps/oxid-headless/src/faucet_tests.rs", "apps/oxid-headless/tests/standalone_faucet_live.rs::two_fresh_wallets_receive_fixed_night_and_generate_dust"],
+        "automated": ["apps/oxid-headless/src/faucet_tests.rs", "apps/oxid-headless/tests/standalone_faucet_live.rs::two_fresh_wallets_complete_a_night_round_trip_and_reconcile_history"],
         "manual": "The operator authorizes the ignored live run and owns only the standalone stack lifecycle; no phone or rendered interaction is needed.",
-        "planned": "Wallet-to-wallet NIGHT transfer and history compose the next phase of epic #537. Tailnet, PreProd, QR, browser, and Android remain later phases."
+        "planned": "Tailnet, PreProd, QR/browser presentation, and Android remain later phases; the next transport slice must reuse this same wallet/funding/finality/history scenario."
       }
     },
     {

@@ -25,6 +25,7 @@
     "wallet.address.shielded",
     "wallet.balance.snapshot",
     "wallet.transaction.history",
+    "wallet.receive_request.import",
     "wallet.transaction.prepare_unshielded",
     "wallet.transaction.prepare_shielded",
     "wallet.transaction.authorize_unshielded",

@@ -353,6 +353,11 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
         CapabilityView::new("wallet.transaction.history", "ready")
             .text("mode", "standalone")
             .texts("sources", &["simulated", "live", "cached"]),
+        CapabilityView::new("wallet.receive_request.import", "ready")
+            .text("mode", "development_only")
+            .text("network", "active_undeployed")
+            .text("asset", "NIGHT")
+            .texts("formats", &["midnight-receive:v1", "raw_bech32m"]),
         CapabilityView::new("wallet.transaction.prepare_unshielded", "ready")
             .text("mode", "development_only")
             .boolean("submissionReady", false),

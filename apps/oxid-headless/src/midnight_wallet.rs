@@ -27,9 +27,9 @@ use crate::{
         transaction_port_error,
     },
     parameters::{
-        AuthorizeDustRegistrationParams, AuthorizeTransferParams, PrepareShieldedTransferParams,
-        PrepareTransferParams, SubmitTransferParams, TransactionDraftParams,
-        dust_registration_draft_params,
+        AuthorizeDustRegistrationParams, AuthorizeTransferParams, ImportReceiveRequestParams,
+        PrepareShieldedTransferParams, PrepareTransferParams, SubmitTransferParams,
+        TransactionDraftParams, dust_registration_draft_params,
     },
     projections::{
         account_value, address_value, balance_value, dust_registration_preview_value,
@@ -625,6 +625,62 @@ impl HeadlessWallet {
                 "transactions": account.transactions.iter().map(transaction_value).collect::<Vec<_>>()
             })
         })
+    }
+
+    pub(super) fn import_receive_request(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<ImportReceiveRequestParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.receive_request.import requires only a string receiveRequest",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        let account = match self
+            .application
+            .get_wallet_account()
+            .execute(WalletAccountQuery { profile_id })
+        {
+            Ok(account) => account,
+            Err(error) => return Dispatch::continue_with(account_error(request.id, error)),
+        };
+        let format = if params.receive_request.starts_with("midnight-receive:") {
+            "versioned"
+        } else {
+            "raw"
+        };
+        match oxid_wallet_application::import_midnight_night_receive_request(
+            &account.network_id,
+            &params.receive_request,
+        ) {
+            Ok(address) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({"recipient": {
+                    "address": address.value(),
+                    "format": format,
+                    "networkId": account.network_id,
+                    "asset": "NIGHT"
+                }}),
+            )),
+            Err(error) => {
+                let code = match error {
+                    oxid_wallet_application::MidnightReceiveRequestError::UnsupportedNetwork => {
+                        "unsupported_network"
+                    }
+                    oxid_wallet_application::MidnightReceiveRequestError::UnsupportedAsset => {
+                        "unsupported_asset"
+                    }
+                    _ => "invalid_recipient",
+                };
+                Dispatch::continue_with(Response::error(request.id, code, error.to_string()))
+            }
+        }
     }
 
     pub(super) fn prepare_unshielded(&self, request: Request) -> Dispatch {
