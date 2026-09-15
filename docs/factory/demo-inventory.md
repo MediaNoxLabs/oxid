@@ -81,6 +81,12 @@ explicitly registers and must observe positive DUST within ten minutes. See
 does not yet claim wallet-to-wallet transfer, Tailnet, PreProd, QR, browser,
 shielded funding, UI, simulator, or physical-device behavior.
 
+`standalone-two-wallet-http-funding` qualifies the same grant policy through a
+real loopback HTTP/1.1 listener. It starts the listener on an ephemeral local
+port, funds two new isolated headless wallets, and requires each authoritative
+balance to equal exactly 50,000 NIGHT. This remains headless localhost evidence;
+Tailnet routing and responsive discovery presentation belong to issue #540.
+
 ## Development proof and local diagnostics slice
 
 `development-proof-benchmark-desktop` is an on-demand desktop diagnostic that

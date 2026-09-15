@@ -21,6 +21,11 @@ name = "oxid-standalone-faucet"
 path = "src/faucet_main.rs"
 required-features = ["standalone-faucet"]
 
+[[bin]]
+name = "oxid-standalone-faucet-http"
+path = "src/faucet_http_main.rs"
+required-features = ["standalone-faucet"]
+
 [dependencies]
 futures.workspace = true
 oxid-capabilities-application.workspace = true

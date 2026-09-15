@@ -18,6 +18,10 @@ mod faucet;
 mod faucet_application;
 #[cfg(feature = "standalone-faucet")]
 mod faucet_errors;
+#[cfg(feature = "standalone-faucet")]
+mod faucet_http;
+#[cfg(feature = "standalone-faucet")]
+pub use faucet_http::{DEFAULT_HTTP_ADDRESS as DEFAULT_FAUCET_HTTP_ADDRESS, run_loopback_http};
 mod identity_protocols;
 mod midnight_wallet;
 mod parameters;

@@ -180,8 +180,14 @@ standalone-funded-finality:
 standalone-faucet:
     ./scripts/run-standalone-faucet.sh
 
+standalone-faucet-http:
+    ./scripts/run-standalone-faucet-http.sh
+
 standalone-faucet-headless-e2e:
     ./scripts/e2e/standalone-faucet-headless-e2e.sh
+
+standalone-faucet-http-headless-e2e:
+    ./scripts/e2e/standalone-faucet-http-headless-e2e.sh
 
 standalone-funded-shielded-finality:
     ./scripts/test-standalone-funded-shielded-finality.sh
