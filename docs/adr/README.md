@@ -135,6 +135,7 @@ ADR status and delivery state answer different questions:
 | [0109](0109-place-scan-contextually-in-the-top-app-bar.md) Place Scan contextually in the top app bar | Proposed | ADR-0086/0087; issue #349; Apple HIG, Material 3, WCAG 2.2 | Research proposes one contextual Scan action with a closed current visibility matrix and future typed extension point; implementation and unsupported QR classes remain unapproved |
 | [0110](0110-compact-submission-barriers-after-checkpoint-acknowledgement.md) Compact submission barriers after checkpoint acknowledgement | Accepted | ADR-0035/0079; issue #93 | Defines fail-closed checkpoint acknowledgement before bounded public-journal compaction; implementation pending |
 | [0111](0111-isolate-fixed-standalone-night-funding.md) Isolate fixed standalone NIGHT funding | Accepted | ADR-0098/0100; issue #538 | Separate compile- and runtime-gated headless faucet grants fixed NIGHT through existing finalized transaction ports; two-wallet DUST readiness is an on-demand localhost acceptance |
+| [0112](0112-bound-standalone-funding-to-loopback-http.md) Bound standalone funding to loopback HTTP | Accepted | ADR-0111; issue #539 | A second feature-gated binary exposes only bounded health and fixed funding on loopback while reusing the same dispatcher and receipt policy |
 
 ## Current boundaries
 
