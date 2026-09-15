@@ -18,11 +18,14 @@ test("Tailnet faucet owns one route and restores unrelated Serve state", async (
   const fixture = await mkdtemp(path.join(os.tmpdir(), "oxid-faucet-tailnet-"));
   context.after(() => rm(fixture, { recursive: true, force: true }));
   const fixtureScripts = path.join(fixture, "scripts");
+  const fixtureScriptLib = path.join(fixtureScripts, "lib");
   const fakeBin = path.join(fixture, "bin");
   await mkdir(fixtureScripts);
+  await mkdir(fixtureScriptLib);
   await mkdir(fakeBin);
   await cp(path.join(root, "scripts/standalone-faucet-tailnet.sh"), path.join(fixtureScripts, "standalone-faucet-tailnet.sh"));
   await chmod(path.join(fixtureScripts, "standalone-faucet-tailnet.sh"), 0o700);
+  await cp(path.join(root, "scripts/lib/spawn-detached.mjs"), path.join(fixtureScriptLib, "spawn-detached.mjs"));
   await executable(path.join(fixtureScripts, "standalone-status.sh"), "#!/bin/sh\nexit 0\n");
 
   const baseline = { TCP: { "2222": { TCPForward: "127.0.0.1:22" } }, Web: {} };
@@ -90,7 +93,50 @@ test("Tailnet source contract forbids broad Serve or state deletion", async () =
   assert.doesNotMatch(script, /--set-path/u);
   assert.doesNotMatch(script, /\bfunnel\b/u);
   assert.doesNotMatch(script, /rm -rf/u);
+  assert.match(script, /spawn-detached\.mjs/u);
+  assert.match(script, /env -i PATH=/u);
+  assert.match(script, /if kill -0 "\$pid"/u);
+
+  const launcher = await readFile(path.join(root, "scripts/lib/spawn-detached.mjs"), "utf8");
+  assert.match(launcher, /detached: true/u);
+  assert.match(launcher, /stdio: \["ignore", log, log\]/u);
 
   const justfile = await readFile(path.join(root, "Justfile"), "utf8");
   assert.match(justfile, /^standalone-faucet-tailnet-lifecycle-test:/mu);
+});
+
+test("mobile Tailnet route preparation is receipt-scoped and has no committed endpoint", async () => {
+  const [routes, iosRunner, androidRunner, justfile] = await Promise.all([
+    readFile(path.join(root, "scripts/standalone-tailnet-routes.sh"), "utf8"),
+    readFile(path.join(root, "scripts/run-ios-simulator.sh"), "utf8"),
+    readFile(path.join(root, "scripts/run-android-tailnet.sh"), "utf8"),
+    readFile(path.join(root, "Justfile"), "utf8"),
+  ]);
+  assert.match(routes, /oxid-standalone-tailnet-routes-v1/u);
+  assert.match(routes, /tailscale status --json/u);
+  assert.match(routes, /tailscale serve status --json/u);
+  assert.match(routes, /seq 12000 12999/u);
+  assert.match(routes, /http:\/\/127\.0\.0\.1:8088/u);
+  assert.match(routes, /http:\/\/127\.0\.0\.1:9944/u);
+  assert.match(routes, /http:\/\/127\.0\.0\.1:6300/u);
+  assert.doesNotMatch(routes, /tailscale serve reset/u);
+  assert.doesNotMatch(routes, /\bfunnel\b/u);
+  assert.doesNotMatch(routes, /rm -rf/u);
+  assert.match(routes, /oxid-standalone-faucet-tailnet-v1/u);
+  assert.match(routes, /\.baseline == \$baseline and \.active == \$active/u);
+  assert.match(iosRunner, /OXID_STANDALONE_NETWORK_PROFILE=tailnet/u);
+  assert.match(iosRunner, /standalone-tailnet-routes\.sh" status/u);
+  assert.match(iosRunner, /standalone-tailnet/u);
+  assert.match(iosRunner, /OXID_BUILD_MIDNIGHT_INDEXER_WS_URL/u);
+  assert.match(androidRunner, /standalone-tailnet-routes\/receipt\.json/u);
+  assert.match(androidRunner, /standalone-tailnet-routes\.sh" status/u);
+  assert.match(androidRunner, /OXID_BUILD_MIDNIGHT_INDEXER_WS_URL/u);
+  assert.match(justfile, /^standalone-tailnet-round-trip-start:/mu);
+  assert.match(justfile, /^ios-standalone-tailnet:/mu);
+});
+
+test("the setup QR opens the private HTTPS funding page in an ordinary phone camera", async () => {
+  const lifecycle = await readFile(path.join(root, "scripts/standalone-faucet-tailnet.sh"), "utf8");
+  assert.match(lifecycle, /payload="https:\/\/\$dns:\$port\/"/u);
+  assert.doesNotMatch(lifecycle, /payload="oxid-faucet:/u);
 });

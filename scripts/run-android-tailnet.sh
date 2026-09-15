@@ -61,21 +61,40 @@ OXID_TAILNET_ORIGIN_POLICY_INPUT="$tailnet_dns_name" node "$origin_policy" --hos
   echo "Tailscale did not report a canonical MagicDNS identity." >&2
   exit 1
 }
-serve_status="$(tailscale serve status --json)"
-jq -e '
-  .TCP["443"].HTTPS == true
-  and .TCP["8443"].HTTPS == true
-  and .TCP["10000"].HTTPS == true
-' >/dev/null <<<"$serve_status" || {
-  echo "Protected standalone Serve routes are unavailable; run just standalone-phone-up first." >&2
-  exit 1
-}
+route_receipt="$repository_root/target/standalone-tailnet-routes/receipt.json"
+if [ -f "$route_receipt" ] && [ ! -L "$route_receipt" ]; then
+  "$repository_root/scripts/standalone-tailnet-routes.sh" status >/dev/null || {
+    echo "The receipt-owned standalone Tailnet routes are unavailable." >&2
+    exit 1
+  }
+  receipt_dns_name="$(jq -r '.dnsName' "$route_receipt")"
+  [ "$receipt_dns_name" = "$tailnet_dns_name" ] || {
+    echo "The standalone Tailnet route receipt belongs to a different host identity." >&2
+    exit 1
+  }
+  indexer_port="$(jq -r '.routes[] | select(.name == "indexer") | .port' "$route_receipt")"
+  node_port="$(jq -r '.routes[] | select(.name == "node") | .port' "$route_receipt")"
+  proof_port="$(jq -r '.routes[] | select(.name == "proof") | .port' "$route_receipt")"
+else
+  serve_status="$(tailscale serve status --json)"
+  jq -e '
+    .TCP["443"].HTTPS == true
+    and .TCP["8443"].HTTPS == true
+    and .TCP["10000"].HTTPS == true
+  ' >/dev/null <<<"$serve_status" || {
+    echo "Protected standalone Serve routes are unavailable; prepare the Tailnet demo first." >&2
+    exit 1
+  }
+  indexer_port=8443
+  node_port=10000
+  proof_port=443
+fi
 
 export OXID_ANDROID_DEVICE="$device"
 export OXID_STANDALONE_NETWORK_PROFILE=tailnet
-export OXID_BUILD_MIDNIGHT_INDEXER_WS_URL="wss://$tailnet_dns_name:8443/api/v4/graphql/ws"
-export OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL="https://$tailnet_dns_name:8443/api/v4/graphql"
-export OXID_BUILD_MIDNIGHT_NODE_WS_URL="wss://$tailnet_dns_name:10000"
-export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$tailnet_dns_name"
+export OXID_BUILD_MIDNIGHT_INDEXER_WS_URL="wss://$tailnet_dns_name:$indexer_port/api/v4/graphql/ws"
+export OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL="https://$tailnet_dns_name:$indexer_port/api/v4/graphql"
+export OXID_BUILD_MIDNIGHT_NODE_WS_URL="wss://$tailnet_dns_name:$node_port"
+export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$tailnet_dns_name:$proof_port"
 
 exec "$repository_root/scripts/run-android-emulator.sh"

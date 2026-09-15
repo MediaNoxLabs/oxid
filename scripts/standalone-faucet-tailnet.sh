@@ -41,7 +41,7 @@ remove_owned_state() {
   rmdir -- "$state"
 }
 
-for command in cargo curl grep jq tailscale qrencode shasum; do command -v "$command" >/dev/null 2>&1 || fail "missing-${command}"; done
+for command in cargo curl grep jq node tailscale qrencode shasum; do command -v "$command" >/dev/null 2>&1 || fail "missing-${command}"; done
 case "$mode" in start|status|stop|accept) ;; *) fail usage ;; esac
 
 load_receipt() {
@@ -92,9 +92,10 @@ start)
   trap 'exit 143' TERM
   trap 'exit 129' HUP
   umask 077; mkdir -p "$state"; chmod 700 "$state"
-  # The QR is intentionally public only to Tailnet peers and contains no wallet,
-  # secret, personal identity, or configurable funding policy.
-  payload="oxid-faucet:v1|realm=undeployed|fingerprint=undeployed|route=https://$dns:$port"
+  # A normal phone camera can open this private Tailnet HTTPS page directly.
+  # The page itself presents the fixed realm and grant; the QR carries no
+  # wallet, recipient, key, or configurable funding policy.
+  payload="https://$dns:$port/"
   qrencode --type=SVG --output="$svg" "$payload" || fail qr
   chmod 600 "$svg"
   "$root/scripts/standalone-status.sh" local >/dev/null || fail standalone
@@ -103,10 +104,11 @@ start)
     --bin oxid-standalone-faucet-http --message-format=json-render-diagnostics 2>>"$log")" || fail faucet-build
   executable="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "oxid-standalone-faucet-http") | .executable // empty' <<<"$build_json" | tail -n 1)"
   [ -n "$executable" ] && [ -x "$executable" ] || fail faucet-binary
-  OXID_ENABLE_STANDALONE_FAUCET=1 OXID_PROFILE_STORE_PATH="$profile_store" \
+  faucet_pid="$(env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" \
+    OXID_ENABLE_STANDALONE_FAUCET=1 OXID_PROFILE_STORE_PATH="$profile_store" \
     OXID_STANDALONE_FAUCET_SETUP_SVG_PATH="$svg" \
-    "$executable" >>"$log" 2>&1 &
-  faucet_pid=$!
+    node "$root/scripts/lib/spawn-detached.mjs" "$executable" "$log")" || fail faucet-launch
+  [[ "$faucet_pid" =~ ^[0-9]+$ ]] && [ "$faucet_pid" -gt 1 ] || fail faucet-launch
   printf '%s\n' "$faucet_pid" >"$pid_file"; chmod 600 "$pid_file"
   faucet_ready=0
   for _ in $(seq 1 30); do
@@ -146,11 +148,15 @@ stop)
   # unrelated baseline routes still match the receipt before removal.
   [ "$active" = "$(jq -r '.active' "$receipt")" ] || fail serve-drift
   pid="$(jq -r '.faucet.pid' "$receipt")"; command_sha="$(jq -r '.faucet.commandSha256' "$receipt")"
-  process_matches "$pid" "$command_sha" || fail faucet-process
+  process_alive=0
+  if kill -0 "$pid" 2>/dev/null; then
+    process_matches "$pid" "$command_sha" || fail faucet-process
+    process_alive=1
+  fi
   port="$(jq -r '.port' "$receipt")"
   tailscale serve --yes --https="$port" off >/dev/null || fail serve-remove
   [ "$(canonical_serve)" = "$(jq -r '.baseline' "$receipt")" ] || fail serve-restore
-  stop_owned_process "$pid" || fail faucet-stop
+  if [ "$process_alive" -eq 1 ]; then stop_owned_process "$pid" || fail faucet-stop; fi
   remove_owned_state || fail state-cleanup
   printf '%s\n' 'standalone-faucet-tailnet: STOPPED'
   ;;
