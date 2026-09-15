@@ -19,7 +19,7 @@ fi
 
 required_commands=(jq node)
 if [ "${OXID_STANDALONE_NETWORK_PROFILE:-simulated}" = "tailnet" ]; then
-  required_commands+=(tailscale)
+  required_commands+=(shasum tailscale)
 fi
 if [ "$operation" != "deploy" ]; then
   required_commands+=(nix rustup)
@@ -83,6 +83,7 @@ case "$mobile_custody" in
 esac
 
 standalone_network_profile="${OXID_STANDALONE_NETWORK_PROFILE:-simulated}"
+tailnet_artifact_binding="none"
 case "$standalone_network_profile" in
   simulated)
     ;;
@@ -112,6 +113,14 @@ case "$standalone_network_profile" in
     export OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL="https://$tailnet_dns_name:$indexer_port/api/v4/graphql"
     export OXID_BUILD_MIDNIGHT_NODE_WS_URL="wss://$tailnet_dns_name:$node_port"
     export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$tailnet_dns_name:$proof_port"
+    tailnet_artifact_binding="$(
+      printf '%s\n' \
+        "$OXID_BUILD_MIDNIGHT_INDEXER_WS_URL" \
+        "$OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL" \
+        "$OXID_BUILD_MIDNIGHT_NODE_WS_URL" \
+        "$OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL" \
+        | shasum -a 256 | awk '{print $1}'
+    )"
     mobile_features="$mobile_features,standalone-tailnet"
     ;;
   *)
@@ -254,7 +263,7 @@ fi
 
 app_bundle="$repository_root/target/dx/oxid-app/debug/ios/OxidApp.app"
 artifact_receipt="$repository_root/target/dx/oxid-app/debug/ios/oxid-app-artifact-receipt.json"
-artifact_configuration="$mobile_features|ui=$ui_profile|custody=$mobile_custody|network=$standalone_network_profile|portal=$portal_profile|proving=$mobile_presentation_proving"
+artifact_configuration="$mobile_features|ui=$ui_profile|custody=$mobile_custody|network=$standalone_network_profile|tailnet=$tailnet_artifact_binding|portal=$portal_profile|proving=$mobile_presentation_proving"
 
 if [ "$operation" != "deploy" ]; then
   rustup target add "$rust_target"

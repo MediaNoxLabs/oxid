@@ -84,7 +84,8 @@ test("Tailnet source contract forbids broad Serve or state deletion", async () =
   assert.doesNotMatch(script, /rm -rf/u);
   assert.match(script, /spawn-detached\.mjs/u);
   assert.match(script, /env -i PATH=/u);
-  assert.match(script, /if kill -0 "\$pid"/u);
+  assert.match(script, /process_has_exited/u);
+  assert.match(script, /\[\[ "\$state" == Z\* \]\]/u);
 
   const launcher = await readFile(path.join(root, "scripts/lib/spawn-detached.mjs"), "utf8");
   assert.match(launcher, /detached: true/u);
@@ -117,9 +118,15 @@ test("mobile Tailnet route preparation is receipt-scoped and has no committed en
   assert.match(iosRunner, /standalone-tailnet-routes\.sh" status/u);
   assert.match(iosRunner, /standalone-tailnet/u);
   assert.match(iosRunner, /OXID_BUILD_MIDNIGHT_INDEXER_WS_URL/u);
+  assert.match(iosRunner, /tailnet_artifact_binding/u);
+  assert.match(iosRunner, /tailnet=\$tailnet_artifact_binding/u);
   assert.match(androidRunner, /standalone-tailnet-routes\/receipt\.json/u);
   assert.match(androidRunner, /standalone-tailnet-routes\.sh" status/u);
   assert.match(androidRunner, /OXID_BUILD_MIDNIGHT_INDEXER_WS_URL/u);
+  assert.match(androidRunner, /OXID_MOBILE_PORTAL_PROFILE:-unavailable/u);
+  const androidBuild = await readFile(path.join(root, "scripts/run-android-emulator.sh"), "utf8");
+  assert.match(androidBuild, /tailnet_artifact_binding/u);
+  assert.match(androidBuild, /tailnet=\$tailnet_artifact_binding/u);
   assert.match(justfile, /^standalone-tailnet-round-trip-start:/mu);
   assert.match(justfile, /^ios-standalone-tailnet:/mu);
 });
