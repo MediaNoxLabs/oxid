@@ -36,18 +36,21 @@ const REQUIRED_CLAUDE_FLAGS = [
   "--permission-mode",
   "--system-prompt",
 ];
+// Commander renders option entries at shallow indentation. Wrapped prose uses
+// a much deeper column; accepting arbitrary leading whitespace can mistake a
+// sentence such as "unless --tools names them" for the authoritative option.
 const HELP_FLAG_PATTERNS = Object.freeze({
-  "--print": /(?:^|\r?\n)[^\S\r\n]*--print(?=\s|=|<|\[|$)/m,
-  "--output-format": /(?:^|\r?\n)[^\S\r\n]*--output-format(?=\s|=|<|\[|$)/m,
-  "--json": /(?:^|\r?\n)[^\S\r\n]*--json(?=\s|=|<|\[|$)/m,
-  "--json-schema": /(?:^|\r?\n)[^\S\r\n]*--json-schema(?=\s|=|<|\[|$)/m,
-  "--max-budget-usd": /(?:^|\r?\n)[^\S\r\n]*--max-budget-usd(?=\s|=|<|\[|$)/m,
-  "--effort": /(?:^|\r?\n)[^\S\r\n]*(?:-[a-zA-Z0-9]+,[^\S\r\n]*)?--effort(?=\s|=|<|\[|$)/m,
-  "--safe-mode": /(?:^|\r?\n)[^\S\r\n]*--safe-mode(?=\s|=|<|\[|$)/m,
-  "--tools": /(?:^|\r?\n)[^\S\r\n]*--tools(?=\s|=|<|\[|$)/m,
-  "--no-session-persistence": /(?:^|\r?\n)[^\S\r\n]*--no-session-persistence(?=\s|=|<|\[|$)/m,
-  "--permission-mode": /(?:^|\r?\n)[^\S\r\n]*--permission-mode(?=\s|=|<|\[|$)/m,
-  "--system-prompt": /(?:^|\r?\n)[^\S\r\n]*--system-prompt(?=\s|=|<|\[|$)/m,
+  "--print": /(?:^|\r?\n)[ \t]{0,8}(?:-p,[ \t]*)?--print(?=\s|=|<|\[|$)/m,
+  "--output-format": /(?:^|\r?\n)[ \t]{0,8}--output-format(?=\s|=|<|\[|$)/m,
+  "--json": /(?:^|\r?\n)[ \t]{0,8}--json(?=\s|=|<|\[|$)/m,
+  "--json-schema": /(?:^|\r?\n)[ \t]{0,8}--json-schema(?=\s|=|<|\[|$)/m,
+  "--max-budget-usd": /(?:^|\r?\n)[ \t]{0,8}--max-budget-usd(?=\s|=|<|\[|$)/m,
+  "--effort": /(?:^|\r?\n)[ \t]{0,8}(?:-[a-zA-Z0-9]+,[ \t]*)?--effort(?=\s|=|<|\[|$)/m,
+  "--safe-mode": /(?:^|\r?\n)[ \t]{0,8}--safe-mode(?=\s|=|<|\[|$)/m,
+  "--tools": /(?:^|\r?\n)[ \t]{0,8}--tools(?=\s|=|<|\[|$)/m,
+  "--no-session-persistence": /(?:^|\r?\n)[ \t]{0,8}--no-session-persistence(?=\s|=|<|\[|$)/m,
+  "--permission-mode": /(?:^|\r?\n)[ \t]{0,8}--permission-mode(?=\s|=|<|\[|$)/m,
+  "--system-prompt": /(?:^|\r?\n)[ \t]{0,8}--system-prompt(?=\s|=|<|\[|$)/m,
 });
 
 export const CLAUDE_REVIEW_SCHEMA = {
