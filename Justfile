@@ -186,6 +186,9 @@ standalone-faucet-http:
 standalone-faucet-headless-e2e:
     ./scripts/e2e/standalone-faucet-headless-e2e.sh
 
+standalone-night-round-trip-headless-e2e:
+    ./scripts/e2e/standalone-night-round-trip-headless-e2e.sh
+
 standalone-faucet-http-headless-e2e:
     ./scripts/e2e/standalone-faucet-http-headless-e2e.sh
 

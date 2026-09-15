@@ -149,6 +149,12 @@ pub(super) struct PrepareTransferParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ImportReceiveRequestParams {
+    pub(super) receive_request: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct PrepareShieldedTransferParams {
     pub(super) recipient_address: String,
     pub(super) token_type: String,

@@ -77,6 +77,46 @@ fn derives_and_binds_a_midnight_account_without_secret_protocol_fields() {
             .as_str()
             .is_some_and(|value| value.starts_with("mn_shield-addr_undeployed1"))
     );
+    let receive_address = derived["receiveAddress"]["value"]
+        .as_str()
+        .expect("unshielded address is returned");
+    let receive_imports = execute_with_wallet(
+        &wallet,
+        &format!(
+            "{}\n{}\n{}\n{}",
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "receive-versioned",
+                "method": "wallet.receive_request.import",
+                "params": {"receiveRequest": format!("midnight-receive:v1|network=undeployed|asset=NIGHT|address={receive_address}")}
+            }),
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "receive-raw",
+                "method": "wallet.receive_request.import",
+                "params": {"receiveRequest": receive_address}
+            }),
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "receive-wrong-network",
+                "method": "wallet.receive_request.import",
+                "params": {"receiveRequest": format!("midnight-receive:v1|network=preprod|asset=NIGHT|address={receive_address}")}
+            }),
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "receive-wrong-asset",
+                "method": "wallet.receive_request.import",
+                "params": {"receiveRequest": format!("midnight-receive:v1|network=undeployed|asset=DUST|address={receive_address}")}
+            }),
+        ),
+    );
+    assert_eq!(
+        receive_imports[0]["result"]["recipient"]["format"],
+        "versioned"
+    );
+    assert_eq!(receive_imports[1]["result"]["recipient"]["format"], "raw");
+    assert_eq!(receive_imports[2]["error"]["code"], "unsupported_network");
+    assert_eq!(receive_imports[3]["error"]["code"], "unsupported_asset");
     let key_ref = derived["transactionKeyRef"]
         .as_str()
         .expect("opaque key reference is returned");
