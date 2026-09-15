@@ -23,8 +23,21 @@ status)
   printf '%s\n' 'standalone-tailnet-round-trip: READY'
   ;;
 stop)
-  "$root/scripts/standalone-faucet-tailnet.sh" stop
-  "$root/scripts/standalone-tailnet-routes.sh" stop
+  cleanup_failed=0
+  faucet_state="$root/target/standalone-faucet-tailnet"
+  routes_state="$root/target/standalone-tailnet-routes"
+  if { [ -e "$faucet_state" ] || [ -L "$faucet_state" ]; } && \
+    ! "$root/scripts/standalone-faucet-tailnet.sh" stop; then
+    cleanup_failed=1
+  fi
+  if { [ -e "$routes_state" ] || [ -L "$routes_state" ]; } && \
+    ! "$root/scripts/standalone-tailnet-routes.sh" stop; then
+    cleanup_failed=1
+  fi
+  if [ "$cleanup_failed" -ne 0 ]; then
+    printf '%s\n' 'standalone-tailnet-round-trip: FAIL phase=cleanup' >&2
+    exit 1
+  fi
   printf '%s\n' 'standalone-tailnet-round-trip: STOPPED'
   ;;
 esac

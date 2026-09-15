@@ -95,6 +95,27 @@ test("Tailnet source contract forbids broad Serve or state deletion", async () =
   assert.match(justfile, /^standalone-faucet-tailnet-lifecycle-test:/mu);
 });
 
+test("round-trip cleanup attempts both independently owned layers", async (context) => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "oxid-tailnet-cleanup-"));
+  context.after(() => rm(fixture, { recursive: true, force: true }));
+  const scripts = path.join(fixture, "scripts");
+  const calls = path.join(fixture, "calls");
+  await mkdir(scripts);
+  await mkdir(path.join(fixture, "target/standalone-faucet-tailnet"), { recursive: true });
+  await mkdir(path.join(fixture, "target/standalone-tailnet-routes"), { recursive: true });
+  await cp(path.join(root, "scripts/standalone-tailnet-round-trip.sh"), path.join(scripts, "standalone-tailnet-round-trip.sh"));
+  await chmod(path.join(scripts, "standalone-tailnet-round-trip.sh"), 0o700);
+  await executable(path.join(scripts, "standalone-faucet-tailnet.sh"), "#!/bin/sh\nprintf 'faucet\\n' >>\"$CALLS\"\nexit 1\n");
+  await executable(path.join(scripts, "standalone-tailnet-routes.sh"), "#!/bin/sh\nprintf 'routes\\n' >>\"$CALLS\"\nexit 0\n");
+
+  const result = spawnSync(path.join(scripts, "standalone-tailnet-round-trip.sh"), ["stop"], {
+    env: { ...process.env, CALLS: calls },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.deepEqual((await readFile(calls, "utf8")).trim().split("\n"), ["faucet", "routes"]);
+});
+
 test("mobile Tailnet route preparation is receipt-scoped and has no committed endpoint", async () => {
   const [routes, iosRunner, androidRunner, justfile] = await Promise.all([
     readFile(path.join(root, "scripts/standalone-tailnet-routes.sh"), "utf8"),
