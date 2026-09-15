@@ -196,6 +196,8 @@ test("mobile Tailnet route preparation is receipt-scoped and has no committed en
   assert.match(androidRunner, /standalone-tailnet-routes\.sh" status/u);
   assert.match(androidRunner, /OXID_BUILD_MIDNIGHT_INDEXER_WS_URL/u);
   assert.match(androidRunner, /OXID_MOBILE_PORTAL_PROFILE:-unavailable/u);
+  assert.match(androidRunner, /\[ "\$proof_port" -eq 443 \]/u);
+  assert.match(androidRunner, /OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https:\/\/\$tailnet_dns_name"/u);
   const androidBuild = await readFile(path.join(root, "scripts/run-android-emulator.sh"), "utf8");
   assert.match(androidBuild, /tailnet_artifact_binding/u);
   assert.match(androidBuild, /tailnet=\$tailnet_artifact_binding/u);
