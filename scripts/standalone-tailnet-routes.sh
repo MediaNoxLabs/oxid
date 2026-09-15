@@ -25,8 +25,15 @@ write_receipt_update() {
 }
 append_progress() {
   jq --arg active "$1" --argjson configured "$2" \
-    '.active = $active | .configured = $configured | .states += [$active]' \
+    '.active = $active | .configured = $configured | .states += [$active] | .pending = null' \
     "$receipt" >"$receipt_next" && write_receipt_update
+}
+mark_pending() {
+  jq --argjson pending "$1" '.pending = $pending' \
+    "$receipt" >"$receipt_next" && write_receipt_update
+}
+clear_pending() {
+  jq '.pending = null' "$receipt" >"$receipt_next" && write_receipt_update
 }
 rewind_progress() {
   jq --arg active "$1" --argjson configured "$2" \
@@ -54,6 +61,7 @@ load_receipt() {
     and (.baseline | type == "string") and (.active | type == "string")
     and (.routes | type == "array" and length == 3)
     and (.configured | type == "number" and floor == . and . >= 0 and . <= 3)
+    and ((.pending == null) or ((.pending | type) == "number" and .pending == .configured and .pending >= 0 and .pending < 3))
     and (.states | type == "array")
     and (.states | length) == (.configured + 1)
     and all(.states[]; type == "string")
@@ -82,7 +90,7 @@ start)
   targets=(http://127.0.0.1:8088 http://127.0.0.1:9944 http://127.0.0.1:6300)
   jq -cn --arg baseline "$baseline" --arg dns "$dns" \
     --argjson routes "$(jq -cn --argjson indexer "${ports[0]}" --argjson node "${ports[1]}" --argjson proof "${ports[2]}" '[{name:"indexer",port:$indexer,target:"http://127.0.0.1:8088"},{name:"node",port:$node,target:"http://127.0.0.1:9944"},{name:"proof",port:$proof,target:"http://127.0.0.1:6300"}]')" \
-    '{schema:"oxid-standalone-tailnet-routes-v1",realm:"undeployed",fingerprint:"undeployed",baseline:$baseline,active:$baseline,dnsName:$dns,routes:$routes,configured:0,states:[$baseline]}' >"$receipt"
+    '{schema:"oxid-standalone-tailnet-routes-v1",realm:"undeployed",fingerprint:"undeployed",baseline:$baseline,active:$baseline,dnsName:$dns,routes:$routes,configured:0,pending:null,states:[$baseline]}' >"$receipt"
   chmod 600 "$receipt"
   cleanup_start() {
     local status="$1"
@@ -96,8 +104,13 @@ start)
   trap 'exit 129' HUP
   for index in 0 1 2; do
     previous="$(jq -r '.active' "$receipt")"
+    mark_pending "$index" || fail receipt-write
     tailscale serve --yes --bg --https="${ports[$index]}" "${targets[$index]}" >/dev/null 2>&1 || true
     after="$(canonical_serve)" || fail serve-active
+    if [ "$after" = "$previous" ]; then
+      clear_pending || fail receipt-write
+      fail serve-add
+    fi
     route_transition_matches "$previous" "$after" "${ports[$index]}" "$dns" "${targets[$index]}" || fail serve-add
     append_progress "$after" "$((index + 1))" || fail receipt-write
   done
@@ -133,6 +146,20 @@ status)
   ;;
 stop)
   load_receipt || fail receipt
+  pending="$(jq -r '.pending // "none"' "$receipt")"
+  if [ "$pending" != none ]; then
+    previous="$(jq -r '.active' "$receipt")"
+    current="$(canonical_serve)" || fail serve-status
+    if [ "$current" = "$previous" ]; then
+      clear_pending || fail receipt-write
+    else
+      port="$(jq -r --argjson index "$pending" '.routes[$index].port' "$receipt")"
+      target="$(jq -r --argjson index "$pending" '.routes[$index].target' "$receipt")"
+      dns="$(jq -r '.dnsName' "$receipt")"
+      route_transition_matches "$previous" "$current" "$port" "$dns" "$target" || fail serve-drift
+      append_progress "$current" "$((pending + 1))" || fail receipt-write
+    fi
+  fi
   [ "$(canonical_serve)" = "$(jq -r '.active' "$receipt")" ] || fail serve-drift
   configured="$(jq -r '.configured' "$receipt")"
   while [ "$configured" -gt 0 ]; do
