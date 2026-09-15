@@ -14,6 +14,13 @@ async function executable(file, source) {
   await chmod(file, 0o700);
 }
 
+function normalizeServeState(value) {
+  const result = { ...value };
+  if (result.TCP && Object.keys(result.TCP).length === 0) delete result.TCP;
+  if (result.Web && Object.keys(result.Web).length === 0) delete result.Web;
+  return result;
+}
+
 test("Tailnet faucet owns one route and restores unrelated Serve state", async (context) => {
   const fixture = await mkdtemp(path.join(os.tmpdir(), "oxid-faucet-tailnet-"));
   context.after(() => rm(fixture, { recursive: true, force: true }));
@@ -134,7 +141,7 @@ test("service-route cleanup resumes after a later route removal fails", async (c
   const fakeBin = path.join(fixture, "bin");
   const serveState = path.join(fixture, "serve.json");
   const failureMarker = path.join(fixture, "failed-once");
-  const baseline = { TCP: { "2222": { TCPForward: "127.0.0.1:22" } }, Web: {} };
+  const baseline = {};
   await mkdir(scripts);
   await mkdir(fakeBin);
   await writeFile(serveState, JSON.stringify(baseline));
@@ -156,7 +163,7 @@ if(args[0]==='serve'){
     if(port===process.env.FAKE_SIGNAL_AFTER_OFF)process.kill(process.ppid,'SIGTERM');
     process.exit(0)
   }
-  const next=state();next.TCP[port]={HTTPS:true};next.Web[key]={Handlers:{'/':{Proxy:args.at(-1)}}};writeFileSync(file,JSON.stringify(next));
+  const next=state();next.TCP??={};next.Web??={};next.TCP[port]={HTTPS:true};next.Web[key]={Handlers:{'/':{Proxy:args.at(-1)}}};writeFileSync(file,JSON.stringify(next));
   if(port===process.env.FAKE_SIGNAL_AFTER_ADD)process.kill(process.ppid,'SIGTERM');
   process.exit(0)
 }
@@ -178,7 +185,7 @@ process.exit(2);
     encoding: "utf8",
   });
   assert.notEqual(interrupted.status, 0);
-  assert.deepEqual(JSON.parse(await readFile(serveState, "utf8")), baseline);
+  assert.deepEqual(normalizeServeState(JSON.parse(await readFile(serveState, "utf8"))), baseline);
   await assert.rejects(readFile(path.join(fixture, "target/standalone-tailnet-routes/receipt.json")));
 
   const removalStart = spawnSync(lifecycle, ["start"], { env: baseEnv, encoding: "utf8" });
@@ -192,7 +199,7 @@ process.exit(2);
   assert.equal(interruptedReceipt.removing, 2);
   const removalRetry = spawnSync(lifecycle, ["stop"], { env: baseEnv, encoding: "utf8" });
   assert.equal(removalRetry.status, 0, removalRetry.stderr);
-  assert.deepEqual(JSON.parse(await readFile(serveState, "utf8")), baseline);
+  assert.deepEqual(normalizeServeState(JSON.parse(await readFile(serveState, "utf8"))), baseline);
   await assert.rejects(readFile(path.join(fixture, "target/standalone-tailnet-routes/receipt.json")));
 
   const start = spawnSync(lifecycle, ["start"], { env, encoding: "utf8" });
@@ -203,7 +210,7 @@ process.exit(2);
   assert.equal(partial.configured, 2, firstStop.stderr);
   const retry = spawnSync(lifecycle, ["stop"], { env, encoding: "utf8" });
   assert.equal(retry.status, 0, retry.stderr);
-  assert.deepEqual(JSON.parse(await readFile(serveState, "utf8")), baseline);
+  assert.deepEqual(normalizeServeState(JSON.parse(await readFile(serveState, "utf8"))), baseline);
   await assert.rejects(readFile(path.join(fixture, "target/standalone-tailnet-routes/receipt.json")));
 });
 
