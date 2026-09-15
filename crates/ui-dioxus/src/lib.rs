@@ -24,6 +24,7 @@ mod profile_guard;
 mod profile_quick_switcher;
 #[cfg(feature = "proof-benchmark")]
 mod proof_benchmark;
+mod receive;
 mod screen_privacy;
 mod selected_realm_sync;
 mod wallet_onboarding;
@@ -48,6 +49,11 @@ pub use oxid_capabilities_application::CapabilityManifestContext;
 pub use passport_vault::{
     PassportVaultContractCallRecoveryUiServices, PassportVaultContractCallUiServices,
     PassportVaultUiServices,
+};
+#[cfg(feature = "standalone-deployment-profile")]
+use receive::standalone_funding_action;
+use receive::{
+    default_receive_kind, grouped_address_preview, protected_receive_addresses, render_qr_svg,
 };
 use wallet_onboarding::{WalletOnboarding, WalletOnboardingIntent};
 #[cfg(feature = "preprod-observation")]
@@ -110,6 +116,8 @@ use oxid_protocol_application::{
 };
 #[cfg(feature = "proof-benchmark")]
 use oxid_wallet_application::RunProofBenchmarkUseCase;
+#[cfg(test)]
+use oxid_wallet_application::WalletAddressView;
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationCommand, AuthorizeWalletDustRegistrationUseCase,
     AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase,
@@ -146,13 +154,13 @@ use oxid_wallet_application::{
     SubmitWalletDustRegistrationUseCase, SubmitWalletTransferCommand, SubmitWalletTransferUseCase,
     SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
     WalletAccountError, WalletAccountPortError, WalletAccountQuery, WalletAccountView,
-    WalletAddressView, WalletBackupReceiptCommand, WalletBackupReceiptView,
-    WalletDustRegistrationAssetView, WalletDustRegistrationPreviewView,
-    WalletDustRegistrationSubmissionStatusView, WalletDustSyncView, WalletNetworkListView,
-    WalletProfileSecurityCommand, WalletProfileView, WalletRealmFamilyView, WalletRecoverySecret,
-    WalletSecurityStatusView, WalletShieldedSyncView, WalletSyncStatusView,
-    WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionQuery,
-    WalletTransferSubmissionStatusView, WalletTransferSubmissionView,
+    WalletBackupReceiptCommand, WalletBackupReceiptView, WalletDustRegistrationAssetView,
+    WalletDustRegistrationPreviewView, WalletDustRegistrationSubmissionStatusView,
+    WalletDustSyncView, WalletNetworkListView, WalletProfileSecurityCommand, WalletProfileView,
+    WalletRealmFamilyView, WalletRecoverySecret, WalletSecurityStatusView, WalletShieldedSyncView,
+    WalletSyncStatusView, WalletTransferDraftQuery, WalletTransferPreviewView,
+    WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
+    WalletTransferSubmissionView,
 };
 #[cfg(feature = "preprod-observation")]
 use oxid_wallet_application::{
@@ -2430,7 +2438,11 @@ enum AccountPageState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ReceiveSheetState {
     Loading,
-    Ready(Box<WalletAccountView>),
+    Ready {
+        account: Box<WalletAccountView>,
+        #[cfg(feature = "standalone-deployment-profile")]
+        deployment: Option<oxid_capabilities_application::DeploymentProfileView>,
+    },
     Failed,
 }
 
@@ -5102,7 +5114,7 @@ fn ReceiveSheet(
             let next = run_ui_blocking(move || load_receive_sheet(&services, &profile_id))
                 .await
                 .unwrap_or(ReceiveSheetState::Failed);
-            if let ReceiveSheetState::Ready(account) = &next {
+            if let ReceiveSheetState::Ready { account, .. } = &next {
                 selected_kind.set(default_receive_kind(account));
             }
             state.set(next);
@@ -5135,7 +5147,7 @@ fn ReceiveSheet(
                             })
                             .await
                             .unwrap_or(ReceiveSheetState::Failed);
-                            if let ReceiveSheetState::Ready(account) = &next {
+                            if let ReceiveSheetState::Ready { account, .. } = &next {
                                 selected_kind.set(default_receive_kind(account));
                             }
                             state.set(next);
@@ -5145,7 +5157,11 @@ fn ReceiveSheet(
                 }
             }
         },
-        ReceiveSheetState::Ready(account) => {
+        ReceiveSheetState::Ready {
+            account,
+            #[cfg(feature = "standalone-deployment-profile")]
+            deployment,
+        } => {
             let Some(addresses) = protected_receive_addresses(&account) else {
                 return rsx! {
                     button {
@@ -5203,8 +5219,30 @@ fn ReceiveSheet(
             } else {
                 "status-pill"
             };
-            let qr = render_qr_svg(&selected.value);
+            let receive_request = oxid_wallet_application::encode_midnight_night_receive_request(
+                &account.network_id,
+                &selected,
+            );
+            let qr_payload = receive_request.as_deref().unwrap_or(&selected.value);
+            let qr = render_qr_svg(qr_payload);
+            let qr_label = if receive_request.is_some() {
+                "Version 1 public NIGHT receive request"
+            } else {
+                "Raw protected receive address"
+            };
             let preview = grouped_address_preview(&selected.value);
+            #[cfg(feature = "standalone-deployment-profile")]
+            let route_class = deployment
+                .map(|profile| ui::deployment_route_class(profile.route_class().as_str()))
+                .unwrap_or("Unavailable");
+            #[cfg(not(feature = "standalone-deployment-profile"))]
+            let route_class = "Unavailable";
+            #[cfg(feature = "standalone-deployment-profile")]
+            let funding_action = receive_request
+                .is_some()
+                .then(|| standalone_funding_action(deployment));
+            #[cfg(not(feature = "standalone-deployment-profile"))]
+            let funding_action: Option<Element> = None;
             let copy_exporter = services.public_text_exporter();
             let copy_value = selected.value.clone();
             let share_exporter = services.public_text_exporter();
@@ -5212,7 +5250,8 @@ fn ReceiveSheet(
             rsx! {
                 div { class: "receive-sheet__status",
                     span { class: "{status_class}", "{source}" }
-                    span { "{account.network_name}" }
+                    span { "{active_profile.display_name}" }
+                    span { "{ui::midnight_network(&account.network_id)} ({account.network_id}) · NIGHT · {route_class}" }
                 }
                 div { class: "receive-sheet__selectors", role: "group", aria_label: "Receive address type",
                     for address in addresses.iter() {
@@ -5244,7 +5283,7 @@ fn ReceiveSheet(
                     div {
                         class: "address-qr privacy-qr",
                         role: "img",
-                        aria_label: "QR code for {ui::address_kind(&selected.kind)} receive address",
+                        aria_label: "{qr_label}",
                         if let Some(svg) = qr {
                             div { class: "address-qr__frame", dangerous_inner_html: "{svg}" }
                         } else {
@@ -5253,8 +5292,11 @@ fn ReceiveSheet(
                     }
                     code {
                         class: "receive-sheet__preview privacy-value",
-                        aria_label: "Full {ui::address_kind(&selected.kind)} receive address {selected.value}",
+                        aria_label: "Full validated raw {ui::address_kind(&selected.kind)} receive address {selected.value}",
                         "{preview}"
+                    }
+                    if receive_request.is_some() {
+                        p { "Copy or share the raw address when the other wallet cannot scan this request." }
                     }
                 }
                 div { class: "receive-sheet__actions",
@@ -5284,8 +5326,15 @@ fn ReceiveSheet(
                 if let Some(message) = export_notice.read().as_deref() {
                     p { class: "address-export-notice", role: "status", "{message}" }
                 }
+                if let Some(action) = funding_action {
+                    {action}
+                }
                 p { class: "receive-sheet__guarantee",
-                    "Each QR, clipboard copy, and share sheet contains exactly the public receive address shown. The grouped preview is display-only."
+                    if receive_request.is_some() {
+                        "QR: versioned undeployed NIGHT request. Copy/share: raw public address."
+                    } else {
+                        "QR, copy, and share contain the protected address shown."
+                    }
                 }
             }
         }
@@ -5329,36 +5378,14 @@ fn load_receive_sheet(services: &WalletUiServices, profile_id: &str) -> ReceiveS
         .execute(WalletAccountQuery {
             profile_id: profile_id.to_owned(),
         })
-        .map(|account| ReceiveSheetState::Ready(Box::new(account)))
+        .map(|account| ReceiveSheetState::Ready {
+            account: Box::new(account),
+            #[cfg(feature = "standalone-deployment-profile")]
+            deployment: services
+                .deployment_profile()
+                .map(|profile| profile.execute()),
+        })
         .unwrap_or(ReceiveSheetState::Failed)
-}
-
-fn protected_receive_addresses(account: &WalletAccountView) -> Option<&[WalletAddressView]> {
-    has_protected_account(account).then_some(account.addresses.as_slice())
-}
-
-fn default_receive_kind(account: &WalletAccountView) -> Option<String> {
-    protected_receive_addresses(account)
-        .and_then(|addresses| addresses.first())
-        .map(|address| address.kind.clone())
-}
-
-fn grouped_address_preview(value: &str) -> String {
-    let characters = value.chars().collect::<Vec<_>>();
-    let visible = if characters.len() > 32 {
-        let mut shortened = characters[..20].to_vec();
-        shortened.extend(['…', '…', '…']);
-        shortened.extend_from_slice(&characters[characters.len() - 8..]);
-        shortened
-    } else {
-        characters
-    };
-
-    visible
-        .chunks(4)
-        .map(|chunk| chunk.iter().collect::<String>())
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 #[component]
@@ -7742,20 +7769,6 @@ fn post_submission_recovery(retained_state: Option<&str>) -> TransferRecovery {
         Some("authorized") => TransferRecovery::RetryAuthorized,
         _ => TransferRecovery::ReconcileUnknown,
     }
-}
-
-fn render_qr_svg(value: &str) -> Option<String> {
-    use qrcode::{QrCode, render::svg};
-
-    QrCode::new(value.as_bytes()).ok().map(|code| {
-        code.render::<svg::Color<'_>>()
-            .min_dimensions(220, 220)
-            .max_dimensions(280, 280)
-            .quiet_zone(true)
-            .dark_color(svg::Color("#07111f"))
-            .light_color(svg::Color("#ffffff"))
-            .build()
-    })
 }
 
 fn night_display_to_atomic_units(value: &str) -> Result<String, &'static str> {
@@ -11966,7 +11979,7 @@ mod tests {
         account.addresses = vec![
             WalletAddressView {
                 kind: "unshielded".to_owned(),
-                value: "mn_addr_fixture".to_owned(),
+                value: "mn_addr_undeployed1fixture".to_owned(),
             },
             WalletAddressView {
                 kind: "shielded".to_owned(),

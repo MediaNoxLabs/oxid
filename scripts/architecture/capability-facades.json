@@ -202,8 +202,14 @@
           "crates/ui-dioxus/src/wallet_onboarding"
         ]
       },
-        {
-          "name": "profile-guard",
+      {
+        "name": "wallet-receive",
+        "modulePathPrefixes": [
+          "crates/ui-dioxus/src/receive"
+        ]
+      },
+      {
+        "name": "profile-guard",
           "modulePathPrefixes": [
             "crates/ui-dioxus/src/profile_guard"
           ]
