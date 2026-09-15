@@ -209,6 +209,12 @@
         ]
       },
       {
+        "name": "wallet-send",
+        "modulePathPrefixes": [
+          "crates/ui-dioxus/src/send_recipient"
+        ]
+      },
+      {
         "name": "profile-guard",
           "modulePathPrefixes": [
             "crates/ui-dioxus/src/profile_guard"

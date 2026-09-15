@@ -67,8 +67,10 @@ automated, privacy-preserving physical-device evidence remains a planned gap.
 `standalone-profile-asset-synchronization` covers only the shipped explicit
 standalone-development composition: its fixed `undeployed` network identity,
 compile-time `local` (loopback) or `tailnet` route class, and independent
-public NIGHT, DUST, and shielded synchronization states. Local simulator runs
-are diagnostic. The physical Android Tailnet lane is also a development-route
+public NIGHT, DUST, and shielded synchronization states. The send recipient step may scan only the closed public NIGHT receive request or a
+validated raw Bech32m address, and only fills the recipient field; it never advances the
+wizard or routes identity. The undeployed label is development-only routing context, not an
+authenticated genesis identity. Local simulator runs are diagnostic. The physical Android Tailnet lane is also a development-route
 diagnostic, not public-network or production acceptance. It records freshness
 states rather than a balance assertion because the public-genesis development
 state is mutable.
