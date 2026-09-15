@@ -143,7 +143,9 @@ if(args[0]==='serve'){
     if(port===process.env.FAKE_FAIL_OFF_PORT&&!existsSync(process.env.FAKE_FAILURE_MARKER)){writeFileSync(process.env.FAKE_FAILURE_MARKER,'failed');process.exit(1)}
     const next=state();delete next.TCP[port];delete next.Web[key];writeFileSync(file,JSON.stringify(next));process.exit(0)
   }
-  const next=state();next.TCP[port]={HTTPS:true};next.Web[key]={Handlers:{'/':{Proxy:args.at(-1)}}};writeFileSync(file,JSON.stringify(next));process.exit(0)
+  const next=state();next.TCP[port]={HTTPS:true};next.Web[key]={Handlers:{'/':{Proxy:args.at(-1)}}};writeFileSync(file,JSON.stringify(next));
+  if(port===process.env.FAKE_SIGNAL_AFTER_ADD)process.kill(process.ppid,'SIGTERM');
+  process.exit(0)
 }
 process.exit(2);
 `);
@@ -155,6 +157,14 @@ process.exit(2);
     FAKE_FAILURE_MARKER: failureMarker,
   };
   const lifecycle = path.join(scripts, "standalone-tailnet-routes.sh");
+  const interrupted = spawnSync(lifecycle, ["start"], {
+    env: { ...env, FAKE_SIGNAL_AFTER_ADD: "12000" },
+    encoding: "utf8",
+  });
+  assert.notEqual(interrupted.status, 0);
+  assert.deepEqual(JSON.parse(await readFile(serveState, "utf8")), baseline);
+  await assert.rejects(readFile(path.join(fixture, "target/standalone-tailnet-routes/receipt.json")));
+
   const start = spawnSync(lifecycle, ["start"], { env, encoding: "utf8" });
   assert.equal(start.status, 0, start.stderr);
   const firstStop = spawnSync(lifecycle, ["stop"], { env, encoding: "utf8" });
