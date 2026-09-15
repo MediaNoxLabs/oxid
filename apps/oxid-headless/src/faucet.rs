@@ -36,6 +36,14 @@ impl StandaloneFaucet {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_grant(grant: Box<dyn NightGrantPort>) -> Self {
+        Self {
+            grant,
+            receipts: VecDeque::new(),
+        }
+    }
+
     /// Processes bounded line-delimited JSON requests until EOF or shutdown.
     pub fn run<R: BufRead, W: Write>(
         &mut self,
@@ -113,6 +121,21 @@ impl StandaloneFaucet {
                 "method is not supported",
             )),
         }
+    }
+
+    pub(crate) fn fund_http(&mut self, params: Value) -> Value {
+        let dispatch = self.fund(Request {
+            protocol: PROTOCOL_VERSION.to_owned(),
+            id: None,
+            method: "faucet.fund".to_owned(),
+            params,
+        });
+        serde_json::to_value(dispatch.response).expect("faucet responses are serializable")
+    }
+
+    pub(crate) fn health_http() -> Value {
+        serde_json::to_value(Response::success(None, health_value()))
+            .expect("faucet responses are serializable")
     }
 
     fn fund(&mut self, request: Request) -> Dispatch {

@@ -5,6 +5,7 @@
 use std::{
     fs,
     io::{BufRead as _, BufReader, Read as _, Write as _},
+    net::{Shutdown, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio},
     thread,
@@ -142,6 +143,131 @@ impl ProcessHarness {
 }
 
 impl Drop for ProcessHarness {
+    fn drop(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+struct HttpFaucetHarness {
+    child: Option<Child>,
+    address: SocketAddr,
+}
+
+impl HttpFaucetHarness {
+    fn start(root: &Path) -> Self {
+        let reservation = TcpListener::bind("127.0.0.1:0").expect("reserve loopback port");
+        let address = reservation.local_addr().expect("reserved address");
+        drop(reservation);
+        let child = Command::new(env!("CARGO_BIN_EXE_oxid-standalone-faucet-http"))
+            .env("OXID_ENABLE_STANDALONE_FAUCET", "1")
+            .env("OXID_PROFILE_STORE_PATH", root.join("profiles.json"))
+            .env("OXID_STANDALONE_FAUCET_HTTP_ADDRESS", address.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("HTTP faucet starts");
+        let mut harness = Self {
+            child: Some(child),
+            address,
+        };
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            if harness.health_ready() {
+                return harness;
+            }
+            assert!(
+                harness
+                    .child
+                    .as_mut()
+                    .expect("HTTP faucet child")
+                    .try_wait()
+                    .expect("HTTP faucet status")
+                    .is_none(),
+                "HTTP faucet exited before readiness"
+            );
+            assert!(
+                Instant::now() < deadline,
+                "HTTP faucet was not ready before deadline"
+            );
+            thread::sleep(Duration::from_millis(250));
+        }
+    }
+
+    fn health_ready(&self) -> bool {
+        self.exchange("GET", "/health", None)
+            .is_ok_and(|(status, body)| {
+                status == 200 && body["ok"] == true && body["result"]["ready"] == true
+            })
+    }
+
+    fn fund(&self, request_id: &str, recipient_address: &str) -> Value {
+        let body = serde_json::to_vec(&json!({
+            "requestId": request_id,
+            "recipientAddress": recipient_address
+        }))
+        .expect("funding request JSON");
+        let (status, response) = self
+            .exchange("POST", "/fund", Some(&body))
+            .expect("HTTP funding response");
+        assert_eq!(status, 200, "{response}");
+        response
+    }
+
+    fn exchange(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&[u8]>,
+    ) -> std::io::Result<(u16, Value)> {
+        let mut stream = TcpStream::connect_timeout(&self.address, Duration::from_secs(2))?;
+        // The HTTP framing deadline is ten seconds, but a successful funding
+        // response waits for the existing prove, submit, and finality path.
+        stream.set_read_timeout(Some(Duration::from_secs(180)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+        let body = body.unwrap_or_default();
+        write!(
+            stream,
+            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{}Content-Length: {}\r\nConnection: close\r\n\r\n",
+            if body.is_empty() {
+                ""
+            } else {
+                "Content-Type: application/json\r\n"
+            },
+            body.len()
+        )?;
+        stream.write_all(body)?;
+        stream.flush()?;
+        stream.shutdown(Shutdown::Write)?;
+        let mut response = Vec::new();
+        stream.take(16 * 1024).read_to_end(&mut response)?;
+        let boundary = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .ok_or_else(|| std::io::Error::other("HTTP response headers are incomplete"))?;
+        let headers = std::str::from_utf8(&response[..boundary])
+            .map_err(|_| std::io::Error::other("HTTP response headers are invalid"))?;
+        let status = headers
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|status| status.parse::<u16>().ok())
+            .ok_or_else(|| std::io::Error::other("HTTP response status is invalid"))?;
+        let body = serde_json::from_slice(&response[boundary + 4..])?;
+        Ok((status, body))
+    }
+
+    fn finish(mut self) {
+        let mut child = self.child.take().expect("HTTP faucet child");
+        child.kill().expect("stop HTTP faucet");
+        let _ = child.wait().expect("wait for HTTP faucet");
+    }
+}
+
+impl Drop for HttpFaucetHarness {
     fn drop(&mut self) {
         if let Some(child) = self.child.as_mut() {
             let _ = child.kill();
@@ -359,4 +485,38 @@ fn two_fresh_wallets_receive_fixed_night_and_generate_dust() {
     wallet_a.finish("system.quit");
     wallet_b.finish("system.quit");
     faucet.finish("faucet.shutdown");
+}
+
+#[test]
+#[ignore = "requires an explicitly authorized local standalone stack"]
+fn two_fresh_wallets_receive_fixed_night_over_loopback_http() {
+    assert_eq!(std::env::var(ENABLE_ENV).as_deref(), Ok("1"));
+    let root = StateRoot::new();
+    let faucet = HttpFaucetHarness::start(&root.child("http-faucet"));
+    let mut wallet_a = ProcessHarness::wallet(&root.child("wallet-a"));
+    let mut wallet_b = ProcessHarness::wallet(&root.child("wallet-b"));
+    let address_a = prepare_wallet(&mut wallet_a, "HTTP wallet A");
+    let address_b = prepare_wallet(&mut wallet_b, "HTTP wallet B");
+    assert_ne!(
+        address_a, address_b,
+        "fresh wallets must derive distinct addresses"
+    );
+
+    for (request, address) in [("http-wallet-a", address_a), ("http-wallet-b", address_b)] {
+        let funded = faucet.fund(request, &address);
+        assert_eq!(funded["ok"], true, "{funded}");
+        assert_eq!(
+            funded["result"]["receipt"]["amount"]["atomicUnits"],
+            FIXED_GRANT.to_string()
+        );
+        assert_eq!(funded["result"]["receipt"]["state"], "included");
+    }
+
+    await_night(&mut wallet_a);
+    await_night(&mut wallet_b);
+    println!("standalone-faucet-http-headless-e2e: PASS wallets=2 grantAtomicUnits={FIXED_GRANT}");
+
+    wallet_a.finish("system.quit");
+    wallet_b.finish("system.quit");
+    faucet.finish();
 }
