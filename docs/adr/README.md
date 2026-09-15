@@ -136,6 +136,7 @@ ADR status and delivery state answer different questions:
 | [0110](0110-compact-submission-barriers-after-checkpoint-acknowledgement.md) Compact submission barriers after checkpoint acknowledgement | Accepted | ADR-0035/0079; issue #93 | Defines fail-closed checkpoint acknowledgement before bounded public-journal compaction; implementation pending |
 | [0111](0111-isolate-fixed-standalone-night-funding.md) Isolate fixed standalone NIGHT funding | Accepted | ADR-0098/0100; issue #538 | Separate compile- and runtime-gated headless faucet grants fixed NIGHT through existing finalized transaction ports; two-wallet DUST readiness is an on-demand localhost acceptance |
 | [0112](0112-bound-standalone-funding-to-loopback-http.md) Bound standalone funding to loopback HTTP | Accepted | ADR-0111; issue #539 | A second feature-gated binary exposes only bounded health and fixed funding on loopback while reusing the same dispatcher and receipt policy |
+| [0113](0113-expose-fixed-standalone-funding-through-tailnet-discovery.md) Expose fixed standalone funding through Tailnet discovery | Accepted | ADR-0112; issue #540 | Receipt-scoped private HTTPS Serve discovery preserves unrelated routes, serves a fixed-policy page/QR, and gates live acceptance to the owner |
 
 ## Current boundaries
 
