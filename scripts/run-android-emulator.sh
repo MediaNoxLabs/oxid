@@ -601,6 +601,19 @@ elif [ "$operation" != "deploy" ]; then
   dioxus_output="$(nix build .#dioxus-cli --no-link --print-out-paths)"
   dioxus_cli="$dioxus_output/bin/dx"
 
+  # NDK r27 does not select 16 KiB LOAD alignment for this Dioxus debug link
+  # unless both page-size constraints are explicit. Keep these flags on the
+  # development build as well as the independently receipt-bound release
+  # candidate; the post-build verifier below remains authoritative.
+  android_export_map="$repository_root/scripts/android-exports.map"
+  android_linker_flags="-C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-z,common-page-size=16384 -C link-arg=-Wl,--version-script=$android_export_map"
+  android_rustflags="${RUSTFLAGS:-}"
+  if [ -n "$android_rustflags" ]; then
+    android_rustflags="$android_rustflags $android_linker_flags"
+  else
+    android_rustflags="$android_linker_flags"
+  fi
+
   ANDROID_HOME="$android_sdk" \
   ANDROID_SDK_ROOT="$android_sdk" \
   ANDROID_NDK_HOME="$android_ndk" \
@@ -610,6 +623,9 @@ elif [ "$operation" != "deploy" ]; then
   OXID_BUILD_PORTAL_PROFILE_AUTHORITY_SHA256="$portal_profile_authority_sha256" \
   OXID_BUILD_PORTAL_PUBLIC_ORIGIN="$portal_public_origin" \
   OXID_PRESENTATION_ARTIFACTS_DIR="$presentation_artifacts_dir" \
+  RUSTFLAGS="$android_rustflags" \
+  GRADLE_OPTS="-Dorg.gradle.daemon=false" \
+  KOTLIN_COMPILER_EXECUTION_STRATEGY=in-process \
   PATH="$rust_toolchain_bin:$android_sdk/platform-tools:/usr/bin:$PATH" \
     "$dioxus_cli" build \
       --android \
@@ -623,6 +639,10 @@ elif [ "$operation" != "deploy" ]; then
     echo "Dioxus did not create the expected APK: $apk" >&2
     exit 1
   fi
+  # Reject an unloadable Rust library before writing a receipt, installing the
+  # APK, or spending emulator time. This also records the bounded ELF/hash
+  # shape selected by the dedicated android-dev Cargo profile.
+  node "$repository_root/scripts/android-verify-16k.mjs" "$apk"
   if [ "$mobile_presentation_proving" = "artifacts" ]; then
     packaged_bytes="$(wc -c < "$apk" | tr -d ' ')"
     echo "Authenticated Compact artifact measurement APK: $packaged_bytes bytes."

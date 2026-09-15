@@ -133,8 +133,8 @@ async function openIdentities() {
 }
 
 async function openSettings() {
-  await clickButtonByLabel("Open profile menu");
-  await clickButtonByLabel("Open settings");
+  await clickButtonByLabel("Open global application menu");
+  await clickGlobalAction("Settings");
 }
 
 async function openPassportVault() {
@@ -293,8 +293,9 @@ try {
       "persistent developer-profile banner before onboarding",
     );
     await createFreshProfile();
-    await clickButtonByLabel("Open profile menu");
-    await clickButtonByLabel("Open developer capabilities");
+    await clickButtonByLabel("Open global application menu");
+    await clickGlobalAction("Developer tools");
+    await clickButton("Open manifest");
     await waitFor(
       `document.body.innerText.includes("Capability manifest")
         && document.body.innerText.includes("oxid_capabilities_application")`,

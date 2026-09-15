@@ -211,6 +211,17 @@ codegen-units = 1
 lto = "thin"
 strip = "symbols"
 
+# Dioxus selects this profile automatically for non-release Android builds.
+# Keep incremental compilation and development assertions from `dev`, while
+# bounding the native library enough for Android's Bionic loader. Full debug
+# objects made libmain.so approach 1 GiB and produced an unusable hash table on
+# the reviewed 16 KiB emulator image.
+[profile.android-dev]
+inherits = "dev"
+debug = 1
+opt-level = 1
+strip = "debuginfo"
+
 # Live PreProd acceptance exercises the production cryptographic replay path.
 # Keep it optimized while retaining symbols for bounded failure diagnosis.
 [profile.preprod-live]

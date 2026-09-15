@@ -7,7 +7,16 @@ import { inflateRawSync } from "node:zlib";
 
 const PAGE_SIZE = 16 * 1024;
 const LOAD = 1;
-const MAX_INFLATED_NATIVE_BYTES = 512 * 1024 * 1024;
+const DYNAMIC = 2;
+const DT_NULL = 0n;
+const DT_HASH = 4n;
+const DT_GNU_HASH = 0x6ffffef5n;
+const SHT_HASH = 5;
+const SHT_DYNSYM = 11;
+const SHT_GNU_HASH = 0x6ffffff6;
+const SHT_NOBITS = 8;
+const MAX_NATIVE_BYTES = 512 * 1024 * 1024;
+const MAX_DYNAMIC_SYMBOLS = 65_536;
 
 function fail(member, message) {
   throw new Error(`${member}: ${message}`);
@@ -89,6 +98,121 @@ function elfLoadSegments(bytes, member) {
   return loads;
 }
 
+function elfDynamicShape(bytes, member) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const elfClass = bytes[4];
+  let sectionOffset;
+  let sectionEntrySize;
+  let sectionCount;
+  let minimumSectionEntrySize;
+  let sectionFileOffsetAt;
+  let sectionSizeAt;
+  let sectionEntrySizeAt;
+  let dynamicSymbolEntrySize;
+
+  if (elfClass === 1) {
+    sectionOffset = view.getUint32(32, true);
+    sectionEntrySize = view.getUint16(46, true);
+    sectionCount = view.getUint16(48, true);
+    minimumSectionEntrySize = 40;
+    sectionFileOffsetAt = 16;
+    sectionSizeAt = 20;
+    sectionEntrySizeAt = 36;
+    dynamicSymbolEntrySize = 16;
+  } else if (elfClass === 2) {
+    sectionOffset = u64(view, 40, member, "ELF section-header offset");
+    sectionEntrySize = view.getUint16(58, true);
+    sectionCount = view.getUint16(60, true);
+    minimumSectionEntrySize = 64;
+    sectionFileOffsetAt = 24;
+    sectionSizeAt = 32;
+    sectionEntrySizeAt = 56;
+    dynamicSymbolEntrySize = 24;
+  } else {
+    fail(member, "has an unsupported ELF class");
+  }
+
+  if (
+    sectionCount === 0
+    || sectionEntrySize < minimumSectionEntrySize
+    || sectionOffset + sectionEntrySize * sectionCount > bytes.length
+  ) {
+    fail(member, "ELF section headers are missing or truncated");
+  }
+
+  let dynamicSymbols = 0;
+  const hashKinds = new Set();
+  for (let index = 0; index < sectionCount; index += 1) {
+    const start = sectionOffset + index * sectionEntrySize;
+    const type = view.getUint32(start + 4, true);
+    const read = elfClass === 1
+      ? (at) => view.getUint32(start + at, true)
+      : (at, field) => u64(view, start + at, member, field);
+    const offset = read(sectionFileOffsetAt, "section offset");
+    const size = read(sectionSizeAt, "section size");
+    const entrySize = read(sectionEntrySizeAt, "section entry size");
+    if (type !== SHT_NOBITS && (offset > bytes.length || size > bytes.length - offset)) {
+      fail(member, `ELF section ${index} extends beyond the shared library`);
+    }
+    if (type === SHT_DYNSYM) {
+      if (entrySize < dynamicSymbolEntrySize || size === 0 || size % entrySize !== 0) {
+        fail(member, "ELF dynamic symbol table is empty or malformed");
+      }
+      dynamicSymbols += size / entrySize;
+    }
+    if (type === SHT_HASH || type === SHT_GNU_HASH) {
+      if (size === 0) fail(member, "ELF dynamic hash table is empty");
+      hashKinds.add(type === SHT_GNU_HASH ? "gnu" : "sysv");
+    }
+  }
+  if (dynamicSymbols === 0) fail(member, "ELF dynamic symbol table is missing");
+  if (dynamicSymbols > MAX_DYNAMIC_SYMBOLS) {
+    fail(member, `ELF dynamic symbol count ${dynamicSymbols} exceeds ${MAX_DYNAMIC_SYMBOLS}`);
+  }
+  if (hashKinds.size === 0) fail(member, "ELF dynamic hash table is missing");
+
+  const dynamicHashKinds = new Set();
+  const programOffset = elfClass === 1
+    ? view.getUint32(28, true)
+    : u64(view, 32, member, "ELF program-header offset");
+  const programEntrySize = elfClass === 1 ? view.getUint16(42, true) : view.getUint16(54, true);
+  const programCount = elfClass === 1 ? view.getUint16(44, true) : view.getUint16(56, true);
+  const dynamicEntrySize = elfClass === 1 ? 8 : 16;
+  let foundDynamicSegment = false;
+  for (let index = 0; index < programCount; index += 1) {
+    const start = programOffset + index * programEntrySize;
+    if (view.getUint32(start, true) !== DYNAMIC) continue;
+    foundDynamicSegment = true;
+    const offset = elfClass === 1
+      ? view.getUint32(start + 4, true)
+      : u64(view, start + 8, member, "DYNAMIC offset");
+    const size = elfClass === 1
+      ? view.getUint32(start + 16, true)
+      : u64(view, start + 32, member, "DYNAMIC file size");
+    if (size === 0 || size % dynamicEntrySize !== 0 || offset > bytes.length || size > bytes.length - offset) {
+      fail(member, "ELF dynamic segment is empty or malformed");
+    }
+    for (let entry = offset; entry < offset + size; entry += dynamicEntrySize) {
+      const tag = elfClass === 1
+        ? BigInt(view.getUint32(entry, true))
+        : view.getBigUint64(entry, true);
+      if (tag === DT_NULL) break;
+      if (tag !== DT_HASH && tag !== DT_GNU_HASH) continue;
+      const address = elfClass === 1
+        ? BigInt(view.getUint32(entry + 4, true))
+        : view.getBigUint64(entry + 8, true);
+      if (address === 0n) fail(member, "ELF dynamic hash address is null");
+      dynamicHashKinds.add(tag === DT_GNU_HASH ? "gnu" : "sysv");
+    }
+  }
+  if (!foundDynamicSegment) fail(member, "ELF dynamic segment is missing");
+  if (dynamicHashKinds.size === 0) fail(member, "ELF DT_HASH/DT_GNU_HASH entry is missing");
+  if (![...dynamicHashKinds].some((kind) => hashKinds.has(kind))) {
+    fail(member, "ELF dynamic hash tag has no matching hash section");
+  }
+  return { dynamicSymbols, hashKinds: [...dynamicHashKinds].sort() };
+}
+
 function verifyElf(bytes, member) {
   for (const load of elfLoadSegments(bytes, member)) {
     if (load.offset > bytes.length || load.fileSize > bytes.length - load.offset) {
@@ -109,6 +233,7 @@ function verifyElf(bytes, member) {
       fail(member, `ELF LOAD segment ${load.index} offset and virtual address are not 16 KiB congruent`);
     }
   }
+  return elfDynamicShape(bytes, member);
 }
 
 function zipMembers(archive) {
@@ -179,21 +304,32 @@ function zipMembers(archive) {
   return members;
 }
 
-export function verifyApk(archive, archiveName = "APK") {
+export function inspectApk(archive, archiveName = "APK") {
   const nativeMembers = zipMembers(archive).filter(({ name }) => name.endsWith(".so"));
   if (nativeMembers.length === 0) {
     throw new Error(`${archiveName}: APK contains no native shared libraries`);
   }
-  let declaredInflatedBytes = 0;
-  for (const member of nativeMembers.filter(({ method }) => method === 8)) {
-    if (member.uncompressedSize > MAX_INFLATED_NATIVE_BYTES) {
-      fail(member.name, "compressed ZIP member exceeds the 512 MiB inspection safety limit");
+  let declaredNativeBytes = 0;
+  for (const member of nativeMembers) {
+    if (member.uncompressedSize > MAX_NATIVE_BYTES) {
+      fail(
+        member.name,
+        member.method === 8
+          ? "compressed ZIP member exceeds the 512 MiB inspection safety limit"
+          : "native library exceeds the 512 MiB loadability limit",
+      );
     }
-    if (declaredInflatedBytes > MAX_INFLATED_NATIVE_BYTES - member.uncompressedSize) {
-      fail(member.name, "compressed native members exceed the aggregate 512 MiB inspection safety limit");
+    if (declaredNativeBytes > MAX_NATIVE_BYTES - member.uncompressedSize) {
+      fail(
+        member.name,
+        member.method === 8
+          ? "compressed native members exceed the aggregate 512 MiB inspection safety limit"
+          : "native libraries exceed the aggregate 512 MiB loadability limit",
+      );
     }
-    declaredInflatedBytes += member.uncompressedSize;
+    declaredNativeBytes += member.uncompressedSize;
   }
+  const measurements = [];
   for (const member of nativeMembers) {
     const stored = archive.subarray(member.dataOffset, member.dataOffset + member.compressedSize);
     let elfBytes;
@@ -217,9 +353,19 @@ export function verifyApk(archive, archiveName = "APK") {
     } else {
       fail(member.name, `uses unsupported ZIP compression method ${member.method}`);
     }
-    verifyElf(elfBytes, member.name);
+    const shape = verifyElf(elfBytes, member.name);
+    measurements.push({
+      member: member.name,
+      bytes: elfBytes.length,
+      dynamicSymbols: shape.dynamicSymbols,
+      hashKinds: shape.hashKinds,
+    });
   }
-  return nativeMembers.length;
+  return measurements;
+}
+
+export function verifyApk(archive, archiveName = "APK") {
+  return inspectApk(archive, archiveName).length;
 }
 
 function main() {
@@ -230,8 +376,14 @@ function main() {
     return;
   }
   try {
-    const count = verifyApk(readFileSync(apk), path.basename(apk));
-    console.log(`android-verify-16k: PASS apk=${apk} native-libraries=${count}`);
+    const measurements = inspectApk(readFileSync(apk), path.basename(apk));
+    const largest = Math.max(...measurements.map(({ bytes }) => bytes));
+    const symbols = Math.max(...measurements.map(({ dynamicSymbols }) => dynamicSymbols));
+    const hashes = [...new Set(measurements.flatMap(({ hashKinds }) => hashKinds))].sort().join("+");
+    console.log(
+      `android-verify-16k: PASS apk=${apk} native-libraries=${measurements.length} `
+      + `largest-bytes=${largest} max-dynamic-symbols=${symbols} hash=${hashes}`,
+    );
   } catch (error) {
     console.error(`android-verify-16k: FAIL ${error.message}`);
     process.exitCode = 1;

@@ -140,6 +140,26 @@ test("Android privacy automation uses the current global application menu", asyn
   assert.doesNotMatch(privacy, /Show private values for 30 seconds|Hide private values/);
 });
 
+test("Android settings and developer automation use the separated header controls", async () => {
+  const flow = await readFile(
+    path.join(root, "tests", "mobile", "android-wallet-flow.mjs"),
+    "utf8",
+  );
+  const settingsStart = flow.indexOf("async function openSettings()");
+  const settingsEnd = flow.indexOf("\nasync function openPassportVault", settingsStart);
+  const settings = flow.slice(settingsStart, settingsEnd);
+  const developerStart = flow.indexOf('if (mode === "developer")');
+  const developerEnd = flow.indexOf('} else if (mode === "demo")', developerStart);
+  const developer = flow.slice(developerStart, developerEnd);
+
+  assert.match(settings, /Open global application menu/);
+  assert.match(settings, /clickGlobalAction\("Settings"\)/);
+  assert.match(developer, /Open global application menu/);
+  assert.match(developer, /clickGlobalAction\("Developer tools"\)/);
+  assert.match(developer, /clickButton\("Open manifest"\)/);
+  assert.doesNotMatch(`${settings}\n${developer}`, /Open profile menu|Open developer capabilities/);
+});
+
 test("Android Home automation follows the realm-scoped product composition", async () => {
   const flow = await readFile(
     path.join(root, "tests", "mobile", "android-wallet-flow.mjs"),

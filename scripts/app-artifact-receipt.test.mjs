@@ -87,12 +87,14 @@ test("directory hashing is deterministic and observes executable mode", async ()
 });
 
 test("target recipes preserve run and expose receipt-gated build and deploy modes", async () => {
-  const [justfile, android, ios, runScript, guide] = await Promise.all([
+  const [justfile, android, ios, runScript, guide, cargo, androidExports] = await Promise.all([
     readFile(path.join(root, "Justfile"), "utf8"),
     readFile(path.join(root, "scripts", "run-android-emulator.sh"), "utf8"),
     readFile(path.join(root, "scripts", "run-ios-simulator.sh"), "utf8"),
     readFile(path.join(root, "run.sh"), "utf8"),
     readFile(path.join(root, "docs", "factory", "application-targets.md"), "utf8"),
+    readFile(path.join(root, "Cargo.toml"), "utf8"),
+    readFile(path.join(root, "scripts", "android-exports.map"), "utf8"),
   ]);
   for (const recipe of [
     "desktop-build:",
@@ -112,6 +114,25 @@ test("target recipes preserve run and expose receipt-gated build and deploy mode
     assert.match(launcher, /if \[ "\$operation" = "build" \]; then/);
     assert.match(launcher, /if \[ "\$operation" = "deploy" \]; then/);
   }
+  const androidBuild = android.indexOf('"$dioxus_cli" build');
+  const androidVerify = android.indexOf('android-verify-16k.mjs" "$apk"');
+  const androidReceipt = android.indexOf('app-artifact-receipt.mjs" write');
+  const androidInstall = android.indexOf('adb_device install -r "$apk"');
+  assert.ok(androidBuild >= 0 && androidBuild < androidVerify);
+  assert.ok(androidVerify < androidReceipt && androidReceipt < androidInstall);
+  assert.match(
+    android.slice(androidBuild - 2_000, androidVerify),
+    /max-page-size=16384.*common-page-size=16384/s,
+  );
+  assert.match(android.slice(androidBuild - 2_000, androidVerify), /--version-script=\$android_export_map/);
+  assert.match(androidExports, /Java_\*/);
+  assert.match(androidExports, /^\s*main\*;/m);
+  assert.match(androidExports, /local:\s*\n\s*\*;/);
+  assert.match(
+    cargo,
+    /\[profile\.android-dev\]\ninherits = "dev"\ndebug = 1\nopt-level = 1\nstrip = "debuginfo"/,
+  );
+  assert.doesNotMatch(android.slice(androidBuild, androidVerify), /--release/);
   assert.match(guide, /Physical iOS deployment is not\s+implemented/);
   const registration = "node --test scripts/app-artifact-receipt.test.mjs";
   assert.equal(runScript.split(registration).length - 1, 1);
