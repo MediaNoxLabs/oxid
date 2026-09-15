@@ -248,6 +248,15 @@ pub(crate) fn midnight_network(value: &str) -> &'static str {
     }
 }
 
+#[cfg(feature = "standalone-deployment-profile")]
+pub(crate) fn deployment_route_class(value: &str) -> &'static str {
+    match value {
+        "local" => "Local loopback",
+        "tailnet" => "Private Tailnet HTTPS",
+        _ => "Route unavailable",
+    }
+}
+
 pub(crate) fn key_curve(value: &str) -> &'static str {
     match value {
         "Ed25519" => "Ed25519",

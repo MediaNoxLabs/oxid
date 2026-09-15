@@ -263,6 +263,37 @@ pub struct WalletAddressView {
     pub value: String,
 }
 
+/// Encodes a portable receive request for public NIGHT on the undeployed
+/// Midnight network.
+///
+/// The application boundary owns this representation so presentation adapters
+/// do not invent chain protocol payloads. Copy/share adapters may continue to
+/// export the validated raw address for consumers that do not understand the
+/// versioned request.
+#[must_use]
+pub fn encode_midnight_night_receive_request(
+    network_id: &str,
+    address: &WalletAddressView,
+) -> Option<String> {
+    if network_id != "undeployed" || address.kind != "unshielded" {
+        return None;
+    }
+
+    let address = ChainAddress::parse(ChainAddressKind::Unshielded, &address.value).ok()?;
+    let value = address.value();
+    if !value.starts_with("mn_addr_undeployed1")
+        || !value.bytes().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == b'_'
+        })
+    {
+        return None;
+    }
+
+    Some(format!(
+        "midnight-receive:v1|network=undeployed|asset=NIGHT|address={value}"
+    ))
+}
+
 /// Safe public account-derivation result returned to incoming adapters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DerivedWalletAccountView {
@@ -996,6 +1027,42 @@ mod tests {
         assert_eq!(view.addresses[0].kind, "unshielded");
         assert_eq!(view.transactions[0].transaction_id, "tx_new");
         assert_eq!(view.sync.state, "synced");
+    }
+
+    #[test]
+    fn undeployed_public_night_request_is_versioned_and_injection_safe() {
+        let address = WalletAddressView {
+            kind: "unshielded".to_owned(),
+            value: "mn_addr_undeployed1validated".to_owned(),
+        };
+
+        assert_eq!(
+            encode_midnight_night_receive_request("undeployed", &address).as_deref(),
+            Some(
+                "midnight-receive:v1|network=undeployed|asset=NIGHT|address=mn_addr_undeployed1validated"
+            )
+        );
+        assert!(encode_midnight_night_receive_request("preprod", &address).is_none());
+        assert!(
+            encode_midnight_night_receive_request(
+                "undeployed",
+                &WalletAddressView {
+                    kind: "shielded".to_owned(),
+                    value: "mn_shield_undeployed1validated".to_owned(),
+                },
+            )
+            .is_none()
+        );
+        assert!(
+            encode_midnight_night_receive_request(
+                "undeployed",
+                &WalletAddressView {
+                    kind: "unshielded".to_owned(),
+                    value: "mn_addr_undeployed1valid|asset=DUST".to_owned(),
+                },
+            )
+            .is_none()
+        );
     }
 
     #[test]
