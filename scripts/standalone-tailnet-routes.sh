@@ -17,7 +17,12 @@ private_file() {
   if stat -f '%Lp' "$1" >/dev/null 2>&1; then mode="$(stat -f '%Lp' "$1")"; else mode="$(stat -c '%a' "$1")"; fi
   [ "$mode" = 600 ]
 }
-canonical_serve() { tailscale serve status --json | jq -S -c '.'; }
+canonical_serve() {
+  tailscale serve status --json | jq -S -c '
+    if .TCP == {} then del(.TCP) else . end
+    | if .Web == {} then del(.Web) else . end
+  '
+}
 remove_owned_state() { rm -f -- "$receipt" "$receipt_next"; rmdir -- "$state"; }
 write_receipt_update() {
   chmod 600 "$receipt_next"
@@ -50,9 +55,13 @@ rewind_progress() {
 route_transition_matches() {
   jq -en --argjson before "$1" --argjson after "$2" --arg port "$3" \
     --arg host "$4:$3" --arg target "$5" '
+      def normalize_empty_roots:
+        if .TCP == {} then del(.TCP) else . end
+        | if .Web == {} then del(.Web) else . end;
       $after.TCP[$port].HTTPS == true
       and $after.Web[$host].Handlers["/"].Proxy == $target
-      and ($after | del(.TCP[$port]) | del(.Web[$host])) == $before
+      and ($after | del(.TCP[$port]) | del(.Web[$host]) | normalize_empty_roots)
+        == ($before | normalize_empty_roots)
     ' >/dev/null
 }
 
