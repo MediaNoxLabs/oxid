@@ -21,13 +21,15 @@ matches the receipt, then removes that new port and verifies exact restoration
 of the prior configuration. It never calls `tailscale serve reset` or Funnel.
 
 The responsive discovery page and owner-generated setup QR are served by the
-existing faucet adapter through the same loopback origin. This keeps the
+existing faucet adapter through the same loopback origin. The QR is the
+dynamically discovered private HTTPS page URL so an ordinary phone camera can
+open it; the page makes the fixed protocol, realm, fingerprint, and grant policy
+visible before funding. This keeps the
 Tailnet lifecycle to one reverse-proxy route and works with macOS Tailscale,
 which cannot serve a local file path. The page has only the fixed funding form
-and health boundary. The QR contains the version, exact `undeployed`
-realm/fingerprint, and HTTPS route. It contains no wallet, recipient, key,
-personal identity, or policy control. The current origin is discovered by the
-browser; no hostname is committed or logged.
+and health boundary. The QR contains no wallet, recipient, key, or policy
+control. The current origin is discovered at runtime; no hostname is committed
+or logged.
 
 A live HTTPS health/funding path requires both explicit owner invocation and
 `OXID_ENABLE_OWNER_TAILNET_FAUCET_ACCEPTANCE=1`. It accepts an operator-private

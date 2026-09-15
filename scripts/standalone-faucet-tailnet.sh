@@ -14,7 +14,12 @@ profile_store="$state/profiles.json"
 mode="${1:-}"
 
 fail() { printf 'standalone-faucet-tailnet: FAIL phase=%s\n' "$1" >&2; exit 1; }
-private_file() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1")" = 600 ]; }
+private_file() {
+  local mode
+  [ -f "$1" ] && [ ! -L "$1" ] || return 1
+  if stat -f '%Lp' "$1" >/dev/null 2>&1; then mode="$(stat -f '%Lp' "$1")"; else mode="$(stat -c '%a' "$1")"; fi
+  [ "$mode" = 600 ]
+}
 canonical_serve() { tailscale serve status --json | jq -S -c '.'; }
 process_matches() {
   local pid="$1" expected="$2" actual
@@ -22,11 +27,17 @@ process_matches() {
   actual="$(ps -p "$pid" -o command= 2>/dev/null | shasum -a 256 | awk '{print $1}')" || return 1
   [ "$actual" = "$expected" ]
 }
+process_has_exited() {
+  local pid="$1" state
+  if ! kill -0 "$pid" 2>/dev/null; then return 0; fi
+  state="$(ps -p "$pid" -o stat= 2>/dev/null || true)"
+  [[ "$state" == Z* ]]
+}
 stop_owned_process() {
   local pid="$1"
   kill -TERM "$pid" >/dev/null 2>&1 || true
   for _ in $(seq 1 30); do
-    kill -0 "$pid" 2>/dev/null || return 0
+    process_has_exited "$pid" && return 0
     sleep 1
   done
   return 1
@@ -36,7 +47,7 @@ remove_owned_state() {
   rmdir -- "$state"
 }
 
-for command in cargo curl jq tailscale qrencode shasum; do command -v "$command" >/dev/null 2>&1 || fail "missing-${command}"; done
+for command in cargo curl jq node tailscale qrencode shasum; do command -v "$command" >/dev/null 2>&1 || fail "missing-${command}"; done
 case "$mode" in start|status|stop|accept) ;; *) fail usage ;; esac
 
 load_receipt() {
@@ -62,9 +73,10 @@ start)
   done
   [ -n "$port" ] || fail route-unavailable
   umask 077; mkdir -p "$state"; chmod 700 "$state"
-  # The QR is intentionally public only to Tailnet peers and contains no wallet,
-  # secret, personal identity, or configurable funding policy.
-  payload="oxid-faucet:v1|realm=undeployed|fingerprint=undeployed|route=https://$dns:$port"
+  # A normal phone camera can open this private Tailnet HTTPS page directly.
+  # The page itself presents the fixed realm and grant; the QR carries no
+  # wallet, recipient, key, or configurable funding policy.
+  payload="https://$dns:$port/"
   qrencode --type=SVG --output="$svg" "$payload" || fail qr
   chmod 600 "$svg"
   "$root/scripts/standalone-status.sh" local >/dev/null || fail standalone
@@ -73,10 +85,11 @@ start)
     --bin oxid-standalone-faucet-http --message-format=json-render-diagnostics 2>>"$log")" || fail faucet-build
   executable="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "oxid-standalone-faucet-http") | .executable // empty' <<<"$build_json" | tail -n 1)"
   [ -n "$executable" ] && [ -x "$executable" ] || fail faucet-binary
-  OXID_ENABLE_STANDALONE_FAUCET=1 OXID_PROFILE_STORE_PATH="$profile_store" \
+  faucet_pid="$(env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" \
+    OXID_ENABLE_STANDALONE_FAUCET=1 OXID_PROFILE_STORE_PATH="$profile_store" \
     OXID_STANDALONE_FAUCET_SETUP_SVG_PATH="$svg" \
-    "$executable" >>"$log" 2>&1 &
-  faucet_pid=$!
+    node "$root/scripts/lib/spawn-detached.mjs" "$executable" "$log")" || fail faucet-launch
+  [[ "$faucet_pid" =~ ^[0-9]+$ ]] && [ "$faucet_pid" -gt 1 ] || fail faucet-launch
   serve_configured=0
   start_cleanup() {
     local incoming="$1" cleanup_status=0 after=""
@@ -127,11 +140,15 @@ stop)
   # unrelated baseline routes still match the receipt before removal.
   [ "$active" = "$(jq -r '.active' "$receipt")" ] || fail serve-drift
   pid="$(jq -r '.faucet.pid' "$receipt")"; command_sha="$(jq -r '.faucet.commandSha256' "$receipt")"
-  process_matches "$pid" "$command_sha" || fail faucet-process
+  process_alive=0
+  if ! process_has_exited "$pid"; then
+    process_matches "$pid" "$command_sha" || fail faucet-process
+    process_alive=1
+  fi
   port="$(jq -r '.port' "$receipt")"
   tailscale serve --yes --https="$port" off >/dev/null || fail serve-remove
   [ "$(canonical_serve)" = "$(jq -r '.baseline' "$receipt")" ] || fail serve-restore
-  stop_owned_process "$pid" || fail faucet-stop
+  if [ "$process_alive" -eq 1 ]; then stop_owned_process "$pid" || fail faucet-stop; fi
   remove_owned_state || fail state-cleanup
   printf '%s\n' 'standalone-faucet-tailnet: STOPPED'
   ;;

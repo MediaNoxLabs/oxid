@@ -223,6 +223,17 @@ preprod-registration-e2e:
 standalone-phone-up:
     ./scripts/standalone-up.sh phone
 
+# Receipt-scoped Tailnet preparation for issue #556. It reuses the existing
+# stack and faucet boundaries and never replaces unrelated Serve configuration.
+standalone-tailnet-round-trip-start:
+    ./scripts/standalone-tailnet-round-trip.sh start
+
+standalone-tailnet-round-trip-status:
+    ./scripts/standalone-tailnet-round-trip.sh status
+
+standalone-tailnet-round-trip-stop:
+    ./scripts/standalone-tailnet-round-trip.sh stop
+
 standalone-down:
     ./scripts/standalone-down.sh
 
@@ -237,6 +248,10 @@ ios-deploy:
 
 ios-standalone-local:
     OXID_STANDALONE_NETWORK_PROFILE=local ./scripts/run-ios-simulator.sh
+
+# Uses only the private receipt created by standalone-tailnet-round-trip-start.
+ios-standalone-tailnet:
+    OXID_STANDALONE_NETWORK_PROFILE=tailnet ./scripts/run-ios-simulator.sh
 
 ios-dev:
     OXID_UI_PROFILE=dev ./scripts/run-ios-simulator.sh

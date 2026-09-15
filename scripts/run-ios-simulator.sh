@@ -18,6 +18,9 @@ if [ "$(uname -s)" != "Darwin" ]; then
 fi
 
 required_commands=(jq node)
+if [ "${OXID_STANDALONE_NETWORK_PROFILE:-simulated}" = "tailnet" ]; then
+  required_commands+=(shasum tailscale)
+fi
 if [ "$operation" != "deploy" ]; then
   required_commands+=(nix rustup)
 fi
@@ -80,6 +83,7 @@ case "$mobile_custody" in
 esac
 
 standalone_network_profile="${OXID_STANDALONE_NETWORK_PROFILE:-simulated}"
+tailnet_artifact_binding="none"
 case "$standalone_network_profile" in
   simulated)
     ;;
@@ -90,8 +94,37 @@ case "$standalone_network_profile" in
     fi
     mobile_features="$mobile_features,standalone-local"
     ;;
+  tailnet)
+    if [ "$mobile_custody" != "development" ]; then
+      echo "OXID_STANDALONE_NETWORK_PROFILE=tailnet requires development custody." >&2
+      exit 1
+    fi
+    "$repository_root/scripts/standalone-tailnet-routes.sh" status >/dev/null
+    tailnet_receipt="$repository_root/target/standalone-tailnet-routes/receipt.json"
+    tailnet_dns_name="$(jq -r '.dnsName' "$tailnet_receipt")"
+    indexer_port="$(jq -r '.routes[] | select(.name == "indexer") | .port' "$tailnet_receipt")"
+    node_port="$(jq -r '.routes[] | select(.name == "node") | .port' "$tailnet_receipt")"
+    proof_port="$(jq -r '.routes[] | select(.name == "proof") | .port' "$tailnet_receipt")"
+    OXID_TAILNET_ORIGIN_POLICY_INPUT="$tailnet_dns_name" node "$repository_root/scripts/e2e/tailnet-origin-policy.mjs" --host-env >/dev/null || {
+      echo "The receipt does not contain a canonical MagicDNS identity." >&2
+      exit 1
+    }
+    export OXID_BUILD_MIDNIGHT_INDEXER_WS_URL="wss://$tailnet_dns_name:$indexer_port/api/v4/graphql/ws"
+    export OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL="https://$tailnet_dns_name:$indexer_port/api/v4/graphql"
+    export OXID_BUILD_MIDNIGHT_NODE_WS_URL="wss://$tailnet_dns_name:$node_port"
+    export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$tailnet_dns_name:$proof_port"
+    tailnet_artifact_binding="$(
+      printf '%s\n' \
+        "$OXID_BUILD_MIDNIGHT_INDEXER_WS_URL" \
+        "$OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL" \
+        "$OXID_BUILD_MIDNIGHT_NODE_WS_URL" \
+        "$OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL" \
+        | shasum -a 256 | awk '{print $1}'
+    )"
+    mobile_features="$mobile_features,standalone-tailnet"
+    ;;
   *)
-    echo "OXID_STANDALONE_NETWORK_PROFILE must be 'simulated' or 'local' for iOS Simulator." >&2
+    echo "OXID_STANDALONE_NETWORK_PROFILE must be 'simulated', 'local', or 'tailnet' for iOS Simulator." >&2
     exit 1
     ;;
 esac
@@ -230,7 +263,7 @@ fi
 
 app_bundle="$repository_root/target/dx/oxid-app/debug/ios/OxidApp.app"
 artifact_receipt="$repository_root/target/dx/oxid-app/debug/ios/oxid-app-artifact-receipt.json"
-artifact_configuration="$mobile_features|ui=$ui_profile|custody=$mobile_custody|network=$standalone_network_profile|portal=$portal_profile|proving=$mobile_presentation_proving"
+artifact_configuration="$mobile_features|ui=$ui_profile|custody=$mobile_custody|network=$standalone_network_profile|tailnet=$tailnet_artifact_binding|portal=$portal_profile|proving=$mobile_presentation_proving"
 
 if [ "$operation" != "deploy" ]; then
   rustup target add "$rust_target"
