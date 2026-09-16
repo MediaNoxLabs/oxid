@@ -3,11 +3,17 @@
 use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 
 use oxid_foundation::OpaqueIdError;
-use oxid_wallet_domain::WalletProfileId;
+use oxid_wallet_domain::{
+    WalletAccountSnapshot, WalletAccountSource, WalletDustSyncFailure, WalletDustSyncSnapshot,
+    WalletDustSyncState, WalletProfileId, WalletShieldedSyncFailure, WalletShieldedSyncSnapshot,
+    WalletShieldedSyncState, WalletSyncState,
+};
 
 use crate::{
     WalletAccountPortError, WalletAccountReadPort, WalletAccountView, WalletDustSyncPort,
-    WalletDustSyncPortError, WalletDustSyncView, WalletShieldedSyncPort,
+    WalletDustSyncPortError, WalletDustSyncView, WalletRealmFacetState,
+    WalletRealmReconciliationEffect, WalletRealmReconciliationPlanner,
+    WalletRealmReconciliationState, WalletRealmReconciliationTrigger, WalletShieldedSyncPort,
     WalletShieldedSyncPortError, WalletShieldedSyncView,
 };
 
@@ -108,6 +114,11 @@ pub struct SelectedWalletRealmSyncService<W> {
     wallet: Arc<W>,
 }
 
+struct ObservedWalletRealm {
+    view: SelectedWalletRealmSyncView,
+    state: WalletRealmReconciliationState,
+}
+
 impl<W> SelectedWalletRealmSyncService<W> {
     #[must_use]
     pub const fn new(wallet: Arc<W>) -> Self {
@@ -121,34 +132,80 @@ impl<W> SelectedWalletRealmSyncService<W> {
             .map_err(SelectedWalletRealmSyncError::InvalidProfileIdentifier)
     }
 
-    fn current(
-        &self,
-        profile: &WalletProfileId,
-    ) -> Result<SelectedWalletRealmSyncView, SelectedWalletRealmSyncError>
+    fn observed(&self, profile: &WalletProfileId) -> ObservedWalletRealm
     where
         W: WalletAccountReadPort + WalletDustSyncPort + WalletShieldedSyncPort,
     {
-        let account = self
-            .wallet
-            .account(profile)
-            .map(|snapshot| {
-                WalletRealmFamilyView::Ready(WalletAccountView::from_snapshot(&snapshot))
-            })
-            .unwrap_or_else(account_family_error);
-        Ok(SelectedWalletRealmSyncView {
-            account,
-            dust: self
-                .wallet
-                .dust_status(profile)
-                .map(|snapshot| WalletRealmFamilyView::Ready(WalletDustSyncView::from(&snapshot)))
-                .unwrap_or_else(dust_family_error),
-            shielded: self
-                .wallet
-                .shielded_status(profile)
-                .map(|snapshot| {
-                    WalletRealmFamilyView::Ready(WalletShieldedSyncView::from(&snapshot))
-                })
-                .unwrap_or_else(shielded_family_error),
+        let (account, account_state) = observe_account(self.wallet.account(profile));
+        let (dust, dust_state) = observe_dust(self.wallet.dust_status(profile));
+        let (shielded, shielded_state) = observe_shielded(self.wallet.shielded_status(profile));
+        ObservedWalletRealm {
+            view: SelectedWalletRealmSyncView {
+                account,
+                dust,
+                shielded,
+            },
+            state: WalletRealmReconciliationState {
+                account: account_state,
+                dust: dust_state,
+                shielded: shielded_state,
+            },
+        }
+    }
+}
+
+impl<W> SelectedWalletRealmSyncService<W>
+where
+    W: WalletAccountReadPort + WalletDustSyncPort + WalletShieldedSyncPort + 'static,
+{
+    /// Reconciles the selected realm for one explicit application trigger.
+    pub fn reconcile(
+        &self,
+        command: SelectedWalletRealmSyncCommand,
+        trigger: WalletRealmReconciliationTrigger,
+    ) -> SelectedWalletRealmSyncViewFuture<'_> {
+        Box::pin(async move {
+            let profile = Self::profile(command)?;
+            let observed = self.observed(&profile);
+            let mut view = observed.view;
+            let plan = WalletRealmReconciliationPlanner::plan(trigger, observed.state);
+            for effect in plan.effects() {
+                match effect {
+                    WalletRealmReconciliationEffect::SyncAccount => {
+                        view.account = self
+                            .wallet
+                            .sync(&profile)
+                            .await
+                            .map(|snapshot| {
+                                WalletRealmFamilyView::Ready(WalletAccountView::from_snapshot(
+                                    &snapshot,
+                                ))
+                            })
+                            .unwrap_or_else(account_family_error);
+                    }
+                    WalletRealmReconciliationEffect::SyncDust => {
+                        view.dust = self
+                            .wallet
+                            .start_dust_sync(&profile)
+                            .map(|snapshot| {
+                                WalletRealmFamilyView::Ready(WalletDustSyncView::from(&snapshot))
+                            })
+                            .unwrap_or_else(dust_family_error);
+                    }
+                    WalletRealmReconciliationEffect::SyncShielded => {
+                        view.shielded = self
+                            .wallet
+                            .start_shielded_sync(&profile)
+                            .map(|snapshot| {
+                                WalletRealmFamilyView::Ready(WalletShieldedSyncView::from(
+                                    &snapshot,
+                                ))
+                            })
+                            .unwrap_or_else(shielded_family_error);
+                    }
+                }
+            }
+            Ok(view)
         })
     }
 }
@@ -161,34 +218,7 @@ where
         &self,
         command: SelectedWalletRealmSyncCommand,
     ) -> SelectedWalletRealmSyncViewFuture<'_> {
-        Box::pin(async move {
-            let profile = Self::profile(command)?;
-            let account = self
-                .wallet
-                .sync(&profile)
-                .await
-                .map(|snapshot| {
-                    WalletRealmFamilyView::Ready(WalletAccountView::from_snapshot(&snapshot))
-                })
-                .unwrap_or_else(account_family_error);
-            let dust = self
-                .wallet
-                .start_dust_sync(&profile)
-                .map(|snapshot| WalletRealmFamilyView::Ready(WalletDustSyncView::from(&snapshot)))
-                .unwrap_or_else(dust_family_error);
-            let shielded = self
-                .wallet
-                .start_shielded_sync(&profile)
-                .map(|snapshot| {
-                    WalletRealmFamilyView::Ready(WalletShieldedSyncView::from(&snapshot))
-                })
-                .unwrap_or_else(shielded_family_error);
-            Ok(SelectedWalletRealmSyncView {
-                account,
-                dust,
-                shielded,
-            })
-        })
+        self.reconcile(command, WalletRealmReconciliationTrigger::ManualRefresh)
     }
 }
 
@@ -200,7 +230,7 @@ where
         &self,
         command: SelectedWalletRealmSyncCommand,
     ) -> Result<SelectedWalletRealmSyncView, SelectedWalletRealmSyncError> {
-        self.current(&Self::profile(command)?)
+        Ok(self.observed(&Self::profile(command)?).view)
     }
 }
 
@@ -235,6 +265,151 @@ where
             dust,
             shielded,
         })
+    }
+}
+
+fn observe_account(
+    result: Result<WalletAccountSnapshot, WalletAccountPortError>,
+) -> (
+    WalletRealmFamilyView<WalletAccountView>,
+    WalletRealmFacetState,
+) {
+    match result {
+        Ok(snapshot) => {
+            let state = match snapshot.sync().state() {
+                WalletSyncState::Synced if snapshot.source() == WalletAccountSource::Live => {
+                    WalletRealmFacetState::Current
+                }
+                WalletSyncState::Syncing => WalletRealmFacetState::Updating,
+                WalletSyncState::NeverSynced => WalletRealmFacetState::Missing,
+                WalletSyncState::Synced
+                | WalletSyncState::Stalled
+                | WalletSyncState::Unavailable => WalletRealmFacetState::Stale,
+            };
+            (
+                WalletRealmFamilyView::Ready(WalletAccountView::from_snapshot(&snapshot)),
+                state,
+            )
+        }
+        Err(error) => (account_family_error(error), account_error_state(error)),
+    }
+}
+
+fn observe_dust(
+    result: Result<WalletDustSyncSnapshot, WalletDustSyncPortError>,
+) -> (
+    WalletRealmFamilyView<WalletDustSyncView>,
+    WalletRealmFacetState,
+) {
+    match result {
+        Ok(snapshot) => {
+            let state = snapshot.failure().map_or_else(
+                || match snapshot.state() {
+                    WalletDustSyncState::Synced => WalletRealmFacetState::Current,
+                    WalletDustSyncState::Syncing => WalletRealmFacetState::Updating,
+                    WalletDustSyncState::NeverSynced => WalletRealmFacetState::Missing,
+                    WalletDustSyncState::Cached
+                    | WalletDustSyncState::Cancelled
+                    | WalletDustSyncState::Stalled
+                    | WalletDustSyncState::Unavailable => WalletRealmFacetState::Stale,
+                },
+                dust_failure_state,
+            );
+            (
+                WalletRealmFamilyView::Ready(WalletDustSyncView::from(&snapshot)),
+                state,
+            )
+        }
+        Err(error) => (dust_family_error(error), dust_error_state(error)),
+    }
+}
+
+fn observe_shielded(
+    result: Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError>,
+) -> (
+    WalletRealmFamilyView<WalletShieldedSyncView>,
+    WalletRealmFacetState,
+) {
+    match result {
+        Ok(snapshot) => {
+            let state = snapshot.failure().map_or_else(
+                || match snapshot.state() {
+                    WalletShieldedSyncState::Synced => WalletRealmFacetState::Current,
+                    WalletShieldedSyncState::Syncing => WalletRealmFacetState::Updating,
+                    WalletShieldedSyncState::NeverSynced => WalletRealmFacetState::Missing,
+                    WalletShieldedSyncState::Cached
+                    | WalletShieldedSyncState::Cancelled
+                    | WalletShieldedSyncState::Stalled
+                    | WalletShieldedSyncState::Unavailable => WalletRealmFacetState::Stale,
+                },
+                shielded_failure_state,
+            );
+            (
+                WalletRealmFamilyView::Ready(WalletShieldedSyncView::from(&snapshot)),
+                state,
+            )
+        }
+        Err(error) => (shielded_family_error(error), shielded_error_state(error)),
+    }
+}
+
+const fn dust_failure_state(failure: WalletDustSyncFailure) -> WalletRealmFacetState {
+    match failure {
+        WalletDustSyncFailure::ProtectionNotInitialized
+        | WalletDustSyncFailure::ProtectionLocked => WalletRealmFacetState::Blocked,
+        WalletDustSyncFailure::UnsupportedNetwork => WalletRealmFacetState::Unsupported,
+        WalletDustSyncFailure::TransportUnavailable
+        | WalletDustSyncFailure::TimedOut
+        | WalletDustSyncFailure::InvalidChainState
+        | WalletDustSyncFailure::StorageUnavailable => WalletRealmFacetState::Stale,
+    }
+}
+
+const fn shielded_failure_state(failure: WalletShieldedSyncFailure) -> WalletRealmFacetState {
+    match failure {
+        WalletShieldedSyncFailure::ProtectionNotInitialized
+        | WalletShieldedSyncFailure::ProtectionLocked => WalletRealmFacetState::Blocked,
+        WalletShieldedSyncFailure::UnsupportedNetwork => WalletRealmFacetState::Unsupported,
+        WalletShieldedSyncFailure::TransportUnavailable
+        | WalletShieldedSyncFailure::TimedOut
+        | WalletShieldedSyncFailure::InvalidChainState
+        | WalletShieldedSyncFailure::StorageUnavailable => WalletRealmFacetState::Stale,
+    }
+}
+
+const fn account_error_state(error: WalletAccountPortError) -> WalletRealmFacetState {
+    match error {
+        WalletAccountPortError::NotFound => WalletRealmFacetState::Missing,
+        WalletAccountPortError::UnsupportedNetwork => WalletRealmFacetState::Unsupported,
+        WalletAccountPortError::ProtectionNotInitialized
+        | WalletAccountPortError::ProtectionLocked => WalletRealmFacetState::Blocked,
+        WalletAccountPortError::Unavailable | WalletAccountPortError::InvalidData => {
+            WalletRealmFacetState::Stale
+        }
+    }
+}
+
+const fn dust_error_state(error: WalletDustSyncPortError) -> WalletRealmFacetState {
+    match error {
+        WalletDustSyncPortError::Conflict => WalletRealmFacetState::Updating,
+        WalletDustSyncPortError::UnsupportedNetwork => WalletRealmFacetState::Unsupported,
+        WalletDustSyncPortError::ProtectionNotInitialized
+        | WalletDustSyncPortError::ProtectionLocked => WalletRealmFacetState::Blocked,
+        WalletDustSyncPortError::Unavailable | WalletDustSyncPortError::InvalidData => {
+            WalletRealmFacetState::Stale
+        }
+    }
+}
+
+const fn shielded_error_state(error: WalletShieldedSyncPortError) -> WalletRealmFacetState {
+    match error {
+        WalletShieldedSyncPortError::Conflict => WalletRealmFacetState::Updating,
+        WalletShieldedSyncPortError::UnsupportedNetwork => WalletRealmFacetState::Unsupported,
+        WalletShieldedSyncPortError::ProtectionNotInitialized
+        | WalletShieldedSyncPortError::ProtectionLocked => WalletRealmFacetState::Blocked,
+        WalletShieldedSyncPortError::Unavailable | WalletShieldedSyncPortError::InvalidData => {
+            WalletRealmFacetState::Stale
+        }
     }
 }
 
@@ -285,16 +460,26 @@ const fn shielded_family_error(
 
 #[cfg(test)]
 mod tests {
-    use std::task::{Context, Poll, Waker};
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        task::{Context, Poll, Waker},
+    };
 
+    use oxid_foundation::UnixTimestampMillis;
     use oxid_wallet_domain::{
         ChainKind, ChainNetwork, ChainNetworkId, NetworkDisplayName, NetworkEnvironment,
-        WalletAccountSnapshot, WalletDustSyncSnapshot, WalletShieldedSyncSnapshot,
+        WalletAccountSnapshot, WalletDustSyncFailure, WalletDustSyncSnapshot,
+        WalletShieldedSyncFailure, WalletShieldedSyncSnapshot,
     };
 
     use super::*;
 
-    struct PartialWallet;
+    #[derive(Default)]
+    struct PartialWallet {
+        account_syncs: AtomicUsize,
+        dust_starts: AtomicUsize,
+        shielded_starts: AtomicUsize,
+    }
 
     impl WalletAccountReadPort for PartialWallet {
         fn account(
@@ -305,6 +490,7 @@ mod tests {
         }
 
         fn sync<'a>(&'a self, _: &'a WalletProfileId) -> crate::WalletAccountPortFuture<'a> {
+            self.account_syncs.fetch_add(1, Ordering::Relaxed);
             Box::pin(async { Ok(WalletAccountSnapshot::unavailable(network())) })
         }
     }
@@ -321,6 +507,7 @@ mod tests {
             &self,
             _: &WalletProfileId,
         ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+            self.dust_starts.fetch_add(1, Ordering::Relaxed);
             Err(WalletDustSyncPortError::ProtectionLocked)
         }
 
@@ -344,6 +531,7 @@ mod tests {
             &self,
             _: &WalletProfileId,
         ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+            self.shielded_starts.fetch_add(1, Ordering::Relaxed);
             Ok(WalletShieldedSyncSnapshot::never_synced(network_id()))
         }
 
@@ -386,7 +574,8 @@ mod tests {
 
     #[test]
     fn aggregate_preserves_partial_family_failures_as_typed_state() {
-        let service = SelectedWalletRealmSyncService::new(Arc::new(PartialWallet));
+        let wallet = Arc::new(PartialWallet::default());
+        let service = SelectedWalletRealmSyncService::new(Arc::clone(&wallet));
         let started = resolve(SyncSelectedWalletRealmUseCase::execute(&service, command()))
             .expect("aggregate starts");
         assert!(matches!(started.account, WalletRealmFamilyView::Ready(_)));
@@ -396,6 +585,9 @@ mod tests {
             WalletRealmFamilyView::Ready(WalletShieldedSyncView { ref state, .. })
                 if state == "never_synced"
         ));
+        assert_eq!(wallet.account_syncs.load(Ordering::Relaxed), 1);
+        assert_eq!(wallet.dust_starts.load(Ordering::Relaxed), 1);
+        assert_eq!(wallet.shielded_starts.load(Ordering::Relaxed), 1);
 
         let cancelled = CancelSelectedWalletRealmSyncUseCase::execute(&service, command())
             .expect("aggregate cancellation reports every family");
@@ -405,7 +597,7 @@ mod tests {
 
     #[test]
     fn aggregate_rejects_an_invalid_profile_before_calling_ports() {
-        let service = SelectedWalletRealmSyncService::new(Arc::new(PartialWallet));
+        let service = SelectedWalletRealmSyncService::new(Arc::new(PartialWallet::default()));
         assert!(matches!(
             GetSelectedWalletRealmSyncUseCase::execute(
                 &service,
@@ -415,5 +607,38 @@ mod tests {
             ),
             Err(SelectedWalletRealmSyncError::InvalidProfileIdentifier(_))
         ));
+    }
+
+    #[test]
+    fn published_failures_classify_blocked_or_unsupported_reconciliation() {
+        let dust = WalletDustSyncSnapshot::new(
+            network_id(),
+            WalletDustSyncState::Cached,
+            Some(4),
+            Some(9),
+            3,
+            Some(42),
+            Some(UnixTimestampMillis::new(42)),
+            Some(WalletDustSyncFailure::ProtectionLocked),
+        )
+        .expect("cached DUST fixture is valid");
+        let (_, dust_state) = observe_dust(Ok(dust));
+        assert_eq!(dust_state, WalletRealmFacetState::Blocked);
+
+        let shielded = WalletShieldedSyncSnapshot::new(
+            network_id(),
+            WalletShieldedSyncState::Stalled,
+            Some(4),
+            Some(9),
+            3,
+            Some(1),
+            Some(2),
+            Vec::new(),
+            Some(UnixTimestampMillis::new(42)),
+            Some(WalletShieldedSyncFailure::UnsupportedNetwork),
+        )
+        .expect("stalled shielded fixture is valid");
+        let (_, shielded_state) = observe_shielded(Ok(shielded));
+        assert_eq!(shielded_state, WalletRealmFacetState::Unsupported);
     }
 }
