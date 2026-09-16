@@ -632,6 +632,61 @@ mod tests {
     }
 
     #[test]
+    fn coordinator_merges_observations_and_runs_the_highest_priority_pending_trigger() {
+        let original = WalletRealmReconciliationState {
+            account: WalletRealmFacetState::Stale,
+            dust: WalletRealmFacetState::Current,
+            shielded: WalletRealmFacetState::Current,
+        };
+        let started = WalletRealmReconciliationCoordinator::reduce(
+            WalletRealmCoordinatorState::new(original),
+            WalletRealmCoordinatorInput::Reconcile(WalletRealmReconciliationTrigger::Initial),
+        );
+        assert_eq!(started.effects().len(), 1);
+
+        let observed = WalletRealmReconciliationCoordinator::reduce(
+            *started.state(),
+            WalletRealmCoordinatorInput::Observe(WalletRealmReconciliationState {
+                account: WalletRealmFacetState::Current,
+                dust: WalletRealmFacetState::Stale,
+                shielded: WalletRealmFacetState::Current,
+            }),
+        );
+        assert_eq!(
+            observed.state().facets().account,
+            WalletRealmFacetState::Updating
+        );
+        assert_eq!(observed.state().facets().dust, WalletRealmFacetState::Stale);
+
+        let pending_manual = WalletRealmReconciliationCoordinator::reduce(
+            *observed.state(),
+            WalletRealmCoordinatorInput::Reconcile(WalletRealmReconciliationTrigger::ManualRefresh),
+        );
+        let pending_preflight = WalletRealmReconciliationCoordinator::reduce(
+            *pending_manual.state(),
+            WalletRealmCoordinatorInput::Reconcile(
+                WalletRealmReconciliationTrigger::ActionPreflight,
+            ),
+        );
+        let recovered = WalletRealmReconciliationCoordinator::reduce(
+            *pending_preflight.state(),
+            WalletRealmCoordinatorInput::EffectExpired {
+                effect: started.effects()[0],
+                outcome: WalletRealmEffectOutcome::Stale,
+            },
+        );
+
+        assert_eq!(recovered.state().revision(), 2);
+        assert_eq!(
+            recovered.effects(),
+            [
+                WalletRealmCoordinatorEffect::new(2, WalletRealmReconciliationEffect::SyncAccount,),
+                WalletRealmCoordinatorEffect::new(2, WalletRealmReconciliationEffect::SyncDust,),
+            ]
+        );
+    }
+
+    #[test]
     fn coordinator_requires_explicit_recovery_and_cancel_invalidates_leases() {
         let blocked = WalletRealmCoordinatorState::new(WalletRealmReconciliationState {
             account: WalletRealmFacetState::Blocked,
