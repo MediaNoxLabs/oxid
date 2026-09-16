@@ -44,6 +44,13 @@ fn selected_realm_sync_projects_public_dust_and_shielded_outcomes_together() {
 
     for response in &responses {
         assert_eq!(response["ok"], true);
+        assert!(response["result"]["realmSync"]["identity"]["profileId"].is_string());
+        assert!(response["result"]["realmSync"]["identity"]["networkId"].is_string());
+        assert!(response["result"]["realmSync"]["revision"].is_u64());
+        assert!(response["result"]["realmSync"]["fresh"].is_boolean());
+        assert!(response["result"]["realmSync"]["consistent"].is_boolean());
+        assert!(response["result"]["realmSync"]["actionable"].is_string());
+        assert!(response["result"]["realmSync"]["observation"]["state"].is_string());
         assert_eq!(response["result"]["realmSync"]["account"]["state"], "ready");
         assert!(response["result"]["realmSync"]["account"]["value"]["networkId"].is_string());
         assert!(response["result"]["realmSync"]["dust"]["state"].is_string());

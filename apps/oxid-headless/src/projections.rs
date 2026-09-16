@@ -15,7 +15,7 @@ use oxid_passport_vault_application::{
 use oxid_presentation_application::CredentialPresentationView;
 use oxid_protocol_application::{CredentialIssuanceView, SelfIssuedAuthenticationView};
 use oxid_wallet_application::{
-    DerivedWalletAccountView, SelectedWalletRealmSyncView, WalletAccountView,
+    DerivedWalletAccountView, SelectedWalletRealmProjection, WalletAccountView,
     WalletDustRegistrationPreviewView, WalletDustRegistrationSubmissionStatusView,
     WalletDustRegistrationSubmissionView, WalletDustSyncView, WalletKeyView, WalletNetworkListView,
     WalletRealmFamilyView, WalletSecurityStatusView, WalletShieldedSyncView,
@@ -91,8 +91,30 @@ pub(super) fn sync_value(account: &WalletAccountView) -> Value {
     })
 }
 
-pub(super) fn selected_realm_sync_value(status: &SelectedWalletRealmSyncView) -> Value {
+pub(super) fn selected_realm_sync_value(projection: &SelectedWalletRealmProjection) -> Value {
+    let status = &projection.view;
     json!({
+        "identity": {
+            "profileId": projection.identity.profile.to_string(),
+            "networkId": projection.identity.realm.to_string()
+        },
+        "revision": projection.revision,
+        "fresh": projection.fresh,
+        "consistent": projection.consistent,
+        "actionable": match projection.actionable {
+            oxid_wallet_application::SelectedWalletRealmActionReadiness::Ready => "ready",
+            oxid_wallet_application::SelectedWalletRealmActionReadiness::Refreshing => "refreshing",
+            oxid_wallet_application::SelectedWalletRealmActionReadiness::Unavailable => "unavailable",
+        },
+        "observation": match projection.observation {
+            oxid_wallet_application::SelectedWalletRealmObservation::Settled => json!({
+                "state": "settled"
+            }),
+            oxid_wallet_application::SelectedWalletRealmObservation::PollAfter(delay) => json!({
+                "state": "poll_after",
+                "afterMs": delay.as_millis()
+            }),
+        },
         "account": realm_family_value(&status.account, account_value),
         "dust": realm_family_value(&status.dust, dust_sync_value),
         "shielded": realm_family_value(&status.shielded, shielded_sync_value)

@@ -8,8 +8,8 @@ use oxid_wallet_application::{
     CancelWalletDustRegistrationSubmissionCommand, GetWalletDustRegistrationCommand,
     GetWalletDustRegistrationStatusCommand, PrepareShieldedWalletTransferCommand,
     PrepareWalletDustRegistrationCommand, PrepareWalletTransferCommand,
-    ReconcileWalletDustRegistrationSubmissionCommand, SelectedWalletRealmSyncCommand,
-    SelectedWalletRealmSyncError, SelectedWalletRealmSyncView, SensitiveOperationConfirmation,
+    ReconcileWalletDustRegistrationSubmissionCommand, SelectedWalletRealmProjection,
+    SelectedWalletRealmSyncCommand, SelectedWalletRealmSyncError, SensitiveOperationConfirmation,
     SubmitWalletDustRegistrationCommand, SubmitWalletTransferCommand, WalletAccountQuery,
     WalletAccountView, WalletDustRegistrationError, WalletDustRegistrationPortError,
     WalletDustRegistrationSubmissionStatusView, WalletDustSyncCommand, WalletDustSyncError,
@@ -42,7 +42,7 @@ use crate::{
 
 fn selected_realm_sync_dispatch(
     id: Option<String>,
-    result: Result<SelectedWalletRealmSyncView, SelectedWalletRealmSyncError>,
+    result: Result<SelectedWalletRealmProjection, SelectedWalletRealmSyncError>,
 ) -> Dispatch {
     match result {
         Ok(status) => Dispatch::continue_with(Response::success(
@@ -131,7 +131,7 @@ impl HeadlessWallet {
             &ApplicationServices,
             SelectedWalletRealmSyncCommand,
         )
-            -> Result<SelectedWalletRealmSyncView, SelectedWalletRealmSyncError>,
+            -> Result<SelectedWalletRealmProjection, SelectedWalletRealmSyncError>,
     ) -> Dispatch {
         if !params_are_empty(&request.params) {
             return invalid_empty_params(request.id, method);
