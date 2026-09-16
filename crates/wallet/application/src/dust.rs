@@ -55,6 +55,22 @@ pub trait WalletDustSyncPort: Send + Sync {
         profile_id: &WalletProfileId,
     ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError>;
 
+    fn dust_status_in_realm(
+        &self,
+        _profile_id: &WalletProfileId,
+        _network_id: &ChainNetworkId,
+    ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+        Err(WalletDustSyncPortError::UnsupportedNetwork)
+    }
+
+    fn start_dust_sync_in_realm(
+        &self,
+        _profile_id: &WalletProfileId,
+        _network_id: &ChainNetworkId,
+    ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+        Err(WalletDustSyncPortError::UnsupportedNetwork)
+    }
+
     /// Cancels an adapter-owned session in an explicitly retired realm. Ports
     /// that cannot address a realm must fail closed instead of cancelling the
     /// newly selected one.

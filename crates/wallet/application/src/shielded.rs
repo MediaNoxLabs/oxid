@@ -55,6 +55,22 @@ pub trait WalletShieldedSyncPort: Send + Sync {
         profile_id: &WalletProfileId,
     ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError>;
 
+    fn shielded_status_in_realm(
+        &self,
+        _profile_id: &WalletProfileId,
+        _network_id: &ChainNetworkId,
+    ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+        Err(WalletShieldedSyncPortError::UnsupportedNetwork)
+    }
+
+    fn start_shielded_sync_in_realm(
+        &self,
+        _profile_id: &WalletProfileId,
+        _network_id: &ChainNetworkId,
+    ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+        Err(WalletShieldedSyncPortError::UnsupportedNetwork)
+    }
+
     /// Cancels an adapter-owned session in an explicitly retired realm. Ports
     /// that cannot address a realm must fail closed instead of cancelling the
     /// newly selected one.
