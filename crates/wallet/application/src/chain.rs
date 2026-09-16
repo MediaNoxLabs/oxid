@@ -665,6 +665,30 @@ pub trait SelectWalletNetworkUseCase: Send + Sync {
     ) -> Result<WalletNetworkListView, WalletAccountError>;
 }
 
+/// Application-owned observer for successful profile realm selections.
+///
+/// The selection service records the transition at the mutation boundary so
+/// concurrent readers cannot infer an incomplete A→B→A history from queries.
+pub trait WalletNetworkSelectionObserver: Send + Sync {
+    fn selected(
+        &self,
+        profile: &WalletProfileId,
+        network: &ChainNetworkId,
+    ) -> Result<(), WalletAccountPortError>;
+}
+
+struct NoopWalletNetworkSelectionObserver;
+
+impl WalletNetworkSelectionObserver for NoopWalletNetworkSelectionObserver {
+    fn selected(
+        &self,
+        _: &WalletProfileId,
+        _: &ChainNetworkId,
+    ) -> Result<(), WalletAccountPortError> {
+        Ok(())
+    }
+}
+
 /// Incoming use case for deriving an account without handling private bytes.
 pub trait DeriveWalletAccountUseCase: Send + Sync {
     fn execute(
@@ -686,12 +710,27 @@ pub trait SyncWalletAccountUseCase: Send + Sync {
 /// Application service for catalog and selection operations.
 pub struct WalletNetworkService<N> {
     networks: Arc<N>,
+    selection_observer: Arc<dyn WalletNetworkSelectionObserver>,
 }
 
 impl<N> WalletNetworkService<N> {
     #[must_use]
-    pub const fn new(networks: Arc<N>) -> Self {
-        Self { networks }
+    pub fn new(networks: Arc<N>) -> Self {
+        Self {
+            networks,
+            selection_observer: Arc::new(NoopWalletNetworkSelectionObserver),
+        }
+    }
+
+    #[must_use]
+    pub fn with_selection_observer(
+        networks: Arc<N>,
+        selection_observer: Arc<dyn WalletNetworkSelectionObserver>,
+    ) -> Self {
+        Self {
+            networks,
+            selection_observer,
+        }
     }
 
     fn view(
@@ -763,6 +802,9 @@ where
             .map_err(WalletAccountError::InvalidNetworkIdentifier)?;
         self.networks
             .select_network(&profile_id, &network_id)
+            .map_err(WalletAccountError::Port)?;
+        self.selection_observer
+            .selected(&profile_id, &network_id)
             .map_err(WalletAccountError::Port)?;
         self.view(&profile_id)
     }
