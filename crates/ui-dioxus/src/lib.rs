@@ -54,10 +54,12 @@ pub use passport_vault::{
 #[cfg(feature = "standalone-deployment-profile")]
 use receive::standalone_funding_action;
 use receive::{
-    default_receive_kind, grouped_address_preview, protected_receive_addresses, render_qr_svg,
+    default_receive_kind, grouped_address_preview, protected_receive_addresses,
+    public_export_message, render_qr_svg,
 };
 use send_recipient::{
-    SendWizardProgress, SendWizardStep, scanned_recipient_update, start_recipient_scan,
+    SendWizardProgress, SendWizardStep, is_public_recipient_candidate, scanned_recipient_update,
+    start_recipient_scan,
 };
 use wallet_onboarding::{WalletOnboarding, WalletOnboardingIntent};
 #[cfg(feature = "preprod-observation")]
@@ -93,8 +95,8 @@ use oxid_passport_vault_application::{
     ListPassportVaultLocksUseCase, PassportVaultView, WithdrawPassportVaultLockUseCase,
 };
 use oxid_platform_ports::{
-    IdentityLinkIngressError, IdentityLinkIngressPort, PublicReceiveAddress, PublicTextExportError,
-    PublicTextExportPort, QrScanError, QrScannerPort, ScreenPrivacyPort,
+    IdentityLinkIngressError, IdentityLinkIngressPort, PublicReceiveAddress, PublicTextExportPort,
+    QrScanError, QrScannerPort, ScreenPrivacyPort,
 };
 #[cfg(feature = "proof-benchmark")]
 use oxid_platform_ports::{ProcessResourceSamplerPort, UnavailableProcessResourceSampler};
@@ -5161,8 +5163,8 @@ fn ReceiveSheet(
                         div { class: "receive-sheet__heading",
                             div {
                                 p { class: "card-eyebrow", "Midnight account" }
-                                h2 { id: "receive-sheet-title", "Receive NIGHT" }
-                                p { "Choose exactly which public receive destination to share." }
+                                h2 { id: "receive-sheet-title", "Receive assets" }
+                                p { "Choose exactly which receive destination to share." }
                             }
                             button {
                                 class: "receive-sheet__close",
@@ -5205,10 +5207,11 @@ fn ReceiveSheet(
                 &account.network_id,
                 &selected,
             );
-            // Keep the QR interoperable until the versioned receive-request
-            // ingress lands. Copy and share likewise expose this validated raw
-            // address; the protocol request is used only for supported actions.
-            let qr = render_qr_svg(&selected.value);
+            // The scanner ingress is composed in this slice, so the QR may use
+            // the closed versioned request. Copy/share remain raw-address
+            // fallbacks for other wallets.
+            let qr_payload = receive_request.as_deref().unwrap_or(&selected.value);
+            let qr = render_qr_svg(qr_payload);
             let qr_label = format!(
                 "QR code for {} receive address",
                 ui::address_kind(&selected.kind)
@@ -5284,7 +5287,7 @@ fn ReceiveSheet(
                         "{preview}"
                     }
                     if receive_request.is_some() {
-                        p { "The QR, copy, and share actions all export this raw address." }
+                        p { "The QR carries a versioned public NIGHT request; copy and share export the raw address shown." }
                     }
                 }
                 div { class: "receive-sheet__actions",
@@ -5319,7 +5322,7 @@ fn ReceiveSheet(
                 }
                 p { class: "receive-sheet__guarantee",
                     if receive_request.is_some() {
-                        "QR, copy, and share contain the validated raw public address."
+                        "QR: versioned public NIGHT request. Copy/share: validated raw address."
                     } else {
                         "QR, copy, and share contain the protected address shown."
                     }
@@ -5344,8 +5347,8 @@ fn ReceiveSheet(
             div { class: "receive-sheet__heading",
                 div {
                     p { class: "card-eyebrow", "Midnight account" }
-                    h2 { id: "receive-sheet-title", "Receive NIGHT" }
-                    p { "Choose exactly which public receive destination to share." }
+                    h2 { id: "receive-sheet-title", "Receive assets" }
+                    p { "Choose exactly which receive destination to share." }
                 }
                 button {
                     class: "receive-sheet__close",
@@ -7077,22 +7080,6 @@ fn ReceiveAddress(kind: String, value: String) -> Element {
     }
 }
 
-fn public_export_message(result: Result<(), PublicTextExportError>, share: bool) -> String {
-    match result {
-        Ok(()) if share => "Native share sheet opened for this public receive address.".to_owned(),
-        Ok(()) => "Public receive address copied to the native clipboard.".to_owned(),
-        Err(PublicTextExportError::Unavailable) => {
-            "Native copy/share is unavailable on this device.".to_owned()
-        }
-        Err(PublicTextExportError::InvalidPublicText) => {
-            "This receive address is not safe to export.".to_owned()
-        }
-        Err(PublicTextExportError::Failed) => {
-            "The public receive address could not be exported.".to_owned()
-        }
-    }
-}
-
 #[component]
 fn SendTransferPanel(
     profile_id: String,
@@ -7117,8 +7104,8 @@ fn SendTransferPanel(
     match panel.read().clone() {
         TransferPanelState::Editing => match wizard_step() {
             SendWizardStep::Recipient => {
-                let can_continue = !recipient.read().trim().is_empty();
                 let scan_busy = recipient_scan_busy();
+                let can_continue = !scan_busy && !recipient.read().trim().is_empty();
                 let scan_notice = recipient_scan_notice();
                 let active_network_id = active_network_id.clone();
                 let manual_network_id = active_network_id.clone();
@@ -7136,9 +7123,11 @@ fn SendTransferPanel(
                             aria_label: "Recipient address",
                             maxlength: 512,
                             autocomplete: "off",
+                            disabled: scan_busy,
                             value: "{recipient}",
                             oninput: move |event| {
                                 using_own_address.set(false);
+                                recipient_scan_notice.set(None);
                                 recipient.set(event.value());
                             },
                         }
@@ -7162,6 +7151,7 @@ fn SendTransferPanel(
                                 recipient_scan_notice,
                                 recipient,
                                 using_own_address,
+                                shielded,
                             ),
                             if scan_busy { "Scanning…" } else { "Scan receive request" }
                         }
@@ -7171,8 +7161,10 @@ fn SendTransferPanel(
                         button {
                             class: "inline-action",
                             r#type: "button",
+                            disabled: scan_busy,
                             onclick: move |_| {
                                 using_own_address.set(true);
+                                recipient_scan_notice.set(None);
                                 recipient.set(if shielded() {
                                     shielded_receive_address.clone()
                                 } else {
@@ -7187,10 +7179,14 @@ fn SendTransferPanel(
                             disabled: !can_continue,
                             aria_label: "Continue to transfer amount",
                             onclick: move |_| {
-                                let value = recipient();
-                                if value.starts_with("mn_addr") || value.starts_with("midnight-receive:") {
+                                let value = recipient().trim().to_owned();
+                                recipient.set(value.clone());
+                                if is_public_recipient_candidate(&value) {
                                     match scanned_recipient_update(&manual_network_id, value) {
-                                        Ok(update) => recipient.set(update.recipient),
+                                        Ok(update) => {
+                                            shielded.set(update.shielded);
+                                            recipient.set(update.recipient);
+                                        }
                                         Err(message) => {
                                             recipient_scan_notice.set(Some(message));
                                             return;

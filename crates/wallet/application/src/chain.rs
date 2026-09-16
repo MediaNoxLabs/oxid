@@ -346,7 +346,17 @@ fn validate_midnight_unshielded_recipient(
     active_network_id: &str,
     value: &str,
 ) -> Result<ChainAddress, MidnightReceiveRequestError> {
-    let address = ChainAddress::parse(ChainAddressKind::Unshielded, value)
+    let has_lowercase = value.bytes().any(|byte| byte.is_ascii_lowercase());
+    let has_uppercase = value.bytes().any(|byte| byte.is_ascii_uppercase());
+    if has_lowercase && has_uppercase {
+        return Err(MidnightReceiveRequestError::InvalidAddress);
+    }
+    let normalized = if has_uppercase {
+        value.to_ascii_lowercase()
+    } else {
+        value.to_owned()
+    };
+    let address = ChainAddress::parse(ChainAddressKind::Unshielded, normalized)
         .map_err(|_| MidnightReceiveRequestError::InvalidAddress)?;
     let expected_hrp = if active_network_id == "mainnet" {
         "mn_addr".to_owned()
@@ -1254,6 +1264,17 @@ mod tests {
             address
         );
         assert!(import_midnight_night_receive_request("undeployed", address).is_ok());
+        assert_eq!(
+            import_midnight_night_receive_request("undeployed", &address.to_ascii_uppercase())
+                .expect("uniformly uppercase Bech32m is accepted")
+                .value(),
+            address
+        );
+        let mixed_case = address.replacen('m', "M", 1);
+        assert_eq!(
+            import_midnight_night_receive_request("undeployed", &mixed_case),
+            Err(MidnightReceiveRequestError::InvalidAddress)
+        );
 
         assert_eq!(
             import_midnight_night_receive_request(

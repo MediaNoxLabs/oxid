@@ -62,6 +62,7 @@ pub(super) fn SendWizardProgress(current: SendWizardStep) -> Element {
 pub(super) struct RecipientScanUpdate {
     pub recipient: String,
     pub advances_wizard: bool,
+    pub shielded: bool,
 }
 
 /// Validates a scanned NIGHT receive request for the selected network.
@@ -75,11 +76,19 @@ pub(super) fn scanned_recipient_update(
         .map(|address| RecipientScanUpdate {
             recipient: address.value().to_owned(),
             advances_wizard: false,
+            shielded: false,
         })
         .map_err(|_| {
             "This is not a valid public NIGHT receive request for the active network. Nothing was imported."
                 .to_owned()
         })
+}
+
+pub(super) fn is_public_recipient_candidate(value: &str) -> bool {
+    value
+        .get(.."mn_addr".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("mn_addr"))
+        || value.starts_with("midnight-receive:")
 }
 
 pub(super) fn start_recipient_scan(
@@ -89,6 +98,7 @@ pub(super) fn start_recipient_scan(
     mut notice: Signal<Option<String>>,
     mut recipient: Signal<String>,
     mut using_own_address: Signal<bool>,
+    mut shielded: Signal<bool>,
 ) {
     if busy() {
         return;
@@ -101,6 +111,7 @@ pub(super) fn start_recipient_scan(
             {
                 Ok(update) => {
                     using_own_address.set(false);
+                    shielded.set(update.shielded);
                     recipient.set(update.recipient);
                     notice.set(Some(
                         "Recipient imported. Continue when you are ready.".to_owned(),
@@ -145,6 +156,20 @@ mod tests {
             "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh"
         );
         assert!(!update.advances_wizard);
+        assert!(!update.shielded);
+    }
+
+    #[test]
+    fn uppercase_public_address_is_admitted_to_the_import_boundary() {
+        let address =
+            "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
+        assert!(is_public_recipient_candidate(&address.to_ascii_uppercase()));
+        assert_eq!(
+            scanned_recipient_update("undeployed", address.to_ascii_uppercase())
+                .expect("uniform uppercase public address")
+                .recipient,
+            address
+        );
     }
 
     #[test]
