@@ -363,7 +363,7 @@
       "description": "Every collector reports its own status. A collector that could not run says so rather than emitting empty facts, because an empty result and an unavailable collector are different conclusions and must not be confused.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "facts"],
+      "required": ["status"],
       "properties": {
         "status": {
           "enum": ["ok", "degraded", "unavailable"],
@@ -378,6 +378,14 @@
         "facts": {}
       },
       "allOf": [
+        {
+          "description": "An ok or degraded collector obtained facts and must carry them. An unavailable collector omits the key entirely, because a typed facts shape cannot admit null and nulling it would leave an unavailable collector unrepresentable.",
+          "if": {
+            "properties": { "status": { "enum": ["ok", "degraded"] } },
+            "required": ["status"]
+          },
+          "then": { "required": ["facts"] }
+        },
         {
           "if": {
             "properties": { "status": { "enum": ["degraded", "unavailable"] } },

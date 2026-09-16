@@ -48,7 +48,7 @@ because in practice they are the ones that lapse.
 1. **Evidence-based.** *Hard rule.* Every finding cites either an evidence
    anchor from the collected artifact or a `file:line` the auditor read. A
    finding that cites neither is rejected by
-   `scripts/audit/check-audit-report.mjs`,
+   [`scripts/audit/check-audit-report.mjs`](../../../scripts/audit/check-audit-report.mjs),
    not by reviewer taste. Sampling is stated wherever the audit sampled.
 2. **Fair presentation.** *Hard rule.* Completeness is part of accuracy. A
    report that lists only findings is non-conforming: what was examined and
@@ -80,7 +80,7 @@ before reaching a finding.
 
 ### Layer 1 — mechanical evidence
 
-`scripts/audit/collect.mjs` is
+[`scripts/audit/collect.mjs`](../../../scripts/audit/collect.mjs) is
 deterministic, read-only, and free of any language model. It emits an
 `audit-evidence-v1` artifact in which every fact carries a stable anchor key.
 
@@ -212,7 +212,7 @@ node scripts/audit/collect.mjs --type milestone --branch milestone-0.2.0 \
 node scripts/audit/check-audit-report.mjs tmp/audit/milestone/<anchor>/report.json
 ```
 
-Under Pi, `.pi/skills/oxid-audit/SKILL.md`
+Under Pi, [`.pi/skills/oxid-audit/SKILL.md`](../../../.pi/skills/oxid-audit/SKILL.md)
 wraps the sequence as `/audit <type> [--since <anchor>]`.
 
 Artifacts live under `tmp/audit/<type>/<anchor>/` — evidence, one findings file
