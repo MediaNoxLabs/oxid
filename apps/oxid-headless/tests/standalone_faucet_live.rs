@@ -52,6 +52,14 @@ impl StateRoot {
         make_owner_private(&path.join("private"));
         path
     }
+
+    fn cleanup(self) {
+        fs::remove_dir_all(&self.0).expect("isolated live-test state cleanup");
+        assert!(
+            !self.0.exists(),
+            "isolated live-test state must be absent after cleanup"
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -83,6 +91,7 @@ impl ProcessHarness {
     fn wallet(root: &Path) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
         command
+            .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
             .env("OXID_PROFILE_STORE_PATH", root.join("profiles.json"))
             .env(
                 "OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH",
@@ -112,6 +121,7 @@ impl ProcessHarness {
     fn faucet(root: &Path) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-standalone-faucet"));
         command
+            .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
             .env("OXID_ENABLE_STANDALONE_FAUCET", "1")
             .env("OXID_PROFILE_STORE_PATH", root.join("profiles.json"));
         Self::spawn(command, "oxid.standalone-faucet.v1")
@@ -762,9 +772,11 @@ fn two_fresh_wallets_complete_a_night_round_trip_and_reconcile_history() {
     wallet_a.finish("system.quit");
     wallet_b.finish("system.quit");
     faucet.finish("faucet.shutdown");
-    drop(root);
+    root.cleanup();
     println!(
-        "standalone-night-round-trip-e2e: PASS wallets=2 transfers=2 dustReady=true cleanup=complete"
+        "standalone-night-round-trip-e2e: PASS wallets=2 grantAtomicUnits={FIXED_GRANT} transfers=2 dustASeconds={} dustBSeconds={} cleanup=complete",
+        dust_a.as_secs(),
+        dust_b.as_secs()
     );
 }
 
