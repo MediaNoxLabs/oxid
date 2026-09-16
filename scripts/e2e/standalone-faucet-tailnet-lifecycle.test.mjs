@@ -1,0 +1,96 @@
+// SPDX-License-Identifier: Apache-2.0
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
+async function executable(file, source) {
+  await writeFile(file, source, { mode: 0o700 });
+  await chmod(file, 0o700);
+}
+
+test("Tailnet faucet owns one route and restores unrelated Serve state", async (context) => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "oxid-faucet-tailnet-"));
+  context.after(() => rm(fixture, { recursive: true, force: true }));
+  const fixtureScripts = path.join(fixture, "scripts");
+  const fakeBin = path.join(fixture, "bin");
+  await mkdir(fixtureScripts);
+  await mkdir(fakeBin);
+  await cp(path.join(root, "scripts/standalone-faucet-tailnet.sh"), path.join(fixtureScripts, "standalone-faucet-tailnet.sh"));
+  await chmod(path.join(fixtureScripts, "standalone-faucet-tailnet.sh"), 0o700);
+  await executable(path.join(fixtureScripts, "standalone-status.sh"), "#!/bin/sh\nexit 0\n");
+
+  const baseline = { TCP: { "2222": { TCPForward: "127.0.0.1:22" } }, Web: {} };
+  const serveState = path.join(fixture, "serve.json");
+  await writeFile(serveState, JSON.stringify(baseline));
+  const faucetBinary = path.join(fixture, "fake-faucet.mjs");
+  await executable(faucetBinary, "#!/usr/bin/env node\nconsole.error('Standalone faucet HTTP ready on 127.0.0.1:36301; loopback only.');process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);\n");
+  await executable(path.join(fakeBin, "cargo"), `#!/usr/bin/env node
+console.log(JSON.stringify({reason:"compiler-artifact",target:{name:"oxid-standalone-faucet-http"},executable:${JSON.stringify(faucetBinary)}}));
+`);
+  await executable(path.join(fakeBin, "curl"), `#!/usr/bin/env node
+const url=process.argv.at(-1);if(url.endsWith('/fund'))console.log('{"ok":true,"result":{"receipt":{"amount":{"atomicUnits":"50000000000"}}}}');
+`);
+  await executable(path.join(fakeBin, "qrencode"), `#!/usr/bin/env node
+import{writeFileSync}from'node:fs';const output=process.argv.find(v=>v.startsWith('--output=')).slice(9);writeFileSync(output,'<svg/>');
+`);
+  await executable(path.join(fakeBin, "stat"), `#!/usr/bin/env node
+if(process.argv[2]==='-f'){console.log('GNU stat diagnostic');process.exit(1)}
+if(process.argv[2]==='-c'){console.log('600');process.exit(0)}
+process.exit(2);
+`);
+  await executable(path.join(fakeBin, "tailscale"), `#!/usr/bin/env node
+import{readFileSync,writeFileSync}from'node:fs';
+const args=process.argv.slice(2),file=process.env.FAKE_TAILSCALE_STATE;
+const state=()=>JSON.parse(readFileSync(file,'utf8'));
+if(args[0]==='status'){console.log(JSON.stringify({BackendState:'Running',Self:{DNSName:'fixture.example.ts.net.'}}));process.exit(0)}
+if(args[0]==='serve'&&args[1]==='status'){console.log(JSON.stringify(state()));process.exit(0)}
+if(args[0]==='serve'){
+  const port=args.find(v=>v.startsWith('--https=')).slice(8),key='fixture.example.ts.net:'+port;
+  if(args.at(-1)==='off'){writeFileSync(file,JSON.stringify(${JSON.stringify(baseline)}));process.exit(0)}
+  const next=state();next.Web[key]??={Handlers:{}};
+  const setPath=args.find(v=>v.startsWith('--set-path='));
+  next.Web[key].Handlers[setPath?setPath.slice(11):'/']={Proxy:args.at(-1)};
+  writeFileSync(file,JSON.stringify(next));process.exit(0)
+}
+process.exit(2);
+`);
+
+  const env = {
+    ...process.env,
+    PATH: `${fakeBin}:${process.env.PATH}`,
+    FAKE_TAILSCALE_STATE: serveState,
+    OXID_ENABLE_OWNER_TAILNET_FAUCET_ACCEPTANCE: "1",
+    OXID_FAUCET_RECIPIENT_ADDRESS: "mn_addr_undeployed1fixture",
+  };
+  const lifecycle = path.join(fixtureScripts, "standalone-faucet-tailnet.sh");
+  for (const mode of ["start", "status", "accept", "stop"]) {
+    const result = spawnSync(lifecycle, [mode], { env, encoding: "utf8", timeout: 10_000 });
+    assert.equal(result.status, 0, `${mode}: ${result.stderr}`);
+  }
+  assert.deepEqual(JSON.parse(await readFile(serveState, "utf8")), baseline);
+  await assert.rejects(readFile(path.join(fixture, "target/standalone-faucet-tailnet/receipt.json")));
+
+  await executable(path.join(fakeBin, "qrencode"), "#!/bin/sh\nexit 1\n");
+  const failedStart = spawnSync(lifecycle, ["start"], { env, encoding: "utf8", timeout: 10_000 });
+  assert.notEqual(failedStart.status, 0);
+  await assert.rejects(readFile(path.join(fixture, "target/standalone-faucet-tailnet/receipt.json")));
+  await assert.rejects(readFile(path.join(fixture, "target/standalone-faucet-tailnet/setup.svg")));
+});
+
+test("Tailnet source contract forbids broad Serve or state deletion", async () => {
+  const script = await readFile(path.join(root, "scripts/standalone-faucet-tailnet.sh"), "utf8");
+  assert.match(script, /OXID_ENABLE_OWNER_TAILNET_FAUCET_ACCEPTANCE/u);
+  assert.doesNotMatch(script, /tailscale serve reset/u);
+  assert.doesNotMatch(script, /--set-path/u);
+  assert.doesNotMatch(script, /\bfunnel\b/u);
+  assert.doesNotMatch(script, /rm -rf/u);
+
+  const justfile = await readFile(path.join(root, "Justfile"), "utf8");
+  assert.match(justfile, /^standalone-faucet-tailnet-lifecycle-test:/mu);
+});

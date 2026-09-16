@@ -189,6 +189,22 @@ standalone-faucet-headless-e2e:
 standalone-faucet-http-headless-e2e:
     ./scripts/e2e/standalone-faucet-http-headless-e2e.sh
 
+# Owner-invoked private HTTPS discovery/funding lifecycle; never starts a phone.
+standalone-faucet-tailnet-start:
+    ./scripts/standalone-faucet-tailnet.sh start
+
+standalone-faucet-tailnet-status:
+    ./scripts/standalone-faucet-tailnet.sh status
+
+standalone-faucet-tailnet-stop:
+    ./scripts/standalone-faucet-tailnet.sh stop
+
+standalone-faucet-tailnet-accept:
+    ./scripts/standalone-faucet-tailnet.sh accept
+
+standalone-faucet-tailnet-lifecycle-test:
+    node --test ./scripts/e2e/standalone-faucet-tailnet-lifecycle.test.mjs
+
 standalone-funded-shielded-finality:
     ./scripts/test-standalone-funded-shielded-finality.sh
 

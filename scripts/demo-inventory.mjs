@@ -21,6 +21,8 @@ const environmentValues = new Map([
   ["OXID_UI_PROFILE", new Set(["user", "dev", "demo"])],
   ["OXID_STANDALONE_NETWORK_PROFILE", new Set(["simulated", "local", "tailnet"])],
   ["OXID_ENABLE_LIVE_STANDALONE_FAUCET_E2E", new Set(["1"])],
+  ["OXID_ENABLE_OWNER_TAILNET_FAUCET_ACCEPTANCE", new Set(["1"])],
+  ["OXID_FAUCET_RECIPIENT_ADDRESS", new Set(["<operator-private-undeployed-address>"])],
 ]);
 
 function fail(message) { throw new Error(message); }

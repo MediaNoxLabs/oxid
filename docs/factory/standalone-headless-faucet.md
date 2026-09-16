@@ -111,6 +111,36 @@ This second acceptance creates two other fresh isolated wallet roots, funds
 them through HTTP, and requires each synchronized balance to equal the fixed
 grant. It does not make a browser, Tailnet, simulator, or phone claim.
 
+## Owner-authorized Tailnet HTTPS discovery
+
+This is an on-demand development acceptance, not a phone, Android, PreProd, or
+public-Internet path. It exposes the same loopback-only faucet through one
+receipt-scoped Tailscale Serve HTTPS port selected at runtime. The loopback
+adapter serves both the page and generated QR, so the Tailnet owns only one
+reverse-proxy route and does not depend on unsupported macOS file serving. It
+dynamically uses MagicDNS but never prints or commits the hostname. Existing
+Serve routes are preserved; cleanup refuses any drift and removes only the
+receipt-proven new port.
+
+With an owner-approved local standalone stack already running:
+
+```sh
+just standalone-faucet-tailnet-start
+just standalone-faucet-tailnet-status
+OXID_ENABLE_OWNER_TAILNET_FAUCET_ACCEPTANCE=1 \
+OXID_FAUCET_RECIPIENT_ADDRESS='mn_addr_undeployed1...' \
+  just standalone-faucet-tailnet-accept
+just standalone-faucet-tailnet-stop
+```
+
+The discovery page is responsive and offers only the fixed 50,000 NIGHT grant.
+Its Tailnet-only setup QR contains protocol version, the exact `undeployed`
+realm/fingerprint, and the dynamically selected HTTPS route. It cannot change
+wallet, asset, realm, route, or amount. The acceptance performs HTTPS health
+and one fixed funding request without a phone; its recipient is operator input
+and is never retained in repository evidence. Always run `stop` before retrying
+or ending the owner session.
+
 Stop the standalone stack only if you started and therefore own it:
 
 ```sh
