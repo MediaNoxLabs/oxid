@@ -2,6 +2,7 @@
 
 #[cfg(feature = "standalone-deployment-profile")]
 use dioxus::prelude::*;
+use oxid_platform_ports::PublicTextExportError;
 use oxid_wallet_application::{WalletAccountView, WalletAddressView};
 
 #[cfg(feature = "standalone-deployment-profile")]
@@ -74,4 +75,23 @@ pub(crate) fn render_qr_svg(value: &str) -> Option<String> {
             .light_color(svg::Color("#ffffff"))
             .build()
     })
+}
+
+pub(crate) fn public_export_message(
+    result: Result<(), PublicTextExportError>,
+    share: bool,
+) -> String {
+    match result {
+        Ok(()) if share => "Native share sheet opened for this public receive address.".to_owned(),
+        Ok(()) => "Public receive address copied to the native clipboard.".to_owned(),
+        Err(PublicTextExportError::Unavailable) => {
+            "Native copy/share is unavailable on this device.".to_owned()
+        }
+        Err(PublicTextExportError::InvalidPublicText) => {
+            "This receive address is not safe to export.".to_owned()
+        }
+        Err(PublicTextExportError::Failed) => {
+            "The public receive address could not be exported.".to_owned()
+        }
+    }
 }
