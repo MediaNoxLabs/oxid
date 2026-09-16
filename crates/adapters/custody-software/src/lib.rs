@@ -52,7 +52,8 @@ impl WalletMnemonicPort for Bip39WalletMnemonic {
         let mnemonic =
             Mnemonic::parse_in_normalized(Language::English, phrase.expose_for_onboarding())
                 .map_err(|_| WalletMnemonicPortError::InvalidPhrase)?;
-        if mnemonic.to_string() != phrase.expose_for_onboarding() {
+        let normalized_phrase = Zeroizing::new(mnemonic.to_string());
+        if normalized_phrase.as_str() != phrase.expose_for_onboarding() {
             return Err(WalletMnemonicPortError::PhraseNotNormalized);
         }
         Ok(root_from_mnemonic(&mnemonic))
