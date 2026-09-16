@@ -76,6 +76,22 @@ large, streaming, ambiguous, or non-HTTP/1.1 input. It cannot bind to a
 non-loopback address. Tailnet exposure is not part of this command; it is owned
 by follow-up issue #540.
 
+## Desktop receive and funding handoff
+
+A desktop artifact explicitly built with `desktop,standalone-development,standalone-local`
+shows the active protected profile's available receive rails and defaults to its
+unshielded undeployed NIGHT rail. Until receive-request ingress lands, that
+rail's QR, Copy, and Share controls all expose the validated raw undeployed
+Bech32m address. The sheet labels the profile, Midnight network, route class,
+and selected asset before export.
+
+With the loopback HTTP faucet already running, the development-only **Open
+development funding** action opens `http://127.0.0.1:36301`. It is a local
+operator convenience, not a grant result: sync to observe an authoritative
+balance and complete DUST registration separately. The app never embeds,
+displays, logs, or screenshots a Tailnet hostname; Tailnet funding remains the
+owner-operated setup-QR journey below.
+
 ## Run the two-wallet acceptance
 
 This is an explicit live, on-demand run. It creates temporary state for two

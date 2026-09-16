@@ -39,6 +39,7 @@ test("inventory keeps standalone asset synchronization diagnostic and route-scop
   assert.deepEqual(scenario.orderedUseCaseIds, [
     "select-compile-time-standalone-profile",
     "synchronize-profile-scoped-midnight-assets",
+    "share-active-undeployed-night-receive-request",
   ]);
   const local = renderPreparationBrief(inventory, scenario.id, "android-emulator");
   assert.match(local, /Target: android-emulator \(supported; diagnostic\)/u);

@@ -115,33 +115,33 @@ if oxid_adb_inventory_is_exact_online "$mixed_inventory" emulator-5562; then fai
 oxid_adb_inventory_is_exact_online "$exact_inventory" emulator-5562 || fail adb-exact
 
 reverse_empty=''
-reverse_exact=$'emulator-5562 tcp:6300 tcp:6300\nemulator-5562 tcp:8088 tcp:8088\nemulator-5562 tcp:9944 tcp:9944\n'
+reverse_exact=$'emulator-5562 tcp:6300 tcp:6300\nemulator-5562 tcp:8088 tcp:8088\nemulator-5562 tcp:9944 tcp:9944\nemulator-5562 tcp:36301 tcp:36301\n'
 reverse_wrong_remote=$'emulator-5562 tcp:6300 tcp:9999\n'
 reverse_wrong_serial=$'emulator-5554 tcp:6300 tcp:6300\n'
-reverse_exact_crlf=$'emulator-5562 tcp:6300 tcp:6300\r\nemulator-5562 tcp:8088 tcp:8088\r\nemulator-5562 tcp:9944 tcp:9944\r\n'
-reverse_exact_scoped=$'tcp:6300 tcp:6300\ntcp:8088 tcp:8088\ntcp:9944 tcp:9944\n'
-reverse_exact_host=$'host-16 tcp:6300 tcp:6300\nhost-16 tcp:8088 tcp:8088\nhost-16 tcp:9944 tcp:9944\n'
-oxid_adb_reverse_snapshot_has_no_managed_routes "$reverse_empty" emulator-5562 6300 8088 9944 \
+reverse_exact_crlf=$'emulator-5562 tcp:6300 tcp:6300\r\nemulator-5562 tcp:8088 tcp:8088\r\nemulator-5562 tcp:9944 tcp:9944\r\nemulator-5562 tcp:36301 tcp:36301\r\n'
+reverse_exact_scoped=$'tcp:6300 tcp:6300\ntcp:8088 tcp:8088\ntcp:9944 tcp:9944\ntcp:36301 tcp:36301\n'
+reverse_exact_host=$'host-16 tcp:6300 tcp:6300\nhost-16 tcp:8088 tcp:8088\nhost-16 tcp:9944 tcp:9944\nhost-16 tcp:36301 tcp:36301\n'
+oxid_adb_reverse_snapshot_has_no_managed_routes "$reverse_empty" emulator-5562 6300 8088 9944 36301 \
   || fail reverse-empty-baseline
 oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent \
-  "$reverse_exact" emulator-5562 6300 8088 9944 || fail reverse-exact-or-absent
-oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_exact" emulator-5562 6300 8088 9944 \
+  "$reverse_exact" emulator-5562 6300 8088 9944 36301 || fail reverse-exact-or-absent
+oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_exact" emulator-5562 6300 8088 9944 36301 \
   || fail reverse-exact-owned
-oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_exact_crlf" emulator-5562 6300 8088 9944 \
+oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_exact_crlf" emulator-5562 6300 8088 9944 36301 \
   || fail reverse-crlf-owned
-oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_exact_scoped" emulator-5562 6300 8088 9944 \
+oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_exact_scoped" emulator-5562 6300 8088 9944 36301 \
   || fail reverse-scoped-owned
-oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_exact_host" emulator-5562 6300 8088 9944 \
+oxid_adb_reverse_snapshot_has_exact_managed_routes "$reverse_exact_host" emulator-5562 6300 8088 9944 36301 \
   || fail reverse-host-owned
-if oxid_adb_reverse_snapshot_has_no_managed_routes "$reverse_exact" emulator-5562 6300 8088 9944; then
+if oxid_adb_reverse_snapshot_has_no_managed_routes "$reverse_exact" emulator-5562 6300 8088 9944 36301; then
   fail reverse-occupied-baseline
 fi
 if oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent \
-  "$reverse_wrong_remote" emulator-5562 6300 8088 9944; then
+  "$reverse_wrong_remote" emulator-5562 6300 8088 9944 36301; then
   fail reverse-wrong-remote
 fi
 if oxid_adb_reverse_snapshot_managed_routes_are_exact_or_absent \
-  "$reverse_wrong_serial" emulator-5562 6300 8088 9944; then
+  "$reverse_wrong_serial" emulator-5562 6300 8088 9944 36301; then
   fail reverse-wrong-serial
 fi
 
