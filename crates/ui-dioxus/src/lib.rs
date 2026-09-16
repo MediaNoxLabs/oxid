@@ -5864,6 +5864,7 @@ fn AccountSyncCard(
                                 retry_services.clone(),
                                 retry_profile.clone(),
                                 state,
+                                on_account_updated,
                             );
                         },
                         "Retry"
@@ -5980,7 +5981,7 @@ fn AccountSyncCard(
                                         if !updated.supersedes(&retained) {
                                             return;
                                         }
-                                        let should_poll = selected_realm_is_syncing(&updated.view);
+                                        let should_poll = updated.observation.poll_after().is_some();
                                         if let WalletRealmFamilyView::Ready(account) = &updated.view.account {
                                             on_account_updated.call(account.clone());
                                         }

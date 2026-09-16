@@ -62,14 +62,28 @@ pub(super) fn reload_account_sync_card(
     services: WalletUiServices,
     profile_id: String,
     mut state: Signal<AccountSyncCardState>,
+    on_account_updated: EventHandler<WalletAccountView>,
 ) {
     state.set(AccountSyncCardState::Loading);
     spawn(async move {
-        state.set(
-            run_ui_blocking(move || load_account_sync_card(&services, &profile_id))
+        let query_services = services.clone();
+        let query_profile = profile_id.clone();
+        let loaded =
+            run_ui_blocking(move || load_account_sync_card(&query_services, &query_profile))
                 .await
-                .unwrap_or_else(|error| AccountSyncCardState::Failed(error.to_string())),
-        );
+                .unwrap_or_else(|error| AccountSyncCardState::Failed(error.to_string()));
+        let observation = match &loaded {
+            AccountSyncCardState::Ready { realm, .. }
+                if realm.observation.poll_after().is_some() =>
+            {
+                Some((**realm).clone())
+            }
+            _ => None,
+        };
+        state.set(loaded);
+        if let Some(projection) = observation {
+            poll_account_sync(services, profile_id, projection, state, on_account_updated);
+        }
     });
 }
 
@@ -94,7 +108,7 @@ pub(super) fn poll_account_sync(
                         break;
                     }
                     expected = (*realm).clone();
-                    let complete = !selected_realm_is_syncing(&realm.view);
+                    let complete = realm.observation.poll_after().is_none();
                     if let WalletRealmFamilyView::Ready(account) = &realm.view.account {
                         on_account_updated.call(account.clone());
                     }
