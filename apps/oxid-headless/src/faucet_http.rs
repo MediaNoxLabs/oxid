@@ -3,9 +3,9 @@
 //! Bounded loopback HTTP adapter for the development-only standalone faucet.
 
 use std::{
-    io::{self, Read as _, Write as _},
+    io::{self, Write as _},
     net::{Shutdown, SocketAddr, TcpListener, TcpStream},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde_json::{Value, json};
@@ -67,9 +67,20 @@ impl std::error::Error for HttpServerError {
 }
 
 fn serve_connection(connection: &mut TcpStream, faucet: &mut StandaloneFaucet) -> io::Result<()> {
-    connection.set_read_timeout(Some(IO_TIMEOUT))?;
+    serve_connection_with_timeout(connection, faucet, IO_TIMEOUT)
+}
+
+fn serve_connection_with_timeout(
+    connection: &mut TcpStream,
+    faucet: &mut StandaloneFaucet,
+    timeout: Duration,
+) -> io::Result<()> {
     connection.set_write_timeout(Some(IO_TIMEOUT))?;
-    let response = match read_request(connection) {
+    let request = {
+        let mut reader = DeadlineReader::new(connection, timeout);
+        read_request(&mut reader)
+    };
+    let response = match request {
         Ok(request) => handle(faucet, request),
         Err(error) => {
             // Discard any unread oversized/malformed input so closing the
@@ -79,6 +90,32 @@ fn serve_connection(connection: &mut TcpStream, faucet: &mut StandaloneFaucet) -
         }
     };
     write_response(connection, response)
+}
+
+struct DeadlineReader<'a> {
+    connection: &'a mut TcpStream,
+    deadline: Instant,
+}
+
+impl<'a> DeadlineReader<'a> {
+    fn new(connection: &'a mut TcpStream, timeout: Duration) -> Self {
+        Self {
+            connection,
+            deadline: Instant::now() + timeout,
+        }
+    }
+}
+
+impl io::Read for DeadlineReader<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let remaining = self
+            .deadline
+            .checked_duration_since(Instant::now())
+            .filter(|duration| !duration.is_zero())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "request deadline elapsed"))?;
+        self.connection.set_read_timeout(Some(remaining))?;
+        io::Read::read(self.connection, buffer)
+    }
 }
 
 struct HttpRequest {
@@ -93,8 +130,8 @@ struct HttpResponse {
     body: Value,
 }
 
-fn read_request(connection: &mut TcpStream) -> Result<HttpRequest, RequestError> {
-    let header_bytes = read_headers(connection)?;
+fn read_request(reader: &mut impl io::Read) -> Result<HttpRequest, RequestError> {
+    let header_bytes = read_headers(reader)?;
     let header_text = std::str::from_utf8(&header_bytes)
         .map_err(|_| RequestError::bad_request("headers must be UTF-8"))?;
     let mut lines = header_text
@@ -171,7 +208,7 @@ fn read_request(connection: &mut TcpStream) -> Result<HttpRequest, RequestError>
         ));
     }
     let mut body = vec![0; content_length];
-    connection
+    reader
         .read_exact(&mut body)
         .map_err(|_| RequestError::bad_request("request body is incomplete"))?;
     Ok(HttpRequest {
@@ -334,6 +371,7 @@ mod tests {
         sync::{
             Arc,
             atomic::{AtomicUsize, Ordering},
+            mpsc,
         },
         thread,
     };
@@ -476,6 +514,34 @@ mod tests {
         );
         let response = exchange(faucet, &[request.as_bytes()]).remove(0);
         assert!(response.starts_with("HTTP/1.1 431 Request Header Fields Too Large"));
+    }
+
+    #[test]
+    fn slow_headers_cannot_refresh_the_complete_request_deadline() {
+        let (faucet, _) = faucet();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback listener");
+        let address = listener.local_addr().expect("listener address");
+        let (finished, completion) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let mut faucet = faucet;
+            let mut connection = listener.accept().expect("accept connection").0;
+            serve_connection_with_timeout(&mut connection, &mut faucet, Duration::from_millis(40))
+                .expect("serve deadline response");
+            finished.send(()).expect("report server completion");
+        });
+
+        let mut client = TcpStream::connect(address).expect("connect to listener");
+        for byte in b"GET /health HTTP/1.1\r\n" {
+            if client.write_all(&[*byte]).is_err() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        completion
+            .recv_timeout(Duration::from_millis(200))
+            .expect("complete request deadline stops the slow client");
+        drop(client);
+        server.join().expect("server joins");
     }
 
     #[test]
