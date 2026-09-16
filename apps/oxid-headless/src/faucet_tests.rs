@@ -103,12 +103,13 @@ fn retries_and_same_recipient_requests_do_not_fund_twice() {
         fund_request("first", "request-a", RECIPIENT_A),
         fund_request("retry", "request-a", RECIPIENT_A),
         fund_request("same-recipient", "request-b", RECIPIENT_A),
+        fund_request("alias-conflict", "request-b", RECIPIENT_B),
     ]
     .join("\n");
 
     let responses = execute(&mut faucet, &(input + "\n"));
 
-    assert_eq!(responses.len(), 3);
+    assert_eq!(responses.len(), 4);
     assert_eq!(responses[0]["result"]["receipt"]["deduplicated"], false);
     assert_eq!(responses[1]["result"]["receipt"]["deduplicated"], true);
     assert_eq!(responses[2]["result"]["receipt"]["deduplicated"], true);
@@ -116,6 +117,8 @@ fn retries_and_same_recipient_requests_do_not_fund_twice() {
         responses[0]["result"]["receipt"]["transactionId"],
         responses[2]["result"]["receipt"]["transactionId"]
     );
+    assert_eq!(responses[2]["result"]["receipt"]["requestId"], "request-b");
+    assert_eq!(responses[3]["error"]["code"], "idempotency_conflict");
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
@@ -181,10 +184,14 @@ fn callers_cannot_select_amount_network_or_secret_bearing_input() {
 fn grant_failures_are_closed_codes_without_adapter_payloads() {
     let (mut faucet, calls) = faucet(Err(GrantError::OutcomeUnknown));
 
-    let responses = execute(
-        &mut faucet,
-        &(fund_request("fund", "request-a", RECIPIENT_A) + "\n"),
-    );
+    let input = [
+        fund_request("fund", "request-a", RECIPIENT_A),
+        fund_request("retry", "request-a", RECIPIENT_A),
+        fund_request("same-recipient", "request-b", RECIPIENT_A),
+        fund_request("alias-conflict", "request-b", RECIPIENT_B),
+    ]
+    .join("\n");
+    let responses = execute(&mut faucet, &(input + "\n"));
 
     assert_eq!(responses[0]["ok"], false);
     assert_eq!(responses[0]["error"]["code"], "outcome_unknown");
@@ -192,7 +199,11 @@ fn grant_failures_are_closed_codes_without_adapter_payloads() {
         responses[0]["error"]["message"],
         "funding transaction outcome is not yet known"
     );
-    assert!(!responses[0].to_string().contains(RECIPIENT_A));
+    assert!(responses[..3].iter().all(|response| {
+        response["error"]["code"] == "outcome_unknown"
+            && !response.to_string().contains(RECIPIENT_A)
+    }));
+    assert_eq!(responses[3]["error"]["code"], "idempotency_conflict");
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 

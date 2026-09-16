@@ -136,9 +136,10 @@ impl StandaloneFaucet {
             .receipts
             .iter()
             .find(|receipt| receipt.request_id == params.request_id)
+            .cloned()
         {
             return if receipt.recipient_address == params.recipient_address {
-                Dispatch::continue_with(Response::success(request.id, receipt_value(receipt, true)))
+                retained_response(request.id, &receipt, true)
             } else {
                 Dispatch::continue_with(Response::error(
                     request.id,
@@ -151,11 +152,15 @@ impl StandaloneFaucet {
             .receipts
             .iter()
             .find(|receipt| receipt.recipient_address == params.recipient_address)
+            .cloned()
         {
-            return Dispatch::continue_with(Response::success(
-                request.id,
-                receipt_value(receipt, true),
-            ));
+            let alias = FundingReceipt {
+                request_id: params.request_id,
+                recipient_address: params.recipient_address,
+                outcome: receipt.outcome,
+            };
+            self.retain(alias.clone());
+            return retained_response(request.id, &alias, true);
         }
 
         match self.grant.grant(&params.recipient_address) {
@@ -163,22 +168,37 @@ impl StandaloneFaucet {
                 let receipt = FundingReceipt {
                     request_id: params.request_id,
                     recipient_address: params.recipient_address,
-                    transaction_id: outcome.transaction_id,
-                    block_id: outcome.block_id,
+                    outcome: RetainedGrantOutcome::Included {
+                        transaction_id: outcome.transaction_id,
+                        block_id: outcome.block_id,
+                    },
                 };
-                if self.receipts.len() == MAX_RECEIPTS {
-                    self.receipts.pop_front();
-                }
-                self.receipts.push_back(receipt.clone());
-                Dispatch::continue_with(Response::success(
+                self.retain(receipt.clone());
+                retained_response(request.id, &receipt, false)
+            }
+            Err(GrantError::OutcomeUnknown) => {
+                self.retain(FundingReceipt {
+                    request_id: params.request_id,
+                    recipient_address: params.recipient_address,
+                    outcome: RetainedGrantOutcome::OutcomeUnknown,
+                });
+                Dispatch::continue_with(Response::error(
                     request.id,
-                    receipt_value(&receipt, false),
+                    GrantError::OutcomeUnknown.code(),
+                    GrantError::OutcomeUnknown.message(),
                 ))
             }
             Err(error) => {
                 Dispatch::continue_with(Response::error(request.id, error.code(), error.message()))
             }
         }
+    }
+
+    fn retain(&mut self, receipt: FundingReceipt) {
+        if self.receipts.len() == MAX_RECEIPTS {
+            self.receipts.pop_front();
+        }
+        self.receipts.push_back(receipt);
     }
 }
 
@@ -277,8 +297,16 @@ struct FundParams {
 struct FundingReceipt {
     request_id: String,
     recipient_address: String,
-    transaction_id: String,
-    block_id: String,
+    outcome: RetainedGrantOutcome,
+}
+
+#[derive(Clone)]
+enum RetainedGrantOutcome {
+    Included {
+        transaction_id: String,
+        block_id: String,
+    },
+    OutcomeUnknown,
 }
 
 #[derive(Serialize)]
@@ -360,7 +388,29 @@ fn health_value() -> Value {
     })
 }
 
-fn receipt_value(receipt: &FundingReceipt, deduplicated: bool) -> Value {
+fn retained_response(id: Option<String>, receipt: &FundingReceipt, deduplicated: bool) -> Dispatch {
+    match &receipt.outcome {
+        RetainedGrantOutcome::Included {
+            transaction_id,
+            block_id,
+        } => Dispatch::continue_with(Response::success(
+            id,
+            receipt_value(receipt, transaction_id, block_id, deduplicated),
+        )),
+        RetainedGrantOutcome::OutcomeUnknown => Dispatch::continue_with(Response::error(
+            id,
+            GrantError::OutcomeUnknown.code(),
+            GrantError::OutcomeUnknown.message(),
+        )),
+    }
+}
+
+fn receipt_value(
+    receipt: &FundingReceipt,
+    transaction_id: &str,
+    block_id: &str,
+    deduplicated: bool,
+) -> Value {
     json!({
         "receipt": {
             "requestId": receipt.request_id,
@@ -373,8 +423,8 @@ fn receipt_value(receipt: &FundingReceipt, deduplicated: bool) -> Value {
                 "atomicUnits": FIXED_GRANT_ATOMIC_UNITS.to_string()
             },
             "state": "included",
-            "transactionId": receipt.transaction_id,
-            "blockId": receipt.block_id,
+            "transactionId": transaction_id,
+            "blockId": block_id,
             "deduplicated": deduplicated
         }
     })
