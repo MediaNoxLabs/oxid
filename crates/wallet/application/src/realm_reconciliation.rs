@@ -103,6 +103,7 @@ pub enum WalletRealmCoordinatorStatus {
 pub struct WalletRealmCoordinatorState {
     revision: u64,
     facets: WalletRealmReconciliationState,
+    leased_from: Option<WalletRealmReconciliationState>,
 }
 
 impl WalletRealmCoordinatorState {
@@ -111,6 +112,7 @@ impl WalletRealmCoordinatorState {
         Self {
             revision: 0,
             facets,
+            leased_from: None,
         }
     }
 
@@ -138,10 +140,7 @@ impl WalletRealmCoordinatorState {
             )
         }) {
             WalletRealmCoordinatorStatus::Stale
-        } else if states
-            .iter()
-            .all(|state| *state == WalletRealmFacetState::Unsupported)
-        {
+        } else if states.contains(&WalletRealmFacetState::Unsupported) {
             WalletRealmCoordinatorStatus::Degraded
         } else {
             WalletRealmCoordinatorStatus::UpToDate
@@ -163,8 +162,7 @@ pub struct WalletRealmCoordinatorEffect {
 }
 
 impl WalletRealmCoordinatorEffect {
-    #[must_use]
-    pub const fn new(revision: u64, kind: WalletRealmReconciliationEffect) -> Self {
+    const fn new(revision: u64, kind: WalletRealmReconciliationEffect) -> Self {
         Self { revision, kind }
     }
 
@@ -270,6 +268,7 @@ fn reconcile(
     let mut next = WalletRealmCoordinatorState {
         revision,
         facets: state.facets,
+        leased_from: Some(state.facets),
     };
     let effects = plan
         .effects()
@@ -297,6 +296,9 @@ fn complete_effect(
         return unchanged(state);
     }
     *facet_mut(&mut state.facets, effect.kind) = outcome.facet_state();
+    if !state.has_active_effects() {
+        state.leased_from = None;
+    }
     unchanged(state)
 }
 
@@ -305,16 +307,23 @@ fn cancel(mut state: WalletRealmCoordinatorState) -> WalletRealmCoordinatorTrans
         return unchanged(state);
     }
     state.revision = next_revision(state.revision);
-    for facet in [
-        &mut state.facets.account,
-        &mut state.facets.dust,
-        &mut state.facets.shielded,
-    ] {
-        if *facet == WalletRealmFacetState::Updating {
-            *facet = WalletRealmFacetState::Stale;
-        }
+    if let Some(previous) = state.leased_from {
+        restore_active_facet(&mut state.facets.account, previous.account);
+        restore_active_facet(&mut state.facets.dust, previous.dust);
+        restore_active_facet(&mut state.facets.shielded, previous.shielded);
+    } else {
+        restore_active_facet(&mut state.facets.account, WalletRealmFacetState::Stale);
+        restore_active_facet(&mut state.facets.dust, WalletRealmFacetState::Stale);
+        restore_active_facet(&mut state.facets.shielded, WalletRealmFacetState::Stale);
     }
+    state.leased_from = None;
     unchanged(state)
+}
+
+fn restore_active_facet(facet: &mut WalletRealmFacetState, previous: WalletRealmFacetState) {
+    if *facet == WalletRealmFacetState::Updating {
+        *facet = previous;
+    }
 }
 
 const fn next_revision(revision: u64) -> u64 {
@@ -563,7 +572,7 @@ mod tests {
         assert_eq!(canceled.state().revision(), 2);
         assert_eq!(
             canceled.state().status(),
-            WalletRealmCoordinatorStatus::Stale
+            WalletRealmCoordinatorStatus::ActionRequired
         );
 
         let late = WalletRealmReconciliationCoordinator::reduce(
@@ -574,5 +583,30 @@ mod tests {
             },
         );
         assert_eq!(late.state(), canceled.state());
+    }
+
+    #[test]
+    fn coordinator_reports_partial_capability_and_restores_pre_lease_state() {
+        let partial = WalletRealmCoordinatorState::new(WalletRealmReconciliationState {
+            account: WalletRealmFacetState::Current,
+            dust: WalletRealmFacetState::Current,
+            shielded: WalletRealmFacetState::Unsupported,
+        });
+        assert_eq!(partial.status(), WalletRealmCoordinatorStatus::Degraded);
+
+        let original = WalletRealmReconciliationState {
+            account: WalletRealmFacetState::Stale,
+            dust: WalletRealmFacetState::Current,
+            shielded: WalletRealmFacetState::Missing,
+        };
+        let started = WalletRealmReconciliationCoordinator::reduce(
+            WalletRealmCoordinatorState::new(original),
+            WalletRealmCoordinatorInput::Reconcile(WalletRealmReconciliationTrigger::Initial),
+        );
+        let canceled = WalletRealmReconciliationCoordinator::reduce(
+            *started.state(),
+            WalletRealmCoordinatorInput::Cancel,
+        );
+        assert_eq!(canceled.state().facets(), original);
     }
 }
