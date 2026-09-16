@@ -4,8 +4,9 @@ use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 
 use oxid_foundation::OpaqueIdError;
 use oxid_wallet_domain::{
-    WalletAccountSnapshot, WalletAccountSource, WalletDustSyncSnapshot, WalletDustSyncState,
-    WalletProfileId, WalletShieldedSyncSnapshot, WalletShieldedSyncState, WalletSyncState,
+    WalletAccountSnapshot, WalletAccountSource, WalletDustSyncFailure, WalletDustSyncSnapshot,
+    WalletDustSyncState, WalletProfileId, WalletShieldedSyncFailure, WalletShieldedSyncSnapshot,
+    WalletShieldedSyncState, WalletSyncState,
 };
 
 use crate::{
@@ -302,15 +303,18 @@ fn observe_dust(
 ) {
     match result {
         Ok(snapshot) => {
-            let state = match snapshot.state() {
-                WalletDustSyncState::Synced => WalletRealmFacetState::Current,
-                WalletDustSyncState::Syncing => WalletRealmFacetState::Updating,
-                WalletDustSyncState::NeverSynced => WalletRealmFacetState::Missing,
-                WalletDustSyncState::Cached
-                | WalletDustSyncState::Cancelled
-                | WalletDustSyncState::Stalled
-                | WalletDustSyncState::Unavailable => WalletRealmFacetState::Stale,
-            };
+            let state = snapshot.failure().map_or_else(
+                || match snapshot.state() {
+                    WalletDustSyncState::Synced => WalletRealmFacetState::Current,
+                    WalletDustSyncState::Syncing => WalletRealmFacetState::Updating,
+                    WalletDustSyncState::NeverSynced => WalletRealmFacetState::Missing,
+                    WalletDustSyncState::Cached
+                    | WalletDustSyncState::Cancelled
+                    | WalletDustSyncState::Stalled
+                    | WalletDustSyncState::Unavailable => WalletRealmFacetState::Stale,
+                },
+                dust_failure_state,
+            );
             (
                 WalletRealmFamilyView::Ready(WalletDustSyncView::from(&snapshot)),
                 state,
@@ -328,21 +332,48 @@ fn observe_shielded(
 ) {
     match result {
         Ok(snapshot) => {
-            let state = match snapshot.state() {
-                WalletShieldedSyncState::Synced => WalletRealmFacetState::Current,
-                WalletShieldedSyncState::Syncing => WalletRealmFacetState::Updating,
-                WalletShieldedSyncState::NeverSynced => WalletRealmFacetState::Missing,
-                WalletShieldedSyncState::Cached
-                | WalletShieldedSyncState::Cancelled
-                | WalletShieldedSyncState::Stalled
-                | WalletShieldedSyncState::Unavailable => WalletRealmFacetState::Stale,
-            };
+            let state = snapshot.failure().map_or_else(
+                || match snapshot.state() {
+                    WalletShieldedSyncState::Synced => WalletRealmFacetState::Current,
+                    WalletShieldedSyncState::Syncing => WalletRealmFacetState::Updating,
+                    WalletShieldedSyncState::NeverSynced => WalletRealmFacetState::Missing,
+                    WalletShieldedSyncState::Cached
+                    | WalletShieldedSyncState::Cancelled
+                    | WalletShieldedSyncState::Stalled
+                    | WalletShieldedSyncState::Unavailable => WalletRealmFacetState::Stale,
+                },
+                shielded_failure_state,
+            );
             (
                 WalletRealmFamilyView::Ready(WalletShieldedSyncView::from(&snapshot)),
                 state,
             )
         }
         Err(error) => (shielded_family_error(error), shielded_error_state(error)),
+    }
+}
+
+const fn dust_failure_state(failure: WalletDustSyncFailure) -> WalletRealmFacetState {
+    match failure {
+        WalletDustSyncFailure::ProtectionNotInitialized
+        | WalletDustSyncFailure::ProtectionLocked => WalletRealmFacetState::Blocked,
+        WalletDustSyncFailure::UnsupportedNetwork => WalletRealmFacetState::Unsupported,
+        WalletDustSyncFailure::TransportUnavailable
+        | WalletDustSyncFailure::TimedOut
+        | WalletDustSyncFailure::InvalidChainState
+        | WalletDustSyncFailure::StorageUnavailable => WalletRealmFacetState::Stale,
+    }
+}
+
+const fn shielded_failure_state(failure: WalletShieldedSyncFailure) -> WalletRealmFacetState {
+    match failure {
+        WalletShieldedSyncFailure::ProtectionNotInitialized
+        | WalletShieldedSyncFailure::ProtectionLocked => WalletRealmFacetState::Blocked,
+        WalletShieldedSyncFailure::UnsupportedNetwork => WalletRealmFacetState::Unsupported,
+        WalletShieldedSyncFailure::TransportUnavailable
+        | WalletShieldedSyncFailure::TimedOut
+        | WalletShieldedSyncFailure::InvalidChainState
+        | WalletShieldedSyncFailure::StorageUnavailable => WalletRealmFacetState::Stale,
     }
 }
 
@@ -434,9 +465,11 @@ mod tests {
         task::{Context, Poll, Waker},
     };
 
+    use oxid_foundation::UnixTimestampMillis;
     use oxid_wallet_domain::{
         ChainKind, ChainNetwork, ChainNetworkId, NetworkDisplayName, NetworkEnvironment,
-        WalletAccountSnapshot, WalletDustSyncSnapshot, WalletShieldedSyncSnapshot,
+        WalletAccountSnapshot, WalletDustSyncFailure, WalletDustSyncSnapshot,
+        WalletShieldedSyncFailure, WalletShieldedSyncSnapshot,
     };
 
     use super::*;
@@ -574,5 +607,38 @@ mod tests {
             ),
             Err(SelectedWalletRealmSyncError::InvalidProfileIdentifier(_))
         ));
+    }
+
+    #[test]
+    fn published_failures_classify_blocked_or_unsupported_reconciliation() {
+        let dust = WalletDustSyncSnapshot::new(
+            network_id(),
+            WalletDustSyncState::Cached,
+            Some(4),
+            Some(9),
+            3,
+            Some(42),
+            Some(UnixTimestampMillis::new(42)),
+            Some(WalletDustSyncFailure::ProtectionLocked),
+        )
+        .expect("cached DUST fixture is valid");
+        let (_, dust_state) = observe_dust(Ok(dust));
+        assert_eq!(dust_state, WalletRealmFacetState::Blocked);
+
+        let shielded = WalletShieldedSyncSnapshot::new(
+            network_id(),
+            WalletShieldedSyncState::Stalled,
+            Some(4),
+            Some(9),
+            3,
+            Some(1),
+            Some(2),
+            Vec::new(),
+            Some(UnixTimestampMillis::new(42)),
+            Some(WalletShieldedSyncFailure::UnsupportedNetwork),
+        )
+        .expect("stalled shielded fixture is valid");
+        let (_, shielded_state) = observe_shielded(Ok(shielded));
+        assert_eq!(shielded_state, WalletRealmFacetState::Unsupported);
     }
 }
