@@ -31,7 +31,10 @@ const EXPECTED_COMMANDS = Object.freeze([
     "--features", "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication,oxid-adapter-storage-dev/development-fixture,oxid-composition/preprod-observation,oxid-composition/proof-benchmark,oxid-composition/standalone-development",
     "--json", "--fail-under-lines", "70",
   ],
-  ["cargo", "llvm-cov", "-p", "oxid-headless", "--all-targets", "--json"],
+  [
+    "cargo", "llvm-cov", "-p", "oxid-headless", "--all-targets",
+    "--features", "standalone-faucet", "--json",
+  ],
   [
     "cargo", "llvm-cov", "-p", "oxid-ui-dioxus", "--all-targets",
     "--features", "ui-profile-dev,app-profile-authority,standalone-deployment-profile,preprod-observation,proof-benchmark", "--json",

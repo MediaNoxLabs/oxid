@@ -176,6 +176,8 @@ run_headless_integration() {
     --test portal_live_flow \
     --test portal_profile_flow \
     --test protocol_contract
+  cargo test -p oxid-headless --features standalone-faucet \
+    --test standalone_faucet_live
 }
 
 run_coverage() {

@@ -73,6 +73,14 @@ diagnostic, not public-network or production acceptance. It records freshness
 states rather than a balance assertion because the public-genesis development
 state is mutable.
 
+`standalone-two-wallet-night-and-dust` is the first headless phase of the
+two-actor wallet demo. A separate compile- and runtime-gated localhost faucet
+gives each fresh isolated wallet one fixed NIGHT grant. Each wallet then
+explicitly registers and must observe positive DUST within ten minutes. See
+[`standalone-headless-faucet.md`](standalone-headless-faucet.md). The scenario
+does not yet claim wallet-to-wallet transfer, Tailnet, PreProd, QR, browser,
+shielded funding, UI, simulator, or physical-device behavior.
+
 ## Development proof and local diagnostics slice
 
 `development-proof-benchmark-desktop` is an on-demand desktop diagnostic that

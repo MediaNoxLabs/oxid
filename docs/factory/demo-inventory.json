@@ -7,7 +7,7 @@
       "id": "oxid-wallet",
       "name": "Oxid identity wallet",
       "targetIds": ["headless-development", "desktop-development", "android-physical", "android-emulator", "ios-simulator", "ios-physical"],
-      "demoIds": ["secure-wallet-recovery", "standalone-wallet-asset-sync", "developer-proof-and-local-diagnostics", "portal-final-digital-passport-issuance"]
+      "demoIds": ["secure-wallet-recovery", "standalone-wallet-asset-sync", "standalone-two-wallet-funding", "developer-proof-and-local-diagnostics", "portal-final-digital-passport-issuance"]
     }
   ],
   "targets": [
@@ -64,6 +64,8 @@
     {"id": "standalone-local-up","phase": "preparation","command": "just standalone-up","reference": "scripts/standalone-up.sh","expectedOutcome": "The repository-owned standalone node, indexer, and proof server are ready on loopback after bounded node/indexer readiness."},
     {"id": "standalone-tailnet-up","phase": "preparation","command": "just standalone-phone-up","reference": "scripts/standalone-up.sh","expectedOutcome": "The repository-owned standalone stack and only its owned TLS Tailscale Serve routes are ready for a compile-time phone profile."},
     {"id": "standalone-local-status","phase": "status","command": "just standalone-status","reference": "scripts/standalone-status.sh","expectedOutcome": "Exactly the owned local standalone services are healthy and the indexer is within its bounded node-height lag."},
+    {"id": "standalone-faucet-run","phase": "run","command": "just standalone-faucet","reference": "docs/factory/standalone-headless-faucet.md","expectedOutcome": "A compile- and runtime-gated localhost process accepts only health, fixed NIGHT grants, and graceful shutdown over its narrow NDJSON protocol."},
+    {"id": "standalone-faucet-headless-e2e","phase": "run","command": "just standalone-faucet-headless-e2e","environment": {"OXID_ENABLE_LIVE_STANDALONE_FAUCET_E2E": "1"},"reference": "docs/factory/standalone-headless-faucet.md","expectedOutcome": "Two fresh isolated headless wallets each observe a finalized fixed NIGHT grant, explicitly register for DUST, and observe positive DUST within ten minutes."},
     {"id": "standalone-tailnet-status","phase": "status","command": "./scripts/standalone-status.sh phone","reference": "scripts/standalone-status.sh","expectedOutcome": "Exactly the owned standalone services and required TLS Tailscale Serve listeners are ready; no peer or endpoint is disclosed."},
     {"id": "standalone-stack-cleanup","phase": "cleanup","status": "manual","reference": "docs/factory/portal-macos-laptop.md","expectedOutcome": "Only the session that proved an empty pre-run standalone baseline may run just standalone-down; a pre-existing or ambiguous stack remains with its owner."},
     {"id": "android-standalone-local-diagnostic","phase": "run","command": "just android-standalone-local-smoke","reference": "scripts/test-android-standalone-local.sh","expectedOutcome": "A disposable Android emulator creates a protected account against the local standalone stack and verifies live-source account state and both receive rails."},
@@ -111,7 +113,9 @@
     {"id": "select-compile-time-standalone-profile","outcome": "An explicitly selected development build binds the reserved public-demo profile to the undeployed Midnight network and either loopback or authenticated Tailnet routes; it cannot pick routes at runtime or represent a public deployment.","sourceReferences": ["docs/adr/0097-build-standalone-phone-routes-at-compile-time.md","crates/composition/src/profile_mobile.rs","crates/ui-dioxus/src/deployment_profile.rs"],"scenarioIds": ["standalone-profile-asset-synchronization"]},
     {"id": "synchronize-profile-scoped-midnight-assets","outcome": "The active protected profile can refresh public NIGHT and independently synchronize DUST and shielded state; only successful live catch-up is live/spend-ready, while cached, cancelled, stalled, or failed state remains truthful display/resume information.","sourceReferences": ["docs/adr/0090-compose-onboarding-backup-receipts-and-account-sync.md","docs/adr/0032-expose-resumable-dust-sync-sessions.md","crates/wallet/application/src/dust.rs","crates/wallet/application/src/shielded.rs"],"scenarioIds": ["standalone-profile-asset-synchronization"]},
     {"id": "bootstrap-managed-holder-did-for-test-issuer","outcome": "A physical Android development lane can create a managed undeployed holder DID and, by an explicit action, share only its public DID Resolution Result with the receipt-scoped test issuer for holder-proof verification.","sourceReferences": ["docs/adr/0037-manage-standalone-midnight-dids-with-opaque-custody.md","docs/adr/0103-compose-portal-final-for-physical-android.md","crates/ui-dioxus/src/dids.rs","docs/factory/portal-android-tailnet-physical.md"],"scenarioIds": ["portal-final-issuance-physical-tailnet"]},
-    {"id": "issue-and-protect-portal-digital-passport", "outcome": "After explicit offer review and consent, a managed holder authenticates and separately binds a Digital Passport that Oxid verifies, encrypts, lists after restart, and freshly reverifies without exposing protocol secrets.", "sourceReferences": ["docs/adr/0039-accept-pre-authorized-openid4vci-offers.md", "docs/adr/0102-admit-pinned-portal-final-in-headless-development.md", "docs/adr/0103-compose-portal-final-for-physical-android.md", "docs/factory/portal-macos-laptop.md", "docs/factory/portal-mobile-simulators.md", "docs/factory/portal-android-tailnet-physical.md"], "scenarioIds": ["portal-final-issuance-localhost", "portal-final-issuance-virtual-mobile", "portal-final-issuance-physical-tailnet"]}
+    {"id": "issue-and-protect-portal-digital-passport", "outcome": "After explicit offer review and consent, a managed holder authenticates and separately binds a Digital Passport that Oxid verifies, encrypts, lists after restart, and freshly reverifies without exposing protocol secrets.", "sourceReferences": ["docs/adr/0039-accept-pre-authorized-openid4vci-offers.md", "docs/adr/0102-admit-pinned-portal-final-in-headless-development.md", "docs/adr/0103-compose-portal-final-for-physical-android.md", "docs/factory/portal-macos-laptop.md", "docs/factory/portal-mobile-simulators.md", "docs/factory/portal-android-tailnet-physical.md"], "scenarioIds": ["portal-final-issuance-localhost", "portal-final-issuance-virtual-mobile", "portal-final-issuance-physical-tailnet"]},
+    {"id": "fund-fresh-standalone-wallets-with-night", "outcome": "A development-only localhost authority grants exactly 50,000 NIGHT to each fresh isolated wallet through an address-only protocol and the existing finalized transaction lifecycle.", "sourceReferences": ["docs/adr/0111-isolate-fixed-standalone-night-funding.md", "apps/oxid-headless/src/faucet.rs", "docs/factory/standalone-headless-faucet.md"], "scenarioIds": ["standalone-two-wallet-night-and-dust"]},
+    {"id": "register-funded-wallets-for-dust", "outcome": "Each funded wallet explicitly authorizes DUST registration and observes positive generated DUST within ten minutes without any shielded funding claim.", "sourceReferences": ["docs/adr/0100-register-protected-dust-keys-before-fresh-wallet-submission.md", "apps/oxid-headless/tests/standalone_faucet_live.rs", "docs/factory/standalone-headless-faucet.md"], "scenarioIds": ["standalone-two-wallet-night-and-dust"]}
   ],
   "scenarios": [
     {
@@ -265,6 +269,38 @@
         "manual": "Desktop inspection covers rendered controls and empty or populated presentation without claiming device evidence.",
         "planned": "No simulator or physical-device diagnostics-screen receipt is currently claimed."
       }
+    },
+    {
+      "id": "standalone-two-wallet-night-and-dust",
+      "title": "Fund two fresh standalone wallets and establish DUST readiness",
+      "productId": "oxid-wallet",
+      "defaultTargetId": "headless-development",
+      "orderedUseCaseIds": ["fund-fresh-standalone-wallets-with-night", "register-funded-wallets-for-dust"],
+      "targetPlans": [
+        {
+          "targetId": "headless-development", "status": "supported", "evidenceClass": "acceptance", "dependencyIds": ["standalone-local-stack"],
+          "commandIds": {"preparation": ["standalone-local-up"], "build": [], "deploy": [], "run": ["standalone-faucet-headless-e2e"], "status": ["standalone-local-status"], "cleanup": ["standalone-stack-cleanup"]},
+          "healthCheckIds": ["standalone-local-ready"], "note": "The ignored owner-authorized run uses two OS-random headless wallet roots and the fixed public genesis authority on localhost. It emits no address, root, path, or transaction material and does not claim Tailnet, PreProd, shielded, UI, simulator, or device behavior."
+        }
+      ],
+      "manualSteps": [
+        "Start and verify only the repository-owned localhost standalone stack; preserve a pre-existing stack for its owner.",
+        "Run the explicit two-wallet command. It creates isolated temporary wallet state, grants fixed NIGHT to both public receive addresses, observes finality, and performs separate explicit DUST registrations.",
+        "Confirm the closed PASS line reports two wallets, the fixed atomic grant, and both DUST readiness durations at or below ten minutes. Stop the stack only if this session started it."
+      ],
+      "expectedOutcomes": [
+        "Both fresh wallets observe exactly 50,000 NIGHT from exactly one finalized grant each.",
+        "Both wallets explicitly register and observe positive generated DUST within ten minutes.",
+        "The result is localhost headless development acceptance only; it establishes no transfer-between-wallets, shielded, Tailnet, PreProd, UI, simulator, physical-device, release, or production claim."
+      ],
+      "evidenceClass": "acceptance",
+      "cadence": "on-demand",
+      "testMapping": {
+        "status": "automated",
+        "automated": ["apps/oxid-headless/src/faucet_tests.rs", "apps/oxid-headless/tests/standalone_faucet_live.rs::two_fresh_wallets_receive_fixed_night_and_generate_dust"],
+        "manual": "The operator authorizes the ignored live run and owns only the standalone stack lifecycle; no phone or rendered interaction is needed.",
+        "planned": "Wallet-to-wallet NIGHT transfer and history compose the next phase of epic #537. Tailnet, PreProd, QR, browser, and Android remain later phases."
+      }
     }
   ],
   "demos": [
@@ -275,6 +311,7 @@
       "expectedOutcome": "Oxid demonstrates one-shot root recovery behind a truthful native-presence boundary, with physical Android acceptance and clearly limited preflight and diagnostic targets."
     },
     {"id": "standalone-wallet-asset-sync","productId": "oxid-wallet","audience": "product owner and development operator","scenarioIds": ["standalone-profile-asset-synchronization"],"targetIds": ["android-emulator","ios-simulator","android-physical"],"expectedOutcome": "Oxid demonstrates development-only profile-scoped Midnight asset synchronization with explicit localhost versus Tailnet route boundaries and no claim of stable public NIGHT, DUST, or shielded balances."},
+    {"id": "standalone-two-wallet-funding", "productId": "oxid-wallet", "audience": "development operator and product owner", "scenarioIds": ["standalone-two-wallet-night-and-dust"], "targetIds": ["headless-development"], "expectedOutcome": "Oxid demonstrates fixed finalized NIGHT funding and explicit DUST readiness for two fresh isolated localhost wallets without a phone, UI, shielded-funding, or production claim."},
     {"id": "developer-proof-and-local-diagnostics", "productId": "oxid-wallet", "audience": "development operator", "scenarioIds": ["development-proof-benchmark-desktop", "bounded-local-diagnostics-headless", "bounded-local-diagnostics-desktop"], "targetIds": ["headless-development", "desktop-development"], "expectedOutcome": "Oxid demonstrates one bounded low-k native proof plus deterministic and rendered payload-free local diagnostics, while high-k device-resource evidence and durable support storage remain explicit non-claims."},
     {"id": "portal-final-digital-passport-issuance", "productId": "oxid-wallet", "audience": "development operator and product owner", "scenarioIds": ["portal-final-issuance-localhost", "portal-final-issuance-virtual-mobile", "portal-final-issuance-physical-tailnet"], "targetIds": ["headless-development", "desktop-development", "ios-simulator", "android-emulator", "android-physical"], "expectedOutcome": "Oxid demonstrates the bounded Final Portal Digital Passport journey from review and explicit consent through verified encrypted storage, restart, and fresh reverification, while keeping localhost, virtual mobile, and physical Android Tailnet evidence distinct and development-only."}
   ]

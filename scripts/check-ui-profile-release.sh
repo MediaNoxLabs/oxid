@@ -667,7 +667,7 @@ for forbidden_value in "${standalone_local_release_values[@]}"; do
   fi
 done
 if rg -a -q \
-  'OXID_STANDALONE_FUNDER_SEED_HEX|OXID_ENABLE_LIVE_STANDALONE_FUNDING|Ephemeral funded recipient|Standalone funding authority|Ephemeral shielded recipient|Standalone shielded funding authority' \
+  'OXID_STANDALONE_FUNDER_SEED_HEX|OXID_ENABLE_LIVE_STANDALONE_FUNDING|OXID_ENABLE_STANDALONE_FAUCET|oxid\.standalone-faucet\.v1|Ephemeral funded recipient|Standalone funding authority|Ephemeral shielded recipient|Standalone shielded funding authority' \
   "$release_binary"; then
   echo "normal release binary contains the standalone funding harness" >&2
   exit 1

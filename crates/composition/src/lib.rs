@@ -46,6 +46,8 @@ pub use profile_production::*;
 #[cfg(all(feature = "proof-benchmark", not(target_arch = "wasm32")))]
 pub use proof_benchmark::*;
 pub use services::{ApplicationServices, WalletOnboardingCapability, WalletRootRecoveryCapability};
+#[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
+pub use standalone_genesis::public_standalone_profile_name;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod standalone_funding_tests;
