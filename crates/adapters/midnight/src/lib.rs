@@ -850,6 +850,14 @@ where
             .map_err(map_account_to_dust_error)?;
         self.dust_sync.cancel(profile_id, &network)
     }
+
+    fn cancel_dust_sync_in_realm(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &oxid_wallet_domain::ChainNetworkId,
+    ) -> Result<oxid_wallet_domain::WalletDustSyncSnapshot, WalletDustSyncPortError> {
+        self.dust_sync.cancel(profile_id, network_id)
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -888,6 +896,14 @@ where
             .selected(profile_id)
             .map_err(map_account_to_shielded_error)?;
         self.shielded_sync.cancel(profile_id, &network)
+    }
+
+    fn cancel_shielded_sync_in_realm(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &oxid_wallet_domain::ChainNetworkId,
+    ) -> Result<oxid_wallet_domain::WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+        self.shielded_sync.cancel(profile_id, network_id)
     }
 }
 

@@ -4,7 +4,8 @@ use std::{error::Error, fmt, sync::Arc};
 
 use oxid_foundation::OpaqueIdError;
 use oxid_wallet_domain::{
-    WalletDustSyncFailure, WalletDustSyncSnapshot, WalletDustSyncState, WalletProfileId,
+    ChainNetworkId, WalletDustSyncFailure, WalletDustSyncSnapshot, WalletDustSyncState,
+    WalletProfileId,
 };
 
 /// Stable adapter failures for starting, reading, or cancelling DUST sync.
@@ -53,6 +54,17 @@ pub trait WalletDustSyncPort: Send + Sync {
         &self,
         profile_id: &WalletProfileId,
     ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError>;
+
+    /// Cancels an adapter-owned session in an explicitly retired realm. Ports
+    /// that cannot address a realm must fail closed instead of cancelling the
+    /// newly selected one.
+    fn cancel_dust_sync_in_realm(
+        &self,
+        _profile_id: &WalletProfileId,
+        _network_id: &ChainNetworkId,
+    ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+        Err(WalletDustSyncPortError::UnsupportedNetwork)
+    }
 }
 
 /// Profile-scoped query or command for the DUST sync capability.
