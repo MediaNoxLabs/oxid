@@ -90,6 +90,8 @@
             "apps/oxid-headless/src/faucet",
             "apps/oxid-headless/src/faucet_application",
             "apps/oxid-headless/src/faucet_errors",
+            "apps/oxid-headless/src/faucet_http",
+            "apps/oxid-headless/src/faucet_http_main",
             "apps/oxid-headless/src/faucet_main",
             "apps/oxid-headless/src/faucet_tests"
           ]

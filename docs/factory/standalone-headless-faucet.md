@@ -48,6 +48,34 @@ recipient, returns the retained receipt without another transfer. Reusing an
 identifier with another recipient fails. Receipts are bounded and process-local;
 restarting the faucet permits another grant.
 
+## Run the loopback HTTP adapter
+
+The HTTP binary reuses the same fixed-grant dispatcher and private authority.
+It is not a second faucet implementation:
+
+```sh
+just standalone-up
+just standalone-faucet-http
+```
+
+It listens on `http://127.0.0.1:36301` and supports only:
+
+```text
+GET /health
+POST /fund  Content-Type: application/json
+```
+
+The `/fund` body is the same closed public parameter object:
+
+```json
+{"requestId":"demo-wallet-a","recipientAddress":"mn_addr_undeployed1..."}
+```
+
+The listener accepts one request at a time, closes every response, and rejects
+large, streaming, ambiguous, or non-HTTP/1.1 input. It cannot bind to a
+non-loopback address. Tailnet exposure is not part of this command; it is owned
+by follow-up issue #540.
+
 ## Run the two-wallet acceptance
 
 This is an explicit live, on-demand run. It creates temporary state for two
@@ -70,6 +98,18 @@ The run fails unless both wallets:
 Only closed timings and counts are printed. Wallet roots, paths, addresses, and
 transaction material are not emitted. DUST timing is acceptance evidence for
 the grant size; it is not a stable performance benchmark.
+
+To qualify the same exact grant through the loopback HTTP boundary without
+repeating DUST registration, run:
+
+```sh
+OXID_ENABLE_LIVE_STANDALONE_FAUCET_E2E=1 \
+  just standalone-faucet-http-headless-e2e
+```
+
+This second acceptance creates two other fresh isolated wallet roots, funds
+them through HTTP, and requires each synchronized balance to equal the fixed
+grant. It does not make a browser, Tailnet, simulator, or phone claim.
 
 Stop the standalone stack only if you started and therefore own it:
 
