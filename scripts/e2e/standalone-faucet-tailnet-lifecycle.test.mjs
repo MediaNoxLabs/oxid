@@ -29,7 +29,7 @@ test("Tailnet faucet owns one route and restores unrelated Serve state", async (
   const serveState = path.join(fixture, "serve.json");
   await writeFile(serveState, JSON.stringify(baseline));
   const faucetBinary = path.join(fixture, "fake-faucet.mjs");
-  await executable(faucetBinary, "#!/usr/bin/env node\nprocess.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);\n");
+  await executable(faucetBinary, "#!/usr/bin/env node\nconsole.error('Standalone faucet HTTP ready on 127.0.0.1:36301; loopback only.');process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);\n");
   await executable(path.join(fakeBin, "cargo"), `#!/usr/bin/env node
 console.log(JSON.stringify({reason:"compiler-artifact",target:{name:"oxid-standalone-faucet-http"},executable:${JSON.stringify(faucetBinary)}}));
 `);
@@ -38,6 +38,11 @@ const url=process.argv.at(-1);if(url.endsWith('/fund'))console.log('{"ok":true,"
 `);
   await executable(path.join(fakeBin, "qrencode"), `#!/usr/bin/env node
 import{writeFileSync}from'node:fs';const output=process.argv.find(v=>v.startsWith('--output=')).slice(9);writeFileSync(output,'<svg/>');
+`);
+  await executable(path.join(fakeBin, "stat"), `#!/usr/bin/env node
+if(process.argv[2]==='-f'){console.log('GNU stat diagnostic');process.exit(1)}
+if(process.argv[2]==='-c'){console.log('600');process.exit(0)}
+process.exit(2);
 `);
   await executable(path.join(fakeBin, "tailscale"), `#!/usr/bin/env node
 import{readFileSync,writeFileSync}from'node:fs';
@@ -70,6 +75,12 @@ process.exit(2);
   }
   assert.deepEqual(JSON.parse(await readFile(serveState, "utf8")), baseline);
   await assert.rejects(readFile(path.join(fixture, "target/standalone-faucet-tailnet/receipt.json")));
+
+  await executable(path.join(fakeBin, "qrencode"), "#!/bin/sh\nexit 1\n");
+  const failedStart = spawnSync(lifecycle, ["start"], { env, encoding: "utf8", timeout: 10_000 });
+  assert.notEqual(failedStart.status, 0);
+  await assert.rejects(readFile(path.join(fixture, "target/standalone-faucet-tailnet/receipt.json")));
+  await assert.rejects(readFile(path.join(fixture, "target/standalone-faucet-tailnet/setup.svg")));
 });
 
 test("Tailnet source contract forbids broad Serve or state deletion", async () => {

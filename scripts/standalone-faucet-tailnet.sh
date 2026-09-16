@@ -14,7 +14,12 @@ profile_store="$state/profiles.json"
 mode="${1:-}"
 
 fail() { printf 'standalone-faucet-tailnet: FAIL phase=%s\n' "$1" >&2; exit 1; }
-private_file() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1")" = 600 ]; }
+private_file() {
+  local permissions
+  [ -f "$1" ] && [ ! -L "$1" ] || return 1
+  permissions="$(stat -f '%Lp' "$1" 2>/dev/null)" || permissions="$(stat -c '%a' "$1" 2>/dev/null)" || return 1
+  [ "$permissions" = 600 ]
+}
 canonical_serve() { tailscale serve status --json | jq -S -c '.'; }
 process_matches() {
   local pid="$1" expected="$2" actual
@@ -36,7 +41,7 @@ remove_owned_state() {
   rmdir -- "$state"
 }
 
-for command in cargo curl jq tailscale qrencode shasum; do command -v "$command" >/dev/null 2>&1 || fail "missing-${command}"; done
+for command in cargo curl grep jq tailscale qrencode shasum; do command -v "$command" >/dev/null 2>&1 || fail "missing-${command}"; done
 case "$mode" in start|status|stop|accept) ;; *) fail usage ;; esac
 
 load_receipt() {
@@ -61,6 +66,31 @@ start)
     if jq -e --arg port "$candidate" --arg host "$dns:$candidate" '(.TCP[$port] == null) and (.Web[$host] == null)' <<<"$baseline" >/dev/null; then port="$candidate"; break; fi
   done
   [ -n "$port" ] || fail route-unavailable
+  faucet_pid=""
+  serve_configured=0
+  start_cleanup() {
+    local incoming="$1" cleanup_status=0 after=""
+    trap - EXIT INT TERM HUP
+    if [ "$serve_configured" -eq 1 ]; then
+      tailscale serve --yes --https="$port" off >/dev/null 2>&1 || cleanup_status=1
+      after="$(canonical_serve 2>/dev/null)" || cleanup_status=1
+      [ "$after" = "$baseline" ] || cleanup_status=1
+    fi
+    if [ -n "$faucet_pid" ]; then
+      stop_owned_process "$faucet_pid" || cleanup_status=1
+    fi
+    if [ -d "$state" ] && [ ! -L "$state" ]; then
+      remove_owned_state || cleanup_status=1
+    elif [ -e "$state" ] || [ -L "$state" ]; then
+      cleanup_status=1
+    fi
+    [ "$cleanup_status" -eq 0 ] || printf '%s\n' 'standalone-faucet-tailnet: exact cleanup could not be proven' >&2
+    exit "$incoming"
+  }
+  trap 'start_cleanup $?' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
   umask 077; mkdir -p "$state"; chmod 700 "$state"
   # The QR is intentionally public only to Tailnet peers and contains no wallet,
   # secret, personal identity, or configurable funding policy.
@@ -77,29 +107,18 @@ start)
     OXID_STANDALONE_FAUCET_SETUP_SVG_PATH="$svg" \
     "$executable" >>"$log" 2>&1 &
   faucet_pid=$!
-  serve_configured=0
-  start_cleanup() {
-    local incoming="$1" cleanup_status=0 after=""
-    trap - EXIT INT TERM HUP
-    if [ "$serve_configured" -eq 1 ]; then
-      tailscale serve --yes --https="$port" off >/dev/null 2>&1 || cleanup_status=1
-      after="$(canonical_serve 2>/dev/null)" || cleanup_status=1
-      [ "$after" = "$baseline" ] || cleanup_status=1
-    fi
-    stop_owned_process "$faucet_pid" || cleanup_status=1
-    if [ "$cleanup_status" -eq 0 ]; then
-      remove_owned_state || cleanup_status=1
-    fi
-    [ "$cleanup_status" -eq 0 ] || printf '%s\n' 'standalone-faucet-tailnet: exact cleanup could not be proven' >&2
-    exit "$incoming"
-  }
-  trap 'start_cleanup $?' EXIT
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
-  trap 'exit 129' HUP
   printf '%s\n' "$faucet_pid" >"$pid_file"; chmod 600 "$pid_file"
-  for _ in $(seq 1 30); do curl --noproxy '*' --silent --fail --max-time 1 http://127.0.0.1:36301/health >/dev/null && break; sleep 1; done
-  curl --noproxy '*' --silent --fail --max-time 1 http://127.0.0.1:36301/health >/dev/null || fail faucet
+  faucet_ready=0
+  for _ in $(seq 1 30); do
+    kill -0 "$faucet_pid" 2>/dev/null || fail faucet-process
+    if grep -Fqx 'Standalone faucet HTTP ready on 127.0.0.1:36301; loopback only.' "$log" \
+      && curl --noproxy '*' --silent --fail --max-time 1 http://127.0.0.1:36301/health >/dev/null; then
+      faucet_ready=1
+      break
+    fi
+    sleep 1
+  done
+  [ "$faucet_ready" -eq 1 ] && kill -0 "$faucet_pid" 2>/dev/null || fail faucet
   # A new port is absent from the baseline, so this invocation owns no route
   # that existed before this receipt. It never uses Serve reset or Funnel.
   tailscale serve --yes --bg --https="$port" http://127.0.0.1:36301 >/dev/null || fail serve-api
