@@ -103,7 +103,15 @@ pub enum WalletRealmCoordinatorStatus {
 pub struct WalletRealmCoordinatorState {
     revision: u64,
     facets: WalletRealmReconciliationState,
+    leases: WalletRealmLeaseSet,
     leased_from: Option<WalletRealmReconciliationState>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct WalletRealmLeaseSet {
+    account: bool,
+    dust: bool,
+    shielded: bool,
 }
 
 impl WalletRealmCoordinatorState {
@@ -112,6 +120,11 @@ impl WalletRealmCoordinatorState {
         Self {
             revision: 0,
             facets,
+            leases: WalletRealmLeaseSet {
+                account: false,
+                dust: false,
+                shielded: false,
+            },
             leased_from: None,
         }
     }
@@ -129,10 +142,10 @@ impl WalletRealmCoordinatorState {
     #[must_use]
     pub fn status(&self) -> WalletRealmCoordinatorStatus {
         let states = [self.facets.account, self.facets.dust, self.facets.shielded];
-        if states.contains(&WalletRealmFacetState::Blocked) {
-            WalletRealmCoordinatorStatus::ActionRequired
-        } else if states.contains(&WalletRealmFacetState::Updating) {
+        if states.contains(&WalletRealmFacetState::Updating) {
             WalletRealmCoordinatorStatus::Updating
+        } else if states.contains(&WalletRealmFacetState::Blocked) {
+            WalletRealmCoordinatorStatus::ActionRequired
         } else if states.iter().any(|state| {
             matches!(
                 state,
@@ -147,10 +160,8 @@ impl WalletRealmCoordinatorState {
         }
     }
 
-    const fn has_active_effects(self) -> bool {
-        matches!(self.facets.account, WalletRealmFacetState::Updating)
-            || matches!(self.facets.dust, WalletRealmFacetState::Updating)
-            || matches!(self.facets.shielded, WalletRealmFacetState::Updating)
+    const fn has_active_leases(self) -> bool {
+        self.leases.account || self.leases.dust || self.leases.shielded
     }
 }
 
@@ -256,7 +267,7 @@ fn reconcile(
     state: WalletRealmCoordinatorState,
     trigger: WalletRealmReconciliationTrigger,
 ) -> WalletRealmCoordinatorTransition {
-    if state.has_active_effects() {
+    if state.has_active_leases() {
         return unchanged(state);
     }
     let plan = WalletRealmReconciliationPlanner::plan(trigger, state.facets);
@@ -268,6 +279,7 @@ fn reconcile(
     let mut next = WalletRealmCoordinatorState {
         revision,
         facets: state.facets,
+        leases: WalletRealmLeaseSet::default(),
         leased_from: Some(state.facets),
     };
     let effects = plan
@@ -276,6 +288,7 @@ fn reconcile(
         .copied()
         .map(|kind| {
             *facet_mut(&mut next.facets, kind) = WalletRealmFacetState::Updating;
+            *lease_mut(&mut next.leases, kind) = true;
             WalletRealmCoordinatorEffect::new(revision, kind)
         })
         .collect();
@@ -290,38 +303,46 @@ fn complete_effect(
     effect: WalletRealmCoordinatorEffect,
     outcome: WalletRealmEffectOutcome,
 ) -> WalletRealmCoordinatorTransition {
-    if effect.revision != state.revision
-        || *facet_mut(&mut state.facets, effect.kind) != WalletRealmFacetState::Updating
-    {
+    if effect.revision != state.revision || !lease_active(state.leases, effect.kind) {
         return unchanged(state);
     }
     *facet_mut(&mut state.facets, effect.kind) = outcome.facet_state();
-    if !state.has_active_effects() {
+    *lease_mut(&mut state.leases, effect.kind) = false;
+    if !state.has_active_leases() {
         state.leased_from = None;
     }
     unchanged(state)
 }
 
 fn cancel(mut state: WalletRealmCoordinatorState) -> WalletRealmCoordinatorTransition {
-    if !state.has_active_effects() {
+    if !state.has_active_leases() {
         return unchanged(state);
     }
     state.revision = next_revision(state.revision);
     if let Some(previous) = state.leased_from {
-        restore_active_facet(&mut state.facets.account, previous.account);
-        restore_active_facet(&mut state.facets.dust, previous.dust);
-        restore_active_facet(&mut state.facets.shielded, previous.shielded);
-    } else {
-        restore_active_facet(&mut state.facets.account, WalletRealmFacetState::Stale);
-        restore_active_facet(&mut state.facets.dust, WalletRealmFacetState::Stale);
-        restore_active_facet(&mut state.facets.shielded, WalletRealmFacetState::Stale);
+        restore_leased_facet(
+            &mut state.facets.account,
+            state.leases.account,
+            previous.account,
+        );
+        restore_leased_facet(&mut state.facets.dust, state.leases.dust, previous.dust);
+        restore_leased_facet(
+            &mut state.facets.shielded,
+            state.leases.shielded,
+            previous.shielded,
+        );
     }
+    state.leases = WalletRealmLeaseSet::default();
     state.leased_from = None;
     unchanged(state)
 }
 
-fn restore_active_facet(facet: &mut WalletRealmFacetState, previous: WalletRealmFacetState) {
-    if *facet == WalletRealmFacetState::Updating {
+fn restore_leased_facet(
+    facet: &mut WalletRealmFacetState,
+    leased: bool,
+    previous: WalletRealmFacetState,
+) {
+    if leased {
         *facet = previous;
     }
 }
@@ -339,6 +360,28 @@ fn facet_mut(
         WalletRealmReconciliationEffect::SyncAccount => &mut facets.account,
         WalletRealmReconciliationEffect::SyncDust => &mut facets.dust,
         WalletRealmReconciliationEffect::SyncShielded => &mut facets.shielded,
+    }
+}
+
+const fn lease_active(
+    leases: WalletRealmLeaseSet,
+    effect: WalletRealmReconciliationEffect,
+) -> bool {
+    match effect {
+        WalletRealmReconciliationEffect::SyncAccount => leases.account,
+        WalletRealmReconciliationEffect::SyncDust => leases.dust,
+        WalletRealmReconciliationEffect::SyncShielded => leases.shielded,
+    }
+}
+
+fn lease_mut(
+    leases: &mut WalletRealmLeaseSet,
+    effect: WalletRealmReconciliationEffect,
+) -> &mut bool {
+    match effect {
+        WalletRealmReconciliationEffect::SyncAccount => &mut leases.account,
+        WalletRealmReconciliationEffect::SyncDust => &mut leases.dust,
+        WalletRealmReconciliationEffect::SyncShielded => &mut leases.shielded,
     }
 }
 
@@ -608,5 +651,49 @@ mod tests {
             WalletRealmCoordinatorInput::Cancel,
         );
         assert_eq!(canceled.state().facets(), original);
+    }
+
+    #[test]
+    fn coordinator_does_not_own_or_starve_externally_active_facets() {
+        let observed = WalletRealmReconciliationState {
+            account: WalletRealmFacetState::Missing,
+            dust: WalletRealmFacetState::Updating,
+            shielded: WalletRealmFacetState::Missing,
+        };
+        let state = WalletRealmCoordinatorState::new(observed);
+        assert_eq!(state.status(), WalletRealmCoordinatorStatus::Updating);
+
+        let canceled = WalletRealmReconciliationCoordinator::reduce(
+            state,
+            WalletRealmCoordinatorInput::Cancel,
+        );
+        assert_eq!(canceled.state().facets(), observed);
+
+        let started = WalletRealmReconciliationCoordinator::reduce(
+            state,
+            WalletRealmCoordinatorInput::Reconcile(WalletRealmReconciliationTrigger::Initial),
+        );
+        assert_eq!(
+            started.effects(),
+            [
+                WalletRealmCoordinatorEffect::new(1, WalletRealmReconciliationEffect::SyncAccount,),
+                WalletRealmCoordinatorEffect::new(1, WalletRealmReconciliationEffect::SyncShielded,),
+            ]
+        );
+        let canceled = WalletRealmReconciliationCoordinator::reduce(
+            *started.state(),
+            WalletRealmCoordinatorInput::Cancel,
+        );
+        assert_eq!(canceled.state().facets(), observed);
+    }
+
+    #[test]
+    fn updating_status_precedes_action_required_until_leased_work_finishes() {
+        let state = WalletRealmCoordinatorState::new(WalletRealmReconciliationState {
+            account: WalletRealmFacetState::Updating,
+            dust: WalletRealmFacetState::Blocked,
+            shielded: WalletRealmFacetState::Current,
+        });
+        assert_eq!(state.status(), WalletRealmCoordinatorStatus::Updating);
     }
 }
