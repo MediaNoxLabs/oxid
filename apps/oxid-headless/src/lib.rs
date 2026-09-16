@@ -190,6 +190,7 @@ impl HeadlessWallet {
             "wallet.address.shielded" => self.shielded_address(request),
             "wallet.balance.snapshot" => self.balance_snapshot(request),
             "wallet.transaction.history" => self.transaction_history(request),
+            "wallet.receive_request.import" => self.import_receive_request(request),
             "wallet.transaction.prepare_unshielded" => self.prepare_unshielded(request),
             "wallet.transaction.prepare_shielded" => self.prepare_shielded(request),
             "wallet.transaction.authorize_unshielded" => self.authorize_unshielded(request),

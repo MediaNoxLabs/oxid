@@ -127,6 +127,33 @@ This second acceptance creates two other fresh isolated wallet roots, funds
 them through HTTP, and requires each synchronized balance to equal the fixed
 grant. It does not make a browser, Tailnet, simulator, or phone claim.
 
+## Run the two-wallet NIGHT round trip
+
+This explicit live, on-demand localhost run reuses the fixed-grant faucet, wallet
+transaction, finality, journal, and headless adapter boundaries. It creates two
+OS-random wallets with isolated receipt-scoped state and submission journals,
+funds each exactly once, establishes DUST readiness separately, sends NIGHT A
+→ B using B's strict `midnight-receive:v1` request, then sends NIGHT B → A using
+A's validated raw Bech32m fallback. The run accepts only after observing the
+final balances, indexed incoming/outgoing confirmed history, and included
+submission journals. The process-local development custody root is intentionally
+not persisted, so this headless run makes no restart or recovery claim; native
+protected custody owns that production behavior.
+
+```sh
+just standalone-up
+OXID_ENABLE_LIVE_STANDALONE_FAUCET_E2E=1 \
+  just standalone-night-round-trip-headless-e2e
+```
+
+The run waits for included submission state and synchronized transaction history;
+it never treats broadcast submission as success. Existing standalone transfers
+use DUST fees, so registration/readiness is exercised as a distinct prerequisite,
+not as NIGHT funding or transfer finality. Its closed output contains only wallet
+and transfer counts, readiness state, and cleanup outcome—never roots, state
+paths, addresses, serialized transactions, or keys. The temporary state is
+removed by the test; it does not stop a pre-existing stack.
+
 ## Owner-authorized Tailnet HTTPS discovery
 
 This is an on-demand development acceptance, not a phone, Android, PreProd, or

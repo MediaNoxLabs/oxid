@@ -18,6 +18,8 @@ const ENABLE_ENV: &str = "OXID_ENABLE_LIVE_STANDALONE_FAUCET_E2E";
 const NETWORK: &str = "undeployed";
 const FIXED_GRANT: u128 = 50_000_000_000;
 const DUST_DEADLINE: Duration = Duration::from_secs(10 * 60);
+const TRANSFER_A_TO_B: u128 = 10_000_000_000;
+const TRANSFER_B_TO_A: u128 = 4_000_000_000;
 const INDEXER_WS: &str = "ws://127.0.0.1:8088/api/v4/graphql/ws";
 const INDEXER_HTTP: &str = "http://127.0.0.1:8088/api/v4/graphql";
 const NODE_WS: &str = "ws://127.0.0.1:9944";
@@ -50,6 +52,14 @@ impl StateRoot {
         make_owner_private(&path.join("private"));
         path
     }
+
+    fn cleanup(self) {
+        fs::remove_dir_all(&self.0).expect("isolated live-test state cleanup");
+        assert!(
+            !self.0.exists(),
+            "isolated live-test state must be absent after cleanup"
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -81,7 +91,24 @@ impl ProcessHarness {
     fn wallet(root: &Path) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
         command
+            .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
             .env("OXID_PROFILE_STORE_PATH", root.join("profiles.json"))
+            .env(
+                "OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH",
+                root.join("private/account-checkpoints.json"),
+            )
+            .env(
+                "OXID_MIDNIGHT_DUST_CHECKPOINT_PATH",
+                root.join("private/dust-checkpoints.json"),
+            )
+            .env(
+                "OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH",
+                root.join("private/shielded-checkpoints.json"),
+            )
+            .env(
+                "OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH",
+                root.join("private/submissions.json"),
+            )
             .env("OXID_MIDNIGHT_NETWORK_ID", NETWORK)
             .env("OXID_MIDNIGHT_INDEXER_WS_URL", INDEXER_WS)
             .env("OXID_MIDNIGHT_INDEXER_HTTP_URL", INDEXER_HTTP)
@@ -94,6 +121,7 @@ impl ProcessHarness {
     fn faucet(root: &Path) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-standalone-faucet"));
         command
+            .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
             .env("OXID_ENABLE_STANDALONE_FAUCET", "1")
             .env("OXID_PROFILE_STORE_PATH", root.join("profiles.json"));
         Self::spawn(command, "oxid.standalone-faucet.v1")
@@ -315,40 +343,225 @@ fn prepare_wallet(wallet: &mut ProcessHarness, name: &str) -> String {
         .to_owned()
 }
 
-fn await_night(wallet: &mut ProcessHarness) {
+fn await_night_amount(wallet: &mut ProcessHarness, expected: u128) {
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         let response = wallet.request("account-sync", "wallet.connect", json!({}));
-        if response["ok"] != true {
-            assert_eq!(
-                response["error"]["code"], "capability_unavailable",
-                "{response}"
-            );
-            assert!(
-                Instant::now() < deadline,
-                "funded NIGHT could not be observed before the indexer deadline: {response}"
-            );
-            thread::sleep(Duration::from_secs(2));
-            continue;
-        }
-        let observed = response["result"]["account"]["balances"]
-            .as_array()
-            .expect("balances")
-            .iter()
-            .find(|balance| balance["symbol"] == "NIGHT")
-            .and_then(|balance| balance["atomicUnits"].as_str())
-            .and_then(|amount| amount.parse::<u128>().ok())
-            .unwrap_or_default();
-        if observed == FIXED_GRANT {
-            return;
+        if response["ok"] == true {
+            let observed = response["result"]["account"]["balances"]
+                .as_array()
+                .and_then(|balances| balances.iter().find(|balance| balance["symbol"] == "NIGHT"))
+                .and_then(|balance| balance["atomicUnits"].as_str())
+                .and_then(|amount| amount.parse::<u128>().ok())
+                .unwrap_or_default();
+            if observed == expected {
+                return;
+            }
         }
         assert!(
-            observed < FIXED_GRANT,
-            "fresh wallet received more than the fixed grant"
+            Instant::now() < deadline,
+            "authoritative NIGHT balance was not observed"
         );
-        assert!(Instant::now() < deadline, "funded NIGHT was not observed");
         thread::sleep(Duration::from_secs(2));
     }
+}
+
+fn await_night(wallet: &mut ProcessHarness) {
+    await_night_amount(wallet, FIXED_GRANT);
+}
+
+fn import_recipient(wallet: &mut ProcessHarness, receive_request: &str, format: &str) -> String {
+    let response = wallet.request(
+        "receive-request-import",
+        "wallet.receive_request.import",
+        json!({"receiveRequest": receive_request}),
+    );
+    assert_eq!(response["ok"], true, "receive request must validate");
+    assert_eq!(response["result"]["recipient"]["format"], format);
+    assert_eq!(response["result"]["recipient"]["networkId"], NETWORK);
+    assert_eq!(response["result"]["recipient"]["asset"], "NIGHT");
+    response["result"]["recipient"]["address"]
+        .as_str()
+        .expect("validated recipient address")
+        .to_owned()
+}
+
+fn transfer_and_await_inclusion(
+    wallet: &mut ProcessHarness,
+    recipient_address: &str,
+    amount: u128,
+) -> String {
+    let prepared = wallet.request(
+        "transfer-prepare",
+        "wallet.transaction.prepare_unshielded",
+        json!({"recipientAddress": recipient_address, "amountAtomicUnits": amount.to_string()}),
+    );
+    assert_eq!(prepared["ok"], true, "transfer preparation must succeed");
+    let transfer = &prepared["result"]["transfer"];
+    let draft_id = transfer["draftId"]
+        .as_str()
+        .expect("transfer draft id")
+        .to_owned();
+    let challenge = transfer["authorizationChallenge"]
+        .as_str()
+        .expect("transfer authorization challenge")
+        .to_owned();
+    let authorized = wallet.request(
+        "transfer-authorize",
+        "wallet.transaction.authorize_unshielded",
+        json!({"draftId": draft_id, "authorizationChallenge": challenge,
+            "confirmation":{"title":"Authorize NIGHT transfer","summary":"Authorize the wallet-derived NIGHT transfer","confirmed":true}}),
+    );
+    assert_eq!(
+        authorized["ok"], true,
+        "transfer authorization must succeed"
+    );
+    let submitted = wallet.request(
+        "transfer-submit",
+        "wallet.transaction.submit_unshielded",
+        json!({"draftId": draft_id,
+            "confirmation":{"title":"Submit NIGHT transfer","summary":"Submit the authorized NIGHT transfer","confirmed":true}}),
+    );
+    let submitted_transaction_id = if submitted["ok"] == true {
+        Some(
+            submitted["result"]["submission"]["transactionId"]
+                .as_str()
+                .expect("public transaction identifier")
+                .to_owned(),
+        )
+    } else {
+        assert_eq!(
+            submitted["error"]["code"], "submission_unknown",
+            "only an explicitly reconcilable finality timeout may continue: {submitted}"
+        );
+        None
+    };
+    let deadline = Instant::now() + Duration::from_secs(180);
+    loop {
+        let status = wallet.request(
+            "transfer-reconcile",
+            "wallet.transaction.reconcile_submission",
+            json!({"draftId": draft_id}),
+        );
+        if status["ok"] == true {
+            let status = &status["result"]["submissionStatus"];
+            if status["state"] == "included" {
+                let reconciled_transaction_id = status["transactionId"]
+                    .as_str()
+                    .expect("included transaction identifier")
+                    .to_owned();
+                if let Some(submitted_transaction_id) = submitted_transaction_id.as_deref() {
+                    assert_eq!(reconciled_transaction_id, submitted_transaction_id);
+                }
+                return reconciled_transaction_id;
+            }
+            assert!(
+                matches!(
+                    status["state"].as_str(),
+                    Some("running" | "broadcasting" | "outcome_unknown")
+                ),
+                "transfer entered an unexpected terminal state: {status}"
+            );
+        } else {
+            assert_eq!(
+                status["error"]["code"], "submission_unknown",
+                "reconciliation failed irrecoverably: {status}"
+            );
+        }
+        assert!(
+            Instant::now() < deadline,
+            "transfer finality was not observed: {status}"
+        );
+        thread::sleep(Duration::from_secs(2));
+    }
+}
+
+fn night_changes(transaction: &Value) -> Option<(u128, u128)> {
+    let mut credits = 0_u128;
+    let mut debits = 0_u128;
+    for change in transaction["changes"].as_array()? {
+        if change["balance"]["symbol"] != "NIGHT" {
+            continue;
+        }
+        let amount = change["balance"]["atomicUnits"]
+            .as_str()?
+            .parse::<u128>()
+            .ok()?;
+        match change["direction"].as_str()? {
+            "credit" => credits = credits.checked_add(amount)?,
+            "debit" => debits = debits.checked_add(amount)?,
+            _ => return None,
+        }
+    }
+    Some((credits, debits))
+}
+
+fn assert_history(wallet: &mut ProcessHarness, direction: &str, amount: u128) {
+    let response = wallet.request(
+        "transaction-history",
+        "wallet.transaction.history",
+        json!({}),
+    );
+    assert_eq!(
+        response["ok"], true,
+        "authoritative transaction history must be readable"
+    );
+    let transactions = response["result"]["transactions"]
+        .as_array()
+        .expect("transaction history array");
+    let observations = transactions
+        .iter()
+        .map(|transaction| {
+            let (credits, debits) = night_changes(transaction).unwrap_or_default();
+            json!({
+                "direction": transaction["direction"],
+                "status": transaction["status"],
+                "nightCredits": credits.to_string(),
+                "nightDebits": debits.to_string()
+            })
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        transactions.iter().any(|transaction| {
+            let Some((credits, debits)) = night_changes(transaction) else {
+                return false;
+            };
+            let exact_delta = match direction {
+                "incoming" => credits.checked_sub(debits),
+                "outgoing" => debits.checked_sub(credits),
+                _ => None,
+            };
+            transaction["transactionId"]
+                .as_str()
+                .is_some_and(|identifier| {
+                    identifier.len() == 64
+                        && identifier.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+                && transaction["direction"] == direction
+                && transaction["status"] == "confirmed"
+                && exact_delta == Some(amount)
+        }),
+        "finalized transaction direction must reconcile: {observations:?}"
+    );
+}
+
+fn assert_submission_history(wallet: &mut ProcessHarness, transaction_id: &str) {
+    let response = wallet.request(
+        "submission-history",
+        "wallet.transaction.submission_history",
+        json!({}),
+    );
+    assert_eq!(response["ok"], true, "submission journal must be readable");
+    assert!(
+        response["result"]["submissions"]
+            .as_array()
+            .is_some_and(|submissions| submissions.iter().any(|submission| {
+                submission["transactionId"] == transaction_id
+                    && submission["state"] == "included"
+                    && submission["reconciliationAllowed"] == false
+            })),
+        "included submission must be recorded in the durable journal"
+    );
 }
 
 fn register_and_await_dust(wallet: &mut ProcessHarness) -> Duration {
@@ -485,6 +698,86 @@ fn two_fresh_wallets_receive_fixed_night_and_generate_dust() {
     wallet_a.finish("system.quit");
     wallet_b.finish("system.quit");
     faucet.finish("faucet.shutdown");
+}
+
+#[test]
+#[ignore = "requires an explicitly authorized local standalone stack"]
+fn two_fresh_wallets_complete_a_night_round_trip_and_reconcile_history() {
+    assert_eq!(std::env::var(ENABLE_ENV).as_deref(), Ok("1"));
+    let root = StateRoot::new();
+    let mut faucet = ProcessHarness::faucet(&root.child("faucet"));
+    let wallet_a_root = root.child("wallet-a");
+    let wallet_b_root = root.child("wallet-b");
+    let mut wallet_a = ProcessHarness::wallet(&wallet_a_root);
+    let mut wallet_b = ProcessHarness::wallet(&wallet_b_root);
+    let address_a = prepare_wallet(&mut wallet_a, "Standalone round-trip wallet A");
+    let address_b = prepare_wallet(&mut wallet_b, "Standalone round-trip wallet B");
+    assert_ne!(address_a, address_b, "wallet roots must remain independent");
+
+    for (request_id, recipient_address) in [
+        ("round-trip-wallet-a", &address_a),
+        ("round-trip-wallet-b", &address_b),
+    ] {
+        let funded = faucet.request(
+            request_id,
+            "faucet.fund",
+            json!({"requestId": request_id, "recipientAddress": recipient_address}),
+        );
+        assert_eq!(
+            funded["ok"], true,
+            "fixed funding must succeed once: {funded}"
+        );
+        assert_eq!(
+            funded["result"]["receipt"]["amount"]["atomicUnits"],
+            FIXED_GRANT.to_string()
+        );
+        assert_eq!(funded["result"]["receipt"]["state"], "included");
+    }
+    await_night(&mut wallet_a);
+    await_night(&mut wallet_b);
+
+    let dust_a = register_and_await_dust(&mut wallet_a);
+    let dust_b = register_and_await_dust(&mut wallet_b);
+    assert!(dust_a <= DUST_DEADLINE && dust_b <= DUST_DEADLINE);
+    // Registration spends each original NIGHT output and returns the same
+    // principal to a new same-owner output. Refresh the public account UTXO
+    // snapshot before either transfer is planned; a balance-only equality is
+    // not proof that the previously selected input remains unspent.
+    await_night(&mut wallet_a);
+    await_night(&mut wallet_b);
+
+    let versioned_b =
+        format!("midnight-receive:v1|network={NETWORK}|asset=NIGHT|address={address_b}");
+    let imported_b = import_recipient(&mut wallet_a, &versioned_b, "versioned");
+    let a_to_b = transfer_and_await_inclusion(&mut wallet_a, &imported_b, TRANSFER_A_TO_B);
+    await_night_amount(&mut wallet_a, FIXED_GRANT - TRANSFER_A_TO_B);
+    await_night_amount(&mut wallet_b, FIXED_GRANT + TRANSFER_A_TO_B);
+    assert_history(&mut wallet_a, "outgoing", TRANSFER_A_TO_B);
+    assert_history(&mut wallet_b, "incoming", TRANSFER_A_TO_B);
+
+    let imported_a = import_recipient(&mut wallet_b, &address_a, "raw");
+    let b_to_a = transfer_and_await_inclusion(&mut wallet_b, &imported_a, TRANSFER_B_TO_A);
+    await_night_amount(
+        &mut wallet_a,
+        FIXED_GRANT - TRANSFER_A_TO_B + TRANSFER_B_TO_A,
+    );
+    await_night_amount(
+        &mut wallet_b,
+        FIXED_GRANT + TRANSFER_A_TO_B - TRANSFER_B_TO_A,
+    );
+    assert_history(&mut wallet_a, "incoming", TRANSFER_B_TO_A);
+    assert_history(&mut wallet_b, "outgoing", TRANSFER_B_TO_A);
+    assert_submission_history(&mut wallet_a, &a_to_b);
+    assert_submission_history(&mut wallet_b, &b_to_a);
+    wallet_a.finish("system.quit");
+    wallet_b.finish("system.quit");
+    faucet.finish("faucet.shutdown");
+    root.cleanup();
+    println!(
+        "standalone-night-round-trip-e2e: PASS wallets=2 grantAtomicUnits={FIXED_GRANT} transfers=2 dustASeconds={} dustBSeconds={} cleanup=complete",
+        dust_a.as_secs(),
+        dust_b.as_secs()
+    );
 }
 
 #[test]
