@@ -93,7 +93,8 @@ fn plan_family(
             WalletRealmReconciliationTrigger::ManualRefresh,
             WalletRealmFacetState::Current
             | WalletRealmFacetState::Stale
-            | WalletRealmFacetState::Missing,
+            | WalletRealmFacetState::Missing
+            | WalletRealmFacetState::Blocked,
         )
         | (
             WalletRealmReconciliationTrigger::Initial
@@ -102,12 +103,14 @@ fn plan_family(
         ) => true,
         (
             WalletRealmReconciliationTrigger::Initial
+            | WalletRealmReconciliationTrigger::ActionPreflight,
+            WalletRealmFacetState::Current | WalletRealmFacetState::Blocked,
+        )
+        | (
+            WalletRealmReconciliationTrigger::Initial
             | WalletRealmReconciliationTrigger::ManualRefresh
             | WalletRealmReconciliationTrigger::ActionPreflight,
-            WalletRealmFacetState::Current
-            | WalletRealmFacetState::Updating
-            | WalletRealmFacetState::Blocked
-            | WalletRealmFacetState::Unsupported,
+            WalletRealmFacetState::Updating | WalletRealmFacetState::Unsupported,
         ) => false,
     };
     if required {
@@ -156,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn planner_never_duplicates_active_blocked_or_unsupported_work() {
+    fn planner_never_duplicates_active_or_unsupported_work() {
         for trigger in [
             WalletRealmReconciliationTrigger::Initial,
             WalletRealmReconciliationTrigger::ManualRefresh,
@@ -166,11 +169,42 @@ mod tests {
                 trigger,
                 WalletRealmReconciliationState {
                     account: WalletRealmFacetState::Updating,
-                    dust: WalletRealmFacetState::Blocked,
+                    dust: WalletRealmFacetState::Updating,
                     shielded: WalletRealmFacetState::Unsupported,
                 },
             );
             assert!(plan.effects().is_empty());
         }
+    }
+
+    #[test]
+    fn planner_retries_blocked_work_only_after_explicit_manual_refresh() {
+        let state = WalletRealmReconciliationState {
+            account: WalletRealmFacetState::Blocked,
+            dust: WalletRealmFacetState::Blocked,
+            shielded: WalletRealmFacetState::Blocked,
+        };
+        for trigger in [
+            WalletRealmReconciliationTrigger::Initial,
+            WalletRealmReconciliationTrigger::ActionPreflight,
+        ] {
+            assert!(
+                WalletRealmReconciliationPlanner::plan(trigger, state)
+                    .effects()
+                    .is_empty()
+            );
+        }
+        assert_eq!(
+            WalletRealmReconciliationPlanner::plan(
+                WalletRealmReconciliationTrigger::ManualRefresh,
+                state,
+            )
+            .effects(),
+            [
+                WalletRealmReconciliationEffect::SyncAccount,
+                WalletRealmReconciliationEffect::SyncDust,
+                WalletRealmReconciliationEffect::SyncShielded,
+            ]
+        );
     }
 }

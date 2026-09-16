@@ -586,7 +586,7 @@ mod tests {
                 if state == "never_synced"
         ));
         assert_eq!(wallet.account_syncs.load(Ordering::Relaxed), 1);
-        assert_eq!(wallet.dust_starts.load(Ordering::Relaxed), 0);
+        assert_eq!(wallet.dust_starts.load(Ordering::Relaxed), 1);
         assert_eq!(wallet.shielded_starts.load(Ordering::Relaxed), 1);
 
         let cancelled = CancelSelectedWalletRealmSyncUseCase::execute(&service, command())
