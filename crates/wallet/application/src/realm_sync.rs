@@ -11,10 +11,11 @@ use oxid_wallet_domain::{
 
 use crate::{
     WalletAccountPortError, WalletAccountReadPort, WalletAccountView, WalletDustSyncPort,
-    WalletDustSyncPortError, WalletDustSyncView, WalletRealmFacetState,
-    WalletRealmReconciliationEffect, WalletRealmReconciliationPlanner,
-    WalletRealmReconciliationState, WalletRealmReconciliationTrigger, WalletShieldedSyncPort,
-    WalletShieldedSyncPortError, WalletShieldedSyncView,
+    WalletDustSyncPortError, WalletDustSyncView, WalletRealmCoordinatorInput,
+    WalletRealmCoordinatorState, WalletRealmFacetState, WalletRealmReconciliationCoordinator,
+    WalletRealmReconciliationEffect, WalletRealmReconciliationState,
+    WalletRealmReconciliationTrigger, WalletShieldedSyncPort, WalletShieldedSyncPortError,
+    WalletShieldedSyncView,
 };
 
 /// Profile-scoped command for reconciling the currently selected network realm.
@@ -168,9 +169,12 @@ where
             let profile = Self::profile(command)?;
             let observed = self.observed(&profile);
             let mut view = observed.view;
-            let plan = WalletRealmReconciliationPlanner::plan(trigger, observed.state);
-            for effect in plan.effects() {
-                match effect {
+            let transition = WalletRealmReconciliationCoordinator::reduce(
+                WalletRealmCoordinatorState::new(observed.state),
+                WalletRealmCoordinatorInput::Reconcile(trigger),
+            );
+            for effect in transition.effects() {
+                match effect.kind() {
                     WalletRealmReconciliationEffect::SyncAccount => {
                         view.account = self
                             .wallet
