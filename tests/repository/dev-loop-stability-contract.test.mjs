@@ -2288,6 +2288,24 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.equal(capabilities.emptyToolsBasis, "captured-help-and-bounded-version-contract");
   assert.equal(capabilities.permissionMode, "dontAsk");
   assert.equal(assertClaudeAuthHelpCapabilities(fixtureClaudeAuthHelp).jsonOutput, true);
+  const wrappedToolsReference = fixtureClaudeHelp.replace(
+    "  --safe-mode",
+    "  --restricted                          Restricted mode\n                                        unless --tools names them.\n  --safe-mode",
+  );
+  assert.equal(
+    assertClaudeHelpCapabilities(wrappedToolsReference, [2, 1, 263]).emptyToolsDisabled,
+    true,
+  );
+  assert.throws(
+    () => assertClaudeHelpCapabilities(
+      fixtureClaudeHelp.replace(
+        '  --tools <tools...> Specify tools. Use "" to disable all tools.',
+        "                                        unless --tools names them.",
+      ),
+      [2, 1, 263],
+    ),
+    /required review flags: --tools/,
+  );
   assert.throws(() => assertClaudeHelpCapabilities("  --safe-mode\n  --toolsfoo\n", [2, 1, 228]), /required review flags/);
   assert.throws(
     () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace(/^\s*--effort.*\n/m, ""), [2, 1, 228]),
