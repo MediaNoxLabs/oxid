@@ -206,6 +206,26 @@ pub trait WalletAccountReadPort: Send + Sync {
     ) -> Result<WalletAccountSnapshot, WalletAccountPortError>;
 
     fn sync<'a>(&'a self, profile_id: &'a WalletProfileId) -> WalletAccountPortFuture<'a>;
+
+    /// Reads one explicitly captured realm. Implementations that cannot pin
+    /// the realm fail closed instead of silently following a later selection.
+    fn account_in_realm(
+        &self,
+        _profile_id: &WalletProfileId,
+        _network_id: &ChainNetworkId,
+    ) -> Result<WalletAccountSnapshot, WalletAccountPortError> {
+        Err(WalletAccountPortError::UnsupportedNetwork)
+    }
+
+    /// Synchronizes one explicitly captured realm. This keeps an asynchronous
+    /// operation from drifting when another command changes the selection.
+    fn sync_in_realm<'a>(
+        &'a self,
+        _profile_id: &'a WalletProfileId,
+        _network_id: &'a ChainNetworkId,
+    ) -> WalletAccountPortFuture<'a> {
+        Box::pin(async { Err(WalletAccountPortError::UnsupportedNetwork) })
+    }
 }
 
 /// Focused outgoing port for deriving an account through protected key custody.

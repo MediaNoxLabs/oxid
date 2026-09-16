@@ -850,6 +850,31 @@ where
             .map_err(map_account_to_dust_error)?;
         self.dust_sync.cancel(profile_id, &network)
     }
+
+    fn dust_status_in_realm(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &oxid_wallet_domain::ChainNetworkId,
+    ) -> Result<oxid_wallet_domain::WalletDustSyncSnapshot, WalletDustSyncPortError> {
+        self.dust_sync.status(profile_id, network_id)
+    }
+
+    fn start_dust_sync_in_realm(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &oxid_wallet_domain::ChainNetworkId,
+    ) -> Result<oxid_wallet_domain::WalletDustSyncSnapshot, WalletDustSyncPortError> {
+        let account_index = self.account_index(profile_id, network_id)?;
+        self.dust_sync.start(profile_id, network_id, account_index)
+    }
+
+    fn cancel_dust_sync_in_realm(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &oxid_wallet_domain::ChainNetworkId,
+    ) -> Result<oxid_wallet_domain::WalletDustSyncSnapshot, WalletDustSyncPortError> {
+        self.dust_sync.cancel(profile_id, network_id)
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -888,6 +913,32 @@ where
             .selected(profile_id)
             .map_err(map_account_to_shielded_error)?;
         self.shielded_sync.cancel(profile_id, &network)
+    }
+
+    fn shielded_status_in_realm(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &oxid_wallet_domain::ChainNetworkId,
+    ) -> Result<oxid_wallet_domain::WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+        self.shielded_sync.status(profile_id, network_id)
+    }
+
+    fn start_shielded_sync_in_realm(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &oxid_wallet_domain::ChainNetworkId,
+    ) -> Result<oxid_wallet_domain::WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+        let account_index = self.shielded_account_index(profile_id, network_id)?;
+        self.shielded_sync
+            .start(profile_id, network_id, account_index)
+    }
+
+    fn cancel_shielded_sync_in_realm(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &oxid_wallet_domain::ChainNetworkId,
+    ) -> Result<oxid_wallet_domain::WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+        self.shielded_sync.cancel(profile_id, network_id)
     }
 }
 
@@ -1194,6 +1245,30 @@ where
             let selected = self.selected(profile_id)?;
             let network =
                 network_by_id(&selected)?.ok_or(WalletAccountPortError::UnsupportedNetwork)?;
+            self.ensure_associated_account(profile_id, &network)?;
+            self.source.sync(profile_id, &network).await
+        })
+    }
+
+    fn account_in_realm(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &oxid_wallet_domain::ChainNetworkId,
+    ) -> Result<WalletAccountSnapshot, WalletAccountPortError> {
+        let network =
+            network_by_id(network_id)?.ok_or(WalletAccountPortError::UnsupportedNetwork)?;
+        self.ensure_associated_account(profile_id, &network)?;
+        self.source.account(profile_id, &network)
+    }
+
+    fn sync_in_realm<'a>(
+        &'a self,
+        profile_id: &'a WalletProfileId,
+        network_id: &'a oxid_wallet_domain::ChainNetworkId,
+    ) -> WalletAccountPortFuture<'a> {
+        Box::pin(async move {
+            let network =
+                network_by_id(network_id)?.ok_or(WalletAccountPortError::UnsupportedNetwork)?;
             self.ensure_associated_account(profile_id, &network)?;
             self.source.sync(profile_id, &network).await
         })

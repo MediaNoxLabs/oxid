@@ -1,18 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
+use std::{
+    error::Error,
+    fmt,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use oxid_foundation::OpaqueIdError;
 use oxid_wallet_domain::{
-    WalletAccountSnapshot, WalletAccountSource, WalletDustSyncFailure, WalletDustSyncSnapshot,
-    WalletDustSyncState, WalletProfileId, WalletShieldedSyncFailure, WalletShieldedSyncSnapshot,
-    WalletShieldedSyncState, WalletSyncState,
+    ChainNetworkId, WalletAccountSnapshot, WalletAccountSource, WalletDustSyncFailure,
+    WalletDustSyncSnapshot, WalletDustSyncState, WalletProfileId, WalletShieldedSyncFailure,
+    WalletShieldedSyncSnapshot, WalletShieldedSyncState, WalletSyncState,
 };
 
 use crate::{
     WalletAccountPortError, WalletAccountReadPort, WalletAccountView, WalletDustSyncPort,
-    WalletDustSyncPortError, WalletDustSyncView, WalletRealmFacetState,
-    WalletRealmReconciliationEffect, WalletRealmReconciliationPlanner,
+    WalletDustSyncPortError, WalletDustSyncView, WalletNetworkPort, WalletRealmCoordinatorEffect,
+    WalletRealmCoordinatorInput, WalletRealmCoordinatorState, WalletRealmEffectOutcome,
+    WalletRealmFacetState, WalletRealmReconciliationCoordinator, WalletRealmReconciliationEffect,
     WalletRealmReconciliationState, WalletRealmReconciliationTrigger, WalletShieldedSyncPort,
     WalletShieldedSyncPortError, WalletShieldedSyncView,
 };
@@ -65,12 +72,16 @@ pub struct SelectedWalletRealmSyncView {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SelectedWalletRealmSyncError {
     InvalidProfileIdentifier(OpaqueIdError),
+    SelectedNetwork(WalletAccountPortError),
+    Unavailable,
 }
 
 impl fmt::Display for SelectedWalletRealmSyncError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidProfileIdentifier(error) => error.fmt(formatter),
+            Self::SelectedNetwork(error) => error.fmt(formatter),
+            Self::Unavailable => formatter.write_str("selected realm runtime is unavailable"),
         }
     }
 }
@@ -109,9 +120,187 @@ pub trait CancelSelectedWalletRealmSyncUseCase: Send + Sync {
     ) -> Result<SelectedWalletRealmSyncView, SelectedWalletRealmSyncError>;
 }
 
+/// Application-owned persistent coordinator registry for selected wallet realms.
+/// The owner is intentionally synchronous: adapters decide how and when to run
+/// effects, while all lease and stale-completion decisions remain deterministic.
+#[derive(Default)]
+pub struct SelectedWalletRealmRuntime {
+    entries: Vec<SelectedWalletRealmRuntimeEntry>,
+    selections: Vec<SelectedWalletRealmSelection>,
+}
+
+struct SelectedWalletRealmRuntimeEntry {
+    profile: WalletProfileId,
+    realm: ChainNetworkId,
+    state: WalletRealmCoordinatorState,
+}
+
+struct SelectedWalletRealmSelection {
+    profile: WalletProfileId,
+    realm: ChainNetworkId,
+}
+
+impl SelectedWalletRealmRuntime {
+    pub fn reconcile(
+        &mut self,
+        profile: WalletProfileId,
+        realm: ChainNetworkId,
+        observed: WalletRealmReconciliationState,
+        trigger: WalletRealmReconciliationTrigger,
+    ) -> Vec<WalletRealmCoordinatorEffect> {
+        let entry = if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.profile == profile && entry.realm == realm)
+        {
+            entry
+        } else {
+            self.entries.push(SelectedWalletRealmRuntimeEntry {
+                profile,
+                realm,
+                state: WalletRealmCoordinatorState::new(observed),
+            });
+            self.entries.last_mut().expect("entry inserted")
+        };
+        let observed = WalletRealmReconciliationCoordinator::reduce(
+            entry.state,
+            WalletRealmCoordinatorInput::Observe(observed),
+        );
+        let transition = WalletRealmReconciliationCoordinator::reduce(
+            *observed.state(),
+            WalletRealmCoordinatorInput::Reconcile(trigger),
+        );
+        entry.state = *transition.state();
+        transition.effects().to_vec()
+    }
+
+    pub fn retire_other_realms(
+        &mut self,
+        profile: &WalletProfileId,
+        selected_realm: &ChainNetworkId,
+    ) -> Vec<ChainNetworkId> {
+        let previous = if let Some(selection) = self
+            .selections
+            .iter_mut()
+            .find(|selection| &selection.profile == profile)
+        {
+            if &selection.realm == selected_realm {
+                return Vec::new();
+            }
+            Some(std::mem::replace(
+                &mut selection.realm,
+                selected_realm.clone(),
+            ))
+        } else {
+            self.selections.push(SelectedWalletRealmSelection {
+                profile: profile.clone(),
+                realm: selected_realm.clone(),
+            });
+            None
+        };
+        let Some(previous) = previous else {
+            return Vec::new();
+        };
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| &entry.profile == profile && entry.realm == previous)
+        {
+            entry.state = *WalletRealmReconciliationCoordinator::reduce(
+                entry.state,
+                WalletRealmCoordinatorInput::Cancel,
+            )
+            .state();
+        }
+        vec![previous]
+    }
+
+    pub fn complete(
+        &mut self,
+        profile: &WalletProfileId,
+        realm: &ChainNetworkId,
+        effect: WalletRealmCoordinatorEffect,
+        outcome: WalletRealmEffectOutcome,
+    ) -> Vec<WalletRealmCoordinatorEffect> {
+        let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| &entry.profile == profile && &entry.realm == realm)
+        else {
+            return Vec::new();
+        };
+        let transition = WalletRealmReconciliationCoordinator::reduce(
+            entry.state,
+            WalletRealmCoordinatorInput::EffectCompleted { effect, outcome },
+        );
+        entry.state = *transition.state();
+        transition.effects().to_vec()
+    }
+
+    pub fn cancel_profile(&mut self, profile: &WalletProfileId) {
+        for entry in self
+            .entries
+            .iter_mut()
+            .filter(|entry| &entry.profile == profile)
+        {
+            entry.state = *WalletRealmReconciliationCoordinator::reduce(
+                entry.state,
+                WalletRealmCoordinatorInput::Cancel,
+            )
+            .state();
+        }
+    }
+
+    #[must_use]
+    pub fn effect_active(
+        &self,
+        profile: &WalletProfileId,
+        realm: &ChainNetworkId,
+        effect: WalletRealmCoordinatorEffect,
+    ) -> bool {
+        self.state(profile, realm)
+            .is_some_and(|state| state.accepts(effect))
+    }
+
+    #[must_use]
+    pub fn state(
+        &self,
+        profile: &WalletProfileId,
+        realm: &ChainNetworkId,
+    ) -> Option<WalletRealmCoordinatorState> {
+        self.entries
+            .iter()
+            .find(|entry| &entry.profile == profile && &entry.realm == realm)
+            .map(|entry| entry.state)
+    }
+
+    pub fn expire(
+        &mut self,
+        profile: &WalletProfileId,
+        realm: &ChainNetworkId,
+        effect: WalletRealmCoordinatorEffect,
+    ) -> Vec<WalletRealmCoordinatorEffect> {
+        let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| &entry.profile == profile && &entry.realm == realm)
+        else {
+            return Vec::new();
+        };
+        let transition = WalletRealmReconciliationCoordinator::reduce(
+            entry.state,
+            WalletRealmCoordinatorInput::EffectExpired(effect),
+        );
+        entry.state = *transition.state();
+        transition.effects().to_vec()
+    }
+}
+
 /// Application orchestration over the three focused wallet ports.
 pub struct SelectedWalletRealmSyncService<W> {
     wallet: Arc<W>,
+    runtime: Mutex<SelectedWalletRealmRuntime>,
+    operation_gate: Mutex<()>,
 }
 
 struct ObservedWalletRealm {
@@ -119,10 +308,64 @@ struct ObservedWalletRealm {
     state: WalletRealmReconciliationState,
 }
 
+struct WalletRealmLeaseGuard<'a> {
+    runtime: &'a Mutex<SelectedWalletRealmRuntime>,
+    profile: WalletProfileId,
+    realm: ChainNetworkId,
+    active: Vec<WalletRealmCoordinatorEffect>,
+}
+
+impl WalletRealmLeaseGuard<'_> {
+    fn effect_active(
+        &self,
+        effect: WalletRealmCoordinatorEffect,
+    ) -> Result<bool, SelectedWalletRealmSyncError> {
+        self.runtime
+            .lock()
+            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)
+            .map(|runtime| runtime.effect_active(&self.profile, &self.realm, effect))
+    }
+
+    fn complete(
+        &mut self,
+        effect: WalletRealmCoordinatorEffect,
+        outcome: WalletRealmEffectOutcome,
+    ) -> Result<Vec<WalletRealmCoordinatorEffect>, SelectedWalletRealmSyncError> {
+        let follow_up = self
+            .runtime
+            .lock()
+            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?
+            .complete(&self.profile, &self.realm, effect, outcome);
+        self.active.retain(|candidate| *candidate != effect);
+        self.active.extend(follow_up.iter().copied());
+        Ok(follow_up)
+    }
+
+    fn discard(&mut self, effect: WalletRealmCoordinatorEffect) {
+        self.active.retain(|candidate| *candidate != effect);
+    }
+}
+
+impl Drop for WalletRealmLeaseGuard<'_> {
+    fn drop(&mut self) {
+        let Ok(mut runtime) = self.runtime.lock() else {
+            return;
+        };
+        while let Some(effect) = self.active.pop() {
+            let follow_up = runtime.expire(&self.profile, &self.realm, effect);
+            self.active.extend(follow_up);
+        }
+    }
+}
+
 impl<W> SelectedWalletRealmSyncService<W> {
     #[must_use]
-    pub const fn new(wallet: Arc<W>) -> Self {
-        Self { wallet }
+    pub fn new(wallet: Arc<W>) -> Self {
+        Self {
+            wallet,
+            runtime: Mutex::new(SelectedWalletRealmRuntime::default()),
+            operation_gate: Mutex::new(()),
+        }
     }
 
     fn profile(
@@ -132,13 +375,15 @@ impl<W> SelectedWalletRealmSyncService<W> {
             .map_err(SelectedWalletRealmSyncError::InvalidProfileIdentifier)
     }
 
-    fn observed(&self, profile: &WalletProfileId) -> ObservedWalletRealm
+    fn observed(&self, profile: &WalletProfileId, realm: &ChainNetworkId) -> ObservedWalletRealm
     where
         W: WalletAccountReadPort + WalletDustSyncPort + WalletShieldedSyncPort,
     {
-        let (account, account_state) = observe_account(self.wallet.account(profile));
-        let (dust, dust_state) = observe_dust(self.wallet.dust_status(profile));
-        let (shielded, shielded_state) = observe_shielded(self.wallet.shielded_status(profile));
+        let (account, account_state) =
+            observe_account(self.wallet.account_in_realm(profile, realm));
+        let (dust, dust_state) = observe_dust(self.wallet.dust_status_in_realm(profile, realm));
+        let (shielded, shielded_state) =
+            observe_shielded(self.wallet.shielded_status_in_realm(profile, realm));
         ObservedWalletRealm {
             view: SelectedWalletRealmSyncView {
                 account,
@@ -156,7 +401,11 @@ impl<W> SelectedWalletRealmSyncService<W> {
 
 impl<W> SelectedWalletRealmSyncService<W>
 where
-    W: WalletAccountReadPort + WalletDustSyncPort + WalletShieldedSyncPort + 'static,
+    W: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletDustSyncPort
+        + WalletShieldedSyncPort
+        + 'static,
 {
     /// Reconciles the selected realm for one explicit application trigger.
     pub fn reconcile(
@@ -166,44 +415,87 @@ where
     ) -> SelectedWalletRealmSyncViewFuture<'_> {
         Box::pin(async move {
             let profile = Self::profile(command)?;
-            let observed = self.observed(&profile);
+            let realm = self
+                .wallet
+                .selected_network(&profile)
+                .map_err(SelectedWalletRealmSyncError::SelectedNetwork)?;
+            {
+                let _operation = self
+                    .operation_gate
+                    .lock()
+                    .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
+                let retired = self
+                    .runtime
+                    .lock()
+                    .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?
+                    .retire_other_realms(&profile, &realm);
+                for retired_realm in retired {
+                    let _ = self
+                        .wallet
+                        .cancel_dust_sync_in_realm(&profile, &retired_realm);
+                    let _ = self
+                        .wallet
+                        .cancel_shielded_sync_in_realm(&profile, &retired_realm);
+                }
+            }
+            let observed = self.observed(&profile, &realm);
             let mut view = observed.view;
-            let plan = WalletRealmReconciliationPlanner::plan(trigger, observed.state);
-            for effect in plan.effects() {
-                match effect {
+            let mut effects = self
+                .runtime
+                .lock()
+                .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?
+                .reconcile(profile.clone(), realm.clone(), observed.state, trigger);
+            let mut leases = WalletRealmLeaseGuard {
+                runtime: &self.runtime,
+                profile: profile.clone(),
+                realm: realm.clone(),
+                active: effects.clone(),
+            };
+            while !effects.is_empty() {
+                let effect = effects.remove(0);
+                let outcome = match effect.kind() {
                     WalletRealmReconciliationEffect::SyncAccount => {
-                        view.account = self
-                            .wallet
-                            .sync(&profile)
-                            .await
-                            .map(|snapshot| {
-                                WalletRealmFamilyView::Ready(WalletAccountView::from_snapshot(
-                                    &snapshot,
-                                ))
-                            })
-                            .unwrap_or_else(account_family_error);
+                        if !leases.effect_active(effect)? {
+                            leases.discard(effect);
+                            continue;
+                        }
+                        let (family, state) =
+                            observe_account(self.wallet.sync_in_realm(&profile, &realm).await);
+                        view.account = family;
+                        effect_outcome(state)
                     }
                     WalletRealmReconciliationEffect::SyncDust => {
-                        view.dust = self
-                            .wallet
-                            .start_dust_sync(&profile)
-                            .map(|snapshot| {
-                                WalletRealmFamilyView::Ready(WalletDustSyncView::from(&snapshot))
-                            })
-                            .unwrap_or_else(dust_family_error);
+                        let _operation = self
+                            .operation_gate
+                            .lock()
+                            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
+                        if !leases.effect_active(effect)? {
+                            leases.discard(effect);
+                            continue;
+                        }
+                        let (family, state) =
+                            observe_dust(self.wallet.start_dust_sync_in_realm(&profile, &realm));
+                        view.dust = family;
+                        effect_outcome(state)
                     }
                     WalletRealmReconciliationEffect::SyncShielded => {
-                        view.shielded = self
-                            .wallet
-                            .start_shielded_sync(&profile)
-                            .map(|snapshot| {
-                                WalletRealmFamilyView::Ready(WalletShieldedSyncView::from(
-                                    &snapshot,
-                                ))
-                            })
-                            .unwrap_or_else(shielded_family_error);
+                        let _operation = self
+                            .operation_gate
+                            .lock()
+                            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
+                        if !leases.effect_active(effect)? {
+                            leases.discard(effect);
+                            continue;
+                        }
+                        let (family, state) = observe_shielded(
+                            self.wallet.start_shielded_sync_in_realm(&profile, &realm),
+                        );
+                        view.shielded = family;
+                        effect_outcome(state)
                     }
-                }
+                };
+                let follow_up = leases.complete(effect, outcome)?;
+                effects.extend(follow_up);
             }
             Ok(view)
         })
@@ -212,7 +504,11 @@ where
 
 impl<W> SyncSelectedWalletRealmUseCase for SelectedWalletRealmSyncService<W>
 where
-    W: WalletAccountReadPort + WalletDustSyncPort + WalletShieldedSyncPort + 'static,
+    W: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletDustSyncPort
+        + WalletShieldedSyncPort
+        + 'static,
 {
     fn execute(
         &self,
@@ -224,40 +520,65 @@ where
 
 impl<W> GetSelectedWalletRealmSyncUseCase for SelectedWalletRealmSyncService<W>
 where
-    W: WalletAccountReadPort + WalletDustSyncPort + WalletShieldedSyncPort + 'static,
-{
-    fn execute(
-        &self,
-        command: SelectedWalletRealmSyncCommand,
-    ) -> Result<SelectedWalletRealmSyncView, SelectedWalletRealmSyncError> {
-        Ok(self.observed(&Self::profile(command)?).view)
-    }
-}
-
-impl<W> CancelSelectedWalletRealmSyncUseCase for SelectedWalletRealmSyncService<W>
-where
-    W: WalletAccountReadPort + WalletDustSyncPort + WalletShieldedSyncPort + 'static,
+    W: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletDustSyncPort
+        + WalletShieldedSyncPort
+        + 'static,
 {
     fn execute(
         &self,
         command: SelectedWalletRealmSyncCommand,
     ) -> Result<SelectedWalletRealmSyncView, SelectedWalletRealmSyncError> {
         let profile = Self::profile(command)?;
+        let realm = self
+            .wallet
+            .selected_network(&profile)
+            .map_err(SelectedWalletRealmSyncError::SelectedNetwork)?;
+        Ok(self.observed(&profile, &realm).view)
+    }
+}
+
+impl<W> CancelSelectedWalletRealmSyncUseCase for SelectedWalletRealmSyncService<W>
+where
+    W: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletDustSyncPort
+        + WalletShieldedSyncPort
+        + 'static,
+{
+    fn execute(
+        &self,
+        command: SelectedWalletRealmSyncCommand,
+    ) -> Result<SelectedWalletRealmSyncView, SelectedWalletRealmSyncError> {
+        let profile = Self::profile(command)?;
+        let realm = self
+            .wallet
+            .selected_network(&profile)
+            .map_err(SelectedWalletRealmSyncError::SelectedNetwork)?;
+        let _operation = self
+            .operation_gate
+            .lock()
+            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
+        self.runtime
+            .lock()
+            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?
+            .cancel_profile(&profile);
         let account = self
             .wallet
-            .account(&profile)
+            .account_in_realm(&profile, &realm)
             .map(|snapshot| {
                 WalletRealmFamilyView::Ready(WalletAccountView::from_snapshot(&snapshot))
             })
             .unwrap_or_else(account_family_error);
         let dust = self
             .wallet
-            .cancel_dust_sync(&profile)
+            .cancel_dust_sync_in_realm(&profile, &realm)
             .map(|snapshot| WalletRealmFamilyView::Ready(WalletDustSyncView::from(&snapshot)))
             .unwrap_or_else(dust_family_error);
         let shielded = self
             .wallet
-            .cancel_shielded_sync(&profile)
+            .cancel_shielded_sync_in_realm(&profile, &realm)
             .map(|snapshot| WalletRealmFamilyView::Ready(WalletShieldedSyncView::from(&snapshot)))
             .unwrap_or_else(shielded_family_error);
         Ok(SelectedWalletRealmSyncView {
@@ -413,6 +734,17 @@ const fn shielded_error_state(error: WalletShieldedSyncPortError) -> WalletRealm
     }
 }
 
+const fn effect_outcome(state: WalletRealmFacetState) -> WalletRealmEffectOutcome {
+    match state {
+        WalletRealmFacetState::Current => WalletRealmEffectOutcome::Current,
+        WalletRealmFacetState::Missing => WalletRealmEffectOutcome::Missing,
+        WalletRealmFacetState::Blocked => WalletRealmEffectOutcome::Blocked,
+        WalletRealmFacetState::Unsupported => WalletRealmEffectOutcome::Unsupported,
+        WalletRealmFacetState::Updating => WalletRealmEffectOutcome::InProgress,
+        WalletRealmFacetState::Stale => WalletRealmEffectOutcome::Stale,
+    }
+}
+
 const fn account_family_error(
     error: WalletAccountPortError,
 ) -> WalletRealmFamilyView<WalletAccountView> {
@@ -461,7 +793,7 @@ const fn shielded_family_error(
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::atomic::{AtomicUsize, Ordering},
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
         task::{Context, Poll, Waker},
     };
 
@@ -481,6 +813,27 @@ mod tests {
         shielded_starts: AtomicUsize,
     }
 
+    impl WalletNetworkPort for PartialWallet {
+        fn available_networks(&self) -> Result<Vec<ChainNetwork>, WalletAccountPortError> {
+            Ok(vec![network()])
+        }
+
+        fn selected_network(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<ChainNetworkId, WalletAccountPortError> {
+            Ok(network_id())
+        }
+
+        fn select_network(
+            &self,
+            _: &WalletProfileId,
+            network_id: &ChainNetworkId,
+        ) -> Result<ChainNetworkId, WalletAccountPortError> {
+            Ok(network_id.clone())
+        }
+    }
+
     impl WalletAccountReadPort for PartialWallet {
         fn account(
             &self,
@@ -492,6 +845,22 @@ mod tests {
         fn sync<'a>(&'a self, _: &'a WalletProfileId) -> crate::WalletAccountPortFuture<'a> {
             self.account_syncs.fetch_add(1, Ordering::Relaxed);
             Box::pin(async { Ok(WalletAccountSnapshot::unavailable(network())) })
+        }
+
+        fn account_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletAccountSnapshot, WalletAccountPortError> {
+            self.account(profile)
+        }
+
+        fn sync_in_realm<'a>(
+            &'a self,
+            profile: &'a WalletProfileId,
+            _: &'a ChainNetworkId,
+        ) -> crate::WalletAccountPortFuture<'a> {
+            self.sync(profile)
         }
     }
 
@@ -517,6 +886,30 @@ mod tests {
         ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
             Err(WalletDustSyncPortError::ProtectionLocked)
         }
+
+        fn dust_status_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+            self.dust_status(profile)
+        }
+
+        fn start_dust_sync_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+            self.start_dust_sync(profile)
+        }
+
+        fn cancel_dust_sync_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+            self.cancel_dust_sync(profile)
+        }
     }
 
     impl WalletShieldedSyncPort for PartialWallet {
@@ -540,6 +933,389 @@ mod tests {
             _: &WalletProfileId,
         ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
             Err(WalletShieldedSyncPortError::Unavailable)
+        }
+
+        fn shielded_status_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+            self.shielded_status(profile)
+        }
+
+        fn start_shielded_sync_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+            self.start_shielded_sync(profile)
+        }
+
+        fn cancel_shielded_sync_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+            self.cancel_shielded_sync(profile)
+        }
+    }
+
+    #[derive(Default)]
+    struct PendingAccountWallet {
+        account_syncs: AtomicUsize,
+    }
+
+    impl WalletNetworkPort for PendingAccountWallet {
+        fn available_networks(&self) -> Result<Vec<ChainNetwork>, WalletAccountPortError> {
+            Ok(vec![network()])
+        }
+
+        fn selected_network(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<ChainNetworkId, WalletAccountPortError> {
+            Ok(network_id())
+        }
+
+        fn select_network(
+            &self,
+            _: &WalletProfileId,
+            network_id: &ChainNetworkId,
+        ) -> Result<ChainNetworkId, WalletAccountPortError> {
+            Ok(network_id.clone())
+        }
+    }
+
+    impl WalletAccountReadPort for PendingAccountWallet {
+        fn account(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<WalletAccountSnapshot, WalletAccountPortError> {
+            Ok(WalletAccountSnapshot::unavailable(network()))
+        }
+
+        fn sync<'a>(&'a self, _: &'a WalletProfileId) -> crate::WalletAccountPortFuture<'a> {
+            self.account_syncs.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async {
+                std::future::pending::<()>().await;
+                unreachable!("pending fixture never completes")
+            })
+        }
+
+        fn account_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletAccountSnapshot, WalletAccountPortError> {
+            self.account(profile)
+        }
+
+        fn sync_in_realm<'a>(
+            &'a self,
+            profile: &'a WalletProfileId,
+            _: &'a ChainNetworkId,
+        ) -> crate::WalletAccountPortFuture<'a> {
+            self.sync(profile)
+        }
+    }
+
+    impl WalletDustSyncPort for PendingAccountWallet {
+        fn dust_status(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+            Err(WalletDustSyncPortError::UnsupportedNetwork)
+        }
+
+        fn start_dust_sync(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+            Err(WalletDustSyncPortError::UnsupportedNetwork)
+        }
+
+        fn cancel_dust_sync(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+            Err(WalletDustSyncPortError::UnsupportedNetwork)
+        }
+
+        fn dust_status_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+            self.dust_status(profile)
+        }
+
+        fn start_dust_sync_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+            self.start_dust_sync(profile)
+        }
+
+        fn cancel_dust_sync_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+            self.cancel_dust_sync(profile)
+        }
+    }
+
+    impl WalletShieldedSyncPort for PendingAccountWallet {
+        fn shielded_status(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+            Err(WalletShieldedSyncPortError::UnsupportedNetwork)
+        }
+
+        fn start_shielded_sync(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+            Err(WalletShieldedSyncPortError::UnsupportedNetwork)
+        }
+
+        fn cancel_shielded_sync(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+            Err(WalletShieldedSyncPortError::UnsupportedNetwork)
+        }
+
+        fn shielded_status_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+            self.shielded_status(profile)
+        }
+
+        fn start_shielded_sync_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+            self.start_shielded_sync(profile)
+        }
+
+        fn cancel_shielded_sync_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+            self.cancel_shielded_sync(profile)
+        }
+    }
+
+    struct CancelDuringAccountWallet {
+        account_ready: AtomicBool,
+        dust_starts: AtomicUsize,
+        selected: Mutex<ChainNetworkId>,
+        account_realm: Mutex<Option<ChainNetworkId>>,
+        dust_realm: Mutex<Option<ChainNetworkId>>,
+    }
+
+    impl Default for CancelDuringAccountWallet {
+        fn default() -> Self {
+            Self {
+                account_ready: AtomicBool::new(false),
+                dust_starts: AtomicUsize::new(0),
+                selected: Mutex::new(network_id()),
+                account_realm: Mutex::new(None),
+                dust_realm: Mutex::new(None),
+            }
+        }
+    }
+
+    impl WalletNetworkPort for CancelDuringAccountWallet {
+        fn available_networks(&self) -> Result<Vec<ChainNetwork>, WalletAccountPortError> {
+            Ok(vec![network()])
+        }
+
+        fn selected_network(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<ChainNetworkId, WalletAccountPortError> {
+            self.selected
+                .lock()
+                .map(|selected| selected.clone())
+                .map_err(|_| WalletAccountPortError::Unavailable)
+        }
+
+        fn select_network(
+            &self,
+            _: &WalletProfileId,
+            network_id: &ChainNetworkId,
+        ) -> Result<ChainNetworkId, WalletAccountPortError> {
+            *self
+                .selected
+                .lock()
+                .map_err(|_| WalletAccountPortError::Unavailable)? = network_id.clone();
+            Ok(network_id.clone())
+        }
+    }
+
+    impl WalletAccountReadPort for CancelDuringAccountWallet {
+        fn account(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<WalletAccountSnapshot, WalletAccountPortError> {
+            Ok(WalletAccountSnapshot::unavailable(network()))
+        }
+
+        fn sync<'a>(&'a self, _: &'a WalletProfileId) -> crate::WalletAccountPortFuture<'a> {
+            Box::pin(std::future::poll_fn(move |_| {
+                if self.account_ready.load(Ordering::Relaxed) {
+                    Poll::Ready(Ok(WalletAccountSnapshot::unavailable(network())))
+                } else {
+                    Poll::Pending
+                }
+            }))
+        }
+
+        fn account_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletAccountSnapshot, WalletAccountPortError> {
+            self.account(profile)
+        }
+
+        fn sync_in_realm<'a>(
+            &'a self,
+            profile: &'a WalletProfileId,
+            realm: &'a ChainNetworkId,
+        ) -> crate::WalletAccountPortFuture<'a> {
+            if let Ok(mut captured) = self.account_realm.lock() {
+                *captured = Some(realm.clone());
+            }
+            self.sync(profile)
+        }
+    }
+
+    impl WalletDustSyncPort for CancelDuringAccountWallet {
+        fn dust_status(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+            Ok(WalletDustSyncSnapshot::never_synced(network_id()))
+        }
+
+        fn start_dust_sync(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+            self.dust_starts.fetch_add(1, Ordering::Relaxed);
+            WalletDustSyncSnapshot::new(
+                network_id(),
+                WalletDustSyncState::Syncing,
+                None,
+                None,
+                0,
+                None,
+                None,
+                None,
+            )
+            .map_err(|_| WalletDustSyncPortError::InvalidData)
+        }
+
+        fn cancel_dust_sync(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+            Err(WalletDustSyncPortError::Conflict)
+        }
+
+        fn dust_status_in_realm(
+            &self,
+            _: &WalletProfileId,
+            realm: &ChainNetworkId,
+        ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+            Ok(WalletDustSyncSnapshot::never_synced(realm.clone()))
+        }
+
+        fn start_dust_sync_in_realm(
+            &self,
+            _: &WalletProfileId,
+            realm: &ChainNetworkId,
+        ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+            self.dust_starts.fetch_add(1, Ordering::Relaxed);
+            *self
+                .dust_realm
+                .lock()
+                .map_err(|_| WalletDustSyncPortError::Unavailable)? = Some(realm.clone());
+            WalletDustSyncSnapshot::new(
+                realm.clone(),
+                WalletDustSyncState::Syncing,
+                None,
+                None,
+                0,
+                None,
+                None,
+                None,
+            )
+            .map_err(|_| WalletDustSyncPortError::InvalidData)
+        }
+
+        fn cancel_dust_sync_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletDustSyncSnapshot, WalletDustSyncPortError> {
+            self.cancel_dust_sync(profile)
+        }
+    }
+
+    impl WalletShieldedSyncPort for CancelDuringAccountWallet {
+        fn shielded_status(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+            Err(WalletShieldedSyncPortError::UnsupportedNetwork)
+        }
+
+        fn start_shielded_sync(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+            Err(WalletShieldedSyncPortError::UnsupportedNetwork)
+        }
+
+        fn cancel_shielded_sync(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+            Err(WalletShieldedSyncPortError::UnsupportedNetwork)
+        }
+
+        fn shielded_status_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+            self.shielded_status(profile)
+        }
+
+        fn start_shielded_sync_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+            self.start_shielded_sync(profile)
+        }
+
+        fn cancel_shielded_sync_in_realm(
+            &self,
+            profile: &WalletProfileId,
+            _: &ChainNetworkId,
+        ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+            self.cancel_shielded_sync(profile)
         }
     }
 
@@ -573,6 +1349,204 @@ mod tests {
     }
 
     #[test]
+    fn runtime_isolates_profiles_and_invalidates_previous_realm_leases() {
+        let mut runtime = SelectedWalletRealmRuntime::default();
+        let stale = WalletRealmReconciliationState {
+            account: WalletRealmFacetState::Stale,
+            dust: WalletRealmFacetState::Current,
+            shielded: WalletRealmFacetState::Current,
+        };
+        let profile_a = WalletProfileId::parse("profile_a").expect("profile id");
+        let profile_b = WalletProfileId::parse("profile_b").expect("profile id");
+        assert!(
+            runtime
+                .retire_other_realms(&profile_a, &network_id())
+                .is_empty()
+        );
+        let first = runtime.reconcile(
+            profile_a.clone(),
+            network_id(),
+            stale,
+            WalletRealmReconciliationTrigger::Initial,
+        );
+        assert_eq!(first.len(), 1);
+        assert!(
+            runtime
+                .complete(
+                    &profile_a,
+                    &network_id(),
+                    first[0],
+                    WalletRealmEffectOutcome::Current,
+                )
+                .is_empty()
+        );
+        let current = WalletRealmReconciliationState {
+            account: WalletRealmFacetState::Current,
+            dust: WalletRealmFacetState::Current,
+            shielded: WalletRealmFacetState::Current,
+        };
+        let repeated = runtime.reconcile(
+            profile_a.clone(),
+            network_id(),
+            current,
+            WalletRealmReconciliationTrigger::ManualRefresh,
+        );
+        assert_eq!(repeated.len(), 3);
+        assert_eq!(
+            runtime
+                .state(&profile_a, &network_id())
+                .expect("same-key state persists")
+                .revision(),
+            2
+        );
+        let other = runtime.reconcile(
+            profile_b,
+            network_id(),
+            stale,
+            WalletRealmReconciliationTrigger::Initial,
+        );
+        assert_eq!(other.len(), 1);
+        let preprod = ChainNetworkId::parse("preprod").expect("network id");
+        assert_eq!(
+            runtime.retire_other_realms(&profile_a, &preprod),
+            [network_id()]
+        );
+        let switched = runtime.reconcile(
+            profile_a.clone(),
+            preprod,
+            stale,
+            WalletRealmReconciliationTrigger::Initial,
+        );
+        assert_eq!(switched.len(), 1);
+        let retired_revision = runtime
+            .state(&profile_a, &network_id())
+            .expect("retired generation remains as a tombstone")
+            .revision();
+        assert_eq!(retired_revision, 3);
+        assert!(
+            runtime
+                .complete(
+                    &profile_a,
+                    &network_id(),
+                    repeated[0],
+                    WalletRealmEffectOutcome::Current
+                )
+                .is_empty()
+        );
+        assert_eq!(
+            runtime
+                .state(&profile_a, &network_id())
+                .expect("stale completion cannot replace tombstone")
+                .revision(),
+            retired_revision
+        );
+
+        assert_eq!(
+            runtime.retire_other_realms(&profile_a, &network_id()),
+            [ChainNetworkId::parse("preprod").expect("network id")]
+        );
+        let returned = runtime.reconcile(
+            profile_a.clone(),
+            network_id(),
+            stale,
+            WalletRealmReconciliationTrigger::Initial,
+        );
+        assert_eq!(returned[0].revision(), 4);
+        assert_ne!(returned[0], repeated[0]);
+    }
+
+    #[test]
+    fn abandoned_service_future_expires_every_owned_lease() {
+        let wallet = Arc::new(PendingAccountWallet::default());
+        let service = SelectedWalletRealmSyncService::new(Arc::clone(&wallet));
+        let mut first = service.reconcile(command(), WalletRealmReconciliationTrigger::Initial);
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(first.as_mut().poll(&mut context), Poll::Pending));
+        assert_eq!(wallet.account_syncs.load(Ordering::Relaxed), 1);
+
+        let duplicate = resolve(
+            service.reconcile(command(), WalletRealmReconciliationTrigger::ActionPreflight),
+        )
+        .expect("duplicate reconciliation returns its observation");
+        assert!(matches!(duplicate.account, WalletRealmFamilyView::Ready(_)));
+        assert_eq!(wallet.account_syncs.load(Ordering::Relaxed), 1);
+
+        drop(first);
+        let profile = WalletProfileId::parse("profile_test").expect("profile id");
+        let expired = service
+            .runtime
+            .lock()
+            .expect("runtime lock")
+            .state(&profile, &network_id())
+            .expect("runtime state");
+        assert_eq!(expired.revision(), 2);
+        assert_eq!(expired.status(), crate::WalletRealmCoordinatorStatus::Stale);
+
+        let mut restarted = service.reconcile(command(), WalletRealmReconciliationTrigger::Initial);
+        assert!(matches!(
+            restarted.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+        assert_eq!(wallet.account_syncs.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn cancellation_prevents_queued_family_effects_from_restarting() {
+        let wallet = Arc::new(CancelDuringAccountWallet::default());
+        let service = SelectedWalletRealmSyncService::new(Arc::clone(&wallet));
+        let mut reconcile = service.reconcile(command(), WalletRealmReconciliationTrigger::Initial);
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(
+            reconcile.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+
+        CancelSelectedWalletRealmSyncUseCase::execute(&service, command())
+            .expect("cancel invalidates queued coordinator effects");
+        wallet.account_ready.store(true, Ordering::Relaxed);
+        assert!(matches!(
+            reconcile.as_mut().poll(&mut context),
+            Poll::Ready(Ok(_))
+        ));
+        assert_eq!(wallet.dust_starts.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn in_flight_reconciliation_remains_pinned_to_its_captured_realm() {
+        let wallet = Arc::new(CancelDuringAccountWallet::default());
+        let service = SelectedWalletRealmSyncService::new(Arc::clone(&wallet));
+        let mut reconcile = service.reconcile(command(), WalletRealmReconciliationTrigger::Initial);
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(
+            reconcile.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+
+        let profile = WalletProfileId::parse("profile_test").expect("profile id");
+        let preprod = ChainNetworkId::parse("preprod").expect("network id");
+        wallet
+            .select_network(&profile, &preprod)
+            .expect("selection changes while the old operation is in flight");
+        wallet.account_ready.store(true, Ordering::Relaxed);
+        assert!(matches!(
+            reconcile.as_mut().poll(&mut context),
+            Poll::Ready(Ok(_))
+        ));
+
+        assert_eq!(
+            *wallet.account_realm.lock().expect("account realm lock"),
+            Some(network_id())
+        );
+        assert_eq!(
+            *wallet.dust_realm.lock().expect("DUST realm lock"),
+            Some(network_id())
+        );
+    }
+
+    #[test]
     fn aggregate_preserves_partial_family_failures_as_typed_state() {
         let wallet = Arc::new(PartialWallet::default());
         let service = SelectedWalletRealmSyncService::new(Arc::clone(&wallet));
@@ -588,6 +1562,21 @@ mod tests {
         assert_eq!(wallet.account_syncs.load(Ordering::Relaxed), 1);
         assert_eq!(wallet.dust_starts.load(Ordering::Relaxed), 1);
         assert_eq!(wallet.shielded_starts.load(Ordering::Relaxed), 1);
+        let profile = WalletProfileId::parse("profile_test").expect("profile id");
+        let state = service
+            .runtime
+            .lock()
+            .expect("runtime lock")
+            .state(&profile, &network_id())
+            .expect("runtime state");
+        assert_eq!(
+            state.facets(),
+            WalletRealmReconciliationState {
+                account: WalletRealmFacetState::Stale,
+                dust: WalletRealmFacetState::Blocked,
+                shielded: WalletRealmFacetState::Missing,
+            }
+        );
 
         let cancelled = CancelSelectedWalletRealmSyncUseCase::execute(&service, command())
             .expect("aggregate cancellation reports every family");
