@@ -437,7 +437,7 @@ if [ "$standalone_network_profile" = "local" ] && [ "$operation" != "build" ]; t
     echo "The local standalone profile requires an Android emulator; use the tailnet profile for a physical phone." >&2
     exit 1
   fi
-  reverse_ports=(8088 9944 6300)
+  reverse_ports=(8088 9944 6300 36301)
   if [ "$portal_profile" = "local" ]; then
     # 18091 is owned only by the virtual-mobile single-use offer harness; the
     # physical suite keeps its unpublished control API on 18095.

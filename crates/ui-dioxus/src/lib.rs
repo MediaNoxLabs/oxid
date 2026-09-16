@@ -5223,20 +5223,23 @@ fn ReceiveSheet(
                 &account.network_id,
                 &selected,
             );
-            let qr_payload = receive_request.as_deref().unwrap_or(&selected.value);
-            let qr = render_qr_svg(qr_payload);
-            let qr_label = if receive_request.is_some() {
-                "Version 1 public NIGHT receive request"
-            } else {
-                "Raw protected receive address"
-            };
+            // Keep the QR interoperable until the versioned receive-request
+            // ingress lands. Copy and share likewise expose this validated raw
+            // address; the protocol request is used only for supported actions.
+            let qr = render_qr_svg(&selected.value);
+            let qr_label = format!(
+                "QR code for {} receive address",
+                ui::address_kind(&selected.kind)
+            );
             let preview = grouped_address_preview(&selected.value);
             #[cfg(feature = "standalone-deployment-profile")]
-            let route_class = deployment
-                .map(|profile| ui::deployment_route_class(profile.route_class().as_str()))
-                .unwrap_or("Unavailable");
+            let route_class = Some(
+                deployment
+                    .map(|profile| ui::deployment_route_class(profile.route_class().as_str()))
+                    .unwrap_or("Unavailable"),
+            );
             #[cfg(not(feature = "standalone-deployment-profile"))]
-            let route_class = "Unavailable";
+            let route_class: Option<&str> = None;
             #[cfg(feature = "standalone-deployment-profile")]
             let funding_action = receive_request
                 .is_some()
@@ -5251,7 +5254,10 @@ fn ReceiveSheet(
                 div { class: "receive-sheet__status",
                     span { class: "{status_class}", "{source}" }
                     span { "{active_profile.display_name}" }
-                    span { "{ui::midnight_network(&account.network_id)} ({account.network_id}) · NIGHT · {route_class}" }
+                    span { "{ui::midnight_network(&account.network_id)} ({account.network_id}) · {ui::receive_asset(&selected.kind)}" }
+                    if let Some(route_class) = route_class {
+                        span { "{route_class}" }
+                    }
                 }
                 div { class: "receive-sheet__selectors", role: "group", aria_label: "Receive address type",
                     for address in addresses.iter() {
@@ -5296,7 +5302,7 @@ fn ReceiveSheet(
                         "{preview}"
                     }
                     if receive_request.is_some() {
-                        p { "Copy or share the raw address when the other wallet cannot scan this request." }
+                        p { "The QR, copy, and share actions all export this raw address." }
                     }
                 }
                 div { class: "receive-sheet__actions",
@@ -5331,7 +5337,7 @@ fn ReceiveSheet(
                 }
                 p { class: "receive-sheet__guarantee",
                     if receive_request.is_some() {
-                        "QR: versioned undeployed NIGHT request. Copy/share: raw public address."
+                        "QR, copy, and share contain the validated raw public address."
                     } else {
                         "QR, copy, and share contain the protected address shown."
                     }

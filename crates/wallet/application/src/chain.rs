@@ -281,17 +281,88 @@ pub fn encode_midnight_night_receive_request(
 
     let address = ChainAddress::parse(ChainAddressKind::Unshielded, &address.value).ok()?;
     let value = address.value();
-    if !value.starts_with("mn_addr_undeployed1")
-        || !value.bytes().all(|character| {
-            character.is_ascii_lowercase() || character.is_ascii_digit() || character == b'_'
-        })
-    {
+    if !valid_midnight_bech32m(value, "mn_addr_undeployed", 32) {
         return None;
     }
 
     Some(format!(
         "midnight-receive:v1|network=undeployed|asset=NIGHT|address={value}"
     ))
+}
+
+// This closed decoder keeps external encoding crates out of the application
+// boundary while checking the exact BIP-350 checksum and 32-byte Midnight
+// public-address payload. Encoding remains owned by the Midnight adapter.
+fn valid_midnight_bech32m(value: &str, expected_hrp: &str, expected_bytes: usize) -> bool {
+    const BECH32M_RESIDUE: u32 = 0x2bc8_30a3;
+    const CHARSET: &[u8; 32] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+    if value.len() > 90 || !value.is_ascii() || value.bytes().any(|byte| byte.is_ascii_uppercase())
+    {
+        return false;
+    }
+    let Some((hrp, data)) = value.rsplit_once('1') else {
+        return false;
+    };
+    if hrp != expected_hrp || data.len() < 6 {
+        return false;
+    }
+
+    let mut checksum = 1_u32;
+    for byte in hrp.bytes() {
+        checksum = bech32_polymod_step(checksum, byte >> 5);
+    }
+    checksum = bech32_polymod_step(checksum, 0);
+    for byte in hrp.bytes() {
+        checksum = bech32_polymod_step(checksum, byte & 0x1f);
+    }
+
+    let mut values = Vec::with_capacity(data.len());
+    for byte in data.bytes() {
+        let Some(value) = CHARSET.iter().position(|candidate| *candidate == byte) else {
+            return false;
+        };
+        let value = value as u8;
+        values.push(value);
+        checksum = bech32_polymod_step(checksum, value);
+    }
+    if checksum != BECH32M_RESIDUE {
+        return false;
+    }
+
+    let payload = &values[..values.len() - 6];
+    let mut accumulator = 0_u32;
+    let mut bits = 0_u8;
+    let mut decoded_bytes = 0_usize;
+    for value in payload {
+        accumulator = (accumulator << 5) | u32::from(*value);
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            decoded_bytes += 1;
+        }
+    }
+    let padding_is_canonical =
+        bits < 5 && (bits == 0 || (accumulator << u32::from(8 - bits)) & 0xff == 0);
+    decoded_bytes == expected_bytes && padding_is_canonical
+}
+
+fn bech32_polymod_step(previous: u32, value: u8) -> u32 {
+    const GENERATORS: [u32; 5] = [
+        0x3b6a_57b2,
+        0x2650_8e6d,
+        0x1ea1_19fa,
+        0x3d42_33dd,
+        0x2a14_62b3,
+    ];
+    let top = previous >> 25;
+    let mut next = ((previous & 0x01ff_ffff) << 5) ^ u32::from(value);
+    for (index, generator) in GENERATORS.into_iter().enumerate() {
+        if (top >> index) & 1 == 1 {
+            next ^= generator;
+        }
+    }
+    next
 }
 
 /// Safe public account-derivation result returned to incoming adapters.
@@ -1031,16 +1102,18 @@ mod tests {
 
     #[test]
     fn undeployed_public_night_request_is_versioned_and_injection_safe() {
+        let value = "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
         let address = WalletAddressView {
             kind: "unshielded".to_owned(),
-            value: "mn_addr_undeployed1validated".to_owned(),
+            value: value.to_owned(),
         };
 
         assert_eq!(
             encode_midnight_night_receive_request("undeployed", &address).as_deref(),
-            Some(
-                "midnight-receive:v1|network=undeployed|asset=NIGHT|address=mn_addr_undeployed1validated"
-            )
+            Some(format!(
+                "midnight-receive:v1|network=undeployed|asset=NIGHT|address={value}"
+            ))
+            .as_deref()
         );
         assert!(encode_midnight_night_receive_request("preprod", &address).is_none());
         assert!(
@@ -1049,6 +1122,16 @@ mod tests {
                 &WalletAddressView {
                     kind: "shielded".to_owned(),
                     value: "mn_shield_undeployed1validated".to_owned(),
+                },
+            )
+            .is_none()
+        );
+        assert!(
+            encode_midnight_night_receive_request(
+                "undeployed",
+                &WalletAddressView {
+                    kind: "unshielded".to_owned(),
+                    value: "mn_addr_undeployed1not_a_checked_address".to_owned(),
                 },
             )
             .is_none()

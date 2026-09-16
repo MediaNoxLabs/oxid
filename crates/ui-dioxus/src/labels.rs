@@ -199,6 +199,15 @@ pub(crate) fn address_purpose(value: &str) -> &'static str {
     }
 }
 
+pub(crate) fn receive_asset(value: &str) -> &'static str {
+    match value {
+        "unshielded" | "shielded" => "NIGHT",
+        "dust" => "DUST",
+        "reward" => "Reward",
+        _ => "Asset",
+    }
+}
+
 pub(crate) fn transaction_mark(value: &str) -> &'static str {
     match value {
         "incoming" => "↓",
@@ -242,6 +251,7 @@ pub(crate) fn midnight_network(value: &str) -> &'static str {
     match value {
         "mainnet" => "Mainnet",
         "preprod" => "Pre-production",
+        "preview" => "Preview",
         "devnet" => "Development network",
         "undeployed" => "Standalone development",
         _ => "Network unavailable",
@@ -754,5 +764,6 @@ mod tests {
         assert_eq!(receive_address_tab("shielded"), "Private");
         assert_eq!(receive_address_tab("dust"), "Fee account");
         assert_eq!(receive_address_tab("future_kind"), "Address");
+        assert_eq!(midnight_network("preview"), "Preview");
     }
 }

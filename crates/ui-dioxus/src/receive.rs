@@ -25,7 +25,7 @@ pub(crate) fn standalone_funding_action(
         Some(oxid_capabilities_application::DeploymentRouteClass::Tailnet) => rsx! {
             div { class: "receive-sheet__funding",
                 strong { "Development funding" }
-                p { "Scan the operator's private Tailnet faucet setup QR to fund this address." }
+                p { "Ask the operator to use the private Tailnet faucet to fund this displayed address, then sync your balance." }
             }
         },
         None => rsx! {},

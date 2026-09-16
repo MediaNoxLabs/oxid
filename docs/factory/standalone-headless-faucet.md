@@ -79,11 +79,11 @@ by follow-up issue #540.
 ## Desktop receive and funding handoff
 
 A desktop artifact explicitly built with `desktop,standalone-development,standalone-local`
-shows the active protected profile's unshielded undeployed NIGHT receive request.
-Its QR is `midnight-receive:v1` and binds the `undeployed` network and `NIGHT` asset;
-Copy and Share use the existing typed public-address export port and retain raw
-Bech32m only as a labelled fallback. The sheet labels the profile, Midnight
-network, route class, and asset before export.
+shows the active protected profile's available receive rails and defaults to its
+unshielded undeployed NIGHT rail. Until receive-request ingress lands, that
+rail's QR, Copy, and Share controls all expose the validated raw undeployed
+Bech32m address. The sheet labels the profile, Midnight network, route class,
+and selected asset before export.
 
 With the loopback HTTP faucet already running, the development-only **Open
 development funding** action opens `http://127.0.0.1:36301`. It is a local
