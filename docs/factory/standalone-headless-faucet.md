@@ -154,6 +154,56 @@ and transfer counts, readiness state, and cleanup outcome—never roots, state
 paths, addresses, serialized transactions, or keys. The temporary state is
 removed by the test; it does not stop a pre-existing stack.
 
+## Tailnet phone-to-iOS-Simulator preparation
+
+Issue #556 reuses the localhost round trip above as its mandatory preflight. The
+following owner-invoked preparation creates four receipt-owned HTTPS routes: one
+for each existing standalone service and one for the existing fixed-grant
+faucet. All route ports and MagicDNS discovery are selected at runtime by the
+local Tailscale CLI. The private mode-0600 receipts are the only place that
+holds the discovered identity or routes; commands and retained output are
+payload-free.
+
+```sh
+OXID_ENABLE_LIVE_STANDALONE_FAUCET_E2E=1 \
+  just standalone-night-round-trip-headless-e2e
+just standalone-tailnet-round-trip-start
+just standalone-tailnet-round-trip-status
+open target/standalone-faucet-tailnet/setup.svg
+# Final physical-device step; keep the iOS Simulator shut down while installing.
+just android-phone
+# Reset only the disposable simulator app container for a genuinely fresh actor.
+OXID_IOS_RESET_DATA=1 just ios-standalone-tailnet
+```
+
+The preparation never starts, recreates, or stops Docker services. It records
+the complete prior Serve JSON, adds only previously absent ports, and refuses
+cleanup on any Serve drift. End the session in reverse order:
+
+```sh
+just standalone-tailnet-round-trip-stop
+```
+
+**Operator handoff (manual and not evidence):** install the Tailnet build on the
+authorized phone before starting the iOS Simulator, then create one fresh wallet
+on each actor. Open the private setup QR shown on the laptop. Scan it with the
+phone's ordinary camera, open the HTTPS funding page, paste the phone wallet's
+public NIGHT address, and accept the fixed standalone grant once; synchronize
+NIGHT, explicitly register DUST, and wait for positive DUST. On the separately
+fresh iOS Simulator wallet, perform the same funding and DUST readiness steps
+using the same private page. Export only the public versioned NIGHT
+receive request from the simulator, import it into the phone Send flow, review,
+authorize, and submit. After included/finalized history appears, export the
+phone's request (or use the labelled raw active-realm fallback) and repeat from
+the simulator. Confirm each UI's final balances and confirmed incoming/outgoing
+activity, then stop the receipt-owned routes. Do not delete physical app data
+without the phone owner's explicit authority.
+
+Automated evidence does not operate a phone, Android emulator, or physical
+deployment. The existing rendered Send wizard supports public receive-request
+import and the review/authorize/submit stages, but the final cross-device UI
+interaction remains an operator-controlled physical-phone acceptance step.
+
 ## Owner-authorized Tailnet HTTPS discovery
 
 This is an on-demand development acceptance, not a phone, Android, PreProd, or
@@ -177,9 +227,10 @@ just standalone-faucet-tailnet-stop
 ```
 
 The discovery page is responsive and offers only the fixed 50,000 NIGHT grant.
-Its Tailnet-only setup QR contains protocol version, the exact `undeployed`
-realm/fingerprint, and the dynamically selected HTTPS route. It cannot change
-wallet, asset, realm, route, or amount. The acceptance performs HTTPS health
+Its Tailnet-only setup QR is the dynamically selected private HTTPS page URL,
+which an ordinary phone camera can open. The page displays the exact
+`undeployed` realm/fingerprint and fixed grant policy; the QR cannot change
+wallet, asset, realm, or amount. The acceptance performs HTTPS health
 and one fixed funding request without a phone; its recipient is operator input
 and is never retained in repository evidence. Always run `stop` before retrying
 or ending the owner session.

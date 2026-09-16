@@ -5,6 +5,7 @@ import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/prom
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -14,15 +15,25 @@ async function executable(file, source) {
   await chmod(file, 0o700);
 }
 
+function normalizeServeState(value) {
+  const result = { ...value };
+  if (result.TCP && Object.keys(result.TCP).length === 0) delete result.TCP;
+  if (result.Web && Object.keys(result.Web).length === 0) delete result.Web;
+  return result;
+}
+
 test("Tailnet faucet owns one route and restores unrelated Serve state", async (context) => {
   const fixture = await mkdtemp(path.join(os.tmpdir(), "oxid-faucet-tailnet-"));
   context.after(() => rm(fixture, { recursive: true, force: true }));
   const fixtureScripts = path.join(fixture, "scripts");
+  const fixtureScriptLib = path.join(fixtureScripts, "lib");
   const fakeBin = path.join(fixture, "bin");
   await mkdir(fixtureScripts);
+  await mkdir(fixtureScriptLib);
   await mkdir(fakeBin);
   await cp(path.join(root, "scripts/standalone-faucet-tailnet.sh"), path.join(fixtureScripts, "standalone-faucet-tailnet.sh"));
   await chmod(path.join(fixtureScripts, "standalone-faucet-tailnet.sh"), 0o700);
+  await cp(path.join(root, "scripts/lib/spawn-detached.mjs"), path.join(fixtureScriptLib, "spawn-detached.mjs"));
   await executable(path.join(fixtureScripts, "standalone-status.sh"), "#!/bin/sh\nexit 0\n");
 
   const baseline = { TCP: { "2222": { TCPForward: "127.0.0.1:22" } }, Web: {} };
@@ -70,11 +81,25 @@ process.exit(2);
   };
   const lifecycle = path.join(fixtureScripts, "standalone-faucet-tailnet.sh");
   for (const mode of ["start", "status", "accept", "stop"]) {
-    const result = spawnSync(lifecycle, [mode], { env, encoding: "utf8", timeout: 10_000 });
+    const result = spawnSync(lifecycle, [mode], { env, encoding: "utf8", timeout: 30_000 });
     assert.equal(result.status, 0, `${mode}: ${result.stderr}`);
   }
   assert.deepEqual(JSON.parse(await readFile(serveState, "utf8")), baseline);
   await assert.rejects(readFile(path.join(fixture, "target/standalone-faucet-tailnet/receipt.json")));
+
+  const zombieStart = spawnSync(lifecycle, ["start"], { env, encoding: "utf8", timeout: 30_000 });
+  assert.equal(zombieStart.status, 0, zombieStart.stderr);
+  const receiptPath = path.join(fixture, "target/standalone-faucet-tailnet/receipt.json");
+  const zombieReceipt = JSON.parse(await readFile(receiptPath, "utf8"));
+  process.kill(zombieReceipt.faucet.pid, "SIGTERM");
+  await delay(100);
+  zombieReceipt.faucet.pid = process.pid;
+  await writeFile(receiptPath, JSON.stringify(zombieReceipt), { mode: 0o600 });
+  await executable(path.join(fakeBin, "ps"), "#!/bin/sh\nprintf 'Z\\n'\n");
+  const zombieStop = spawnSync(lifecycle, ["stop"], { env, encoding: "utf8", timeout: 30_000 });
+  assert.equal(zombieStop.status, 0, zombieStop.stderr);
+  assert.deepEqual(JSON.parse(await readFile(serveState, "utf8")), baseline);
+  await assert.rejects(readFile(receiptPath));
 
   await executable(path.join(fakeBin, "qrencode"), "#!/bin/sh\nexit 1\n");
   const failedStart = spawnSync(lifecycle, ["start"], { env, encoding: "utf8", timeout: 10_000 });
@@ -90,7 +115,164 @@ test("Tailnet source contract forbids broad Serve or state deletion", async () =
   assert.doesNotMatch(script, /--set-path/u);
   assert.doesNotMatch(script, /\bfunnel\b/u);
   assert.doesNotMatch(script, /rm -rf/u);
+  assert.match(script, /spawn-detached\.mjs/u);
+  assert.match(script, /env -i PATH=/u);
+  assert.match(script, /process_has_exited/u);
+  assert.match(script, /\[\[ "\$state" == Z\* \]\]/u);
+
+  const launcher = await readFile(path.join(root, "scripts/lib/spawn-detached.mjs"), "utf8");
+  assert.match(launcher, /detached: true/u);
+  assert.match(launcher, /stdio: \["ignore", log, log\]/u);
 
   const justfile = await readFile(path.join(root, "Justfile"), "utf8");
   assert.match(justfile, /^standalone-faucet-tailnet-lifecycle-test:/mu);
+});
+
+test("round-trip cleanup attempts both independently owned layers", async (context) => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "oxid-tailnet-cleanup-"));
+  context.after(() => rm(fixture, { recursive: true, force: true }));
+  const scripts = path.join(fixture, "scripts");
+  const calls = path.join(fixture, "calls");
+  await mkdir(scripts);
+  await mkdir(path.join(fixture, "target/standalone-faucet-tailnet"), { recursive: true });
+  await mkdir(path.join(fixture, "target/standalone-tailnet-routes"), { recursive: true });
+  await cp(path.join(root, "scripts/standalone-tailnet-round-trip.sh"), path.join(scripts, "standalone-tailnet-round-trip.sh"));
+  await chmod(path.join(scripts, "standalone-tailnet-round-trip.sh"), 0o700);
+  await executable(path.join(scripts, "standalone-faucet-tailnet.sh"), "#!/bin/sh\nprintf 'faucet\\n' >>\"$CALLS\"\nexit 1\n");
+  await executable(path.join(scripts, "standalone-tailnet-routes.sh"), "#!/bin/sh\nprintf 'routes\\n' >>\"$CALLS\"\nexit 0\n");
+
+  const result = spawnSync(path.join(scripts, "standalone-tailnet-round-trip.sh"), ["stop"], {
+    env: { ...process.env, CALLS: calls },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.deepEqual((await readFile(calls, "utf8")).trim().split("\n"), ["faucet", "routes"]);
+});
+
+test("service-route cleanup resumes after a later route removal fails", async (context) => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "oxid-tailnet-routes-"));
+  context.after(() => rm(fixture, { recursive: true, force: true }));
+  const scripts = path.join(fixture, "scripts");
+  const fakeBin = path.join(fixture, "bin");
+  const serveState = path.join(fixture, "serve.json");
+  const failureMarker = path.join(fixture, "failed-once");
+  const baseline = {};
+  await mkdir(scripts);
+  await mkdir(fakeBin);
+  await writeFile(serveState, JSON.stringify(baseline));
+  await cp(path.join(root, "scripts/standalone-tailnet-routes.sh"), path.join(scripts, "standalone-tailnet-routes.sh"));
+  await chmod(path.join(scripts, "standalone-tailnet-routes.sh"), 0o700);
+  await executable(path.join(scripts, "standalone-status.sh"), "#!/bin/sh\nexit 0\n");
+  await executable(path.join(fakeBin, "curl"), "#!/bin/sh\nexit 0\n");
+  await executable(path.join(fakeBin, "tailscale"), `#!/usr/bin/env node
+import{existsSync,readFileSync,writeFileSync}from'node:fs';
+const args=process.argv.slice(2),file=process.env.FAKE_TAILSCALE_STATE;
+const state=()=>JSON.parse(readFileSync(file,'utf8'));
+if(args[0]==='status'){console.log(JSON.stringify({BackendState:'Running',Self:{DNSName:'fixture.example.ts.net.'}}));process.exit(0)}
+if(args[0]==='serve'&&args[1]==='status'){console.log(JSON.stringify(state()));process.exit(0)}
+if(args[0]==='serve'){
+  const port=args.find(v=>v.startsWith('--https=')).slice(8),key='fixture.example.ts.net:'+port;
+  if(args.at(-1)==='off'){
+    if(port===process.env.FAKE_FAIL_OFF_PORT&&!existsSync(process.env.FAKE_FAILURE_MARKER)){writeFileSync(process.env.FAKE_FAILURE_MARKER,'failed');process.exit(1)}
+    const next=state();delete next.TCP[port];delete next.Web[key];writeFileSync(file,JSON.stringify(next));
+    if(port===process.env.FAKE_SIGNAL_AFTER_OFF)process.kill(process.ppid,'SIGTERM');
+    process.exit(0)
+  }
+  const next=state();next.TCP??={};next.Web??={};next.TCP[port]={HTTPS:true};next.Web[key]={Handlers:{'/':{Proxy:args.at(-1)}}};writeFileSync(file,JSON.stringify(next));
+  if(port===process.env.FAKE_SIGNAL_AFTER_ADD)process.kill(process.ppid,'SIGTERM');
+  process.exit(0)
+}
+process.exit(2);
+`);
+  const baseEnv = {
+    ...process.env,
+    PATH: `${fakeBin}:${process.env.PATH}`,
+    FAKE_TAILSCALE_STATE: serveState,
+  };
+  const env = {
+    ...baseEnv,
+    FAKE_FAIL_OFF_PORT: "12001",
+    FAKE_FAILURE_MARKER: failureMarker,
+  };
+  const lifecycle = path.join(scripts, "standalone-tailnet-routes.sh");
+  const interrupted = spawnSync(lifecycle, ["start"], {
+    env: { ...baseEnv, FAKE_SIGNAL_AFTER_ADD: "12000" },
+    encoding: "utf8",
+  });
+  assert.notEqual(interrupted.status, 0);
+  assert.deepEqual(normalizeServeState(JSON.parse(await readFile(serveState, "utf8"))), baseline);
+  await assert.rejects(readFile(path.join(fixture, "target/standalone-tailnet-routes/receipt.json")));
+
+  const removalStart = spawnSync(lifecycle, ["start"], { env: baseEnv, encoding: "utf8" });
+  assert.equal(removalStart.status, 0, removalStart.stderr);
+  const interruptedRemoval = spawnSync(lifecycle, ["stop"], {
+    env: { ...baseEnv, FAKE_SIGNAL_AFTER_OFF: "12002" },
+    encoding: "utf8",
+  });
+  assert.notEqual(interruptedRemoval.status, 0);
+  const interruptedReceipt = JSON.parse(await readFile(path.join(fixture, "target/standalone-tailnet-routes/receipt.json"), "utf8"));
+  assert.equal(interruptedReceipt.removing, 2);
+  const removalRetry = spawnSync(lifecycle, ["stop"], { env: baseEnv, encoding: "utf8" });
+  assert.equal(removalRetry.status, 0, removalRetry.stderr);
+  assert.deepEqual(normalizeServeState(JSON.parse(await readFile(serveState, "utf8"))), baseline);
+  await assert.rejects(readFile(path.join(fixture, "target/standalone-tailnet-routes/receipt.json")));
+
+  const start = spawnSync(lifecycle, ["start"], { env, encoding: "utf8" });
+  assert.equal(start.status, 0, start.stderr);
+  const firstStop = spawnSync(lifecycle, ["stop"], { env, encoding: "utf8" });
+  assert.equal(firstStop.status, 1);
+  const partial = JSON.parse(await readFile(path.join(fixture, "target/standalone-tailnet-routes/receipt.json"), "utf8"));
+  assert.equal(partial.configured, 2, firstStop.stderr);
+  const retry = spawnSync(lifecycle, ["stop"], { env, encoding: "utf8" });
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.deepEqual(normalizeServeState(JSON.parse(await readFile(serveState, "utf8"))), baseline);
+  await assert.rejects(readFile(path.join(fixture, "target/standalone-tailnet-routes/receipt.json")));
+});
+
+test("mobile Tailnet route preparation is receipt-scoped and has no committed endpoint", async () => {
+  const [routes, iosRunner, androidRunner, justfile] = await Promise.all([
+    readFile(path.join(root, "scripts/standalone-tailnet-routes.sh"), "utf8"),
+    readFile(path.join(root, "scripts/run-ios-simulator.sh"), "utf8"),
+    readFile(path.join(root, "scripts/run-android-tailnet.sh"), "utf8"),
+    readFile(path.join(root, "Justfile"), "utf8"),
+  ]);
+  assert.match(routes, /oxid-standalone-tailnet-routes-v1/u);
+  assert.match(routes, /tailscale status --json/u);
+  assert.match(routes, /tailscale serve status --json/u);
+  assert.match(routes, /seq 12000 12999/u);
+  assert.ok(
+    routes.indexOf("trap 'cleanup_start $?' EXIT") < routes.indexOf('umask 077; mkdir -p "$state"'),
+    "startup cleanup must be armed before route state becomes visible",
+  );
+  assert.match(routes, /http:\/\/127\.0\.0\.1:8088/u);
+  assert.match(routes, /http:\/\/127\.0\.0\.1:9944/u);
+  assert.match(routes, /http:\/\/127\.0\.0\.1:6300/u);
+  assert.doesNotMatch(routes, /tailscale serve reset/u);
+  assert.doesNotMatch(routes, /\bfunnel\b/u);
+  assert.doesNotMatch(routes, /rm -rf/u);
+  assert.match(routes, /oxid-standalone-faucet-tailnet-v1/u);
+  assert.match(routes, /\.baseline == \$baseline and \.active == \$active/u);
+  assert.match(iosRunner, /OXID_STANDALONE_NETWORK_PROFILE=tailnet/u);
+  assert.match(iosRunner, /standalone-tailnet-routes\.sh" status/u);
+  assert.match(iosRunner, /standalone-tailnet/u);
+  assert.match(iosRunner, /OXID_BUILD_MIDNIGHT_INDEXER_WS_URL/u);
+  assert.match(iosRunner, /tailnet_artifact_binding/u);
+  assert.match(iosRunner, /tailnet=\$tailnet_artifact_binding/u);
+  assert.match(androidRunner, /standalone-tailnet-routes\/receipt\.json/u);
+  assert.match(androidRunner, /standalone-tailnet-routes\.sh" status/u);
+  assert.match(androidRunner, /OXID_BUILD_MIDNIGHT_INDEXER_WS_URL/u);
+  assert.match(androidRunner, /OXID_MOBILE_PORTAL_PROFILE:-unavailable/u);
+  assert.match(androidRunner, /\[ "\$proof_port" -eq 443 \]/u);
+  assert.match(androidRunner, /OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https:\/\/\$tailnet_dns_name"/u);
+  const androidBuild = await readFile(path.join(root, "scripts/run-android-emulator.sh"), "utf8");
+  assert.match(androidBuild, /tailnet_artifact_binding/u);
+  assert.match(androidBuild, /tailnet=\$tailnet_artifact_binding/u);
+  assert.match(justfile, /^standalone-tailnet-round-trip-start:/mu);
+  assert.match(justfile, /^ios-standalone-tailnet:/mu);
+});
+
+test("the setup QR opens the private HTTPS funding page in an ordinary phone camera", async () => {
+  const lifecycle = await readFile(path.join(root, "scripts/standalone-faucet-tailnet.sh"), "utf8");
+  assert.match(lifecycle, /payload="https:\/\/\$dns:\$port\/"/u);
+  assert.doesNotMatch(lifecycle, /payload="oxid-faucet:/u);
 });
