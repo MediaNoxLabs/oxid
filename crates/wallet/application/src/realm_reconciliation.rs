@@ -105,6 +105,7 @@ pub struct WalletRealmCoordinatorState {
     facets: WalletRealmReconciliationState,
     leases: WalletRealmLeaseSet,
     leased_from: Option<WalletRealmReconciliationState>,
+    pending_trigger: Option<WalletRealmReconciliationTrigger>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -126,6 +127,7 @@ impl WalletRealmCoordinatorState {
                 shielded: false,
             },
             leased_from: None,
+            pending_trigger: None,
         }
     }
 
@@ -219,6 +221,11 @@ pub enum WalletRealmCoordinatorInput {
         effect: WalletRealmCoordinatorEffect,
         outcome: WalletRealmEffectOutcome,
     },
+    EffectExpired {
+        effect: WalletRealmCoordinatorEffect,
+        outcome: WalletRealmEffectOutcome,
+    },
+    Observe(WalletRealmReconciliationState),
     Cancel,
 }
 
@@ -255,9 +262,11 @@ impl WalletRealmReconciliationCoordinator {
     ) -> WalletRealmCoordinatorTransition {
         match input {
             WalletRealmCoordinatorInput::Reconcile(trigger) => reconcile(state, trigger),
-            WalletRealmCoordinatorInput::EffectCompleted { effect, outcome } => {
+            WalletRealmCoordinatorInput::EffectCompleted { effect, outcome }
+            | WalletRealmCoordinatorInput::EffectExpired { effect, outcome } => {
                 complete_effect(state, effect, outcome)
             }
+            WalletRealmCoordinatorInput::Observe(observed) => observe(state, observed),
             WalletRealmCoordinatorInput::Cancel => cancel(state),
         }
     }
@@ -268,7 +277,14 @@ fn reconcile(
     trigger: WalletRealmReconciliationTrigger,
 ) -> WalletRealmCoordinatorTransition {
     if state.has_active_leases() {
-        return unchanged(state);
+        let pending_trigger = match state.pending_trigger {
+            Some(pending) if trigger_priority(pending) >= trigger_priority(trigger) => pending,
+            _ => trigger,
+        };
+        return unchanged(WalletRealmCoordinatorState {
+            pending_trigger: Some(pending_trigger),
+            ..state
+        });
     }
     let plan = WalletRealmReconciliationPlanner::plan(trigger, state.facets);
     if plan.effects().is_empty() {
@@ -281,6 +297,7 @@ fn reconcile(
         facets: state.facets,
         leases: WalletRealmLeaseSet::default(),
         leased_from: Some(state.facets),
+        pending_trigger: None,
     };
     let effects = plan
         .effects()
@@ -310,6 +327,26 @@ fn complete_effect(
     *lease_mut(&mut state.leases, effect.kind) = false;
     if !state.has_active_leases() {
         state.leased_from = None;
+        if let Some(trigger) = state.pending_trigger {
+            state.pending_trigger = None;
+            return reconcile(state, trigger);
+        }
+    }
+    unchanged(state)
+}
+
+fn observe(
+    mut state: WalletRealmCoordinatorState,
+    observed: WalletRealmReconciliationState,
+) -> WalletRealmCoordinatorTransition {
+    if !state.leases.account {
+        state.facets.account = observed.account;
+    }
+    if !state.leases.dust {
+        state.facets.dust = observed.dust;
+    }
+    if !state.leases.shielded {
+        state.facets.shielded = observed.shielded;
     }
     unchanged(state)
 }
@@ -334,6 +371,7 @@ fn cancel(mut state: WalletRealmCoordinatorState) -> WalletRealmCoordinatorTrans
     }
     state.leases = WalletRealmLeaseSet::default();
     state.leased_from = None;
+    state.pending_trigger = None;
     unchanged(state)
 }
 
@@ -389,6 +427,14 @@ fn unchanged(state: WalletRealmCoordinatorState) -> WalletRealmCoordinatorTransi
     WalletRealmCoordinatorTransition {
         state,
         effects: Vec::new(),
+    }
+}
+
+const fn trigger_priority(trigger: WalletRealmReconciliationTrigger) -> u8 {
+    match trigger {
+        WalletRealmReconciliationTrigger::Initial => 0,
+        WalletRealmReconciliationTrigger::ManualRefresh => 1,
+        WalletRealmReconciliationTrigger::ActionPreflight => 2,
     }
 }
 
@@ -549,7 +595,7 @@ mod tests {
                 WalletRealmReconciliationTrigger::ActionPreflight,
             ),
         );
-        assert_eq!(duplicate.state(), started.state());
+        assert_eq!(duplicate.state().revision(), started.state().revision());
         assert!(duplicate.effects().is_empty());
 
         let stale_completion = WalletRealmReconciliationCoordinator::reduce(

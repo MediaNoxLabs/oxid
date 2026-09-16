@@ -11,8 +11,9 @@ use oxid_wallet_domain::{
 
 use crate::{
     WalletAccountPortError, WalletAccountReadPort, WalletAccountView, WalletDustSyncPort,
-    WalletDustSyncPortError, WalletDustSyncView, WalletRealmFacetState,
-    WalletRealmReconciliationEffect, WalletRealmReconciliationPlanner,
+    WalletDustSyncPortError, WalletDustSyncView, WalletNetworkPort, WalletRealmCoordinatorEffect,
+    WalletRealmCoordinatorInput, WalletRealmCoordinatorState, WalletRealmFacetState,
+    WalletRealmReconciliationCoordinator, WalletRealmReconciliationEffect,
     WalletRealmReconciliationState, WalletRealmReconciliationTrigger, WalletShieldedSyncPort,
     WalletShieldedSyncPortError, WalletShieldedSyncView,
 };
@@ -65,12 +66,16 @@ pub struct SelectedWalletRealmSyncView {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SelectedWalletRealmSyncError {
     InvalidProfileIdentifier(OpaqueIdError),
+    SelectedNetwork(WalletAccountPortError),
+    Unavailable,
 }
 
 impl fmt::Display for SelectedWalletRealmSyncError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidProfileIdentifier(error) => error.fmt(formatter),
+            Self::SelectedNetwork(error) => error.fmt(formatter),
+            Self::Unavailable => formatter.write_str("selected realm runtime is unavailable"),
         }
     }
 }
@@ -109,9 +114,114 @@ pub trait CancelSelectedWalletRealmSyncUseCase: Send + Sync {
     ) -> Result<SelectedWalletRealmSyncView, SelectedWalletRealmSyncError>;
 }
 
+/// Application-owned persistent coordinator registry for selected wallet realms.
+/// The owner is intentionally synchronous: adapters decide how and when to run
+/// effects, while all lease and stale-completion decisions remain deterministic.
+#[derive(Default)]
+pub struct SelectedWalletRealmRuntime {
+    entries: Vec<SelectedWalletRealmRuntimeEntry>,
+}
+
+struct SelectedWalletRealmRuntimeEntry {
+    profile: WalletProfileId,
+    realm: oxid_wallet_domain::ChainNetworkId,
+    state: WalletRealmCoordinatorState,
+}
+
+impl SelectedWalletRealmRuntime {
+    pub fn reconcile(
+        &mut self,
+        profile: WalletProfileId,
+        realm: oxid_wallet_domain::ChainNetworkId,
+        observed: WalletRealmReconciliationState,
+        trigger: WalletRealmReconciliationTrigger,
+    ) -> Vec<WalletRealmCoordinatorEffect> {
+        for entry in self
+            .entries
+            .iter_mut()
+            .filter(|entry| entry.profile == profile && entry.realm != realm)
+        {
+            entry.state = *WalletRealmReconciliationCoordinator::reduce(
+                entry.state,
+                WalletRealmCoordinatorInput::Cancel,
+            )
+            .state();
+        }
+        let entry = if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.profile == profile && entry.realm == realm)
+        {
+            entry
+        } else {
+            self.entries.push(SelectedWalletRealmRuntimeEntry {
+                profile,
+                realm,
+                state: WalletRealmCoordinatorState::new(observed),
+            });
+            self.entries.last_mut().expect("entry inserted")
+        };
+        let observed = WalletRealmReconciliationCoordinator::reduce(
+            entry.state,
+            WalletRealmCoordinatorInput::Observe(observed),
+        );
+        let transition = WalletRealmReconciliationCoordinator::reduce(
+            *observed.state(),
+            WalletRealmCoordinatorInput::Reconcile(trigger),
+        );
+        entry.state = *transition.state();
+        transition.effects().to_vec()
+    }
+
+    pub fn complete(
+        &mut self,
+        profile: &WalletProfileId,
+        realm: &oxid_wallet_domain::ChainNetworkId,
+        effect: WalletRealmCoordinatorEffect,
+        outcome: crate::WalletRealmEffectOutcome,
+    ) -> Vec<WalletRealmCoordinatorEffect> {
+        let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| &entry.profile == profile && &entry.realm == realm)
+        else {
+            return Vec::new();
+        };
+        let transition = WalletRealmReconciliationCoordinator::reduce(
+            entry.state,
+            WalletRealmCoordinatorInput::EffectCompleted { effect, outcome },
+        );
+        entry.state = *transition.state();
+        transition.effects().to_vec()
+    }
+
+    pub fn expire(
+        &mut self,
+        profile: &WalletProfileId,
+        realm: &oxid_wallet_domain::ChainNetworkId,
+        effect: WalletRealmCoordinatorEffect,
+        outcome: crate::WalletRealmEffectOutcome,
+    ) -> Vec<WalletRealmCoordinatorEffect> {
+        let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| &entry.profile == profile && &entry.realm == realm)
+        else {
+            return Vec::new();
+        };
+        let transition = WalletRealmReconciliationCoordinator::reduce(
+            entry.state,
+            WalletRealmCoordinatorInput::EffectExpired { effect, outcome },
+        );
+        entry.state = *transition.state();
+        transition.effects().to_vec()
+    }
+}
+
 /// Application orchestration over the three focused wallet ports.
 pub struct SelectedWalletRealmSyncService<W> {
     wallet: Arc<W>,
+    runtime: std::sync::Mutex<SelectedWalletRealmRuntime>,
 }
 
 struct ObservedWalletRealm {
@@ -121,8 +231,11 @@ struct ObservedWalletRealm {
 
 impl<W> SelectedWalletRealmSyncService<W> {
     #[must_use]
-    pub const fn new(wallet: Arc<W>) -> Self {
-        Self { wallet }
+    pub fn new(wallet: Arc<W>) -> Self {
+        Self {
+            wallet,
+            runtime: std::sync::Mutex::new(SelectedWalletRealmRuntime::default()),
+        }
     }
 
     fn profile(
@@ -156,7 +269,11 @@ impl<W> SelectedWalletRealmSyncService<W> {
 
 impl<W> SelectedWalletRealmSyncService<W>
 where
-    W: WalletAccountReadPort + WalletDustSyncPort + WalletShieldedSyncPort + 'static,
+    W: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletDustSyncPort
+        + WalletShieldedSyncPort
+        + 'static,
 {
     /// Reconciles the selected realm for one explicit application trigger.
     pub fn reconcile(
@@ -166,11 +283,20 @@ where
     ) -> SelectedWalletRealmSyncViewFuture<'_> {
         Box::pin(async move {
             let profile = Self::profile(command)?;
+            let realm = self
+                .wallet
+                .selected_network(&profile)
+                .map_err(SelectedWalletRealmSyncError::SelectedNetwork)?;
             let observed = self.observed(&profile);
             let mut view = observed.view;
-            let plan = WalletRealmReconciliationPlanner::plan(trigger, observed.state);
-            for effect in plan.effects() {
-                match effect {
+            let mut effects = self
+                .runtime
+                .lock()
+                .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?
+                .reconcile(profile.clone(), realm.clone(), observed.state, trigger);
+            while !effects.is_empty() {
+                let effect = effects.remove(0);
+                match effect.kind() {
                     WalletRealmReconciliationEffect::SyncAccount => {
                         view.account = self
                             .wallet
@@ -204,6 +330,17 @@ where
                             .unwrap_or_else(shielded_family_error);
                     }
                 }
+                let outcome = match effect.kind() {
+                    WalletRealmReconciliationEffect::SyncAccount => family_outcome(&view.account),
+                    WalletRealmReconciliationEffect::SyncDust => family_outcome(&view.dust),
+                    WalletRealmReconciliationEffect::SyncShielded => family_outcome(&view.shielded),
+                };
+                let follow_up = self
+                    .runtime
+                    .lock()
+                    .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?
+                    .complete(&profile, &realm, effect, outcome);
+                effects.extend(follow_up);
             }
             Ok(view)
         })
@@ -212,7 +349,11 @@ where
 
 impl<W> SyncSelectedWalletRealmUseCase for SelectedWalletRealmSyncService<W>
 where
-    W: WalletAccountReadPort + WalletDustSyncPort + WalletShieldedSyncPort + 'static,
+    W: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletDustSyncPort
+        + WalletShieldedSyncPort
+        + 'static,
 {
     fn execute(
         &self,
@@ -224,7 +365,11 @@ where
 
 impl<W> GetSelectedWalletRealmSyncUseCase for SelectedWalletRealmSyncService<W>
 where
-    W: WalletAccountReadPort + WalletDustSyncPort + WalletShieldedSyncPort + 'static,
+    W: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletDustSyncPort
+        + WalletShieldedSyncPort
+        + 'static,
 {
     fn execute(
         &self,
@@ -236,7 +381,11 @@ where
 
 impl<W> CancelSelectedWalletRealmSyncUseCase for SelectedWalletRealmSyncService<W>
 where
-    W: WalletAccountReadPort + WalletDustSyncPort + WalletShieldedSyncPort + 'static,
+    W: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletDustSyncPort
+        + WalletShieldedSyncPort
+        + 'static,
 {
     fn execute(
         &self,
@@ -413,6 +562,19 @@ const fn shielded_error_state(error: WalletShieldedSyncPortError) -> WalletRealm
     }
 }
 
+const fn family_outcome<T>(view: &WalletRealmFamilyView<T>) -> crate::WalletRealmEffectOutcome {
+    match view {
+        WalletRealmFamilyView::Ready(_) => crate::WalletRealmEffectOutcome::Current,
+        WalletRealmFamilyView::NotFound => crate::WalletRealmEffectOutcome::Missing,
+        WalletRealmFamilyView::Unsupported => crate::WalletRealmEffectOutcome::Unsupported,
+        WalletRealmFamilyView::ProtectionNotInitialized
+        | WalletRealmFamilyView::ProtectionLocked => crate::WalletRealmEffectOutcome::Blocked,
+        WalletRealmFamilyView::Busy
+        | WalletRealmFamilyView::Unavailable
+        | WalletRealmFamilyView::InvalidData => crate::WalletRealmEffectOutcome::Stale,
+    }
+}
+
 const fn account_family_error(
     error: WalletAccountPortError,
 ) -> WalletRealmFamilyView<WalletAccountView> {
@@ -479,6 +641,27 @@ mod tests {
         account_syncs: AtomicUsize,
         dust_starts: AtomicUsize,
         shielded_starts: AtomicUsize,
+    }
+
+    impl WalletNetworkPort for PartialWallet {
+        fn available_networks(&self) -> Result<Vec<ChainNetwork>, WalletAccountPortError> {
+            Ok(vec![network()])
+        }
+
+        fn selected_network(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<ChainNetworkId, WalletAccountPortError> {
+            Ok(network_id())
+        }
+
+        fn select_network(
+            &self,
+            _: &WalletProfileId,
+            network_id: &ChainNetworkId,
+        ) -> Result<ChainNetworkId, WalletAccountPortError> {
+            Ok(network_id.clone())
+        }
     }
 
     impl WalletAccountReadPort for PartialWallet {
@@ -570,6 +753,49 @@ mod tests {
             Poll::Ready(value) => value,
             Poll::Pending => panic!("fixture future must resolve immediately"),
         }
+    }
+
+    #[test]
+    fn runtime_isolates_profiles_and_invalidates_previous_realm_leases() {
+        let mut runtime = SelectedWalletRealmRuntime::default();
+        let stale = WalletRealmReconciliationState {
+            account: WalletRealmFacetState::Stale,
+            dust: WalletRealmFacetState::Current,
+            shielded: WalletRealmFacetState::Current,
+        };
+        let profile_a = WalletProfileId::parse("profile_a").expect("profile id");
+        let profile_b = WalletProfileId::parse("profile_b").expect("profile id");
+        let first = runtime.reconcile(
+            profile_a.clone(),
+            network_id(),
+            stale,
+            WalletRealmReconciliationTrigger::Initial,
+        );
+        assert_eq!(first.len(), 1);
+        let other = runtime.reconcile(
+            profile_b,
+            network_id(),
+            stale,
+            WalletRealmReconciliationTrigger::Initial,
+        );
+        assert_eq!(other.len(), 1);
+        let switched = runtime.reconcile(
+            profile_a.clone(),
+            ChainNetworkId::parse("preprod").expect("network id"),
+            stale,
+            WalletRealmReconciliationTrigger::Initial,
+        );
+        assert_eq!(switched.len(), 1);
+        assert!(
+            runtime
+                .complete(
+                    &profile_a,
+                    &network_id(),
+                    first[0],
+                    crate::WalletRealmEffectOutcome::Current
+                )
+                .is_empty()
+        );
     }
 
     #[test]
