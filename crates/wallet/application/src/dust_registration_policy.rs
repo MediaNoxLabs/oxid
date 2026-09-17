@@ -29,6 +29,8 @@ pub struct WalletDustRegistrationSettlementRegistration {
     pub reconciliation_revision: u64,
     /// Monotonic DUST snapshot sequence for this registration.
     pub dust_revision: u64,
+    pub dust_observation_revision: u64,
+    pub dust_ready: bool,
     pub included: bool,
 }
 
@@ -308,6 +310,8 @@ pub fn reduce_wallet_dust_registration_settlement(
                 finality_revision: 0,
                 reconciliation_revision: 0,
                 dust_revision: 0,
+                dust_observation_revision: 0,
+                dust_ready: false,
                 included: false,
             });
             set_effective_state(
@@ -337,6 +341,8 @@ pub fn reduce_wallet_dust_registration_settlement(
                 finality_revision: 0,
                 reconciliation_revision: 0,
                 dust_revision: 0,
+                dust_observation_revision: 0,
+                dust_ready: false,
                 included: false,
             });
         }
@@ -403,10 +409,6 @@ pub fn reduce_wallet_dust_registration_settlement(
                 .is_some_and(|registration| revision > registration.finality_revision) =>
         {
             let current_state = effective_state(projection);
-            let observation_advanced = projection
-                .registration
-                .as_ref()
-                .is_some_and(|registration| revision > registration.observation_revision);
             if let Some(registration) = &mut next.registration {
                 registration.finality_revision = revision;
                 registration.observation_revision = registration.observation_revision.max(revision);
@@ -414,12 +416,13 @@ pub fn reduce_wallet_dust_registration_settlement(
             let finality_is_current = next.registration.as_ref().is_some_and(|registration| {
                 registration.finality_revision >= registration.reconciliation_revision
             });
-            if (matches!(
-                current_state,
-                WalletDustRegistrationSettlementState::Confirming
-            ) && finality_is_current)
-                || (matches!(current_state, WalletDustRegistrationSettlementState::Ready)
-                    && observation_advanced)
+            if registration_ready(&next) {
+                set_effective_state(&mut next, WalletDustRegistrationSettlementState::Ready);
+            } else if matches!(current_state, WalletDustRegistrationSettlementState::Ready)
+                || (matches!(
+                    current_state,
+                    WalletDustRegistrationSettlementState::Confirming
+                ) && finality_is_current)
             {
                 set_effective_state(
                     &mut next,
@@ -443,11 +446,6 @@ pub fn reduce_wallet_dust_registration_settlement(
                 .as_ref()
                 .is_some_and(|registration| revision > registration.reconciliation_revision) =>
         {
-            let current_state = effective_state(projection);
-            let observation_advanced = projection
-                .registration
-                .as_ref()
-                .is_some_and(|registration| revision > registration.observation_revision);
             if let Some(registration) = &mut next.registration {
                 registration.reconciliation_revision = revision;
                 registration.observation_revision = registration.observation_revision.max(revision);
@@ -457,14 +455,12 @@ pub fn reduce_wallet_dust_registration_settlement(
                     if let Some(registration) = &mut next.registration {
                         registration.included = true;
                     }
-                    if !matches!(current_state, WalletDustRegistrationSettlementState::Ready)
-                        || observation_advanced
-                    {
-                        set_effective_state(
-                            &mut next,
-                            WalletDustRegistrationSettlementState::Reconciling,
-                        );
-                    }
+                    let state = if registration_ready(&next) {
+                        WalletDustRegistrationSettlementState::Ready
+                    } else {
+                        WalletDustRegistrationSettlementState::Reconciling
+                    };
+                    set_effective_state(&mut next, state);
                 }
                 WalletDustRegistrationSettlementReconciliation::Pending => {
                     if let Some(registration) = &mut next.registration {
@@ -493,32 +489,28 @@ pub fn reduce_wallet_dust_registration_settlement(
             ..
         } if matches!(
             effective_state(projection),
-            WalletDustRegistrationSettlementState::Reconciling
+            WalletDustRegistrationSettlementState::Confirming
+                | WalletDustRegistrationSettlementState::Reconciling
                 | WalletDustRegistrationSettlementState::Ready
         ) && has_transaction(projection, &transaction_id)
             && projection
                 .registration
                 .as_ref()
-                .is_some_and(|registration| {
-                    registration.included
-                        && after_observation_revision == registration.observation_revision
-                        && revision > registration.dust_revision
-                }) =>
+                .is_some_and(|registration| revision > registration.dust_revision) =>
         {
+            let current_state = effective_state(projection);
             if let Some(registration) = &mut next.registration {
                 registration.dust_revision = revision;
+                registration.dust_observation_revision = after_observation_revision;
+                registration.dust_ready = ready;
             }
-            match (effective_state(projection), ready) {
-                (WalletDustRegistrationSettlementState::Reconciling, true) => {
-                    set_effective_state(&mut next, WalletDustRegistrationSettlementState::Ready);
-                }
-                (WalletDustRegistrationSettlementState::Ready, false) => {
-                    set_effective_state(
-                        &mut next,
-                        WalletDustRegistrationSettlementState::Reconciling,
-                    );
-                }
-                _ => {}
+            if registration_ready(&next) {
+                set_effective_state(&mut next, WalletDustRegistrationSettlementState::Ready);
+            } else if matches!(current_state, WalletDustRegistrationSettlementState::Ready) {
+                set_effective_state(
+                    &mut next,
+                    WalletDustRegistrationSettlementState::Reconciling,
+                );
             }
         }
         WalletDustRegistrationSettlementEvent::Cancelled { draft_id, .. }
@@ -803,6 +795,17 @@ fn has_transaction(
         .is_some_and(|current| current == transaction)
 }
 
+fn registration_ready(projection: &WalletDustRegistrationSettlementProjection) -> bool {
+    projection
+        .registration
+        .as_ref()
+        .is_some_and(|registration| {
+            registration.included
+                && registration.dust_ready
+                && registration.dust_observation_revision == registration.observation_revision
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -986,11 +989,9 @@ mod tests {
             },
         );
         projection = reduce(&projection, finality(1));
-        assert_eq!(
-            projection.state,
-            WalletDustRegistrationSettlementState::Reconciling
-        );
-        assert_eq!(reduce(&projection, dust_refresh(1, 1, true),), projection);
+        assert_eq!(projection.state, State::Reconciling);
+        projection = reduce(&projection, dust_refresh(1, 1, true));
+        assert_eq!(projection.state, State::Reconciling);
         projection = reduce(
             &projection,
             reconciliation(2, WalletDustRegistrationSettlementReconciliation::Included),
@@ -1181,7 +1182,7 @@ mod tests {
                 },
             )
             .state,
-            WalletDustRegistrationSettlementState::Reconciling
+            State::Reconciling
         );
         let degraded_confirming = reduce(
             &confirming,
@@ -1237,7 +1238,7 @@ mod tests {
                 },
             )
             .state,
-            WalletDustRegistrationSettlementState::Ready
+            State::Ready
         );
         let retried_suspension = reduce(
             &suspended,
@@ -1257,7 +1258,7 @@ mod tests {
                 },
             )
             .state,
-            WalletDustRegistrationSettlementState::Ready
+            State::Ready
         );
         let early_retry = reduce(
             &ready,
@@ -1321,14 +1322,8 @@ mod tests {
             },
         );
 
-        assert_eq!(
-            accepted.state,
-            WalletDustRegistrationSettlementState::Offline
-        );
-        assert_eq!(
-            accepted.resume_state,
-            Some(WalletDustRegistrationSettlementState::Confirming)
-        );
+        assert_eq!(accepted.state, State::Offline);
+        assert_eq!(accepted.resume_state, Some(State::Confirming));
         assert!(has_transaction(&accepted, &transaction()));
 
         let retried = reduce(
@@ -1338,10 +1333,7 @@ mod tests {
                 revision: 2,
             },
         );
-        assert_eq!(
-            retried.state,
-            WalletDustRegistrationSettlementState::Confirming
-        );
+        assert_eq!(retried.state, State::Confirming);
         assert!(has_transaction(&retried, &transaction()));
 
         let retried_before_acceptance = reduce(
@@ -1351,10 +1343,7 @@ mod tests {
                 revision: 2,
             },
         );
-        assert_eq!(
-            retried_before_acceptance.state,
-            WalletDustRegistrationSettlementState::Submitting
-        );
+        assert_eq!(retried_before_acceptance.state, State::Submitting);
         let accepted_after_retry = reduce(
             &retried_before_acceptance,
             WalletDustRegistrationSettlementEvent::SubmissionAccepted {
@@ -1363,10 +1352,7 @@ mod tests {
                 transaction_id: transaction(),
             },
         );
-        assert_eq!(
-            accepted_after_retry.state,
-            WalletDustRegistrationSettlementState::Confirming
-        );
+        assert_eq!(accepted_after_retry.state, State::Confirming);
         assert!(has_transaction(&accepted_after_retry, &transaction()));
     }
 
@@ -1953,8 +1939,9 @@ mod tests {
         let not_ready = reduce(&included, dust_refresh(2, 2, false));
         assert_eq!(not_ready.state, State::Reconciling);
         assert_eq!(reduce(&not_ready, dust_refresh(1, 2, true),), not_ready);
-        assert_eq!(reduce(&not_ready, dust_refresh(3, 1, true),), not_ready);
-        let ready = reduce(&not_ready, dust_refresh(3, 2, true));
+        let stale_binding = reduce(&not_ready, dust_refresh(3, 1, true));
+        assert_eq!(stale_binding.state, State::Reconciling);
+        let ready = reduce(&stale_binding, dust_refresh(4, 2, true));
         assert_eq!(ready.state, State::Ready);
         let advanced_after_ready = reduce(&ready, finality(3));
         assert_eq!(advanced_after_ready.state, State::Reconciling);
@@ -1963,6 +1950,10 @@ mod tests {
             reduce(&advanced_before_ready, dust_refresh(3, 2, true)).state,
             State::Reconciling
         );
+        let refresh_first = reduce(&reduce(&included, dust_refresh(4, 3, true)), finality(3));
+        let observation_first = reduce(&advanced_before_ready, dust_refresh(4, 3, true));
+        assert_eq!(refresh_first, observation_first);
+        assert_eq!(refresh_first.state, State::Ready);
 
         let mut second_included = included.clone();
         let registration = second_included.registration.as_mut().unwrap();
