@@ -107,6 +107,18 @@ pub(super) fn poll_account_sync(
                     if !realm.supersedes(&expected) {
                         break;
                     }
+                    let next = {
+                        let current = state.read();
+                        merge_polled_account_sync_card(&current, realm)
+                    };
+                    let Some(AccountSyncCardState::Ready {
+                        realm,
+                        action_busy,
+                        operation_error,
+                    }) = next
+                    else {
+                        break;
+                    };
                     expected = (*realm).clone();
                     let complete = realm.observation.poll_after().is_none();
                     if let WalletRealmFamilyView::Ready(account) = &realm.view.account {
@@ -114,25 +126,66 @@ pub(super) fn poll_account_sync(
                     }
                     state.set(AccountSyncCardState::Ready {
                         realm,
-                        action_busy: false,
-                        operation_error: None,
+                        action_busy,
+                        operation_error,
                     });
                     if complete {
                         break;
                     }
                 }
                 Ok(AccountSyncCardState::Failed(error)) => {
+                    if !poll_still_owns_account_sync_card(&state.read(), &expected) {
+                        break;
+                    }
                     state.set(AccountSyncCardState::Failed(error));
                     break;
                 }
                 Ok(AccountSyncCardState::Loading) => {}
                 Err(error) => {
+                    if !poll_still_owns_account_sync_card(&state.read(), &expected) {
+                        break;
+                    }
                     state.set(AccountSyncCardState::Failed(error.to_string()));
                     break;
                 }
             }
         }
     });
+}
+
+fn merge_polled_account_sync_card(
+    current: &AccountSyncCardState,
+    candidate: Box<SelectedWalletRealmProjection>,
+) -> Option<AccountSyncCardState> {
+    let AccountSyncCardState::Ready {
+        realm,
+        action_busy,
+        operation_error,
+    } = current
+    else {
+        return None;
+    };
+    candidate
+        .supersedes(realm)
+        .then(|| AccountSyncCardState::Ready {
+            realm: candidate,
+            action_busy: *action_busy,
+            operation_error: operation_error.clone(),
+        })
+}
+
+fn poll_still_owns_account_sync_card(
+    current: &AccountSyncCardState,
+    expected: &SelectedWalletRealmProjection,
+) -> bool {
+    matches!(
+        current,
+        AccountSyncCardState::Ready {
+            realm,
+            action_busy: false,
+            ..
+        } if realm.as_ref() == expected
+    )
 }
 
 pub(super) fn selected_realm_is_syncing(realm: &SelectedWalletRealmSyncView) -> bool {
@@ -405,4 +458,67 @@ pub(super) fn non_native_shielded_balances(
         .balances
         .iter()
         .filter(|balance| balance.token_type_hex != NATIVE_SHIELDED_NIGHT_TOKEN_TYPE)
+}
+
+#[cfg(test)]
+mod poll_tests {
+    use super::*;
+    use oxid_wallet_application::{
+        SelectedWalletRealmActionReadiness, SelectedWalletRealmIdentity,
+        SelectedWalletRealmObservation,
+    };
+    use oxid_wallet_domain::{ChainNetworkId, WalletProfileId};
+
+    fn projection(revision: u64) -> Box<SelectedWalletRealmProjection> {
+        Box::new(SelectedWalletRealmProjection {
+            identity: SelectedWalletRealmIdentity {
+                profile: WalletProfileId::parse("profile_test").expect("profile id"),
+                realm: ChainNetworkId::parse("undeployed").expect("network id"),
+            },
+            revision,
+            fresh: true,
+            consistent: true,
+            actionable: SelectedWalletRealmActionReadiness::Ready,
+            observation: SelectedWalletRealmObservation::Settled,
+            view: SelectedWalletRealmSyncView {
+                account: WalletRealmFamilyView::Unsupported,
+                dust: WalletRealmFamilyView::Unsupported,
+                shielded: WalletRealmFamilyView::Unsupported,
+            },
+        })
+    }
+
+    #[test]
+    fn stale_poll_cannot_replace_a_newer_manual_projection() {
+        let current = AccountSyncCardState::Ready {
+            realm: projection(2),
+            action_busy: true,
+            operation_error: None,
+        };
+
+        assert!(merge_polled_account_sync_card(&current, projection(1)).is_none());
+        assert!(!poll_still_owns_account_sync_card(&current, &projection(1)));
+    }
+
+    #[test]
+    fn equal_poll_preserves_the_current_action_state() {
+        let current = AccountSyncCardState::Ready {
+            realm: projection(2),
+            action_busy: true,
+            operation_error: Some("manual action pending".to_owned()),
+        };
+        let Some(AccountSyncCardState::Ready {
+            realm,
+            action_busy,
+            operation_error,
+        }) = merge_polled_account_sync_card(&current, projection(2))
+        else {
+            panic!("equal projection remains admissible")
+        };
+
+        assert_eq!(realm.revision, 2);
+        assert!(action_busy);
+        assert_eq!(operation_error.as_deref(), Some("manual action pending"));
+        assert!(!poll_still_owns_account_sync_card(&current, &realm));
+    }
 }
