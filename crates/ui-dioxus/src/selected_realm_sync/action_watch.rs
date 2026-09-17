@@ -4,7 +4,8 @@
 
 use dioxus::prelude::*;
 use oxid_wallet_application::{
-    WalletAccountQuery, WalletAccountView, WalletActionWatch, WalletActionWatchKind,
+    SelectedWalletRealmSyncCommand, WalletAccountError, WalletAccountPortError, WalletAccountQuery,
+    WalletAccountView, WalletActionWatch, WalletActionWatchHandle, WalletActionWatchKind,
     WalletActionWatchObservation, WalletActionWatchProjection, WalletActionWatchState,
 };
 use std::{collections::BTreeSet, time::Duration};
@@ -107,15 +108,76 @@ pub(crate) fn record_included_transfer(
 pub(crate) async fn observe_receive_arrival(
     services: WalletUiServices,
     profile_id: String,
-    baseline: WalletAccountView,
+    initial: WalletAccountView,
 ) {
-    let Some(account_id) = baseline.account_id.as_deref() else {
+    let Some(account_id) = initial.account_id.as_deref() else {
         return;
     };
     let account_id = account_id.to_owned();
-    let baseline_transactions = incoming_transactions(&baseline);
-    let starting_checkpoint = u64::try_from(baseline_transactions.len()).unwrap_or(u64::MAX);
     let manager = services.manage_wallet_action_watch();
+    let fallback_checkpoint = initial.sync.current_cursor.unwrap_or_default();
+
+    let preflight = crate::run_ui_future(crate::wallet_realm_lifecycle::explicit_retry(
+        services.clone(),
+        SelectedWalletRealmSyncCommand {
+            profile_id: profile_id.clone(),
+        },
+    ))
+    .await;
+    if !matches!(preflight, Ok(Ok(_))) {
+        publish_receive_terminal(
+            &manager,
+            &account_id,
+            fallback_checkpoint,
+            WalletActionWatchState::Degraded,
+        );
+        return;
+    }
+
+    let baseline_services = services.clone();
+    let baseline_profile = profile_id.clone();
+    let baseline = match crate::run_ui_blocking(move || {
+        baseline_services
+            .get_wallet_account()
+            .execute(WalletAccountQuery {
+                profile_id: baseline_profile,
+            })
+    })
+    .await
+    {
+        Ok(Ok(account)) => account,
+        Ok(Err(error)) => {
+            publish_receive_terminal(
+                &manager,
+                &account_id,
+                fallback_checkpoint,
+                account_error_state(&error),
+            );
+            return;
+        }
+        Err(_) => {
+            publish_receive_terminal(
+                &manager,
+                &account_id,
+                fallback_checkpoint,
+                WalletActionWatchState::Degraded,
+            );
+            return;
+        }
+    };
+    if baseline.account_id.as_deref() != Some(account_id.as_str()) {
+        return;
+    }
+    let Some(starting_checkpoint) = synchronized_account_checkpoint(&baseline) else {
+        publish_receive_terminal(
+            &manager,
+            &account_id,
+            baseline.sync.current_cursor.unwrap_or(fallback_checkpoint),
+            account_state(&baseline).unwrap_or(WalletActionWatchState::Degraded),
+        );
+        return;
+    };
+    let baseline_transactions = confirmed_incoming_transactions(&baseline);
     let now_millis = monotonic_millis();
     let deadline_millis = now_millis.saturating_add(ACTION_WATCH_DURATION_MILLIS);
     let Ok(watch) = WalletActionWatch::incoming_arrival(&account_id, starting_checkpoint) else {
@@ -134,25 +196,53 @@ pub(crate) async fn observe_receive_arrival(
             guard.disarm();
             return;
         }
-        let Ok(observed) = services.get_wallet_account().execute(WalletAccountQuery {
-            profile_id: profile_id.clone(),
-        }) else {
-            continue;
+        let query_services = services.clone();
+        let query_profile = profile_id.clone();
+        let observed = match crate::run_ui_blocking(move || {
+            query_services
+                .get_wallet_account()
+                .execute(WalletAccountQuery {
+                    profile_id: query_profile,
+                })
+        })
+        .await
+        {
+            Ok(Ok(account)) => account,
+            Ok(Err(error)) => {
+                settle_receive_handle(&manager, handle, account_error_state(&error));
+                guard.disarm();
+                return;
+            }
+            Err(_) => {
+                settle_receive_handle(&manager, handle, WalletActionWatchState::Degraded);
+                guard.disarm();
+                return;
+            }
         };
         if observed.account_id.as_deref() != Some(account_id.as_str()) {
             return;
         }
-        if incoming_transactions(&observed)
-            .difference(&baseline_transactions)
-            .next()
-            .is_none()
+        if let Some(state) = account_state(&observed) {
+            settle_receive_handle(&manager, handle, state);
+            guard.disarm();
+            return;
+        }
+        let Some(observed_checkpoint) = observed.sync.current_cursor else {
+            settle_receive_handle(&manager, handle, WalletActionWatchState::Degraded);
+            guard.disarm();
+            return;
+        };
+        if observed_checkpoint <= starting_checkpoint
+            || confirmed_incoming_transactions(&observed)
+                .difference(&baseline_transactions)
+                .next()
+                .is_none()
         {
             continue;
         }
-        let Ok(observation) = WalletActionWatchObservation::incoming_arrival(
-            &account_id,
-            starting_checkpoint.saturating_add(1),
-        ) else {
+        let Ok(observation) =
+            WalletActionWatchObservation::incoming_arrival(&account_id, observed_checkpoint)
+        else {
             return;
         };
         let _ = manager.observe(handle, observation, now_millis);
@@ -161,11 +251,78 @@ pub(crate) async fn observe_receive_arrival(
     }
 }
 
-fn incoming_transactions(account: &WalletAccountView) -> BTreeSet<String> {
+fn synchronized_account_checkpoint(account: &WalletAccountView) -> Option<u64> {
+    if account_state(account).is_none() {
+        account.sync.current_cursor
+    } else {
+        None
+    }
+}
+
+fn account_state(account: &WalletAccountView) -> Option<WalletActionWatchState> {
+    if account.source == "unavailable" || account.sync.state == "unavailable" {
+        Some(WalletActionWatchState::Offline)
+    } else if account.source != "live" || account.sync.state != "synced" {
+        Some(WalletActionWatchState::Degraded)
+    } else {
+        None
+    }
+}
+
+fn account_error_state(error: &WalletAccountError) -> WalletActionWatchState {
+    if matches!(
+        error,
+        WalletAccountError::Port(WalletAccountPortError::Unavailable)
+    ) {
+        WalletActionWatchState::Offline
+    } else {
+        WalletActionWatchState::Degraded
+    }
+}
+
+fn publish_receive_terminal(
+    manager: &std::sync::Arc<dyn oxid_wallet_application::ManageWalletActionWatchUseCase>,
+    account_id: &str,
+    starting_checkpoint: u64,
+    state: WalletActionWatchState,
+) {
+    let Ok(watch) = WalletActionWatch::incoming_arrival(account_id, starting_checkpoint) else {
+        return;
+    };
+    let now_millis = monotonic_millis();
+    let Ok(Some(handle)) = manager.admit(
+        watch,
+        now_millis.saturating_add(ACTION_WATCH_DURATION_MILLIS),
+        now_millis,
+    ) else {
+        return;
+    };
+    settle_receive_handle(manager, handle, state);
+}
+
+fn settle_receive_handle(
+    manager: &std::sync::Arc<dyn oxid_wallet_application::ManageWalletActionWatchUseCase>,
+    handle: WalletActionWatchHandle,
+    state: WalletActionWatchState,
+) {
+    match state {
+        WalletActionWatchState::Offline => {
+            let _ = manager.offline(handle);
+        }
+        WalletActionWatchState::Degraded => {
+            let _ = manager.degraded(handle);
+        }
+        _ => debug_assert!(false, "receive failure must be offline or degraded"),
+    }
+}
+
+fn confirmed_incoming_transactions(account: &WalletAccountView) -> BTreeSet<String> {
     account
         .transactions
         .iter()
-        .filter(|transaction| transaction.direction == "incoming")
+        .filter(|transaction| {
+            transaction.direction == "incoming" && transaction.status == "confirmed"
+        })
         .map(|transaction| transaction.transaction_id.clone())
         .collect()
 }
@@ -288,7 +445,46 @@ mod tests {
         CreateWalletProfileCommand, SelectWalletProfileCommand, WalletAccountQuery,
         WalletActionWatch, WalletActionWatchObservation, WalletRealmFacetState,
         WalletRealmLifecycleIdentity, WalletRealmLifecycleInput, WalletRealmReconciliationState,
+        WalletSyncStatusView, WalletTransactionView,
     };
+
+    fn account(
+        source: &str,
+        sync_state: &str,
+        cursor: Option<u64>,
+        transactions: Vec<WalletTransactionView>,
+    ) -> WalletAccountView {
+        WalletAccountView {
+            chain: "midnight".to_owned(),
+            network_id: "undeployed".to_owned(),
+            network_name: "Standalone".to_owned(),
+            network_environment: "undeployed".to_owned(),
+            account_id: Some("account-ui".to_owned()),
+            source: source.to_owned(),
+            addresses: Vec::new(),
+            balances: Vec::new(),
+            sync: WalletSyncStatusView {
+                state: sync_state.to_owned(),
+                current_cursor: cursor,
+                target_cursor: cursor,
+                chain_tip_height: cursor,
+                updated_at_millis: None,
+            },
+            transactions,
+        }
+    }
+
+    fn transaction(id: &str, direction: &str, status: &str) -> WalletTransactionView {
+        WalletTransactionView {
+            transaction_id: id.to_owned(),
+            direction: direction.to_owned(),
+            status: status.to_owned(),
+            block_height: None,
+            observed_at_millis: None,
+            changes: Vec::new(),
+            fee: None,
+        }
+    }
 
     fn services_with_selected_realm() -> oxid_composition::ApplicationServices {
         let services = oxid_composition::compose_in_memory();
@@ -454,6 +650,46 @@ mod tests {
             )
             .map(|projection| projection.state),
             Some(WalletActionWatchState::Confirmed)
+        );
+    }
+
+    #[test]
+    fn receive_baseline_requires_a_live_synchronized_chain_cursor() {
+        assert_eq!(
+            synchronized_account_checkpoint(&account("live", "synced", Some(7), Vec::new())),
+            Some(7)
+        );
+        assert_eq!(
+            synchronized_account_checkpoint(&account("cached", "synced", Some(7), Vec::new())),
+            None
+        );
+        assert_eq!(
+            account_state(&account("unavailable", "unavailable", None, Vec::new())),
+            Some(WalletActionWatchState::Offline)
+        );
+        assert_eq!(
+            account_state(&account("live", "stalled", Some(7), Vec::new())),
+            Some(WalletActionWatchState::Degraded)
+        );
+    }
+
+    #[test]
+    fn receive_observation_uses_only_confirmed_incoming_rows() {
+        let observed = account(
+            "live",
+            "synced",
+            Some(9),
+            vec![
+                transaction("confirmed-incoming", "incoming", "confirmed"),
+                transaction("pending-incoming", "incoming", "pending"),
+                transaction("failed-incoming", "incoming", "failed"),
+                transaction("confirmed-outgoing", "outgoing", "confirmed"),
+            ],
+        );
+
+        assert_eq!(
+            confirmed_incoming_transactions(&observed),
+            BTreeSet::from(["confirmed-incoming".to_owned()])
         );
     }
 
