@@ -2694,6 +2694,10 @@ textarea:focus-visible {
   background: var(--warning);
 }
 
+.action-watch-status.is-muted .action-watch-status__mark {
+  opacity: 0.55;
+}
+
 .development-card {
   border-color: color-mix(in srgb, var(--warning) 26%, transparent);
   background:
