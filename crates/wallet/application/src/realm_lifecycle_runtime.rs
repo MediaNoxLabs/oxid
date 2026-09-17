@@ -5,10 +5,11 @@
 use crate::{
     DEFAULT_WALLET_REALM_LIFECYCLE_REQUEST_TIMEOUT_MILLIS, ReconcileSelectedWalletRealmUseCase,
     SelectedWalletRealmProjection, SelectedWalletRealmSyncCommand, SelectedWalletRealmSyncError,
-    WalletActionWatch, WalletActionWatchObservation, WalletActionWatchProjection,
-    WalletActionWatchRuntime, WalletRealmFacetState, WalletRealmLifecycleDecision,
-    WalletRealmLifecycleIdentity, WalletRealmLifecycleInput, WalletRealmLifecyclePolicy,
-    WalletRealmLifecyclePolicyConfig, WalletRealmLifecycleRequest, WalletRealmReconciliationState,
+    WalletActionWatch, WalletActionWatchHandle, WalletActionWatchObservation,
+    WalletActionWatchProjection, WalletActionWatchRuntime, WalletRealmFacetState,
+    WalletRealmLifecycleDecision, WalletRealmLifecycleIdentity, WalletRealmLifecycleInput,
+    WalletRealmLifecyclePolicy, WalletRealmLifecyclePolicyConfig, WalletRealmLifecycleRequest,
+    WalletRealmReconciliationState,
 };
 use std::{
     error::Error,
@@ -312,17 +313,17 @@ impl WalletRealmLifecycleService {
         watch: WalletActionWatch,
         deadline_millis: u64,
         now_millis: u64,
-    ) -> Result<(), WalletRealmLifecycleError> {
+    ) -> Result<Option<WalletActionWatchHandle>, WalletRealmLifecycleError> {
         let mut state = self
             .state
             .lock()
             .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
-        state.action_watch.admit(watch, deadline_millis, now_millis);
-        Ok(())
+        Ok(state.action_watch.admit(watch, deadline_millis, now_millis))
     }
 
     pub fn observe_action_watch(
         &self,
+        handle: WalletActionWatchHandle,
         observation: WalletActionWatchObservation,
         now_millis: u64,
     ) -> Result<(), WalletRealmLifecycleError> {
@@ -330,43 +331,56 @@ impl WalletRealmLifecycleService {
             .state
             .lock()
             .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
-        state.action_watch.observe(observation, now_millis);
+        state.action_watch.observe(handle, observation, now_millis);
         Ok(())
     }
 
-    pub fn timeout_action_watch(&self, now_millis: u64) -> Result<(), WalletRealmLifecycleError> {
+    pub fn timeout_action_watch(
+        &self,
+        handle: WalletActionWatchHandle,
+        now_millis: u64,
+    ) -> Result<(), WalletRealmLifecycleError> {
         let mut state = self
             .state
             .lock()
             .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
-        state.action_watch.timeout(now_millis);
+        state.action_watch.timeout(handle, now_millis);
         Ok(())
     }
 
-    pub fn cancel_action_watch(&self) -> Result<(), WalletRealmLifecycleError> {
+    pub fn cancel_action_watch(
+        &self,
+        handle: WalletActionWatchHandle,
+    ) -> Result<(), WalletRealmLifecycleError> {
         let mut state = self
             .state
             .lock()
             .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
-        state.action_watch.cancel();
+        state.action_watch.cancel(handle);
         Ok(())
     }
 
-    pub fn suspend_action_watch(&self) -> Result<(), WalletRealmLifecycleError> {
+    pub fn suspend_action_watch(
+        &self,
+        handle: WalletActionWatchHandle,
+    ) -> Result<(), WalletRealmLifecycleError> {
         let mut state = self
             .state
             .lock()
             .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
-        state.action_watch.suspend();
+        state.action_watch.suspend(handle);
         Ok(())
     }
 
-    pub fn resume_action_watch(&self) -> Result<(), WalletRealmLifecycleError> {
+    pub fn resume_action_watch(
+        &self,
+        handle: WalletActionWatchHandle,
+    ) -> Result<(), WalletRealmLifecycleError> {
         let mut state = self
             .state
             .lock()
             .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
-        state.action_watch.resume();
+        state.action_watch.resume(handle);
         Ok(())
     }
 
