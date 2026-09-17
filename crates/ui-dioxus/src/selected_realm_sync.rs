@@ -196,6 +196,27 @@ pub(super) fn account_sync_card_accepts_projection(
     )
 }
 
+pub(super) fn finish_account_sync_card_action(
+    mut state: Signal<AccountSyncCardState>,
+    error: Option<String>,
+) {
+    let next = match state.read().clone() {
+        AccountSyncCardState::Ready {
+            realm,
+            operation_error,
+            ..
+        } => Some(AccountSyncCardState::Ready {
+            realm,
+            action_busy: false,
+            operation_error: error.or(operation_error),
+        }),
+        AccountSyncCardState::Loading | AccountSyncCardState::Failed(_) => None,
+    };
+    if let Some(next) = next {
+        state.set(next);
+    }
+}
+
 fn retain_polled_card_feedback(
     same_realm: bool,
     candidate_revision: u64,
