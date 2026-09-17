@@ -23,7 +23,9 @@ pub struct WalletDustRegistrationSettlementIdentity {
 pub struct WalletDustRegistrationSettlementRegistration {
     pub draft_id: WalletTransactionDraftId,
     pub transaction_id: Option<ChainTransactionId>,
+    /// Monotonic sequence shared by finality and reconciliation observations.
     pub observation_revision: u64,
+    /// Monotonic DUST snapshot sequence for this registration.
     pub dust_revision: u64,
     pub included: bool,
 }
@@ -70,6 +72,8 @@ pub struct WalletDustRegistrationSettlementProjection {
     pub registration: Option<WalletDustRegistrationSettlementRegistration>,
     pub checkpoint: Option<WalletDustRegistrationSettlementCheckpoint>,
     pub preparation_revision: u64,
+    /// Monotonic sequence shared by every recoverable-status event.
+    pub recovery_revision: u64,
     resume_state: Option<WalletDustRegistrationSettlementState>,
 }
 
@@ -81,6 +85,7 @@ impl Default for WalletDustRegistrationSettlementProjection {
             registration: None,
             checkpoint: None,
             preparation_revision: 0,
+            recovery_revision: 0,
             resume_state: None,
         }
     }
@@ -136,26 +141,33 @@ pub enum WalletDustRegistrationSettlementEvent {
     },
     Offline {
         identity: WalletDustRegistrationSettlementIdentity,
+        revision: u64,
     },
     TimedOut {
         identity: WalletDustRegistrationSettlementIdentity,
+        revision: u64,
     },
     Degraded {
         identity: WalletDustRegistrationSettlementIdentity,
+        revision: u64,
     },
     Suspended {
         identity: WalletDustRegistrationSettlementIdentity,
+        revision: u64,
     },
     Resumed {
         identity: WalletDustRegistrationSettlementIdentity,
+        revision: u64,
     },
     Retry {
         identity: WalletDustRegistrationSettlementIdentity,
+        revision: u64,
     },
-    /// Reset this projection after its currently selected identity is superseded.
+    /// Retire this projection after its selected identity is superseded.
     ///
-    /// The identity is the outgoing identity owned by this projection. A newer
-    /// selection starts a replacement projection with an `Eligibility` event.
+    /// The outgoing identity remains as an unavailable tombstone so delayed
+    /// observations cannot resurrect it. A strictly newer selection starts a
+    /// replacement projection with an `Eligibility` event.
     Superseded {
         identity: WalletDustRegistrationSettlementIdentity,
     },
@@ -206,6 +218,12 @@ pub fn reduce_wallet_dust_registration_settlement(
     } else {
         projection.clone()
     };
+    if let Some(revision) = recovery_revision(&event) {
+        if revision <= projection.recovery_revision {
+            return projection.clone();
+        }
+        next.recovery_revision = revision;
+    }
     match event {
         WalletDustRegistrationSettlementEvent::Eligibility {
             identity,
@@ -486,8 +504,14 @@ pub fn reduce_wallet_dust_registration_settlement(
         {
             resume_recoverable_state(&mut next);
         }
+        WalletDustRegistrationSettlementEvent::Resumed { .. }
+        | WalletDustRegistrationSettlementEvent::Retry { .. } => {}
         WalletDustRegistrationSettlementEvent::Superseded { .. } => {
-            return WalletDustRegistrationSettlementProjection::default();
+            next.registration = None;
+            set_state(
+                &mut next,
+                WalletDustRegistrationSettlementState::Unavailable,
+            );
         }
         _ => return projection.clone(),
     }
@@ -649,13 +673,25 @@ fn event_identity(
         | WalletDustRegistrationSettlementEvent::RegistrationReconciled { identity, .. }
         | WalletDustRegistrationSettlementEvent::DustRefreshed { identity, .. }
         | WalletDustRegistrationSettlementEvent::Cancelled { identity }
-        | WalletDustRegistrationSettlementEvent::Offline { identity }
-        | WalletDustRegistrationSettlementEvent::TimedOut { identity }
-        | WalletDustRegistrationSettlementEvent::Degraded { identity }
-        | WalletDustRegistrationSettlementEvent::Suspended { identity }
-        | WalletDustRegistrationSettlementEvent::Resumed { identity }
-        | WalletDustRegistrationSettlementEvent::Retry { identity }
+        | WalletDustRegistrationSettlementEvent::Offline { identity, .. }
+        | WalletDustRegistrationSettlementEvent::TimedOut { identity, .. }
+        | WalletDustRegistrationSettlementEvent::Degraded { identity, .. }
+        | WalletDustRegistrationSettlementEvent::Suspended { identity, .. }
+        | WalletDustRegistrationSettlementEvent::Resumed { identity, .. }
+        | WalletDustRegistrationSettlementEvent::Retry { identity, .. }
         | WalletDustRegistrationSettlementEvent::Superseded { identity } => identity,
+    }
+}
+
+fn recovery_revision(event: &WalletDustRegistrationSettlementEvent) -> Option<u64> {
+    match event {
+        WalletDustRegistrationSettlementEvent::Offline { revision, .. }
+        | WalletDustRegistrationSettlementEvent::TimedOut { revision, .. }
+        | WalletDustRegistrationSettlementEvent::Degraded { revision, .. }
+        | WalletDustRegistrationSettlementEvent::Suspended { revision, .. }
+        | WalletDustRegistrationSettlementEvent::Resumed { revision, .. }
+        | WalletDustRegistrationSettlementEvent::Retry { revision, .. } => Some(*revision),
+        _ => None,
     }
 }
 
@@ -983,6 +1019,7 @@ mod tests {
             &submitting,
             WalletDustRegistrationSettlementEvent::Offline {
                 identity: identity.clone(),
+                revision: 1,
             },
         );
         assert_eq!(offline.checkpoint, submitting.checkpoint);
@@ -991,6 +1028,7 @@ mod tests {
                 &offline,
                 WalletDustRegistrationSettlementEvent::Retry {
                     identity: identity.clone(),
+                    revision: 2,
                 },
             )
             .state,
@@ -1001,6 +1039,7 @@ mod tests {
                 &offline,
                 WalletDustRegistrationSettlementEvent::Retry {
                     identity: identity.clone(),
+                    revision: 2,
                 },
             )
             .registration
@@ -1012,6 +1051,7 @@ mod tests {
             &confirming,
             WalletDustRegistrationSettlementEvent::TimedOut {
                 identity: identity.clone(),
+                revision: 1,
             },
         );
         assert_eq!(
@@ -1019,6 +1059,7 @@ mod tests {
                 &timed_out,
                 WalletDustRegistrationSettlementEvent::Retry {
                     identity: identity.clone(),
+                    revision: 2,
                 },
             )
             .state,
@@ -1029,6 +1070,7 @@ mod tests {
                 &timed_out,
                 WalletDustRegistrationSettlementEvent::Resumed {
                     identity: identity.clone(),
+                    revision: 2,
                 },
             )
             .state,
@@ -1048,6 +1090,7 @@ mod tests {
             &included,
             WalletDustRegistrationSettlementEvent::Degraded {
                 identity: identity.clone(),
+                revision: 1,
             },
         );
         assert_eq!(
@@ -1055,6 +1098,7 @@ mod tests {
                 &degraded,
                 WalletDustRegistrationSettlementEvent::Retry {
                     identity: identity.clone(),
+                    revision: 2,
                 },
             )
             .state,
@@ -1064,6 +1108,7 @@ mod tests {
             &confirming,
             WalletDustRegistrationSettlementEvent::Degraded {
                 identity: identity.clone(),
+                revision: 1,
             },
         );
         let included_while_degraded = reduce(
@@ -1084,6 +1129,7 @@ mod tests {
                 &included_while_degraded,
                 WalletDustRegistrationSettlementEvent::Retry {
                     identity: identity.clone(),
+                    revision: 2,
                 },
             )
             .state,
@@ -1106,6 +1152,7 @@ mod tests {
             &dropped_while_degraded,
             WalletDustRegistrationSettlementEvent::Retry {
                 identity: identity.clone(),
+                revision: 2,
             },
         );
         assert_eq!(
@@ -1126,6 +1173,7 @@ mod tests {
             &ready,
             WalletDustRegistrationSettlementEvent::Suspended {
                 identity: identity.clone(),
+                revision: 1,
             },
         );
         assert_eq!(
@@ -1133,6 +1181,7 @@ mod tests {
                 &suspended,
                 WalletDustRegistrationSettlementEvent::Resumed {
                     identity: identity.clone(),
+                    revision: 2,
                 },
             )
             .state,
@@ -1154,6 +1203,7 @@ mod tests {
             &submitting(),
             WalletDustRegistrationSettlementEvent::Offline {
                 identity: identity.clone(),
+                revision: 1,
             },
         );
 
@@ -1178,7 +1228,10 @@ mod tests {
 
         let retried = reduce(
             &accepted,
-            WalletDustRegistrationSettlementEvent::Retry { identity },
+            WalletDustRegistrationSettlementEvent::Retry {
+                identity,
+                revision: 2,
+            },
         );
         assert_eq!(
             retried.state,
@@ -1190,6 +1243,7 @@ mod tests {
             &offline,
             WalletDustRegistrationSettlementEvent::Retry {
                 identity: selected_identity(),
+                revision: 2,
             },
         );
         assert_eq!(
@@ -1221,6 +1275,7 @@ mod tests {
                 &projection,
                 WalletDustRegistrationSettlementEvent::Offline {
                     identity: other.clone(),
+                    revision: 1,
                 },
             ),
             projection
@@ -1236,6 +1291,7 @@ mod tests {
                 &cancelled,
                 WalletDustRegistrationSettlementEvent::Retry {
                     identity: selected.clone(),
+                    revision: 1,
                 },
             ),
             cancelled
@@ -1263,6 +1319,7 @@ mod tests {
             &awaiting,
             WalletDustRegistrationSettlementEvent::Offline {
                 identity: selected.clone(),
+                revision: 1,
             },
         );
         assert_eq!(
@@ -1290,17 +1347,34 @@ mod tests {
                 &cancelled,
                 WalletDustRegistrationSettlementEvent::Offline {
                     identity: selected.clone(),
+                    revision: 1,
                 },
             ),
             cancelled
         );
         let superseded = reduce(
             &projection,
-            WalletDustRegistrationSettlementEvent::Superseded { identity: selected },
+            WalletDustRegistrationSettlementEvent::Superseded {
+                identity: selected.clone(),
+            },
         );
         assert_eq!(
-            superseded,
-            WalletDustRegistrationSettlementProjection::default()
+            superseded.state,
+            WalletDustRegistrationSettlementState::Unavailable
+        );
+        assert_eq!(superseded.identity, Some(selected.clone()));
+        assert!(superseded.registration.is_none());
+        assert_eq!(
+            reduce(
+                &superseded,
+                WalletDustRegistrationSettlementEvent::Eligibility {
+                    identity: selected,
+                    revision: 2,
+                    eligible: true,
+                },
+            )
+            .state,
+            WalletDustRegistrationSettlementState::Unavailable
         );
         let replacement = reduce(
             &superseded,
@@ -1313,6 +1387,57 @@ mod tests {
         assert_eq!(replacement.identity, Some(other));
         assert_eq!(
             replacement.state,
+            WalletDustRegistrationSettlementState::ActionRequired
+        );
+    }
+
+    #[test]
+    fn recoverable_status_revisions_reject_delayed_state_changes() {
+        let identity = selected_identity();
+        let projection = eligible();
+        let early_resume = reduce(
+            &projection,
+            WalletDustRegistrationSettlementEvent::Resumed {
+                identity: identity.clone(),
+                revision: 2,
+            },
+        );
+        assert_eq!(
+            early_resume.state,
+            WalletDustRegistrationSettlementState::ActionRequired
+        );
+        assert_eq!(early_resume.recovery_revision, 2);
+        assert_eq!(
+            reduce(
+                &early_resume,
+                WalletDustRegistrationSettlementEvent::Suspended {
+                    identity: identity.clone(),
+                    revision: 1,
+                },
+            ),
+            early_resume
+        );
+
+        let suspended = reduce(
+            &early_resume,
+            WalletDustRegistrationSettlementEvent::Suspended {
+                identity: identity.clone(),
+                revision: 3,
+            },
+        );
+        assert_eq!(
+            suspended.state,
+            WalletDustRegistrationSettlementState::Suspended
+        );
+        assert_eq!(
+            reduce(
+                &suspended,
+                WalletDustRegistrationSettlementEvent::Resumed {
+                    identity,
+                    revision: 4,
+                },
+            )
+            .state,
             WalletDustRegistrationSettlementState::ActionRequired
         );
     }
@@ -1332,6 +1457,7 @@ mod tests {
             &not_eligible,
             WalletDustRegistrationSettlementEvent::Offline {
                 identity: selected.clone(),
+                revision: 1,
             },
         );
         let refreshed = reduce(
@@ -1347,6 +1473,7 @@ mod tests {
                 &refreshed,
                 WalletDustRegistrationSettlementEvent::Retry {
                     identity: selected.clone(),
+                    revision: 2,
                 },
             )
             .state,
@@ -1370,7 +1497,10 @@ mod tests {
         assert_eq!(
             reduce(
                 &replaced,
-                WalletDustRegistrationSettlementEvent::Offline { identity: selected },
+                WalletDustRegistrationSettlementEvent::Offline {
+                    identity: selected,
+                    revision: 1,
+                },
             ),
             replaced
         );
