@@ -134,15 +134,12 @@ async fn observe_receive_arrival(
     let manager = services.manage_wallet_action_watch();
     let fallback_checkpoint = initial.sync.current_cursor.unwrap_or_default();
 
-    let refresh = services.sync_selected_wallet_realm();
-    let refresh_profile = profile_id.clone();
-    let preflight = crate::run_ui_future(async move {
-        refresh
-            .execute(SelectedWalletRealmSyncCommand {
-                profile_id: refresh_profile,
-            })
-            .await
-    })
+    let preflight = crate::run_ui_future(crate::wallet_realm_lifecycle::explicit_retry(
+        services.clone(),
+        SelectedWalletRealmSyncCommand {
+            profile_id: profile_id.clone(),
+        },
+    ))
     .await;
     if !receive_watch_supported(selected_kind().as_deref()) {
         return;
