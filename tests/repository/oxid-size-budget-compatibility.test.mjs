@@ -11,12 +11,14 @@ const result = (entries, config = sizeConfig) => computeOxidSizeBudget({ numstat
 test("Oxid native source languages receive deterministic logic LOC", async () => {
   assert.equal((await result([[8, 2, "crates/core/src/lib.rs"]])).wholeLogicLoc, 10);
   assert.equal((await result([[4, 0, "apps/android/Main.kt"], [6, 0, "apps/ios/App.swift"]])).wholeLogicLoc, 10);
+  assert.equal((await result([[7, 3, "bootstrap.sh"]])).wholeLogicLoc, 10);
 });
 
 test("recognized embedded and path native tests retain the configured discount", async () => {
   assert.equal((await result([[8, 0, "crates/core/tests/login.rs"]])).wholeLogicLoc, 2);
   assert.equal((await result([[8, 0, "apps/android/src/test/AuthTest.kt"]])).wholeLogicLoc, 2);
   assert.equal((await result([[8, 0, "apps/ios/WalletTests.swift"]])).wholeLogicLoc, 2);
+  assert.equal((await result([[8, 0, "tests/repository/bootstrap-contract.sh"]])).wholeLogicLoc, 2);
 });
 
 test("docs, config, CI, generated paths, and lockfiles are excluded", async () => {

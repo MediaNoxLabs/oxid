@@ -73,6 +73,27 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(smoke, /Failed to load skill/u);
   assert.match(smoke, /Pi did not expose the tracked scenario and use-case commands/u);
   assert.match(bootstrap, /bash scripts\/check-pi-devshell\.sh/u);
+  const ciDispatchGuard = bootstrap.indexOf('if [[ -n "${CI:-}" ]]');
+  const selectPiWorktree = bootstrap.indexOf('pi_cwd="$(node "$repo_root/scripts/loop/bootstrap-dev-loop.mjs"', ciDispatchGuard);
+  const validatePiWorktree = bootstrap.indexOf('if [[ "$pi_cwd" != /* || ! -d "$pi_cwd" ]]', selectPiWorktree);
+  const enterPiWorktree = bootstrap.indexOf('cd -- "$pi_cwd" || {', validatePiWorktree);
+  const auditPiConfig = bootstrap.indexOf("node scripts/factory/audit-pi.mjs --config-only --enforce-config", enterPiWorktree);
+  const changedWorktreeGuard = bootstrap.indexOf('if [[ "$pi_cwd" != "$repo_root" ]]', auditPiConfig);
+  const provisionPiPackages = bootstrap.indexOf("node scripts/factory/provision-pi-packages.mjs", changedWorktreeGuard);
+  const auditSelectedWorktree = bootstrap.indexOf("node scripts/factory/audit-pi.mjs --config-only --enforce-config", auditPiConfig + 1);
+  const smokePiRuntime = bootstrap.indexOf("bash scripts/check-pi-devshell.sh", auditSelectedWorktree);
+  const dispatchPi = bootstrap.indexOf('exec pi "$@"', smokePiRuntime);
+  assert.ok(ciDispatchGuard >= 0
+    && selectPiWorktree > ciDispatchGuard
+    && validatePiWorktree > selectPiWorktree
+    && enterPiWorktree > validatePiWorktree
+    && auditPiConfig > enterPiWorktree
+    && changedWorktreeGuard > auditPiConfig
+    && provisionPiPackages > changedWorktreeGuard
+    && auditSelectedWorktree > provisionPiPackages
+    && smokePiRuntime > auditSelectedWorktree
+    && dispatchPi > smokePiRuntime,
+  "Pi bootstrap must reject CI before mutation, pre-audit, attach a changed worktree closure, re-audit, smoke, then dispatch");
   assert.match(bootstrap, /node scripts\/git-hooks\/check-github-web-flow-key\.mjs/u);
   const discoverNix = bootstrap.indexOf('[[ -x "$nix_daemon_profile_bin/nix" ]]');
   const prependNix = bootstrap.indexOf('export PATH="$nix_daemon_profile_bin:$PATH"');
