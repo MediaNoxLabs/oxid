@@ -10,7 +10,7 @@ use oxid_wallet_application::{
 use crate::WalletUiServices;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum WalletActionWatchContext {
+pub(crate) enum WalletActionWatchContext {
     Send,
     Receive,
 }
@@ -42,7 +42,7 @@ pub(super) fn action_watch_projection_for(
     projection.filter(|projection| context.accepts(projection.kind))
 }
 
-pub(super) fn action_watch_projection_from(
+pub(crate) fn action_watch_projection_from(
     services: &WalletUiServices,
     context: WalletActionWatchContext,
 ) -> Option<WalletActionWatchProjection> {
@@ -118,7 +118,7 @@ const fn present(state: WalletActionWatchState) -> WalletActionWatchPresentation
 }
 
 #[component]
-pub(super) fn WalletActionWatchStatus(projection: WalletActionWatchProjection) -> Element {
+pub(crate) fn WalletActionWatchStatus(projection: WalletActionWatchProjection) -> Element {
     let presentation = present(projection.state);
     let class = format!("action-watch-status {}", presentation.class);
     rsx! {
