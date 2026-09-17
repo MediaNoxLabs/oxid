@@ -84,10 +84,8 @@ pub(super) async fn explicit_retry(
     )
     .await
     .map_err(|()| "selected-realm reconciliation did not settle before its deadline".to_owned())?;
-    if matches!(
-        result.decision,
-        oxid_wallet_application::WalletRealmLifecycleDecision::Retained(_)
-    ) {
+    let status_after = lifecycle.status().map_err(|error| error.to_string())?;
+    if preflight_requires_idle_wait(&result, &status_after) {
         await_lifecycle_idle(Arc::clone(&lifecycle)).await?;
     }
     let projection = result.projection.map_or_else(
@@ -100,6 +98,16 @@ pub(super) async fn explicit_retry(
         Ok,
     )?;
     Ok(projection)
+}
+
+fn preflight_requires_idle_wait(
+    result: &WalletRealmLifecycleResult,
+    status: &WalletRealmLifecycleStatus,
+) -> bool {
+    matches!(
+        result.decision,
+        oxid_wallet_application::WalletRealmLifecycleDecision::Retained(_)
+    ) || status.in_flight.is_some()
 }
 
 async fn await_lifecycle_idle(
@@ -439,5 +447,24 @@ mod tests {
         scheduled.in_flight = None;
         scheduled.in_flight_deadline_millis = None;
         assert_eq!(next_driver_wait_millis(&scheduled, 1_000), None);
+    }
+
+    #[test]
+    fn duplicate_preflight_waits_for_the_already_active_request() {
+        let selected = identity("profile_one", "undeployed");
+        let request = oxid_wallet_application::WalletRealmLifecycleRequest {
+            identity: selected.clone(),
+            trigger: oxid_wallet_application::WalletRealmReconciliationTrigger::ActionPreflight,
+            sequence: 1,
+        };
+        let mut active = status(Some(selected));
+        active.in_flight = Some(request);
+        let ignored = WalletRealmLifecycleResult {
+            decision: oxid_wallet_application::WalletRealmLifecycleDecision::Ignored,
+            projection: None,
+            settlement: None,
+        };
+
+        assert!(preflight_requires_idle_wait(&ignored, &active));
     }
 }
