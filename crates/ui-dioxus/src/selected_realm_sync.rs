@@ -181,6 +181,21 @@ fn merge_polled_account_sync_card(
     )
 }
 
+pub(super) fn account_sync_card_accepts_projection(
+    current: &AccountSyncCardState,
+    candidate: &SelectedWalletRealmProjection,
+) -> bool {
+    matches!(
+        current,
+        AccountSyncCardState::Ready { realm, .. }
+            if projection_can_publish(
+                candidate.identity == realm.identity,
+                candidate.revision,
+                realm.revision,
+            )
+    )
+}
+
 fn retain_polled_card_feedback(
     same_realm: bool,
     candidate_revision: u64,
@@ -188,8 +203,16 @@ fn retain_polled_card_feedback(
     action_busy: bool,
     operation_error: &Option<String>,
 ) -> Option<(bool, Option<String>)> {
-    (same_realm && candidate_revision >= current_revision)
+    projection_can_publish(same_realm, candidate_revision, current_revision)
         .then(|| (action_busy, operation_error.clone()))
+}
+
+const fn projection_can_publish(
+    same_realm: bool,
+    candidate_revision: u64,
+    current_revision: u64,
+) -> bool {
+    same_realm && candidate_revision >= current_revision
 }
 
 fn poll_still_owns_account_sync_card(

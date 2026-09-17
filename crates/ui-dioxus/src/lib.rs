@@ -191,12 +191,13 @@ use profile_quick_switcher::{ProfileSwitcherMenu, profile_switch_is_allowed};
 use screen_privacy::protect_suspended_snapshot;
 use screen_privacy::route_forces_screen_privacy;
 use selected_realm_sync::{
-    AccountSyncCardState, begin_account_sync_card_observation, dust_status_pill_class,
-    non_native_shielded_balances, poll_account_sync, reload_account_sync_card,
-    selected_realm_chain_tip, selected_realm_dust_balance, selected_realm_dust_note,
-    selected_realm_dust_state, selected_realm_is_syncing, selected_realm_provenance,
-    selected_realm_shielded_balance, selected_realm_shielded_note, selected_realm_shielded_state,
-    selected_realm_sync_progress, selected_realm_sync_state,
+    AccountSyncCardState, account_sync_card_accepts_projection,
+    begin_account_sync_card_observation, dust_status_pill_class, non_native_shielded_balances,
+    poll_account_sync, reload_account_sync_card, selected_realm_chain_tip,
+    selected_realm_dust_balance, selected_realm_dust_note, selected_realm_dust_state,
+    selected_realm_is_syncing, selected_realm_provenance, selected_realm_shielded_balance,
+    selected_realm_shielded_note, selected_realm_shielded_state, selected_realm_sync_progress,
+    selected_realm_sync_state,
 };
 #[cfg(test)]
 use selected_realm_sync::{
@@ -5978,7 +5979,10 @@ fn AccountSyncCard(
                                 };
                                 match result {
                                     Ok(Ok(updated)) => {
-                                        if !updated.supersedes(&retained) {
+                                        if !account_sync_card_accepts_projection(
+                                            &action_state.read(),
+                                            &updated,
+                                        ) {
                                             return;
                                         }
                                         let should_poll = updated.observation.poll_after().is_some();
