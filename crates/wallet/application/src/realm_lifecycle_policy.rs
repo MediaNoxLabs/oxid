@@ -152,6 +152,7 @@ pub struct WalletRealmLifecyclePolicy {
     pending: Option<WalletRealmLifecycleRequest>,
     last_request_millis: Option<u64>,
     last_fresh_millis: Option<u64>,
+    last_failure_millis: Option<u64>,
     retry_count: u8,
     sequence: u64,
 }
@@ -237,9 +238,11 @@ impl WalletRealmLifecyclePolicy {
                 self.in_flight = None;
                 if succeeded {
                     self.retry_count = 0;
+                    self.last_failure_millis = None;
                     self.observe_freshness(now_millis, facets);
                 } else {
                     self.retry_count = self.retry_count.saturating_add(1);
+                    self.last_failure_millis = Some(now_millis);
                 }
                 match self.pending.take() {
                     Some(request) => self.admit(request, now_millis),
@@ -349,7 +352,8 @@ impl WalletRealmLifecyclePolicy {
             .saturating_mul(1_u64 << exponent)
             .min(config.backoff_max_millis)
             .saturating_add(jitter);
-        self.last_request_millis
+        self.last_failure_millis
+            .or(self.last_request_millis)
             .is_none_or(|last| now_millis.saturating_sub(last) >= delay)
     }
 
@@ -362,6 +366,7 @@ impl WalletRealmLifecyclePolicy {
         self.pending = None;
         self.last_request_millis = None;
         self.last_fresh_millis = None;
+        self.last_failure_millis = None;
         self.retry_count = 0;
     }
 }
@@ -812,7 +817,7 @@ mod tests {
             WalletRealmLifecycleInput::ReconciliationFinished {
                 identity: active,
                 sequence: 1,
-                now_millis: 1,
+                now_millis: 1_000,
                 facets: stale(),
                 succeeded: false,
             },
@@ -821,7 +826,7 @@ mod tests {
             policy.reduce(
                 config,
                 WalletRealmLifecycleInput::PeriodicTick {
-                    now_millis: 9 + jitter,
+                    now_millis: 1_009 + jitter,
                     facets: stale(),
                 },
             ),
@@ -831,7 +836,7 @@ mod tests {
             policy.reduce(
                 config,
                 WalletRealmLifecycleInput::PeriodicTick {
-                    now_millis: 10 + jitter,
+                    now_millis: 1_010 + jitter,
                     facets: stale(),
                 },
             ),
