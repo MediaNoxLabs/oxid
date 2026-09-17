@@ -80,6 +80,7 @@ pub struct WalletDustRegistrationSettlementProjection {
     pub preparation_revision: u64,
     /// Monotonic sequence shared by every recoverable-status event.
     pub recovery_revision: u64,
+    abandonment_revision: u64,
     resume_state: Option<WalletDustRegistrationSettlementState>,
     pending_retry_revision: Option<u64>,
 }
@@ -93,6 +94,7 @@ impl Default for WalletDustRegistrationSettlementProjection {
             checkpoint: None,
             preparation_revision: 0,
             recovery_revision: 0,
+            abandonment_revision: 0,
             resume_state: None,
             pending_retry_revision: None,
         }
@@ -307,10 +309,12 @@ pub fn reduce_wallet_dust_registration_settlement(
         } if matches!(
             effective_state(projection),
             WalletDustRegistrationSettlementState::ActionRequired
-        ) && !has_submitted_registration(projection)
+        ) && (!has_submitted_registration(projection)
+            || projection.abandonment_revision > 0)
             && preparation_revision > projection.preparation_revision =>
         {
             next.preparation_revision = preparation_revision;
+            next.abandonment_revision = 0;
             next.registration = Some(WalletDustRegistrationSettlementRegistration {
                 draft_id,
                 transaction_id: None,
@@ -418,6 +422,7 @@ pub fn reduce_wallet_dust_registration_settlement(
                 .as_ref()
                 .is_some_and(|registration| {
                     revision > registration.finality_revision
+                        && revision > projection.abandonment_revision
                         && (!matches!(
                             effective_state(projection),
                             State::NotEligible | State::ActionRequired
@@ -464,11 +469,13 @@ pub fn reduce_wallet_dust_registration_settlement(
                 .as_ref()
                 .is_some_and(|registration| {
                     revision > registration.reconciliation_revision
+                        && revision > projection.abandonment_revision
                         && (reconciliation
                             != WalletDustRegistrationSettlementReconciliation::Dropped
                             || revision >= registration.finality_revision)
                 }) =>
         {
+            next.abandonment_revision = 0;
             if let Some(registration) = &mut next.registration {
                 registration.reconciliation_revision = revision;
                 registration.observation_revision = registration.observation_revision.max(revision);
@@ -544,17 +551,17 @@ pub fn reduce_wallet_dust_registration_settlement(
             transaction_id,
             after_observation_revision,
             ..
-        } if projection.state == State::ActionRequired
+        } if effective_state(projection) == State::ActionRequired
             && has_transaction(projection, &transaction_id)
             && projection
                 .registration
                 .as_ref()
                 .is_some_and(|registration| {
-                    registration.observation_revision == after_observation_revision
+                    registration.observation_revision < after_observation_revision
                         && registration.dust_observation_revision <= after_observation_revision
                 }) =>
         {
-            next.registration = None;
+            next.abandonment_revision = after_observation_revision;
         }
         WalletDustRegistrationSettlementEvent::Cancelled { draft_id, .. }
             if can_cancel(projection) && has_draft(projection, &draft_id) =>
@@ -1873,15 +1880,17 @@ mod tests {
             dropped
         );
         assert_eq!(reduce(&dropped, cancellation(draft())), dropped);
-        let abandoned = reduce(&dropped, abandon_dropped(2));
-        assert!(abandoned.registration.is_none());
+        assert_eq!(reduce(&dropped, abandon_dropped(2)), dropped);
+        let abandoned = reduce(&dropped, abandon_dropped(3));
         assert_eq!(
             reduce(&abandoned, authorization_request(other_draft(), 2)).state,
             State::AwaitingAuthorization
         );
-        assert_eq!(reduce(&recovered, abandon_dropped(2)), recovered);
+        let abandoned_offline = reduce(&reduce(&dropped, offline_event(1)), abandon_dropped(3));
+        assert_eq!(abandoned_offline.abandonment_revision, 3);
+        let superseded_abandonment = reduce(&abandoned, finality(4));
+        assert_eq!(superseded_abandonment.state, State::Reconciling);
         let refreshed = reduce(&dropped, dust_refresh(1, 3, true));
-        assert_eq!(reduce(&refreshed, abandon_dropped(2)), refreshed);
         let included = reduce(
             &refreshed,
             reconciliation(3, WalletDustRegistrationSettlementReconciliation::Included),
