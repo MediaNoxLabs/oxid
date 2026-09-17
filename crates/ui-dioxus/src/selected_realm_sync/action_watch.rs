@@ -158,15 +158,18 @@ async fn observe_receive_arrival(
 
     let baseline_services = services.clone();
     let baseline_profile = profile_id.clone();
-    let baseline = match crate::run_ui_blocking(move || {
+    let baseline = crate::run_ui_blocking(move || {
         baseline_services
             .get_wallet_account()
             .execute(WalletAccountQuery {
                 profile_id: baseline_profile,
             })
     })
-    .await
-    {
+    .await;
+    if !receive_watch_supported(selected_kind().as_deref()) {
+        return;
+    }
+    let baseline = match baseline {
         Ok(Ok(account)) => account,
         Ok(Err(error)) => {
             if publish_receive_terminal(
@@ -191,9 +194,6 @@ async fn observe_receive_arrival(
             return;
         }
     };
-    if !receive_watch_supported(selected_kind().as_deref()) {
-        return;
-    }
     if baseline.account_id.as_deref() != Some(account_id.as_str()) {
         return;
     }
