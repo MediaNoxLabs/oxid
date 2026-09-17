@@ -237,9 +237,14 @@ where
     S: WalletProtectionPort + WalletRootRecoveryPort + 'static,
     M: WalletNetworkPort + WalletAccountDerivationPort + 'static,
 {
-    let Ok(recovery) =
-        WalletRootRecoveryService::new(repository, security, midnight, network_id.clone())
-    else {
+    let network_selection = services.select_wallet_network();
+    let Ok(recovery) = WalletRootRecoveryService::new(
+        repository,
+        security,
+        midnight,
+        network_selection,
+        network_id.clone(),
+    ) else {
         return services;
     };
     #[cfg(any(target_os = "ios", target_os = "android"))]
