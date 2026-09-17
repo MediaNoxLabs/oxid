@@ -2,10 +2,13 @@
 
 use std::sync::Arc;
 
+use oxid_platform_ports::PublicTextExportPort;
 use oxid_wallet_application::{
-    CancelSelectedWalletRealmSyncUseCase, GetSelectedWalletRealmSyncUseCase,
-    GetWalletOperationTimelineUseCase, ManageWalletActionWatchUseCase,
-    ReconcileWalletRealmLifecycleUseCase, SyncSelectedWalletRealmUseCase,
+    CancelSelectedWalletRealmSyncUseCase, DeriveWalletAccountUseCase,
+    GetSelectedWalletRealmSyncUseCase, GetWalletAccountUseCase, GetWalletOperationTimelineUseCase,
+    ListWalletNetworksUseCase, ManageWalletActionWatchUseCase,
+    ReconcileWalletRealmLifecycleUseCase, SelectWalletNetworkUseCase,
+    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase,
 };
 
 use crate::WalletUiServices;
@@ -19,6 +22,40 @@ pub struct WalletRealmSyncUiServices {
     action_watch: Arc<dyn ManageWalletActionWatchUseCase>,
     cancel: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
     timeline: Arc<dyn GetWalletOperationTimelineUseCase>,
+}
+
+/// Midnight account use cases consumed by the Assets page.
+pub struct WalletAccountUiServices {
+    pub(crate) list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
+    pub(crate) select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
+    pub(crate) derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
+    pub(crate) get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
+    pub(crate) sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+    pub(crate) realm_sync: WalletRealmSyncUiServices,
+    pub(crate) public_text_exporter: Arc<dyn PublicTextExportPort>,
+}
+
+impl WalletAccountUiServices {
+    #[must_use]
+    pub fn new(
+        list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
+        select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
+        derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
+        get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
+        sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
+        realm_sync: WalletRealmSyncUiServices,
+        public_text_exporter: Arc<dyn PublicTextExportPort>,
+    ) -> Self {
+        Self {
+            list_wallet_networks,
+            select_wallet_network,
+            derive_wallet_account,
+            get_wallet_account,
+            sync_wallet_account,
+            realm_sync,
+            public_text_exporter,
+        }
+    }
 }
 
 impl WalletRealmSyncUiServices {

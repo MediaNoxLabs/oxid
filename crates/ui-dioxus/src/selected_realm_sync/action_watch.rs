@@ -4,10 +4,15 @@
 
 use dioxus::prelude::*;
 use oxid_wallet_application::{
-    WalletActionWatchKind, WalletActionWatchProjection, WalletActionWatchState,
+    WalletAccountQuery, WalletAccountView, WalletActionWatch, WalletActionWatchKind,
+    WalletActionWatchObservation, WalletActionWatchProjection, WalletActionWatchState,
 };
+use std::{collections::BTreeSet, time::Duration};
 
-use crate::WalletUiServices;
+use crate::{WalletUiServices, wallet_realm_lifecycle::monotonic_millis};
+
+const ACTION_WATCH_POLL_MILLIS: u64 = 250;
+const ACTION_WATCH_DURATION_MILLIS: u64 = 10 * 60 * 1_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WalletActionWatchContext {
@@ -54,6 +59,144 @@ pub(crate) fn action_watch_projection_from(
             .flatten(),
         context,
     )
+}
+
+pub(crate) fn use_action_watch_projection(
+    services: WalletUiServices,
+    context: WalletActionWatchContext,
+) -> Signal<Option<WalletActionWatchProjection>> {
+    let initial = action_watch_projection_from(&services, context);
+    let mut projection = use_signal(|| initial);
+    use_future(move || {
+        let services = services.clone();
+        async move {
+            loop {
+                let next = action_watch_projection_from(&services, context);
+                if projection() != next {
+                    projection.set(next);
+                }
+                tokio::time::sleep(Duration::from_millis(ACTION_WATCH_POLL_MILLIS)).await;
+            }
+        }
+    });
+    projection
+}
+
+pub(crate) fn record_included_transfer(
+    manager: &std::sync::Arc<dyn oxid_wallet_application::ManageWalletActionWatchUseCase>,
+    transaction_id: &str,
+) {
+    let Ok(watch) = WalletActionWatch::submitted_transaction(transaction_id) else {
+        return;
+    };
+    let Ok(observation) = WalletActionWatchObservation::submitted_transaction(transaction_id)
+    else {
+        return;
+    };
+    let now_millis = monotonic_millis();
+    let Ok(Some(handle)) = manager.admit(
+        watch,
+        now_millis.saturating_add(ACTION_WATCH_DURATION_MILLIS),
+        now_millis,
+    ) else {
+        return;
+    };
+    let _ = manager.observe(handle, observation, now_millis);
+}
+
+pub(crate) async fn observe_receive_arrival(
+    services: WalletUiServices,
+    profile_id: String,
+    baseline: WalletAccountView,
+) {
+    let Some(account_id) = baseline.account_id.as_deref() else {
+        return;
+    };
+    let account_id = account_id.to_owned();
+    let baseline_transactions = incoming_transactions(&baseline);
+    let starting_checkpoint = u64::try_from(baseline_transactions.len()).unwrap_or(u64::MAX);
+    let manager = services.manage_wallet_action_watch();
+    let now_millis = monotonic_millis();
+    let deadline_millis = now_millis.saturating_add(ACTION_WATCH_DURATION_MILLIS);
+    let Ok(watch) = WalletActionWatch::incoming_arrival(&account_id, starting_checkpoint) else {
+        return;
+    };
+    let Ok(Some(handle)) = manager.admit(watch, deadline_millis, now_millis) else {
+        return;
+    };
+    let mut guard = ActionWatchCancellation::new(manager.clone(), handle);
+
+    loop {
+        tokio::time::sleep(Duration::from_millis(ACTION_WATCH_POLL_MILLIS)).await;
+        let now_millis = monotonic_millis();
+        if now_millis >= deadline_millis {
+            let _ = manager.timeout(handle, now_millis);
+            guard.disarm();
+            return;
+        }
+        let Ok(observed) = services.get_wallet_account().execute(WalletAccountQuery {
+            profile_id: profile_id.clone(),
+        }) else {
+            continue;
+        };
+        if observed.account_id.as_deref() != Some(account_id.as_str()) {
+            return;
+        }
+        if incoming_transactions(&observed)
+            .difference(&baseline_transactions)
+            .next()
+            .is_none()
+        {
+            continue;
+        }
+        let Ok(observation) = WalletActionWatchObservation::incoming_arrival(
+            &account_id,
+            starting_checkpoint.saturating_add(1),
+        ) else {
+            return;
+        };
+        let _ = manager.observe(handle, observation, now_millis);
+        guard.disarm();
+        return;
+    }
+}
+
+fn incoming_transactions(account: &WalletAccountView) -> BTreeSet<String> {
+    account
+        .transactions
+        .iter()
+        .filter(|transaction| transaction.direction == "incoming")
+        .map(|transaction| transaction.transaction_id.clone())
+        .collect()
+}
+
+struct ActionWatchCancellation {
+    manager: std::sync::Arc<dyn oxid_wallet_application::ManageWalletActionWatchUseCase>,
+    handle: Option<oxid_wallet_application::WalletActionWatchHandle>,
+}
+
+impl ActionWatchCancellation {
+    fn new(
+        manager: std::sync::Arc<dyn oxid_wallet_application::ManageWalletActionWatchUseCase>,
+        handle: oxid_wallet_application::WalletActionWatchHandle,
+    ) -> Self {
+        Self {
+            manager,
+            handle: Some(handle),
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.handle = None;
+    }
+}
+
+impl Drop for ActionWatchCancellation {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle {
+            let _ = self.manager.cancel(handle);
+        }
+    }
 }
 
 const fn present(state: WalletActionWatchState) -> WalletActionWatchPresentation {
@@ -146,7 +289,6 @@ mod tests {
         WalletActionWatch, WalletActionWatchObservation, WalletRealmFacetState,
         WalletRealmLifecycleIdentity, WalletRealmLifecycleInput, WalletRealmReconciliationState,
     };
-    use oxid_wallet_domain::{ChainAccountId, ChainTransactionId};
 
     fn services_with_selected_realm() -> oxid_composition::ApplicationServices {
         let services = oxid_composition::compose_in_memory();
@@ -190,12 +332,9 @@ mod tests {
     fn composed_outgoing_watch_presents_waiting_then_confirmed_only_in_send() {
         let services = services_with_selected_realm();
         let watches = services.manage_wallet_action_watch();
-        let transaction = ChainTransactionId::parse("tx-ui").expect("transaction id");
         let handle = watches
             .admit(
-                WalletActionWatch::SubmittedTransaction {
-                    transaction: transaction.clone(),
-                },
+                WalletActionWatch::submitted_transaction("tx-ui").expect("transaction id"),
                 10,
                 0,
             )
@@ -216,7 +355,8 @@ mod tests {
         watches
             .observe(
                 handle,
-                WalletActionWatchObservation::SubmittedTransaction { transaction },
+                WalletActionWatchObservation::submitted_transaction("tx-ui")
+                    .expect("transaction id"),
                 1,
             )
             .expect("matching observation");
@@ -231,16 +371,52 @@ mod tests {
     }
 
     #[test]
+    fn included_transfer_helper_settles_the_composed_production_owner() {
+        let services = services_with_selected_realm();
+        let watches = services.manage_wallet_action_watch();
+
+        record_included_transfer(&watches, "tx-included-ui");
+
+        let projection = watches
+            .projection()
+            .expect("projection query")
+            .expect("included transfer watch");
+        assert_eq!(projection.kind, WalletActionWatchKind::SubmittedTransaction);
+        assert_eq!(projection.state, WalletActionWatchState::Confirmed);
+    }
+
+    #[test]
+    fn dropping_a_mounted_receive_observer_cancels_its_watch() {
+        let services = services_with_selected_realm();
+        let watches = services.manage_wallet_action_watch();
+        let handle = watches
+            .admit(
+                WalletActionWatch::incoming_arrival("account-drop", 0).expect("account id"),
+                10,
+                0,
+            )
+            .expect("watch admission")
+            .expect("selected realm admits watch");
+
+        drop(ActionWatchCancellation::new(watches.clone(), handle));
+
+        assert_eq!(
+            watches
+                .projection()
+                .expect("projection query")
+                .expect("cancelled projection")
+                .state,
+            WalletActionWatchState::Cancelled
+        );
+    }
+
+    #[test]
     fn composed_incoming_watch_presents_only_after_a_later_checkpoint() {
         let services = services_with_selected_realm();
         let watches = services.manage_wallet_action_watch();
-        let account = ChainAccountId::parse("account-ui").expect("account id");
         let handle = watches
             .admit(
-                WalletActionWatch::IncomingArrival {
-                    account: account.clone(),
-                    starting_checkpoint: 7,
-                },
+                WalletActionWatch::incoming_arrival("account-ui", 7).expect("account id"),
                 10,
                 0,
             )
@@ -249,10 +425,8 @@ mod tests {
         watches
             .observe(
                 handle,
-                WalletActionWatchObservation::IncomingArrival {
-                    account: account.clone(),
-                    checkpoint: 7,
-                },
+                WalletActionWatchObservation::incoming_arrival("account-ui", 7)
+                    .expect("account id"),
                 1,
             )
             .expect("same-checkpoint observation");
@@ -268,10 +442,8 @@ mod tests {
         watches
             .observe(
                 handle,
-                WalletActionWatchObservation::IncomingArrival {
-                    account,
-                    checkpoint: 8,
-                },
+                WalletActionWatchObservation::incoming_arrival("account-ui", 8)
+                    .expect("account id"),
                 2,
             )
             .expect("later observation");

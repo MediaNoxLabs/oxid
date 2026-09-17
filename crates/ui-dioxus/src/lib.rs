@@ -31,7 +31,7 @@ mod send_recipient;
 mod wallet_onboarding;
 mod wallet_realm_lifecycle;
 mod wallet_realm_sync_services;
-pub use wallet_realm_sync_services::WalletRealmSyncUiServices;
+pub use wallet_realm_sync_services::{WalletAccountUiServices, WalletRealmSyncUiServices};
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
 
@@ -61,7 +61,7 @@ use receive::{
     public_export_message, render_qr_svg,
 };
 use selected_realm_sync::action_watch::{
-    WalletActionWatchContext, WalletActionWatchStatus, action_watch_projection_from,
+    WalletActionWatchContext, WalletActionWatchStatus, use_action_watch_projection,
 };
 use send_recipient::{
     SendWizardProgress, SendWizardStep, is_public_recipient_candidate, scanned_recipient_update,
@@ -867,40 +867,6 @@ impl WalletSecurityUiServices {
     pub fn with_root_recovery(mut self, recovery: WalletRootRecoveryUiServices) -> Self {
         self.root_recovery = Some(recovery);
         self
-    }
-}
-
-/// Midnight account use cases consumed by the Assets page.
-pub struct WalletAccountUiServices {
-    list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
-    select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
-    derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
-    get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
-    sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
-    realm_sync: WalletRealmSyncUiServices,
-    public_text_exporter: Arc<dyn PublicTextExportPort>,
-}
-
-impl WalletAccountUiServices {
-    #[must_use]
-    pub fn new(
-        list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
-        select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
-        derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
-        get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
-        sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
-        realm_sync: WalletRealmSyncUiServices,
-        public_text_exporter: Arc<dyn PublicTextExportPort>,
-    ) -> Self {
-        Self {
-            list_wallet_networks,
-            select_wallet_network,
-            derive_wallet_account,
-            get_wallet_account,
-            sync_wallet_account,
-            realm_sync,
-            public_text_exporter,
-        }
     }
 }
 
@@ -5072,19 +5038,30 @@ fn ReceiveSheet(
     let mut export_notice = use_signal(|| None::<String>);
     let profile_id = active_profile.id.clone();
     let action_watch_projection =
-        action_watch_projection_from(&services, WalletActionWatchContext::Receive);
+        use_action_watch_projection(services.clone(), WalletActionWatchContext::Receive);
     let services_for_load = services.clone();
     use_effect(move || {
         let services = services_for_load.clone();
         let profile_id = profile_id.clone();
         spawn(async move {
-            let next = run_ui_blocking(move || load_receive_sheet(&services, &profile_id))
+            let query_services = services.clone();
+            let query_profile = profile_id.clone();
+            let next = run_ui_blocking(move || load_receive_sheet(&query_services, &query_profile))
                 .await
                 .unwrap_or(ReceiveSheetState::Failed);
-            if let ReceiveSheetState::Ready { account, .. } = &next {
+            let observed_account = if let ReceiveSheetState::Ready { account, .. } = &next {
                 selected_kind.set(default_receive_kind(account));
-            }
+                Some((**account).clone())
+            } else {
+                None
+            };
             state.set(next);
+            if let Some(account) = observed_account {
+                selected_realm_sync::action_watch::observe_receive_arrival(
+                    services, profile_id, account,
+                )
+                .await;
+            }
         });
     });
 
@@ -5341,7 +5318,7 @@ fn ReceiveSheet(
                     "Close"
                 }
             }
-            if let Some(projection) = action_watch_projection {
+            if let Some(projection) = action_watch_projection() {
                 WalletActionWatchStatus { projection }
             }
             {content}
@@ -7103,7 +7080,7 @@ fn SendTransferPanel(
     let mut recipient_scan_notice = use_signal(|| None::<String>);
     let recipient_scanner = services.qr_scanner();
     let action_watch_projection =
-        action_watch_projection_from(&services, WalletActionWatchContext::Send);
+        use_action_watch_projection(services.clone(), WalletActionWatchContext::Send);
 
     let content = match panel.read().clone() {
         TransferPanelState::Editing => match wizard_step() {
@@ -7532,6 +7509,7 @@ fn SendTransferPanel(
                             panel.set(TransferPanelState::Submitting(submitting_preview.clone()));
                             let service = services.submit_wallet_transfer();
                             let drafts = services.get_wallet_transfer_draft();
+                            let action_watches = services.manage_wallet_action_watch();
                             let profile_id = profile_id.clone();
                             let draft_id = draft_id.clone();
                             let confirmation = confirmation.clone();
@@ -7547,7 +7525,13 @@ fn SendTransferPanel(
                                 })
                                 .await
                                 {
-                                    Ok(Ok(submitted)) => panel.set(TransferPanelState::Submitted(Box::new(submitted))),
+                                    Ok(Ok(submitted)) => {
+                                        selected_realm_sync::action_watch::record_included_transfer(
+                                            &action_watches,
+                                            &submitted.transaction_id,
+                                        );
+                                        panel.set(TransferPanelState::Submitted(Box::new(submitted)));
+                                    }
                                     Ok(Err(error)) => {
                                         let retained = drafts.execute(WalletTransferDraftQuery {
                                             profile_id,
@@ -7710,7 +7694,7 @@ fn SendTransferPanel(
     };
 
     rsx! {
-        if let Some(projection) = action_watch_projection {
+        if let Some(projection) = action_watch_projection() {
             WalletActionWatchStatus { projection }
         }
         {content}
