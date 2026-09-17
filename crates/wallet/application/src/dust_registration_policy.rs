@@ -281,14 +281,14 @@ pub fn reduce_wallet_dust_registration_settlement(
             transaction_id,
             ..
         } if matches!(
-            projection.state,
+            effective_state(projection),
             WalletDustRegistrationSettlementState::Submitting
         ) && has_draft(projection, &draft_id) =>
         {
             if let Some(registration) = &mut next.registration {
                 registration.transaction_id = Some(transaction_id);
             }
-            set_state(&mut next, WalletDustRegistrationSettlementState::Confirming);
+            set_effective_state(&mut next, WalletDustRegistrationSettlementState::Confirming);
         }
         WalletDustRegistrationSettlementEvent::FinalityObserved { transaction_id, .. }
             if matches!(
@@ -991,6 +991,46 @@ mod tests {
             ),
             ready
         );
+    }
+
+    #[test]
+    fn accepted_submission_is_retained_while_the_visible_state_is_recoverable() {
+        let identity = selected_identity();
+        let offline = reduce(
+            &submitting(),
+            WalletDustRegistrationSettlementEvent::Offline {
+                identity: identity.clone(),
+            },
+        );
+
+        let accepted = reduce(
+            &offline,
+            WalletDustRegistrationSettlementEvent::SubmissionAccepted {
+                identity: identity.clone(),
+                draft_id: draft(),
+                transaction_id: transaction(),
+            },
+        );
+
+        assert_eq!(
+            accepted.state,
+            WalletDustRegistrationSettlementState::Offline
+        );
+        assert_eq!(
+            accepted.resume_state,
+            Some(WalletDustRegistrationSettlementState::Confirming)
+        );
+        assert!(has_transaction(&accepted, &transaction()));
+
+        let retried = reduce(
+            &accepted,
+            WalletDustRegistrationSettlementEvent::Retry { identity },
+        );
+        assert_eq!(
+            retried.state,
+            WalletDustRegistrationSettlementState::Confirming
+        );
+        assert!(has_transaction(&retried, &transaction()));
     }
 
     #[test]
