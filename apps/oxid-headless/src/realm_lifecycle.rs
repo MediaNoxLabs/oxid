@@ -8,13 +8,19 @@ use futures::{
 use futures_timer::Delay;
 use oxid_wallet_application::{
     ReconcileWalletRealmLifecycleUseCase, WalletAccountQuery, WalletRealmFacetState,
-    WalletRealmLifecycleIdentity, WalletRealmLifecycleInput, WalletRealmReconciliationState,
+    WalletRealmLifecycleIdentity, WalletRealmLifecycleInput, WalletRealmLifecycleResult,
+    WalletRealmReconciliationState,
 };
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    sync::{Arc, mpsc::Receiver},
+    time::Duration,
+};
 
 use crate::HeadlessWallet;
 
 const HEADLESS_STARTUP_RECONCILIATION_TIMEOUT_MILLIS: u64 = 1_000;
+const HEADLESS_SCHEDULER_MAX_SLEEP_MILLIS: u64 = 1_000;
 
 impl HeadlessWallet {
     pub(super) fn initialize_active_realm(&self) {
@@ -58,7 +64,123 @@ impl HeadlessWallet {
                 facets,
             },
         };
-        execute_bounded(lifecycle, input)
+        execute_bounded(
+            lifecycle,
+            input,
+            HEADLESS_STARTUP_RECONCILIATION_TIMEOUT_MILLIS,
+        )
+        .map(|_| ())
+    }
+
+    pub(super) fn run_lifecycle_scheduler(&self, stop: &Receiver<()>) {
+        loop {
+            let lifecycle = self.application.reconcile_wallet_realm_lifecycle();
+            let wait_millis =
+                lifecycle
+                    .status()
+                    .map_or(HEADLESS_SCHEDULER_MAX_SLEEP_MILLIS, |status| {
+                        let now_millis = self.monotonic_millis();
+                        if let Some(request) = status.in_flight {
+                            if status
+                                .in_flight_deadline_millis
+                                .is_some_and(|deadline| now_millis >= deadline)
+                            {
+                                let _ = execute_bounded(
+                                    Arc::clone(&lifecycle),
+                                    WalletRealmLifecycleInput::ReconciliationTimedOut {
+                                        identity: request.identity,
+                                        sequence: request.sequence,
+                                        now_millis,
+                                        facets: status.facets,
+                                    },
+                                    HEADLESS_STARTUP_RECONCILIATION_TIMEOUT_MILLIS,
+                                );
+                                return 1;
+                            }
+                            return status
+                                .in_flight_deadline_millis
+                                .map(|deadline| deadline.saturating_sub(now_millis).max(1))
+                                .unwrap_or(HEADLESS_SCHEDULER_MAX_SLEEP_MILLIS)
+                                .min(HEADLESS_SCHEDULER_MAX_SLEEP_MILLIS);
+                        }
+                        if let Some(wakeup) = status.next_wakeup_millis {
+                            if wakeup <= now_millis {
+                                let _ = execute_bounded(
+                                    lifecycle,
+                                    WalletRealmLifecycleInput::PeriodicTick {
+                                        now_millis,
+                                        facets: status.facets,
+                                    },
+                                    u64::MAX,
+                                );
+                                return 1;
+                            }
+                            return wakeup
+                                .saturating_sub(now_millis)
+                                .max(1)
+                                .min(HEADLESS_SCHEDULER_MAX_SLEEP_MILLIS);
+                        }
+                        HEADLESS_SCHEDULER_MAX_SLEEP_MILLIS
+                    });
+            if stop
+                .recv_timeout(Duration::from_millis(wait_millis))
+                .is_ok()
+                || matches!(
+                    stop.try_recv(),
+                    Err(std::sync::mpsc::TryRecvError::Disconnected)
+                )
+            {
+                return;
+            }
+        }
+    }
+
+    pub(super) fn execute_realm_lifecycle(
+        &self,
+        input: WalletRealmLifecycleInput,
+    ) -> Result<WalletRealmLifecycleResult, ()> {
+        execute_bounded(
+            self.application.reconcile_wallet_realm_lifecycle(),
+            input,
+            u64::MAX,
+        )
+    }
+
+    pub(super) fn await_realm_lifecycle_idle(&self) -> Result<(), ()> {
+        let lifecycle = self.application.reconcile_wallet_realm_lifecycle();
+        let timeout_millis = lifecycle
+            .status()
+            .map_err(|_| ())?
+            .request_timeout_millis
+            .saturating_mul(2);
+        let started = std::time::Instant::now();
+        loop {
+            let status = lifecycle.status().map_err(|_| ())?;
+            let Some(request) = status.in_flight else {
+                return Ok(());
+            };
+            let now_millis = self.monotonic_millis();
+            if status
+                .in_flight_deadline_millis
+                .is_some_and(|deadline| now_millis >= deadline)
+            {
+                let _ = execute_bounded(
+                    Arc::clone(&lifecycle),
+                    WalletRealmLifecycleInput::ReconciliationTimedOut {
+                        identity: request.identity,
+                        sequence: request.sequence,
+                        now_millis,
+                        facets: status.facets,
+                    },
+                    HEADLESS_STARTUP_RECONCILIATION_TIMEOUT_MILLIS,
+                )?;
+            } else {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            if u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX) >= timeout_millis {
+                return Err(());
+            }
+        }
     }
 
     pub(super) fn monotonic_millis(&self) -> u64 {
@@ -69,14 +191,15 @@ impl HeadlessWallet {
 fn execute_bounded(
     lifecycle: Arc<dyn ReconcileWalletRealmLifecycleUseCase>,
     input: WalletRealmLifecycleInput,
-) -> Result<(), ()> {
+    maximum_timeout_millis: u64,
+) -> Result<WalletRealmLifecycleResult, ()> {
     let timeout_millis = lifecycle
         .status()
         .map_err(|_| ())?
         .request_timeout_millis
-        .min(HEADLESS_STARTUP_RECONCILIATION_TIMEOUT_MILLIS);
+        .min(maximum_timeout_millis);
     match block_on_with_timeout(lifecycle.execute(input), timeout_millis) {
-        Some(Ok(_)) => Ok(()),
+        Some(Ok(result)) => Ok(result),
         Some(Err(_)) => Err(()),
         None => {
             let status = lifecycle.status().map_err(|_| ())?;
@@ -89,7 +212,6 @@ fn execute_bounded(
                     facets: status.facets,
                 }),
             )
-            .map(|_| ())
             .map_err(|_| ())
         }
     }

@@ -111,21 +111,31 @@ impl HeadlessWallet {
                 Err(SelectedWalletRealmSyncError::Unavailable),
             );
         };
-        let result = futures::executor::block_on(lifecycle.execute(
-            WalletRealmLifecycleInput::ActionPreflight {
-                now_millis: self.monotonic_millis(),
-                facets: status.facets,
-            },
-        ));
+        let result = self.execute_realm_lifecycle(WalletRealmLifecycleInput::ActionPreflight {
+            now_millis: self.monotonic_millis(),
+            facets: status.facets,
+        });
         let projection = match result {
-            Ok(result) => result.projection.map_or_else(
-                || {
-                    self.application
-                        .get_selected_wallet_realm_sync()
-                        .execute(SelectedWalletRealmSyncCommand { profile_id })
-                },
-                Ok,
-            ),
+            Ok(result) => {
+                if matches!(
+                    result.decision,
+                    oxid_wallet_application::WalletRealmLifecycleDecision::Retained(_)
+                ) && self.await_realm_lifecycle_idle().is_err()
+                {
+                    return selected_realm_sync_dispatch(
+                        request.id,
+                        Err(SelectedWalletRealmSyncError::Unavailable),
+                    );
+                }
+                result.projection.map_or_else(
+                    || {
+                        self.application
+                            .get_selected_wallet_realm_sync()
+                            .execute(SelectedWalletRealmSyncCommand { profile_id })
+                    },
+                    Ok,
+                )
+            }
             Err(_) => Err(SelectedWalletRealmSyncError::Unavailable),
         };
         selected_realm_sync_dispatch(request.id, projection)

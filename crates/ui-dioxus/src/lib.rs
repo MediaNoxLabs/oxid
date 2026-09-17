@@ -3533,6 +3533,7 @@ fn WalletApp() -> Element {
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let identity_link_wake = use_signal(|| 0_u64);
     let mut realm_lifecycle_wake = use_signal(|| WalletRealmLifecycleWake::INITIAL);
+    use_context_provider(|| realm_lifecycle_wake);
     wallet_realm_lifecycle::use_wallet_realm_lifecycle_driver(
         services.clone(),
         profile_session,
@@ -5813,6 +5814,7 @@ fn AccountSyncCard(
     on_account_updated: EventHandler<WalletAccountView>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
+    let mut realm_lifecycle_wake = consume_context::<Signal<WalletRealmLifecycleWake>>();
     let state = use_signal(|| AccountSyncCardState::Loading);
     let load_services = services.clone();
     let load_profile = profile_id.clone();
@@ -5971,6 +5973,11 @@ fn AccountSyncCard(
                                     ))
                                     .await
                                 };
+                                if !syncing {
+                                    realm_lifecycle_wake.set(
+                                        realm_lifecycle_wake().realm_changed(),
+                                    );
+                                }
                                 match result {
                                     Ok(Ok(updated)) => {
                                         if !account_sync_card_accepts_projection(

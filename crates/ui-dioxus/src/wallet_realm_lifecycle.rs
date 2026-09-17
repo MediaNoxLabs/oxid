@@ -76,7 +76,7 @@ pub(super) async fn explicit_retry(
     let lifecycle = services.reconcile_wallet_realm_lifecycle();
     let status = lifecycle.status().map_err(|error| error.to_string())?;
     let result = execute_with_timeout(
-        lifecycle,
+        Arc::clone(&lifecycle),
         WalletRealmLifecycleInput::ActionPreflight {
             now_millis: monotonic_millis(),
             facets: status.facets,
@@ -84,7 +84,13 @@ pub(super) async fn explicit_retry(
     )
     .await
     .map_err(|()| "selected-realm reconciliation did not settle before its deadline".to_owned())?;
-    result.projection.map_or_else(
+    if matches!(
+        result.decision,
+        oxid_wallet_application::WalletRealmLifecycleDecision::Retained(_)
+    ) {
+        await_lifecycle_idle(Arc::clone(&lifecycle)).await?;
+    }
+    let projection = result.projection.map_or_else(
         || {
             services
                 .get_selected_wallet_realm_sync()
@@ -92,7 +98,51 @@ pub(super) async fn explicit_retry(
                 .map_err(|error| error.to_string())
         },
         Ok,
-    )
+    )?;
+    Ok(projection)
+}
+
+async fn await_lifecycle_idle(
+    lifecycle: Arc<dyn ReconcileWalletRealmLifecycleUseCase>,
+) -> Result<(), String> {
+    let timeout_millis = lifecycle
+        .status()
+        .map_err(|error| error.to_string())?
+        .request_timeout_millis
+        .saturating_mul(2);
+    tokio::time::timeout(Duration::from_millis(timeout_millis), async {
+        loop {
+            let status = lifecycle.status().map_err(|error| error.to_string())?;
+            let Some(request) = status.in_flight else {
+                return Ok(());
+            };
+            let now_millis = monotonic_millis();
+            if status
+                .in_flight_deadline_millis
+                .is_some_and(|deadline| now_millis >= deadline)
+            {
+                execute_with_timeout(
+                    Arc::clone(&lifecycle),
+                    WalletRealmLifecycleInput::ReconciliationTimedOut {
+                        identity: request.identity,
+                        sequence: request.sequence,
+                        now_millis,
+                        facets: status.facets,
+                    },
+                )
+                .await
+                .map_err(|()| {
+                    "selected-realm reconciliation timeout could not settle".to_owned()
+                })?;
+            } else {
+                tokio::time::sleep(Duration::from_millis(DRIVER_IN_FLIGHT_POLL_MILLIS)).await;
+            }
+        }
+    })
+    .await
+    .map_err(|_| {
+        "queued selected-realm reconciliation did not settle before its deadline".to_owned()
+    })?
 }
 
 async fn drive_selected_realm(services: WalletUiServices, profile_id: String, resumed: bool) {

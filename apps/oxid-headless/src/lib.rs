@@ -72,7 +72,18 @@ impl HeadlessWallet {
     ///
     /// Protocol responses are the only bytes written to `writer`. Callers must
     /// direct operational diagnostics to stderr.
-    pub fn run<R: BufRead, W: Write>(
+    pub fn run<R: BufRead, W: Write>(&self, reader: R, writer: W) -> Result<(), HeadlessIoError> {
+        let (stop_sender, stop_receiver) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let scheduler = scope.spawn(move || self.run_lifecycle_scheduler(&stop_receiver));
+            let result = self.run_requests(reader, writer);
+            drop(stop_sender);
+            let _ = scheduler.join();
+            result
+        })
+    }
+
+    fn run_requests<R: BufRead, W: Write>(
         &self,
         reader: R,
         mut writer: W,
