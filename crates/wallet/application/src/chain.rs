@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::BTreeSet, error::Error, fmt, future::Future, pin::Pin, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    error::Error,
+    fmt,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use oxid_foundation::OpaqueIdError;
 use oxid_wallet_domain::{
@@ -711,6 +718,7 @@ pub trait SyncWalletAccountUseCase: Send + Sync {
 pub struct WalletNetworkService<N> {
     networks: Arc<N>,
     selection_observer: Arc<dyn WalletNetworkSelectionObserver>,
+    selection_gate: Arc<Mutex<()>>,
 }
 
 impl<N> WalletNetworkService<N> {
@@ -719,6 +727,7 @@ impl<N> WalletNetworkService<N> {
         Self {
             networks,
             selection_observer: Arc::new(NoopWalletNetworkSelectionObserver),
+            selection_gate: Arc::new(Mutex::new(())),
         }
     }
 
@@ -730,6 +739,20 @@ impl<N> WalletNetworkService<N> {
         Self {
             networks,
             selection_observer,
+            selection_gate: Arc::new(Mutex::new(())),
+        }
+    }
+
+    #[must_use]
+    pub fn with_selection_observer_and_gate(
+        networks: Arc<N>,
+        selection_observer: Arc<dyn WalletNetworkSelectionObserver>,
+        selection_gate: Arc<Mutex<()>>,
+    ) -> Self {
+        Self {
+            networks,
+            selection_observer,
+            selection_gate,
         }
     }
 
@@ -800,6 +823,10 @@ where
             .map_err(WalletAccountError::InvalidProfileIdentifier)?;
         let network_id = ChainNetworkId::parse(command.network_id)
             .map_err(WalletAccountError::InvalidNetworkIdentifier)?;
+        let _selection = self
+            .selection_gate
+            .lock()
+            .map_err(|_| WalletAccountError::Port(WalletAccountPortError::Unavailable))?;
         self.networks
             .select_network(&profile_id, &network_id)
             .map_err(WalletAccountError::Port)?;

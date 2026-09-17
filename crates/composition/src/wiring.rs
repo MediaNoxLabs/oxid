@@ -635,14 +635,19 @@ where
     let midnight_contract_call_submission: Arc<dyn MidnightContractCallSubmissionPort> =
         midnight.clone();
     let selected_realm_runtime = Arc::new(Mutex::new(SelectedWalletRealmRuntime::default()));
-    let selected_realm_sync = Arc::new(SelectedWalletRealmSyncService::with_runtime(
-        Arc::clone(&midnight),
-        selected_realm_runtime,
-    ));
+    let selected_realm_selection_gate = Arc::new(Mutex::new(()));
+    let selected_realm_sync = Arc::new(
+        SelectedWalletRealmSyncService::with_runtime_and_selection_gate(
+            Arc::clone(&midnight),
+            selected_realm_runtime,
+            Arc::clone(&selected_realm_selection_gate),
+        ),
+    );
     let selection_observer: Arc<dyn WalletNetworkSelectionObserver> = selected_realm_sync.clone();
-    let networks = Arc::new(WalletNetworkService::with_selection_observer(
+    let networks = Arc::new(WalletNetworkService::with_selection_observer_and_gate(
         Arc::clone(&midnight),
         selection_observer,
+        selected_realm_selection_gate,
     ));
     let account_derivation = Arc::new(WalletAccountDerivationService::new(Arc::clone(&midnight)));
     let accounts = Arc::new(WalletAccountService::new(Arc::clone(&midnight)));

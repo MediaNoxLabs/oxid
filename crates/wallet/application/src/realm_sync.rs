@@ -498,6 +498,7 @@ impl SelectedWalletRealmRuntime {
 pub struct SelectedWalletRealmSyncService<W> {
     wallet: Arc<W>,
     runtime: Arc<Mutex<SelectedWalletRealmRuntime>>,
+    selection_gate: Arc<Mutex<()>>,
     operation_gate: Mutex<()>,
 }
 
@@ -567,9 +568,19 @@ impl<W> SelectedWalletRealmSyncService<W> {
 
     #[must_use]
     pub fn with_runtime(wallet: Arc<W>, runtime: Arc<Mutex<SelectedWalletRealmRuntime>>) -> Self {
+        Self::with_runtime_and_selection_gate(wallet, runtime, Arc::new(Mutex::new(())))
+    }
+
+    #[must_use]
+    pub fn with_runtime_and_selection_gate(
+        wallet: Arc<W>,
+        runtime: Arc<Mutex<SelectedWalletRealmRuntime>>,
+        selection_gate: Arc<Mutex<()>>,
+    ) -> Self {
         Self {
             wallet,
             runtime,
+            selection_gate,
             operation_gate: Mutex::new(()),
         }
     }
@@ -606,6 +617,10 @@ impl<W> SelectedWalletRealmSyncService<W> {
     where
         W: WalletNetworkPort,
     {
+        let _selection = self
+            .selection_gate
+            .lock()
+            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
         self.ensure_selected_realm(&profile, &realm)?;
         let published = {
             let mut runtime = self
@@ -882,7 +897,7 @@ where
             .map_err(SelectedWalletRealmSyncError::SelectedNetwork)?;
         self.pin_selected_realm(&profile, &realm)?;
         let observation_generation = self.begin_observation(&profile, &realm)?;
-        let _operation = self
+        let operation = self
             .operation_gate
             .lock()
             .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
@@ -907,6 +922,7 @@ where
             .cancel_shielded_sync_in_realm(&profile, &realm)
             .map(|snapshot| WalletRealmFamilyView::Ready(WalletShieldedSyncView::from(&snapshot)))
             .unwrap_or_else(shielded_family_error);
+        drop(operation);
         self.projection(
             profile,
             realm,
@@ -1151,7 +1167,10 @@ const fn shielded_family_error(
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+        sync::{
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            mpsc,
+        },
         task::{Context, Poll, Waker},
     };
 
@@ -1895,13 +1914,20 @@ mod tests {
     fn in_flight_reconciliation_rejects_an_unobserved_a_b_a_switch() {
         let wallet = Arc::new(CancelDuringAccountWallet::default());
         let runtime = Arc::new(Mutex::new(SelectedWalletRealmRuntime::default()));
-        let service = Arc::new(SelectedWalletRealmSyncService::with_runtime(
-            Arc::clone(&wallet),
-            Arc::clone(&runtime),
-        ));
+        let selection_gate = Arc::new(Mutex::new(()));
+        let service = Arc::new(
+            SelectedWalletRealmSyncService::with_runtime_and_selection_gate(
+                Arc::clone(&wallet),
+                Arc::clone(&runtime),
+                Arc::clone(&selection_gate),
+            ),
+        );
         let selection_observer: Arc<dyn WalletNetworkSelectionObserver> = service.clone();
-        let network_service =
-            WalletNetworkService::with_selection_observer(Arc::clone(&wallet), selection_observer);
+        let network_service = WalletNetworkService::with_selection_observer_and_gate(
+            Arc::clone(&wallet),
+            selection_observer,
+            selection_gate,
+        );
         let mut reconcile = service.reconcile(command(), WalletRealmReconciliationTrigger::Initial);
         let waker = Waker::noop();
         let mut context = Context::from_waker(waker);
@@ -2061,6 +2087,63 @@ mod tests {
             ),
             Err(SelectedWalletRealmSyncError::SelectionChanged)
         );
+    }
+
+    #[test]
+    fn selection_mutation_and_projection_publication_share_one_gate() {
+        let wallet = Arc::new(CancelDuringAccountWallet::default());
+        let runtime = Arc::new(Mutex::new(SelectedWalletRealmRuntime::default()));
+        let selection_gate = Arc::new(Mutex::new(()));
+        let service = Arc::new(
+            SelectedWalletRealmSyncService::with_runtime_and_selection_gate(
+                Arc::clone(&wallet),
+                runtime,
+                Arc::clone(&selection_gate),
+            ),
+        );
+        let observer: Arc<dyn WalletNetworkSelectionObserver> = service.clone();
+        let networks = Arc::new(WalletNetworkService::with_selection_observer_and_gate(
+            Arc::clone(&wallet),
+            observer,
+            Arc::clone(&selection_gate),
+        ));
+        let first = GetSelectedWalletRealmSyncUseCase::execute(service.as_ref(), command())
+            .expect("initial projection");
+        let guard = selection_gate.lock().expect("selection gate");
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                started_tx.send(()).expect("announce selection");
+                let selected = SelectWalletNetworkUseCase::execute(
+                    networks.as_ref(),
+                    SelectWalletNetworkCommand {
+                        profile_id: "profile_test".to_owned(),
+                        network_id: "preprod".to_owned(),
+                    },
+                );
+                done_tx.send(selected).expect("return selection result");
+            });
+            started_rx.recv().expect("selection starts");
+            assert!(matches!(done_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+            assert_eq!(
+                wallet
+                    .selected_network(&first.identity.profile)
+                    .expect("selected network"),
+                first.identity.realm
+            );
+            drop(guard);
+            done_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("selection completes after gate release")
+                .expect("selection succeeds");
+        });
+
+        let selected = GetSelectedWalletRealmSyncUseCase::execute(service.as_ref(), command())
+            .expect("replacement projection");
+        assert_eq!(selected.identity.realm.as_str(), "preprod");
+        assert!(!selected.supersedes(&first));
     }
 
     #[test]
