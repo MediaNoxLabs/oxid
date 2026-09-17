@@ -2,7 +2,7 @@
 /**
  * Oxid compatibility evaluator for the pinned JS/TS-only size classifier.
  * Remove this adapter when the pinned upstream evaluator recognizes Rust,
- * Kotlin, and Swift with equivalent deterministic test-path handling.
+ * Kotlin, Swift, and shell with equivalent deterministic test-path handling.
  */
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -20,11 +20,11 @@ async function loadUpstreamSizeBudget(repoRoot) {
   return { ...sizeBudget, ...config, ...gateContext, ...output };
 }
 
-const SOURCE_EXTENSIONS = new Set([".rs", ".kt", ".swift"]);
+const SOURCE_EXTENSIONS = new Set([".rs", ".kt", ".swift", ".sh"]);
 const EXCLUDED_NAMES = new Set([".devloops", "cargo.lock", "cargo.toml", "deny.toml", "flake.lock", "justfile", "rust-toolchain.toml"]);
 const EXCLUDED_EXTENSIONS = new Set([".gradle", ".json", ".kts", ".lock", ".md", ".mdx", ".nix", ".plist", ".properties", ".toml", ".xml", ".yaml", ".yml"]);
 const EXCLUDED_PATH = /(?:^|\/)(?:\.cargo|\.github|\.pi|ci|config|configs|docs|fixtures|generated|nix|vendor)\//u;
-const TEST_PATH = /(?:^|\/)(?:tests?|__tests__)\/|(?:_tests?|tests?)\.(?:rs|kt|swift)$/u;
+const TEST_PATH = /(?:^|\/)(?:tests?|__tests__)\/|(?:_tests?|tests?)\.(?:rs|kt|swift|sh)$/u;
 
 export function classifyOxidSizePath(filePath) {
   const normalized = String(filePath).replaceAll("\\", "/").toLowerCase();
@@ -46,7 +46,7 @@ function translateNativePath(filePath) {
 function translateTierPatterns(sizeConfig) {
   const extend = (patterns = []) => [...new Set(patterns.flatMap((pattern) => [
     pattern,
-    ...[".rs", ".kt", ".swift"].filter((extension) => pattern.endsWith(extension)).map((extension) => `${pattern}.js`),
+    ...[".rs", ".kt", ".swift", ".sh"].filter((extension) => pattern.endsWith(extension)).map((extension) => `${pattern}.js`),
   ]))];
   const tiers = sizeConfig?.tiers ?? {};
   return {

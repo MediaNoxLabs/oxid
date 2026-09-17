@@ -55,12 +55,37 @@ case "${1:-}" in
     nix_develop_command bash -c '
       repo_root="$1"
       shift
+      if [[ -n "${CI:-}" ]]; then
+        echo "Pi dispatch is unavailable in CI; provision packages only from an owner-invoked local devshell." >&2
+        exit 1
+      fi
       pi_cwd="$(node "$repo_root/scripts/loop/bootstrap-dev-loop.mjs" --repo-root "$repo_root" -- "$@")" || exit $?
-      cd "$pi_cwd"
+      if [[ "$pi_cwd" != /* || ! -d "$pi_cwd" ]]; then
+        echo "Pi worktree selection did not return one existing absolute directory; refusing dispatch." >&2
+        exit 1
+      fi
+      cd -- "$pi_cwd" || {
+        echo "Pi could not enter the selected worktree; refusing dispatch from the original checkout." >&2
+        exit 1
+      }
       node scripts/factory/audit-pi.mjs --config-only --enforce-config || {
         echo "Pi startup audit failed. If user-subagent-policy is red, run ./bootstrap.sh --configure-pi; otherwise fix the reported control, then retry ./bootstrap.sh --pi." >&2
         exit 1
       }
+      # The devshell hook ran before an exact /dev-loop command selected or
+      # created its linked issue worktree. Attach that worktree to the already
+      # verified shared package closure after config authority is enforced. The
+      # original checkout was already provisioned by the devshell hook.
+      if [[ "$pi_cwd" != "$repo_root" ]]; then
+        node scripts/factory/provision-pi-packages.mjs || {
+          echo "Pi package provisioning failed in the selected worktree; resolve the exact package closure before starting an agent." >&2
+          exit 1
+        }
+        node scripts/factory/audit-pi.mjs --config-only --enforce-config || {
+          echo "Pi selected-worktree config audit failed after package provisioning; resolve the effective dev-loop config before starting an agent." >&2
+          exit 1
+        }
+      fi
       bash scripts/check-pi-devshell.sh || {
         echo "Pi runtime smoke failed; resolve the reported package/resource problem before starting an agent." >&2
         exit 1
