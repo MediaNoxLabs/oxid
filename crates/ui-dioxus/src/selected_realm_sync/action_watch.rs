@@ -134,12 +134,15 @@ async fn observe_receive_arrival(
     let manager = services.manage_wallet_action_watch();
     let fallback_checkpoint = initial.sync.current_cursor.unwrap_or_default();
 
-    let preflight = crate::run_ui_future(crate::wallet_realm_lifecycle::explicit_retry(
-        services.clone(),
-        SelectedWalletRealmSyncCommand {
-            profile_id: profile_id.clone(),
-        },
-    ))
+    let refresh = services.sync_selected_wallet_realm();
+    let refresh_profile = profile_id.clone();
+    let preflight = crate::run_ui_future(async move {
+        refresh
+            .execute(SelectedWalletRealmSyncCommand {
+                profile_id: refresh_profile,
+            })
+            .await
+    })
     .await;
     if !receive_watch_supported(selected_kind().as_deref()) {
         return;
@@ -265,6 +268,9 @@ async fn observe_receive_arrival(
             guard.disarm();
             return;
         }
+        if observed.sync.state == "syncing" {
+            continue;
+        }
         let Some(observed_checkpoint) = observed.sync.current_cursor else {
             settle_receive_handle(&manager, handle, WalletActionWatchState::Degraded);
             guard.disarm();
@@ -294,7 +300,7 @@ fn receive_watch_supported(kind: Option<&str>) -> bool {
 }
 
 fn synchronized_account_checkpoint(account: &WalletAccountView) -> Option<u64> {
-    if account_state(account).is_none() {
+    if account_state(account).is_none() && account.sync.state == "synced" {
         account.sync.current_cursor
     } else {
         None
@@ -304,7 +310,9 @@ fn synchronized_account_checkpoint(account: &WalletAccountView) -> Option<u64> {
 fn account_state(account: &WalletAccountView) -> Option<WalletActionWatchState> {
     if account.source == "unavailable" || account.sync.state == "unavailable" {
         Some(WalletActionWatchState::Offline)
-    } else if account.source != "live" || account.sync.state != "synced" {
+    } else if account.source != "live"
+        || !matches!(account.sync.state.as_str(), "synced" | "syncing")
+    {
         Some(WalletActionWatchState::Degraded)
     } else {
         None
@@ -713,6 +721,14 @@ mod tests {
         assert_eq!(
             account_state(&account("live", "stalled", Some(7), Vec::new())),
             Some(WalletActionWatchState::Degraded)
+        );
+        assert_eq!(
+            account_state(&account("live", "syncing", Some(7), Vec::new())),
+            None
+        );
+        assert_eq!(
+            synchronized_account_checkpoint(&account("live", "syncing", Some(7), Vec::new())),
+            None
         );
     }
 
