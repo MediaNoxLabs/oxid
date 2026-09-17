@@ -216,6 +216,13 @@ struct SelectedWalletRealmObservationGeneration {
     profile: WalletProfileId,
     realm: ChainNetworkId,
     generation: u64,
+    authority_generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SelectedWalletRealmObservationToken {
+    generation: u64,
+    authority_generation: u64,
 }
 
 impl SelectedWalletRealmRuntime {
@@ -312,36 +319,62 @@ impl SelectedWalletRealmRuntime {
         {
             projection.revision = projection.revision.saturating_add(1);
         }
-        self.advance_observation_generation(profile, realm);
+        self.advance_authority_generation(profile, realm);
     }
 
-    fn advance_observation_generation(
-        &mut self,
-        profile: &WalletProfileId,
-        realm: &ChainNetworkId,
-    ) -> u64 {
+    fn advance_authority_generation(&mut self, profile: &WalletProfileId, realm: &ChainNetworkId) {
         if let Some(observation) = self
             .observations
             .iter_mut()
             .find(|observation| &observation.profile == profile && &observation.realm == realm)
         {
             observation.generation = observation.generation.saturating_add(1);
-            return observation.generation;
+            observation.authority_generation = observation.authority_generation.saturating_add(1);
+            return;
         }
         self.observations
             .push(SelectedWalletRealmObservationGeneration {
                 profile: profile.clone(),
                 realm: realm.clone(),
                 generation: 1,
+                authority_generation: 1,
             });
-        1
+    }
+
+    fn advance_observation_generation(
+        &mut self,
+        profile: &WalletProfileId,
+        realm: &ChainNetworkId,
+    ) -> SelectedWalletRealmObservationToken {
+        if let Some(observation) = self
+            .observations
+            .iter_mut()
+            .find(|observation| &observation.profile == profile && &observation.realm == realm)
+        {
+            observation.generation = observation.generation.saturating_add(1);
+            return SelectedWalletRealmObservationToken {
+                generation: observation.generation,
+                authority_generation: observation.authority_generation,
+            };
+        }
+        self.observations
+            .push(SelectedWalletRealmObservationGeneration {
+                profile: profile.clone(),
+                realm: realm.clone(),
+                generation: 1,
+                authority_generation: 0,
+            });
+        SelectedWalletRealmObservationToken {
+            generation: 1,
+            authority_generation: 0,
+        }
     }
 
     fn begin_observation(
         &mut self,
         profile: &WalletProfileId,
         realm: &ChainNetworkId,
-    ) -> Option<u64> {
+    ) -> Option<SelectedWalletRealmObservationToken> {
         match self
             .selections
             .iter()
@@ -364,6 +397,20 @@ impl SelectedWalletRealmRuntime {
             .iter()
             .find(|selection| &selection.profile == profile)
             .is_some_and(|selection| &selection.realm == realm)
+    }
+
+    fn authority_matches(
+        &self,
+        profile: &WalletProfileId,
+        realm: &ChainNetworkId,
+        token: SelectedWalletRealmObservationToken,
+    ) -> bool {
+        self.observations
+            .iter()
+            .find(|observation| &observation.profile == profile && &observation.realm == realm)
+            .is_some_and(|observation| {
+                observation.authority_generation == token.authority_generation
+            })
     }
 
     pub fn complete(
@@ -389,6 +436,7 @@ impl SelectedWalletRealmRuntime {
     }
 
     pub fn cancel_profile(&mut self, profile: &WalletProfileId) {
+        let mut invalidated_realms = Vec::new();
         for entry in self
             .entries
             .iter_mut()
@@ -399,6 +447,10 @@ impl SelectedWalletRealmRuntime {
                 WalletRealmCoordinatorInput::Cancel,
             )
             .state();
+            invalidated_realms.push(entry.realm.clone());
+        }
+        for realm in invalidated_realms {
+            self.invalidate_projection(profile, &realm);
         }
     }
 
@@ -426,17 +478,18 @@ impl SelectedWalletRealmRuntime {
     }
 
     #[must_use]
-    pub fn publish(
+    fn publish(
         &mut self,
         profile: WalletProfileId,
         realm: ChainNetworkId,
-        observation_generation: u64,
+        observation_generation: SelectedWalletRealmObservationToken,
         view: &SelectedWalletRealmSyncView,
     ) -> Option<u64> {
         if !self.observations.iter().any(|observation| {
             observation.profile == profile
                 && observation.realm == realm
-                && observation.generation == observation_generation
+                && observation.generation == observation_generation.generation
+                && observation.authority_generation == observation_generation.authority_generation
         }) {
             return None;
         }
@@ -596,7 +649,7 @@ impl<W> SelectedWalletRealmSyncService<W> {
         &self,
         profile: &WalletProfileId,
         realm: &ChainNetworkId,
-    ) -> Result<u64, SelectedWalletRealmSyncError> {
+    ) -> Result<SelectedWalletRealmObservationToken, SelectedWalletRealmSyncError> {
         self.runtime
             .lock()
             .map_err(|_| SelectedWalletRealmSyncError::Unavailable)
@@ -611,7 +664,7 @@ impl<W> SelectedWalletRealmSyncService<W> {
         &self,
         profile: WalletProfileId,
         realm: ChainNetworkId,
-        observation_generation: u64,
+        observation_generation: SelectedWalletRealmObservationToken,
         view: SelectedWalletRealmSyncView,
     ) -> Result<SelectedWalletRealmProjection, SelectedWalletRealmSyncError>
     where
@@ -745,7 +798,8 @@ where
     fn begin_selected_realm_observation(
         &self,
         profile: &WalletProfileId,
-    ) -> Result<(ChainNetworkId, u64), SelectedWalletRealmSyncError> {
+    ) -> Result<(ChainNetworkId, SelectedWalletRealmObservationToken), SelectedWalletRealmSyncError>
+    {
         let _selection = self
             .selection_gate
             .lock()
@@ -759,6 +813,27 @@ where
         Ok((realm, observation_generation))
     }
 
+    fn rebase_selected_realm_observation(
+        &self,
+        profile: &WalletProfileId,
+        realm: &ChainNetworkId,
+        admitted: SelectedWalletRealmObservationToken,
+    ) -> Result<SelectedWalletRealmObservationToken, SelectedWalletRealmSyncError> {
+        let _selection = self
+            .selection_gate
+            .lock()
+            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
+        self.ensure_selected_realm(profile, realm)?;
+        let mut runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
+        if !runtime.authority_matches(profile, realm, admitted) {
+            return Err(SelectedWalletRealmSyncError::ObservationSuperseded);
+        }
+        Ok(runtime.advance_observation_generation(profile, realm))
+    }
+
     /// Reconciles the selected realm for one explicit application trigger.
     pub fn reconcile(
         &self,
@@ -767,8 +842,7 @@ where
     ) -> SelectedWalletRealmProjectionFuture<'_> {
         Box::pin(async move {
             let profile = Self::profile(command)?;
-            let (realm, observation_generation) =
-                self.begin_selected_realm_observation(&profile)?;
+            let (realm, admitted) = self.begin_selected_realm_observation(&profile)?;
             let observed = self.observed(&profile, &realm);
             let mut view = observed.view;
             let mut effects = self
@@ -829,6 +903,12 @@ where
                 let follow_up = leases.complete(effect, outcome)?;
                 effects.extend(follow_up);
             }
+            let observation_generation =
+                match self.rebase_selected_realm_observation(&profile, &realm, admitted) {
+                    Ok(rebased) => rebased,
+                    Err(SelectedWalletRealmSyncError::ObservationSuperseded) => admitted,
+                    Err(error) => return Err(error),
+                };
             self.projection(profile, realm, observation_generation, view)
         })
     }
@@ -900,7 +980,7 @@ where
         command: SelectedWalletRealmSyncCommand,
     ) -> Result<SelectedWalletRealmProjection, SelectedWalletRealmSyncError> {
         let profile = Self::profile(command)?;
-        let (realm, observation_generation) = self.begin_selected_realm_observation(&profile)?;
+        let (realm, _) = self.begin_selected_realm_observation(&profile)?;
         let operation = self
             .operation_gate
             .lock()
@@ -927,6 +1007,11 @@ where
             .map(|snapshot| WalletRealmFamilyView::Ready(WalletShieldedSyncView::from(&snapshot)))
             .unwrap_or_else(shielded_family_error);
         drop(operation);
+        let (selected_realm, observation_generation) =
+            self.begin_selected_realm_observation(&profile)?;
+        if selected_realm != realm {
+            return Err(SelectedWalletRealmSyncError::SelectionChanged);
+        }
         self.projection(
             profile,
             realm,
@@ -1559,7 +1644,7 @@ mod tests {
         fn sync<'a>(&'a self, _: &'a WalletProfileId) -> crate::WalletAccountPortFuture<'a> {
             Box::pin(std::future::poll_fn(move |_| {
                 if self.account_ready.load(Ordering::Relaxed) {
-                    Poll::Ready(Ok(WalletAccountSnapshot::unavailable(network())))
+                    Poll::Ready(Ok(WalletAccountSnapshot::unavailable(completed_network())))
                 } else {
                     Poll::Pending
                 }
@@ -1717,6 +1802,15 @@ mod tests {
             ChainKind::Midnight,
             network_id(),
             NetworkDisplayName::parse("Standalone").expect("network name is valid"),
+            NetworkEnvironment::Development,
+        )
+    }
+
+    fn completed_network() -> ChainNetwork {
+        ChainNetwork::new(
+            ChainKind::Midnight,
+            network_id(),
+            NetworkDisplayName::parse("Completed Standalone").expect("network name is valid"),
             NetworkEnvironment::Development,
         )
     }
@@ -1912,6 +2006,36 @@ mod tests {
         };
         assert!(matches!(projection.view.dust, WalletRealmFamilyView::Busy));
         assert_eq!(wallet.dust_starts.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn completed_command_rebases_over_a_status_read_started_during_await() {
+        let wallet = Arc::new(CancelDuringAccountWallet::default());
+        let service = SelectedWalletRealmSyncService::new(Arc::clone(&wallet));
+        let mut reconcile = service.reconcile(command(), WalletRealmReconciliationTrigger::Initial);
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(
+            reconcile.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+        let intermediate = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
+            .expect("status read publishes while account sync awaits");
+        let WalletRealmFamilyView::Ready(intermediate_account) = &intermediate.view.account else {
+            panic!("intermediate account is available");
+        };
+        assert_eq!(intermediate_account.network_name, "Standalone");
+
+        wallet.account_ready.store(true, Ordering::Relaxed);
+        let Poll::Ready(Ok(completed)) = reconcile.as_mut().poll(&mut context) else {
+            panic!("account effect completes");
+        };
+        let WalletRealmFamilyView::Ready(completed_account) = &completed.view.account else {
+            panic!("completed account is available");
+        };
+        assert_eq!(completed_account.network_name, "Completed Standalone");
+        assert!(completed.revision > intermediate.revision);
+        assert!(completed.supersedes(&intermediate));
     }
 
     #[test]
