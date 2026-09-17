@@ -280,11 +280,9 @@ impl WalletRealmLifecyclePolicy {
         now_millis: u64,
     ) -> WalletRealmLifecycleDecision {
         if let Some(in_flight) = &self.in_flight {
-            if priority(in_flight.trigger) >= priority(trigger)
-                || self
-                    .pending
-                    .as_ref()
-                    .is_some_and(|pending| priority(pending.trigger) >= priority(trigger))
+            if trigger != WalletRealmReconciliationTrigger::ActionPreflight
+                || in_flight.trigger == WalletRealmReconciliationTrigger::ActionPreflight
+                || self.pending.is_some()
             {
                 return WalletRealmLifecycleDecision::Ignored;
             }
@@ -330,11 +328,14 @@ impl WalletRealmLifecyclePolicy {
 
     fn retry_due(&self, config: WalletRealmLifecyclePolicyConfig, now_millis: u64) -> bool {
         let exponent = u32::from(self.retry_count.saturating_sub(1)).min(63);
+        let jitter = self.active.as_ref().map_or(0, |identity| {
+            deterministic_jitter(identity, self.retry_count, config.jitter_window_millis)
+        });
         let delay = config
             .backoff_base_millis
             .saturating_mul(1_u64 << exponent)
             .min(config.backoff_max_millis)
-            .saturating_add(config.jitter_window_millis);
+            .saturating_add(jitter);
         self.last_request_millis
             .is_none_or(|last| now_millis.saturating_sub(last) >= delay)
     }
@@ -363,12 +364,27 @@ fn is_stale(facets: WalletRealmReconciliationState) -> bool {
         })
 }
 
-const fn priority(trigger: WalletRealmReconciliationTrigger) -> u8 {
-    match trigger {
-        WalletRealmReconciliationTrigger::Initial => 0,
-        WalletRealmReconciliationTrigger::ManualRefresh => 1,
-        WalletRealmReconciliationTrigger::ActionPreflight => 2,
+fn deterministic_jitter(
+    identity: &WalletRealmLifecycleIdentity,
+    retry_count: u8,
+    window_millis: u64,
+) -> u64 {
+    if window_millis == 0 {
+        return 0;
     }
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in identity
+        .profile
+        .as_str()
+        .bytes()
+        .chain([0xff])
+        .chain(identity.realm.as_str().bytes())
+        .chain([retry_count])
+    {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    (u128::from(hash) % (u128::from(window_millis) + 1)) as u64
 }
 
 #[cfg(test)]
@@ -463,6 +479,48 @@ mod tests {
                     facets: fresh(),
                     succeeded: true,
                 }
+            ),
+            WalletRealmLifecycleDecision::Ignored
+        );
+    }
+
+    #[test]
+    fn automatic_events_do_not_queue_behind_active_reconciliation() {
+        let mut policy = WalletRealmLifecyclePolicy::default();
+        let config = WalletRealmLifecyclePolicyConfig::default();
+        let _ = policy.reduce(
+            config,
+            WalletRealmLifecycleInput::Initialized {
+                identity: identity("preprod"),
+                now_millis: 0,
+                facets: stale(),
+            },
+        );
+        for input in [
+            WalletRealmLifecycleInput::PeriodicTick {
+                now_millis: 60_000,
+                facets: stale(),
+            },
+            WalletRealmLifecycleInput::ConnectivityRestored {
+                now_millis: 60_000,
+                facets: stale(),
+            },
+        ] {
+            assert_eq!(
+                policy.reduce(config, input),
+                WalletRealmLifecycleDecision::Ignored
+            );
+        }
+        assert_eq!(
+            policy.reduce(
+                config,
+                WalletRealmLifecycleInput::ReconciliationFinished {
+                    identity: identity("preprod"),
+                    sequence: 1,
+                    now_millis: 60_001,
+                    facets: fresh(),
+                    succeeded: true,
+                },
             ),
             WalletRealmLifecycleDecision::Ignored
         );
@@ -669,6 +727,56 @@ mod tests {
             ),
             WalletRealmLifecycleDecision::Ignored
         );
+    }
+
+    #[test]
+    fn periodic_retry_uses_a_deterministic_bounded_jitter() {
+        let active = identity("preprod");
+        let jitter = deterministic_jitter(&active, 1, 10);
+        assert!(jitter <= 10);
+        assert_eq!(jitter, deterministic_jitter(&active, 1, 10));
+
+        let config =
+            WalletRealmLifecyclePolicyConfig::new(1, 1, 10, 10, 2, 10).expect("valid bounds");
+        let mut policy = WalletRealmLifecyclePolicy::default();
+        let _ = policy.reduce(
+            config,
+            WalletRealmLifecycleInput::Initialized {
+                identity: active.clone(),
+                now_millis: 0,
+                facets: stale(),
+            },
+        );
+        let _ = policy.reduce(
+            config,
+            WalletRealmLifecycleInput::ReconciliationFinished {
+                identity: active,
+                sequence: 1,
+                now_millis: 1,
+                facets: stale(),
+                succeeded: false,
+            },
+        );
+        assert_eq!(
+            policy.reduce(
+                config,
+                WalletRealmLifecycleInput::PeriodicTick {
+                    now_millis: 9 + jitter,
+                    facets: stale(),
+                },
+            ),
+            WalletRealmLifecycleDecision::Ignored
+        );
+        assert!(matches!(
+            policy.reduce(
+                config,
+                WalletRealmLifecycleInput::PeriodicTick {
+                    now_millis: 10 + jitter,
+                    facets: stale(),
+                },
+            ),
+            WalletRealmLifecycleDecision::Request(_)
+        ));
     }
 
     #[test]
