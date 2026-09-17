@@ -367,16 +367,19 @@ const fn missing_facets() -> WalletRealmReconciliationState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxid_wallet_application::{CreateWalletProfileCommand, SelectWalletProfileCommand};
+    use oxid_wallet_application::{
+        CreateWalletProfileCommand, SelectWalletProfileCommand, WalletActionWatch,
+        WalletActionWatchObservation, WalletActionWatchState,
+    };
+    use oxid_wallet_domain::{ChainAccountId, ChainTransactionId};
     use std::future::pending;
 
-    #[test]
-    fn startup_initializes_the_active_selected_realm_without_a_sync_request() {
+    fn initialized_wallet(name: &str) -> HeadlessWallet {
         let application = oxid_composition::compose_in_memory();
         let created = application
             .create_wallet_profile()
             .execute(CreateWalletProfileCommand {
-                display_name: "Headless lifecycle".to_owned(),
+                display_name: name.to_owned(),
             })
             .expect("profile creation");
         application
@@ -385,7 +388,12 @@ mod tests {
                 profile_id: created.id,
             })
             .expect("profile selection");
-        let wallet = HeadlessWallet::new(application);
+        HeadlessWallet::new(application)
+    }
+
+    #[test]
+    fn startup_initializes_the_active_selected_realm_without_a_sync_request() {
+        let wallet = initialized_wallet("Headless lifecycle");
         let active = wallet
             .application
             .get_active_wallet_profile()
@@ -407,6 +415,135 @@ mod tests {
         );
         assert!(status.in_flight.is_none());
         assert!(status.next_wakeup_millis.is_some());
+    }
+
+    #[test]
+    fn headless_adapter_settles_only_the_exact_submitted_transaction() {
+        let wallet = initialized_wallet("Headless send watch");
+        let watches = wallet.application.manage_wallet_action_watch();
+        let transaction = ChainTransactionId::parse("tx_exact").expect("transaction id");
+        let handle = watches
+            .admit(
+                WalletActionWatch::SubmittedTransaction {
+                    transaction: transaction.clone(),
+                },
+                100,
+                0,
+            )
+            .expect("watch admission")
+            .expect("selected realm admits the watch");
+
+        watches
+            .observe(
+                handle,
+                WalletActionWatchObservation::SubmittedTransaction {
+                    transaction: ChainTransactionId::parse("tx_unrelated")
+                        .expect("unrelated transaction id"),
+                },
+                1,
+            )
+            .expect("unrelated observation");
+        assert_eq!(
+            watches
+                .projection()
+                .expect("projection query")
+                .expect("watch projection")
+                .state,
+            WalletActionWatchState::Waiting
+        );
+
+        watches
+            .observe(
+                handle,
+                WalletActionWatchObservation::SubmittedTransaction { transaction },
+                2,
+            )
+            .expect("matching observation");
+        assert_eq!(
+            watches
+                .projection()
+                .expect("projection query")
+                .expect("watch projection")
+                .state,
+            WalletActionWatchState::Confirmed
+        );
+    }
+
+    #[test]
+    fn headless_arrival_watch_respects_checkpoint_and_suspension() {
+        let wallet = initialized_wallet("Headless receive watch");
+        let watches = wallet.application.manage_wallet_action_watch();
+        let account = ChainAccountId::parse("account_exact").expect("account id");
+        let handle = watches
+            .admit(
+                WalletActionWatch::IncomingArrival {
+                    account: account.clone(),
+                    starting_checkpoint: 7,
+                },
+                100,
+                0,
+            )
+            .expect("watch admission")
+            .expect("selected realm admits the watch");
+
+        watches.suspend(handle).expect("suspend watch");
+        watches
+            .observe(
+                handle,
+                WalletActionWatchObservation::IncomingArrival {
+                    account: account.clone(),
+                    checkpoint: 8,
+                },
+                1,
+            )
+            .expect("suspended observation");
+        assert_eq!(
+            watches
+                .projection()
+                .expect("projection query")
+                .expect("watch projection")
+                .state,
+            WalletActionWatchState::Waiting
+        );
+
+        watches.resume(handle).expect("resume watch");
+        watches
+            .observe(
+                handle,
+                WalletActionWatchObservation::IncomingArrival {
+                    account,
+                    checkpoint: 7,
+                },
+                2,
+            )
+            .expect("same-checkpoint observation");
+        assert_eq!(
+            watches
+                .projection()
+                .expect("projection query")
+                .expect("watch projection")
+                .state,
+            WalletActionWatchState::Waiting
+        );
+
+        watches
+            .observe(
+                handle,
+                WalletActionWatchObservation::IncomingArrival {
+                    account: ChainAccountId::parse("account_exact").expect("account id"),
+                    checkpoint: 8,
+                },
+                3,
+            )
+            .expect("later observation");
+        assert_eq!(
+            watches
+                .projection()
+                .expect("projection query")
+                .expect("watch projection")
+                .state,
+            WalletActionWatchState::Confirmed
+        );
     }
 
     #[test]
