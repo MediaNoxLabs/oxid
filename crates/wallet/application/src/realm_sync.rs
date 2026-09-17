@@ -703,6 +703,19 @@ impl<W> SelectedWalletRealmSyncService<W> {
             .selection_gate
             .lock()
             .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
+        self.publish_projection_while_selected(profile, realm, observation_generation, view)
+    }
+
+    fn publish_projection_while_selected(
+        &self,
+        profile: WalletProfileId,
+        realm: ChainNetworkId,
+        observation_generation: SelectedWalletRealmObservationToken,
+        view: SelectedWalletRealmSyncView,
+    ) -> Result<SelectedWalletRealmProjection, SelectedWalletRealmSyncError>
+    where
+        W: WalletNetworkPort,
+    {
         self.ensure_selected_realm(&profile, &realm)?;
         let published = {
             let mut runtime = self
@@ -1124,7 +1137,15 @@ where
         command: SelectedWalletRealmSyncCommand,
     ) -> Result<SelectedWalletRealmProjection, SelectedWalletRealmSyncError> {
         let profile = Self::profile(command)?;
-        let (realm, _) = self.begin_selected_realm_observation(&profile)?;
+        let _selection = self
+            .selection_gate
+            .lock()
+            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
+        let realm = self
+            .wallet
+            .selected_network(&profile)
+            .map_err(SelectedWalletRealmSyncError::SelectedNetwork)?;
+        self.pin_selected_realm(&profile, &realm)?;
         let operation = self
             .operation_gate
             .lock()
@@ -1133,13 +1154,6 @@ where
             .lock()
             .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?
             .cancel_profile(&profile);
-        let account = self
-            .wallet
-            .account_in_realm(&profile, &realm)
-            .map(|snapshot| {
-                WalletRealmFamilyView::Ready(WalletAccountView::from_snapshot(&snapshot))
-            })
-            .unwrap_or_else(account_family_error);
         let dust = self
             .wallet
             .cancel_dust_sync_in_realm(&profile, &realm)
@@ -1150,13 +1164,17 @@ where
             .cancel_shielded_sync_in_realm(&profile, &realm)
             .map(|snapshot| WalletRealmFamilyView::Ready(WalletShieldedSyncView::from(&snapshot)))
             .unwrap_or_else(shielded_family_error);
+        let account = self
+            .wallet
+            .account_in_realm(&profile, &realm)
+            .map(|snapshot| {
+                WalletRealmFamilyView::Ready(WalletAccountView::from_snapshot(&snapshot))
+            })
+            .unwrap_or_else(account_family_error);
         drop(operation);
-        let (selected_realm, observation_generation) =
-            self.begin_selected_realm_observation(&profile)?;
-        if selected_realm != realm {
-            return Err(SelectedWalletRealmSyncError::SelectionChanged);
-        }
-        self.projection(
+        self.ensure_selected_realm(&profile, &realm)?;
+        let observation_generation = self.begin_observation(&profile, &realm)?;
+        self.publish_projection_while_selected(
             profile,
             realm,
             observation_generation,
@@ -2188,6 +2206,29 @@ mod tests {
         };
         assert!(matches!(projection.view.dust, WalletRealmFamilyView::Busy));
         assert_eq!(wallet.dust_starts.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn cancellation_supersedes_a_read_admitted_before_its_side_effects() {
+        let service =
+            SelectedWalletRealmSyncService::new(Arc::new(CancelDuringAccountWallet::default()));
+        let first = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
+            .expect("initial projection");
+        let stale = service
+            .begin_observation(&first.identity.profile, &first.identity.realm)
+            .expect("read is admitted before cancellation");
+        let canceled = CancelSelectedWalletRealmSyncUseCase::execute(&service, command())
+            .expect("cancellation publishes atomically");
+        let recovered = service
+            .projection(
+                first.identity.profile,
+                first.identity.realm,
+                stale,
+                first.view,
+            )
+            .expect("stale read recovers the cancellation projection");
+
+        assert_eq!(recovered, canceled);
     }
 
     #[test]
