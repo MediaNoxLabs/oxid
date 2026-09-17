@@ -444,7 +444,12 @@ pub fn reduce_wallet_dust_registration_settlement(
             && projection
                 .registration
                 .as_ref()
-                .is_some_and(|registration| revision > registration.reconciliation_revision) =>
+                .is_some_and(|registration| {
+                    revision > registration.reconciliation_revision
+                        && (reconciliation
+                            != WalletDustRegistrationSettlementReconciliation::Dropped
+                            || revision >= registration.finality_revision)
+                }) =>
         {
             if let Some(registration) = &mut next.registration {
                 registration.reconciliation_revision = revision;
@@ -1002,10 +1007,7 @@ mod tests {
             reconciliation(2, WalletDustRegistrationSettlementReconciliation::Included),
         );
         projection = reduce(&projection, dust_refresh(2, 2, true));
-        assert_eq!(
-            projection.state,
-            WalletDustRegistrationSettlementState::Ready
-        );
+        assert_eq!(projection.state, State::Ready);
     }
 
     #[test]
@@ -1019,10 +1021,7 @@ mod tests {
                 eligible: false,
             },
         );
-        assert_eq!(
-            projection.state,
-            WalletDustRegistrationSettlementState::NotEligible
-        );
+        assert_eq!(projection.state, State::NotEligible);
         projection = reduce(
             &projection,
             WalletDustRegistrationSettlementEvent::Eligibility {
@@ -1031,10 +1030,7 @@ mod tests {
                 eligible: true,
             },
         );
-        assert_eq!(
-            projection.state,
-            WalletDustRegistrationSettlementState::ActionRequired
-        );
+        assert_eq!(projection.state, State::ActionRequired);
         assert!(projection.registration.is_none());
         assert_eq!(
             reduce(
@@ -1064,10 +1060,7 @@ mod tests {
                 eligible: false,
             },
         );
-        assert_eq!(
-            became_ineligible.state,
-            WalletDustRegistrationSettlementState::AwaitingAuthorization
-        );
+        assert_eq!(became_ineligible.state, State::AwaitingAuthorization);
         assert!(
             became_ineligible
                 .checkpoint
@@ -1081,10 +1074,7 @@ mod tests {
                 draft_id: draft(),
             },
         );
-        assert_eq!(
-            rejected.state,
-            WalletDustRegistrationSettlementState::NotEligible
-        );
+        assert_eq!(rejected.state, State::NotEligible);
         assert!(rejected.registration.is_none());
 
         let stale_success = reduce(
@@ -1094,10 +1084,7 @@ mod tests {
                 draft_id: draft(),
             },
         );
-        assert_eq!(
-            stale_success.state,
-            WalletDustRegistrationSettlementState::NotEligible
-        );
+        assert_eq!(stale_success.state, State::NotEligible);
         assert!(stale_success.registration.is_none());
     }
 
@@ -1122,7 +1109,7 @@ mod tests {
                 },
             )
             .state,
-            WalletDustRegistrationSettlementState::Submitting
+            State::Submitting
         );
         assert!(
             reduce(
@@ -1805,7 +1792,7 @@ mod tests {
                 },
             )
             .state,
-            WalletDustRegistrationSettlementState::Submitting
+            State::Submitting
         );
     }
 
@@ -1838,10 +1825,7 @@ mod tests {
             },
         );
         assert_eq!(rejected.preparation_revision, 2);
-        assert_eq!(
-            rejected.state,
-            WalletDustRegistrationSettlementState::ActionRequired
-        );
+        assert_eq!(rejected.state, State::ActionRequired);
         assert!(rejected.registration.is_none());
 
         let stale_request = reduce(
@@ -1887,6 +1871,14 @@ mod tests {
         );
         assert!(retained(&included_after_finality).included);
         assert_eq!(retained(&included_after_finality).observation_revision, 2);
+        let finalized = reduce(&confirming(), finality(3));
+        assert_eq!(
+            reduce(
+                &finalized,
+                reconciliation(2, WalletDustRegistrationSettlementReconciliation::Dropped),
+            ),
+            finalized
+        );
 
         let included = reduce(
             &confirming(),
