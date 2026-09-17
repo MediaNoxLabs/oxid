@@ -233,15 +233,18 @@ async fn observe_receive_arrival(
         }
         let query_services = services.clone();
         let query_profile = profile_id.clone();
-        let observed = match crate::run_ui_blocking(move || {
+        let observed = crate::run_ui_blocking(move || {
             query_services
                 .get_wallet_account()
                 .execute(WalletAccountQuery {
                     profile_id: query_profile,
                 })
         })
-        .await
-        {
+        .await;
+        if !receive_watch_supported(selected_kind().as_deref()) {
+            return;
+        }
+        let observed = match observed {
             Ok(Ok(account)) => account,
             Ok(Err(error)) => {
                 settle_receive_handle(&manager, handle, account_error_state(&error));
