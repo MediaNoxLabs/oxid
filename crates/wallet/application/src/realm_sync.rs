@@ -337,9 +337,33 @@ impl SelectedWalletRealmRuntime {
         1
     }
 
-    fn begin_observation(&mut self, profile: &WalletProfileId, realm: &ChainNetworkId) -> u64 {
-        self.observe_selected_realm(profile, realm);
-        self.advance_observation_generation(profile, realm)
+    fn begin_observation(
+        &mut self,
+        profile: &WalletProfileId,
+        realm: &ChainNetworkId,
+    ) -> Option<u64> {
+        match self
+            .selections
+            .iter()
+            .find(|selection| &selection.profile == profile)
+        {
+            Some(selection) if &selection.realm != realm => None,
+            Some(_) => Some(self.advance_observation_generation(profile, realm)),
+            None => {
+                self.selections.push(SelectedWalletRealmSelection {
+                    profile: profile.clone(),
+                    realm: realm.clone(),
+                });
+                Some(self.advance_observation_generation(profile, realm))
+            }
+        }
+    }
+
+    fn selection_matches(&self, profile: &WalletProfileId, realm: &ChainNetworkId) -> bool {
+        self.selections
+            .iter()
+            .find(|selection| &selection.profile == profile)
+            .is_some_and(|selection| &selection.realm == realm)
     }
 
     pub fn complete(
@@ -565,7 +589,11 @@ impl<W> SelectedWalletRealmSyncService<W> {
         self.runtime
             .lock()
             .map_err(|_| SelectedWalletRealmSyncError::Unavailable)
-            .map(|mut runtime| runtime.begin_observation(profile, realm))
+            .and_then(|mut runtime| {
+                runtime
+                    .begin_observation(profile, realm)
+                    .ok_or(SelectedWalletRealmSyncError::SelectionChanged)
+            })
     }
 
     fn projection(
@@ -584,6 +612,9 @@ impl<W> SelectedWalletRealmSyncService<W> {
                 .runtime
                 .lock()
                 .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
+            if !runtime.selection_matches(&profile, &realm) {
+                return Err(SelectedWalletRealmSyncError::SelectionChanged);
+            }
             let _ = runtime.publish(
                 profile.clone(),
                 realm.clone(),
@@ -1940,12 +1971,12 @@ mod tests {
             SelectedWalletRealmObservation::PollAfter(Duration::from_millis(150))
         );
         let profile = WalletProfileId::parse("profile_test").expect("profile id");
+        let preprod = ChainNetworkId::parse("preprod").expect("network id");
         wallet
-            .select_network(
-                &profile,
-                &ChainNetworkId::parse("preprod").expect("network id"),
-            )
+            .select_network(&profile, &preprod)
             .expect("select replacement realm");
+        WalletNetworkSelectionObserver::selected(&service, &profile, &preprod)
+            .expect("record replacement realm");
         let replacement = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
             .expect("replacement projection");
         assert_ne!(first.identity, replacement.identity);
@@ -1954,6 +1985,8 @@ mod tests {
         wallet
             .select_network(&profile, &network_id())
             .expect("restore original realm");
+        WalletNetworkSelectionObserver::selected(&service, &profile, &network_id())
+            .expect("record restored realm");
         let restored = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
             .expect("restored projection");
         assert_eq!(first.identity, restored.identity);
@@ -1967,8 +2000,12 @@ mod tests {
         let profile = WalletProfileId::parse("profile_test").expect("profile id");
         let realm = network_id();
         let mut runtime = SelectedWalletRealmRuntime::default();
-        let older = runtime.begin_observation(&profile, &realm);
-        let newer = runtime.begin_observation(&profile, &realm);
+        let older = runtime
+            .begin_observation(&profile, &realm)
+            .expect("first observation begins");
+        let newer = runtime
+            .begin_observation(&profile, &realm)
+            .expect("second observation begins");
         let view = SelectedWalletRealmSyncView {
             account: WalletRealmFamilyView::Unavailable,
             dust: WalletRealmFamilyView::Unavailable,
@@ -1980,6 +2017,50 @@ mod tests {
             Some(1)
         );
         assert_eq!(runtime.publish(profile, realm, older, &view), None);
+    }
+
+    #[test]
+    fn read_cannot_rewrite_a_selection_owned_by_the_mutation_boundary() {
+        let profile = WalletProfileId::parse("profile_test").expect("profile id");
+        let standalone = network_id();
+        let preprod = ChainNetworkId::parse("preprod").expect("network id");
+        let mut runtime = SelectedWalletRealmRuntime::default();
+
+        assert!(runtime.retire_other_realms(&profile, &preprod).is_empty());
+        assert_eq!(runtime.begin_observation(&profile, &standalone), None);
+        assert!(runtime.selection_matches(&profile, &preprod));
+        assert_eq!(
+            runtime.retire_other_realms(&profile, &standalone),
+            [preprod]
+        );
+    }
+
+    #[test]
+    fn selection_invalidation_never_recovers_a_cached_previous_realm() {
+        let service = SelectedWalletRealmSyncService::new(Arc::new(PartialWallet::default()));
+        let first = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
+            .expect("initial projection");
+        let stale = service
+            .begin_observation(&first.identity.profile, &first.identity.realm)
+            .expect("observation begins before selection changes");
+        service
+            .runtime
+            .lock()
+            .expect("runtime lock")
+            .retire_other_realms(
+                &first.identity.profile,
+                &ChainNetworkId::parse("preprod").expect("network id"),
+            );
+
+        assert_eq!(
+            service.projection(
+                first.identity.profile,
+                first.identity.realm,
+                stale,
+                first.view,
+            ),
+            Err(SelectedWalletRealmSyncError::SelectionChanged)
+        );
     }
 
     #[test]
