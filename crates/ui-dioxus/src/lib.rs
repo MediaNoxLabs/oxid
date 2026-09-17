@@ -28,7 +28,6 @@ mod receive;
 mod screen_privacy;
 mod selected_realm_sync;
 mod send_recipient;
-mod wallet_action_watch;
 mod wallet_onboarding;
 mod wallet_realm_lifecycle;
 mod wallet_realm_sync_services;
@@ -61,12 +60,12 @@ use receive::{
     default_receive_kind, grouped_address_preview, protected_receive_addresses,
     public_export_message, render_qr_svg,
 };
+use selected_realm_sync::action_watch::{
+    WalletActionWatchContext, WalletActionWatchStatus, action_watch_projection_from,
+};
 use send_recipient::{
     SendWizardProgress, SendWizardStep, is_public_recipient_candidate, scanned_recipient_update,
     start_recipient_scan,
-};
-use wallet_action_watch::{
-    WalletActionWatchContext, WalletActionWatchStatus, action_watch_projection_from,
 };
 use wallet_onboarding::{WalletOnboarding, WalletOnboardingIntent};
 #[cfg(feature = "preprod-observation")]
