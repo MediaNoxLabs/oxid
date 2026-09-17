@@ -75,6 +75,7 @@ pub struct WalletDustRegistrationSettlementProjection {
     /// Monotonic sequence shared by every recoverable-status event.
     pub recovery_revision: u64,
     resume_state: Option<WalletDustRegistrationSettlementState>,
+    pending_retry_revision: Option<u64>,
 }
 
 impl Default for WalletDustRegistrationSettlementProjection {
@@ -87,6 +88,7 @@ impl Default for WalletDustRegistrationSettlementProjection {
             preparation_revision: 0,
             recovery_revision: 0,
             resume_state: None,
+            pending_retry_revision: None,
         }
     }
 }
@@ -139,6 +141,7 @@ pub enum WalletDustRegistrationSettlementEvent {
     },
     Cancelled {
         identity: WalletDustRegistrationSettlementIdentity,
+        draft_id: WalletTransactionDraftId,
     },
     Offline {
         identity: WalletDustRegistrationSettlementIdentity,
@@ -228,12 +231,23 @@ pub fn reduce_wallet_dust_registration_settlement(
     } else {
         projection.clone()
     };
+    let settles_pending_retry = recovery_revision(&event).is_some()
+        && !matches!(event, WalletDustRegistrationSettlementEvent::Retry { .. });
     if let Some(revision) = recovery_revision(&event) {
         if revision <= projection.recovery_revision {
             return projection.clone();
         }
-        if !recovery_event_applies(projection, &event) {
-            return projection.clone();
+        if matches!(event, WalletDustRegistrationSettlementEvent::Retry { .. })
+            && !can_retry(projection.state)
+        {
+            if projection
+                .pending_retry_revision
+                .is_some_and(|pending| revision <= pending)
+            {
+                return projection.clone();
+            }
+            next.pending_retry_revision = Some(revision);
+            return next;
         }
         next.recovery_revision = revision;
     }
@@ -487,7 +501,9 @@ pub fn reduce_wallet_dust_registration_settlement(
                 _ => {}
             }
         }
-        WalletDustRegistrationSettlementEvent::Cancelled { .. } if can_cancel(projection) => {
+        WalletDustRegistrationSettlementEvent::Cancelled { draft_id, .. }
+            if can_cancel(projection) && has_draft(projection, &draft_id) =>
+        {
             next.registration = None;
             set_state(&mut next, WalletDustRegistrationSettlementState::Cancelled);
         }
@@ -516,14 +532,7 @@ pub fn reduce_wallet_dust_registration_settlement(
         {
             resume_recoverable_state(&mut next);
         }
-        WalletDustRegistrationSettlementEvent::Retry { .. }
-            if matches!(
-                projection.state,
-                WalletDustRegistrationSettlementState::Offline
-                    | WalletDustRegistrationSettlementState::TimedOut
-                    | WalletDustRegistrationSettlementState::Degraded
-            ) =>
-        {
+        WalletDustRegistrationSettlementEvent::Retry { .. } if can_retry(projection.state) => {
             resume_recoverable_state(&mut next);
         }
         WalletDustRegistrationSettlementEvent::Resumed { .. }
@@ -536,6 +545,9 @@ pub fn reduce_wallet_dust_registration_settlement(
             );
         }
         _ => return projection.clone(),
+    }
+    if settles_pending_retry {
+        settle_pending_retry(&mut next);
     }
     next
 }
@@ -702,7 +714,7 @@ fn event_identity(
         | WalletDustRegistrationSettlementEvent::FinalityObserved { identity, .. }
         | WalletDustRegistrationSettlementEvent::RegistrationReconciled { identity, .. }
         | WalletDustRegistrationSettlementEvent::DustRefreshed { identity, .. }
-        | WalletDustRegistrationSettlementEvent::Cancelled { identity }
+        | WalletDustRegistrationSettlementEvent::Cancelled { identity, .. }
         | WalletDustRegistrationSettlementEvent::Offline { identity, .. }
         | WalletDustRegistrationSettlementEvent::TimedOut { identity, .. }
         | WalletDustRegistrationSettlementEvent::Degraded { identity, .. }
@@ -725,18 +737,25 @@ fn recovery_revision(event: &WalletDustRegistrationSettlementEvent) -> Option<u6
     }
 }
 
-fn recovery_event_applies(
-    projection: &WalletDustRegistrationSettlementProjection,
-    event: &WalletDustRegistrationSettlementEvent,
-) -> bool {
-    match event {
-        WalletDustRegistrationSettlementEvent::Retry { .. } => matches!(
-            projection.state,
-            WalletDustRegistrationSettlementState::Offline
-                | WalletDustRegistrationSettlementState::TimedOut
-                | WalletDustRegistrationSettlementState::Degraded
-        ),
-        _ => true,
+fn can_retry(state: WalletDustRegistrationSettlementState) -> bool {
+    matches!(
+        state,
+        WalletDustRegistrationSettlementState::Offline
+            | WalletDustRegistrationSettlementState::TimedOut
+            | WalletDustRegistrationSettlementState::Degraded
+    )
+}
+
+fn settle_pending_retry(projection: &mut WalletDustRegistrationSettlementProjection) {
+    let Some(revision) = projection.pending_retry_revision.take() else {
+        return;
+    };
+    if revision <= projection.recovery_revision {
+        return;
+    }
+    if can_retry(projection.state) {
+        projection.recovery_revision = revision;
+        resume_recoverable_state(projection);
     }
 }
 
@@ -1206,7 +1225,11 @@ mod tests {
                 revision: 3,
             },
         );
-        assert_eq!(unsupported_retry, suspended);
+        assert_eq!(unsupported_retry.state, suspended.state);
+        assert_eq!(
+            unsupported_retry.recovery_revision,
+            suspended.recovery_revision
+        );
         assert_eq!(
             reduce(
                 &unsupported_retry,
@@ -1218,10 +1241,37 @@ mod tests {
             .state,
             WalletDustRegistrationSettlementState::Ready
         );
+        let delayed_offline = reduce(
+            &unsupported_retry,
+            WalletDustRegistrationSettlementEvent::Offline {
+                identity: identity.clone(),
+                revision: 2,
+            },
+        );
+        assert_eq!(
+            delayed_offline.state,
+            WalletDustRegistrationSettlementState::Ready
+        );
+        assert_eq!(delayed_offline.recovery_revision, 3);
+        let newer_offline = reduce(
+            &unsupported_retry,
+            WalletDustRegistrationSettlementEvent::Offline {
+                identity: identity.clone(),
+                revision: 4,
+            },
+        );
+        assert_eq!(
+            newer_offline.state,
+            WalletDustRegistrationSettlementState::Offline
+        );
+        assert_eq!(newer_offline.recovery_revision, 4);
         assert_eq!(
             reduce(
                 &ready,
-                WalletDustRegistrationSettlementEvent::Cancelled { identity },
+                WalletDustRegistrationSettlementEvent::Cancelled {
+                    identity,
+                    draft_id: draft(),
+                },
             ),
             ready
         );
@@ -1301,6 +1351,14 @@ mod tests {
         let selected = selected_identity();
         let other = identity("profile_other", "preprod", 2);
         let projection = eligible();
+        let awaiting = reduce(
+            &projection,
+            WalletDustRegistrationSettlementEvent::AuthorizationRequested {
+                identity: selected.clone(),
+                draft_id: draft(),
+                preparation_revision: 1,
+            },
+        );
         assert_eq!(
             reduce(
                 &projection,
@@ -1312,9 +1370,10 @@ mod tests {
             projection
         );
         let cancelled = reduce(
-            &projection,
+            &awaiting,
             WalletDustRegistrationSettlementEvent::Cancelled {
                 identity: selected.clone(),
+                draft_id: draft(),
             },
         );
         assert_eq!(
@@ -1327,18 +1386,11 @@ mod tests {
             ),
             cancelled
         );
-        let awaiting = reduce(
-            &eligible(),
-            WalletDustRegistrationSettlementEvent::AuthorizationRequested {
-                identity: selected.clone(),
-                draft_id: draft(),
-                preparation_revision: 1,
-            },
-        );
         let awaiting_cancelled = reduce(
             &awaiting,
             WalletDustRegistrationSettlementEvent::Cancelled {
                 identity: selected.clone(),
+                draft_id: draft(),
             },
         );
         assert_eq!(
@@ -1358,6 +1410,7 @@ mod tests {
                 &awaiting_offline,
                 WalletDustRegistrationSettlementEvent::Cancelled {
                     identity: selected.clone(),
+                    draft_id: draft(),
                 },
             )
             .state,
@@ -1369,6 +1422,7 @@ mod tests {
                 &submitting,
                 WalletDustRegistrationSettlementEvent::Cancelled {
                     identity: selected.clone(),
+                    draft_id: draft(),
                 },
             ),
             submitting
@@ -1719,6 +1773,16 @@ mod tests {
                 draft_id: second_draft.clone(),
                 preparation_revision: 2,
             },
+        );
+        assert_eq!(
+            reduce(
+                &reprepared,
+                WalletDustRegistrationSettlementEvent::Cancelled {
+                    identity: identity.clone(),
+                    draft_id: first_draft.clone(),
+                },
+            ),
+            reprepared
         );
         assert_eq!(
             reduce(
