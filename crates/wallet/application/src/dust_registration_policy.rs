@@ -23,8 +23,10 @@ pub struct WalletDustRegistrationSettlementIdentity {
 pub struct WalletDustRegistrationSettlementRegistration {
     pub draft_id: WalletTransactionDraftId,
     pub transaction_id: Option<ChainTransactionId>,
-    /// Monotonic sequence shared by finality and reconciliation observations.
+    /// Maximum retained finality or reconciliation observation sequence.
     pub observation_revision: u64,
+    pub finality_revision: u64,
+    pub reconciliation_revision: u64,
     /// Monotonic DUST snapshot sequence for this registration.
     pub dust_revision: u64,
     pub included: bool,
@@ -303,6 +305,8 @@ pub fn reduce_wallet_dust_registration_settlement(
                 draft_id,
                 transaction_id: None,
                 observation_revision: 0,
+                finality_revision: 0,
+                reconciliation_revision: 0,
                 dust_revision: 0,
                 included: false,
             });
@@ -330,6 +334,8 @@ pub fn reduce_wallet_dust_registration_settlement(
                 draft_id,
                 transaction_id: None,
                 observation_revision: 0,
+                finality_revision: 0,
+                reconciliation_revision: 0,
                 dust_revision: 0,
                 included: false,
             });
@@ -394,15 +400,18 @@ pub fn reduce_wallet_dust_registration_settlement(
             && projection
                 .registration
                 .as_ref()
-                .is_some_and(|registration| revision > registration.observation_revision) =>
+                .is_some_and(|registration| revision > registration.finality_revision) =>
         {
             if let Some(registration) = &mut next.registration {
-                registration.observation_revision = revision;
+                registration.finality_revision = revision;
+                registration.observation_revision = registration.observation_revision.max(revision);
             }
             if matches!(
                 effective_state(projection),
                 WalletDustRegistrationSettlementState::Confirming
-            ) {
+            ) && next.registration.as_ref().is_some_and(|registration| {
+                registration.finality_revision >= registration.reconciliation_revision
+            }) {
                 set_effective_state(
                     &mut next,
                     WalletDustRegistrationSettlementState::Reconciling,
@@ -423,11 +432,12 @@ pub fn reduce_wallet_dust_registration_settlement(
             && projection
                 .registration
                 .as_ref()
-                .is_some_and(|registration| revision > registration.observation_revision) =>
+                .is_some_and(|registration| revision > registration.reconciliation_revision) =>
         {
             let current_state = effective_state(projection);
             if let Some(registration) = &mut next.registration {
-                registration.observation_revision = revision;
+                registration.reconciliation_revision = revision;
+                registration.observation_revision = registration.observation_revision.max(revision);
             }
             match reconciliation {
                 WalletDustRegistrationSettlementReconciliation::Included => {
@@ -456,7 +466,15 @@ pub fn reduce_wallet_dust_registration_settlement(
                     }
                     set_effective_state(
                         &mut next,
-                        WalletDustRegistrationSettlementState::Confirming,
+                        if projection
+                            .registration
+                            .as_ref()
+                            .is_some_and(|registration| registration.finality_revision >= revision)
+                        {
+                            WalletDustRegistrationSettlementState::Reconciling
+                        } else {
+                            WalletDustRegistrationSettlementState::Confirming
+                        },
                     );
                 }
                 WalletDustRegistrationSettlementReconciliation::Dropped => {
@@ -855,6 +873,12 @@ mod tests {
         event: WalletDustRegistrationSettlementEvent,
     ) -> WalletDustRegistrationSettlementProjection {
         reduce_wallet_dust_registration_settlement(projection, event)
+    }
+
+    fn retained(
+        projection: &WalletDustRegistrationSettlementProjection,
+    ) -> &WalletDustRegistrationSettlementRegistration {
+        projection.registration.as_ref().unwrap()
     }
 
     fn eligible() -> WalletDustRegistrationSettlementProjection {
@@ -1690,7 +1714,8 @@ mod tests {
             WalletDustRegistrationSettlementState::Ready
         );
         let duplicate_finality = reduce(&included_early, finality(1));
-        assert_eq!(duplicate_finality, included_early);
+        assert_eq!(duplicate_finality.state, included_early.state);
+        assert!(retained(&duplicate_finality).included);
 
         let pending = reduce(
             &reconciling(),
@@ -1720,12 +1745,7 @@ mod tests {
             dust_not_ready.state,
             WalletDustRegistrationSettlementState::Reconciling
         );
-        assert!(
-            dust_not_ready
-                .registration
-                .as_ref()
-                .is_some_and(|registration| registration.included)
-        );
+        assert!(retained(&dust_not_ready).included);
 
         let pending = reduce(
             &ready,
@@ -1735,12 +1755,7 @@ mod tests {
             pending.state,
             WalletDustRegistrationSettlementState::Confirming
         );
-        assert!(
-            pending
-                .registration
-                .as_ref()
-                .is_some_and(|registration| !registration.included)
-        );
+        assert!(!retained(&pending).included);
 
         let dropped = reduce(
             &ready,
@@ -1876,6 +1891,14 @@ mod tests {
 
     #[test]
     fn reconciliation_revisions_prevent_stale_regressions() {
+        let finality_first = reduce(&confirming(), finality(2));
+        let included_after_finality = reduce(
+            &finality_first,
+            reconciliation(1, WalletDustRegistrationSettlementReconciliation::Included),
+        );
+        assert!(retained(&included_after_finality).included);
+        assert_eq!(retained(&included_after_finality).observation_revision, 2);
+
         let included = reduce(
             &confirming(),
             reconciliation(2, WalletDustRegistrationSettlementReconciliation::Included),
@@ -1884,28 +1907,18 @@ mod tests {
             included.state,
             WalletDustRegistrationSettlementState::Reconciling
         );
-        assert_eq!(
-            included
-                .registration
-                .as_ref()
-                .map(|registration| registration.observation_revision),
-            Some(2)
-        );
+        assert_eq!(retained(&included).observation_revision, 2);
         let newer_finality = reduce(&included, finality(4));
-        assert_eq!(
-            newer_finality
-                .registration
-                .as_ref()
-                .map(|registration| registration.observation_revision),
-            Some(4)
+        assert_eq!(retained(&newer_finality).observation_revision, 4);
+        let pending_after_finality = reduce(
+            &newer_finality,
+            reconciliation(3, WalletDustRegistrationSettlementReconciliation::Pending),
         );
         assert_eq!(
-            reduce(
-                &newer_finality,
-                reconciliation(3, WalletDustRegistrationSettlementReconciliation::Pending),
-            ),
-            newer_finality
+            pending_after_finality.state,
+            WalletDustRegistrationSettlementState::Reconciling
         );
+        assert!(!retained(&pending_after_finality).included);
 
         let stale_pending = reduce(
             &included,
@@ -1921,14 +1934,10 @@ mod tests {
             current_pending.state,
             WalletDustRegistrationSettlementState::Confirming
         );
-        assert_eq!(
-            current_pending
-                .registration
-                .as_ref()
-                .map(|registration| registration.observation_revision),
-            Some(3)
-        );
-        assert_eq!(reduce(&current_pending, finality(2),), current_pending);
+        assert_eq!(retained(&current_pending).observation_revision, 3);
+        let delayed_finality = reduce(&current_pending, finality(2));
+        assert_eq!(delayed_finality.state, current_pending.state);
+        assert!(!retained(&delayed_finality).included);
         assert_eq!(
             reduce(
                 &current_pending,
@@ -1956,50 +1965,11 @@ mod tests {
             WalletDustRegistrationSettlementState::Ready
         );
 
-        let dropped = reduce(
-            &included,
-            reconciliation(3, WalletDustRegistrationSettlementReconciliation::Dropped),
-        );
-        let awaiting = reduce(
-            &dropped,
-            WalletDustRegistrationSettlementEvent::AuthorizationRequested {
-                identity: selected_identity(),
-                draft_id: other_draft(),
-                preparation_revision: 2,
-            },
-        );
-        let submitting = reduce(
-            &awaiting,
-            WalletDustRegistrationSettlementEvent::AuthorizationSucceeded {
-                identity: selected_identity(),
-                draft_id: other_draft(),
-            },
-        );
-        let confirming = reduce(
-            &submitting,
-            WalletDustRegistrationSettlementEvent::SubmissionAccepted {
-                identity: selected_identity(),
-                draft_id: other_draft(),
-                transaction_id: other_transaction(),
-            },
-        );
-        let reconciling = reduce(
-            &confirming,
-            WalletDustRegistrationSettlementEvent::FinalityObserved {
-                identity: selected_identity(),
-                transaction_id: other_transaction(),
-                revision: 1,
-            },
-        );
-        let second_included = reduce(
-            &reconciling,
-            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                identity: selected_identity(),
-                transaction_id: other_transaction(),
-                revision: 2,
-                reconciliation: WalletDustRegistrationSettlementReconciliation::Included,
-            },
-        );
+        let mut second_included = included.clone();
+        let registration = second_included.registration.as_mut().unwrap();
+        registration.draft_id = other_draft();
+        registration.transaction_id = Some(other_transaction());
+        registration.dust_revision = 0;
         assert_eq!(
             reduce(
                 &second_included,
