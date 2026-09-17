@@ -222,12 +222,31 @@ requirement rather than a convenience, for the reason in the next section.
 
 ## What refuses to work by design
 
-- **A six-role audit in one Pi session.** `.pi/subagent-policy.json` caps four
-  spawns per session, two concurrent, `dynamicFanout.maxItems: 2`, sixteen
-  turns and a 120k hard token ceiling per child. These caps exist because this
-  host has frozen from aggregate overcommit; they are not raised to fit an
-  audit. Audits run as resumable passes over the artifact directory instead,
-  which is also why the directory, not a session, holds the state.
+- **More than one judgment role in one Pi session.**
+  [`.pi/subagent-policy.json`](../../../.pi/subagent-policy.json) is the
+  authority, and it currently caps:
+
+  ```
+  "maxSubagentSpawnsPerSession": 1
+  "maxSubagentSpawnsPerRun": 1
+  "globalConcurrencyLimit": 2
+  ```
+
+  One spawn per session and per run, with an 80k soft / 120k hard token
+  envelope per child. These caps exist because this host has frozen from
+  aggregate overcommit; they are not raised to fit an audit. A six-role audit
+  is therefore **six sessions plus a consolidator**, run as resumable passes
+  over the artifact directory — which is why the directory, and not a session,
+  holds the audit's state.
+
+  Quote these figures from the policy file, never from memory or from a stale
+  checkout. They changed during this framework's own development, and an
+  earlier draft of this charter cited a spawn allowance and a per-child budget
+  grammar that the policy no longer used — the `OXA-PRC-08` failure class,
+  committed inside the document that defines it.
+  `tests/repository/audit-report-contract.test.mjs` now holds both this
+  document and the skill to the live policy, so the next drift fails a gate
+  instead of reaching an agent.
 - **A finding without a citation.** The validator rejects it. This blocks
   well-meant, true observations that the auditor did not evidence, and that is
   the intended cost.

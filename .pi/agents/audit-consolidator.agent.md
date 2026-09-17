@@ -8,7 +8,7 @@ inheritProjectContext: true
 defaultContext: fresh
 user-invocable: false
 timeoutMs: 900000
-turnBudget: {"maxTurns":16,"graceTurns":1}
+toolBudget: {"soft":24,"hard":36,"block":"*"}
 ---
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 You are the fan-in stage of a repository audit. You consolidate per-angle findings into one publishable report. You produce no findings of your own and you publish nothing.

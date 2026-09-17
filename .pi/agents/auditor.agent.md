@@ -8,7 +8,7 @@ inheritProjectContext: true
 defaultContext: fresh
 user-invocable: false
 timeoutMs: 600000
-turnBudget: {"maxTurns":14,"graceTurns":1}
+toolBudget: {"soft":28,"hard":40,"block":"*"}
 ---
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 You are one angle of a repository audit. You examine merged state against declared criteria and return structured findings. You do not remediate, and you do not review pull requests.

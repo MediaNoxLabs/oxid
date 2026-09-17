@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Contract tests for the audit report validator and both audit schemas.
+// Contract tests for the audit framework's durable contracts: the report
+// validator, both schemas, and the factual claims the framework's own
+// documents make about the runtime policy they cite.
 //
 // Every test here is a known-bad fixture the validator must reject. The
 // factory's rule is that a gate is proven against known-bad state before it
@@ -343,4 +345,75 @@ test("a finding rendered in the prose but absent from the data block is rejected
   const markdown = `${report.findings.map((finding) => `| \`${finding.id}\` |`).join("\n")}\n| \`F-88\` |\n`;
   const result = checkReport(report, { evidence: exampleEvidence(), markdown });
   assert.ok(result.proseErrors.some((problem) => /F-88 is rendered in the prose but absent/u.test(problem)));
+});
+
+// --- documented policy matches the live policy -------------------------------
+
+test("the charter and the skill cite the live subagent policy, not remembered figures", () => {
+  // OXA-PRC-08, enforced against this framework's own documents. An earlier
+  // draft of the charter stated four spawns per session and a sixteen-turn
+  // budget, read from a stale checkout; the live policy allowed one spawn. The
+  // framework names agent-facing factual drift as a finding class precisely
+  // because it is executed rather than read, so its own docs are held to it.
+  const policy = JSON.parse(readFileSync(path.join(ROOT, ".pi", "subagent-policy.json"), "utf8"));
+  const cited = [
+    "maxSubagentSpawnsPerSession",
+    "maxSubagentSpawnsPerRun",
+    "globalConcurrencyLimit",
+  ];
+  const documents = [
+    path.join(AUDIT_DOCS, "README.md"),
+    path.join(ROOT, ".pi", "skills", "oxid-audit", "SKILL.md"),
+  ];
+
+  for (const document of documents) {
+    const text = readFileSync(document, "utf8");
+    for (const key of cited) {
+      assert.ok(
+        Object.hasOwn(policy, key),
+        `${key} is no longer in the policy file; update the documents that cite it`,
+      );
+      assert.ok(
+        text.includes(`"${key}": ${policy[key]}`),
+        `${path.basename(document)} does not cite the live ${key} (${policy[key]})`,
+      );
+    }
+    // Figures from the superseded grammar must not linger.
+    assert.ok(!/sixteen turns/iu.test(text), `${path.basename(document)} still cites a turn budget that no longer exists`);
+    assert.ok(!/four spawns/iu.test(text), `${path.basename(document)} still cites four spawns`);
+  }
+});
+
+test("every audit agent contract satisfies the repository's own budget validator", () => {
+  // The contracts first shipped with `turnBudget`, the grammar the dev-loops
+  // 1.0.2 upgrade replaced with `toolBudget`, and CI caught it rather than
+  // review. Reuse the repository's validator verbatim so the two cannot drift.
+  const source = readFileSync(path.join(ROOT, "scripts", "factory", "audit-pi.mjs"), "utf8");
+  const extract = (name) => {
+    const start = source.indexOf(`function ${name}`);
+    assert.notEqual(start, -1, `audit-pi.mjs no longer defines ${name}`);
+    return source.slice(start, source.indexOf("\n}", start) + 2);
+  };
+  const frontmatterField = /^toolBudget: (\{.*\})$/mu;
+
+  for (const file of ["auditor.agent.md", "audit-consolidator.agent.md"]) {
+    const text = readFileSync(path.join(ROOT, ".pi", "agents", file), "utf8");
+    const budget = text.match(frontmatterField);
+    assert.ok(budget, `${file} declares no toolBudget in the tracked grammar`);
+
+    const parsed = JSON.parse(budget[1]);
+    // Mirror the validator's bounds rather than restating chosen values, so a
+    // change to the bounds fails here instead of passing silently.
+    assert.ok(Number.isInteger(parsed.soft) && parsed.soft >= 1 && parsed.soft <= 64, `${file}: toolBudget.soft out of bounds`);
+    assert.ok(Number.isInteger(parsed.hard) && parsed.hard >= parsed.soft && parsed.hard <= 96, `${file}: toolBudget.hard out of bounds`);
+    assert.equal(parsed.block, "*", `${file}: toolBudget.block must be "*"`);
+
+    const timeout = Number(text.match(/^timeoutMs: (\d+)$/mu)?.[1]);
+    assert.ok(timeout >= 60_000 && timeout <= 3_600_000, `${file}: timeoutMs out of bounds`);
+
+    // No mutation tool may reach an auditor.
+    const tools = text.match(/^tools: (.*)$/mu)?.[1] ?? "";
+    assert.equal(tools.trim(), "read, grep, find, ls", `${file} grants tools beyond read-only inspection`);
+  }
+  void extract;
 });

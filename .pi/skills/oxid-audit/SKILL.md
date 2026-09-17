@@ -17,36 +17,45 @@ The only mutation is publishing the Discussion, and that waits for the owner.
 
 ## Pass structure
 
-The per-session subagent caps in
-[`.pi/subagent-policy.json`](../../subagent-policy.json) are four spawns, two
-concurrent, `dynamicFanout.maxItems: 2`, sixteen turns and a 120k hard token
-ceiling per child. A six-role audit therefore **does not fit one session**, and
-the caps are not raised to make it fit — they exist because this host has
-frozen from aggregate overcommit.
+[`.pi/subagent-policy.json`](../../subagent-policy.json) is the authority on
+what fits. Read it before planning a run; do not quote these numbers from
+memory. It currently caps:
+
+```
+"maxSubagentSpawnsPerSession": 1
+"maxSubagentSpawnsPerRun": 1
+"globalConcurrencyLimit": 2
+```
+
+**One spawn per session and per run.** A six-role audit is therefore six
+sessions plus a consolidator session, not a fan-out. The caps are not raised to
+make an audit fit — they exist because this host has frozen from aggregate
+overcommit.
 
 Run the audit as resumable passes over one anchor directory. The directory is
-the audit's state, so an interrupted run resumes without re-collecting.
+the audit's state, so an interrupted run resumes without re-collecting, and a
+session boundary costs nothing but wall-clock.
 
 ```
 tmp/audit/<type>/<anchor>/
   evidence.json            # pass 0, deterministic, no model
   findings/<angle>.json    # one per role, written by `auditor`
-  report.json              # pass N, written by `audit-consolidator`
+  report.json              # final pass, written by `audit-consolidator`
   report.md
 ```
 
 | Pass | Spawns | Work |
 | --- | --- | --- |
-| 0 | 0 | Collect evidence. No model runs. |
-| 1 | 2 | Two `auditor` children, one angle each. |
-| 2 | 2 | The next two angles. |
-| 3 | 2 | Remaining angles, if the type declares more than four. |
+| 0 | 0 | Collect evidence. No model runs, so this needs no spawn. |
+| 1..N | 1 each | One `auditor`, one angle, one session. N is the role count for the type. |
 | final | 1 | One `audit-consolidator`, then stop at the owner gate. |
 
-Never exceed two spawns in a pass, and never start a pass before the previous
-one has written its findings files. Each `auditor` receives the evidence path
-and **one** angle — never the orchestrator's conversation, opinions, or another
-role's conclusions.
+Before each judgment pass, confirm the previous pass wrote its findings file.
+Each `auditor` receives the evidence path and **one** angle — never the
+orchestrator's conversation, opinions, or another role's conclusions.
+
+If the policy later permits more than one spawn, passes may hold that many; the
+table above follows the file, not the reverse.
 
 ## Pass 0 — collect
 
