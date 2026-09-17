@@ -210,6 +210,7 @@ struct SelectedWalletRealmPublishedProjection {
     realm: ChainNetworkId,
     revision: u64,
     authority_generation: u64,
+    reconciling: bool,
     view: SelectedWalletRealmSyncView,
 }
 
@@ -494,16 +495,20 @@ impl SelectedWalletRealmRuntime {
         }) {
             return None;
         }
+        let reconciling = self
+            .state(&profile, &realm)
+            .is_some_and(WalletRealmCoordinatorState::has_active_leases);
         if let Some(projection) = self
             .projections
             .iter_mut()
             .find(|projection| projection.profile == profile && projection.realm == realm)
         {
-            if &projection.view != view {
+            if &projection.view != view || projection.reconciling != reconciling {
                 projection.revision = projection.revision.saturating_add(1);
                 projection.view.clone_from(view);
             }
             projection.authority_generation = observation_generation.authority_generation;
+            projection.reconciling = reconciling;
             return Some(projection.revision);
         }
         self.projections
@@ -512,6 +517,7 @@ impl SelectedWalletRealmRuntime {
                 realm,
                 revision: 1,
                 authority_generation: observation_generation.authority_generation,
+                reconciling,
                 view: view.clone(),
             });
         Some(1)
@@ -572,37 +578,21 @@ struct ObservedWalletRealm {
     state: WalletRealmReconciliationState,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct SelectedWalletRealmProjectionUpdates {
-    account: bool,
-    dust: bool,
-    shielded: bool,
+struct SelectedWalletRealmReconciliationAdmission {
+    profile: WalletProfileId,
+    realm: ChainNetworkId,
+    authority: SelectedWalletRealmObservationToken,
+    view: SelectedWalletRealmSyncView,
+    effects: Vec<WalletRealmCoordinatorEffect>,
+    projection: SelectedWalletRealmProjection,
 }
 
-impl SelectedWalletRealmProjectionUpdates {
-    fn include(&mut self, effect: WalletRealmReconciliationEffect) {
-        match effect {
-            WalletRealmReconciliationEffect::SyncAccount => self.account = true,
-            WalletRealmReconciliationEffect::SyncDust => self.dust = true,
-            WalletRealmReconciliationEffect::SyncShielded => self.shielded = true,
-        }
-    }
-
-    fn merge_into(
-        self,
-        latest: &mut SelectedWalletRealmSyncView,
-        completed: SelectedWalletRealmSyncView,
-    ) {
-        if self.account {
-            latest.account = completed.account;
-        }
-        if self.dust {
-            latest.dust = completed.dust;
-        }
-        if self.shielded {
-            latest.shielded = completed.shielded;
-        }
-    }
+enum SelectedWalletRealmEffectPublication {
+    Published {
+        follow_up: Vec<WalletRealmCoordinatorEffect>,
+        projection: SelectedWalletRealmProjection,
+    },
+    Superseded(SelectedWalletRealmProjection),
 }
 
 struct WalletRealmLeaseGuard<'a> {
@@ -623,19 +613,13 @@ impl WalletRealmLeaseGuard<'_> {
             .map(|runtime| runtime.effect_active(&self.profile, &self.realm, effect))
     }
 
-    fn complete(
+    fn settle(
         &mut self,
         effect: WalletRealmCoordinatorEffect,
-        outcome: WalletRealmEffectOutcome,
-    ) -> Result<Vec<WalletRealmCoordinatorEffect>, SelectedWalletRealmSyncError> {
-        let follow_up = self
-            .runtime
-            .lock()
-            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?
-            .complete(&self.profile, &self.realm, effect, outcome);
+        follow_up: &[WalletRealmCoordinatorEffect],
+    ) {
         self.active.retain(|candidate| *candidate != effect);
         self.active.extend(follow_up.iter().copied());
-        Ok(follow_up)
     }
 
     fn discard(&mut self, effect: WalletRealmCoordinatorEffect) {
@@ -748,7 +732,7 @@ impl<W> SelectedWalletRealmSyncService<W> {
         let view = published.view;
         let fresh = selected_realm_is_fresh(&view);
         let consistent = selected_realm_is_consistent(&view);
-        let refreshing = selected_realm_is_refreshing(&view);
+        let refreshing = published.reconciling || selected_realm_is_refreshing(&view);
         SelectedWalletRealmProjection {
             identity: SelectedWalletRealmIdentity { profile, realm },
             revision: published.revision,
@@ -866,47 +850,127 @@ where
         Ok((realm, observation_generation))
     }
 
-    fn publish_completed_reconciliation(
+    fn admit_reconciliation(
         &self,
         profile: WalletProfileId,
-        realm: ChainNetworkId,
-        admitted: SelectedWalletRealmObservationToken,
-        completed: SelectedWalletRealmSyncView,
-        updates: SelectedWalletRealmProjectionUpdates,
-    ) -> Result<SelectedWalletRealmProjection, SelectedWalletRealmSyncError> {
+        trigger: WalletRealmReconciliationTrigger,
+    ) -> Result<SelectedWalletRealmReconciliationAdmission, SelectedWalletRealmSyncError> {
         let _selection = self
             .selection_gate
             .lock()
             .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
-        self.ensure_selected_realm(&profile, &realm)?;
+        let realm = self
+            .wallet
+            .selected_network(&profile)
+            .map_err(SelectedWalletRealmSyncError::SelectedNetwork)?;
+        self.pin_selected_realm(&profile, &realm)?;
+        let authority = self.begin_observation(&profile, &realm)?;
+        let observed = self.observed(&profile, &realm);
+        let view = observed.view;
         let mut runtime = self
             .runtime
             .lock()
             .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
-        if !runtime.selection_matches(&profile, &realm) {
-            return Err(SelectedWalletRealmSyncError::SelectionChanged);
+        let effects = runtime.reconcile(profile.clone(), realm.clone(), observed.state, trigger);
+        if runtime
+            .publish(profile.clone(), realm.clone(), authority, &view)
+            .is_none()
+        {
+            return Err(SelectedWalletRealmSyncError::ObservationSuperseded);
         }
-        if !runtime.authority_matches(&profile, &realm, admitted) {
+        let projection = runtime
+            .authoritative_projection(&profile, &realm)
+            .map(|published| {
+                Self::projection_from_published(profile.clone(), realm.clone(), published)
+            })
+            .ok_or(SelectedWalletRealmSyncError::ObservationSuperseded)?;
+        Ok(SelectedWalletRealmReconciliationAdmission {
+            profile,
+            realm,
+            authority,
+            view,
+            effects,
+            projection,
+        })
+    }
+
+    fn complete_effect_and_publish(
+        &self,
+        profile: &WalletProfileId,
+        realm: &ChainNetworkId,
+        authority: SelectedWalletRealmObservationToken,
+        effect: WalletRealmCoordinatorEffect,
+        outcome: WalletRealmEffectOutcome,
+        completed: &SelectedWalletRealmSyncView,
+    ) -> Result<SelectedWalletRealmEffectPublication, SelectedWalletRealmSyncError> {
+        let _selection = self
+            .selection_gate
+            .lock()
+            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
+        self.ensure_selected_realm(profile, realm)?;
+        let mut completed = completed.clone();
+        match effect.kind() {
+            WalletRealmReconciliationEffect::SyncAccount => {}
+            WalletRealmReconciliationEffect::SyncDust => {
+                let latest = observe_dust(self.wallet.dust_status_in_realm(profile, realm)).0;
+                if matches!(latest, WalletRealmFamilyView::Ready(_)) {
+                    completed.dust = latest;
+                }
+            }
+            WalletRealmReconciliationEffect::SyncShielded => {
+                let latest =
+                    observe_shielded(self.wallet.shielded_status_in_realm(profile, realm)).0;
+                if matches!(latest, WalletRealmFamilyView::Ready(_)) {
+                    completed.shielded = latest;
+                }
+            }
+        }
+        let mut runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
+        if !runtime.authority_matches(profile, realm, authority) {
             return runtime
-                .authoritative_projection(&profile, &realm)
-                .map(|published| Self::projection_from_published(profile, realm, published))
+                .authoritative_projection(profile, realm)
+                .map(|published| {
+                    SelectedWalletRealmEffectPublication::Superseded(
+                        Self::projection_from_published(profile.clone(), realm.clone(), published),
+                    )
+                })
                 .ok_or(SelectedWalletRealmSyncError::ObservationSuperseded);
         }
+        let follow_up = runtime.complete(profile, realm, effect, outcome);
         let mut view = runtime
-            .authoritative_projection(&profile, &realm)
+            .authoritative_projection(profile, realm)
             .map_or_else(|| completed.clone(), |published| published.view);
-        updates.merge_into(&mut view, completed);
-        let observation = runtime.advance_observation_generation(&profile, &realm);
+        match effect.kind() {
+            WalletRealmReconciliationEffect::SyncAccount => {
+                view.account.clone_from(&completed.account);
+            }
+            WalletRealmReconciliationEffect::SyncDust => {
+                view.dust.clone_from(&completed.dust);
+            }
+            WalletRealmReconciliationEffect::SyncShielded => {
+                view.shielded.clone_from(&completed.shielded);
+            }
+        }
+        let observation = runtime.advance_observation_generation(profile, realm);
         if runtime
             .publish(profile.clone(), realm.clone(), observation, &view)
             .is_none()
         {
             return Err(SelectedWalletRealmSyncError::ObservationSuperseded);
         }
-        runtime
-            .authoritative_projection(&profile, &realm)
-            .map(|published| Self::projection_from_published(profile, realm, published))
-            .ok_or(SelectedWalletRealmSyncError::ObservationSuperseded)
+        let projection = runtime
+            .authoritative_projection(profile, realm)
+            .map(|published| {
+                Self::projection_from_published(profile.clone(), realm.clone(), published)
+            })
+            .ok_or(SelectedWalletRealmSyncError::ObservationSuperseded)?;
+        Ok(SelectedWalletRealmEffectPublication::Published {
+            follow_up,
+            projection,
+        })
     }
 
     /// Reconciles the selected realm for one explicit application trigger.
@@ -917,15 +981,13 @@ where
     ) -> SelectedWalletRealmProjectionFuture<'_> {
         Box::pin(async move {
             let profile = Self::profile(command)?;
-            let (realm, admitted) = self.begin_selected_realm_observation(&profile)?;
-            let observed = self.observed(&profile, &realm);
-            let mut view = observed.view;
-            let mut updates = SelectedWalletRealmProjectionUpdates::default();
-            let mut effects = self
-                .runtime
-                .lock()
-                .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?
-                .reconcile(profile.clone(), realm.clone(), observed.state, trigger);
+            let admission = self.admit_reconciliation(profile, trigger)?;
+            let profile = admission.profile;
+            let realm = admission.realm;
+            let authority = admission.authority;
+            let mut view = admission.view;
+            let mut effects = admission.effects;
+            let mut projection = admission.projection;
             let mut leases = WalletRealmLeaseGuard {
                 runtime: &self.runtime,
                 profile: profile.clone(),
@@ -975,12 +1037,23 @@ where
                         effect_outcome(state)
                     }
                 };
-                self.ensure_selected_realm(&profile, &realm)?;
-                let follow_up = leases.complete(effect, outcome)?;
-                updates.include(effect.kind());
-                effects.extend(follow_up);
+                match self.complete_effect_and_publish(
+                    &profile, &realm, authority, effect, outcome, &view,
+                )? {
+                    SelectedWalletRealmEffectPublication::Published {
+                        follow_up,
+                        projection: published,
+                    } => {
+                        leases.settle(effect, &follow_up);
+                        effects.extend(follow_up);
+                        projection = published;
+                    }
+                    SelectedWalletRealmEffectPublication::Superseded(published) => {
+                        return Ok(published);
+                    }
+                }
             }
-            self.publish_completed_reconciliation(profile, realm, admitted, view, updates)
+            Ok(projection)
         })
     }
 }
@@ -1828,7 +1901,7 @@ mod tests {
                 .dust_realm
                 .lock()
                 .map_err(|_| WalletDustSyncPortError::Unavailable)? = Some(realm.clone());
-            WalletDustSyncSnapshot::new(
+            let started = WalletDustSyncSnapshot::new(
                 realm.clone(),
                 WalletDustSyncState::Syncing,
                 None,
@@ -1838,7 +1911,11 @@ mod tests {
                 None,
                 None,
             )
-            .map_err(|_| WalletDustSyncPortError::InvalidData)
+            .map_err(|_| WalletDustSyncPortError::InvalidData)?;
+            let _ =
+                self.dust_observation
+                    .compare_exchange(3, 2, Ordering::Relaxed, Ordering::Relaxed);
+            Ok(started)
         }
 
         fn cancel_dust_sync_in_realm(
@@ -2126,6 +2203,10 @@ mod tests {
         ));
         let intermediate = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
             .expect("status read publishes while account sync awaits");
+        assert_eq!(
+            intermediate.observation,
+            SelectedWalletRealmObservation::PollAfter(Duration::from_millis(150))
+        );
         let WalletRealmFamilyView::Ready(intermediate_account) = &intermediate.view.account else {
             panic!("intermediate account is available");
         };
@@ -2171,6 +2252,35 @@ mod tests {
         assert_eq!(completed.view.dust, intermediate.view.dust);
         assert!(completed.revision > intermediate.revision);
         assert_eq!(wallet.dust_starts.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn effect_publication_reobserves_a_worker_that_completed_after_start() {
+        let wallet = Arc::new(CancelDuringAccountWallet::default());
+        wallet.dust_observation.store(3, Ordering::Relaxed);
+        let service = SelectedWalletRealmSyncService::new(Arc::clone(&wallet));
+        let mut reconcile = service.reconcile(command(), WalletRealmReconciliationTrigger::Initial);
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(
+            reconcile.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+
+        wallet.account_ready.store(true, Ordering::Relaxed);
+        let Poll::Ready(Ok(completed)) = reconcile.as_mut().poll(&mut context) else {
+            panic!("account and DUST effects complete");
+        };
+        let WalletRealmFamilyView::Ready(dust) = completed.view.dust else {
+            panic!("completed DUST observation is available");
+        };
+        assert_eq!(dust.state, "synced");
+        assert_eq!(dust.balance_atomic_units.as_deref(), Some("777"));
+        assert_eq!(wallet.dust_starts.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            completed.observation,
+            SelectedWalletRealmObservation::Settled
+        );
     }
 
     #[test]

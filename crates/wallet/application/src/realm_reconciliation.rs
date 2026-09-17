@@ -167,7 +167,7 @@ impl WalletRealmCoordinatorState {
         effect.revision == self.revision && lease_active(self.leases, effect.kind)
     }
 
-    const fn has_active_leases(self) -> bool {
+    pub(crate) const fn has_active_leases(self) -> bool {
         self.leases.account || self.leases.dust || self.leases.shielded
     }
 }
