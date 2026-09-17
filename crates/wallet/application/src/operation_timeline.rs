@@ -223,6 +223,29 @@ pub enum WalletOperationResourceMeasurement {
     CommitmentCount(u64),
 }
 
+/// Closed, bounded resource measurements attached to one effect completion.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WalletOperationResourceMeasurements {
+    values: Vec<WalletOperationResourceMeasurement>,
+}
+
+impl WalletOperationResourceMeasurements {
+    pub(crate) const MAX_VALUES: usize = 5;
+
+    pub(crate) fn from_values(values: Vec<WalletOperationResourceMeasurement>) -> Self {
+        assert!(
+            values.len() <= Self::MAX_VALUES,
+            "resource measurements are bounded"
+        );
+        Self { values }
+    }
+
+    #[must_use]
+    pub fn as_slice(&self) -> &[WalletOperationResourceMeasurement] {
+        &self.values
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WalletOperationEvent {
     Admitted,
@@ -250,7 +273,7 @@ pub struct WalletOperationRecord {
     pub attempt: WalletOperationAttempt,
     pub timestamp: Option<WalletOperationTimestampMillis>,
     pub duration: WalletOperationDurationMillis,
-    pub measurement: Option<WalletOperationResourceMeasurement>,
+    pub measurements: WalletOperationResourceMeasurements,
     pub event: WalletOperationEvent,
 }
 
@@ -431,6 +454,32 @@ impl WalletOperationTimeline {
         duration: WalletOperationDurationMillis,
         event: WalletOperationEvent,
     ) -> Result<WalletOperationCausationId, WalletOperationTimelineError> {
+        self.record_with_measurements(
+            operation_id,
+            correlation_id,
+            caused_by,
+            resource,
+            trigger,
+            attempt,
+            duration,
+            WalletOperationResourceMeasurements::default(),
+            event,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn record_with_measurements(
+        &self,
+        operation_id: WalletOperationId,
+        correlation_id: WalletOperationCorrelationId,
+        caused_by: Option<WalletOperationCausationId>,
+        resource: WalletOperationResource,
+        trigger: WalletOperationTrigger,
+        attempt: WalletOperationAttempt,
+        duration: WalletOperationDurationMillis,
+        measurements: WalletOperationResourceMeasurements,
+        event: WalletOperationEvent,
+    ) -> Result<WalletOperationCausationId, WalletOperationTimelineError> {
         let mut state = self
             .state
             .lock()
@@ -455,7 +504,7 @@ impl WalletOperationTimeline {
             attempt,
             timestamp: Some(timestamp),
             duration,
-            measurement: None,
+            measurements,
             event,
         });
         Ok(causation_id)
@@ -499,7 +548,7 @@ impl WalletOperationTimeline {
             attempt: WalletOperationAttempt::new(1).expect("one is a valid attempt"),
             timestamp: Some(timestamp),
             duration: WalletOperationDurationMillis::zero(),
-            measurement: None,
+            measurements: WalletOperationResourceMeasurements::default(),
             event: WalletOperationEvent::Admitted,
         });
         Ok((operation_id, correlation_id, causation_id))
