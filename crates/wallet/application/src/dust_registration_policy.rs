@@ -239,9 +239,32 @@ pub fn reduce_wallet_dust_registration_settlement(
     {
         return projection.clone();
     }
+    if let WalletDustRegistrationSettlementEvent::SubmissionAccepted {
+        draft_id,
+        transaction_id,
+        ..
+    } = &event
+        && projection
+            .abandoned_registration
+            .as_ref()
+            .is_some_and(|registration| {
+                registration.draft_id == *draft_id && registration.transaction_id.is_none()
+            })
+    {
+        let mut retained = projection.clone();
+        retained
+            .abandoned_registration
+            .as_mut()
+            .unwrap()
+            .transaction_id = Some(transaction_id.clone());
+        return retained;
+    }
     if supersedes_abandoned_registration(projection, &event) {
         let mut restored = projection.clone();
-        restored.registration = restored.abandoned_registration.take();
+        std::mem::swap(
+            &mut restored.registration,
+            &mut restored.abandoned_registration,
+        );
         let state = latest_eligibility_state(projection);
         set_effective_state(&mut restored, state);
         return reduce_wallet_dust_registration_settlement(&restored, event);
@@ -412,7 +435,6 @@ pub fn reduce_wallet_dust_registration_settlement(
             WalletDustRegistrationSettlementState::Submitting
         ) && has_draft(projection, &draft_id) =>
         {
-            next.abandoned_registration = None;
             if let Some(registration) = &mut next.registration {
                 registration.transaction_id = Some(transaction_id);
             }
@@ -1021,6 +1043,26 @@ mod tests {
         }
     }
 
+    fn authorization_success(
+        draft_id: WalletTransactionDraftId,
+    ) -> WalletDustRegistrationSettlementEvent {
+        WalletDustRegistrationSettlementEvent::AuthorizationSucceeded {
+            identity: selected_identity(),
+            draft_id,
+        }
+    }
+
+    fn submission(
+        draft_id: WalletTransactionDraftId,
+        transaction_id: ChainTransactionId,
+    ) -> WalletDustRegistrationSettlementEvent {
+        WalletDustRegistrationSettlementEvent::SubmissionAccepted {
+            identity: selected_identity(),
+            draft_id,
+            transaction_id,
+        }
+    }
+
     fn cancellation(draft_id: WalletTransactionDraftId) -> WalletDustRegistrationSettlementEvent {
         WalletDustRegistrationSettlementEvent::Cancelled {
             identity: selected_identity(),
@@ -1075,26 +1117,12 @@ mod tests {
     }
 
     fn submitting() -> WalletDustRegistrationSettlementProjection {
-        let identity = selected_identity();
         let awaiting = reduce(&eligible(), authorization_request(draft(), 1));
-        reduce(
-            &awaiting,
-            WalletDustRegistrationSettlementEvent::AuthorizationSucceeded {
-                identity,
-                draft_id: draft(),
-            },
-        )
+        reduce(&awaiting, authorization_success(draft()))
     }
 
     fn confirming() -> WalletDustRegistrationSettlementProjection {
-        reduce(
-            &submitting(),
-            WalletDustRegistrationSettlementEvent::SubmissionAccepted {
-                identity: selected_identity(),
-                draft_id: draft(),
-                transaction_id: transaction(),
-            },
-        )
+        reduce(&submitting(), submission(draft(), transaction()))
     }
 
     fn reconciling() -> WalletDustRegistrationSettlementProjection {
@@ -1111,36 +1139,16 @@ mod tests {
 
     #[test]
     fn eligible_flow_requires_authorization_finality_reconciliation_and_dust_refresh() {
-        let identity = selected_identity();
         let mut projection = eligible();
         assert_eq!(projection.state, State::ActionRequired);
         assert_eq!(
-            reduce(
-                &projection,
-                WalletDustRegistrationSettlementEvent::AuthorizationSucceeded {
-                    identity: identity.clone(),
-                    draft_id: draft(),
-                },
-            ),
+            reduce(&projection, authorization_success(draft()),),
             projection
         );
         projection = reduce(&projection, authorization_request(draft(), 1));
-        projection = reduce(
-            &projection,
-            WalletDustRegistrationSettlementEvent::AuthorizationSucceeded {
-                identity: identity.clone(),
-                draft_id: draft(),
-            },
-        );
+        projection = reduce(&projection, authorization_success(draft()));
         assert_eq!(projection.state, State::Submitting);
-        projection = reduce(
-            &projection,
-            WalletDustRegistrationSettlementEvent::SubmissionAccepted {
-                identity: identity.clone(),
-                draft_id: draft(),
-                transaction_id: transaction(),
-            },
-        );
+        projection = reduce(&projection, submission(draft(), transaction()));
         projection = reduce(&projection, finality(1));
         assert_eq!(projection.state, State::Reconciling);
         projection = reduce(&projection, dust_refresh(1, 1, true));
@@ -1181,13 +1189,7 @@ mod tests {
         assert_eq!(rejected.state, State::NotEligible);
         assert!(rejected.registration.is_none());
 
-        let stale_success = reduce(
-            &became_ineligible,
-            WalletDustRegistrationSettlementEvent::AuthorizationSucceeded {
-                identity: selected_identity(),
-                draft_id: draft(),
-            },
-        );
+        let stale_success = reduce(&became_ineligible, authorization_success(draft()));
         assert_eq!(stale_success.state, State::NotEligible);
         assert!(stale_success.registration.is_none());
     }
@@ -1346,14 +1348,7 @@ mod tests {
             },
         );
 
-        let accepted = reduce(
-            &offline,
-            WalletDustRegistrationSettlementEvent::SubmissionAccepted {
-                identity: identity.clone(),
-                draft_id: draft(),
-                transaction_id: transaction(),
-            },
-        );
+        let accepted = reduce(&offline, submission(draft(), transaction()));
 
         assert_eq!(accepted.state, State::Offline);
         assert_eq!(accepted.resume_state, Some(State::Confirming));
@@ -1367,11 +1362,7 @@ mod tests {
         assert_eq!(retried_before_acceptance.state, State::Submitting);
         let accepted_after_retry = reduce(
             &retried_before_acceptance,
-            WalletDustRegistrationSettlementEvent::SubmissionAccepted {
-                identity: selected_identity(),
-                draft_id: draft(),
-                transaction_id: transaction(),
-            },
+            submission(draft(), transaction()),
         );
         assert_eq!(accepted_after_retry.state, State::Confirming);
         assert!(has_transaction(&accepted_after_retry, &transaction()));
@@ -1528,13 +1519,7 @@ mod tests {
         );
         assert_eq!(awaiting.state, State::Offline);
         assert_eq!(awaiting.resume_state, Some(State::AwaitingAuthorization));
-        let authorized = reduce(
-            &awaiting,
-            WalletDustRegistrationSettlementEvent::AuthorizationSucceeded {
-                identity: identity.clone(),
-                draft_id: draft(),
-            },
-        );
+        let authorized = reduce(&awaiting, authorization_success(draft()));
         assert_eq!(authorized.resume_state, Some(State::Submitting));
         assert_eq!(
             reduce(&authorized, retry_event(2),).state,
@@ -1705,13 +1690,7 @@ mod tests {
             reprepared
         );
         assert_eq!(
-            reduce(
-                &reprepared,
-                WalletDustRegistrationSettlementEvent::AuthorizationSucceeded {
-                    identity: identity.clone(),
-                    draft_id: first_draft,
-                },
-            ),
+            reduce(&reprepared, authorization_success(first_draft),),
             reprepared
         );
         assert_eq!(
@@ -1849,6 +1828,14 @@ mod tests {
         let restored = reduce(&replacement, finality(4));
         assert_eq!(restored.state, State::Reconciling);
         assert!(has_transaction(&restored, &transaction()));
+        let submitting_replacement = reduce(&replacement, authorization_success(other_draft()));
+        let replacement_submission = submission(other_draft(), other_transaction());
+        let accepted_first = reduce(&submitting_replacement, replacement_submission.clone());
+        let observed_first = reduce(&submitting_replacement, finality(4));
+        assert_eq!(
+            reduce(&accepted_first, finality(4)),
+            reduce(&observed_first, replacement_submission)
+        );
         let refresh_first = reduce(
             &reduce(&replacement, dust_refresh(1, 4, true)),
             reconciliation(4, WalletDustRegistrationSettlementReconciliation::Included),
