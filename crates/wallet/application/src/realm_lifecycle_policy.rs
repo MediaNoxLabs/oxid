@@ -96,6 +96,9 @@ pub enum WalletRealmLifecycleInput {
         now_millis: u64,
         facets: WalletRealmReconciliationState,
     },
+    Backgrounded {
+        now_millis: u64,
+    },
     Foreground {
         now_millis: u64,
         facets: WalletRealmReconciliationState,
@@ -191,6 +194,10 @@ impl WalletRealmLifecyclePolicy {
                     }
                     (_, decision) => decision,
                 }
+            }
+            WalletRealmLifecycleInput::Backgrounded { now_millis: _ } => {
+                self.foreground = false;
+                WalletRealmLifecycleDecision::Ignored
             }
             WalletRealmLifecycleInput::Foreground { now_millis, facets } => {
                 self.foreground = true;
@@ -462,6 +469,43 @@ mod tests {
     }
 
     #[test]
+    fn retained_preflight_keeps_its_sequence_when_admitted() {
+        let mut policy = WalletRealmLifecyclePolicy::default();
+        let config = WalletRealmLifecyclePolicyConfig::default();
+        let _ = policy.reduce(
+            config,
+            WalletRealmLifecycleInput::Initialized {
+                identity: identity("preprod"),
+                now_millis: 0,
+                facets: stale(),
+            },
+        );
+        let retained = match policy.reduce(
+            config,
+            WalletRealmLifecycleInput::ActionPreflight {
+                now_millis: 1,
+                facets: stale(),
+            },
+        ) {
+            WalletRealmLifecycleDecision::Retained(request) => request,
+            decision => panic!("expected retained preflight, got {decision:?}"),
+        };
+        assert_eq!(
+            policy.reduce(
+                config,
+                WalletRealmLifecycleInput::ReconciliationFinished {
+                    identity: identity("preprod"),
+                    sequence: 1,
+                    now_millis: 2,
+                    facets: stale(),
+                    succeeded: true,
+                },
+            ),
+            WalletRealmLifecycleDecision::Request(retained)
+        );
+    }
+
+    #[test]
     fn stale_resume_is_debounced_and_periodic_retry_is_bounded() {
         let mut policy = WalletRealmLifecyclePolicy::default();
         let config = WalletRealmLifecyclePolicyConfig::default();
@@ -499,6 +543,63 @@ mod tests {
                 WalletRealmLifecycleInput::Foreground {
                     now_millis: 31_000,
                     facets: stale()
+                }
+            ),
+            WalletRealmLifecycleDecision::Request(_)
+        ));
+    }
+
+    #[test]
+    fn backgrounded_policy_ignores_periodic_and_connectivity_events_until_foregrounded() {
+        let config =
+            WalletRealmLifecyclePolicyConfig::new(10, 10, 10, 40, 2, 0).expect("valid bounds");
+        let mut policy = WalletRealmLifecyclePolicy::default();
+        let _ = policy.reduce(
+            config,
+            WalletRealmLifecycleInput::Initialized {
+                identity: identity("preprod"),
+                now_millis: 0,
+                facets: stale(),
+            },
+        );
+        let _ = policy.reduce(
+            config,
+            WalletRealmLifecycleInput::ReconciliationFinished {
+                identity: identity("preprod"),
+                sequence: 1,
+                now_millis: 1,
+                facets: stale(),
+                succeeded: true,
+            },
+        );
+        assert_eq!(
+            policy.reduce(
+                config,
+                WalletRealmLifecycleInput::Backgrounded { now_millis: 2 },
+            ),
+            WalletRealmLifecycleDecision::Ignored
+        );
+        for input in [
+            WalletRealmLifecycleInput::PeriodicTick {
+                now_millis: 100,
+                facets: stale(),
+            },
+            WalletRealmLifecycleInput::ConnectivityRestored {
+                now_millis: 100,
+                facets: stale(),
+            },
+        ] {
+            assert_eq!(
+                policy.reduce(config, input),
+                WalletRealmLifecycleDecision::Ignored
+            );
+        }
+        assert!(matches!(
+            policy.reduce(
+                config,
+                WalletRealmLifecycleInput::Foreground {
+                    now_millis: 100,
+                    facets: stale(),
                 }
             ),
             WalletRealmLifecycleDecision::Request(_)
