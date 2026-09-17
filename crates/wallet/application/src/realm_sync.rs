@@ -742,6 +742,23 @@ where
         Ok(())
     }
 
+    fn begin_selected_realm_observation(
+        &self,
+        profile: &WalletProfileId,
+    ) -> Result<(ChainNetworkId, u64), SelectedWalletRealmSyncError> {
+        let _selection = self
+            .selection_gate
+            .lock()
+            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
+        let realm = self
+            .wallet
+            .selected_network(profile)
+            .map_err(SelectedWalletRealmSyncError::SelectedNetwork)?;
+        self.pin_selected_realm(profile, &realm)?;
+        let observation_generation = self.begin_observation(profile, &realm)?;
+        Ok((realm, observation_generation))
+    }
+
     /// Reconciles the selected realm for one explicit application trigger.
     pub fn reconcile(
         &self,
@@ -750,12 +767,8 @@ where
     ) -> SelectedWalletRealmProjectionFuture<'_> {
         Box::pin(async move {
             let profile = Self::profile(command)?;
-            let realm = self
-                .wallet
-                .selected_network(&profile)
-                .map_err(SelectedWalletRealmSyncError::SelectedNetwork)?;
-            self.pin_selected_realm(&profile, &realm)?;
-            let observation_generation = self.begin_observation(&profile, &realm)?;
+            let (realm, observation_generation) =
+                self.begin_selected_realm_observation(&profile)?;
             let observed = self.observed(&profile, &realm);
             let mut view = observed.view;
             let mut effects = self
@@ -868,11 +881,7 @@ where
         command: SelectedWalletRealmSyncCommand,
     ) -> Result<SelectedWalletRealmProjection, SelectedWalletRealmSyncError> {
         let profile = Self::profile(command)?;
-        let realm = self
-            .wallet
-            .selected_network(&profile)
-            .map_err(SelectedWalletRealmSyncError::SelectedNetwork)?;
-        let observation_generation = self.begin_observation(&profile, &realm)?;
+        let (realm, observation_generation) = self.begin_selected_realm_observation(&profile)?;
         let view = self.observed(&profile, &realm).view;
         self.projection(profile, realm, observation_generation, view)
     }
@@ -891,12 +900,7 @@ where
         command: SelectedWalletRealmSyncCommand,
     ) -> Result<SelectedWalletRealmProjection, SelectedWalletRealmSyncError> {
         let profile = Self::profile(command)?;
-        let realm = self
-            .wallet
-            .selected_network(&profile)
-            .map_err(SelectedWalletRealmSyncError::SelectedNetwork)?;
-        self.pin_selected_realm(&profile, &realm)?;
-        let observation_generation = self.begin_observation(&profile, &realm)?;
+        let (realm, observation_generation) = self.begin_selected_realm_observation(&profile)?;
         let operation = self
             .operation_gate
             .lock()
