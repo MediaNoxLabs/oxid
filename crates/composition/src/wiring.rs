@@ -635,8 +635,11 @@ where
     let midnight_contract_call_submission: Arc<dyn MidnightContractCallSubmissionPort> =
         midnight.clone();
     let selected_realm_runtime = Arc::new(Mutex::new(SelectedWalletRealmRuntime::default()));
-    let selection_observer: Arc<dyn WalletNetworkSelectionObserver> =
-        selected_realm_runtime.clone();
+    let selected_realm_sync = Arc::new(SelectedWalletRealmSyncService::with_runtime(
+        Arc::clone(&midnight),
+        selected_realm_runtime,
+    ));
+    let selection_observer: Arc<dyn WalletNetworkSelectionObserver> = selected_realm_sync.clone();
     let networks = Arc::new(WalletNetworkService::with_selection_observer(
         Arc::clone(&midnight),
         selection_observer,
@@ -645,10 +648,6 @@ where
     let accounts = Arc::new(WalletAccountService::new(Arc::clone(&midnight)));
     let dust = Arc::new(WalletDustSyncService::new(Arc::clone(&midnight)));
     let shielded = Arc::new(WalletShieldedSyncService::new(Arc::clone(&midnight)));
-    let selected_realm_sync = Arc::new(SelectedWalletRealmSyncService::with_runtime(
-        Arc::clone(&midnight),
-        selected_realm_runtime,
-    ));
     #[cfg(not(target_arch = "wasm32"))]
     let dust_registrations = Arc::new(WalletDustRegistrationService::new(
         Arc::clone(&midnight),
