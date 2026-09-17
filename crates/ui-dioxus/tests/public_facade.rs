@@ -10,9 +10,10 @@ use oxid_ui_dioxus::{
     PassportVaultUiServices, SecurityCopySnapshot, SelfIssuedAuthenticationUiServices,
     WalletAccountUiServices, WalletBackupUiServices, WalletDustRegistrationRecoveryUiServices,
     WalletDustRegistrationUiServices, WalletDustSyncUiServices, WalletOperationalUiServices,
-    WalletProfileUiServices, WalletSecurityUiServices, WalletShieldedSyncUiServices,
-    WalletTransactionPreparationUiServices, WalletTransactionRecoveryUiServices,
-    WalletTransactionUiServices, WalletUiServices, security_copy_snapshot,
+    WalletProfileUiServices, WalletRealmSyncUiServices, WalletSecurityUiServices,
+    WalletShieldedSyncUiServices, WalletTransactionPreparationUiServices,
+    WalletTransactionRecoveryUiServices, WalletTransactionUiServices, WalletUiServices,
+    security_copy_snapshot,
 };
 
 fn assert_public_path<Item>(_item: Item) {}
@@ -42,6 +43,7 @@ fn service_facade_type_and_constructor_paths_remain_at_the_crate_root() {
     assert_public_type::<WalletSecurityUiServices>();
     assert_public_type::<WalletBackupUiServices>();
     assert_public_type::<WalletAccountUiServices>();
+    assert_public_type::<WalletRealmSyncUiServices>();
     assert_public_type::<WalletDustSyncUiServices>();
     assert_public_type::<WalletDustRegistrationUiServices>();
     assert_public_type::<WalletDustRegistrationRecoveryUiServices>();
@@ -86,6 +88,8 @@ fn service_facade_type_and_constructor_paths_remain_at_the_crate_root() {
     assert_public_path(WalletSecurityUiServices::new);
     assert_public_path(WalletBackupUiServices::new);
     assert_public_path(WalletAccountUiServices::new);
+    assert_public_path(WalletRealmSyncUiServices::new);
+    assert_public_path(WalletUiServices::get_wallet_operation_timeline);
     assert_public_path(WalletDustSyncUiServices::new);
     assert_public_path(WalletDustRegistrationUiServices::new);
     assert_public_path(WalletDustRegistrationRecoveryUiServices::new);

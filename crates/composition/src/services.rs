@@ -59,19 +59,20 @@ use oxid_wallet_application::{
     GetActiveWalletProfileUseCase, GetSelectedWalletRealmSyncUseCase, GetWalletAccountUseCase,
     GetWalletBackupReceiptUseCase, GetWalletDustRegistrationStatusUseCase,
     GetWalletDustRegistrationUseCase, GetWalletDustSyncStatusUseCase,
-    GetWalletSecurityStatusUseCase, GetWalletShieldedSyncStatusUseCase,
-    GetWalletTransferDraftUseCase, GetWalletTransferSubmissionStatusUseCase,
-    InitializeWalletSecurityUseCase, ListWalletKeysUseCase, ListWalletNetworksUseCase,
-    ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase, LockWalletUseCase,
-    PortableWalletBackupDocumentPort, PrepareShieldedWalletTransferUseCase,
-    PrepareWalletDustRegistrationUseCase, PrepareWalletOnboardingUseCase,
-    PrepareWalletTransferUseCase, ReconcileWalletDustRegistrationSubmissionUseCase,
-    ReconcileWalletTransferSubmissionUseCase, RecordWalletBackupReceiptUseCase,
-    RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupUseCase,
-    RecoverWalletRootUseCase, SelectWalletNetworkUseCase, SelectWalletProfileUseCase,
-    SignWalletDataUseCase, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
-    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferUseCase,
-    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
+    GetWalletOperationTimelineUseCase, GetWalletSecurityStatusUseCase,
+    GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
+    GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
+    ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesUseCase,
+    ListWalletTransferSubmissionsUseCase, LockWalletUseCase, PortableWalletBackupDocumentPort,
+    PrepareShieldedWalletTransferUseCase, PrepareWalletDustRegistrationUseCase,
+    PrepareWalletOnboardingUseCase, PrepareWalletTransferUseCase,
+    ReconcileWalletDustRegistrationSubmissionUseCase, ReconcileWalletTransferSubmissionUseCase,
+    RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupUseCase,
+    RecoverPortableWalletBackupUseCase, RecoverWalletRootUseCase, SelectWalletNetworkUseCase,
+    SelectWalletProfileUseCase, SignWalletDataUseCase, StartWalletDustSyncUseCase,
+    StartWalletShieldedSyncUseCase, SubmitWalletDustRegistrationUseCase,
+    SubmitWalletTransferUseCase, SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase,
+    UnlockWalletUseCase,
 };
 
 /// Application capabilities shared by every incoming adapter.
@@ -123,6 +124,7 @@ pub struct ApplicationServices {
     pub(super) sync_selected_wallet_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
     pub(super) get_selected_wallet_realm_sync: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
     pub(super) cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
+    pub(super) get_wallet_operation_timeline: Arc<dyn GetWalletOperationTimelineUseCase>,
     pub(super) get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
     pub(super) start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase>,
     pub(super) cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase>,
@@ -512,6 +514,11 @@ impl ApplicationServices {
         &self,
     ) -> Arc<dyn CancelSelectedWalletRealmSyncUseCase> {
         Arc::clone(&self.cancel_selected_wallet_realm_sync)
+    }
+
+    #[must_use]
+    pub fn get_wallet_operation_timeline(&self) -> Arc<dyn GetWalletOperationTimelineUseCase> {
+        Arc::clone(&self.get_wallet_operation_timeline)
     }
 
     #[must_use]

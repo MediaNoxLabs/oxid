@@ -471,6 +471,7 @@ fn main() {
                 application.sync_selected_wallet_realm(),
                 application.get_selected_wallet_realm_sync(),
                 application.cancel_selected_wallet_realm_sync(),
+                application.get_wallet_operation_timeline(),
             ),
             application.public_text_exporter(),
         ),

@@ -150,29 +150,29 @@ use oxid_wallet_application::{
     ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase, GetActiveWalletProfileService,
     GetSelectedWalletRealmSyncUseCase, GetWalletAccountUseCase, GetWalletBackupReceiptUseCase,
     GetWalletDustRegistrationStatusUseCase, GetWalletDustRegistrationUseCase,
-    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
-    GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
-    GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
-    ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesService,
-    ListWalletTransferSubmissionsUseCase, LockWalletUseCase, PortableWalletBackupDocumentPort,
-    PrepareShieldedWalletTransferUseCase, PrepareWalletDustRegistrationUseCase,
-    PrepareWalletTransferUseCase, ReconcileWalletDustRegistrationSubmissionUseCase,
-    ReconcileWalletTransferSubmissionUseCase, RecordWalletBackupReceiptUseCase,
-    RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupUseCase,
-    SelectWalletNetworkUseCase, SelectWalletProfileService, SelectedWalletRealmRuntime,
-    SelectedWalletRealmSyncService, SignWalletDataUseCase, StartWalletDustSyncUseCase,
-    StartWalletShieldedSyncUseCase, SubmitWalletDustRegistrationUseCase,
-    SubmitWalletTransferUseCase, SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase,
-    UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
-    WalletAccountReadPort, WalletAccountService, WalletBackupReceiptRepository,
-    WalletBackupReceiptService, WalletDustRegistrationService, WalletDustSyncPort,
-    WalletDustSyncService, WalletJubjubChallengeSigningPort, WalletKeyOperationPort,
-    WalletKeyService, WalletNetworkPort, WalletNetworkSelectionObserver, WalletNetworkService,
-    WalletOnboardingService, WalletPortableBackupPort, WalletPortableBackupService,
-    WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
-    WalletProtectionService, WalletRootRecoveryPort, WalletRootRecoveryService,
-    WalletShieldedSyncPort, WalletShieldedSyncService, WalletTransactionPort,
-    WalletTransactionService,
+    GetWalletDustSyncStatusUseCase, GetWalletOperationTimelineUseCase,
+    GetWalletSecurityStatusUseCase, GetWalletShieldedSyncStatusUseCase,
+    GetWalletTransferDraftUseCase, GetWalletTransferSubmissionStatusUseCase,
+    InitializeWalletSecurityUseCase, ListWalletKeysUseCase, ListWalletNetworksUseCase,
+    ListWalletProfilesService, ListWalletTransferSubmissionsUseCase, LockWalletUseCase,
+    PortableWalletBackupDocumentPort, PrepareShieldedWalletTransferUseCase,
+    PrepareWalletDustRegistrationUseCase, PrepareWalletTransferUseCase,
+    ReconcileWalletDustRegistrationSubmissionUseCase, ReconcileWalletTransferSubmissionUseCase,
+    RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupUseCase,
+    RecoverPortableWalletBackupUseCase, SelectWalletNetworkUseCase, SelectWalletProfileService,
+    SelectedWalletRealmRuntime, SelectedWalletRealmSyncService, SignWalletDataUseCase,
+    StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
+    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferUseCase,
+    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
+    WalletAccountDerivationPort, WalletAccountDerivationService, WalletAccountReadPort,
+    WalletAccountService, WalletBackupReceiptRepository, WalletBackupReceiptService,
+    WalletDustRegistrationService, WalletDustSyncPort, WalletDustSyncService,
+    WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
+    WalletNetworkSelectionObserver, WalletNetworkService, WalletOnboardingService,
+    WalletPortableBackupPort, WalletPortableBackupService, WalletProfileAssociationRepository,
+    WalletProfileRepository, WalletProtectionPort, WalletProtectionService, WalletRootRecoveryPort,
+    WalletRootRecoveryService, WalletShieldedSyncPort, WalletShieldedSyncService,
+    WalletTransactionPort, WalletTransactionService,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -942,6 +942,8 @@ where
     let get_selected_wallet_realm_sync: Arc<dyn GetSelectedWalletRealmSyncUseCase> =
         selected_realm_sync.clone();
     let cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase> =
+        selected_realm_sync.clone();
+    let get_wallet_operation_timeline: Arc<dyn GetWalletOperationTimelineUseCase> =
         selected_realm_sync;
     let get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase> = dust.clone();
     let start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase> = dust.clone();
@@ -1103,6 +1105,7 @@ where
         sync_selected_wallet_realm,
         get_selected_wallet_realm_sync,
         cancel_selected_wallet_realm_sync,
+        get_wallet_operation_timeline,
         get_wallet_dust_sync_status,
         start_wallet_dust_sync,
         cancel_wallet_dust_sync,

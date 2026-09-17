@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    cell::Cell,
     error::Error,
     fmt,
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use oxid_foundation::OpaqueIdError;
@@ -17,13 +18,18 @@ use oxid_wallet_domain::{
 };
 
 use crate::{
-    WalletAccountPortError, WalletAccountReadPort, WalletAccountView, WalletDustSyncPort,
-    WalletDustSyncPortError, WalletDustSyncView, WalletNetworkPort, WalletNetworkSelectionObserver,
+    GetWalletOperationTimelineUseCase, WalletAccountPortError, WalletAccountReadPort,
+    WalletAccountView, WalletDustSyncPort, WalletDustSyncPortError, WalletDustSyncView,
+    WalletNetworkPort, WalletNetworkSelectionObserver, WalletOperationAttempt,
+    WalletOperationCausationId, WalletOperationCorrelationId, WalletOperationDurationMillis,
+    WalletOperationEvent, WalletOperationFailure, WalletOperationId, WalletOperationOutcome,
+    WalletOperationResource, WalletOperationResourceIdentity, WalletOperationTimeline,
+    WalletOperationTimelineError, WalletOperationTimelineSnapshot, WalletOperationTrigger,
     WalletRealmCoordinatorEffect, WalletRealmCoordinatorInput, WalletRealmCoordinatorState,
     WalletRealmEffectOutcome, WalletRealmFacetState, WalletRealmReconciliationCoordinator,
     WalletRealmReconciliationEffect, WalletRealmReconciliationState,
     WalletRealmReconciliationTrigger, WalletShieldedSyncPort, WalletShieldedSyncPortError,
-    WalletShieldedSyncView,
+    WalletShieldedSyncView, timeline_effect_outcome,
 };
 
 /// Profile-scoped command for reconciling the currently selected network realm.
@@ -571,6 +577,7 @@ pub struct SelectedWalletRealmSyncService<W> {
     runtime: Arc<Mutex<SelectedWalletRealmRuntime>>,
     selection_gate: Arc<Mutex<()>>,
     operation_gate: Mutex<()>,
+    timeline: WalletOperationTimeline,
 }
 
 struct ObservedWalletRealm {
@@ -593,6 +600,190 @@ enum SelectedWalletRealmEffectPublication {
         projection: SelectedWalletRealmProjection,
     },
     Superseded(SelectedWalletRealmProjection),
+}
+
+struct SelectedWalletRealmTimelineOperation {
+    timeline: WalletOperationTimeline,
+    operation_id: WalletOperationId,
+    correlation_id: WalletOperationCorrelationId,
+    admission_id: WalletOperationCausationId,
+    resource: WalletOperationResource,
+    trigger: WalletOperationTrigger,
+    started: Instant,
+    completed_effects: u16,
+    unsuccessful_effects: u16,
+    in_progress_effects: u16,
+    superseded_effects: u16,
+    effect_attempts: [u16; 3],
+    last_cause: Cell<WalletOperationCausationId>,
+    terminal_recorded: Cell<bool>,
+}
+
+impl SelectedWalletRealmTimelineOperation {
+    fn begin(
+        timeline: WalletOperationTimeline,
+        profile: WalletProfileId,
+        realm: ChainNetworkId,
+        revision: u64,
+        trigger: WalletRealmReconciliationTrigger,
+    ) -> Option<Self> {
+        let resource = WalletOperationResource {
+            identity: WalletOperationResourceIdentity::SelectedWalletRealm { profile, realm },
+            revision,
+        };
+        let trigger = WalletOperationTrigger::from(trigger);
+        let (operation_id, correlation_id, admission_id) =
+            timeline.begin_operation(resource.clone(), trigger).ok()?;
+        Some(Self {
+            timeline,
+            operation_id,
+            correlation_id,
+            admission_id,
+            resource,
+            trigger,
+            started: Instant::now(),
+            completed_effects: 0,
+            unsuccessful_effects: 0,
+            in_progress_effects: 0,
+            superseded_effects: 0,
+            effect_attempts: [0; 3],
+            last_cause: Cell::new(admission_id),
+            terminal_recorded: Cell::new(false),
+        })
+    }
+
+    fn planned(
+        &mut self,
+        effect: WalletRealmCoordinatorEffect,
+        caused_by: WalletOperationCausationId,
+    ) -> (WalletOperationCausationId, WalletOperationAttempt) {
+        let attempt_slot = match effect.kind() {
+            WalletRealmReconciliationEffect::SyncAccount => &mut self.effect_attempts[0],
+            WalletRealmReconciliationEffect::SyncDust => &mut self.effect_attempts[1],
+            WalletRealmReconciliationEffect::SyncShielded => &mut self.effect_attempts[2],
+        };
+        *attempt_slot = attempt_slot
+            .saturating_add(1)
+            .min(crate::MAX_WALLET_OPERATION_ATTEMPT);
+        let attempt = WalletOperationAttempt::new(*attempt_slot)
+            .expect("bounded effect attempt is always valid");
+        self.resource.revision = effect.revision();
+        let cause = self
+            .timeline
+            .record(
+                self.operation_id,
+                self.correlation_id,
+                Some(caused_by),
+                self.resource.clone(),
+                self.trigger,
+                attempt,
+                WalletOperationDurationMillis::zero(),
+                WalletOperationEvent::EffectPlanned(effect.kind().into()),
+            )
+            .unwrap_or(caused_by);
+        self.last_cause.set(cause);
+        (cause, attempt)
+    }
+
+    fn completed(
+        &mut self,
+        effect: WalletRealmCoordinatorEffect,
+        attempt: WalletOperationAttempt,
+        caused_by: WalletOperationCausationId,
+        timeline_outcome: WalletOperationOutcome,
+        failure: Option<WalletOperationFailure>,
+        started: Instant,
+    ) -> WalletOperationCausationId {
+        self.completed_effects = self.completed_effects.saturating_add(1);
+        match timeline_outcome {
+            WalletOperationOutcome::Succeeded => {}
+            WalletOperationOutcome::InProgress => {
+                self.in_progress_effects = self.in_progress_effects.saturating_add(1);
+            }
+            WalletOperationOutcome::Stale
+            | WalletOperationOutcome::Missing
+            | WalletOperationOutcome::Blocked
+            | WalletOperationOutcome::Unsupported
+            | WalletOperationOutcome::PartialFailure
+            | WalletOperationOutcome::Failed
+            | WalletOperationOutcome::Superseded
+            | WalletOperationOutcome::SelectionChanged
+            | WalletOperationOutcome::Cancelled
+            | WalletOperationOutcome::NoChanges => {
+                self.unsuccessful_effects = self.unsuccessful_effects.saturating_add(1);
+                if timeline_outcome == WalletOperationOutcome::Superseded {
+                    self.superseded_effects = self.superseded_effects.saturating_add(1);
+                }
+            }
+        }
+        let cause = self
+            .timeline
+            .record(
+                self.operation_id,
+                self.correlation_id,
+                Some(caused_by),
+                self.resource.clone(),
+                self.trigger,
+                attempt,
+                WalletOperationDurationMillis::bounded(started.elapsed()),
+                WalletOperationEvent::EffectCompleted {
+                    effect: effect.kind().into(),
+                    outcome: timeline_outcome,
+                    failure,
+                },
+            )
+            .unwrap_or(caused_by);
+        self.last_cause.set(cause);
+        cause
+    }
+
+    fn terminal(
+        &self,
+        caused_by: WalletOperationCausationId,
+        outcome: WalletOperationOutcome,
+        failure: Option<WalletOperationFailure>,
+    ) {
+        self.terminal_recorded.set(true);
+        let _ = self.timeline.record(
+            self.operation_id,
+            self.correlation_id,
+            Some(caused_by),
+            self.resource.clone(),
+            self.trigger,
+            WalletOperationAttempt::new(1).expect("one is a valid attempt"),
+            WalletOperationDurationMillis::bounded(self.started.elapsed()),
+            WalletOperationEvent::Terminal { outcome, failure },
+        );
+    }
+
+    fn completed_outcome(&self, planned_effects: usize) -> WalletOperationOutcome {
+        if planned_effects == 0 {
+            WalletOperationOutcome::NoChanges
+        } else if self.superseded_effects > 0 {
+            WalletOperationOutcome::Superseded
+        } else if self.completed_effects > 0 && self.unsuccessful_effects == self.completed_effects
+        {
+            WalletOperationOutcome::Failed
+        } else if self.unsuccessful_effects > 0 {
+            WalletOperationOutcome::PartialFailure
+        } else if self.in_progress_effects > 0 {
+            WalletOperationOutcome::InProgress
+        } else {
+            WalletOperationOutcome::Succeeded
+        }
+    }
+}
+
+impl Drop for SelectedWalletRealmTimelineOperation {
+    fn drop(&mut self) {
+        if !self.terminal_recorded.get() {
+            self.terminal(
+                self.last_cause.get(),
+                WalletOperationOutcome::Cancelled,
+                Some(WalletOperationFailure::OperationCancelled),
+            );
+        }
+    }
 }
 
 struct WalletRealmLeaseGuard<'a> {
@@ -659,11 +850,27 @@ impl<W> SelectedWalletRealmSyncService<W> {
         runtime: Arc<Mutex<SelectedWalletRealmRuntime>>,
         selection_gate: Arc<Mutex<()>>,
     ) -> Self {
+        Self::with_runtime_selection_gate_and_timeline(
+            wallet,
+            runtime,
+            selection_gate,
+            WalletOperationTimeline::default(),
+        )
+    }
+
+    #[must_use]
+    pub fn with_runtime_selection_gate_and_timeline(
+        wallet: Arc<W>,
+        runtime: Arc<Mutex<SelectedWalletRealmRuntime>>,
+        selection_gate: Arc<Mutex<()>>,
+        timeline: WalletOperationTimeline,
+    ) -> Self {
         Self {
             wallet,
             runtime,
             selection_gate,
             operation_gate: Mutex::new(()),
+            timeline,
         }
     }
 
@@ -1001,6 +1208,25 @@ where
             let mut view = admission.view;
             let mut effects = admission.effects;
             let mut projection = admission.projection;
+            let revision = effects
+                .first()
+                .map_or(projection.revision, |effect| effect.revision());
+            let mut timeline = SelectedWalletRealmTimelineOperation::begin(
+                self.timeline.clone(),
+                profile.clone(),
+                realm.clone(),
+                revision,
+                trigger,
+            );
+            let mut effect_causes = effects
+                .iter()
+                .map(|effect| {
+                    timeline
+                        .as_mut()
+                        .map(|operation| operation.planned(*effect, operation.admission_id))
+                })
+                .collect::<Vec<_>>();
+            let mut planned_effects = effects.len();
             let mut leases = WalletRealmLeaseGuard {
                 runtime: &self.runtime,
                 profile: profile.clone(),
@@ -1009,11 +1235,32 @@ where
             };
             while !effects.is_empty() {
                 let effect = effects.remove(0);
+                let effect_cause = effect_causes.remove(0);
+                let effect_started = Instant::now();
                 let outcome = match effect.kind() {
                     WalletRealmReconciliationEffect::SyncAccount => {
-                        if !leases.effect_active(effect)? {
-                            leases.discard(effect);
-                            continue;
+                        match leases.effect_active(effect) {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                if let (Some(operation), Some((cause, attempt))) =
+                                    (timeline.as_mut(), effect_cause)
+                                {
+                                    operation.completed(
+                                        effect,
+                                        attempt,
+                                        cause,
+                                        WalletOperationOutcome::Superseded,
+                                        Some(WalletOperationFailure::ObservationSuperseded),
+                                        effect_started,
+                                    );
+                                }
+                                leases.discard(effect);
+                                continue;
+                            }
+                            Err(error) => {
+                                record_terminal_error(timeline.as_ref(), &error);
+                                return Err(error);
+                            }
                         }
                         let (family, state) =
                             observe_account(self.wallet.sync_in_realm(&profile, &realm).await);
@@ -1021,13 +1268,36 @@ where
                         effect_outcome(state)
                     }
                     WalletRealmReconciliationEffect::SyncDust => {
-                        let _operation = self
-                            .operation_gate
-                            .lock()
-                            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
-                        if !leases.effect_active(effect)? {
-                            leases.discard(effect);
-                            continue;
+                        let _operation = match self.operation_gate.lock() {
+                            Ok(operation) => operation,
+                            Err(_) => {
+                                let error = SelectedWalletRealmSyncError::Unavailable;
+                                record_terminal_error(timeline.as_ref(), &error);
+                                return Err(error);
+                            }
+                        };
+                        match leases.effect_active(effect) {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                if let (Some(operation), Some((cause, attempt))) =
+                                    (timeline.as_mut(), effect_cause)
+                                {
+                                    operation.completed(
+                                        effect,
+                                        attempt,
+                                        cause,
+                                        WalletOperationOutcome::Superseded,
+                                        Some(WalletOperationFailure::ObservationSuperseded),
+                                        effect_started,
+                                    );
+                                }
+                                leases.discard(effect);
+                                continue;
+                            }
+                            Err(error) => {
+                                record_terminal_error(timeline.as_ref(), &error);
+                                return Err(error);
+                            }
                         }
                         let (family, state) =
                             observe_dust(self.wallet.start_dust_sync_in_realm(&profile, &realm));
@@ -1035,13 +1305,36 @@ where
                         effect_outcome(state)
                     }
                     WalletRealmReconciliationEffect::SyncShielded => {
-                        let _operation = self
-                            .operation_gate
-                            .lock()
-                            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
-                        if !leases.effect_active(effect)? {
-                            leases.discard(effect);
-                            continue;
+                        let _operation = match self.operation_gate.lock() {
+                            Ok(operation) => operation,
+                            Err(_) => {
+                                let error = SelectedWalletRealmSyncError::Unavailable;
+                                record_terminal_error(timeline.as_ref(), &error);
+                                return Err(error);
+                            }
+                        };
+                        match leases.effect_active(effect) {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                if let (Some(operation), Some((cause, attempt))) =
+                                    (timeline.as_mut(), effect_cause)
+                                {
+                                    operation.completed(
+                                        effect,
+                                        attempt,
+                                        cause,
+                                        WalletOperationOutcome::Superseded,
+                                        Some(WalletOperationFailure::ObservationSuperseded),
+                                        effect_started,
+                                    );
+                                }
+                                leases.discard(effect);
+                                continue;
+                            }
+                            Err(error) => {
+                                record_terminal_error(timeline.as_ref(), &error);
+                                return Err(error);
+                            }
                         }
                         let (family, state) = observe_shielded(
                             self.wallet.start_shielded_sync_in_realm(&profile, &realm),
@@ -1050,24 +1343,73 @@ where
                         effect_outcome(state)
                     }
                 };
-                match self.complete_effect_and_publish(
+                let failure = timeline_effect_failure(effect.kind(), outcome, &view);
+                if let (Some(operation), Some((cause, attempt))) = (timeline.as_mut(), effect_cause)
+                {
+                    operation.completed(
+                        effect,
+                        attempt,
+                        cause,
+                        timeline_effect_outcome(outcome),
+                        failure,
+                        effect_started,
+                    );
+                }
+                let publication = match self.complete_effect_and_publish(
                     &profile, &realm, authority, effect, outcome, &view,
-                )? {
+                ) {
+                    Ok(publication) => publication,
+                    Err(error) => {
+                        record_terminal_error(timeline.as_ref(), &error);
+                        return Err(error);
+                    }
+                };
+                match publication {
                     SelectedWalletRealmEffectPublication::Published {
                         follow_up,
                         projection: published,
                     } => {
                         leases.settle(effect, &follow_up);
+                        for follow_up_effect in &follow_up {
+                            let cause = timeline.as_mut().map(|operation| {
+                                operation.planned(*follow_up_effect, operation.last_cause.get())
+                            });
+                            effect_causes.push(cause);
+                        }
+                        planned_effects = planned_effects.saturating_add(follow_up.len());
                         effects.extend(follow_up);
                         projection = published;
                     }
                     SelectedWalletRealmEffectPublication::Superseded(published) => {
+                        if let Some(operation) = timeline.as_ref() {
+                            operation.terminal(
+                                operation.last_cause.get(),
+                                WalletOperationOutcome::Superseded,
+                                Some(WalletOperationFailure::ObservationSuperseded),
+                            );
+                        }
                         return Ok(published);
                     }
                 }
             }
+            if let Some(operation) = timeline.as_ref() {
+                operation.terminal(
+                    operation.last_cause.get(),
+                    operation.completed_outcome(planned_effects),
+                    None,
+                );
+            }
             Ok(projection)
         })
+    }
+}
+
+impl<W> GetWalletOperationTimelineUseCase for SelectedWalletRealmSyncService<W>
+where
+    W: Send + Sync,
+{
+    fn execute(&self) -> Result<WalletOperationTimelineSnapshot, WalletOperationTimelineError> {
+        self.timeline.query()
     }
 }
 
@@ -1184,6 +1526,115 @@ where
                 shielded,
             },
         )
+    }
+}
+
+fn record_terminal_error(
+    operation: Option<&SelectedWalletRealmTimelineOperation>,
+    error: &SelectedWalletRealmSyncError,
+) {
+    let (outcome, failure) = match error {
+        SelectedWalletRealmSyncError::InvalidProfileIdentifier(_) => (
+            WalletOperationOutcome::Failed,
+            WalletOperationFailure::InvalidAdapterData,
+        ),
+        SelectedWalletRealmSyncError::SelectedNetwork(error) => (
+            WalletOperationOutcome::Failed,
+            account_timeline_failure(*error),
+        ),
+        SelectedWalletRealmSyncError::SelectionChanged => (
+            WalletOperationOutcome::SelectionChanged,
+            WalletOperationFailure::SelectionChanged,
+        ),
+        SelectedWalletRealmSyncError::ObservationSuperseded => (
+            WalletOperationOutcome::Superseded,
+            WalletOperationFailure::ObservationSuperseded,
+        ),
+        SelectedWalletRealmSyncError::Unavailable => (
+            WalletOperationOutcome::Failed,
+            WalletOperationFailure::RuntimeUnavailable,
+        ),
+    };
+    if let Some(operation) = operation {
+        operation.terminal(operation.last_cause.get(), outcome, Some(failure));
+    }
+}
+
+fn timeline_effect_failure(
+    effect: WalletRealmReconciliationEffect,
+    outcome: WalletRealmEffectOutcome,
+    view: &SelectedWalletRealmSyncView,
+) -> Option<WalletOperationFailure> {
+    if matches!(outcome, WalletRealmEffectOutcome::Current) {
+        return None;
+    }
+    match effect {
+        WalletRealmReconciliationEffect::SyncAccount => match &view.account {
+            WalletRealmFamilyView::NotFound => Some(WalletOperationFailure::AccountNotFound),
+            WalletRealmFamilyView::Unsupported => Some(WalletOperationFailure::UnsupportedNetwork),
+            WalletRealmFamilyView::ProtectionNotInitialized => {
+                Some(WalletOperationFailure::ProtectionNotInitialized)
+            }
+            WalletRealmFamilyView::ProtectionLocked => {
+                Some(WalletOperationFailure::ProtectionLocked)
+            }
+            WalletRealmFamilyView::InvalidData => Some(WalletOperationFailure::InvalidAdapterData),
+            WalletRealmFamilyView::Busy | WalletRealmFamilyView::Unavailable => {
+                Some(WalletOperationFailure::AdapterUnavailable)
+            }
+            WalletRealmFamilyView::Ready(_) => None,
+        },
+        WalletRealmReconciliationEffect::SyncDust => match &view.dust {
+            WalletRealmFamilyView::Ready(value) => sync_timeline_failure(value.failure.as_deref()),
+            family => family_timeline_failure(family),
+        },
+        WalletRealmReconciliationEffect::SyncShielded => match &view.shielded {
+            WalletRealmFamilyView::Ready(value) => sync_timeline_failure(value.failure.as_deref()),
+            family => family_timeline_failure(family),
+        },
+    }
+}
+
+fn sync_timeline_failure(failure: Option<&str>) -> Option<WalletOperationFailure> {
+    match failure {
+        Some("protection_not_initialized") => {
+            Some(WalletOperationFailure::ProtectionNotInitialized)
+        }
+        Some("protection_locked") => Some(WalletOperationFailure::ProtectionLocked),
+        Some("unsupported_network") => Some(WalletOperationFailure::UnsupportedNetwork),
+        Some("invalid_chain_state") => Some(WalletOperationFailure::InvalidAdapterData),
+        Some("transport_unavailable" | "timed_out" | "storage_unavailable") => {
+            Some(WalletOperationFailure::AdapterUnavailable)
+        }
+        _ => None,
+    }
+}
+
+fn family_timeline_failure<T>(family: &WalletRealmFamilyView<T>) -> Option<WalletOperationFailure> {
+    match family {
+        WalletRealmFamilyView::Busy => Some(WalletOperationFailure::Conflict),
+        WalletRealmFamilyView::NotFound => Some(WalletOperationFailure::AccountNotFound),
+        WalletRealmFamilyView::Unsupported => Some(WalletOperationFailure::UnsupportedNetwork),
+        WalletRealmFamilyView::ProtectionNotInitialized => {
+            Some(WalletOperationFailure::ProtectionNotInitialized)
+        }
+        WalletRealmFamilyView::ProtectionLocked => Some(WalletOperationFailure::ProtectionLocked),
+        WalletRealmFamilyView::InvalidData => Some(WalletOperationFailure::InvalidAdapterData),
+        WalletRealmFamilyView::Unavailable => Some(WalletOperationFailure::AdapterUnavailable),
+        WalletRealmFamilyView::Ready(_) => None,
+    }
+}
+
+const fn account_timeline_failure(error: WalletAccountPortError) -> WalletOperationFailure {
+    match error {
+        WalletAccountPortError::NotFound => WalletOperationFailure::AccountNotFound,
+        WalletAccountPortError::UnsupportedNetwork => WalletOperationFailure::UnsupportedNetwork,
+        WalletAccountPortError::ProtectionNotInitialized => {
+            WalletOperationFailure::ProtectionNotInitialized
+        }
+        WalletAccountPortError::ProtectionLocked => WalletOperationFailure::ProtectionLocked,
+        WalletAccountPortError::Unavailable => WalletOperationFailure::AdapterUnavailable,
+        WalletAccountPortError::InvalidData => WalletOperationFailure::InvalidAdapterData,
     }
 }
 
@@ -1432,7 +1883,10 @@ mod tests {
         WalletShieldedSyncFailure, WalletShieldedSyncSnapshot,
     };
 
-    use crate::{SelectWalletNetworkCommand, SelectWalletNetworkUseCase, WalletNetworkService};
+    use crate::{
+        SelectWalletNetworkCommand, SelectWalletNetworkUseCase, WalletNetworkService,
+        WalletOperationEffect, WalletOperationRecord,
+    };
 
     use super::*;
 
@@ -2168,6 +2622,30 @@ mod tests {
         assert_eq!(wallet.account_syncs.load(Ordering::Relaxed), 1);
 
         drop(first);
+        let timeline = GetWalletOperationTimelineUseCase::execute(&service).expect("timeline");
+        assert!(matches!(
+            timeline.records().last().map(|record| record.event),
+            Some(WalletOperationEvent::Terminal {
+                outcome: WalletOperationOutcome::Cancelled,
+                failure: Some(WalletOperationFailure::OperationCancelled),
+            })
+        ));
+        let first_operation = timeline.records()[0].operation_id;
+        let first_records = timeline
+            .records()
+            .iter()
+            .filter(|record| record.operation_id == first_operation)
+            .collect::<Vec<_>>();
+        assert_eq!(first_records.len(), 3);
+        assert!(matches!(
+            first_records[1].event,
+            WalletOperationEvent::EffectPlanned(WalletOperationEffect::SyncAccount)
+        ));
+        assert_eq!(
+            first_records[2].caused_by,
+            Some(first_records[1].causation_id),
+            "drop cancellation must follow the latest successfully recorded event"
+        );
         let profile = WalletProfileId::parse("profile_test").expect("profile id");
         let expired = service
             .runtime
@@ -2184,6 +2662,208 @@ mod tests {
             Poll::Pending
         ));
         assert_eq!(wallet.account_syncs.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn dropped_operation_after_completion_uses_the_completion_as_its_cause() {
+        let timeline = WalletOperationTimeline::with_capacity(8).expect("timeline");
+        let profile = WalletProfileId::parse("profile_test").expect("profile id");
+        let mut runtime = SelectedWalletRealmRuntime::default();
+        let effect = runtime
+            .reconcile(
+                profile.clone(),
+                network_id(),
+                WalletRealmReconciliationState {
+                    account: WalletRealmFacetState::Stale,
+                    dust: WalletRealmFacetState::Current,
+                    shielded: WalletRealmFacetState::Current,
+                },
+                WalletRealmReconciliationTrigger::Initial,
+            )
+            .into_iter()
+            .next()
+            .expect("account effect");
+        let mut operation = SelectedWalletRealmTimelineOperation::begin(
+            timeline.clone(),
+            profile,
+            network_id(),
+            effect.revision(),
+            WalletRealmReconciliationTrigger::Initial,
+        )
+        .expect("timeline operation");
+        let (planned, attempt) = operation.planned(effect, operation.admission_id);
+        let completed = operation.completed(
+            effect,
+            attempt,
+            planned,
+            WalletOperationOutcome::Stale,
+            None,
+            Instant::now(),
+        );
+        drop(operation);
+
+        let snapshot = timeline.query().expect("timeline snapshot");
+        let terminal = snapshot.records().last().expect("terminal record");
+        assert!(matches!(
+            terminal.event,
+            WalletOperationEvent::Terminal {
+                outcome: WalletOperationOutcome::Cancelled,
+                failure: Some(WalletOperationFailure::OperationCancelled),
+            }
+        ));
+        assert_eq!(terminal.caused_by, Some(completed));
+    }
+
+    #[test]
+    fn actual_follow_up_retry_keeps_causality_and_increments_effect_attempt() {
+        let wallet = Arc::new(CancelDuringAccountWallet::default());
+        let service = SelectedWalletRealmSyncService::new(Arc::clone(&wallet));
+        let mut first = service.reconcile(command(), WalletRealmReconciliationTrigger::Initial);
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(first.as_mut().poll(&mut context), Poll::Pending));
+
+        resolve(service.reconcile(command(), WalletRealmReconciliationTrigger::ActionPreflight))
+            .expect("follow-up trigger is queued while the first account effect awaits");
+        wallet.account_ready.store(true, Ordering::Relaxed);
+        assert!(matches!(
+            first.as_mut().poll(&mut context),
+            Poll::Ready(Ok(_))
+        ));
+
+        let timeline = GetWalletOperationTimelineUseCase::execute(&service).expect("timeline");
+        let operation_id = timeline
+            .records()
+            .iter()
+            .find(|record| {
+                record.trigger == WalletOperationTrigger::Initial
+                    && matches!(record.event, WalletOperationEvent::Admitted)
+            })
+            .expect("initial operation admission")
+            .operation_id;
+        let records = timeline
+            .records()
+            .iter()
+            .filter(|record| record.operation_id == operation_id)
+            .collect::<Vec<_>>();
+        let account_records = records
+            .iter()
+            .copied()
+            .filter(|record| {
+                matches!(
+                    record.event,
+                    WalletOperationEvent::EffectPlanned(WalletOperationEffect::SyncAccount)
+                        | WalletOperationEvent::EffectCompleted {
+                            effect: WalletOperationEffect::SyncAccount,
+                            ..
+                        }
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(account_records.len(), 4);
+        assert_eq!(
+            account_records
+                .iter()
+                .map(|record| record.attempt.value())
+                .collect::<Vec<_>>(),
+            [1, 1, 2, 2]
+        );
+        assert_eq!(
+            account_records
+                .iter()
+                .map(|record| record.resource.revision)
+                .collect::<Vec<_>>(),
+            [1, 1, 2, 2],
+            "resource revision remains separate from the per-effect attempt"
+        );
+        assert_eq!(
+            account_records[1].caused_by,
+            Some(account_records[0].causation_id)
+        );
+        assert_eq!(
+            account_records[3].caused_by,
+            Some(account_records[2].causation_id)
+        );
+        let dust_completion = records
+            .iter()
+            .copied()
+            .find(|record| {
+                matches!(
+                    record.event,
+                    WalletOperationEvent::EffectCompleted {
+                        effect: WalletOperationEffect::SyncDust,
+                        ..
+                    }
+                )
+            })
+            .expect("DUST completion causes the queued retry plan");
+        assert_eq!(
+            account_records[2].caused_by,
+            Some(dust_completion.causation_id)
+        );
+        assert_eq!(
+            records.last().expect("terminal").caused_by,
+            Some(account_records[3].causation_id)
+        );
+    }
+
+    #[test]
+    fn degraded_typed_effect_outcomes_never_produce_terminal_success() {
+        for outcome in [
+            WalletOperationOutcome::Stale,
+            WalletOperationOutcome::Missing,
+            WalletOperationOutcome::Blocked,
+            WalletOperationOutcome::Unsupported,
+            WalletOperationOutcome::Superseded,
+        ] {
+            let timeline = WalletOperationTimeline::with_capacity(4).expect("timeline");
+            let profile = WalletProfileId::parse("profile_test").expect("profile id");
+            let mut runtime = SelectedWalletRealmRuntime::default();
+            let effect = runtime
+                .reconcile(
+                    profile.clone(),
+                    network_id(),
+                    WalletRealmReconciliationState {
+                        account: WalletRealmFacetState::Stale,
+                        dust: WalletRealmFacetState::Current,
+                        shielded: WalletRealmFacetState::Current,
+                    },
+                    WalletRealmReconciliationTrigger::Initial,
+                )
+                .into_iter()
+                .next()
+                .expect("account effect");
+            let mut operation = SelectedWalletRealmTimelineOperation::begin(
+                timeline.clone(),
+                profile,
+                network_id(),
+                effect.revision(),
+                WalletRealmReconciliationTrigger::Initial,
+            )
+            .expect("timeline operation");
+            let (planned, attempt) = operation.planned(effect, operation.admission_id);
+            operation.completed(effect, attempt, planned, outcome, None, Instant::now());
+            let terminal_outcome = operation.completed_outcome(1);
+            operation.terminal(operation.last_cause.get(), terminal_outcome, None);
+            drop(operation);
+
+            let expected = if outcome == WalletOperationOutcome::Superseded {
+                WalletOperationOutcome::Superseded
+            } else {
+                WalletOperationOutcome::Failed
+            };
+            assert_eq!(terminal_outcome, expected);
+            assert!(matches!(
+                timeline.query().expect("snapshot").records().last(),
+                Some(WalletOperationRecord {
+                    event: WalletOperationEvent::Terminal {
+                        outcome,
+                        ..
+                    },
+                    ..
+                }) if *outcome == expected
+            ));
+        }
     }
 
     #[test]
@@ -2206,6 +2886,14 @@ mod tests {
         };
         assert!(matches!(projection.view.dust, WalletRealmFamilyView::Busy));
         assert_eq!(wallet.dust_starts.load(Ordering::Relaxed), 0);
+        let timeline = GetWalletOperationTimelineUseCase::execute(&service).expect("timeline");
+        assert!(matches!(
+            timeline.records().last().map(|record| record.event),
+            Some(WalletOperationEvent::Terminal {
+                outcome: WalletOperationOutcome::Superseded,
+                failure: Some(WalletOperationFailure::ObservationSuperseded),
+            })
+        ));
     }
 
     #[test]
@@ -2374,6 +3062,15 @@ mod tests {
         assert!(matches!(
             reconcile.as_mut().poll(&mut context),
             Poll::Ready(Err(SelectedWalletRealmSyncError::ObservationSuperseded))
+        ));
+        let timeline = GetWalletOperationTimelineUseCase::execute(service.as_ref())
+            .expect("superseded operation remains inspectable");
+        assert!(matches!(
+            timeline.records().last().map(|record| record.event),
+            Some(WalletOperationEvent::Terminal {
+                outcome: WalletOperationOutcome::Superseded,
+                failure: Some(WalletOperationFailure::ObservationSuperseded),
+            })
         ));
 
         assert_eq!(
@@ -2710,6 +3407,69 @@ mod tests {
             }
         );
 
+        let timeline = GetWalletOperationTimelineUseCase::execute(&service)
+            .expect("shared operation timeline query");
+        assert_eq!(timeline.records().len(), 8);
+        assert!(matches!(
+            timeline.records()[0].event,
+            WalletOperationEvent::Admitted
+        ));
+        assert!(matches!(
+            timeline.records()[1].event,
+            WalletOperationEvent::EffectPlanned(WalletOperationEffect::SyncAccount)
+        ));
+        assert!(matches!(
+            timeline.records()[2].event,
+            WalletOperationEvent::EffectPlanned(WalletOperationEffect::SyncDust)
+        ));
+        assert!(matches!(
+            timeline.records()[3].event,
+            WalletOperationEvent::EffectPlanned(WalletOperationEffect::SyncShielded)
+        ));
+        assert!(matches!(
+            timeline.records()[4].event,
+            WalletOperationEvent::EffectCompleted {
+                effect: WalletOperationEffect::SyncAccount,
+                outcome: WalletOperationOutcome::Stale,
+                failure: None,
+            }
+        ));
+        assert!(matches!(
+            timeline.records()[5].event,
+            WalletOperationEvent::EffectCompleted {
+                effect: WalletOperationEffect::SyncDust,
+                outcome: WalletOperationOutcome::Blocked,
+                failure: Some(WalletOperationFailure::ProtectionLocked),
+            }
+        ));
+        assert!(matches!(
+            timeline.records()[6].event,
+            WalletOperationEvent::EffectCompleted {
+                effect: WalletOperationEffect::SyncShielded,
+                outcome: WalletOperationOutcome::Missing,
+                failure: None,
+            }
+        ));
+        assert!(matches!(
+            timeline.records()[7].event,
+            WalletOperationEvent::Terminal {
+                outcome: WalletOperationOutcome::Failed,
+                failure: None,
+            }
+        ));
+        assert!(
+            timeline
+                .records()
+                .windows(2)
+                .all(|pair| pair[0].sequence < pair[1].sequence)
+        );
+        let aggregates = timeline.aggregates();
+        assert_eq!(aggregates.maximum_attempt, 1);
+        assert_eq!(aggregates.outcomes.stale, 1);
+        assert_eq!(aggregates.outcomes.blocked, 1);
+        assert_eq!(aggregates.outcomes.missing, 1);
+        assert_eq!(aggregates.outcomes.failed, 1);
+
         let cancelled = CancelSelectedWalletRealmSyncUseCase::execute(&service, command())
             .expect("aggregate cancellation reports every family");
         assert_eq!(cancelled.view.dust, WalletRealmFamilyView::ProtectionLocked);
@@ -2745,6 +3505,10 @@ mod tests {
         .expect("cached DUST fixture is valid");
         let (_, dust_state) = observe_dust(Ok(dust));
         assert_eq!(dust_state, WalletRealmFacetState::Blocked);
+        assert_eq!(
+            sync_timeline_failure(Some("protection_locked")),
+            Some(WalletOperationFailure::ProtectionLocked)
+        );
 
         let shielded = WalletShieldedSyncSnapshot::new(
             network_id(),
@@ -2761,5 +3525,26 @@ mod tests {
         .expect("stalled shielded fixture is valid");
         let (_, shielded_state) = observe_shielded(Ok(shielded));
         assert_eq!(shielded_state, WalletRealmFacetState::Unsupported);
+        assert_eq!(
+            sync_timeline_failure(Some("unsupported_network")),
+            Some(WalletOperationFailure::UnsupportedNetwork)
+        );
+
+        let (family, state) = observe_dust(Err(WalletDustSyncPortError::Conflict));
+        assert_eq!(family, WalletRealmFamilyView::Busy);
+        assert_eq!(state, WalletRealmFacetState::Updating);
+        let view = SelectedWalletRealmSyncView {
+            account: WalletRealmFamilyView::Unavailable,
+            dust: family,
+            shielded: WalletRealmFamilyView::Unavailable,
+        };
+        assert_eq!(
+            timeline_effect_failure(
+                WalletRealmReconciliationEffect::SyncDust,
+                WalletRealmEffectOutcome::InProgress,
+                &view,
+            ),
+            Some(WalletOperationFailure::Conflict)
+        );
     }
 }

@@ -37,9 +37,15 @@ fn composition_exposes_every_application_capability() {
     drop(services.derive_wallet_account());
     drop(services.get_wallet_account());
     drop(services.sync_wallet_account());
-    drop(services.sync_selected_wallet_realm());
+    let selected_realm_sync = services.sync_selected_wallet_realm();
     drop(services.get_selected_wallet_realm_sync());
     drop(services.cancel_selected_wallet_realm_sync());
+    let operation_timeline = services.get_wallet_operation_timeline();
+    assert_eq!(
+        std::sync::Arc::as_ptr(&selected_realm_sync) as *const (),
+        std::sync::Arc::as_ptr(&operation_timeline) as *const (),
+        "composition must expose the timeline query from the selected-realm service"
+    );
     drop(services.get_wallet_dust_sync_status());
     drop(services.start_wallet_dust_sync());
     drop(services.cancel_wallet_dust_sync());

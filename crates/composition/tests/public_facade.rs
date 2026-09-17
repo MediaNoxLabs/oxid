@@ -41,6 +41,7 @@ fn application_service_getters_remain_available_at_the_root_facade() {
     let _ = services.derive_wallet_account();
     let _ = services.get_wallet_account();
     let _ = services.sync_wallet_account();
+    let _ = services.get_wallet_operation_timeline();
     let _ = services.get_wallet_dust_sync_status();
     let _ = services.start_wallet_dust_sync();
     let _ = services.cancel_wallet_dust_sync();
