@@ -908,6 +908,11 @@ fn supersedes_abandoned_registration(
             revision,
             ..
         } => Some((transaction_id, *revision)),
+        WalletDustRegistrationSettlementEvent::DustRefreshed {
+            transaction_id,
+            after_observation_revision,
+            ..
+        } => Some((transaction_id, *after_observation_revision)),
         _ => None,
     };
     observation.is_some_and(|(transaction, revision)| {
@@ -1844,6 +1849,19 @@ mod tests {
         let restored = reduce(&replacement, finality(4));
         assert_eq!(restored.state, State::Reconciling);
         assert!(has_transaction(&restored, &transaction()));
+        let refresh_first = reduce(
+            &reduce(&replacement, dust_refresh(1, 4, true)),
+            reconciliation(4, WalletDustRegistrationSettlementReconciliation::Included),
+        );
+        let included_first = reduce(
+            &reduce(
+                &replacement,
+                reconciliation(4, WalletDustRegistrationSettlementReconciliation::Included),
+            ),
+            dust_refresh(1, 4, true),
+        );
+        assert_eq!(refresh_first, included_first);
+        assert_eq!(refresh_first.state, State::Ready);
         let abandoned_offline = reduce(&reduce(&dropped, offline_event(1)), abandon_dropped(3));
         assert_eq!(retained(&abandoned_offline).abandonment_revision, 3);
         let superseded_abandonment = reduce(&abandoned, finality(4));
