@@ -670,6 +670,10 @@ pub trait SelectWalletNetworkUseCase: Send + Sync {
         &self,
         command: SelectWalletNetworkCommand,
     ) -> Result<WalletNetworkListView, WalletAccountError>;
+
+    fn select(&self, command: SelectWalletNetworkCommand) -> Result<(), WalletAccountError> {
+        self.execute(command).map(drop)
+    }
 }
 
 /// Application-owned observer for successful profile realm selections.
@@ -756,6 +760,26 @@ impl<N> WalletNetworkService<N> {
         }
     }
 
+    fn select_identity(
+        &self,
+        profile: &WalletProfileId,
+        network: &ChainNetworkId,
+    ) -> Result<(), WalletAccountError>
+    where
+        N: WalletNetworkPort,
+    {
+        let _selection = self
+            .selection_gate
+            .lock()
+            .map_err(|_| WalletAccountError::Port(WalletAccountPortError::Unavailable))?;
+        self.networks
+            .select_network(profile, network)
+            .map_err(WalletAccountError::Port)?;
+        self.selection_observer
+            .selected(profile, network)
+            .map_err(WalletAccountError::Port)
+    }
+
     fn view(
         &self,
         profile_id: &WalletProfileId,
@@ -823,17 +847,16 @@ where
             .map_err(WalletAccountError::InvalidProfileIdentifier)?;
         let network_id = ChainNetworkId::parse(command.network_id)
             .map_err(WalletAccountError::InvalidNetworkIdentifier)?;
-        let _selection = self
-            .selection_gate
-            .lock()
-            .map_err(|_| WalletAccountError::Port(WalletAccountPortError::Unavailable))?;
-        self.networks
-            .select_network(&profile_id, &network_id)
-            .map_err(WalletAccountError::Port)?;
-        self.selection_observer
-            .selected(&profile_id, &network_id)
-            .map_err(WalletAccountError::Port)?;
+        self.select_identity(&profile_id, &network_id)?;
         self.view(&profile_id)
+    }
+
+    fn select(&self, command: SelectWalletNetworkCommand) -> Result<(), WalletAccountError> {
+        let profile = WalletProfileId::parse(command.profile_id)
+            .map_err(WalletAccountError::InvalidProfileIdentifier)?;
+        let network = ChainNetworkId::parse(command.network_id)
+            .map_err(WalletAccountError::InvalidNetworkIdentifier)?;
+        self.select_identity(&profile, &network)
     }
 }
 

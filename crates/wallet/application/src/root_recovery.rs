@@ -328,7 +328,7 @@ where
             ));
         }
         self.network_selection
-            .execute(SelectWalletNetworkCommand {
+            .select(SelectWalletNetworkCommand {
                 profile_id: profile_id.as_str().to_owned(),
                 network_id: self.network_id.as_str().to_owned(),
             })
