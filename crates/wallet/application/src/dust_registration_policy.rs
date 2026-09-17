@@ -523,6 +523,14 @@ fn resume_recoverable_state(projection: &mut WalletDustRegistrationSettlementPro
         WalletDustRegistrationSettlementState::NotEligible => {
             WalletDustRegistrationSettlementState::NotEligible
         }
+        WalletDustRegistrationSettlementState::Submitting
+            if projection
+                .registration
+                .as_ref()
+                .is_some_and(|registration| registration.transaction_id.is_none()) =>
+        {
+            WalletDustRegistrationSettlementState::Submitting
+        }
         WalletDustRegistrationSettlementState::Confirming
         | WalletDustRegistrationSettlementState::Reconciling
             if projection
@@ -845,7 +853,7 @@ mod tests {
                 },
             )
             .state,
-            WalletDustRegistrationSettlementState::ActionRequired
+            WalletDustRegistrationSettlementState::Submitting
         );
         assert!(
             reduce(
@@ -855,7 +863,7 @@ mod tests {
                 },
             )
             .registration
-            .is_none()
+            .is_some()
         );
 
         let confirming = confirming();
@@ -1031,6 +1039,30 @@ mod tests {
             WalletDustRegistrationSettlementState::Confirming
         );
         assert!(has_transaction(&retried, &transaction()));
+
+        let retried_before_acceptance = reduce(
+            &offline,
+            WalletDustRegistrationSettlementEvent::Retry {
+                identity: selected_identity(),
+            },
+        );
+        assert_eq!(
+            retried_before_acceptance.state,
+            WalletDustRegistrationSettlementState::Submitting
+        );
+        let accepted_after_retry = reduce(
+            &retried_before_acceptance,
+            WalletDustRegistrationSettlementEvent::SubmissionAccepted {
+                identity: selected_identity(),
+                draft_id: draft(),
+                transaction_id: transaction(),
+            },
+        );
+        assert_eq!(
+            accepted_after_retry.state,
+            WalletDustRegistrationSettlementState::Confirming
+        );
+        assert!(has_transaction(&accepted_after_retry, &transaction()));
     }
 
     #[test]
