@@ -768,6 +768,39 @@ mod tests {
         ChainTransactionId::parse("tx_test").unwrap()
     }
 
+    fn finality(revision: u64) -> WalletDustRegistrationSettlementEvent {
+        WalletDustRegistrationSettlementEvent::FinalityObserved {
+            identity: selected_identity(),
+            transaction_id: transaction(),
+            revision,
+        }
+    }
+
+    fn reconciliation(
+        revision: u64,
+        reconciliation: WalletDustRegistrationSettlementReconciliation,
+    ) -> WalletDustRegistrationSettlementEvent {
+        WalletDustRegistrationSettlementEvent::RegistrationReconciled {
+            identity: selected_identity(),
+            transaction_id: transaction(),
+            revision,
+            reconciliation,
+        }
+    }
+
+    fn dust_refresh(
+        revision: u64,
+        after_observation_revision: u64,
+        ready: bool,
+    ) -> WalletDustRegistrationSettlementEvent {
+        WalletDustRegistrationSettlementEvent::DustRefreshed {
+            identity: selected_identity(),
+            revision,
+            after_observation_revision,
+            ready,
+        }
+    }
+
     fn reduce(
         projection: &WalletDustRegistrationSettlementProjection,
         event: WalletDustRegistrationSettlementEvent,
@@ -817,36 +850,15 @@ mod tests {
     }
 
     fn reconciling() -> WalletDustRegistrationSettlementProjection {
-        reduce(
-            &confirming(),
-            WalletDustRegistrationSettlementEvent::FinalityObserved {
-                identity: selected_identity(),
-                transaction_id: transaction(),
-                revision: 1,
-            },
-        )
+        reduce(&confirming(), finality(1))
     }
 
     fn ready() -> WalletDustRegistrationSettlementProjection {
-        let identity = selected_identity();
         let included = reduce(
             &reconciling(),
-            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                identity: identity.clone(),
-                transaction_id: transaction(),
-                revision: 2,
-                reconciliation: WalletDustRegistrationSettlementReconciliation::Included,
-            },
+            reconciliation(2, WalletDustRegistrationSettlementReconciliation::Included),
         );
-        reduce(
-            &included,
-            WalletDustRegistrationSettlementEvent::DustRefreshed {
-                identity,
-                revision: 1,
-                after_observation_revision: 2,
-                ready: true,
-            },
-        )
+        reduce(&included, dust_refresh(1, 2, true))
     }
 
     #[test]
@@ -894,48 +906,17 @@ mod tests {
                 transaction_id: transaction(),
             },
         );
-        projection = reduce(
-            &projection,
-            WalletDustRegistrationSettlementEvent::FinalityObserved {
-                identity: identity.clone(),
-                transaction_id: transaction(),
-                revision: 1,
-            },
-        );
+        projection = reduce(&projection, finality(1));
         assert_eq!(
             projection.state,
             WalletDustRegistrationSettlementState::Reconciling
         );
-        assert_eq!(
-            reduce(
-                &projection,
-                WalletDustRegistrationSettlementEvent::DustRefreshed {
-                    identity: identity.clone(),
-                    revision: 1,
-                    after_observation_revision: 1,
-                    ready: true,
-                },
-            ),
-            projection
-        );
+        assert_eq!(reduce(&projection, dust_refresh(1, 1, true),), projection);
         projection = reduce(
             &projection,
-            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                identity: identity.clone(),
-                transaction_id: transaction(),
-                revision: 2,
-                reconciliation: WalletDustRegistrationSettlementReconciliation::Included,
-            },
+            reconciliation(2, WalletDustRegistrationSettlementReconciliation::Included),
         );
-        projection = reduce(
-            &projection,
-            WalletDustRegistrationSettlementEvent::DustRefreshed {
-                identity,
-                revision: 2,
-                after_observation_revision: 2,
-                ready: true,
-            },
-        );
+        projection = reduce(&projection, dust_refresh(2, 2, true));
         assert_eq!(
             projection.state,
             WalletDustRegistrationSettlementState::Ready
@@ -1103,12 +1084,7 @@ mod tests {
 
         let included = reduce(
             &reconciling(),
-            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                identity: identity.clone(),
-                transaction_id: transaction(),
-                revision: 2,
-                reconciliation: WalletDustRegistrationSettlementReconciliation::Included,
-            },
+            reconciliation(2, WalletDustRegistrationSettlementReconciliation::Included),
         );
         let degraded = reduce(
             &included,
@@ -1137,12 +1113,7 @@ mod tests {
         );
         let included_while_degraded = reduce(
             &degraded_confirming,
-            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                identity: identity.clone(),
-                transaction_id: transaction(),
-                revision: 1,
-                reconciliation: WalletDustRegistrationSettlementReconciliation::Included,
-            },
+            reconciliation(1, WalletDustRegistrationSettlementReconciliation::Included),
         );
         assert_eq!(
             included_while_degraded.state,
@@ -1161,12 +1132,7 @@ mod tests {
         );
         let dropped_while_degraded = reduce(
             &degraded_confirming,
-            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                identity: identity.clone(),
-                transaction_id: transaction(),
-                revision: 1,
-                reconciliation: WalletDustRegistrationSettlementReconciliation::Dropped,
-            },
+            reconciliation(1, WalletDustRegistrationSettlementReconciliation::Dropped),
         );
         assert_eq!(
             dropped_while_degraded.state,
@@ -1184,15 +1150,7 @@ mod tests {
             WalletDustRegistrationSettlementState::ActionRequired
         );
         assert!(retried.registration.is_none());
-        let ready = reduce(
-            &included,
-            WalletDustRegistrationSettlementEvent::DustRefreshed {
-                identity: identity.clone(),
-                revision: 1,
-                after_observation_revision: 2,
-                ready: true,
-            },
-        );
+        let ready = reduce(&included, dust_refresh(1, 2, true));
         let suspended = reduce(
             &ready,
             WalletDustRegistrationSettlementEvent::Suspended {
@@ -1615,52 +1573,25 @@ mod tests {
 
     #[test]
     fn early_pending_and_dropped_reconciliation_are_deterministic() {
-        let identity = selected_identity();
         let confirming = confirming();
         let included_early = reduce(
             &confirming,
-            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                identity: identity.clone(),
-                transaction_id: transaction(),
-                revision: 1,
-                reconciliation: WalletDustRegistrationSettlementReconciliation::Included,
-            },
+            reconciliation(1, WalletDustRegistrationSettlementReconciliation::Included),
         );
         assert_eq!(
             included_early.state,
             WalletDustRegistrationSettlementState::Reconciling
         );
         assert_eq!(
-            reduce(
-                &included_early,
-                WalletDustRegistrationSettlementEvent::DustRefreshed {
-                    identity: identity.clone(),
-                    revision: 1,
-                    after_observation_revision: 1,
-                    ready: true,
-                },
-            )
-            .state,
+            reduce(&included_early, dust_refresh(1, 1, true),).state,
             WalletDustRegistrationSettlementState::Ready
         );
-        let duplicate_finality = reduce(
-            &included_early,
-            WalletDustRegistrationSettlementEvent::FinalityObserved {
-                identity: identity.clone(),
-                transaction_id: transaction(),
-                revision: 1,
-            },
-        );
+        let duplicate_finality = reduce(&included_early, finality(1));
         assert_eq!(duplicate_finality, included_early);
 
         let pending = reduce(
             &reconciling(),
-            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                identity: identity.clone(),
-                transaction_id: transaction(),
-                revision: 2,
-                reconciliation: WalletDustRegistrationSettlementReconciliation::Pending,
-            },
+            reconciliation(2, WalletDustRegistrationSettlementReconciliation::Pending),
         );
         assert_eq!(
             pending.state,
@@ -1668,12 +1599,7 @@ mod tests {
         );
         let dropped = reduce(
             &pending,
-            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                identity,
-                transaction_id: transaction(),
-                revision: 3,
-                reconciliation: WalletDustRegistrationSettlementReconciliation::Dropped,
-            },
+            reconciliation(3, WalletDustRegistrationSettlementReconciliation::Dropped),
         );
         assert_eq!(
             dropped.state,
@@ -1684,18 +1610,9 @@ mod tests {
 
     #[test]
     fn ready_regresses_on_dust_or_reconciliation_rollback() {
-        let identity = selected_identity();
         let ready = ready();
 
-        let dust_not_ready = reduce(
-            &ready,
-            WalletDustRegistrationSettlementEvent::DustRefreshed {
-                identity: identity.clone(),
-                revision: 2,
-                after_observation_revision: 2,
-                ready: false,
-            },
-        );
+        let dust_not_ready = reduce(&ready, dust_refresh(2, 2, false));
         assert_eq!(
             dust_not_ready.state,
             WalletDustRegistrationSettlementState::Reconciling
@@ -1709,12 +1626,7 @@ mod tests {
 
         let pending = reduce(
             &ready,
-            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                identity: identity.clone(),
-                transaction_id: transaction(),
-                revision: 3,
-                reconciliation: WalletDustRegistrationSettlementReconciliation::Pending,
-            },
+            reconciliation(3, WalletDustRegistrationSettlementReconciliation::Pending),
         );
         assert_eq!(
             pending.state,
@@ -1729,12 +1641,7 @@ mod tests {
 
         let dropped = reduce(
             &ready,
-            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                identity,
-                transaction_id: transaction(),
-                revision: 3,
-                reconciliation: WalletDustRegistrationSettlementReconciliation::Dropped,
-            },
+            reconciliation(3, WalletDustRegistrationSettlementReconciliation::Dropped),
         );
         assert_eq!(
             dropped.state,
@@ -1856,15 +1763,9 @@ mod tests {
 
     #[test]
     fn reconciliation_revisions_prevent_stale_regressions() {
-        let identity = selected_identity();
         let included = reduce(
             &confirming(),
-            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                identity: identity.clone(),
-                transaction_id: transaction(),
-                revision: 2,
-                reconciliation: WalletDustRegistrationSettlementReconciliation::Included,
-            },
+            reconciliation(2, WalletDustRegistrationSettlementReconciliation::Included),
         );
         assert_eq!(
             included.state,
@@ -1877,14 +1778,7 @@ mod tests {
                 .map(|registration| registration.observation_revision),
             Some(2)
         );
-        let newer_finality = reduce(
-            &included,
-            WalletDustRegistrationSettlementEvent::FinalityObserved {
-                identity: identity.clone(),
-                transaction_id: transaction(),
-                revision: 4,
-            },
-        );
+        let newer_finality = reduce(&included, finality(4));
         assert_eq!(
             newer_finality
                 .registration
@@ -1895,35 +1789,20 @@ mod tests {
         assert_eq!(
             reduce(
                 &newer_finality,
-                WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                    identity: identity.clone(),
-                    transaction_id: transaction(),
-                    revision: 3,
-                    reconciliation: WalletDustRegistrationSettlementReconciliation::Pending,
-                },
+                reconciliation(3, WalletDustRegistrationSettlementReconciliation::Pending),
             ),
             newer_finality
         );
 
         let stale_pending = reduce(
             &included,
-            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                identity: identity.clone(),
-                transaction_id: transaction(),
-                revision: 1,
-                reconciliation: WalletDustRegistrationSettlementReconciliation::Pending,
-            },
+            reconciliation(1, WalletDustRegistrationSettlementReconciliation::Pending),
         );
         assert_eq!(stale_pending, included);
 
         let current_pending = reduce(
             &stale_pending,
-            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                identity: identity.clone(),
-                transaction_id: transaction(),
-                revision: 3,
-                reconciliation: WalletDustRegistrationSettlementReconciliation::Pending,
-            },
+            reconciliation(3, WalletDustRegistrationSettlementReconciliation::Pending),
         );
         assert_eq!(
             current_pending.state,
@@ -1936,26 +1815,11 @@ mod tests {
                 .map(|registration| registration.observation_revision),
             Some(3)
         );
+        assert_eq!(reduce(&current_pending, finality(2),), current_pending);
         assert_eq!(
             reduce(
                 &current_pending,
-                WalletDustRegistrationSettlementEvent::FinalityObserved {
-                    identity: identity.clone(),
-                    transaction_id: transaction(),
-                    revision: 2,
-                },
-            ),
-            current_pending
-        );
-        assert_eq!(
-            reduce(
-                &current_pending,
-                WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                    identity,
-                    transaction_id: transaction(),
-                    revision: 2,
-                    reconciliation: WalletDustRegistrationSettlementReconciliation::Included,
-                },
+                reconciliation(2, WalletDustRegistrationSettlementReconciliation::Included),
             ),
             current_pending
         );
@@ -1963,64 +1827,19 @@ mod tests {
 
     #[test]
     fn dust_refreshes_are_ordered_and_bound_to_the_inclusion_observation() {
-        let identity = selected_identity();
         let included = reduce(
             &reconciling(),
-            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
-                identity: identity.clone(),
-                transaction_id: transaction(),
-                revision: 2,
-                reconciliation: WalletDustRegistrationSettlementReconciliation::Included,
-            },
+            reconciliation(2, WalletDustRegistrationSettlementReconciliation::Included),
         );
-        let not_ready = reduce(
-            &included,
-            WalletDustRegistrationSettlementEvent::DustRefreshed {
-                identity: identity.clone(),
-                revision: 2,
-                after_observation_revision: 2,
-                ready: false,
-            },
-        );
+        let not_ready = reduce(&included, dust_refresh(2, 2, false));
         assert_eq!(
             not_ready.state,
             WalletDustRegistrationSettlementState::Reconciling
         );
+        assert_eq!(reduce(&not_ready, dust_refresh(1, 2, true),), not_ready);
+        assert_eq!(reduce(&not_ready, dust_refresh(3, 1, true),), not_ready);
         assert_eq!(
-            reduce(
-                &not_ready,
-                WalletDustRegistrationSettlementEvent::DustRefreshed {
-                    identity: identity.clone(),
-                    revision: 1,
-                    after_observation_revision: 2,
-                    ready: true,
-                },
-            ),
-            not_ready
-        );
-        assert_eq!(
-            reduce(
-                &not_ready,
-                WalletDustRegistrationSettlementEvent::DustRefreshed {
-                    identity: identity.clone(),
-                    revision: 3,
-                    after_observation_revision: 1,
-                    ready: true,
-                },
-            ),
-            not_ready
-        );
-        assert_eq!(
-            reduce(
-                &not_ready,
-                WalletDustRegistrationSettlementEvent::DustRefreshed {
-                    identity,
-                    revision: 3,
-                    after_observation_revision: 2,
-                    ready: true,
-                },
-            )
-            .state,
+            reduce(&not_ready, dust_refresh(3, 2, true),).state,
             WalletDustRegistrationSettlementState::Ready
         );
     }
