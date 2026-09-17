@@ -29,6 +29,7 @@ mod screen_privacy;
 mod selected_realm_sync;
 mod send_recipient;
 mod wallet_onboarding;
+mod wallet_realm_sync_services;
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
 
@@ -138,15 +139,16 @@ use oxid_wallet_application::{
     GetSelectedWalletRealmSyncUseCase, GetWalletAccountUseCase, GetWalletBackupReceiptUseCase,
     GetWalletDustRegistrationCommand, GetWalletDustRegistrationStatusCommand,
     GetWalletDustRegistrationStatusUseCase, GetWalletDustRegistrationUseCase,
-    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
-    GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
-    GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
-    ListWalletNetworksUseCase, ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase,
-    LockWalletUseCase, MAX_WALLET_RECOVERY_SECRET_CHARACTERS, PortableWalletBackupDocumentError,
-    PortableWalletBackupDocumentKind, PortableWalletBackupDocumentPort,
-    PrepareShieldedWalletTransferCommand, PrepareShieldedWalletTransferUseCase,
-    PrepareWalletDustRegistrationCommand, PrepareWalletDustRegistrationUseCase,
-    PrepareWalletOnboardingUseCase, PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
+    GetWalletDustSyncStatusUseCase, GetWalletOperationTimelineUseCase,
+    GetWalletSecurityStatusUseCase, GetWalletShieldedSyncStatusUseCase,
+    GetWalletTransferDraftUseCase, GetWalletTransferSubmissionStatusUseCase,
+    InitializeWalletSecurityUseCase, ListWalletNetworksUseCase, ListWalletProfilesUseCase,
+    ListWalletTransferSubmissionsUseCase, LockWalletUseCase, MAX_WALLET_RECOVERY_SECRET_CHARACTERS,
+    PortableWalletBackupDocumentError, PortableWalletBackupDocumentKind,
+    PortableWalletBackupDocumentPort, PrepareShieldedWalletTransferCommand,
+    PrepareShieldedWalletTransferUseCase, PrepareWalletDustRegistrationCommand,
+    PrepareWalletDustRegistrationUseCase, PrepareWalletOnboardingUseCase,
+    PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
     RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY, RECOVER_COMPLETE_WALLET_BACKUP_TITLE,
     RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY, RECOVER_PORTABLE_WALLET_BACKUP_TITLE,
     ReconcileWalletDustRegistrationSubmissionCommand,
@@ -346,6 +348,7 @@ pub struct WalletUiServices {
     sync_selected_wallet_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
     get_selected_wallet_realm_sync: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
     cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
+    get_wallet_operation_timeline: Arc<dyn GetWalletOperationTimelineUseCase>,
     get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
     start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase>,
     cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase>,
@@ -871,17 +874,7 @@ pub struct WalletRealmSyncUiServices {
     sync: Arc<dyn SyncSelectedWalletRealmUseCase>,
     get: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
     cancel: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
-}
-
-impl WalletRealmSyncUiServices {
-    #[must_use]
-    pub const fn new(
-        sync: Arc<dyn SyncSelectedWalletRealmUseCase>,
-        get: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
-        cancel: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
-    ) -> Self {
-        Self { sync, get, cancel }
-    }
+    timeline: Arc<dyn GetWalletOperationTimelineUseCase>,
 }
 
 /// Midnight account use cases consumed by the Assets page.
@@ -894,6 +887,7 @@ pub struct WalletAccountUiServices {
     sync_selected_wallet_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
     get_selected_wallet_realm_sync: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
     cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
+    get_wallet_operation_timeline: Arc<dyn GetWalletOperationTimelineUseCase>,
     public_text_exporter: Arc<dyn PublicTextExportPort>,
 }
 
@@ -917,6 +911,7 @@ impl WalletAccountUiServices {
             sync_selected_wallet_realm: realm_sync.sync,
             get_selected_wallet_realm_sync: realm_sync.get,
             cancel_selected_wallet_realm_sync: realm_sync.cancel,
+            get_wallet_operation_timeline: realm_sync.timeline,
             public_text_exporter,
         }
     }
@@ -1167,6 +1162,7 @@ impl WalletUiServices {
             sync_selected_wallet_realm: account.sync_selected_wallet_realm,
             get_selected_wallet_realm_sync: account.get_selected_wallet_realm_sync,
             cancel_selected_wallet_realm_sync: account.cancel_selected_wallet_realm_sync,
+            get_wallet_operation_timeline: account.get_wallet_operation_timeline,
             get_wallet_dust_sync_status: dust.get_wallet_dust_sync_status,
             start_wallet_dust_sync: dust.start_wallet_dust_sync,
             cancel_wallet_dust_sync: dust.cancel_wallet_dust_sync,
@@ -1419,6 +1415,11 @@ impl WalletUiServices {
         &self,
     ) -> Arc<dyn CancelSelectedWalletRealmSyncUseCase> {
         Arc::clone(&self.cancel_selected_wallet_realm_sync)
+    }
+
+    #[must_use]
+    pub fn get_wallet_operation_timeline(&self) -> Arc<dyn GetWalletOperationTimelineUseCase> {
+        Arc::clone(&self.get_wallet_operation_timeline)
     }
 
     #[must_use]
