@@ -5036,6 +5036,7 @@ fn ReceiveSheet(
     let mut state = use_signal(|| ReceiveSheetState::Loading);
     let mut selected_kind = use_signal(|| None::<String>);
     let mut export_notice = use_signal(|| None::<String>);
+    let mut receive_watch_session = use_signal(|| false);
     let profile_id = active_profile.id.clone();
     let action_watch_projection =
         use_action_watch_projection(services.clone(), WalletActionWatchContext::Receive);
@@ -5058,7 +5059,10 @@ fn ReceiveSheet(
             state.set(next);
             if let Some(account) = observed_account {
                 selected_realm_sync::action_watch::observe_receive_arrival(
-                    services, profile_id, account,
+                    services,
+                    profile_id,
+                    account,
+                    receive_watch_session,
                 )
                 .await;
             }
@@ -5084,6 +5088,7 @@ fn ReceiveSheet(
                         let services = services.clone();
                         let profile_id = active_profile.id.clone();
                         export_notice.set(None);
+                        receive_watch_session.set(false);
                         state.set(ReceiveSheetState::Loading);
                         spawn(async move {
                             let query_services = services.clone();
@@ -5103,7 +5108,10 @@ fn ReceiveSheet(
                             state.set(next);
                             if let Some(account) = observed_account {
                                 selected_realm_sync::action_watch::observe_receive_arrival(
-                                    services, profile_id, account,
+                                    services,
+                                    profile_id,
+                                    account,
+                                    receive_watch_session,
                                 )
                                 .await;
                             }
@@ -5330,8 +5338,10 @@ fn ReceiveSheet(
                     "Close"
                 }
             }
-            if let Some(projection) = action_watch_projection() {
-                WalletActionWatchStatus { projection }
+            if receive_watch_session() {
+                if let Some(projection) = action_watch_projection() {
+                    WalletActionWatchStatus { projection }
+                }
             }
             {content}
         }

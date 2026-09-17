@@ -109,6 +109,7 @@ pub(crate) async fn observe_receive_arrival(
     services: WalletUiServices,
     profile_id: String,
     initial: WalletAccountView,
+    mut session_active: Signal<bool>,
 ) {
     let Some(account_id) = initial.account_id.as_deref() else {
         return;
@@ -125,12 +126,14 @@ pub(crate) async fn observe_receive_arrival(
     ))
     .await;
     if !matches!(preflight, Ok(Ok(_))) {
-        publish_receive_terminal(
+        if publish_receive_terminal(
             &manager,
             &account_id,
             fallback_checkpoint,
             WalletActionWatchState::Degraded,
-        );
+        ) {
+            session_active.set(true);
+        }
         return;
     }
 
@@ -147,21 +150,25 @@ pub(crate) async fn observe_receive_arrival(
     {
         Ok(Ok(account)) => account,
         Ok(Err(error)) => {
-            publish_receive_terminal(
+            if publish_receive_terminal(
                 &manager,
                 &account_id,
                 fallback_checkpoint,
                 account_error_state(&error),
-            );
+            ) {
+                session_active.set(true);
+            }
             return;
         }
         Err(_) => {
-            publish_receive_terminal(
+            if publish_receive_terminal(
                 &manager,
                 &account_id,
                 fallback_checkpoint,
                 WalletActionWatchState::Degraded,
-            );
+            ) {
+                session_active.set(true);
+            }
             return;
         }
     };
@@ -169,12 +176,14 @@ pub(crate) async fn observe_receive_arrival(
         return;
     }
     let Some(starting_checkpoint) = synchronized_account_checkpoint(&baseline) else {
-        publish_receive_terminal(
+        if publish_receive_terminal(
             &manager,
             &account_id,
             baseline.sync.current_cursor.unwrap_or(fallback_checkpoint),
             account_state(&baseline).unwrap_or(WalletActionWatchState::Degraded),
-        );
+        ) {
+            session_active.set(true);
+        }
         return;
     };
     let baseline_transactions = confirmed_incoming_transactions(&baseline);
@@ -186,6 +195,7 @@ pub(crate) async fn observe_receive_arrival(
     let Ok(Some(handle)) = manager.admit(watch, deadline_millis, now_millis) else {
         return;
     };
+    session_active.set(true);
     let mut guard = ActionWatchCancellation::new(manager.clone(), handle);
 
     loop {
@@ -285,9 +295,9 @@ fn publish_receive_terminal(
     account_id: &str,
     starting_checkpoint: u64,
     state: WalletActionWatchState,
-) {
+) -> bool {
     let Ok(watch) = WalletActionWatch::incoming_arrival(account_id, starting_checkpoint) else {
-        return;
+        return false;
     };
     let now_millis = monotonic_millis();
     let Ok(Some(handle)) = manager.admit(
@@ -295,9 +305,10 @@ fn publish_receive_terminal(
         now_millis.saturating_add(ACTION_WATCH_DURATION_MILLIS),
         now_millis,
     ) else {
-        return;
+        return false;
     };
     settle_receive_handle(manager, handle, state);
+    true
 }
 
 fn settle_receive_handle(
