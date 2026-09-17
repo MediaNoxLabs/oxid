@@ -105,6 +105,14 @@ pub(crate) fn record_included_transfer(
     let _ = manager.observe(handle, observation, now_millis);
 }
 
+pub(crate) fn reset_receive_watch(
+    mut session_active: Signal<bool>,
+    mut boundary_ready: Signal<bool>,
+) {
+    session_active.set(false);
+    boundary_ready.set(false);
+}
+
 pub(crate) fn start_receive_watch(
     services: WalletUiServices,
     profile_id: String,
@@ -113,6 +121,7 @@ pub(crate) fn start_receive_watch(
     session_active: Signal<bool>,
     boundary_ready: Signal<bool>,
 ) {
+    reset_receive_watch(session_active, boundary_ready);
     spawn(async move {
         observe_receive_arrival(
             services,
@@ -309,6 +318,25 @@ fn receive_watch_supported(kind: Option<&str>) -> bool {
 
 pub(crate) fn receive_address_ready(kind: &str, boundary_ready: bool) -> bool {
     kind != "unshielded" || boundary_ready
+}
+
+#[component]
+pub(crate) fn ReceiveBoundaryStatus(failed: bool) -> Element {
+    rsx! {
+        div { class: "receive-sheet__state", role: "status",
+            if !failed {
+                span { class: "loading-mark", aria_hidden: "true" }
+            }
+            strong {
+                if failed {
+                    "Public receive is unavailable"
+                } else {
+                    "Preparing public receive…"
+                }
+            }
+            p { "The address stays hidden until synchronized arrival tracking is ready." }
+        }
+    }
 }
 
 fn synchronized_account_checkpoint(account: &WalletAccountView) -> Option<u64> {

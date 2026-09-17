@@ -61,8 +61,8 @@ use receive::{
     public_export_message, render_qr_svg,
 };
 use selected_realm_sync::action_watch::{
-    WalletActionWatchContext, WalletActionWatchStatus, receive_address_ready, start_receive_watch,
-    use_action_watch_projection,
+    ReceiveBoundaryStatus, WalletActionWatchContext, WalletActionWatchStatus,
+    receive_address_ready, reset_receive_watch, start_receive_watch, use_action_watch_projection,
 };
 use send_recipient::{
     SendWizardProgress, SendWizardStep, is_public_recipient_candidate, scanned_recipient_update,
@@ -5037,7 +5037,7 @@ fn ReceiveSheet(
     let mut state = use_signal(|| ReceiveSheetState::Loading);
     let mut selected_kind = use_signal(|| None::<String>);
     let mut export_notice = use_signal(|| None::<String>);
-    let mut watch_session = use_signal(|| false);
+    let watch_session = use_signal(|| false);
     let mut watch_boundary_ready = use_signal(|| false);
     let profile_id = active_profile.id.clone();
     let action_watch_projection =
@@ -5061,8 +5061,6 @@ fn ReceiveSheet(
     let watch_services = services.clone();
     let watch_profile = active_profile.id.clone();
     use_effect(move || {
-        watch_session.set(false);
-        watch_boundary_ready.set(false);
         if let (Some(_), ReceiveSheetState::Ready { account, .. }) = (selected_kind(), state()) {
             start_receive_watch(
                 watch_services.clone(),
@@ -5095,8 +5093,7 @@ fn ReceiveSheet(
                         let profile_id = active_profile.id.clone();
                         export_notice.set(None);
                         selected_kind.set(None);
-                        watch_session.set(false);
-                        watch_boundary_ready.set(false);
+                        reset_receive_watch(watch_session, watch_boundary_ready);
                         state.set(ReceiveSheetState::Loading);
                         spawn(async move {
                             let query_services = services.clone();
@@ -5182,15 +5179,10 @@ fn ReceiveSheet(
                 &account.network_id,
                 &selected,
             );
-            // The scanner ingress is composed in this slice, so the QR may use
-            // the closed versioned request. Copy/share remain raw-address
-            // fallbacks for other wallets.
             let qr_payload = receive_request.as_deref().unwrap_or(&selected.value);
             let qr = render_qr_svg(qr_payload);
-            let qr_label = format!(
-                "QR code for {} receive address",
-                ui::address_kind(&selected.kind)
-            );
+            let address_kind = ui::address_kind(&selected.kind);
+            let qr_label = format!("QR code for {address_kind} receive address");
             let preview = grouped_address_preview(&selected.value);
             #[cfg(feature = "standalone-deployment-profile")]
             let route_class = Some(
@@ -5210,7 +5202,6 @@ fn ReceiveSheet(
             let copy_value = selected.value.clone();
             let share_exporter = services.public_text_exporter();
             let share_value = selected.value.clone();
-            let address_ready = receive_address_ready(&selected.kind, watch_boundary_ready());
             rsx! {
                 div { class: "receive-sheet__status",
                     span { class: "{status_class}", "{source}" }
@@ -5243,7 +5234,7 @@ fn ReceiveSheet(
                         }
                     }
                 }
-                if address_ready {
+                if receive_address_ready(&selected.kind, watch_boundary_ready()) {
                     div { class: "receive-sheet__address",
                         div {
                             strong { "{ui::address_kind(&selected.kind)}" }
@@ -5299,19 +5290,7 @@ fn ReceiveSheet(
                         {action}
                     }
                 } else {
-                    div { class: "receive-sheet__state", role: "status",
-                        if !watch_session() {
-                            span { class: "loading-mark", aria_hidden: "true" }
-                        }
-                        strong {
-                            if watch_session() {
-                                "Public receive is unavailable"
-                            } else {
-                                "Preparing public receive…"
-                            }
-                        }
-                        p { "The address stays hidden until synchronized arrival tracking is ready." }
-                    }
+                    ReceiveBoundaryStatus { failed: watch_session() }
                 }
                 p { class: "receive-sheet__guarantee",
                     if receive_request.is_some() {
