@@ -61,7 +61,7 @@ use receive::{
     public_export_message, render_qr_svg,
 };
 use selected_realm_sync::action_watch::{
-    WalletActionWatchContext, WalletActionWatchStatus, start_receive_watch,
+    WalletActionWatchContext, WalletActionWatchStatus, receive_address_ready, start_receive_watch,
     use_action_watch_projection,
 };
 use send_recipient::{
@@ -5038,6 +5038,7 @@ fn ReceiveSheet(
     let mut selected_kind = use_signal(|| None::<String>);
     let mut export_notice = use_signal(|| None::<String>);
     let mut watch_session = use_signal(|| false);
+    let mut watch_boundary_ready = use_signal(|| false);
     let profile_id = active_profile.id.clone();
     let action_watch_projection =
         use_action_watch_projection(services.clone(), WalletActionWatchContext::Receive);
@@ -5061,6 +5062,7 @@ fn ReceiveSheet(
     let watch_profile = active_profile.id.clone();
     use_effect(move || {
         watch_session.set(false);
+        watch_boundary_ready.set(false);
         if let (Some(_), ReceiveSheetState::Ready { account, .. }) = (selected_kind(), state()) {
             start_receive_watch(
                 watch_services.clone(),
@@ -5068,6 +5070,7 @@ fn ReceiveSheet(
                 *account,
                 selected_kind,
                 watch_session,
+                watch_boundary_ready,
             );
         }
     });
@@ -5093,6 +5096,7 @@ fn ReceiveSheet(
                         export_notice.set(None);
                         selected_kind.set(None);
                         watch_session.set(false);
+                        watch_boundary_ready.set(false);
                         state.set(ReceiveSheetState::Loading);
                         spawn(async move {
                             let query_services = services.clone();
@@ -5206,6 +5210,7 @@ fn ReceiveSheet(
             let copy_value = selected.value.clone();
             let share_exporter = services.public_text_exporter();
             let share_value = selected.value.clone();
+            let address_ready = receive_address_ready(&selected.kind, watch_boundary_ready());
             rsx! {
                 div { class: "receive-sheet__status",
                     span { class: "{status_class}", "{source}" }
@@ -5228,6 +5233,7 @@ fn ReceiveSheet(
                                     aria_pressed: if selected { "true" } else { "false" },
                                     aria_label: "Use {ui::receive_address_tab(&address.kind)} receive address",
                                     onclick: move |_| {
+                                        watch_boundary_ready.set(false);
                                         selected_kind.set(Some(kind.clone()));
                                         export_notice.set(None);
                                     },
@@ -5237,59 +5243,75 @@ fn ReceiveSheet(
                         }
                     }
                 }
-                div { class: "receive-sheet__address",
-                    div {
-                        strong { "{ui::address_kind(&selected.kind)}" }
-                        p { "{ui::address_purpose(&selected.kind)}" }
-                    }
-                    div {
-                        class: "address-qr privacy-qr",
-                        role: "img",
-                        aria_label: "{qr_label}",
-                        if let Some(svg) = qr {
-                            div { class: "address-qr__frame", dangerous_inner_html: "{svg}" }
-                        } else {
-                            p { role: "alert", "This address could not be encoded as a QR code." }
+                if address_ready {
+                    div { class: "receive-sheet__address",
+                        div {
+                            strong { "{ui::address_kind(&selected.kind)}" }
+                            p { "{ui::address_purpose(&selected.kind)}" }
+                        }
+                        div {
+                            class: "address-qr privacy-qr",
+                            role: "img",
+                            aria_label: "{qr_label}",
+                            if let Some(svg) = qr {
+                                div { class: "address-qr__frame", dangerous_inner_html: "{svg}" }
+                            } else {
+                                p { role: "alert", "This address could not be encoded as a QR code." }
+                            }
+                        }
+                        code {
+                            class: "receive-sheet__preview privacy-value",
+                            aria_label: "Full validated raw {ui::address_kind(&selected.kind)} receive address {selected.value}",
+                            "{preview}"
+                        }
+                        if receive_request.is_some() {
+                            p { "The QR carries a versioned public NIGHT request; copy and share export the raw address shown." }
                         }
                     }
-                    code {
-                        class: "receive-sheet__preview privacy-value",
-                        aria_label: "Full validated raw {ui::address_kind(&selected.kind)} receive address {selected.value}",
-                        "{preview}"
+                    div { class: "receive-sheet__actions",
+                        button {
+                            class: "receive-sheet__action",
+                            r#type: "button",
+                            aria_label: "Copy {ui::address_kind(&selected.kind)} receive address",
+                            onclick: move |_| {
+                                let result = PublicReceiveAddress::new(copy_value.clone())
+                                    .and_then(|address| copy_exporter.copy_receive_address(address));
+                                export_notice.set(Some(public_export_message(result, false)));
+                            },
+                            "Copy address"
+                        }
+                        button {
+                            class: "receive-sheet__action",
+                            r#type: "button",
+                            aria_label: "Share {ui::address_kind(&selected.kind)} receive address",
+                            onclick: move |_| {
+                                let result = PublicReceiveAddress::new(share_value.clone())
+                                    .and_then(|address| share_exporter.share_receive_address(address));
+                                export_notice.set(Some(public_export_message(result, true)));
+                            },
+                            "Share"
+                        }
                     }
-                    if receive_request.is_some() {
-                        p { "The QR carries a versioned public NIGHT request; copy and share export the raw address shown." }
+                    if let Some(message) = export_notice.read().as_deref() {
+                        p { class: "address-export-notice", role: "status", "{message}" }
                     }
-                }
-                div { class: "receive-sheet__actions",
-                    button {
-                        class: "receive-sheet__action",
-                        r#type: "button",
-                        aria_label: "Copy {ui::address_kind(&selected.kind)} receive address",
-                        onclick: move |_| {
-                            let result = PublicReceiveAddress::new(copy_value.clone())
-                                .and_then(|address| copy_exporter.copy_receive_address(address));
-                            export_notice.set(Some(public_export_message(result, false)));
-                        },
-                        "Copy address"
+                    if let Some(action) = funding_action {
+                        {action}
                     }
-                    button {
-                        class: "receive-sheet__action",
-                        r#type: "button",
-                        aria_label: "Share {ui::address_kind(&selected.kind)} receive address",
-                        onclick: move |_| {
-                            let result = PublicReceiveAddress::new(share_value.clone())
-                                .and_then(|address| share_exporter.share_receive_address(address));
-                            export_notice.set(Some(public_export_message(result, true)));
-                        },
-                        "Share"
+                } else {
+                    div { class: "receive-sheet__state", role: "status",
+                        if !watch_session() {
+                            span { class: "loading-mark", aria_hidden: "true" }
+                        }
+                        strong {
+                            if watch_session() {
+                                "Public receive is unavailable"
+                            } else {
+                                "Preparing public receive…"
+                            }
+                        }
+                        p { "The address stays hidden until synchronized arrival tracking is ready." }
                     }
-                }
-                if let Some(message) = export_notice.read().as_deref() {
-                    p { class: "address-export-notice", role: "status", "{message}" }
-                }
-                if let Some(action) = funding_action {
-                    {action}
                 }
                 p { class: "receive-sheet__guarantee",
                     if receive_request.is_some() {

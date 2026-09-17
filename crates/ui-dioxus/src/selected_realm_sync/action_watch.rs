@@ -111,9 +111,18 @@ pub(crate) fn start_receive_watch(
     initial: WalletAccountView,
     selected_kind: Signal<Option<String>>,
     session_active: Signal<bool>,
+    boundary_ready: Signal<bool>,
 ) {
     spawn(async move {
-        observe_receive_arrival(services, profile_id, initial, selected_kind, session_active).await;
+        observe_receive_arrival(
+            services,
+            profile_id,
+            initial,
+            selected_kind,
+            session_active,
+            boundary_ready,
+        )
+        .await;
     });
 }
 
@@ -123,6 +132,7 @@ async fn observe_receive_arrival(
     initial: WalletAccountView,
     selected_kind: Signal<Option<String>>,
     mut session_active: Signal<bool>,
+    mut boundary_ready: Signal<bool>,
 ) {
     if !receive_watch_supported(selected_kind().as_deref()) {
         return;
@@ -217,6 +227,7 @@ async fn observe_receive_arrival(
     let Ok(Some(handle)) = manager.admit(watch, deadline_millis, now_millis) else {
         return;
     };
+    boundary_ready.set(true);
     session_active.set(true);
     let mut guard = ActionWatchCancellation::new(manager.clone(), handle);
 
@@ -294,6 +305,10 @@ async fn observe_receive_arrival(
 
 fn receive_watch_supported(kind: Option<&str>) -> bool {
     kind == Some("unshielded")
+}
+
+pub(crate) fn receive_address_ready(kind: &str, boundary_ready: bool) -> bool {
+    kind != "unshielded" || boundary_ready
 }
 
 fn synchronized_account_checkpoint(account: &WalletAccountView) -> Option<u64> {
@@ -754,6 +769,9 @@ mod tests {
         assert!(receive_watch_supported(Some("unshielded")));
         assert!(!receive_watch_supported(Some("shielded")));
         assert!(!receive_watch_supported(None));
+        assert!(!receive_address_ready("unshielded", false));
+        assert!(receive_address_ready("unshielded", true));
+        assert!(receive_address_ready("shielded", false));
     }
 
     #[test]
