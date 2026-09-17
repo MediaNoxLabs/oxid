@@ -296,7 +296,7 @@ pub fn reduce_wallet_dust_registration_settlement(
             preparation_revision,
             ..
         } if matches!(
-            projection.state,
+            effective_state(projection),
             WalletDustRegistrationSettlementState::ActionRequired
         ) && preparation_revision > projection.preparation_revision =>
         {
@@ -310,7 +310,7 @@ pub fn reduce_wallet_dust_registration_settlement(
                 dust_revision: 0,
                 included: false,
             });
-            set_state(
+            set_effective_state(
                 &mut next,
                 WalletDustRegistrationSettlementState::AwaitingAuthorization,
             );
@@ -320,7 +320,7 @@ pub fn reduce_wallet_dust_registration_settlement(
             preparation_revision,
             ..
         } if matches!(
-            projection.state,
+            effective_state(projection),
             WalletDustRegistrationSettlementState::AwaitingAuthorization
         ) && !has_draft(projection, &draft_id)
             && matches!(
@@ -452,30 +452,17 @@ pub fn reduce_wallet_dust_registration_settlement(
                     }
                 }
                 WalletDustRegistrationSettlementReconciliation::Pending => {
-                    let regressed =
-                        matches!(current_state, WalletDustRegistrationSettlementState::Ready)
-                            || projection
-                                .registration
-                                .as_ref()
-                                .is_some_and(|registration| registration.included);
-                    if !regressed {
-                        return next;
-                    }
                     if let Some(registration) = &mut next.registration {
                         registration.included = false;
                     }
-                    set_effective_state(
-                        &mut next,
-                        if projection
-                            .registration
-                            .as_ref()
-                            .is_some_and(|registration| registration.finality_revision >= revision)
-                        {
-                            WalletDustRegistrationSettlementState::Reconciling
-                        } else {
-                            WalletDustRegistrationSettlementState::Confirming
-                        },
-                    );
+                    let state = if next.registration.as_ref().is_some_and(|registration| {
+                        registration.finality_revision >= registration.reconciliation_revision
+                    }) {
+                        WalletDustRegistrationSettlementState::Reconciling
+                    } else {
+                        WalletDustRegistrationSettlementState::Confirming
+                    };
+                    set_effective_state(&mut next, state);
                 }
                 WalletDustRegistrationSettlementReconciliation::Dropped => {
                     next.registration = None;
@@ -761,6 +748,7 @@ fn can_retry(state: WalletDustRegistrationSettlementState) -> bool {
         WalletDustRegistrationSettlementState::Offline
             | WalletDustRegistrationSettlementState::TimedOut
             | WalletDustRegistrationSettlementState::Degraded
+            | WalletDustRegistrationSettlementState::Suspended
     )
 }
 
@@ -801,6 +789,7 @@ fn has_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use WalletDustRegistrationSettlementState as State;
 
     fn identity(
         profile: &str,
@@ -1242,21 +1231,18 @@ mod tests {
             .state,
             WalletDustRegistrationSettlementState::Ready
         );
-        let unsupported_retry = reduce(
+        let retried_suspension = reduce(
             &suspended,
             WalletDustRegistrationSettlementEvent::Retry {
                 identity: identity.clone(),
                 revision: 3,
             },
         );
-        assert_eq!(unsupported_retry.state, suspended.state);
-        assert_eq!(
-            unsupported_retry.recovery_revision,
-            suspended.recovery_revision
-        );
+        assert_eq!(retried_suspension.state, State::Ready);
+        assert_eq!(retried_suspension.recovery_revision, 3);
         assert_eq!(
             reduce(
-                &unsupported_retry,
+                &retried_suspension,
                 WalletDustRegistrationSettlementEvent::Resumed {
                     identity: identity.clone(),
                     revision: 2,
@@ -1265,30 +1251,29 @@ mod tests {
             .state,
             WalletDustRegistrationSettlementState::Ready
         );
+        let early_retry = reduce(
+            &ready,
+            WalletDustRegistrationSettlementEvent::Retry {
+                identity: identity.clone(),
+                revision: 5,
+            },
+        );
         let delayed_offline = reduce(
-            &unsupported_retry,
+            &early_retry,
             WalletDustRegistrationSettlementEvent::Offline {
                 identity: identity.clone(),
                 revision: 2,
             },
         );
-        assert_eq!(
-            delayed_offline.state,
-            WalletDustRegistrationSettlementState::Ready
-        );
-        assert_eq!(delayed_offline.recovery_revision, 3);
-        let newer_offline = reduce(
-            &unsupported_retry,
-            WalletDustRegistrationSettlementEvent::Offline {
+        let delayed_suspension = reduce(
+            &delayed_offline,
+            WalletDustRegistrationSettlementEvent::Suspended {
                 identity: identity.clone(),
                 revision: 4,
             },
         );
-        assert_eq!(
-            newer_offline.state,
-            WalletDustRegistrationSettlementState::Offline
-        );
-        assert_eq!(newer_offline.recovery_revision, 4);
+        assert_eq!(delayed_suspension.state, State::Ready);
+        assert_eq!(delayed_suspension.recovery_revision, 5);
         assert_eq!(
             reduce(
                 &ready,
@@ -1572,32 +1557,31 @@ mod tests {
     #[test]
     fn authorization_results_are_retained_across_recoverable_states() {
         let identity = selected_identity();
-        let awaiting = reduce(
+        let offline = reduce(
             &eligible(),
+            WalletDustRegistrationSettlementEvent::Offline {
+                identity: identity.clone(),
+                revision: 1,
+            },
+        );
+        let awaiting = reduce(
+            &offline,
             WalletDustRegistrationSettlementEvent::AuthorizationRequested {
                 identity: identity.clone(),
                 draft_id: draft(),
                 preparation_revision: 1,
             },
         );
-        let offline = reduce(
-            &awaiting,
-            WalletDustRegistrationSettlementEvent::Offline {
-                identity: identity.clone(),
-                revision: 1,
-            },
-        );
+        assert_eq!(awaiting.state, State::Offline);
+        assert_eq!(awaiting.resume_state, Some(State::AwaitingAuthorization));
         let authorized = reduce(
-            &offline,
+            &awaiting,
             WalletDustRegistrationSettlementEvent::AuthorizationSucceeded {
                 identity: identity.clone(),
                 draft_id: draft(),
             },
         );
-        assert_eq!(
-            authorized.resume_state,
-            Some(WalletDustRegistrationSettlementState::Submitting)
-        );
+        assert_eq!(authorized.resume_state, Some(State::Submitting));
         assert_eq!(
             reduce(
                 &authorized,
@@ -1611,16 +1595,13 @@ mod tests {
         );
 
         let retried = reduce(
-            &offline,
+            &awaiting,
             WalletDustRegistrationSettlementEvent::Retry {
                 identity: identity.clone(),
                 revision: 2,
             },
         );
-        assert_eq!(
-            retried.state,
-            WalletDustRegistrationSettlementState::AwaitingAuthorization
-        );
+        assert_eq!(retried.state, State::AwaitingAuthorization);
         assert_eq!(
             reduce(
                 &retried,
@@ -1723,7 +1704,7 @@ mod tests {
         );
         assert_eq!(
             pending.state,
-            WalletDustRegistrationSettlementState::Reconciling
+            WalletDustRegistrationSettlementState::Confirming
         );
         let dropped = reduce(
             &pending,
@@ -1891,6 +1872,19 @@ mod tests {
 
     #[test]
     fn reconciliation_revisions_prevent_stale_regressions() {
+        let finality_then_pending = reduce(
+            &reduce(&confirming(), finality(1)),
+            reconciliation(2, WalletDustRegistrationSettlementReconciliation::Pending),
+        );
+        let pending_then_finality = reduce(
+            &reduce(
+                &confirming(),
+                reconciliation(2, WalletDustRegistrationSettlementReconciliation::Pending),
+            ),
+            finality(1),
+        );
+        assert_eq!(finality_then_pending, pending_then_finality);
+
         let finality_first = reduce(&confirming(), finality(2));
         let included_after_finality = reduce(
             &finality_first,
