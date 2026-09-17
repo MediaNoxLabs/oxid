@@ -2675,7 +2675,7 @@ textarea:focus-visible {
 
 .action-watch-status.is-waiting .action-watch-status__mark {
   background: var(--accent);
-  animation: pulse 1.4s ease-in-out infinite;
+  animation: pulse calc(var(--motion-slow) * 4) ease-in-out infinite;
 }
 
 .action-watch-status.is-confirmed {
