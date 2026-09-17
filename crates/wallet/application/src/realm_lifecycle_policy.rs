@@ -143,6 +143,11 @@ pub enum WalletRealmLifecycleInput {
         facets: WalletRealmReconciliationState,
         succeeded: bool,
     },
+    ReconciliationObserved {
+        identity: WalletRealmLifecycleIdentity,
+        now_millis: u64,
+        facets: WalletRealmReconciliationState,
+    },
     ReconciliationTimedOut {
         identity: WalletRealmLifecycleIdentity,
         sequence: u64,
@@ -304,6 +309,16 @@ impl WalletRealmLifecyclePolicy {
                 facets,
                 succeeded,
             } => self.settle(identity, sequence, now_millis, facets, succeeded),
+            WalletRealmLifecycleInput::ReconciliationObserved {
+                identity,
+                now_millis,
+                facets,
+            } => {
+                if self.active.as_ref() == Some(&identity) {
+                    self.observe_freshness(now_millis, facets);
+                }
+                WalletRealmLifecycleDecision::Ignored
+            }
             WalletRealmLifecycleInput::ReconciliationTimedOut {
                 identity,
                 sequence,

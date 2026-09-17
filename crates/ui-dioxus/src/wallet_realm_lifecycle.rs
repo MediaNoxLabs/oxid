@@ -299,14 +299,11 @@ async fn execute_with_timeout(
     // reconciliation. A timeout can therefore expose at most one follow-up
     // drain. Keep one final bounded attempt for settling that follow-up.
     for _ in 0..3 {
-        match tokio::time::timeout(
-            Duration::from_millis(timeout_millis),
-            lifecycle.execute(input),
-        )
-        .await
-        {
+        let execution = lifecycle.begin(input).map_err(|_| ())?;
+        let handle = execution.handle;
+        match tokio::time::timeout(Duration::from_millis(timeout_millis), execution.future).await {
             Ok(Ok(result)) => {
-                return match expected_settlement {
+                let result = match expected_settlement {
                     Some(expected)
                         if !matches!(
                             result.settlement,
@@ -314,15 +311,17 @@ async fn execute_with_timeout(
                                 if settled == &expected
                         ) =>
                     {
-                        Err(())
+                        return Err(());
                     }
-                    _ => Ok(result),
+                    _ => result,
                 };
+                observe_successful_completion(&lifecycle, &result).await?;
+                return Ok(result);
             }
             Ok(Err(_)) => return Err(()),
             Err(_) => {
+                let request = handle.request().map_err(|_| ())?.ok_or(())?;
                 let status = lifecycle.status().map_err(|_| ())?;
-                let request = status.in_flight.ok_or(())?;
                 input = WalletRealmLifecycleInput::ReconciliationTimedOut {
                     identity: request.identity.clone(),
                     sequence: request.sequence,
@@ -334,6 +333,30 @@ async fn execute_with_timeout(
         }
     }
     Err(())
+}
+
+async fn observe_successful_completion(
+    lifecycle: &Arc<dyn ReconcileWalletRealmLifecycleUseCase>,
+    result: &WalletRealmLifecycleResult,
+) -> Result<(), ()> {
+    let Some(projection) = result.projection.as_ref() else {
+        return Ok(());
+    };
+    let identity = WalletRealmLifecycleIdentity::parse(
+        projection.identity.profile.as_str().to_owned(),
+        projection.identity.realm.as_str().to_owned(),
+    )
+    .map_err(|_| ())?;
+    let facets = lifecycle.status().map_err(|_| ())?.facets;
+    lifecycle
+        .execute(WalletRealmLifecycleInput::ReconciliationObserved {
+            identity,
+            now_millis: monotonic_millis(),
+            facets,
+        })
+        .await
+        .map(|_| ())
+        .map_err(|_| ())
 }
 
 pub(super) fn monotonic_millis() -> u64 {

@@ -68,6 +68,7 @@ impl HeadlessWallet {
             lifecycle,
             input,
             HEADLESS_STARTUP_RECONCILIATION_TIMEOUT_MILLIS,
+            &|| self.monotonic_millis(),
         )
         .map(|_| ())
     }
@@ -94,6 +95,7 @@ impl HeadlessWallet {
                                         facets: status.facets,
                                     },
                                     HEADLESS_STARTUP_RECONCILIATION_TIMEOUT_MILLIS,
+                                    &|| self.monotonic_millis(),
                                 );
                                 return 1;
                             }
@@ -105,14 +107,20 @@ impl HeadlessWallet {
                         }
                         if let Some(wakeup) = status.next_wakeup_millis {
                             if wakeup <= now_millis {
-                                let _ = execute_bounded(
+                                if execute_bounded_until_stopped(
                                     lifecycle,
                                     WalletRealmLifecycleInput::PeriodicTick {
                                         now_millis,
                                         facets: status.facets,
                                     },
                                     u64::MAX,
-                                );
+                                    stop,
+                                    &|| self.monotonic_millis(),
+                                )
+                                .is_none()
+                                {
+                                    return 1;
+                                }
                                 return 1;
                             }
                             return wakeup
@@ -143,6 +151,7 @@ impl HeadlessWallet {
             self.application.reconcile_wallet_realm_lifecycle(),
             input,
             u64::MAX,
+            &|| self.monotonic_millis(),
         )
     }
 
@@ -173,6 +182,7 @@ impl HeadlessWallet {
                         facets: status.facets,
                     },
                     HEADLESS_STARTUP_RECONCILIATION_TIMEOUT_MILLIS,
+                    &|| self.monotonic_millis(),
                 )?;
             } else {
                 std::thread::sleep(Duration::from_millis(25));
@@ -190,31 +200,146 @@ impl HeadlessWallet {
 
 fn execute_bounded(
     lifecycle: Arc<dyn ReconcileWalletRealmLifecycleUseCase>,
-    input: WalletRealmLifecycleInput,
+    mut input: WalletRealmLifecycleInput,
     maximum_timeout_millis: u64,
+    now_millis: &dyn Fn() -> u64,
 ) -> Result<WalletRealmLifecycleResult, ()> {
     let timeout_millis = lifecycle
         .status()
         .map_err(|_| ())?
         .request_timeout_millis
         .min(maximum_timeout_millis);
-    match block_on_with_timeout(lifecycle.execute(input), timeout_millis) {
-        Some(Ok(result)) => Ok(result),
-        Some(Err(_)) => Err(()),
-        None => {
-            let status = lifecycle.status().map_err(|_| ())?;
-            let request = status.in_flight.ok_or(())?;
-            block_on(
-                lifecycle.execute(WalletRealmLifecycleInput::ReconciliationTimedOut {
+    for _ in 0..3 {
+        let execution = lifecycle.begin(input).map_err(|_| ())?;
+        let handle = execution.handle;
+        match block_on_with_timeout(execution.future, timeout_millis) {
+            Some(Ok(result)) => {
+                observe_successful_completion(&lifecycle, &result, now_millis())?;
+                return Ok(result);
+            }
+            Some(Err(_)) => return Err(()),
+            None => {
+                let request = handle.request().map_err(|_| ())?.ok_or(())?;
+                let status = lifecycle.status().map_err(|_| ())?;
+                input = WalletRealmLifecycleInput::ReconciliationTimedOut {
                     identity: request.identity,
                     sequence: request.sequence,
-                    now_millis: status.observed_at_millis.saturating_add(timeout_millis),
+                    now_millis: now_millis(),
                     facets: status.facets,
-                }),
-            )
-            .map_err(|_| ())
+                };
+            }
         }
     }
+    Err(())
+}
+
+fn execute_bounded_until_stopped(
+    lifecycle: Arc<dyn ReconcileWalletRealmLifecycleUseCase>,
+    input: WalletRealmLifecycleInput,
+    maximum_timeout_millis: u64,
+    stop: &Receiver<()>,
+    now_millis: &dyn Fn() -> u64,
+) -> Option<Result<WalletRealmLifecycleResult, ()>> {
+    let timeout_millis = lifecycle
+        .status()
+        .ok()?
+        .request_timeout_millis
+        .min(maximum_timeout_millis);
+    let execution = lifecycle.begin(input).ok()?;
+    let handle = execution.handle;
+    match block_on_with_timeout_or_stop(execution.future, timeout_millis, stop) {
+        BoundedWait::Completed(Ok(result)) => {
+            Some(observe_successful_completion(&lifecycle, &result, now_millis()).map(|()| result))
+        }
+        BoundedWait::Completed(Err(_)) => Some(Err(())),
+        BoundedWait::TimedOut => {
+            let request = handle.request().ok()??;
+            let status = lifecycle.status().ok()?;
+            Some(execute_bounded(
+                Arc::clone(&lifecycle),
+                WalletRealmLifecycleInput::ReconciliationTimedOut {
+                    identity: request.identity,
+                    sequence: request.sequence,
+                    now_millis: now_millis(),
+                    facets: status.facets,
+                },
+                maximum_timeout_millis,
+                now_millis,
+            ))
+        }
+        BoundedWait::Stopped => {
+            let _ = block_on(lifecycle.execute(WalletRealmLifecycleInput::Backgrounded {
+                now_millis: now_millis(),
+            }));
+            None
+        }
+    }
+}
+
+fn observe_successful_completion(
+    lifecycle: &Arc<dyn ReconcileWalletRealmLifecycleUseCase>,
+    result: &WalletRealmLifecycleResult,
+    now_millis: u64,
+) -> Result<(), ()> {
+    let Some(projection) = result.projection.as_ref() else {
+        return Ok(());
+    };
+    let identity = WalletRealmLifecycleIdentity::parse(
+        projection.identity.profile.as_str().to_owned(),
+        projection.identity.realm.as_str().to_owned(),
+    )
+    .map_err(|_| ())?;
+    let facets = lifecycle.status().map_err(|_| ())?.facets;
+    block_on(
+        lifecycle.execute(WalletRealmLifecycleInput::ReconciliationObserved {
+            identity,
+            now_millis,
+            facets,
+        }),
+    )
+    .map(|_| ())
+    .map_err(|_| ())
+}
+
+enum BoundedWait<T> {
+    Completed(T),
+    TimedOut,
+    Stopped,
+}
+
+fn block_on_with_timeout_or_stop<F>(
+    future: F,
+    timeout_millis: u64,
+    stop: &Receiver<()>,
+) -> BoundedWait<F::Output>
+where
+    F: Future,
+{
+    block_on(async move {
+        let timeout = Delay::new(Duration::from_millis(timeout_millis.max(1)));
+        let timed = async move {
+            pin_mut!(future, timeout);
+            match select(future, timeout).await {
+                Either::Left((output, _)) => BoundedWait::Completed(output),
+                Either::Right(((), _)) => BoundedWait::TimedOut,
+            }
+        };
+        let stopped = async {
+            loop {
+                match stop.try_recv() {
+                    Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        Delay::new(Duration::from_millis(25)).await;
+                    }
+                }
+            }
+        };
+        pin_mut!(timed, stopped);
+        match select(timed, stopped).await {
+            Either::Left((outcome, _)) => outcome,
+            Either::Right(((), _)) => BoundedWait::Stopped,
+        }
+    })
 }
 
 fn block_on_with_timeout<F>(future: F, timeout_millis: u64) -> Option<F::Output>
@@ -287,5 +412,15 @@ mod tests {
     #[test]
     fn stalled_startup_work_is_bounded_before_the_request_loop() {
         assert_eq!(block_on_with_timeout(pending::<()>(), 1), None);
+    }
+
+    #[test]
+    fn scheduler_wait_is_interrupted_when_the_protocol_loop_stops() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        drop(sender);
+        assert!(matches!(
+            block_on_with_timeout_or_stop(pending::<()>(), 1_000, &receiver),
+            BoundedWait::Stopped
+        ));
     }
 }
