@@ -327,7 +327,7 @@ impl WalletRealmLifecycleService {
             };
 
             let mut projection = None;
-            let mut first_error = None;
+            let mut latest_error = None;
             for drain_index in 0..MAX_DRAINED_REQUESTS {
                 handle.replace(Some(request.clone()))?;
                 let outcome = self
@@ -367,9 +367,11 @@ impl WalletRealmLifecycleService {
                     if let Some(candidate) = candidate_projection {
                         projection = Some(candidate);
                     }
-                    if first_error.is_none() {
-                        first_error = sync_error;
-                    }
+                    // A retained request represents newer intent than the
+                    // request that exposed it. Surface the latest settlement
+                    // so callers can observe completion-time freshness after
+                    // a retained retry recovers from an earlier failure.
+                    latest_error = sync_error;
                 }
 
                 let Some(next) = admitted_request(&completion) else {
@@ -384,7 +386,7 @@ impl WalletRealmLifecycleService {
             }
             handle.replace(None)?;
 
-            if let Some(error) = first_error {
+            if let Some(error) = latest_error {
                 return Err(error);
             }
             Ok(WalletRealmLifecycleResult {
@@ -688,6 +690,44 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn retained_success_supersedes_an_earlier_sync_failure() {
+        let realm = identity("profile_one", "standalone");
+        let released = Arc::new(AtomicBool::new(false));
+        let reconciler = Arc::new(FakeReconciler::new([
+            FakeOutcome::Gated {
+                released: released.clone(),
+                result: Err(SelectedWalletRealmSyncError::Unavailable),
+            },
+            FakeOutcome::Immediate(Ok(reconciliation(
+                &realm,
+                2,
+                WalletRealmFacetState::Current,
+            ))),
+        ]));
+        let service = WalletRealmLifecycleService::new(reconciler, missing_facets());
+        let mut first = service.execute(initialized(realm, 1, WalletRealmFacetState::Missing));
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(first.as_mut().poll(&mut context), Poll::Pending));
+
+        let retained = resolve(service.execute(WalletRealmLifecycleInput::ActionPreflight {
+            now_millis: 2,
+            facets: facets(WalletRealmFacetState::Missing),
+        }))
+        .expect("retained signal");
+        assert!(matches!(
+            retained.decision,
+            WalletRealmLifecycleDecision::Retained(_)
+        ));
+
+        released.store(true, Ordering::SeqCst);
+        let Poll::Ready(Ok(completed)) = first.as_mut().poll(&mut context) else {
+            panic!("retained success must become the surfaced outcome");
+        };
+        assert_eq!(completed.projection.expect("latest projection").revision, 2);
     }
 
     #[test]
