@@ -759,6 +759,27 @@ impl SelectedWalletRealmTimelineOperation {
         cause
     }
 
+    fn completed_from_view(
+        &mut self,
+        effect: WalletRealmCoordinatorEffect,
+        attempt: WalletOperationAttempt,
+        caused_by: WalletOperationCausationId,
+        timeline_outcome: WalletOperationOutcome,
+        failure: Option<WalletOperationFailure>,
+        started: Instant,
+        view: &SelectedWalletRealmSyncView,
+    ) -> WalletOperationCausationId {
+        self.completed_with_measurements(
+            effect,
+            attempt,
+            caused_by,
+            timeline_outcome,
+            failure,
+            started,
+            resource_measurements(effect.kind(), view),
+        )
+    }
+
     fn terminal(
         &self,
         caused_by: WalletOperationCausationId,
@@ -1371,6 +1392,19 @@ where
                 ) {
                     Ok(publication) => publication,
                     Err(error) => {
+                        if let (Some(operation), Some((cause, attempt))) =
+                            (timeline.as_mut(), effect_cause)
+                        {
+                            operation.completed_from_view(
+                                effect,
+                                attempt,
+                                cause,
+                                timeline_effect_outcome(outcome),
+                                failure,
+                                effect_started,
+                                &view,
+                            );
+                        }
                         record_terminal_error(timeline.as_ref(), &error);
                         return Err(error);
                     }
@@ -1383,14 +1417,14 @@ where
                         if let (Some(operation), Some((cause, attempt))) =
                             (timeline.as_mut(), effect_cause)
                         {
-                            operation.completed_with_measurements(
+                            operation.completed_from_view(
                                 effect,
                                 attempt,
                                 cause,
                                 timeline_effect_outcome(outcome),
                                 failure,
                                 effect_started,
-                                resource_measurements(effect.kind(), &published.view),
+                                &published.view,
                             );
                         }
                         leases.settle(effect, &follow_up);
@@ -1408,14 +1442,14 @@ where
                         if let (Some(operation), Some((cause, attempt))) =
                             (timeline.as_mut(), effect_cause)
                         {
-                            operation.completed_with_measurements(
+                            operation.completed_from_view(
                                 effect,
                                 attempt,
                                 cause,
                                 timeline_effect_outcome(outcome),
                                 failure,
                                 effect_started,
-                                resource_measurements(effect.kind(), &published.view),
+                                &published.view,
                             );
                         }
                         if let Some(operation) = timeline.as_ref() {
@@ -3220,6 +3254,22 @@ mod tests {
                 failure: Some(WalletOperationFailure::ObservationSuperseded),
             })
         ));
+        let completion = timeline
+            .records()
+            .iter()
+            .find(|record| {
+                matches!(
+                    record.event,
+                    WalletOperationEvent::EffectCompleted {
+                        effect: WalletOperationEffect::SyncAccount,
+                        ..
+                    }
+                )
+            })
+            .expect("publication error retains the effect completion");
+        assert!(completion.measurements.as_slice().is_empty());
+        assert_eq!(completion.attempt.value(), 1);
+        assert!(completion.caused_by.is_some());
 
         assert_eq!(
             *wallet.account_realm.lock().expect("account realm lock"),
