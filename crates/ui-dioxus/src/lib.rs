@@ -5039,6 +5039,7 @@ fn ReceiveSheet(
     let mut export_notice = use_signal(|| None::<String>);
     let watch_session = use_signal(|| false);
     let mut watch_boundary_ready = use_signal(|| false);
+    let watch_generation = use_signal(|| 0_u64);
     let profile_id = active_profile.id.clone();
     let action_watch_projection =
         use_action_watch_projection(services.clone(), WalletActionWatchContext::Receive);
@@ -5067,8 +5068,7 @@ fn ReceiveSheet(
                 watch_profile.clone(),
                 *account,
                 selected_kind,
-                watch_session,
-                watch_boundary_ready,
+                (watch_session, watch_boundary_ready, watch_generation),
             );
         }
     });
@@ -5093,7 +5093,7 @@ fn ReceiveSheet(
                         let profile_id = active_profile.id.clone();
                         export_notice.set(None);
                         selected_kind.set(None);
-                        reset_receive_watch(watch_session, watch_boundary_ready);
+                        reset_receive_watch((watch_session, watch_boundary_ready, watch_generation));
                         state.set(ReceiveSheetState::Loading);
                         spawn(async move {
                             let query_services = services.clone();

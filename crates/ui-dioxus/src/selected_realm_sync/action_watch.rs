@@ -106,11 +106,17 @@ pub(crate) fn record_included_transfer(
 }
 
 pub(crate) fn reset_receive_watch(
-    mut session_active: Signal<bool>,
-    mut boundary_ready: Signal<bool>,
-) {
+    (mut session_active, mut boundary_ready, mut generation): ReceiveWatchSignals,
+) -> u64 {
+    let next_generation = {
+        let mut current = generation.write();
+        let next = (*current).wrapping_add(1);
+        *current = next;
+        next
+    };
     session_active.set(false);
     boundary_ready.set(false);
+    next_generation
 }
 
 pub(crate) fn start_receive_watch(
@@ -118,10 +124,10 @@ pub(crate) fn start_receive_watch(
     profile_id: String,
     initial: WalletAccountView,
     selected_kind: Signal<Option<String>>,
-    session_active: Signal<bool>,
-    boundary_ready: Signal<bool>,
+    signals: ReceiveWatchSignals,
 ) {
-    reset_receive_watch(session_active, boundary_ready);
+    let (session_active, boundary_ready, generation) = signals;
+    let expected_generation = reset_receive_watch(signals);
     spawn(async move {
         observe_receive_arrival(
             services,
@@ -130,10 +136,14 @@ pub(crate) fn start_receive_watch(
             selected_kind,
             session_active,
             boundary_ready,
+            generation,
+            expected_generation,
         )
         .await;
     });
 }
+
+pub(crate) type ReceiveWatchSignals = (Signal<bool>, Signal<bool>, Signal<u64>);
 
 async fn observe_receive_arrival(
     services: WalletUiServices,
@@ -142,8 +152,14 @@ async fn observe_receive_arrival(
     selected_kind: Signal<Option<String>>,
     mut session_active: Signal<bool>,
     mut boundary_ready: Signal<bool>,
+    generation: Signal<u64>,
+    expected_generation: u64,
 ) {
-    if !receive_watch_supported(selected_kind().as_deref()) {
+    if !receive_watch_is_current(
+        *generation.peek(),
+        expected_generation,
+        selected_kind().as_deref(),
+    ) {
         return;
     }
     let Some(account_id) = initial.account_id.as_deref() else {
@@ -160,7 +176,11 @@ async fn observe_receive_arrival(
         },
     ))
     .await;
-    if !receive_watch_supported(selected_kind().as_deref()) {
+    if !receive_watch_is_current(
+        *generation.peek(),
+        expected_generation,
+        selected_kind().as_deref(),
+    ) {
         return;
     }
     if !matches!(preflight, Ok(Ok(_))) {
@@ -185,7 +205,11 @@ async fn observe_receive_arrival(
             })
     })
     .await;
-    if !receive_watch_supported(selected_kind().as_deref()) {
+    if !receive_watch_is_current(
+        *generation.peek(),
+        expected_generation,
+        selected_kind().as_deref(),
+    ) {
         return;
     }
     let baseline = match baseline {
@@ -228,6 +252,13 @@ async fn observe_receive_arrival(
         return;
     };
     let baseline_transactions = confirmed_incoming_transactions(&baseline);
+    if !receive_watch_is_current(
+        *generation.peek(),
+        expected_generation,
+        selected_kind().as_deref(),
+    ) {
+        return;
+    }
     let now_millis = monotonic_millis();
     let deadline_millis = now_millis.saturating_add(ACTION_WATCH_DURATION_MILLIS);
     let Ok(watch) = WalletActionWatch::incoming_arrival(&account_id, starting_checkpoint) else {
@@ -242,7 +273,11 @@ async fn observe_receive_arrival(
 
     loop {
         tokio::time::sleep(Duration::from_millis(ACTION_WATCH_POLL_MILLIS)).await;
-        if !receive_watch_supported(selected_kind().as_deref()) {
+        if !receive_watch_is_current(
+            *generation.peek(),
+            expected_generation,
+            selected_kind().as_deref(),
+        ) {
             return;
         }
         let now_millis = monotonic_millis();
@@ -261,7 +296,11 @@ async fn observe_receive_arrival(
                 })
         })
         .await;
-        if !receive_watch_supported(selected_kind().as_deref()) {
+        if !receive_watch_is_current(
+            *generation.peek(),
+            expected_generation,
+            selected_kind().as_deref(),
+        ) {
             return;
         }
         let observed = match observed {
@@ -310,6 +349,14 @@ async fn observe_receive_arrival(
         guard.disarm();
         return;
     }
+}
+
+fn receive_watch_is_current(
+    current_generation: u64,
+    expected_generation: u64,
+    kind: Option<&str>,
+) -> bool {
+    current_generation == expected_generation && receive_watch_supported(kind)
 }
 
 fn receive_watch_supported(kind: Option<&str>) -> bool {
@@ -695,6 +742,13 @@ mod tests {
                 .state,
             WalletActionWatchState::Cancelled
         );
+    }
+
+    #[test]
+    fn superseded_receive_observers_cannot_publish_or_admit_work() {
+        assert!(receive_watch_is_current(7, 7, Some("unshielded")));
+        assert!(!receive_watch_is_current(8, 7, Some("unshielded")));
+        assert!(!receive_watch_is_current(7, 7, Some("shielded")));
     }
 
     #[test]
