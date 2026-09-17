@@ -170,6 +170,58 @@ fn retry_causality_and_duration_attempt_outcome_aggregates_are_typed() {
 }
 
 #[test]
+fn measurements_are_closed_bounded_and_evicted_with_their_record() {
+    let timeline = WalletOperationTimeline::with_capacity(1).expect("capacity");
+    let trigger = WalletOperationTrigger::Initial;
+    let (operation, correlation, admission) = timeline
+        .begin_operation(resource(1), trigger)
+        .expect("admission");
+    let measurements = WalletOperationResourceMeasurements::from_values(vec![
+        WalletOperationResourceMeasurement::CurrentCursor(4),
+        WalletOperationResourceMeasurement::TargetCursor(9),
+        WalletOperationResourceMeasurement::EventsProcessed(3),
+    ]);
+    timeline
+        .record_with_measurements(
+            operation,
+            correlation,
+            Some(admission),
+            resource(1),
+            trigger,
+            WalletOperationAttempt::new(1).expect("attempt"),
+            WalletOperationDurationMillis::zero(),
+            measurements,
+            WalletOperationEvent::EffectCompleted {
+                effect: WalletOperationEffect::SyncDust,
+                outcome: WalletOperationOutcome::Succeeded,
+                failure: None,
+            },
+        )
+        .expect("completion");
+
+    let snapshot = timeline.query().expect("snapshot");
+    assert_eq!(snapshot.evicted_records(), 1);
+    assert_eq!(snapshot.records().len(), 1);
+    assert_eq!(
+        snapshot.records()[0].measurements.as_slice(),
+        [
+            WalletOperationResourceMeasurement::CurrentCursor(4),
+            WalletOperationResourceMeasurement::TargetCursor(9),
+            WalletOperationResourceMeasurement::EventsProcessed(3),
+        ]
+    );
+}
+
+#[test]
+#[should_panic(expected = "resource measurements are bounded")]
+fn measurements_reject_unbounded_values() {
+    let _ = WalletOperationResourceMeasurements::from_values(vec![
+        WalletOperationResourceMeasurement::CurrentCursor(0);
+        WalletOperationResourceMeasurements::MAX_VALUES + 1
+    ]);
+}
+
+#[test]
 fn bounded_values_are_rejected_before_storage() {
     let timeline = WalletOperationTimeline::with_capacity(2).expect("capacity");
     assert_eq!(

@@ -23,13 +23,13 @@ use crate::{
     WalletNetworkPort, WalletNetworkSelectionObserver, WalletOperationAttempt,
     WalletOperationCausationId, WalletOperationCorrelationId, WalletOperationDurationMillis,
     WalletOperationEvent, WalletOperationFailure, WalletOperationId, WalletOperationOutcome,
-    WalletOperationResource, WalletOperationResourceIdentity, WalletOperationTimeline,
-    WalletOperationTimelineError, WalletOperationTimelineSnapshot, WalletOperationTrigger,
-    WalletRealmCoordinatorEffect, WalletRealmCoordinatorInput, WalletRealmCoordinatorState,
-    WalletRealmEffectOutcome, WalletRealmFacetState, WalletRealmReconciliationCoordinator,
-    WalletRealmReconciliationEffect, WalletRealmReconciliationState,
-    WalletRealmReconciliationTrigger, WalletShieldedSyncPort, WalletShieldedSyncPortError,
-    WalletShieldedSyncView, timeline_effect_outcome,
+    WalletOperationResource, WalletOperationResourceIdentity, WalletOperationResourceMeasurement,
+    WalletOperationResourceMeasurements, WalletOperationTimeline, WalletOperationTimelineError,
+    WalletOperationTimelineSnapshot, WalletOperationTrigger, WalletRealmCoordinatorEffect,
+    WalletRealmCoordinatorInput, WalletRealmCoordinatorState, WalletRealmEffectOutcome,
+    WalletRealmFacetState, WalletRealmReconciliationCoordinator, WalletRealmReconciliationEffect,
+    WalletRealmReconciliationState, WalletRealmReconciliationTrigger, WalletShieldedSyncPort,
+    WalletShieldedSyncPortError, WalletShieldedSyncView, timeline_effect_outcome,
 };
 
 /// Profile-scoped command for reconciling the currently selected network realm.
@@ -694,6 +694,27 @@ impl SelectedWalletRealmTimelineOperation {
         failure: Option<WalletOperationFailure>,
         started: Instant,
     ) -> WalletOperationCausationId {
+        self.completed_with_measurements(
+            effect,
+            attempt,
+            caused_by,
+            timeline_outcome,
+            failure,
+            started,
+            WalletOperationResourceMeasurements::default(),
+        )
+    }
+
+    fn completed_with_measurements(
+        &mut self,
+        effect: WalletRealmCoordinatorEffect,
+        attempt: WalletOperationAttempt,
+        caused_by: WalletOperationCausationId,
+        timeline_outcome: WalletOperationOutcome,
+        failure: Option<WalletOperationFailure>,
+        started: Instant,
+        measurements: WalletOperationResourceMeasurements,
+    ) -> WalletOperationCausationId {
         self.completed_effects = self.completed_effects.saturating_add(1);
         match timeline_outcome {
             WalletOperationOutcome::Succeeded => {}
@@ -718,7 +739,7 @@ impl SelectedWalletRealmTimelineOperation {
         }
         let cause = self
             .timeline
-            .record(
+            .record_with_measurements(
                 self.operation_id,
                 self.correlation_id,
                 Some(caused_by),
@@ -726,6 +747,7 @@ impl SelectedWalletRealmTimelineOperation {
                 self.trigger,
                 attempt,
                 WalletOperationDurationMillis::bounded(started.elapsed()),
+                measurements,
                 WalletOperationEvent::EffectCompleted {
                     effect: effect.kind().into(),
                     outcome: timeline_outcome,
@@ -1346,13 +1368,14 @@ where
                 let failure = timeline_effect_failure(effect.kind(), outcome, &view);
                 if let (Some(operation), Some((cause, attempt))) = (timeline.as_mut(), effect_cause)
                 {
-                    operation.completed(
+                    operation.completed_with_measurements(
                         effect,
                         attempt,
                         cause,
                         timeline_effect_outcome(outcome),
                         failure,
                         effect_started,
+                        resource_measurements(effect.kind(), &view),
                     );
                 }
                 let publication = match self.complete_effect_and_publish(
@@ -1527,6 +1550,54 @@ where
             },
         )
     }
+}
+
+fn resource_measurements(
+    effect: WalletRealmReconciliationEffect,
+    view: &SelectedWalletRealmSyncView,
+) -> WalletOperationResourceMeasurements {
+    let values = match effect {
+        WalletRealmReconciliationEffect::SyncDust => match &view.dust {
+            WalletRealmFamilyView::Ready(dust) => [
+                dust.current_cursor
+                    .map(WalletOperationResourceMeasurement::CurrentCursor),
+                dust.target_cursor
+                    .map(WalletOperationResourceMeasurement::TargetCursor),
+                Some(WalletOperationResourceMeasurement::EventsProcessed(
+                    dust.events_processed,
+                )),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+            _ => Vec::new(),
+        },
+        WalletRealmReconciliationEffect::SyncShielded => match &view.shielded {
+            WalletRealmFamilyView::Ready(shielded) => [
+                shielded
+                    .current_cursor
+                    .map(WalletOperationResourceMeasurement::CurrentCursor),
+                shielded
+                    .target_cursor
+                    .map(WalletOperationResourceMeasurement::TargetCursor),
+                Some(WalletOperationResourceMeasurement::EventsProcessed(
+                    shielded.events_processed,
+                )),
+                shielded
+                    .owned_note_count
+                    .map(WalletOperationResourceMeasurement::OwnedNoteCount),
+                shielded
+                    .commitment_count
+                    .map(WalletOperationResourceMeasurement::CommitmentCount),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+            _ => Vec::new(),
+        },
+        WalletRealmReconciliationEffect::SyncAccount => Vec::new(),
+    };
+    WalletOperationResourceMeasurements::from_values(values)
 }
 
 fn record_terminal_error(
@@ -3488,6 +3559,67 @@ mod tests {
             ),
             Err(SelectedWalletRealmSyncError::InvalidProfileIdentifier(_))
         ));
+    }
+
+    #[test]
+    fn resource_measurements_retain_ready_dust_and_shielded_values() {
+        let dust_view = SelectedWalletRealmSyncView {
+            account: WalletRealmFamilyView::Unavailable,
+            dust: WalletRealmFamilyView::Ready(WalletDustSyncView {
+                network_id: "undeployed".to_owned(),
+                state: "synced".to_owned(),
+                current_cursor: Some(4),
+                target_cursor: Some(9),
+                events_processed: 3,
+                balance_atomic_units: None,
+                updated_at_millis: None,
+                failure: None,
+            }),
+            shielded: WalletRealmFamilyView::Unavailable,
+        };
+        assert_eq!(
+            resource_measurements(WalletRealmReconciliationEffect::SyncDust, &dust_view).as_slice(),
+            [
+                WalletOperationResourceMeasurement::CurrentCursor(4),
+                WalletOperationResourceMeasurement::TargetCursor(9),
+                WalletOperationResourceMeasurement::EventsProcessed(3),
+            ]
+        );
+
+        let shielded_view = SelectedWalletRealmSyncView {
+            account: WalletRealmFamilyView::Unavailable,
+            dust: WalletRealmFamilyView::Unavailable,
+            shielded: WalletRealmFamilyView::Ready(WalletShieldedSyncView {
+                network_id: "undeployed".to_owned(),
+                state: "synced".to_owned(),
+                current_cursor: None,
+                target_cursor: Some(9),
+                events_processed: 3,
+                owned_note_count: Some(1),
+                commitment_count: Some(2),
+                balances: Vec::new(),
+                updated_at_millis: None,
+                failure: None,
+            }),
+        };
+        assert_eq!(
+            resource_measurements(
+                WalletRealmReconciliationEffect::SyncShielded,
+                &shielded_view
+            )
+            .as_slice(),
+            [
+                WalletOperationResourceMeasurement::TargetCursor(9),
+                WalletOperationResourceMeasurement::EventsProcessed(3),
+                WalletOperationResourceMeasurement::OwnedNoteCount(1),
+                WalletOperationResourceMeasurement::CommitmentCount(2),
+            ]
+        );
+        assert!(
+            resource_measurements(WalletRealmReconciliationEffect::SyncAccount, &shielded_view)
+                .as_slice()
+                .is_empty()
+        );
     }
 
     #[test]
