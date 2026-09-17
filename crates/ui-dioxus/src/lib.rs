@@ -28,9 +28,11 @@ mod receive;
 mod screen_privacy;
 mod selected_realm_sync;
 mod send_recipient;
+mod wallet_action_watch;
 mod wallet_onboarding;
 mod wallet_realm_lifecycle;
 mod wallet_realm_sync_services;
+pub use wallet_realm_sync_services::WalletRealmSyncUiServices;
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
 
@@ -62,6 +64,9 @@ use receive::{
 use send_recipient::{
     SendWizardProgress, SendWizardStep, is_public_recipient_candidate, scanned_recipient_update,
     start_recipient_scan,
+};
+use wallet_action_watch::{
+    WalletActionWatchContext, WalletActionWatchStatus, action_watch_projection_from,
 };
 use wallet_onboarding::{WalletOnboarding, WalletOnboardingIntent};
 #[cfg(feature = "preprod-observation")]
@@ -129,18 +134,16 @@ use oxid_wallet_application::WalletAddressView;
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationCommand, AuthorizeWalletDustRegistrationUseCase,
     AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase,
-    CancelSelectedWalletRealmSyncUseCase, CancelWalletDustRegistrationSubmissionCommand,
-    CancelWalletDustRegistrationSubmissionUseCase, CancelWalletDustSyncUseCase,
-    CancelWalletOnboardingUseCase, CancelWalletShieldedSyncUseCase,
+    CancelWalletDustRegistrationSubmissionCommand, CancelWalletDustRegistrationSubmissionUseCase,
+    CancelWalletDustSyncUseCase, CancelWalletOnboardingUseCase, CancelWalletShieldedSyncUseCase,
     CancelWalletTransferSubmissionUseCase, CompleteWalletOnboardingUseCase,
     CompleteWalletRecoverySummary, CreateWalletProfileCommand, CreateWalletProfileUseCase,
     DeriveWalletAccountCommand, DeriveWalletAccountUseCase, EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY,
     EXPORT_COMPLETE_WALLET_BACKUP_TITLE, ExportCompleteWalletBackupCommand,
-    ExportCompleteWalletBackupUseCase, GetActiveWalletProfileUseCase,
-    GetSelectedWalletRealmSyncUseCase, GetWalletAccountUseCase, GetWalletBackupReceiptUseCase,
-    GetWalletDustRegistrationCommand, GetWalletDustRegistrationStatusCommand,
-    GetWalletDustRegistrationStatusUseCase, GetWalletDustRegistrationUseCase,
-    GetWalletDustSyncStatusUseCase, GetWalletOperationTimelineUseCase,
+    ExportCompleteWalletBackupUseCase, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
+    GetWalletBackupReceiptUseCase, GetWalletDustRegistrationCommand,
+    GetWalletDustRegistrationStatusCommand, GetWalletDustRegistrationStatusUseCase,
+    GetWalletDustRegistrationUseCase, GetWalletDustSyncStatusUseCase,
     GetWalletSecurityStatusUseCase, GetWalletShieldedSyncStatusUseCase,
     GetWalletTransferDraftUseCase, GetWalletTransferSubmissionStatusUseCase,
     InitializeWalletSecurityUseCase, ListWalletNetworksUseCase, ListWalletProfilesUseCase,
@@ -153,24 +156,23 @@ use oxid_wallet_application::{
     RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY, RECOVER_COMPLETE_WALLET_BACKUP_TITLE,
     RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY, RECOVER_PORTABLE_WALLET_BACKUP_TITLE,
     ReconcileWalletDustRegistrationSubmissionCommand,
-    ReconcileWalletDustRegistrationSubmissionUseCase, ReconcileWalletRealmLifecycleUseCase,
-    ReconcileWalletTransferSubmissionUseCase, RecordWalletBackupReceiptUseCase,
-    RecoverCompleteWalletBackupCommand, RecoverCompleteWalletBackupUseCase,
-    RecoverPortableWalletBackupCommand, RecoverPortableWalletBackupUseCase,
-    SelectWalletNetworkCommand, SelectWalletNetworkUseCase, SelectWalletProfileCommand,
-    SelectWalletProfileUseCase, SelectedWalletRealmProjection, SelectedWalletRealmSyncCommand,
-    SelectedWalletRealmSyncView, SensitiveOperationConfirmation, StartWalletDustSyncUseCase,
-    StartWalletShieldedSyncUseCase, SubmitWalletDustRegistrationCommand,
-    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferCommand, SubmitWalletTransferUseCase,
-    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
-    WalletAccountError, WalletAccountPortError, WalletAccountQuery, WalletAccountView,
-    WalletBackupReceiptCommand, WalletBackupReceiptView, WalletDustRegistrationAssetView,
-    WalletDustRegistrationPreviewView, WalletDustRegistrationSubmissionStatusView,
-    WalletDustSyncView, WalletNetworkListView, WalletProfileSecurityCommand, WalletProfileView,
-    WalletRealmFamilyView, WalletRecoverySecret, WalletSecurityStatusView, WalletShieldedSyncView,
-    WalletSyncStatusView, WalletTransferDraftQuery, WalletTransferPreviewView,
-    WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
-    WalletTransferSubmissionView,
+    ReconcileWalletDustRegistrationSubmissionUseCase, ReconcileWalletTransferSubmissionUseCase,
+    RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupCommand,
+    RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupCommand,
+    RecoverPortableWalletBackupUseCase, SelectWalletNetworkCommand, SelectWalletNetworkUseCase,
+    SelectWalletProfileCommand, SelectWalletProfileUseCase, SelectedWalletRealmProjection,
+    SelectedWalletRealmSyncCommand, SelectedWalletRealmSyncView, SensitiveOperationConfirmation,
+    StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
+    SubmitWalletDustRegistrationCommand, SubmitWalletDustRegistrationUseCase,
+    SubmitWalletTransferCommand, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
+    UnlockWalletUseCase, WalletAccountError, WalletAccountPortError, WalletAccountQuery,
+    WalletAccountView, WalletBackupReceiptCommand, WalletBackupReceiptView,
+    WalletDustRegistrationAssetView, WalletDustRegistrationPreviewView,
+    WalletDustRegistrationSubmissionStatusView, WalletDustSyncView, WalletNetworkListView,
+    WalletProfileSecurityCommand, WalletProfileView, WalletRealmFamilyView, WalletRecoverySecret,
+    WalletSecurityStatusView, WalletShieldedSyncView, WalletSyncStatusView,
+    WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionQuery,
+    WalletTransferSubmissionStatusView, WalletTransferSubmissionView,
 };
 #[cfg(feature = "preprod-observation")]
 use oxid_wallet_application::{
@@ -867,16 +869,6 @@ impl WalletSecurityUiServices {
         self.root_recovery = Some(recovery);
         self
     }
-}
-
-/// Midnight account use cases consumed by the Assets page.
-#[derive(Clone)]
-pub struct WalletRealmSyncUiServices {
-    sync: Arc<dyn SyncSelectedWalletRealmUseCase>,
-    get: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
-    lifecycle: Arc<dyn ReconcileWalletRealmLifecycleUseCase>,
-    cancel: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
-    timeline: Arc<dyn GetWalletOperationTimelineUseCase>,
 }
 
 /// Midnight account use cases consumed by the Assets page.
@@ -5080,6 +5072,8 @@ fn ReceiveSheet(
     let mut selected_kind = use_signal(|| None::<String>);
     let mut export_notice = use_signal(|| None::<String>);
     let profile_id = active_profile.id.clone();
+    let action_watch_projection =
+        action_watch_projection_from(&services, WalletActionWatchContext::Receive);
     let services_for_load = services.clone();
     use_effect(move || {
         let services = services_for_load.clone();
@@ -5347,6 +5341,9 @@ fn ReceiveSheet(
                     onclick: move |event| on_close.call(event),
                     "Close"
                 }
+            }
+            if let Some(projection) = action_watch_projection {
+                WalletActionWatchStatus { projection }
             }
             {content}
         }
@@ -7106,8 +7103,10 @@ fn SendTransferPanel(
     let recipient_scan_busy = use_signal(|| false);
     let mut recipient_scan_notice = use_signal(|| None::<String>);
     let recipient_scanner = services.qr_scanner();
+    let action_watch_projection =
+        action_watch_projection_from(&services, WalletActionWatchContext::Send);
 
-    match panel.read().clone() {
+    let content = match panel.read().clone() {
         TransferPanelState::Editing => match wizard_step() {
             SendWizardStep::Recipient => {
                 let scan_busy = recipient_scan_busy();
@@ -7709,6 +7708,13 @@ fn SendTransferPanel(
             }
             }
         }
+    };
+
+    rsx! {
+        if let Some(projection) = action_watch_projection {
+            WalletActionWatchStatus { projection }
+        }
+        {content}
     }
 }
 

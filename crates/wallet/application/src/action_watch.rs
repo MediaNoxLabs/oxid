@@ -32,6 +32,24 @@ pub enum WalletActionWatch {
     },
 }
 
+/// Payload-free action category retained by projections so incoming adapters
+/// can show a watch only in the journey that owns it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletActionWatchKind {
+    SubmittedTransaction,
+    IncomingArrival,
+}
+
+impl WalletActionWatch {
+    #[must_use]
+    pub const fn kind(&self) -> WalletActionWatchKind {
+        match self {
+            Self::SubmittedTransaction { .. } => WalletActionWatchKind::SubmittedTransaction,
+            Self::IncomingArrival { .. } => WalletActionWatchKind::IncomingArrival,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WalletActionWatchObservation {
     SubmittedTransaction {
@@ -64,6 +82,7 @@ impl WalletActionWatchState {
 /// Payload-free projection suitable for UI or headless adapters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WalletActionWatchProjection {
+    pub kind: WalletActionWatchKind,
     pub state: WalletActionWatchState,
     pub realm_generation: u64,
 }
@@ -106,10 +125,12 @@ impl WalletActionWatchRuntime {
         deadline_millis: u64,
         now_millis: u64,
     ) -> Option<WalletActionWatchHandle> {
+        let kind = watch.kind();
         self.finish(WalletActionWatchState::Superseded);
         self.suspended = false;
         let Some(identity) = self.identity.clone() else {
             self.projection = Some(WalletActionWatchProjection {
+                kind,
                 state: WalletActionWatchState::Degraded,
                 realm_generation: self.generation,
             });
@@ -117,6 +138,7 @@ impl WalletActionWatchRuntime {
         };
         if deadline_millis <= now_millis {
             self.projection = Some(WalletActionWatchProjection {
+                kind,
                 state: WalletActionWatchState::Expired,
                 realm_generation: self.generation,
             });
@@ -134,6 +156,7 @@ impl WalletActionWatchRuntime {
             deadline_millis,
         });
         self.projection = Some(WalletActionWatchProjection {
+            kind,
             state: WalletActionWatchState::Waiting,
             realm_generation: self.generation,
         });
@@ -217,6 +240,7 @@ impl WalletActionWatchRuntime {
             debug_assert_eq!(self.identity.as_ref(), Some(&active.identity));
             self.suspended = false;
             self.projection = Some(WalletActionWatchProjection {
+                kind: active.watch.kind(),
                 state,
                 realm_generation: active.handle.realm_generation,
             });
@@ -293,6 +317,10 @@ mod tests {
             runtime.projection().unwrap().state,
             WalletActionWatchState::Waiting
         );
+        assert_eq!(
+            runtime.projection().unwrap().kind,
+            WalletActionWatchKind::SubmittedTransaction
+        );
         runtime.observe(
             handle,
             WalletActionWatchObservation::SubmittedTransaction {
@@ -341,6 +369,10 @@ mod tests {
         assert_eq!(
             runtime.projection().unwrap().state,
             WalletActionWatchState::Waiting
+        );
+        assert_eq!(
+            runtime.projection().unwrap().kind,
+            WalletActionWatchKind::IncomingArrival
         );
         runtime.observe(
             handle,

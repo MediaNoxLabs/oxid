@@ -4,11 +4,22 @@ use std::sync::Arc;
 
 use oxid_wallet_application::{
     CancelSelectedWalletRealmSyncUseCase, GetSelectedWalletRealmSyncUseCase,
-    GetWalletOperationTimelineUseCase, ReconcileWalletRealmLifecycleUseCase,
-    SyncSelectedWalletRealmUseCase,
+    GetWalletOperationTimelineUseCase, ManageWalletActionWatchUseCase,
+    ReconcileWalletRealmLifecycleUseCase, SyncSelectedWalletRealmUseCase,
 };
 
-use crate::{WalletRealmSyncUiServices, WalletUiServices};
+use crate::WalletUiServices;
+
+/// Midnight account use cases consumed by the Assets page.
+#[derive(Clone)]
+pub struct WalletRealmSyncUiServices {
+    sync: Arc<dyn SyncSelectedWalletRealmUseCase>,
+    get: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+    lifecycle: Arc<dyn ReconcileWalletRealmLifecycleUseCase>,
+    action_watch: Arc<dyn ManageWalletActionWatchUseCase>,
+    cancel: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
+    timeline: Arc<dyn GetWalletOperationTimelineUseCase>,
+}
 
 impl WalletRealmSyncUiServices {
     #[must_use]
@@ -16,6 +27,7 @@ impl WalletRealmSyncUiServices {
         sync: Arc<dyn SyncSelectedWalletRealmUseCase>,
         get: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
         lifecycle: Arc<dyn ReconcileWalletRealmLifecycleUseCase>,
+        action_watch: Arc<dyn ManageWalletActionWatchUseCase>,
         cancel: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
         timeline: Arc<dyn GetWalletOperationTimelineUseCase>,
     ) -> Self {
@@ -23,6 +35,7 @@ impl WalletRealmSyncUiServices {
             sync,
             get,
             lifecycle,
+            action_watch,
             cancel,
             timeline,
         }
@@ -45,6 +58,11 @@ impl WalletUiServices {
         &self,
     ) -> Arc<dyn ReconcileWalletRealmLifecycleUseCase> {
         Arc::clone(&self.realm_sync.lifecycle)
+    }
+
+    #[must_use]
+    pub fn manage_wallet_action_watch(&self) -> Arc<dyn ManageWalletActionWatchUseCase> {
+        Arc::clone(&self.realm_sync.action_watch)
     }
 
     #[must_use]
