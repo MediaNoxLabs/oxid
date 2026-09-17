@@ -145,6 +145,11 @@ pub enum WalletDustRegistrationSettlementEvent {
         after_observation_revision: u64,
         ready: bool,
     },
+    DroppedRegistrationAbandoned {
+        identity: WalletDustRegistrationSettlementIdentity,
+        transaction_id: ChainTransactionId,
+        after_observation_revision: u64,
+    },
     Cancelled {
         identity: WalletDustRegistrationSettlementIdentity,
         draft_id: WalletTransactionDraftId,
@@ -535,6 +540,22 @@ pub fn reduce_wallet_dust_registration_settlement(
                 );
             }
         }
+        WalletDustRegistrationSettlementEvent::DroppedRegistrationAbandoned {
+            transaction_id,
+            after_observation_revision,
+            ..
+        } if projection.state == State::ActionRequired
+            && has_transaction(projection, &transaction_id)
+            && projection
+                .registration
+                .as_ref()
+                .is_some_and(|registration| {
+                    registration.observation_revision == after_observation_revision
+                        && registration.dust_observation_revision <= after_observation_revision
+                }) =>
+        {
+            next.registration = None;
+        }
         WalletDustRegistrationSettlementEvent::Cancelled { draft_id, .. }
             if can_cancel(projection) && has_draft(projection, &draft_id) =>
         {
@@ -753,6 +774,9 @@ fn event_identity(
         | WalletDustRegistrationSettlementEvent::FinalityObserved { identity, .. }
         | WalletDustRegistrationSettlementEvent::RegistrationReconciled { identity, .. }
         | WalletDustRegistrationSettlementEvent::DustRefreshed { identity, .. }
+        | WalletDustRegistrationSettlementEvent::DroppedRegistrationAbandoned {
+            identity, ..
+        }
         | WalletDustRegistrationSettlementEvent::Cancelled { identity, .. }
         | WalletDustRegistrationSettlementEvent::Offline { identity, .. }
         | WalletDustRegistrationSettlementEvent::TimedOut { identity, .. }
@@ -907,6 +931,14 @@ mod tests {
             revision,
             after_observation_revision,
             ready,
+        }
+    }
+
+    fn abandon_dropped(after_observation_revision: u64) -> WalletDustRegistrationSettlementEvent {
+        WalletDustRegistrationSettlementEvent::DroppedRegistrationAbandoned {
+            identity: selected_identity(),
+            transaction_id: transaction(),
+            after_observation_revision,
         }
     }
 
@@ -1841,7 +1873,15 @@ mod tests {
             dropped
         );
         assert_eq!(reduce(&dropped, cancellation(draft())), dropped);
+        let abandoned = reduce(&dropped, abandon_dropped(2));
+        assert!(abandoned.registration.is_none());
+        assert_eq!(
+            reduce(&abandoned, authorization_request(other_draft(), 2)).state,
+            State::AwaitingAuthorization
+        );
+        assert_eq!(reduce(&recovered, abandon_dropped(2)), recovered);
         let refreshed = reduce(&dropped, dust_refresh(1, 3, true));
+        assert_eq!(reduce(&refreshed, abandon_dropped(2)), refreshed);
         let included = reduce(
             &refreshed,
             reconciliation(3, WalletDustRegistrationSettlementReconciliation::Included),
