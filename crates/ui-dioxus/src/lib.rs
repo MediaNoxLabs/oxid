@@ -5086,15 +5086,27 @@ fn ReceiveSheet(
                         export_notice.set(None);
                         state.set(ReceiveSheetState::Loading);
                         spawn(async move {
+                            let query_services = services.clone();
+                            let query_profile = profile_id.clone();
                             let next = run_ui_blocking(move || {
-                                load_receive_sheet(&services, &profile_id)
+                                load_receive_sheet(&query_services, &query_profile)
                             })
                             .await
                             .unwrap_or(ReceiveSheetState::Failed);
-                            if let ReceiveSheetState::Ready { account, .. } = &next {
-                                selected_kind.set(default_receive_kind(account));
-                            }
+                            let observed_account =
+                                if let ReceiveSheetState::Ready { account, .. } = &next {
+                                    selected_kind.set(default_receive_kind(account));
+                                    Some((**account).clone())
+                                } else {
+                                    None
+                                };
                             state.set(next);
+                            if let Some(account) = observed_account {
+                                selected_realm_sync::action_watch::observe_receive_arrival(
+                                    services, profile_id, account,
+                                )
+                                .await;
+                            }
                         });
                     },
                     "Retry"
@@ -7081,6 +7093,7 @@ fn SendTransferPanel(
     let recipient_scanner = services.qr_scanner();
     let action_watch_projection =
         use_action_watch_projection(services.clone(), WalletActionWatchContext::Send);
+    let show_action_watch = matches!(*panel.read(), TransferPanelState::Submitted(_));
 
     let content = match panel.read().clone() {
         TransferPanelState::Editing => match wizard_step() {
@@ -7694,8 +7707,10 @@ fn SendTransferPanel(
     };
 
     rsx! {
-        if let Some(projection) = action_watch_projection() {
-            WalletActionWatchStatus { projection }
+        if show_action_watch {
+            if let Some(projection) = action_watch_projection() {
+                WalletActionWatchStatus { projection }
+            }
         }
         {content}
     }
