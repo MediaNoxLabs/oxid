@@ -61,7 +61,7 @@ use receive::{
     public_export_message, render_qr_svg,
 };
 use selected_realm_sync::action_watch::{
-    WalletActionWatchContext, WalletActionWatchStatus, observe_receive_arrival as watch_receive,
+    WalletActionWatchContext, WalletActionWatchStatus, start_receive_watch,
     use_action_watch_projection,
 };
 use send_recipient::{
@@ -5051,17 +5051,25 @@ fn ReceiveSheet(
             let next = run_ui_blocking(move || load_receive_sheet(&query_services, &query_profile))
                 .await
                 .unwrap_or(ReceiveSheetState::Failed);
-            let observed_account = if let ReceiveSheetState::Ready { account, .. } = &next {
+            if let ReceiveSheetState::Ready { account, .. } = &next {
                 selected_kind.set(default_receive_kind(account));
-                Some((**account).clone())
-            } else {
-                None
-            };
-            state.set(next);
-            if let Some(account) = observed_account {
-                watch_receive(services, profile_id, account, watch_session).await;
             }
+            state.set(next);
         });
+    });
+    let watch_services = services.clone();
+    let watch_profile = active_profile.id.clone();
+    use_effect(move || {
+        watch_session.set(false);
+        if let (Some(_), ReceiveSheetState::Ready { account, .. }) = (selected_kind(), state()) {
+            start_receive_watch(
+                watch_services.clone(),
+                watch_profile.clone(),
+                *account,
+                selected_kind,
+                watch_session,
+            );
+        }
     });
 
     let content = match state.read().clone() {
@@ -5083,6 +5091,7 @@ fn ReceiveSheet(
                         let services = services.clone();
                         let profile_id = active_profile.id.clone();
                         export_notice.set(None);
+                        selected_kind.set(None);
                         watch_session.set(false);
                         state.set(ReceiveSheetState::Loading);
                         spawn(async move {
@@ -5093,17 +5102,10 @@ fn ReceiveSheet(
                             })
                             .await
                             .unwrap_or(ReceiveSheetState::Failed);
-                            let observed_account =
-                                if let ReceiveSheetState::Ready { account, .. } = &next {
-                                    selected_kind.set(default_receive_kind(account));
-                                    Some((**account).clone())
-                                } else {
-                                    None
-                                };
-                            state.set(next);
-                            if let Some(account) = observed_account {
-                                watch_receive(services, profile_id, account, watch_session).await;
+                            if let ReceiveSheetState::Ready { account, .. } = &next {
+                                selected_kind.set(default_receive_kind(account));
                             }
+                            state.set(next);
                         });
                     },
                     "Retry"
@@ -5293,7 +5295,7 @@ fn ReceiveSheet(
                     if receive_request.is_some() {
                         "QR: versioned public NIGHT request. Copy/share: validated raw address."
                     } else {
-                        "QR, copy, and share contain the protected address shown."
+                        "QR, copy, and share contain the protected address shown. Automatic arrival confirmation is shown only for Public NIGHT."
                     }
                 }
             }

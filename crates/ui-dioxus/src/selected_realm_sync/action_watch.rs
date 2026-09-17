@@ -105,12 +105,28 @@ pub(crate) fn record_included_transfer(
     let _ = manager.observe(handle, observation, now_millis);
 }
 
-pub(crate) async fn observe_receive_arrival(
+pub(crate) fn start_receive_watch(
     services: WalletUiServices,
     profile_id: String,
     initial: WalletAccountView,
+    selected_kind: Signal<Option<String>>,
+    session_active: Signal<bool>,
+) {
+    spawn(async move {
+        observe_receive_arrival(services, profile_id, initial, selected_kind, session_active).await;
+    });
+}
+
+async fn observe_receive_arrival(
+    services: WalletUiServices,
+    profile_id: String,
+    initial: WalletAccountView,
+    selected_kind: Signal<Option<String>>,
     mut session_active: Signal<bool>,
 ) {
+    if !receive_watch_supported(selected_kind().as_deref()) {
+        return;
+    }
     let Some(account_id) = initial.account_id.as_deref() else {
         return;
     };
@@ -125,6 +141,9 @@ pub(crate) async fn observe_receive_arrival(
         },
     ))
     .await;
+    if !receive_watch_supported(selected_kind().as_deref()) {
+        return;
+    }
     if !matches!(preflight, Ok(Ok(_))) {
         if publish_receive_terminal(
             &manager,
@@ -172,6 +191,9 @@ pub(crate) async fn observe_receive_arrival(
             return;
         }
     };
+    if !receive_watch_supported(selected_kind().as_deref()) {
+        return;
+    }
     if baseline.account_id.as_deref() != Some(account_id.as_str()) {
         return;
     }
@@ -200,6 +222,9 @@ pub(crate) async fn observe_receive_arrival(
 
     loop {
         tokio::time::sleep(Duration::from_millis(ACTION_WATCH_POLL_MILLIS)).await;
+        if !receive_watch_supported(selected_kind().as_deref()) {
+            return;
+        }
         let now_millis = monotonic_millis();
         if now_millis >= deadline_millis {
             let _ = manager.timeout(handle, now_millis);
@@ -259,6 +284,10 @@ pub(crate) async fn observe_receive_arrival(
         guard.disarm();
         return;
     }
+}
+
+fn receive_watch_supported(kind: Option<&str>) -> bool {
+    kind == Some("unshielded")
 }
 
 fn synchronized_account_checkpoint(account: &WalletAccountView) -> Option<u64> {
@@ -702,6 +731,13 @@ mod tests {
             confirmed_incoming_transactions(&observed),
             BTreeSet::from(["confirmed-incoming".to_owned()])
         );
+    }
+
+    #[test]
+    fn receive_watch_is_explicitly_scoped_to_the_public_rail() {
+        assert!(receive_watch_supported(Some("unshielded")));
+        assert!(!receive_watch_supported(Some("shielded")));
+        assert!(!receive_watch_supported(None));
     }
 
     #[test]
