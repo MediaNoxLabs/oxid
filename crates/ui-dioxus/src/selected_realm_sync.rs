@@ -165,27 +165,47 @@ fn merge_polled_account_sync_card(
     else {
         return None;
     };
-    candidate
-        .supersedes(realm)
-        .then(|| AccountSyncCardState::Ready {
+    retain_polled_card_feedback(
+        candidate.identity == realm.identity,
+        candidate.revision,
+        realm.revision,
+        *action_busy,
+        operation_error,
+    )
+    .map(
+        |(action_busy, operation_error)| AccountSyncCardState::Ready {
             realm: candidate,
-            action_busy: *action_busy,
-            operation_error: operation_error.clone(),
-        })
+            action_busy,
+            operation_error,
+        },
+    )
+}
+
+fn retain_polled_card_feedback(
+    same_realm: bool,
+    candidate_revision: u64,
+    current_revision: u64,
+    action_busy: bool,
+    operation_error: &Option<String>,
+) -> Option<(bool, Option<String>)> {
+    (same_realm && candidate_revision >= current_revision)
+        .then(|| (action_busy, operation_error.clone()))
 }
 
 fn poll_still_owns_account_sync_card(
     current: &AccountSyncCardState,
     expected: &SelectedWalletRealmProjection,
 ) -> bool {
-    matches!(
-        current,
+    match current {
         AccountSyncCardState::Ready {
-            realm,
-            action_busy: false,
-            ..
-        } if realm.as_ref() == expected
-    )
+            realm, action_busy, ..
+        } => poll_owns_current_projection(realm.as_ref() == expected, *action_busy),
+        AccountSyncCardState::Loading | AccountSyncCardState::Failed(_) => false,
+    }
+}
+
+const fn poll_owns_current_projection(same_projection: bool, action_busy: bool) -> bool {
+    same_projection && !action_busy
 }
 
 pub(super) fn selected_realm_is_syncing(realm: &SelectedWalletRealmSyncView) -> bool {
@@ -463,62 +483,22 @@ pub(super) fn non_native_shielded_balances(
 #[cfg(test)]
 mod poll_tests {
     use super::*;
-    use oxid_wallet_application::{
-        SelectedWalletRealmActionReadiness, SelectedWalletRealmIdentity,
-        SelectedWalletRealmObservation,
-    };
-    use oxid_wallet_domain::{ChainNetworkId, WalletProfileId};
-
-    fn projection(revision: u64) -> Box<SelectedWalletRealmProjection> {
-        Box::new(SelectedWalletRealmProjection {
-            identity: SelectedWalletRealmIdentity {
-                profile: WalletProfileId::parse("profile_test").expect("profile id"),
-                realm: ChainNetworkId::parse("undeployed").expect("network id"),
-            },
-            revision,
-            fresh: true,
-            consistent: true,
-            actionable: SelectedWalletRealmActionReadiness::Ready,
-            observation: SelectedWalletRealmObservation::Settled,
-            view: SelectedWalletRealmSyncView {
-                account: WalletRealmFamilyView::Unsupported,
-                dust: WalletRealmFamilyView::Unsupported,
-                shielded: WalletRealmFamilyView::Unsupported,
-            },
-        })
-    }
 
     #[test]
     fn stale_poll_cannot_replace_a_newer_manual_projection() {
-        let current = AccountSyncCardState::Ready {
-            realm: projection(2),
-            action_busy: true,
-            operation_error: None,
-        };
-
-        assert!(merge_polled_account_sync_card(&current, projection(1)).is_none());
-        assert!(!poll_still_owns_account_sync_card(&current, &projection(1)));
+        assert!(retain_polled_card_feedback(true, 1, 2, true, &None).is_none());
+        assert!(!poll_owns_current_projection(false, false));
     }
 
     #[test]
     fn equal_poll_preserves_the_current_action_state() {
-        let current = AccountSyncCardState::Ready {
-            realm: projection(2),
-            action_busy: true,
-            operation_error: Some("manual action pending".to_owned()),
-        };
-        let Some(AccountSyncCardState::Ready {
-            realm,
-            action_busy,
-            operation_error,
-        }) = merge_polled_account_sync_card(&current, projection(2))
-        else {
-            panic!("equal projection remains admissible")
-        };
+        let operation_error = Some("manual action pending".to_owned());
+        let (action_busy, retained_error) =
+            retain_polled_card_feedback(true, 2, 2, true, &operation_error)
+                .expect("equal projection remains admissible");
 
-        assert_eq!(realm.revision, 2);
         assert!(action_busy);
-        assert_eq!(operation_error.as_deref(), Some("manual action pending"));
-        assert!(!poll_still_owns_account_sync_card(&current, &realm));
+        assert_eq!(retained_error, operation_error);
+        assert!(!poll_owns_current_projection(true, true));
     }
 }

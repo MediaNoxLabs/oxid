@@ -6169,7 +6169,6 @@ dependencies = [
  "oxid-presentation-application",
  "oxid-protocol-application",
  "oxid-wallet-application",
- "oxid-wallet-domain",
  "qrcode",
  "tokio",
  "zeroize",
