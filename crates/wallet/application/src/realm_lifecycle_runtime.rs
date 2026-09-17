@@ -1,68 +1,112 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Application execution seam for selected-realm lifecycle admission.
-//!
-//! Platform adapters supply typed lifecycle inputs; this owner preserves the
-//! policy-selected trigger when it invokes the selected-realm reconciler.
-
+use crate::{
+    ReconcileSelectedWalletRealmUseCase, SelectedWalletRealmProjection,
+    SelectedWalletRealmSyncCommand, SelectedWalletRealmSyncError, WalletRealmLifecycleDecision,
+    WalletRealmLifecycleIdentity, WalletRealmLifecycleInput, WalletRealmLifecyclePolicy,
+    WalletRealmLifecyclePolicyConfig, WalletRealmReconciliationState,
+};
+use oxid_platform_ports::{ClockPort, PlatformError};
 use std::{
+    error::Error,
+    fmt,
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
 };
 
-use crate::{
-    SelectedWalletRealmProjection, SelectedWalletRealmSyncCommand, SelectedWalletRealmSyncError,
-    SyncSelectedWalletRealmUseCase, WalletRealmFacetState, WalletRealmLifecycleDecision,
-    WalletRealmLifecycleInput, WalletRealmLifecyclePolicy, WalletRealmLifecyclePolicyConfig,
-    WalletRealmReconciliationState,
-};
-
 pub type WalletRealmLifecycleFuture<'a> = Pin<
     Box<
-        dyn Future<Output = Result<WalletRealmLifecycleResult, SelectedWalletRealmSyncError>>
+        dyn Future<Output = Result<WalletRealmLifecycleResult, WalletRealmLifecycleError>>
             + Send
             + 'a,
     >,
 >;
-
-/// Result of one lifecycle observation, including an optional admitted projection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WalletRealmLifecycleError {
+    Clock(PlatformError),
+    Sync(SelectedWalletRealmSyncError),
+    Poisoned,
+}
+impl fmt::Display for WalletRealmLifecycleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Clock(e) => e.fmt(f),
+            Self::Sync(e) => e.fmt(f),
+            Self::Poisoned => f.write_str("wallet realm lifecycle state is unavailable"),
+        }
+    }
+}
+impl Error for WalletRealmLifecycleError {}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WalletRealmLifecycleResult {
     pub decision: WalletRealmLifecycleDecision,
     pub projection: Option<SelectedWalletRealmProjection>,
 }
-
-/// Incoming application seam shared by headless and presentation adapters.
 pub trait ReconcileWalletRealmLifecycleUseCase: Send + Sync {
     fn execute(&self, input: WalletRealmLifecycleInput) -> WalletRealmLifecycleFuture<'_>;
 }
-
-/// Serializes policy admission and executes only the typed trigger it selects.
 pub struct WalletRealmLifecycleService {
     policy: Mutex<WalletRealmLifecyclePolicy>,
     config: WalletRealmLifecyclePolicyConfig,
-    sync: Arc<dyn SyncSelectedWalletRealmUseCase>,
+    clock: Arc<dyn ClockPort>,
+    sync: Arc<dyn ReconcileSelectedWalletRealmUseCase>,
+    facets: Mutex<WalletRealmReconciliationState>,
 }
-
 impl WalletRealmLifecycleService {
-    #[must_use]
-    pub fn new(sync: Arc<dyn SyncSelectedWalletRealmUseCase>) -> Self {
+    pub fn new(
+        clock: Arc<dyn ClockPort>,
+        sync: Arc<dyn ReconcileSelectedWalletRealmUseCase>,
+        facets: WalletRealmReconciliationState,
+    ) -> Self {
         Self {
             policy: Mutex::new(WalletRealmLifecyclePolicy::default()),
             config: WalletRealmLifecyclePolicyConfig::default(),
+            clock,
             sync,
+            facets: Mutex::new(facets),
         }
     }
+    fn complete(
+        &self,
+        identity: WalletRealmLifecycleIdentity,
+        sequence: u64,
+        facets: WalletRealmReconciliationState,
+        succeeded: bool,
+    ) -> Result<(), WalletRealmLifecycleError> {
+        let now_millis = self
+            .clock
+            .now()
+            .map_err(WalletRealmLifecycleError::Clock)?
+            .value();
+        *self
+            .facets
+            .lock()
+            .map_err(|_| WalletRealmLifecycleError::Poisoned)? = facets;
+        let _ = self
+            .policy
+            .lock()
+            .map_err(|_| WalletRealmLifecycleError::Poisoned)?
+            .reduce(
+                self.config,
+                WalletRealmLifecycleInput::ReconciliationFinished {
+                    identity,
+                    sequence,
+                    now_millis,
+                    facets,
+                    succeeded,
+                },
+            );
+        Ok(())
+    }
 }
-
 impl ReconcileWalletRealmLifecycleUseCase for WalletRealmLifecycleService {
     fn execute(&self, input: WalletRealmLifecycleInput) -> WalletRealmLifecycleFuture<'_> {
         Box::pin(async move {
             let decision = self
                 .policy
                 .lock()
-                .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?
+                .map_err(|_| WalletRealmLifecycleError::Poisoned)?
                 .reduce(self.config, input);
             let (WalletRealmLifecycleDecision::Request(request)
             | WalletRealmLifecycleDecision::Superseded { request, .. }) = &decision
@@ -72,41 +116,37 @@ impl ReconcileWalletRealmLifecycleUseCase for WalletRealmLifecycleService {
                     projection: None,
                 });
             };
-            let projection = self
+            match self
                 .sync
-                .execute(SelectedWalletRealmSyncCommand {
-                    profile_id: request.identity.profile.as_str().to_owned(),
-                })
-                .await?;
-            let completion = WalletRealmLifecycleInput::ReconciliationFinished {
-                identity: request.identity.clone(),
-                sequence: request.sequence,
-                now_millis: 0,
-                facets: projection_facets(&projection),
-                succeeded: true,
-            };
-            let _ = self
-                .policy
-                .lock()
-                .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?
-                .reduce(self.config, completion);
-            Ok(WalletRealmLifecycleResult {
-                decision,
-                projection: Some(projection),
-            })
+                .execute(
+                    SelectedWalletRealmSyncCommand {
+                        profile_id: request.identity.profile.as_str().to_owned(),
+                    },
+                    request.trigger,
+                )
+                .await
+            {
+                Ok(result) => {
+                    self.complete(
+                        request.identity.clone(),
+                        request.sequence,
+                        result.facets,
+                        true,
+                    )?;
+                    Ok(WalletRealmLifecycleResult {
+                        decision,
+                        projection: Some(result.projection),
+                    })
+                }
+                Err(error) => {
+                    let facets = *self
+                        .facets
+                        .lock()
+                        .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
+                    self.complete(request.identity.clone(), request.sequence, facets, false)?;
+                    Err(WalletRealmLifecycleError::Sync(error))
+                }
+            }
         })
-    }
-}
-
-fn projection_facets(projection: &SelectedWalletRealmProjection) -> WalletRealmReconciliationState {
-    let state = if projection.fresh {
-        WalletRealmFacetState::Current
-    } else {
-        WalletRealmFacetState::Stale
-    };
-    WalletRealmReconciliationState {
-        account: state,
-        dust: state,
-        shielded: state,
     }
 }

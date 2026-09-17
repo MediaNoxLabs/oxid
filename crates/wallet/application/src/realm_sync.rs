@@ -120,6 +120,13 @@ pub struct SelectedWalletRealmProjection {
     pub view: SelectedWalletRealmSyncView,
 }
 
+/// Reconciliation output preserving the coordinator's typed facet state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelectedWalletRealmReconciliation {
+    pub projection: SelectedWalletRealmProjection,
+    pub facets: WalletRealmReconciliationState,
+}
+
 impl SelectedWalletRealmProjection {
     /// Rejects an observation belonging to another selected realm or an older revision.
     #[must_use]
@@ -163,6 +170,13 @@ pub type SelectedWalletRealmProjectionFuture<'a> = Pin<
             + 'a,
     >,
 >;
+pub type SelectedWalletRealmReconciliationFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<SelectedWalletRealmReconciliation, SelectedWalletRealmSyncError>>
+            + Send
+            + 'a,
+    >,
+>;
 
 /// Starts one bounded public/DUST/shielded reconciliation for the selected realm.
 pub trait SyncSelectedWalletRealmUseCase: Send + Sync {
@@ -170,6 +184,15 @@ pub trait SyncSelectedWalletRealmUseCase: Send + Sync {
         &self,
         command: SelectedWalletRealmSyncCommand,
     ) -> SelectedWalletRealmProjectionFuture<'_>;
+}
+
+/// Executes a lifecycle-selected trigger and retains its authoritative facets.
+pub trait ReconcileSelectedWalletRealmUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: SelectedWalletRealmSyncCommand,
+        trigger: WalletRealmReconciliationTrigger,
+    ) -> SelectedWalletRealmReconciliationFuture<'_>;
 }
 
 /// Reads the most recently published aggregate without starting I/O.
@@ -265,6 +288,17 @@ impl SelectedWalletRealmRuntime {
         );
         entry.state = *transition.state();
         transition.effects().to_vec()
+    }
+
+    pub fn facets(
+        &self,
+        profile: &WalletProfileId,
+        realm: &ChainNetworkId,
+    ) -> Option<WalletRealmReconciliationState> {
+        self.entries
+            .iter()
+            .find(|entry| &entry.profile == profile && &entry.realm == realm)
+            .map(|entry| entry.state.facets())
     }
 
     pub fn retire_other_realms(
@@ -1499,6 +1533,32 @@ where
     ) -> Result<(), WalletAccountPortError> {
         self.pin_selected_realm(profile, network)
             .map_err(|_| WalletAccountPortError::Unavailable)
+    }
+}
+
+impl<W> ReconcileSelectedWalletRealmUseCase for SelectedWalletRealmSyncService<W>
+where
+    W: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletDustSyncPort
+        + WalletShieldedSyncPort
+        + 'static,
+{
+    fn execute(
+        &self,
+        command: SelectedWalletRealmSyncCommand,
+        trigger: WalletRealmReconciliationTrigger,
+    ) -> SelectedWalletRealmReconciliationFuture<'_> {
+        Box::pin(async move {
+            let projection = self.reconcile(command, trigger).await?;
+            let facets = self
+                .runtime
+                .lock()
+                .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?
+                .facets(&projection.identity.profile, &projection.identity.realm)
+                .ok_or(SelectedWalletRealmSyncError::ObservationSuperseded)?;
+            Ok(SelectedWalletRealmReconciliation { projection, facets })
+        })
     }
 }
 
