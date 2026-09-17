@@ -45,7 +45,8 @@
         {
           "name": "midnight-wallet",
           "modulePathPrefixes": [
-            "apps/oxid-headless/src/midnight_wallet"
+            "apps/oxid-headless/src/midnight_wallet",
+            "apps/oxid-headless/src/realm_lifecycle"
           ]
         },
         {
@@ -236,6 +237,7 @@
           "name": "selected-realm-sync",
           "modulePathPrefixes": [
             "crates/ui-dioxus/src/selected_realm_sync",
+            "crates/ui-dioxus/src/wallet_realm_lifecycle",
             "crates/ui-dioxus/src/wallet_realm_sync_services"
           ]
         },

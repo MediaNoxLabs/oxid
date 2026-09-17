@@ -28,6 +28,7 @@ required-features = ["standalone-faucet"]
 
 [dependencies]
 futures.workspace = true
+futures-timer.workspace = true
 oxid-capabilities-application.workspace = true
 oxid-composition = { workspace = true, features = ["headless-portal-local"] }
 oxid-credential-application.workspace = true

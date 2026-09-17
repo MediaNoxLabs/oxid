@@ -13,7 +13,8 @@ use oxid_wallet_application::{
     SubmitWalletDustRegistrationCommand, SubmitWalletTransferCommand, WalletAccountQuery,
     WalletAccountView, WalletDustRegistrationError, WalletDustRegistrationPortError,
     WalletDustRegistrationSubmissionStatusView, WalletDustSyncCommand, WalletDustSyncError,
-    WalletDustSyncView, WalletShieldedSyncCommand, WalletShieldedSyncError, WalletShieldedSyncView,
+    WalletDustSyncView, WalletRealmLifecycleInput, WalletShieldedSyncCommand,
+    WalletShieldedSyncError, WalletShieldedSyncPortError, WalletShieldedSyncView,
     WalletTransactionError, WalletTransactionPortError, WalletTransferDraftQuery,
     WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView, validate_confirmation,
 };
@@ -103,12 +104,41 @@ impl HeadlessWallet {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
         };
-        let result = futures::executor::block_on(
-            self.application
-                .sync_selected_wallet_realm()
-                .execute(SelectedWalletRealmSyncCommand { profile_id }),
-        );
-        selected_realm_sync_dispatch(request.id, result)
+        let lifecycle = self.application.reconcile_wallet_realm_lifecycle();
+        let Ok(status) = lifecycle.status() else {
+            return selected_realm_sync_dispatch(
+                request.id,
+                Err(SelectedWalletRealmSyncError::Unavailable),
+            );
+        };
+        let result = self.execute_realm_lifecycle(WalletRealmLifecycleInput::ActionPreflight {
+            now_millis: self.monotonic_millis(),
+            facets: status.facets,
+        });
+        let projection = match result {
+            Ok(result) => {
+                if matches!(
+                    result.decision,
+                    oxid_wallet_application::WalletRealmLifecycleDecision::Retained(_)
+                ) && self.await_realm_lifecycle_idle().is_err()
+                {
+                    return selected_realm_sync_dispatch(
+                        request.id,
+                        Err(SelectedWalletRealmSyncError::Unavailable),
+                    );
+                }
+                result.projection.map_or_else(
+                    || {
+                        self.application
+                            .get_selected_wallet_realm_sync()
+                            .execute(SelectedWalletRealmSyncCommand { profile_id })
+                    },
+                    Ok,
+                )
+            }
+            Err(_) => Err(SelectedWalletRealmSyncError::Unavailable),
+        };
+        selected_realm_sync_dispatch(request.id, projection)
     }
 
     pub(super) fn cancel_selected_realm_sync(&self, request: Request) -> Dispatch {
@@ -539,7 +569,24 @@ impl HeadlessWallet {
         self.shielded_sync_operation(
             request,
             "wallet.shielded.sync.start",
-            |application, command| application.start_wallet_shielded_sync().execute(command),
+            |application, command| {
+                match application
+                    .start_wallet_shielded_sync()
+                    .execute(command.clone())
+                {
+                    // Lifecycle-driven reconciliation may have admitted the
+                    // same adapter worker immediately before this explicit
+                    // recovery command. Return its public status instead of
+                    // turning a harmless single-flight conflict into a
+                    // protocol failure.
+                    Err(WalletShieldedSyncError::Port(WalletShieldedSyncPortError::Conflict)) => {
+                        application
+                            .get_wallet_shielded_sync_status()
+                            .execute(command)
+                    }
+                    result => result,
+                }
+            },
         )
     }
 

@@ -3,11 +3,11 @@
 //! Stateful execution boundary for selected-realm lifecycle reconciliation.
 
 use crate::{
-    ReconcileSelectedWalletRealmUseCase, SelectedWalletRealmProjection,
-    SelectedWalletRealmSyncCommand, SelectedWalletRealmSyncError, WalletRealmFacetState,
-    WalletRealmLifecycleDecision, WalletRealmLifecycleIdentity, WalletRealmLifecycleInput,
-    WalletRealmLifecyclePolicy, WalletRealmLifecyclePolicyConfig, WalletRealmLifecycleRequest,
-    WalletRealmReconciliationState,
+    DEFAULT_WALLET_REALM_LIFECYCLE_REQUEST_TIMEOUT_MILLIS, ReconcileSelectedWalletRealmUseCase,
+    SelectedWalletRealmProjection, SelectedWalletRealmSyncCommand, SelectedWalletRealmSyncError,
+    WalletRealmFacetState, WalletRealmLifecycleDecision, WalletRealmLifecycleIdentity,
+    WalletRealmLifecycleInput, WalletRealmLifecyclePolicy, WalletRealmLifecyclePolicyConfig,
+    WalletRealmLifecycleRequest, WalletRealmReconciliationState,
 };
 use std::{
     error::Error,
@@ -26,6 +26,38 @@ pub type WalletRealmLifecycleFuture<'a> = Pin<
             + 'a,
     >,
 >;
+
+pub struct WalletRealmLifecycleExecution<'a> {
+    pub handle: WalletRealmLifecycleExecutionHandle,
+    pub future: WalletRealmLifecycleFuture<'a>,
+}
+
+#[derive(Clone)]
+pub struct WalletRealmLifecycleExecutionHandle {
+    request: Arc<Mutex<Option<WalletRealmLifecycleRequest>>>,
+}
+
+impl WalletRealmLifecycleExecutionHandle {
+    pub fn request(
+        &self,
+    ) -> Result<Option<WalletRealmLifecycleRequest>, WalletRealmLifecycleError> {
+        self.request
+            .lock()
+            .map(|request| request.clone())
+            .map_err(|_| WalletRealmLifecycleError::Poisoned)
+    }
+
+    fn replace(
+        &self,
+        request: Option<WalletRealmLifecycleRequest>,
+    ) -> Result<(), WalletRealmLifecycleError> {
+        *self
+            .request
+            .lock()
+            .map_err(|_| WalletRealmLifecycleError::Poisoned)? = request;
+        Ok(())
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WalletRealmLifecycleError {
@@ -50,10 +82,34 @@ impl Error for WalletRealmLifecycleError {}
 pub struct WalletRealmLifecycleResult {
     pub decision: WalletRealmLifecycleDecision,
     pub projection: Option<SelectedWalletRealmProjection>,
+    pub settlement: Option<WalletRealmLifecycleSettlement>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WalletRealmLifecycleSettlement {
+    TimedOut(WalletRealmLifecycleRequest),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletRealmLifecycleStatus {
+    pub identity: Option<WalletRealmLifecycleIdentity>,
+    pub facets: WalletRealmReconciliationState,
+    pub observed_at_millis: u64,
+    pub next_wakeup_millis: Option<u64>,
+    pub in_flight: Option<WalletRealmLifecycleRequest>,
+    pub in_flight_deadline_millis: Option<u64>,
+    pub request_timeout_millis: u64,
 }
 
 pub trait ReconcileWalletRealmLifecycleUseCase: Send + Sync {
+    fn begin(
+        &self,
+        input: WalletRealmLifecycleInput,
+    ) -> Result<WalletRealmLifecycleExecution<'_>, WalletRealmLifecycleError>;
+
     fn execute(&self, input: WalletRealmLifecycleInput) -> WalletRealmLifecycleFuture<'_>;
+
+    fn status(&self) -> Result<WalletRealmLifecycleStatus, WalletRealmLifecycleError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,6 +164,23 @@ impl WalletRealmLifecycleCheckpoint {
                 self.now_millis = *now_millis;
             }
             WalletRealmLifecycleInput::ReconciliationFinished { .. } => {}
+            WalletRealmLifecycleInput::ReconciliationObserved {
+                identity,
+                now_millis,
+                facets,
+            } if self.identity.as_ref() == Some(identity) => {
+                self.facets = *facets;
+                self.now_millis = *now_millis;
+            }
+            WalletRealmLifecycleInput::ReconciliationObserved { .. } => {}
+            WalletRealmLifecycleInput::ReconciliationTimedOut {
+                identity,
+                now_millis,
+                ..
+            } if self.identity.as_ref() == Some(identity) => {
+                self.now_millis = *now_millis;
+            }
+            WalletRealmLifecycleInput::ReconciliationTimedOut { .. } => {}
         }
     }
 
@@ -134,6 +207,7 @@ impl WalletRealmLifecycleCheckpoint {
 pub struct WalletRealmLifecycleService {
     state: Mutex<WalletRealmLifecycleState>,
     config: WalletRealmLifecyclePolicyConfig,
+    request_timeout_millis: u64,
     sync: Arc<dyn ReconcileSelectedWalletRealmUseCase>,
 }
 
@@ -158,12 +232,28 @@ impl WalletRealmLifecycleService {
         facets: WalletRealmReconciliationState,
         config: WalletRealmLifecyclePolicyConfig,
     ) -> Self {
+        Self::with_config_and_timeout(
+            sync,
+            facets,
+            config,
+            DEFAULT_WALLET_REALM_LIFECYCLE_REQUEST_TIMEOUT_MILLIS,
+        )
+    }
+
+    #[must_use]
+    pub fn with_config_and_timeout(
+        sync: Arc<dyn ReconcileSelectedWalletRealmUseCase>,
+        facets: WalletRealmReconciliationState,
+        config: WalletRealmLifecyclePolicyConfig,
+        request_timeout_millis: u64,
+    ) -> Self {
         Self {
             state: Mutex::new(WalletRealmLifecycleState {
                 policy: WalletRealmLifecyclePolicy::default(),
                 checkpoint: WalletRealmLifecycleCheckpoint::new(facets),
             }),
             config,
+            request_timeout_millis: request_timeout_millis.max(1),
             sync,
         }
     }
@@ -220,22 +310,26 @@ impl WalletRealmLifecycleService {
             .checkpoint
             .facets_for(identity))
     }
-}
 
-impl ReconcileWalletRealmLifecycleUseCase for WalletRealmLifecycleService {
-    fn execute(&self, input: WalletRealmLifecycleInput) -> WalletRealmLifecycleFuture<'_> {
+    fn execute_admitted(
+        &self,
+        first_decision: WalletRealmLifecycleDecision,
+        settlement: Option<WalletRealmLifecycleSettlement>,
+        handle: WalletRealmLifecycleExecutionHandle,
+    ) -> WalletRealmLifecycleFuture<'_> {
         Box::pin(async move {
-            let first_decision = self.admit(input)?;
             let Some(mut request) = admitted_request(&first_decision) else {
                 return Ok(WalletRealmLifecycleResult {
                     decision: first_decision,
                     projection: None,
+                    settlement,
                 });
             };
 
             let mut projection = None;
-            let mut first_error = None;
+            let mut latest_error = None;
             for drain_index in 0..MAX_DRAINED_REQUESTS {
+                handle.replace(Some(request.clone()))?;
                 let outcome = self
                     .sync
                     .execute(
@@ -273,9 +367,11 @@ impl ReconcileWalletRealmLifecycleUseCase for WalletRealmLifecycleService {
                     if let Some(candidate) = candidate_projection {
                         projection = Some(candidate);
                     }
-                    if first_error.is_none() {
-                        first_error = sync_error;
-                    }
+                    // A retained request represents newer intent than the
+                    // request that exposed it. Surface the latest settlement
+                    // so callers can observe completion-time freshness after
+                    // a retained retry recovers from an earlier failure.
+                    latest_error = sync_error;
                 }
 
                 let Some(next) = admitted_request(&completion) else {
@@ -288,14 +384,71 @@ impl ReconcileWalletRealmLifecycleUseCase for WalletRealmLifecycleService {
                 }
                 request = next;
             }
+            handle.replace(None)?;
 
-            if let Some(error) = first_error {
+            if let Some(error) = latest_error {
                 return Err(error);
             }
             Ok(WalletRealmLifecycleResult {
                 decision: first_decision,
                 projection,
+                settlement,
             })
+        })
+    }
+}
+
+impl ReconcileWalletRealmLifecycleUseCase for WalletRealmLifecycleService {
+    fn begin(
+        &self,
+        input: WalletRealmLifecycleInput,
+    ) -> Result<WalletRealmLifecycleExecution<'_>, WalletRealmLifecycleError> {
+        let settlement = match &input {
+            WalletRealmLifecycleInput::ReconciliationTimedOut {
+                identity, sequence, ..
+            } => self
+                .state
+                .lock()
+                .map_err(|_| WalletRealmLifecycleError::Poisoned)?
+                .policy
+                .in_flight()
+                .filter(|request| request.identity == *identity && request.sequence == *sequence)
+                .cloned()
+                .map(WalletRealmLifecycleSettlement::TimedOut),
+            _ => None,
+        };
+        let first_decision = self.admit(input)?;
+        let handle = WalletRealmLifecycleExecutionHandle {
+            request: Arc::new(Mutex::new(admitted_request(&first_decision))),
+        };
+        Ok(WalletRealmLifecycleExecution {
+            handle: handle.clone(),
+            future: self.execute_admitted(first_decision, settlement, handle),
+        })
+    }
+
+    fn execute(&self, input: WalletRealmLifecycleInput) -> WalletRealmLifecycleFuture<'_> {
+        match self.begin(input) {
+            Ok(execution) => execution.future,
+            Err(error) => Box::pin(async move { Err(error) }),
+        }
+    }
+
+    fn status(&self) -> Result<WalletRealmLifecycleStatus, WalletRealmLifecycleError> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
+        Ok(WalletRealmLifecycleStatus {
+            identity: state.checkpoint.identity.clone(),
+            facets: state.checkpoint.facets,
+            observed_at_millis: state.checkpoint.now_millis,
+            next_wakeup_millis: state.policy.next_wakeup_millis(self.config),
+            in_flight: state.policy.in_flight().cloned(),
+            in_flight_deadline_millis: state
+                .policy
+                .in_flight_deadline_millis(self.request_timeout_millis),
+            request_timeout_millis: self.request_timeout_millis,
         })
     }
 }
@@ -540,6 +693,44 @@ mod tests {
     }
 
     #[test]
+    fn retained_success_supersedes_an_earlier_sync_failure() {
+        let realm = identity("profile_one", "standalone");
+        let released = Arc::new(AtomicBool::new(false));
+        let reconciler = Arc::new(FakeReconciler::new([
+            FakeOutcome::Gated {
+                released: released.clone(),
+                result: Err(SelectedWalletRealmSyncError::Unavailable),
+            },
+            FakeOutcome::Immediate(Ok(reconciliation(
+                &realm,
+                2,
+                WalletRealmFacetState::Current,
+            ))),
+        ]));
+        let service = WalletRealmLifecycleService::new(reconciler, missing_facets());
+        let mut first = service.execute(initialized(realm, 1, WalletRealmFacetState::Missing));
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(first.as_mut().poll(&mut context), Poll::Pending));
+
+        let retained = resolve(service.execute(WalletRealmLifecycleInput::ActionPreflight {
+            now_millis: 2,
+            facets: facets(WalletRealmFacetState::Missing),
+        }))
+        .expect("retained signal");
+        assert!(matches!(
+            retained.decision,
+            WalletRealmLifecycleDecision::Retained(_)
+        ));
+
+        released.store(true, Ordering::SeqCst);
+        let Poll::Ready(Ok(completed)) = first.as_mut().poll(&mut context) else {
+            panic!("retained success must become the surfaced outcome");
+        };
+        assert_eq!(completed.projection.expect("latest projection").revision, 2);
+    }
+
+    #[test]
     fn completion_stays_in_the_input_monotonic_time_domain() {
         let realm = identity("profile_one", "standalone");
         let reconciler = Arc::new(FakeReconciler::new([
@@ -675,7 +866,15 @@ mod tests {
             ))),
         ]));
         let service = WalletRealmLifecycleService::new(reconciler, missing_facets());
-        let mut stale = service.execute(initialized(first, 1, WalletRealmFacetState::Missing));
+        let execution = service
+            .begin(initialized(
+                first.clone(),
+                1,
+                WalletRealmFacetState::Missing,
+            ))
+            .expect("tracked execution");
+        let handle = execution.handle;
+        let mut stale = execution.future;
         let waker = Waker::noop();
         let mut context = Context::from_waker(waker);
         assert!(matches!(stale.as_mut().poll(&mut context), Poll::Pending));
@@ -690,6 +889,14 @@ mod tests {
             current.projection.expect("new projection").identity.realm,
             second.realm
         );
+        assert_eq!(
+            handle
+                .request()
+                .expect("tracked request")
+                .expect("admitted request")
+                .identity,
+            first
+        );
         released.store(true, Ordering::SeqCst);
         let Poll::Ready(Ok(stale_result)) = stale.as_mut().poll(&mut context) else {
             panic!("stale work settles");
@@ -703,5 +910,105 @@ mod tests {
             .clone();
         assert_eq!(checkpoint.identity, Some(second));
         assert_eq!(checkpoint.facets, facets(WalletRealmFacetState::Current));
+    }
+
+    #[test]
+    fn status_exposes_schedule_and_timeout_retains_the_last_consistent_checkpoint() {
+        let realm = identity("profile_one", "standalone");
+        let released = Arc::new(AtomicBool::new(false));
+        let reconciler = Arc::new(FakeReconciler::new([FakeOutcome::Gated {
+            released: released.clone(),
+            result: Ok(reconciliation(&realm, 1, WalletRealmFacetState::Current)),
+        }]));
+        let config =
+            WalletRealmLifecyclePolicyConfig::new(1, 100, 10, 1_000, 5, 0).expect("config");
+        let service = WalletRealmLifecycleService::with_config_and_timeout(
+            reconciler,
+            missing_facets(),
+            config,
+            5,
+        );
+        let mut admitted = service.execute(initialized(
+            realm.clone(),
+            10,
+            WalletRealmFacetState::Missing,
+        ));
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(
+            admitted.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+
+        let active = service.status().expect("active status");
+        let request = active.in_flight.clone().expect("admitted request");
+        assert_eq!(active.identity, Some(realm.clone()));
+        assert_eq!(active.facets, facets(WalletRealmFacetState::Missing));
+        assert_eq!(active.in_flight_deadline_millis, Some(15));
+        assert_eq!(active.next_wakeup_millis, None);
+
+        let timeout = resolve(
+            service.execute(WalletRealmLifecycleInput::ReconciliationTimedOut {
+                identity: realm,
+                sequence: request.sequence,
+                now_millis: 15,
+                facets: facets(WalletRealmFacetState::Current),
+            }),
+        )
+        .expect("timeout settlement");
+        assert_eq!(
+            timeout.settlement,
+            Some(WalletRealmLifecycleSettlement::TimedOut(request))
+        );
+        let settled = service.status().expect("settled status");
+        assert_eq!(settled.facets, facets(WalletRealmFacetState::Missing));
+        assert!(settled.in_flight.is_none());
+        assert!(settled.in_flight_deadline_millis.is_none());
+        assert_eq!(settled.next_wakeup_millis, Some(25));
+
+        released.store(true, Ordering::SeqCst);
+        let Poll::Ready(Ok(stale)) = admitted.as_mut().poll(&mut context) else {
+            panic!("cancelled work must settle without publication");
+        };
+        assert!(stale.projection.is_none());
+        assert_eq!(
+            service.status().expect("final status").facets,
+            facets(WalletRealmFacetState::Missing)
+        );
+    }
+
+    #[test]
+    fn successful_reconciliation_exposes_the_next_runtime_wakeup() {
+        let realm = identity("profile_one", "standalone");
+        let reconciler = Arc::new(FakeReconciler::new([FakeOutcome::Immediate(Ok(
+            reconciliation(&realm, 1, WalletRealmFacetState::Current),
+        ))]));
+        let config =
+            WalletRealmLifecyclePolicyConfig::new(1, 100, 10, 1_000, 5, 0).expect("config");
+        let service =
+            WalletRealmLifecycleService::with_config(reconciler, missing_facets(), config);
+        resolve(service.execute(initialized(
+            realm.clone(),
+            10,
+            WalletRealmFacetState::Missing,
+        )))
+        .expect("initial reconciliation");
+
+        let status = service.status().expect("status");
+        assert_eq!(status.next_wakeup_millis, Some(110));
+        assert!(status.in_flight.is_none());
+        assert!(status.in_flight_deadline_millis.is_none());
+
+        resolve(
+            service.execute(WalletRealmLifecycleInput::ReconciliationObserved {
+                identity: realm,
+                now_millis: 50,
+                facets: facets(WalletRealmFacetState::Current),
+            }),
+        )
+        .expect("completion observation");
+        let completed = service.status().expect("completion status");
+        assert_eq!(completed.observed_at_millis, 50);
+        assert_eq!(completed.next_wakeup_millis, Some(150));
     }
 }

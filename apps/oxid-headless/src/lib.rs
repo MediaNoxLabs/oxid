@@ -28,6 +28,7 @@ mod parameters;
 mod passport_vault;
 mod projections;
 mod protocol;
+mod realm_lifecycle;
 mod security;
 mod system;
 mod wallet_profiles;
@@ -38,7 +39,7 @@ pub use faucet::StandaloneFaucet;
 pub use faucet_errors::{FaucetIoError, FaucetStartupError};
 pub use protocol::HeadlessIoError;
 
-use std::{io::BufRead, io::Write};
+use std::{io::BufRead, io::Write, time::Instant};
 
 use oxid_composition::ApplicationServices;
 use oxid_diagnostics_application::{DiagnosticCode, DiagnosticSeverity};
@@ -53,19 +54,36 @@ const MAX_REQUEST_ID_CHARACTERS: usize = 128;
 /// Drives Oxid application use cases through line-delimited JSON.
 pub struct HeadlessWallet {
     application: ApplicationServices,
+    started_at: Instant,
 }
 
 impl HeadlessWallet {
     #[must_use]
-    pub const fn new(application: ApplicationServices) -> Self {
-        Self { application }
+    pub fn new(application: ApplicationServices) -> Self {
+        let wallet = Self {
+            application,
+            started_at: Instant::now(),
+        };
+        wallet.initialize_active_realm();
+        wallet
     }
 
     /// Processes requests until EOF or a successful shutdown request.
     ///
     /// Protocol responses are the only bytes written to `writer`. Callers must
     /// direct operational diagnostics to stderr.
-    pub fn run<R: BufRead, W: Write>(
+    pub fn run<R: BufRead, W: Write>(&self, reader: R, writer: W) -> Result<(), HeadlessIoError> {
+        let (stop_sender, stop_receiver) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let scheduler = scope.spawn(move || self.run_lifecycle_scheduler(&stop_receiver));
+            let result = self.run_requests(reader, writer);
+            drop(stop_sender);
+            let _ = scheduler.join();
+            result
+        })
+    }
+
+    fn run_requests<R: BufRead, W: Write>(
         &self,
         reader: R,
         mut writer: W,

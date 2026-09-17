@@ -18,6 +18,7 @@ pub const DEFAULT_WALLET_REALM_LIFECYCLE_BACKOFF_BASE_MILLIS: u64 = 1_000;
 pub const DEFAULT_WALLET_REALM_LIFECYCLE_BACKOFF_MAX_MILLIS: u64 = 60_000;
 pub const DEFAULT_WALLET_REALM_LIFECYCLE_RETRY_CEILING: u8 = 5;
 pub const DEFAULT_WALLET_REALM_LIFECYCLE_JITTER_WINDOW_MILLIS: u64 = 250;
+pub const DEFAULT_WALLET_REALM_LIFECYCLE_REQUEST_TIMEOUT_MILLIS: u64 = 60_000;
 
 /// Validated bounds for the pure lifecycle policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,6 +84,26 @@ pub struct WalletRealmLifecycleIdentity {
     pub realm: ChainNetworkId,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletRealmLifecycleIdentityError {
+    InvalidProfile,
+    InvalidRealm,
+}
+
+impl WalletRealmLifecycleIdentity {
+    pub fn parse(
+        profile: impl Into<String>,
+        realm: impl Into<String>,
+    ) -> Result<Self, WalletRealmLifecycleIdentityError> {
+        Ok(Self {
+            profile: WalletProfileId::parse(profile)
+                .map_err(|_| WalletRealmLifecycleIdentityError::InvalidProfile)?,
+            realm: ChainNetworkId::parse(realm)
+                .map_err(|_| WalletRealmLifecycleIdentityError::InvalidRealm)?,
+        })
+    }
+}
+
 /// Closed lifecycle inputs. Timestamps are caller-supplied monotonic millis.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WalletRealmLifecycleInput {
@@ -121,6 +142,17 @@ pub enum WalletRealmLifecycleInput {
         now_millis: u64,
         facets: WalletRealmReconciliationState,
         succeeded: bool,
+    },
+    ReconciliationObserved {
+        identity: WalletRealmLifecycleIdentity,
+        now_millis: u64,
+        facets: WalletRealmReconciliationState,
+    },
+    ReconciliationTimedOut {
+        identity: WalletRealmLifecycleIdentity,
+        sequence: u64,
+        now_millis: u64,
+        facets: WalletRealmReconciliationState,
     },
 }
 
@@ -166,6 +198,43 @@ impl WalletRealmLifecyclePolicy {
                 .is_some_and(|in_flight| in_flight.sequence == request.sequence)
     }
 
+    pub(crate) fn in_flight(&self) -> Option<&WalletRealmLifecycleRequest> {
+        self.in_flight.as_ref()
+    }
+
+    pub(crate) fn next_wakeup_millis(
+        &self,
+        config: WalletRealmLifecyclePolicyConfig,
+    ) -> Option<u64> {
+        if !self.foreground
+            || self.active.is_none()
+            || self.in_flight.is_some()
+            || self.retry_count >= config.retry_ceiling
+        {
+            return None;
+        }
+        let freshness_due = self
+            .last_fresh_millis
+            .map(|last| last.saturating_add(config.stale_age_millis))
+            .or(self.last_request_millis)
+            .unwrap_or(0);
+        let debounce_due = self
+            .last_request_millis
+            .map(|last| last.saturating_add(config.debounce_millis))
+            .unwrap_or(0);
+        let retry_due = self.last_failure_millis.map_or(0, |last| {
+            last.saturating_add(self.retry_delay_millis(config))
+        });
+        Some(freshness_due.max(debounce_due).max(retry_due))
+    }
+
+    pub(crate) fn in_flight_deadline_millis(&self, timeout_millis: u64) -> Option<u64> {
+        self.in_flight
+            .as_ref()
+            .and(self.last_request_millis)
+            .map(|started| started.saturating_add(timeout_millis))
+    }
+
     #[must_use]
     pub fn reduce(
         &mut self,
@@ -206,6 +275,8 @@ impl WalletRealmLifecyclePolicy {
             }
             WalletRealmLifecycleInput::Backgrounded { now_millis: _ } => {
                 self.foreground = false;
+                self.in_flight = None;
+                self.pending = None;
                 WalletRealmLifecycleDecision::Ignored
             }
             WalletRealmLifecycleInput::Foreground { now_millis, facets } => {
@@ -237,26 +308,51 @@ impl WalletRealmLifecyclePolicy {
                 now_millis,
                 facets,
                 succeeded,
+            } => self.settle(identity, sequence, now_millis, facets, succeeded),
+            WalletRealmLifecycleInput::ReconciliationObserved {
+                identity,
+                now_millis,
+                facets,
             } => {
-                if self.active.as_ref() != Some(&identity)
-                    || self.in_flight.as_ref().map(|request| request.sequence) != Some(sequence)
-                {
-                    return WalletRealmLifecycleDecision::Ignored;
-                }
-                self.in_flight = None;
-                if succeeded {
-                    self.retry_count = 0;
-                    self.last_failure_millis = None;
+                if self.active.as_ref() == Some(&identity) {
                     self.observe_freshness(now_millis, facets);
-                } else {
-                    self.retry_count = self.retry_count.saturating_add(1);
-                    self.last_failure_millis = Some(now_millis);
                 }
-                match self.pending.take() {
-                    Some(request) => self.admit(request, now_millis),
-                    None => WalletRealmLifecycleDecision::Ignored,
-                }
+                WalletRealmLifecycleDecision::Ignored
             }
+            WalletRealmLifecycleInput::ReconciliationTimedOut {
+                identity,
+                sequence,
+                now_millis,
+                facets,
+            } => self.settle(identity, sequence, now_millis, facets, false),
+        }
+    }
+
+    fn settle(
+        &mut self,
+        identity: WalletRealmLifecycleIdentity,
+        sequence: u64,
+        now_millis: u64,
+        facets: WalletRealmReconciliationState,
+        succeeded: bool,
+    ) -> WalletRealmLifecycleDecision {
+        if self.active.as_ref() != Some(&identity)
+            || self.in_flight.as_ref().map(|request| request.sequence) != Some(sequence)
+        {
+            return WalletRealmLifecycleDecision::Ignored;
+        }
+        self.in_flight = None;
+        if succeeded {
+            self.retry_count = 0;
+            self.last_failure_millis = None;
+            self.observe_freshness(now_millis, facets);
+        } else {
+            self.retry_count = self.retry_count.saturating_add(1);
+            self.last_failure_millis = Some(now_millis);
+        }
+        match self.pending.take() {
+            Some(request) => self.admit(request, now_millis),
+            None => WalletRealmLifecycleDecision::Ignored,
         }
     }
 
@@ -351,18 +447,22 @@ impl WalletRealmLifecyclePolicy {
     }
 
     fn retry_due(&self, config: WalletRealmLifecyclePolicyConfig, now_millis: u64) -> bool {
+        let delay = self.retry_delay_millis(config);
+        self.last_failure_millis
+            .or(self.last_request_millis)
+            .is_none_or(|last| now_millis.saturating_sub(last) >= delay)
+    }
+
+    fn retry_delay_millis(&self, config: WalletRealmLifecyclePolicyConfig) -> u64 {
         let exponent = u32::from(self.retry_count.saturating_sub(1)).min(63);
         let jitter = self.active.as_ref().map_or(0, |identity| {
             deterministic_jitter(identity, self.retry_count, config.jitter_window_millis)
         });
-        let delay = config
+        config
             .backoff_base_millis
             .saturating_mul(1_u64 << exponent)
             .min(config.backoff_max_millis)
-            .saturating_add(jitter);
-        self.last_failure_millis
-            .or(self.last_request_millis)
-            .is_none_or(|last| now_millis.saturating_sub(last) >= delay)
+            .saturating_add(jitter)
     }
 
     fn next_sequence(&mut self) -> u64 {
@@ -730,6 +830,66 @@ mod tests {
                 config,
                 WalletRealmLifecycleInput::Foreground {
                     now_millis: 100,
+                    facets: stale(),
+                }
+            ),
+            WalletRealmLifecycleDecision::Request(_)
+        ));
+    }
+
+    #[test]
+    fn backgrounding_cancels_admitted_and_retained_work_before_resume() {
+        let config =
+            WalletRealmLifecyclePolicyConfig::new(10, 10, 10, 40, 2, 0).expect("valid bounds");
+        let active = identity("preprod");
+        let mut policy = WalletRealmLifecyclePolicy::default();
+        assert!(matches!(
+            policy.reduce(
+                config,
+                WalletRealmLifecycleInput::Initialized {
+                    identity: active.clone(),
+                    now_millis: 0,
+                    facets: stale(),
+                }
+            ),
+            WalletRealmLifecycleDecision::Request(_)
+        ));
+        assert!(matches!(
+            policy.reduce(
+                config,
+                WalletRealmLifecycleInput::ActionPreflight {
+                    now_millis: 1,
+                    facets: stale(),
+                }
+            ),
+            WalletRealmLifecycleDecision::Retained(_)
+        ));
+        assert_eq!(
+            policy.reduce(
+                config,
+                WalletRealmLifecycleInput::Backgrounded { now_millis: 2 }
+            ),
+            WalletRealmLifecycleDecision::Ignored
+        );
+        assert!(policy.in_flight().is_none());
+        assert_eq!(
+            policy.reduce(
+                config,
+                WalletRealmLifecycleInput::ReconciliationFinished {
+                    identity: active,
+                    sequence: 1,
+                    now_millis: 3,
+                    facets: fresh(),
+                    succeeded: true,
+                }
+            ),
+            WalletRealmLifecycleDecision::Ignored
+        );
+        assert!(matches!(
+            policy.reduce(
+                config,
+                WalletRealmLifecycleInput::Foreground {
+                    now_millis: 20,
                     facets: stale(),
                 }
             ),
