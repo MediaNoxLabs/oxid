@@ -9,7 +9,6 @@ use crate::{
     WalletRealmLifecyclePolicy, WalletRealmLifecyclePolicyConfig, WalletRealmLifecycleRequest,
     WalletRealmReconciliationState,
 };
-use oxid_platform_ports::{ClockPort, PlatformError};
 use std::{
     error::Error,
     fmt,
@@ -30,7 +29,6 @@ pub type WalletRealmLifecycleFuture<'a> = Pin<
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WalletRealmLifecycleError {
-    Clock(PlatformError),
     Sync(SelectedWalletRealmSyncError),
     DrainLimit,
     Poisoned,
@@ -39,7 +37,6 @@ pub enum WalletRealmLifecycleError {
 impl fmt::Display for WalletRealmLifecycleError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Clock(error) => error.fmt(formatter),
             Self::Sync(error) => error.fmt(formatter),
             Self::DrainLimit => formatter.write_str("wallet realm lifecycle drain limit reached"),
             Self::Poisoned => formatter.write_str("wallet realm lifecycle state is unavailable"),
@@ -135,41 +132,39 @@ impl WalletRealmLifecycleCheckpoint {
 }
 
 pub struct WalletRealmLifecycleService {
-    policy: Mutex<WalletRealmLifecyclePolicy>,
+    state: Mutex<WalletRealmLifecycleState>,
     config: WalletRealmLifecyclePolicyConfig,
-    clock: Arc<dyn ClockPort>,
     sync: Arc<dyn ReconcileSelectedWalletRealmUseCase>,
-    checkpoint: Mutex<WalletRealmLifecycleCheckpoint>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WalletRealmLifecycleState {
+    policy: WalletRealmLifecyclePolicy,
+    checkpoint: WalletRealmLifecycleCheckpoint,
 }
 
 impl WalletRealmLifecycleService {
     #[must_use]
     pub fn new(
-        clock: Arc<dyn ClockPort>,
         sync: Arc<dyn ReconcileSelectedWalletRealmUseCase>,
         facets: WalletRealmReconciliationState,
     ) -> Self {
-        Self::with_config(
-            clock,
-            sync,
-            facets,
-            WalletRealmLifecyclePolicyConfig::default(),
-        )
+        Self::with_config(sync, facets, WalletRealmLifecyclePolicyConfig::default())
     }
 
     #[must_use]
     pub fn with_config(
-        clock: Arc<dyn ClockPort>,
         sync: Arc<dyn ReconcileSelectedWalletRealmUseCase>,
         facets: WalletRealmReconciliationState,
         config: WalletRealmLifecyclePolicyConfig,
     ) -> Self {
         Self {
-            policy: Mutex::new(WalletRealmLifecyclePolicy::default()),
+            state: Mutex::new(WalletRealmLifecycleState {
+                policy: WalletRealmLifecyclePolicy::default(),
+                checkpoint: WalletRealmLifecycleCheckpoint::new(facets),
+            }),
             config,
-            clock,
             sync,
-            checkpoint: Mutex::new(WalletRealmLifecycleCheckpoint::new(facets)),
         }
     }
 
@@ -177,15 +172,12 @@ impl WalletRealmLifecycleService {
         &self,
         input: WalletRealmLifecycleInput,
     ) -> Result<WalletRealmLifecycleDecision, WalletRealmLifecycleError> {
-        self.checkpoint
+        let mut state = self
+            .state
             .lock()
-            .map_err(|_| WalletRealmLifecycleError::Poisoned)?
-            .observe(&input);
-        Ok(self
-            .policy
-            .lock()
-            .map_err(|_| WalletRealmLifecycleError::Poisoned)?
-            .reduce(self.config, input))
+            .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
+        state.checkpoint.observe(&input);
+        Ok(state.policy.reduce(self.config, input))
     }
 
     fn settle(
@@ -193,53 +185,28 @@ impl WalletRealmLifecycleService {
         request: &WalletRealmLifecycleRequest,
         facets: WalletRealmReconciliationState,
         succeeded: bool,
-    ) -> Result<
-        (
-            WalletRealmLifecycleDecision,
-            Option<WalletRealmLifecycleError>,
-            bool,
-        ),
-        WalletRealmLifecycleError,
-    > {
-        let (fallback_now, current) = {
-            let checkpoint = self
-                .checkpoint
-                .lock()
-                .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
-            (
-                checkpoint.now_for(&request.identity),
-                checkpoint.identity.as_ref() == Some(&request.identity),
-            )
-        };
-        let (now_millis, clock_error) = match self.clock.now() {
-            Ok(now) => (now.value(), None),
-            Err(error) => (fallback_now, Some(WalletRealmLifecycleError::Clock(error))),
-        };
-
-        if current {
-            let mut checkpoint = self
-                .checkpoint
-                .lock()
-                .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
-            checkpoint.facets = facets;
-            checkpoint.now_millis = now_millis;
-        }
-
-        let decision = self
-            .policy
+    ) -> Result<(WalletRealmLifecycleDecision, bool), WalletRealmLifecycleError> {
+        let mut state = self
+            .state
             .lock()
-            .map_err(|_| WalletRealmLifecycleError::Poisoned)?
-            .reduce(
-                self.config,
-                WalletRealmLifecycleInput::ReconciliationFinished {
-                    identity: request.identity.clone(),
-                    sequence: request.sequence,
-                    now_millis,
-                    facets,
-                    succeeded,
-                },
-            );
-        Ok((decision, clock_error, current))
+            .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
+        let current = state.policy.owns(request)
+            && state.checkpoint.identity.as_ref() == Some(&request.identity);
+        let now_millis = state.checkpoint.now_for(&request.identity);
+        if current {
+            state.checkpoint.facets = facets;
+        }
+        let decision = state.policy.reduce(
+            self.config,
+            WalletRealmLifecycleInput::ReconciliationFinished {
+                identity: request.identity.clone(),
+                sequence: request.sequence,
+                now_millis,
+                facets,
+                succeeded,
+            },
+        );
+        Ok((decision, current))
     }
 
     fn fallback_facets(
@@ -247,9 +214,10 @@ impl WalletRealmLifecycleService {
         identity: &WalletRealmLifecycleIdentity,
     ) -> Result<WalletRealmReconciliationState, WalletRealmLifecycleError> {
         Ok(self
-            .checkpoint
+            .state
             .lock()
             .map_err(|_| WalletRealmLifecycleError::Poisoned)?
+            .checkpoint
             .facets_for(identity))
     }
 }
@@ -299,15 +267,14 @@ impl ReconcileWalletRealmLifecycleUseCase for WalletRealmLifecycleService {
                         Some(WalletRealmLifecycleError::Sync(error)),
                     ),
                 };
-                let (completion, clock_error, current) =
-                    self.settle(&request, facets, succeeded)?;
+                let (completion, current) = self.settle(&request, facets, succeeded)?;
 
                 if current {
                     if let Some(candidate) = candidate_projection {
                         projection = Some(candidate);
                     }
                     if first_error.is_none() {
-                        first_error = sync_error.or(clock_error);
+                        first_error = sync_error;
                     }
                 }
 
@@ -360,7 +327,6 @@ mod tests {
         SelectedWalletRealmReconciliationFuture, SelectedWalletRealmSyncView,
         WalletRealmFamilyView, WalletRealmReconciliationTrigger,
     };
-    use oxid_foundation::UnixTimestampMillis;
     use oxid_wallet_domain::{ChainNetworkId, WalletProfileId};
     use std::{
         collections::VecDeque,
@@ -371,34 +337,6 @@ mod tests {
         },
         task::{Context, Poll, Waker},
     };
-
-    #[derive(Clone)]
-    struct FakeClock {
-        values: Arc<Mutex<VecDeque<Result<UnixTimestampMillis, PlatformError>>>>,
-    }
-
-    impl FakeClock {
-        fn new(values: impl IntoIterator<Item = Result<u64, PlatformError>>) -> Self {
-            Self {
-                values: Arc::new(Mutex::new(
-                    values
-                        .into_iter()
-                        .map(|value| value.map(UnixTimestampMillis::new))
-                        .collect(),
-                )),
-            }
-        }
-    }
-
-    impl ClockPort for FakeClock {
-        fn now(&self) -> Result<UnixTimestampMillis, PlatformError> {
-            self.values
-                .lock()
-                .expect("clock queue")
-                .pop_front()
-                .unwrap_or(Ok(UnixTimestampMillis::new(0)))
-        }
-    }
 
     enum FakeOutcome {
         Immediate(Result<SelectedWalletRealmReconciliation, SelectedWalletRealmSyncError>),
@@ -529,11 +467,7 @@ mod tests {
         let reconciler = Arc::new(FakeReconciler::new([FakeOutcome::Immediate(Ok(
             reconciliation(&realm, 1, WalletRealmFacetState::Current),
         ))]));
-        let service = WalletRealmLifecycleService::new(
-            Arc::new(FakeClock::new([Ok(10)])),
-            reconciler.clone(),
-            missing_facets(),
-        );
+        let service = WalletRealmLifecycleService::new(reconciler.clone(), missing_facets());
 
         let result =
             resolve(service.execute(initialized(realm, 1, WalletRealmFacetState::Missing)))
@@ -570,11 +504,7 @@ mod tests {
                 WalletRealmFacetState::Current,
             ))),
         ]));
-        let service = WalletRealmLifecycleService::new(
-            Arc::new(FakeClock::new([Ok(10), Ok(20)])),
-            reconciler.clone(),
-            missing_facets(),
-        );
+        let service = WalletRealmLifecycleService::new(reconciler.clone(), missing_facets());
         let mut first = service.execute(initialized(realm, 1, WalletRealmFacetState::Missing));
         let waker = Waker::noop();
         let mut context = Context::from_waker(waker);
@@ -610,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn clock_failure_settles_request_and_allows_another_action() {
+    fn completion_stays_in_the_input_monotonic_time_domain() {
         let realm = identity("profile_one", "standalone");
         let reconciler = Arc::new(FakeReconciler::new([
             FakeOutcome::Immediate(Ok(reconciliation(
@@ -624,25 +554,23 @@ mod tests {
                 WalletRealmFacetState::Current,
             ))),
         ]));
-        let service = WalletRealmLifecycleService::new(
-            Arc::new(FakeClock::new([
-                Err(PlatformError::ClockUnavailable),
-                Ok(20),
-            ])),
-            reconciler.clone(),
-            missing_facets(),
-        );
-        assert_eq!(
-            resolve(service.execute(initialized(realm, 7, WalletRealmFacetState::Missing,))),
-            Err(WalletRealmLifecycleError::Clock(
-                PlatformError::ClockUnavailable
-            ))
-        );
-        resolve(service.execute(WalletRealmLifecycleInput::ActionPreflight {
-            now_millis: 8,
+        let config =
+            WalletRealmLifecyclePolicyConfig::new(1, 100, 1, 1_000, 5, 0).expect("policy config");
+        let service =
+            WalletRealmLifecycleService::with_config(reconciler.clone(), missing_facets(), config);
+        resolve(service.execute(initialized(realm, 10, WalletRealmFacetState::Missing)))
+            .expect("initial request");
+        let fresh = resolve(service.execute(WalletRealmLifecycleInput::PeriodicTick {
+            now_millis: 109,
             facets: facets(WalletRealmFacetState::Current),
         }))
-        .expect("request was settled despite clock failure");
+        .expect("fresh tick");
+        assert_eq!(fresh.decision, WalletRealmLifecycleDecision::Ignored);
+        resolve(service.execute(WalletRealmLifecycleInput::PeriodicTick {
+            now_millis: 110,
+            facets: facets(WalletRealmFacetState::Current),
+        }))
+        .expect("stale-age tick");
         assert_eq!(reconciler.calls().len(), 2);
     }
 
@@ -659,12 +587,8 @@ mod tests {
         ]));
         let config =
             WalletRealmLifecyclePolicyConfig::new(1, 1, 100, 1_000, 5, 0).expect("policy config");
-        let service = WalletRealmLifecycleService::with_config(
-            Arc::new(FakeClock::new([Ok(10), Ok(200)])),
-            reconciler.clone(),
-            missing_facets(),
-            config,
-        );
+        let service =
+            WalletRealmLifecycleService::with_config(reconciler.clone(), missing_facets(), config);
         assert_eq!(
             resolve(service.execute(initialized(realm, 0, WalletRealmFacetState::Missing,))),
             Err(WalletRealmLifecycleError::Sync(
@@ -699,11 +623,7 @@ mod tests {
             let reconciler = Arc::new(FakeReconciler::new([FakeOutcome::Immediate(Ok(
                 reconciliation(&realm, 1, state),
             ))]));
-            let service = WalletRealmLifecycleService::new(
-                Arc::new(FakeClock::new([Ok(10)])),
-                reconciler,
-                missing_facets(),
-            );
+            let service = WalletRealmLifecycleService::new(reconciler, missing_facets());
             resolve(service.execute(initialized(
                 realm.clone(),
                 1,
@@ -711,7 +631,12 @@ mod tests {
             )))
             .expect("reconciliation");
             assert_eq!(
-                service.checkpoint.lock().expect("checkpoint").facets,
+                service
+                    .state
+                    .lock()
+                    .expect("lifecycle state")
+                    .checkpoint
+                    .facets,
                 facets(state)
             );
         }
@@ -724,11 +649,7 @@ mod tests {
         let reconciler = Arc::new(FakeReconciler::new([FakeOutcome::Immediate(Ok(
             reconciliation(&other, 1, WalletRealmFacetState::Current),
         ))]));
-        let service = WalletRealmLifecycleService::new(
-            Arc::new(FakeClock::new([Ok(10)])),
-            reconciler,
-            missing_facets(),
-        );
+        let service = WalletRealmLifecycleService::new(reconciler, missing_facets());
         assert_eq!(
             resolve(service.execute(initialized(requested, 1, WalletRealmFacetState::Missing,))),
             Err(WalletRealmLifecycleError::Sync(
@@ -753,11 +674,7 @@ mod tests {
                 WalletRealmFacetState::Current,
             ))),
         ]));
-        let service = WalletRealmLifecycleService::new(
-            Arc::new(FakeClock::new([Ok(20), Ok(30)])),
-            reconciler,
-            missing_facets(),
-        );
+        let service = WalletRealmLifecycleService::new(reconciler, missing_facets());
         let mut stale = service.execute(initialized(first, 1, WalletRealmFacetState::Missing));
         let waker = Waker::noop();
         let mut context = Context::from_waker(waker);
@@ -778,7 +695,12 @@ mod tests {
             panic!("stale work settles");
         };
         assert!(stale_result.projection.is_none());
-        let checkpoint = service.checkpoint.lock().expect("checkpoint").clone();
+        let checkpoint = service
+            .state
+            .lock()
+            .expect("lifecycle state")
+            .checkpoint
+            .clone();
         assert_eq!(checkpoint.identity, Some(second));
         assert_eq!(checkpoint.facets, facets(WalletRealmFacetState::Current));
     }

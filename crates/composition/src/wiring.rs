@@ -947,7 +947,6 @@ where
         selected_realm_sync.clone();
     let reconcile_wallet_realm_lifecycle: Arc<dyn ReconcileWalletRealmLifecycleUseCase> =
         Arc::new(WalletRealmLifecycleService::new(
-            clock.clone(),
             selected_realm_reconciliation,
             WalletRealmReconciliationState {
                 account: WalletRealmFacetState::Missing,
