@@ -302,7 +302,8 @@ pub fn reduce_wallet_dust_registration_settlement(
         } if matches!(
             effective_state(projection),
             WalletDustRegistrationSettlementState::ActionRequired
-        ) && preparation_revision > projection.preparation_revision =>
+        ) && !has_submitted_registration(projection)
+            && preparation_revision > projection.preparation_revision =>
         {
             next.preparation_revision = preparation_revision;
             next.registration = Some(WalletDustRegistrationSettlementRegistration {
@@ -499,9 +500,7 @@ pub fn reduce_wallet_dust_registration_settlement(
             ..
         } if matches!(
             effective_state(projection),
-            WalletDustRegistrationSettlementState::Confirming
-                | WalletDustRegistrationSettlementState::Reconciling
-                | WalletDustRegistrationSettlementState::Ready
+            State::ActionRequired | State::Confirming | State::Reconciling | State::Ready
         ) && has_transaction(projection, &transaction_id)
             && projection
                 .registration
@@ -653,9 +652,10 @@ fn can_cancel(projection: &WalletDustRegistrationSettlementProjection) -> bool {
         )
     }
 
-    is_pre_submission(projection.state)
+    (is_pre_submission(projection.state)
         || (is_recoverable_state(projection.state)
-            && projection.resume_state.is_some_and(is_pre_submission))
+            && projection.resume_state.is_some_and(is_pre_submission)))
+        && !has_submitted_registration(projection)
 }
 
 fn enter_recoverable_state(
@@ -720,10 +720,7 @@ fn resume_recoverable_state(projection: &mut WalletDustRegistrationSettlementPro
         }
         _ => fallback,
     };
-    let transaction_retained = projection
-        .registration
-        .as_ref()
-        .is_some_and(|registration| registration.transaction_id.is_some());
+    let transaction_retained = has_submitted_registration(projection);
     if matches!(
         projection.state,
         WalletDustRegistrationSettlementState::NotEligible
@@ -817,6 +814,13 @@ fn has_transaction(
         .is_some_and(|current| current == transaction)
 }
 
+fn has_submitted_registration(projection: &WalletDustRegistrationSettlementProjection) -> bool {
+    projection
+        .registration
+        .as_ref()
+        .is_some_and(|registration| registration.transaction_id.is_some())
+}
+
 fn registration_ready(projection: &WalletDustRegistrationSettlementProjection) -> bool {
     projection
         .registration
@@ -898,6 +902,24 @@ mod tests {
         }
     }
 
+    fn authorization_request(
+        draft_id: WalletTransactionDraftId,
+        preparation_revision: u64,
+    ) -> WalletDustRegistrationSettlementEvent {
+        WalletDustRegistrationSettlementEvent::AuthorizationRequested {
+            identity: selected_identity(),
+            draft_id,
+            preparation_revision,
+        }
+    }
+
+    fn cancellation(draft_id: WalletTransactionDraftId) -> WalletDustRegistrationSettlementEvent {
+        WalletDustRegistrationSettlementEvent::Cancelled {
+            identity: selected_identity(),
+            draft_id,
+        }
+    }
+
     fn reduce(
         projection: &WalletDustRegistrationSettlementProjection,
         event: WalletDustRegistrationSettlementEvent,
@@ -924,14 +946,7 @@ mod tests {
 
     fn submitting() -> WalletDustRegistrationSettlementProjection {
         let identity = selected_identity();
-        let awaiting = reduce(
-            &eligible(),
-            WalletDustRegistrationSettlementEvent::AuthorizationRequested {
-                identity: identity.clone(),
-                draft_id: draft(),
-                preparation_revision: 1,
-            },
-        );
+        let awaiting = reduce(&eligible(), authorization_request(draft(), 1));
         reduce(
             &awaiting,
             WalletDustRegistrationSettlementEvent::AuthorizationSucceeded {
@@ -979,14 +994,7 @@ mod tests {
             ),
             projection
         );
-        projection = reduce(
-            &projection,
-            WalletDustRegistrationSettlementEvent::AuthorizationRequested {
-                identity: identity.clone(),
-                draft_id: draft(),
-                preparation_revision: 1,
-            },
-        );
+        projection = reduce(&projection, authorization_request(draft(), 1));
         projection = reduce(
             &projection,
             WalletDustRegistrationSettlementEvent::AuthorizationSucceeded {
@@ -1049,14 +1057,7 @@ mod tests {
             projection
         );
 
-        let awaiting = reduce(
-            &eligible(),
-            WalletDustRegistrationSettlementEvent::AuthorizationRequested {
-                identity: selected_identity(),
-                draft_id: draft(),
-                preparation_revision: 1,
-            },
-        );
+        let awaiting = reduce(&eligible(), authorization_request(draft(), 1));
         let became_ineligible = reduce(
             &awaiting,
             WalletDustRegistrationSettlementEvent::Eligibility {
@@ -1383,14 +1384,7 @@ mod tests {
         let selected = selected_identity();
         let other = identity("profile_other", "preprod", 2);
         let projection = eligible();
-        let awaiting = reduce(
-            &projection,
-            WalletDustRegistrationSettlementEvent::AuthorizationRequested {
-                identity: selected.clone(),
-                draft_id: draft(),
-                preparation_revision: 1,
-            },
-        );
+        let awaiting = reduce(&projection, authorization_request(draft(), 1));
         assert_eq!(
             reduce(
                 &projection,
@@ -1401,13 +1395,7 @@ mod tests {
             ),
             projection
         );
-        let cancelled = reduce(
-            &awaiting,
-            WalletDustRegistrationSettlementEvent::Cancelled {
-                identity: selected.clone(),
-                draft_id: draft(),
-            },
-        );
+        let cancelled = reduce(&awaiting, cancellation(draft()));
         assert_eq!(
             reduce(
                 &cancelled,
@@ -1418,13 +1406,7 @@ mod tests {
             ),
             cancelled
         );
-        let awaiting_cancelled = reduce(
-            &awaiting,
-            WalletDustRegistrationSettlementEvent::Cancelled {
-                identity: selected.clone(),
-                draft_id: draft(),
-            },
-        );
+        let awaiting_cancelled = reduce(&awaiting, cancellation(draft()));
         assert_eq!(awaiting_cancelled.state, State::Cancelled);
         assert!(awaiting_cancelled.registration.is_none());
         let awaiting_offline = reduce(
@@ -1435,27 +1417,11 @@ mod tests {
             },
         );
         assert_eq!(
-            reduce(
-                &awaiting_offline,
-                WalletDustRegistrationSettlementEvent::Cancelled {
-                    identity: selected.clone(),
-                    draft_id: draft(),
-                },
-            )
-            .state,
+            reduce(&awaiting_offline, cancellation(draft())).state,
             State::Cancelled
         );
         let submitting = submitting();
-        assert_eq!(
-            reduce(
-                &submitting,
-                WalletDustRegistrationSettlementEvent::Cancelled {
-                    identity: selected.clone(),
-                    draft_id: draft(),
-                },
-            ),
-            submitting
-        );
+        assert_eq!(reduce(&submitting, cancellation(draft())), submitting);
         assert_eq!(
             reduce(
                 &cancelled,
@@ -1889,6 +1855,17 @@ mod tests {
             reconciliation(2, WalletDustRegistrationSettlementReconciliation::Dropped),
         );
         assert_eq!(reduce(&dropped, finality(3)), finalized);
+        assert_eq!(
+            reduce(&dropped, authorization_request(other_draft(), 2)),
+            dropped
+        );
+        assert_eq!(reduce(&dropped, cancellation(draft())), dropped);
+        let refreshed = reduce(&dropped, dust_refresh(1, 3, true));
+        let included = reduce(
+            &refreshed,
+            reconciliation(3, WalletDustRegistrationSettlementReconciliation::Included),
+        );
+        assert_eq!(included.state, State::Ready);
         let newer_drop = reduce(
             &confirming(),
             reconciliation(5, WalletDustRegistrationSettlementReconciliation::Dropped),
