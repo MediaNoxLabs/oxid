@@ -23,7 +23,8 @@ pub struct WalletDustRegistrationSettlementIdentity {
 pub struct WalletDustRegistrationSettlementRegistration {
     pub draft_id: WalletTransactionDraftId,
     pub transaction_id: Option<ChainTransactionId>,
-    pub reconciliation_revision: u64,
+    pub observation_revision: u64,
+    pub dust_revision: u64,
     pub included: bool,
 }
 
@@ -116,6 +117,7 @@ pub enum WalletDustRegistrationSettlementEvent {
     FinalityObserved {
         identity: WalletDustRegistrationSettlementIdentity,
         transaction_id: ChainTransactionId,
+        revision: u64,
     },
     RegistrationReconciled {
         identity: WalletDustRegistrationSettlementIdentity,
@@ -125,6 +127,8 @@ pub enum WalletDustRegistrationSettlementEvent {
     },
     DustRefreshed {
         identity: WalletDustRegistrationSettlementIdentity,
+        revision: u64,
+        after_observation_revision: u64,
         ready: bool,
     },
     Cancelled {
@@ -253,7 +257,8 @@ pub fn reduce_wallet_dust_registration_settlement(
             next.registration = Some(WalletDustRegistrationSettlementRegistration {
                 draft_id,
                 transaction_id: None,
-                reconciliation_revision: 0,
+                observation_revision: 0,
+                dust_revision: 0,
                 included: false,
             });
             set_state(
@@ -279,7 +284,8 @@ pub fn reduce_wallet_dust_registration_settlement(
             next.registration = Some(WalletDustRegistrationSettlementRegistration {
                 draft_id,
                 transaction_id: None,
-                reconciliation_revision: 0,
+                observation_revision: 0,
+                dust_revision: 0,
                 included: false,
             });
         }
@@ -330,12 +336,22 @@ pub fn reduce_wallet_dust_registration_settlement(
             }
             set_effective_state(&mut next, WalletDustRegistrationSettlementState::Confirming);
         }
-        WalletDustRegistrationSettlementEvent::FinalityObserved { transaction_id, .. }
-            if matches!(
-                effective_state(projection),
-                WalletDustRegistrationSettlementState::Confirming
-            ) && has_transaction(projection, &transaction_id) =>
+        WalletDustRegistrationSettlementEvent::FinalityObserved {
+            transaction_id,
+            revision,
+            ..
+        } if matches!(
+            effective_state(projection),
+            WalletDustRegistrationSettlementState::Confirming
+        ) && has_transaction(projection, &transaction_id)
+            && projection
+                .registration
+                .as_ref()
+                .is_some_and(|registration| revision > registration.observation_revision) =>
         {
+            if let Some(registration) = &mut next.registration {
+                registration.observation_revision = revision;
+            }
             set_effective_state(
                 &mut next,
                 WalletDustRegistrationSettlementState::Reconciling,
@@ -355,11 +371,11 @@ pub fn reduce_wallet_dust_registration_settlement(
             && projection
                 .registration
                 .as_ref()
-                .is_some_and(|registration| revision > registration.reconciliation_revision) =>
+                .is_some_and(|registration| revision > registration.observation_revision) =>
         {
             let current_state = effective_state(projection);
             if let Some(registration) = &mut next.registration {
-                registration.reconciliation_revision = revision;
+                registration.observation_revision = revision;
             }
             match reconciliation {
                 WalletDustRegistrationSettlementReconciliation::Included => {
@@ -397,27 +413,39 @@ pub fn reduce_wallet_dust_registration_settlement(
                 }
             }
         }
-        WalletDustRegistrationSettlementEvent::DustRefreshed { ready: true, .. }
-            if matches!(
-                effective_state(projection),
-                WalletDustRegistrationSettlementState::Reconciling
-            ) && projection
-                .registration
-                .as_ref()
-                .is_some_and(|registration| registration.included) =>
+        WalletDustRegistrationSettlementEvent::DustRefreshed {
+            revision,
+            after_observation_revision,
+            ready,
+            ..
+        } if matches!(
+            effective_state(projection),
+            WalletDustRegistrationSettlementState::Reconciling
+                | WalletDustRegistrationSettlementState::Ready
+        ) && projection
+            .registration
+            .as_ref()
+            .is_some_and(|registration| {
+                registration.included
+                    && after_observation_revision == registration.observation_revision
+                    && revision > registration.dust_revision
+            }) =>
         {
-            set_effective_state(&mut next, WalletDustRegistrationSettlementState::Ready);
-        }
-        WalletDustRegistrationSettlementEvent::DustRefreshed { ready: false, .. }
-            if matches!(
-                effective_state(projection),
-                WalletDustRegistrationSettlementState::Ready
-            ) =>
-        {
-            set_effective_state(
-                &mut next,
-                WalletDustRegistrationSettlementState::Reconciling,
-            );
+            if let Some(registration) = &mut next.registration {
+                registration.dust_revision = revision;
+            }
+            match (effective_state(projection), ready) {
+                (WalletDustRegistrationSettlementState::Reconciling, true) => {
+                    set_effective_state(&mut next, WalletDustRegistrationSettlementState::Ready);
+                }
+                (WalletDustRegistrationSettlementState::Ready, false) => {
+                    set_effective_state(
+                        &mut next,
+                        WalletDustRegistrationSettlementState::Reconciling,
+                    );
+                }
+                _ => {}
+            }
         }
         WalletDustRegistrationSettlementEvent::Cancelled { .. } if can_cancel(projection) => {
             next.registration = None;
@@ -734,6 +762,7 @@ mod tests {
             WalletDustRegistrationSettlementEvent::FinalityObserved {
                 identity: selected_identity(),
                 transaction_id: transaction(),
+                revision: 1,
             },
         )
     }
@@ -745,7 +774,7 @@ mod tests {
             WalletDustRegistrationSettlementEvent::RegistrationReconciled {
                 identity: identity.clone(),
                 transaction_id: transaction(),
-                revision: 1,
+                revision: 2,
                 reconciliation: WalletDustRegistrationSettlementReconciliation::Included,
             },
         );
@@ -753,6 +782,8 @@ mod tests {
             &included,
             WalletDustRegistrationSettlementEvent::DustRefreshed {
                 identity,
+                revision: 1,
+                after_observation_revision: 2,
                 ready: true,
             },
         )
@@ -808,6 +839,7 @@ mod tests {
             WalletDustRegistrationSettlementEvent::FinalityObserved {
                 identity: identity.clone(),
                 transaction_id: transaction(),
+                revision: 1,
             },
         );
         assert_eq!(
@@ -819,6 +851,8 @@ mod tests {
                 &projection,
                 WalletDustRegistrationSettlementEvent::DustRefreshed {
                     identity: identity.clone(),
+                    revision: 1,
+                    after_observation_revision: 1,
                     ready: true,
                 },
             ),
@@ -829,7 +863,7 @@ mod tests {
             WalletDustRegistrationSettlementEvent::RegistrationReconciled {
                 identity: identity.clone(),
                 transaction_id: transaction(),
-                revision: 1,
+                revision: 2,
                 reconciliation: WalletDustRegistrationSettlementReconciliation::Included,
             },
         );
@@ -837,6 +871,8 @@ mod tests {
             &projection,
             WalletDustRegistrationSettlementEvent::DustRefreshed {
                 identity,
+                revision: 2,
+                after_observation_revision: 2,
                 ready: true,
             },
         );
@@ -1004,7 +1040,7 @@ mod tests {
             WalletDustRegistrationSettlementEvent::RegistrationReconciled {
                 identity: identity.clone(),
                 transaction_id: transaction(),
-                revision: 1,
+                revision: 2,
                 reconciliation: WalletDustRegistrationSettlementReconciliation::Included,
             },
         );
@@ -1081,6 +1117,8 @@ mod tests {
             &included,
             WalletDustRegistrationSettlementEvent::DustRefreshed {
                 identity: identity.clone(),
+                revision: 1,
+                after_observation_revision: 2,
                 ready: true,
             },
         );
@@ -1360,6 +1398,8 @@ mod tests {
                 &included_early,
                 WalletDustRegistrationSettlementEvent::DustRefreshed {
                     identity: identity.clone(),
+                    revision: 1,
+                    after_observation_revision: 1,
                     ready: true,
                 },
             )
@@ -1371,6 +1411,7 @@ mod tests {
             WalletDustRegistrationSettlementEvent::FinalityObserved {
                 identity: identity.clone(),
                 transaction_id: transaction(),
+                revision: 1,
             },
         );
         assert_eq!(duplicate_finality, included_early);
@@ -1380,7 +1421,7 @@ mod tests {
             WalletDustRegistrationSettlementEvent::RegistrationReconciled {
                 identity: identity.clone(),
                 transaction_id: transaction(),
-                revision: 1,
+                revision: 2,
                 reconciliation: WalletDustRegistrationSettlementReconciliation::Pending,
             },
         );
@@ -1393,7 +1434,7 @@ mod tests {
             WalletDustRegistrationSettlementEvent::RegistrationReconciled {
                 identity,
                 transaction_id: transaction(),
-                revision: 2,
+                revision: 3,
                 reconciliation: WalletDustRegistrationSettlementReconciliation::Dropped,
             },
         );
@@ -1413,6 +1454,8 @@ mod tests {
             &ready,
             WalletDustRegistrationSettlementEvent::DustRefreshed {
                 identity: identity.clone(),
+                revision: 2,
+                after_observation_revision: 2,
                 ready: false,
             },
         );
@@ -1432,7 +1475,7 @@ mod tests {
             WalletDustRegistrationSettlementEvent::RegistrationReconciled {
                 identity: identity.clone(),
                 transaction_id: transaction(),
-                revision: 2,
+                revision: 3,
                 reconciliation: WalletDustRegistrationSettlementReconciliation::Pending,
             },
         );
@@ -1452,7 +1495,7 @@ mod tests {
             WalletDustRegistrationSettlementEvent::RegistrationReconciled {
                 identity,
                 transaction_id: transaction(),
-                revision: 2,
+                revision: 3,
                 reconciliation: WalletDustRegistrationSettlementReconciliation::Dropped,
             },
         );
@@ -1594,7 +1637,7 @@ mod tests {
             included
                 .registration
                 .as_ref()
-                .map(|registration| registration.reconciliation_revision),
+                .map(|registration| registration.observation_revision),
             Some(2)
         );
 
@@ -1626,8 +1669,19 @@ mod tests {
             current_pending
                 .registration
                 .as_ref()
-                .map(|registration| registration.reconciliation_revision),
+                .map(|registration| registration.observation_revision),
             Some(3)
+        );
+        assert_eq!(
+            reduce(
+                &current_pending,
+                WalletDustRegistrationSettlementEvent::FinalityObserved {
+                    identity: identity.clone(),
+                    transaction_id: transaction(),
+                    revision: 2,
+                },
+            ),
+            current_pending
         );
         assert_eq!(
             reduce(
@@ -1640,6 +1694,70 @@ mod tests {
                 },
             ),
             current_pending
+        );
+    }
+
+    #[test]
+    fn dust_refreshes_are_ordered_and_bound_to_the_inclusion_observation() {
+        let identity = selected_identity();
+        let included = reduce(
+            &reconciling(),
+            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
+                identity: identity.clone(),
+                transaction_id: transaction(),
+                revision: 2,
+                reconciliation: WalletDustRegistrationSettlementReconciliation::Included,
+            },
+        );
+        let not_ready = reduce(
+            &included,
+            WalletDustRegistrationSettlementEvent::DustRefreshed {
+                identity: identity.clone(),
+                revision: 2,
+                after_observation_revision: 2,
+                ready: false,
+            },
+        );
+        assert_eq!(
+            not_ready.state,
+            WalletDustRegistrationSettlementState::Reconciling
+        );
+        assert_eq!(
+            reduce(
+                &not_ready,
+                WalletDustRegistrationSettlementEvent::DustRefreshed {
+                    identity: identity.clone(),
+                    revision: 1,
+                    after_observation_revision: 2,
+                    ready: true,
+                },
+            ),
+            not_ready
+        );
+        assert_eq!(
+            reduce(
+                &not_ready,
+                WalletDustRegistrationSettlementEvent::DustRefreshed {
+                    identity: identity.clone(),
+                    revision: 3,
+                    after_observation_revision: 1,
+                    ready: true,
+                },
+            ),
+            not_ready
+        );
+        assert_eq!(
+            reduce(
+                &not_ready,
+                WalletDustRegistrationSettlementEvent::DustRefreshed {
+                    identity,
+                    revision: 3,
+                    after_observation_revision: 2,
+                    ready: true,
+                },
+            )
+            .state,
+            WalletDustRegistrationSettlementState::Ready
         );
     }
 }
