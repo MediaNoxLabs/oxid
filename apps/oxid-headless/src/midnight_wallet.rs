@@ -13,9 +13,10 @@ use oxid_wallet_application::{
     SubmitWalletDustRegistrationCommand, SubmitWalletTransferCommand, WalletAccountQuery,
     WalletAccountView, WalletDustRegistrationError, WalletDustRegistrationPortError,
     WalletDustRegistrationSubmissionStatusView, WalletDustSyncCommand, WalletDustSyncError,
-    WalletDustSyncView, WalletShieldedSyncCommand, WalletShieldedSyncError, WalletShieldedSyncView,
-    WalletTransactionError, WalletTransactionPortError, WalletTransferDraftQuery,
-    WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView, validate_confirmation,
+    WalletDustSyncView, WalletRealmLifecycleInput, WalletShieldedSyncCommand,
+    WalletShieldedSyncError, WalletShieldedSyncView, WalletTransactionError,
+    WalletTransactionPortError, WalletTransferDraftQuery, WalletTransferSubmissionQuery,
+    WalletTransferSubmissionStatusView, validate_confirmation,
 };
 use serde_json::{Value, json};
 
@@ -103,12 +104,31 @@ impl HeadlessWallet {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
         };
-        let result = futures::executor::block_on(
-            self.application
-                .sync_selected_wallet_realm()
-                .execute(SelectedWalletRealmSyncCommand { profile_id }),
-        );
-        selected_realm_sync_dispatch(request.id, result)
+        let lifecycle = self.application.reconcile_wallet_realm_lifecycle();
+        let Ok(status) = lifecycle.status() else {
+            return selected_realm_sync_dispatch(
+                request.id,
+                Err(SelectedWalletRealmSyncError::Unavailable),
+            );
+        };
+        let result = futures::executor::block_on(lifecycle.execute(
+            WalletRealmLifecycleInput::ActionPreflight {
+                now_millis: self.monotonic_millis(),
+                facets: status.facets,
+            },
+        ));
+        let projection = match result {
+            Ok(result) => result.projection.map_or_else(
+                || {
+                    self.application
+                        .get_selected_wallet_realm_sync()
+                        .execute(SelectedWalletRealmSyncCommand { profile_id })
+                },
+                Ok,
+            ),
+            Err(_) => Err(SelectedWalletRealmSyncError::Unavailable),
+        };
+        selected_realm_sync_dispatch(request.id, projection)
     }
 
     pub(super) fn cancel_selected_realm_sync(&self, request: Request) -> Dispatch {

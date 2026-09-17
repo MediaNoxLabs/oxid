@@ -470,6 +470,7 @@ fn main() {
             oxid_ui_dioxus::WalletRealmSyncUiServices::new(
                 application.sync_selected_wallet_realm(),
                 application.get_selected_wallet_realm_sync(),
+                application.reconcile_wallet_realm_lifecycle(),
                 application.cancel_selected_wallet_realm_sync(),
                 application.get_wallet_operation_timeline(),
             ),

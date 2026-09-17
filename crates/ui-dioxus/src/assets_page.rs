@@ -6,6 +6,7 @@ use super::*;
 pub(super) fn AssetsPage(
     active_profile: WalletProfileView,
     secret_mode: SecretModeController,
+    on_realm_changed: EventHandler<()>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     #[cfg(feature = "preprod-observation")]
@@ -169,6 +170,7 @@ pub(super) fn AssetsPage(
                                             security,
                                             busy: None,
                                         });
+                                        on_realm_changed.call(());
                                     }
                                     Ok(Err(error)) => select_state
                                         .set(AccountPageState::Failed(error.to_string())),
