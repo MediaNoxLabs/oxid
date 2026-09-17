@@ -3816,7 +3816,7 @@ select:focus-visible {
   .page-content,
   .receive-sheet,
   .loading-mark,
-  .action-watch-status__mark {
+  .action-watch-status.is-waiting .action-watch-status__mark {
     animation: none;
   }
 
