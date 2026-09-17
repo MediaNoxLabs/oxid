@@ -212,6 +212,15 @@ pub fn reduce_wallet_dust_registration_settlement(
     {
         return projection.clone();
     }
+    if !replaces_generation
+        && projection.identity.is_some()
+        && matches!(
+            projection.state,
+            WalletDustRegistrationSettlementState::Unavailable
+        )
+    {
+        return projection.clone();
+    }
 
     let mut next = if replaces_generation {
         WalletDustRegistrationSettlementProjection::default()
@@ -309,7 +318,7 @@ pub fn reduce_wallet_dust_registration_settlement(
         }
         WalletDustRegistrationSettlementEvent::AuthorizationSucceeded { draft_id, .. }
             if matches!(
-                projection.state,
+                effective_state(projection),
                 WalletDustRegistrationSettlementState::AwaitingAuthorization
             ) && has_draft(projection, &draft_id)
                 && matches!(
@@ -318,27 +327,27 @@ pub fn reduce_wallet_dust_registration_settlement(
                 ) =>
         {
             next.registration = None;
-            set_state(
+            set_effective_state(
                 &mut next,
                 WalletDustRegistrationSettlementState::NotEligible,
             );
         }
         WalletDustRegistrationSettlementEvent::AuthorizationSucceeded { draft_id, .. }
             if matches!(
-                projection.state,
+                effective_state(projection),
                 WalletDustRegistrationSettlementState::AwaitingAuthorization
             ) && has_draft(projection, &draft_id) =>
         {
-            set_state(&mut next, WalletDustRegistrationSettlementState::Submitting);
+            set_effective_state(&mut next, WalletDustRegistrationSettlementState::Submitting);
         }
         WalletDustRegistrationSettlementEvent::AuthorizationRejected { draft_id, .. }
             if matches!(
-                projection.state,
+                effective_state(projection),
                 WalletDustRegistrationSettlementState::AwaitingAuthorization
             ) && has_draft(projection, &draft_id) =>
         {
             next.registration = None;
-            set_state(&mut next, latest_eligibility_state(projection));
+            set_effective_state(&mut next, latest_eligibility_state(projection));
         }
         WalletDustRegistrationSettlementEvent::SubmissionAccepted {
             draft_id,
@@ -361,6 +370,8 @@ pub fn reduce_wallet_dust_registration_settlement(
         } if matches!(
             effective_state(projection),
             WalletDustRegistrationSettlementState::Confirming
+                | WalletDustRegistrationSettlementState::Reconciling
+                | WalletDustRegistrationSettlementState::Ready
         ) && has_transaction(projection, &transaction_id)
             && projection
                 .registration
@@ -370,10 +381,15 @@ pub fn reduce_wallet_dust_registration_settlement(
             if let Some(registration) = &mut next.registration {
                 registration.observation_revision = revision;
             }
-            set_effective_state(
-                &mut next,
-                WalletDustRegistrationSettlementState::Reconciling,
-            );
+            if matches!(
+                effective_state(projection),
+                WalletDustRegistrationSettlementState::Confirming
+            ) {
+                set_effective_state(
+                    &mut next,
+                    WalletDustRegistrationSettlementState::Reconciling,
+                );
+            }
         }
         WalletDustRegistrationSettlementEvent::RegistrationReconciled {
             transaction_id,
@@ -630,6 +646,14 @@ fn resume_recoverable_state(projection: &mut WalletDustRegistrationSettlementPro
                 .is_some_and(|registration| registration.transaction_id.is_none()) =>
         {
             WalletDustRegistrationSettlementState::Submitting
+        }
+        WalletDustRegistrationSettlementState::AwaitingAuthorization
+            if projection
+                .registration
+                .as_ref()
+                .is_some_and(|registration| registration.transaction_id.is_none()) =>
+        {
+            WalletDustRegistrationSettlementState::AwaitingAuthorization
         }
         WalletDustRegistrationSettlementState::Confirming
         | WalletDustRegistrationSettlementState::Reconciling
@@ -1364,6 +1388,24 @@ mod tests {
         );
         assert_eq!(superseded.identity, Some(selected.clone()));
         assert!(superseded.registration.is_none());
+        let delayed_offline = reduce(
+            &superseded,
+            WalletDustRegistrationSettlementEvent::Offline {
+                identity: selected.clone(),
+                revision: 2,
+            },
+        );
+        assert_eq!(delayed_offline, superseded);
+        assert_eq!(
+            reduce(
+                &delayed_offline,
+                WalletDustRegistrationSettlementEvent::Retry {
+                    identity: selected.clone(),
+                    revision: 3,
+                },
+            ),
+            superseded
+        );
         assert_eq!(
             reduce(
                 &superseded,
@@ -1439,6 +1481,71 @@ mod tests {
             )
             .state,
             WalletDustRegistrationSettlementState::ActionRequired
+        );
+    }
+
+    #[test]
+    fn authorization_results_are_retained_across_recoverable_states() {
+        let identity = selected_identity();
+        let awaiting = reduce(
+            &eligible(),
+            WalletDustRegistrationSettlementEvent::AuthorizationRequested {
+                identity: identity.clone(),
+                draft_id: draft(),
+                preparation_revision: 1,
+            },
+        );
+        let offline = reduce(
+            &awaiting,
+            WalletDustRegistrationSettlementEvent::Offline {
+                identity: identity.clone(),
+                revision: 1,
+            },
+        );
+        let authorized = reduce(
+            &offline,
+            WalletDustRegistrationSettlementEvent::AuthorizationSucceeded {
+                identity: identity.clone(),
+                draft_id: draft(),
+            },
+        );
+        assert_eq!(
+            authorized.resume_state,
+            Some(WalletDustRegistrationSettlementState::Submitting)
+        );
+        assert_eq!(
+            reduce(
+                &authorized,
+                WalletDustRegistrationSettlementEvent::Retry {
+                    identity: identity.clone(),
+                    revision: 2,
+                },
+            )
+            .state,
+            WalletDustRegistrationSettlementState::Submitting
+        );
+
+        let retried = reduce(
+            &offline,
+            WalletDustRegistrationSettlementEvent::Retry {
+                identity: identity.clone(),
+                revision: 2,
+            },
+        );
+        assert_eq!(
+            retried.state,
+            WalletDustRegistrationSettlementState::AwaitingAuthorization
+        );
+        assert_eq!(
+            reduce(
+                &retried,
+                WalletDustRegistrationSettlementEvent::AuthorizationSucceeded {
+                    identity,
+                    draft_id: draft(),
+                },
+            )
+            .state,
+            WalletDustRegistrationSettlementState::Submitting
         );
     }
 
@@ -1769,6 +1876,33 @@ mod tests {
                 .as_ref()
                 .map(|registration| registration.observation_revision),
             Some(2)
+        );
+        let newer_finality = reduce(
+            &included,
+            WalletDustRegistrationSettlementEvent::FinalityObserved {
+                identity: identity.clone(),
+                transaction_id: transaction(),
+                revision: 4,
+            },
+        );
+        assert_eq!(
+            newer_finality
+                .registration
+                .as_ref()
+                .map(|registration| registration.observation_revision),
+            Some(4)
+        );
+        assert_eq!(
+            reduce(
+                &newer_finality,
+                WalletDustRegistrationSettlementEvent::RegistrationReconciled {
+                    identity: identity.clone(),
+                    transaction_id: transaction(),
+                    revision: 3,
+                    reconciliation: WalletDustRegistrationSettlementReconciliation::Pending,
+                },
+            ),
+            newer_finality
         );
 
         let stale_pending = reduce(
