@@ -14,9 +14,9 @@ use oxid_wallet_application::{
     WalletAccountView, WalletDustRegistrationError, WalletDustRegistrationPortError,
     WalletDustRegistrationSubmissionStatusView, WalletDustSyncCommand, WalletDustSyncError,
     WalletDustSyncView, WalletRealmLifecycleInput, WalletShieldedSyncCommand,
-    WalletShieldedSyncError, WalletShieldedSyncView, WalletTransactionError,
-    WalletTransactionPortError, WalletTransferDraftQuery, WalletTransferSubmissionQuery,
-    WalletTransferSubmissionStatusView, validate_confirmation,
+    WalletShieldedSyncError, WalletShieldedSyncPortError, WalletShieldedSyncView,
+    WalletTransactionError, WalletTransactionPortError, WalletTransferDraftQuery,
+    WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView, validate_confirmation,
 };
 use serde_json::{Value, json};
 
@@ -569,7 +569,24 @@ impl HeadlessWallet {
         self.shielded_sync_operation(
             request,
             "wallet.shielded.sync.start",
-            |application, command| application.start_wallet_shielded_sync().execute(command),
+            |application, command| {
+                match application
+                    .start_wallet_shielded_sync()
+                    .execute(command.clone())
+                {
+                    // Lifecycle-driven reconciliation may have admitted the
+                    // same adapter worker immediately before this explicit
+                    // recovery command. Return its public status instead of
+                    // turning a harmless single-flight conflict into a
+                    // protocol failure.
+                    Err(WalletShieldedSyncError::Port(WalletShieldedSyncPortError::Conflict)) => {
+                        application
+                            .get_wallet_shielded_sync_status()
+                            .execute(command)
+                    }
+                    result => result,
+                }
+            },
         )
     }
 
