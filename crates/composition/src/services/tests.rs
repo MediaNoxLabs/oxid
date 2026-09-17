@@ -39,6 +39,12 @@ fn composition_exposes_every_application_capability() {
     drop(services.sync_wallet_account());
     let selected_realm_sync = services.sync_selected_wallet_realm();
     drop(services.get_selected_wallet_realm_sync());
+    let lifecycle = services.reconcile_wallet_realm_lifecycle();
+    let same_lifecycle = services.reconcile_wallet_realm_lifecycle();
+    assert!(
+        std::sync::Arc::ptr_eq(&lifecycle, &same_lifecycle),
+        "composition must expose one shared selected-realm lifecycle service"
+    );
     drop(services.cancel_selected_wallet_realm_sync());
     let operation_timeline = services.get_wallet_operation_timeline();
     assert_eq!(

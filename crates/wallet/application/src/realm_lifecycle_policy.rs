@@ -158,6 +158,14 @@ pub struct WalletRealmLifecyclePolicy {
 }
 
 impl WalletRealmLifecyclePolicy {
+    pub(crate) fn owns(&self, request: &WalletRealmLifecycleRequest) -> bool {
+        self.active.as_ref() == Some(&request.identity)
+            && self
+                .in_flight
+                .as_ref()
+                .is_some_and(|in_flight| in_flight.sequence == request.sequence)
+    }
+
     #[must_use]
     pub fn reduce(
         &mut self,
