@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[cfg(all(
     not(target_arch = "wasm32"),
@@ -159,19 +159,20 @@ use oxid_wallet_application::{
     PrepareWalletTransferUseCase, ReconcileWalletDustRegistrationSubmissionUseCase,
     ReconcileWalletTransferSubmissionUseCase, RecordWalletBackupReceiptUseCase,
     RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupUseCase,
-    SelectWalletNetworkUseCase, SelectWalletProfileService, SelectedWalletRealmSyncService,
-    SignWalletDataUseCase, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
-    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferUseCase,
-    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
-    WalletAccountDerivationPort, WalletAccountDerivationService, WalletAccountReadPort,
-    WalletAccountService, WalletBackupReceiptRepository, WalletBackupReceiptService,
-    WalletDustRegistrationService, WalletDustSyncPort, WalletDustSyncService,
-    WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
-    WalletNetworkService, WalletOnboardingService, WalletPortableBackupPort,
-    WalletPortableBackupService, WalletProfileAssociationRepository, WalletProfileRepository,
-    WalletProtectionPort, WalletProtectionService, WalletRootRecoveryPort,
-    WalletRootRecoveryService, WalletShieldedSyncPort, WalletShieldedSyncService,
-    WalletTransactionPort, WalletTransactionService,
+    SelectWalletNetworkUseCase, SelectWalletProfileService, SelectedWalletRealmRuntime,
+    SelectedWalletRealmSyncService, SignWalletDataUseCase, StartWalletDustSyncUseCase,
+    StartWalletShieldedSyncUseCase, SubmitWalletDustRegistrationUseCase,
+    SubmitWalletTransferUseCase, SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase,
+    UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
+    WalletAccountReadPort, WalletAccountService, WalletBackupReceiptRepository,
+    WalletBackupReceiptService, WalletDustRegistrationService, WalletDustSyncPort,
+    WalletDustSyncService, WalletJubjubChallengeSigningPort, WalletKeyOperationPort,
+    WalletKeyService, WalletNetworkPort, WalletNetworkSelectionObserver, WalletNetworkService,
+    WalletOnboardingService, WalletPortableBackupPort, WalletPortableBackupService,
+    WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
+    WalletProtectionService, WalletRootRecoveryPort, WalletRootRecoveryService,
+    WalletShieldedSyncPort, WalletShieldedSyncService, WalletTransactionPort,
+    WalletTransactionService,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -236,9 +237,14 @@ where
     S: WalletProtectionPort + WalletRootRecoveryPort + 'static,
     M: WalletNetworkPort + WalletAccountDerivationPort + 'static,
 {
-    let Ok(recovery) =
-        WalletRootRecoveryService::new(repository, security, midnight, network_id.clone())
-    else {
+    let network_selection = services.select_wallet_network();
+    let Ok(recovery) = WalletRootRecoveryService::new(
+        repository,
+        security,
+        midnight,
+        network_selection,
+        network_id.clone(),
+    ) else {
         return services;
     };
     #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -633,12 +639,25 @@ where
     #[cfg(not(target_arch = "wasm32"))]
     let midnight_contract_call_submission: Arc<dyn MidnightContractCallSubmissionPort> =
         midnight.clone();
-    let networks = Arc::new(WalletNetworkService::new(Arc::clone(&midnight)));
+    let selected_realm_runtime = Arc::new(Mutex::new(SelectedWalletRealmRuntime::default()));
+    let selected_realm_selection_gate = Arc::new(Mutex::new(()));
+    let selected_realm_sync = Arc::new(
+        SelectedWalletRealmSyncService::with_runtime_and_selection_gate(
+            Arc::clone(&midnight),
+            selected_realm_runtime,
+            Arc::clone(&selected_realm_selection_gate),
+        ),
+    );
+    let selection_observer: Arc<dyn WalletNetworkSelectionObserver> = selected_realm_sync.clone();
+    let networks = Arc::new(WalletNetworkService::with_selection_observer_and_gate(
+        Arc::clone(&midnight),
+        selection_observer,
+        selected_realm_selection_gate,
+    ));
     let account_derivation = Arc::new(WalletAccountDerivationService::new(Arc::clone(&midnight)));
     let accounts = Arc::new(WalletAccountService::new(Arc::clone(&midnight)));
     let dust = Arc::new(WalletDustSyncService::new(Arc::clone(&midnight)));
     let shielded = Arc::new(WalletShieldedSyncService::new(Arc::clone(&midnight)));
-    let selected_realm_sync = Arc::new(SelectedWalletRealmSyncService::new(Arc::clone(&midnight)));
     #[cfg(not(target_arch = "wasm32"))]
     let dust_registrations = Arc::new(WalletDustRegistrationService::new(
         Arc::clone(&midnight),

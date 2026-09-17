@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::BTreeSet, error::Error, fmt, future::Future, pin::Pin, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    error::Error,
+    fmt,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use oxid_foundation::OpaqueIdError;
 use oxid_wallet_domain::{
@@ -663,6 +670,34 @@ pub trait SelectWalletNetworkUseCase: Send + Sync {
         &self,
         command: SelectWalletNetworkCommand,
     ) -> Result<WalletNetworkListView, WalletAccountError>;
+
+    fn select(&self, command: SelectWalletNetworkCommand) -> Result<(), WalletAccountError> {
+        self.execute(command).map(drop)
+    }
+}
+
+/// Application-owned observer for successful profile realm selections.
+///
+/// The selection service records the transition at the mutation boundary so
+/// concurrent readers cannot infer an incomplete A→B→A history from queries.
+pub trait WalletNetworkSelectionObserver: Send + Sync {
+    fn selected(
+        &self,
+        profile: &WalletProfileId,
+        network: &ChainNetworkId,
+    ) -> Result<(), WalletAccountPortError>;
+}
+
+struct NoopWalletNetworkSelectionObserver;
+
+impl WalletNetworkSelectionObserver for NoopWalletNetworkSelectionObserver {
+    fn selected(
+        &self,
+        _: &WalletProfileId,
+        _: &ChainNetworkId,
+    ) -> Result<(), WalletAccountPortError> {
+        Ok(())
+    }
 }
 
 /// Incoming use case for deriving an account without handling private bytes.
@@ -686,12 +721,43 @@ pub trait SyncWalletAccountUseCase: Send + Sync {
 /// Application service for catalog and selection operations.
 pub struct WalletNetworkService<N> {
     networks: Arc<N>,
+    selection_observer: Arc<dyn WalletNetworkSelectionObserver>,
+    selection_gate: Arc<Mutex<()>>,
 }
 
 impl<N> WalletNetworkService<N> {
     #[must_use]
-    pub const fn new(networks: Arc<N>) -> Self {
-        Self { networks }
+    pub fn new(networks: Arc<N>) -> Self {
+        Self {
+            networks,
+            selection_observer: Arc::new(NoopWalletNetworkSelectionObserver),
+            selection_gate: Arc::new(Mutex::new(())),
+        }
+    }
+
+    #[must_use]
+    pub fn with_selection_observer(
+        networks: Arc<N>,
+        selection_observer: Arc<dyn WalletNetworkSelectionObserver>,
+    ) -> Self {
+        Self {
+            networks,
+            selection_observer,
+            selection_gate: Arc::new(Mutex::new(())),
+        }
+    }
+
+    #[must_use]
+    pub fn with_selection_observer_and_gate(
+        networks: Arc<N>,
+        selection_observer: Arc<dyn WalletNetworkSelectionObserver>,
+        selection_gate: Arc<Mutex<()>>,
+    ) -> Self {
+        Self {
+            networks,
+            selection_observer,
+            selection_gate,
+        }
     }
 
     fn view(
@@ -761,10 +827,34 @@ where
             .map_err(WalletAccountError::InvalidProfileIdentifier)?;
         let network_id = ChainNetworkId::parse(command.network_id)
             .map_err(WalletAccountError::InvalidNetworkIdentifier)?;
+        let _selection = self
+            .selection_gate
+            .lock()
+            .map_err(|_| WalletAccountError::Port(WalletAccountPortError::Unavailable))?;
         self.networks
             .select_network(&profile_id, &network_id)
             .map_err(WalletAccountError::Port)?;
+        self.selection_observer
+            .selected(&profile_id, &network_id)
+            .map_err(WalletAccountError::Port)?;
         self.view(&profile_id)
+    }
+
+    fn select(&self, command: SelectWalletNetworkCommand) -> Result<(), WalletAccountError> {
+        let profile = WalletProfileId::parse(command.profile_id)
+            .map_err(WalletAccountError::InvalidProfileIdentifier)?;
+        let network = ChainNetworkId::parse(command.network_id)
+            .map_err(WalletAccountError::InvalidNetworkIdentifier)?;
+        let _selection = self
+            .selection_gate
+            .lock()
+            .map_err(|_| WalletAccountError::Port(WalletAccountPortError::Unavailable))?;
+        self.networks
+            .select_network(&profile, &network)
+            .map_err(WalletAccountError::Port)?;
+        self.selection_observer
+            .selected(&profile, &network)
+            .map_err(WalletAccountError::Port)
     }
 }
 

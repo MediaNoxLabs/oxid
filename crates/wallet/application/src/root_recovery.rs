@@ -9,7 +9,8 @@
 use std::{error::Error, fmt, sync::Arc};
 
 use crate::{
-    SensitiveOperationConfirmation, SensitiveWalletOperationError, WalletAccountDerivationPort,
+    SelectWalletNetworkCommand, SelectWalletNetworkUseCase, SensitiveOperationConfirmation,
+    SensitiveWalletOperationError, WalletAccountDerivationPort, WalletAccountError,
     WalletAccountPortError, WalletNetworkPort, WalletProfileAssociationRepository,
     WalletProfileAssociationRepositoryError, WalletProfileRepository, WalletProfileRepositoryError,
     WalletProtectionPort, WalletSecurityPortError, validate_confirmation,
@@ -241,6 +242,7 @@ pub struct WalletRootRecoveryService<R, P, N> {
     profiles: Arc<R>,
     protection: Arc<P>,
     networks: Arc<N>,
+    network_selection: Arc<dyn SelectWalletNetworkUseCase>,
     network_id: ChainNetworkId,
 }
 
@@ -249,6 +251,7 @@ impl<R, P, N> WalletRootRecoveryService<R, P, N> {
         profiles: Arc<R>,
         protection: Arc<P>,
         networks: Arc<N>,
+        network_selection: Arc<dyn SelectWalletNetworkUseCase>,
         network_id: String,
     ) -> Result<Self, WalletRootRecoveryConfigurationError> {
         let network_id = ChainNetworkId::parse(network_id)
@@ -257,6 +260,7 @@ impl<R, P, N> WalletRootRecoveryService<R, P, N> {
             profiles,
             protection,
             networks,
+            network_selection,
             network_id,
         })
     }
@@ -323,9 +327,15 @@ where
                 WalletAccountPortError::UnsupportedNetwork,
             ));
         }
-        self.networks
-            .select_network(&profile_id, &self.network_id)
-            .map_err(WalletRootRecoveryError::Network)?;
+        self.network_selection
+            .select(SelectWalletNetworkCommand {
+                profile_id: profile_id.as_str().to_owned(),
+                network_id: self.network_id.as_str().to_owned(),
+            })
+            .map_err(|error| match error {
+                WalletAccountError::Port(error) => WalletRootRecoveryError::Network(error),
+                _ => WalletRootRecoveryError::Network(WalletAccountPortError::InvalidData),
+            })?;
         self.protection
             .recover_root(&profile_id, command.root)
             .map_err(WalletRootRecoveryError::Custody)?;
@@ -356,7 +366,10 @@ fn map_confirmation(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     use oxid_foundation::UnixTimestampMillis;
     use oxid_wallet_domain::{
@@ -365,6 +378,8 @@ mod tests {
         PublicKeyEncoding, WalletKeyReference, WalletProfile, WalletProtectionClass,
         WalletPublicKey, WalletSecurityStatus,
     };
+
+    use crate::WalletNetworkService;
 
     use super::*;
 
@@ -607,6 +622,30 @@ mod tests {
         }
     }
 
+    struct RecordingNetworkSelection {
+        service: WalletNetworkService<TestState>,
+        calls: AtomicUsize,
+    }
+
+    impl RecordingNetworkSelection {
+        fn new(state: Arc<TestState>) -> Self {
+            Self {
+                service: WalletNetworkService::new(state),
+                calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl SelectWalletNetworkUseCase for RecordingNetworkSelection {
+        fn execute(
+            &self,
+            command: SelectWalletNetworkCommand,
+        ) -> Result<crate::WalletNetworkListView, WalletAccountError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            SelectWalletNetworkUseCase::execute(&self.service, command)
+        }
+    }
+
     fn confirmation(confirmed: bool) -> SensitiveOperationConfirmation {
         SensitiveOperationConfirmation {
             title: RECOVER_WALLET_ROOT_TITLE.to_owned(),
@@ -623,16 +662,28 @@ mod tests {
         }
     }
 
+    fn recovery_service(
+        state: &Arc<TestState>,
+        network_id: &str,
+    ) -> Result<
+        WalletRootRecoveryService<TestState, TestState, TestState>,
+        WalletRootRecoveryConfigurationError,
+    > {
+        let selection: Arc<dyn SelectWalletNetworkUseCase> =
+            Arc::new(WalletNetworkService::new(Arc::clone(state)));
+        WalletRootRecoveryService::new(
+            Arc::clone(state),
+            Arc::clone(state),
+            Arc::clone(state),
+            selection,
+            network_id.to_owned(),
+        )
+    }
+
     #[test]
     fn exact_confirmation_precedes_network_or_custody_changes() {
         let state = Arc::new(TestState::new());
-        let service = WalletRootRecoveryService::new(
-            Arc::clone(&state),
-            Arc::clone(&state),
-            Arc::clone(&state),
-            "preprod".to_owned(),
-        )
-        .expect("service");
+        let service = recovery_service(&state, "preprod").expect("service");
         assert_eq!(
             service.execute(command(false)),
             Err(WalletRootRecoveryError::ConfirmationRequired)
@@ -658,12 +709,7 @@ mod tests {
     #[test]
     fn recovery_configuration_rejects_an_invalid_authenticated_network() {
         let state = Arc::new(TestState::new());
-        let result = WalletRootRecoveryService::new(
-            Arc::clone(&state),
-            Arc::clone(&state),
-            Arc::clone(&state),
-            "preprod network".to_owned(),
-        );
+        let result = recovery_service(&state, "preprod network");
         assert!(matches!(
             result,
             Err(WalletRootRecoveryConfigurationError::InvalidNetworkIdentifier)
@@ -673,13 +719,7 @@ mod tests {
     #[test]
     fn authorization_denial_is_retryable_but_duplicate_import_is_rejected() {
         let state = Arc::new(TestState::new());
-        let service = WalletRootRecoveryService::new(
-            Arc::clone(&state),
-            Arc::clone(&state),
-            Arc::clone(&state),
-            "preprod".to_owned(),
-        )
-        .expect("service");
+        let service = recovery_service(&state, "preprod").expect("service");
         *state.deny_recovery.lock().expect("denial") = true;
         assert_eq!(
             service.execute(command(true)),
@@ -711,16 +751,28 @@ mod tests {
     }
 
     #[test]
-    fn installed_root_reports_account_derivation_as_separately_retryable() {
+    fn recovery_routes_network_mutation_through_the_injected_selection_boundary() {
         let state = Arc::new(TestState::new());
-        *state.deny_derivation.lock().expect("derivation denial") = true;
+        let selection = Arc::new(RecordingNetworkSelection::new(Arc::clone(&state)));
+        let selection_port: Arc<dyn SelectWalletNetworkUseCase> = selection.clone();
         let service = WalletRootRecoveryService::new(
             Arc::clone(&state),
             Arc::clone(&state),
             Arc::clone(&state),
+            selection_port,
             "preprod".to_owned(),
         )
         .expect("service");
+
+        service.execute(command(true)).expect("recovery succeeds");
+        assert_eq!(selection.calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn installed_root_reports_account_derivation_as_separately_retryable() {
+        let state = Arc::new(TestState::new());
+        *state.deny_derivation.lock().expect("derivation denial") = true;
+        let service = recovery_service(&state, "preprod").expect("service");
 
         let recovered = service
             .execute(command(true))
@@ -737,13 +789,7 @@ mod tests {
     #[test]
     fn initialized_custody_and_existing_accounts_fail_before_root_use() {
         let state = Arc::new(TestState::new());
-        let service = WalletRootRecoveryService::new(
-            Arc::clone(&state),
-            Arc::clone(&state),
-            Arc::clone(&state),
-            "preprod".to_owned(),
-        )
-        .expect("service");
+        let service = recovery_service(&state, "preprod").expect("service");
         *state.status.lock().expect("status") = WalletSecurityStatus::new(
             WalletProtectionState::Locked,
             WalletProtectionClass::HardwareBacked,

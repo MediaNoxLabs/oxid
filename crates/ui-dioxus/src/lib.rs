@@ -154,19 +154,19 @@ use oxid_wallet_application::{
     RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupCommand,
     RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupCommand,
     RecoverPortableWalletBackupUseCase, SelectWalletNetworkCommand, SelectWalletNetworkUseCase,
-    SelectWalletProfileCommand, SelectWalletProfileUseCase, SelectedWalletRealmSyncCommand,
-    SelectedWalletRealmSyncView, SensitiveOperationConfirmation, StartWalletDustSyncUseCase,
-    StartWalletShieldedSyncUseCase, SubmitWalletDustRegistrationCommand,
-    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferCommand, SubmitWalletTransferUseCase,
-    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
-    WalletAccountError, WalletAccountPortError, WalletAccountQuery, WalletAccountView,
-    WalletBackupReceiptCommand, WalletBackupReceiptView, WalletDustRegistrationAssetView,
-    WalletDustRegistrationPreviewView, WalletDustRegistrationSubmissionStatusView,
-    WalletDustSyncView, WalletNetworkListView, WalletProfileSecurityCommand, WalletProfileView,
-    WalletRealmFamilyView, WalletRecoverySecret, WalletSecurityStatusView, WalletShieldedSyncView,
-    WalletSyncStatusView, WalletTransferDraftQuery, WalletTransferPreviewView,
-    WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
-    WalletTransferSubmissionView,
+    SelectWalletProfileCommand, SelectWalletProfileUseCase, SelectedWalletRealmProjection,
+    SelectedWalletRealmSyncCommand, SelectedWalletRealmSyncView, SensitiveOperationConfirmation,
+    StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
+    SubmitWalletDustRegistrationCommand, SubmitWalletDustRegistrationUseCase,
+    SubmitWalletTransferCommand, SubmitWalletTransferUseCase, SyncSelectedWalletRealmUseCase,
+    SyncWalletAccountUseCase, UnlockWalletUseCase, WalletAccountError, WalletAccountPortError,
+    WalletAccountQuery, WalletAccountView, WalletBackupReceiptCommand, WalletBackupReceiptView,
+    WalletDustRegistrationAssetView, WalletDustRegistrationPreviewView,
+    WalletDustRegistrationSubmissionStatusView, WalletDustSyncView, WalletNetworkListView,
+    WalletProfileSecurityCommand, WalletProfileView, WalletRealmFamilyView, WalletRecoverySecret,
+    WalletSecurityStatusView, WalletShieldedSyncView, WalletSyncStatusView,
+    WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionQuery,
+    WalletTransferSubmissionStatusView, WalletTransferSubmissionView,
 };
 #[cfg(feature = "preprod-observation")]
 use oxid_wallet_application::{
@@ -191,12 +191,13 @@ use profile_quick_switcher::{ProfileSwitcherMenu, profile_switch_is_allowed};
 use screen_privacy::protect_suspended_snapshot;
 use screen_privacy::route_forces_screen_privacy;
 use selected_realm_sync::{
-    AccountSyncCardState, dust_status_pill_class, load_account_sync_card,
-    non_native_shielded_balances, poll_account_sync, selected_realm_chain_tip,
-    selected_realm_dust_balance, selected_realm_dust_note, selected_realm_dust_state,
-    selected_realm_is_syncing, selected_realm_provenance, selected_realm_shielded_balance,
-    selected_realm_shielded_note, selected_realm_shielded_state, selected_realm_sync_progress,
-    selected_realm_sync_state,
+    AccountSyncCardState, account_sync_card_accepts_projection,
+    begin_account_sync_card_observation, dust_status_pill_class, finish_account_sync_card_action,
+    non_native_shielded_balances, poll_account_sync, reload_account_sync_card,
+    selected_realm_chain_tip, selected_realm_dust_balance, selected_realm_dust_note,
+    selected_realm_dust_state, selected_realm_is_syncing, selected_realm_provenance,
+    selected_realm_shielded_balance, selected_realm_shielded_note, selected_realm_shielded_state,
+    selected_realm_sync_progress, selected_realm_sync_state,
 };
 #[cfg(test)]
 use selected_realm_sync::{
@@ -5824,19 +5825,16 @@ fn AccountSyncCard(
     on_account_updated: EventHandler<WalletAccountView>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
-    let mut state = use_signal(|| AccountSyncCardState::Loading);
+    let state = use_signal(|| AccountSyncCardState::Loading);
     let load_services = services.clone();
     let load_profile = profile_id.clone();
     use_effect(move || {
-        let services = load_services.clone();
-        let profile_id = load_profile.clone();
-        spawn(async move {
-            state.set(
-                run_ui_blocking(move || load_account_sync_card(&services, &profile_id))
-                    .await
-                    .unwrap_or_else(|error| AccountSyncCardState::Failed(error.to_string())),
-            );
-        });
+        begin_account_sync_card_observation(
+            load_services.clone(),
+            load_profile.clone(),
+            state,
+            on_account_updated,
+        );
     });
 
     match state.read().clone() {
@@ -5863,16 +5861,12 @@ fn AccountSyncCard(
                         class: "secondary-action",
                         r#type: "button",
                         onclick: move |_| {
-                            let services = retry_services.clone();
-                            let profile_id = retry_profile.clone();
-                            state.set(AccountSyncCardState::Loading);
-                            spawn(async move {
-                                state.set(
-                                    run_ui_blocking(move || load_account_sync_card(&services, &profile_id))
-                                        .await
-                                        .unwrap_or_else(|error| AccountSyncCardState::Failed(error.to_string())),
-                                );
-                            });
+                            reload_account_sync_card(
+                                retry_services.clone(),
+                                retry_profile.clone(),
+                                state,
+                                on_account_updated,
+                            );
                         },
                         "Retry"
                     }
@@ -5880,15 +5874,17 @@ fn AccountSyncCard(
             }
         }
         AccountSyncCardState::Ready {
-            realm,
+            realm: projection,
             action_busy,
             operation_error,
         } => {
-            let syncing = selected_realm_is_syncing(&realm);
-            let overall_state = selected_realm_sync_state(&realm);
-            let provenance = selected_realm_provenance(&realm);
-            let chain_tip = selected_realm_chain_tip(&realm);
-            let progress = selected_realm_sync_progress(&realm);
+            let retained_projection = projection.clone();
+            let realm = &projection.view;
+            let syncing = selected_realm_is_syncing(realm);
+            let overall_state = selected_realm_sync_state(realm);
+            let provenance = selected_realm_provenance(realm);
+            let chain_tip = selected_realm_chain_tip(realm);
+            let progress = selected_realm_sync_progress(realm);
             let dust_balance = selected_realm_dust_balance(&realm.dust);
             let dust_state = selected_realm_dust_state(&realm.dust);
             let dust_note = selected_realm_dust_note(&realm.dust);
@@ -5901,7 +5897,7 @@ fn AccountSyncCard(
                     .map_or_else(|| "—".to_owned(), |count| count.to_string()),
                 _ => "—".to_owned(),
             };
-            let retained_realm = realm.clone();
+            let retained_realm = retained_projection.clone();
             let action_services = services.clone();
             let action_profile = profile_id.clone();
             let mut action_state = state;
@@ -5983,10 +5979,18 @@ fn AccountSyncCard(
                                 };
                                 match result {
                                     Ok(Ok(updated)) => {
-                                        let should_poll = selected_realm_is_syncing(&updated);
-                                        if let WalletRealmFamilyView::Ready(account) = &updated.account {
+                                        if !account_sync_card_accepts_projection(
+                                            &action_state.read(),
+                                            &updated,
+                                        ) {
+                                            finish_account_sync_card_action(action_state, &retained, None);
+                                            return;
+                                        }
+                                        let should_poll = updated.observation.poll_after().is_some();
+                                        if let WalletRealmFamilyView::Ready(account) = &updated.view.account {
                                             on_account_updated.call(account.clone());
                                         }
+                                        let poll_projection = updated.clone();
                                         action_state.set(AccountSyncCardState::Ready {
                                             realm: Box::new(updated),
                                             action_busy: false,
@@ -5996,21 +6000,22 @@ fn AccountSyncCard(
                                             poll_account_sync(
                                                 services,
                                                 profile_id,
+                                                poll_projection,
                                                 action_state,
                                                 on_account_updated,
                                             );
                                         }
                                     }
-                                    Ok(Err(error)) => action_state.set(AccountSyncCardState::Ready {
-                                        realm: retained,
-                                        action_busy: false,
-                                        operation_error: Some(error.to_string()),
-                                    }),
-                                    Err(error) => action_state.set(AccountSyncCardState::Ready {
-                                        realm: retained,
-                                        action_busy: false,
-                                        operation_error: Some(error.to_string()),
-                                    }),
+                                    Ok(Err(error)) => finish_account_sync_card_action(
+                                        action_state,
+                                        &retained,
+                                        Some(error.to_string()),
+                                    ),
+                                    Err(error) => finish_account_sync_card_action(
+                                        action_state,
+                                        &retained,
+                                        Some(error.to_string()),
+                                    ),
                                 }
                             });
                         },
