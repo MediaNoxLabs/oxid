@@ -723,6 +723,7 @@ mod tests {
             [
                 WalletRealmCoordinatorEffect::new(2, WalletRealmReconciliationEffect::SyncAccount,),
                 WalletRealmCoordinatorEffect::new(2, WalletRealmReconciliationEffect::SyncDust,),
+                WalletRealmCoordinatorEffect::new(2, WalletRealmReconciliationEffect::SyncShielded,),
             ]
         );
     }
