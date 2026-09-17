@@ -165,141 +165,160 @@ fn spawn_indexer_fixture(
         runtime.block_on(async move {
             let listener =
                 tokio::net::TcpListener::from_std(listener).expect("listener should convert");
-            let (stream, _) = listener
-                .accept()
-                .await
-                .expect("fixture should accept client");
-            let callback = |request: &Request, mut response: Response| {
+            loop {
+                let (stream, _) = listener
+                    .accept()
+                    .await
+                    .expect("fixture should accept client");
+                let callback = |request: &Request, mut response: Response| {
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get("Sec-WebSocket-Protocol")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("graphql-transport-ws")
+                    );
+                    response.headers_mut().insert(
+                        "Sec-WebSocket-Protocol",
+                        HeaderValue::from_static("graphql-transport-ws"),
+                    );
+                    Ok(response)
+                };
+                let mut socket = accept_hdr_async(stream, callback)
+                    .await
+                    .expect("fixture handshake should succeed");
+                let init = socket
+                    .next()
+                    .await
+                    .expect("connection init should arrive")
+                    .expect("connection init should be readable");
+                let init: Value = serde_json::from_str(
+                    init.into_text()
+                        .expect("connection init should be text")
+                        .as_str(),
+                )
+                .expect("connection init should be JSON");
+                assert_eq!(init["type"], "connection_init");
+                socket
+                    .send(Message::Text(
+                        json!({ "type": "connection_ack" }).to_string().into(),
+                    ))
+                    .await
+                    .expect("ack should send");
+
+                let subscribe = socket
+                    .next()
+                    .await
+                    .expect("subscribe should arrive")
+                    .expect("subscribe should be readable");
+                let subscribe: Value = serde_json::from_str(
+                    subscribe
+                        .into_text()
+                        .expect("subscribe should be text")
+                        .as_str(),
+                )
+                .expect("subscribe should be JSON");
+                assert_eq!(subscribe["type"], "subscribe");
+
+                let Some(subscribed_address) = subscribe["payload"]["variables"]["address"]
+                    .as_str()
+                    .map(str::to_owned)
+                else {
+                    assert!(
+                        subscribe["payload"]["query"]
+                            .as_str()
+                            .is_some_and(|query| query.contains("zswapLedgerEvents"))
+                    );
+                    socket
+                        .send(Message::Text(
+                            json!({ "type": "complete", "id": "oxid-shielded" })
+                                .to_string()
+                                .into(),
+                        ))
+                        .await
+                        .expect("shielded completion should send");
+                    continue;
+                };
+                assert!(subscribed_address.starts_with("mn_addr_undeployed1"));
                 assert_eq!(
-                    request
-                        .headers()
-                        .get("Sec-WebSocket-Protocol")
-                        .and_then(|value| value.to_str().ok()),
-                    Some("graphql-transport-ws")
+                    subscribe["payload"]["variables"]["transactionId"],
+                    expected_transaction_id
                 );
-                response.headers_mut().insert(
-                    "Sec-WebSocket-Protocol",
-                    HeaderValue::from_static("graphql-transport-ws"),
-                );
-                Ok(response)
-            };
-            let mut socket = accept_hdr_async(stream, callback)
-                .await
-                .expect("fixture handshake should succeed");
-            let init = socket
-                .next()
-                .await
-                .expect("connection init should arrive")
-                .expect("connection init should be readable");
-            let init: Value = serde_json::from_str(
-                init.into_text()
-                    .expect("connection init should be text")
-                    .as_str(),
-            )
-            .expect("connection init should be JSON");
-            assert_eq!(init["type"], "connection_init");
-            socket
-                .send(Message::Text(
-                    json!({ "type": "connection_ack" }).to_string().into(),
-                ))
-                .await
-                .expect("ack should send");
+                assert!(subscribe["payload"]["query"].as_str().is_some_and(|query| {
+                    query.contains("highestTransactionId")
+                        && query.contains("fees")
+                        && query.contains("paidFees")
+                }));
 
-            let subscribe = socket
-                .next()
-                .await
-                .expect("subscribe should arrive")
-                .expect("subscribe should be readable");
-            let subscribe: Value = serde_json::from_str(
-                subscribe
-                    .into_text()
-                    .expect("subscribe should be text")
-                    .as_str(),
-            )
-            .expect("subscribe should be JSON");
-            assert_eq!(subscribe["type"], "subscribe");
-            let subscribed_address = subscribe["payload"]["variables"]["address"]
-                .as_str()
-                .expect("subscription address should be a string")
-                .to_owned();
-            assert!(subscribed_address.starts_with("mn_addr_undeployed1"));
-            assert_eq!(
-                subscribe["payload"]["variables"]["transactionId"],
-                expected_transaction_id
-            );
-            assert!(subscribe["payload"]["query"].as_str().is_some_and(|query| {
-                query.contains("highestTransactionId")
-                    && query.contains("fees")
-                    && query.contains("paidFees")
-            }));
+                let target = if incremental { 3 } else { 2 };
+                send_fixture_event(
+                    &mut socket,
+                    json!({
+                        "unshieldedTransactions": {
+                            "__typename": "UnshieldedTransactionsProgress",
+                            "highestTransactionId": target
+                        }
+                    }),
+                )
+                .await;
+                if incremental {
+                    send_fixture_event(
+                        &mut socket,
+                        transaction_event(
+                            3,
+                            "33",
+                            43,
+                            vec![utxo(&subscribed_address, "cc", 0, "1000000")],
+                            vec![utxo(&subscribed_address, "bb", 0, "2500000")],
+                            "SUCCESS",
+                            "900",
+                        ),
+                    )
+                    .await;
+                } else {
+                    send_fixture_event(
+                        &mut socket,
+                        transaction_event(
+                            1,
+                            "11",
+                            41,
+                            vec![utxo(&subscribed_address, "aa", 0, "3000000")],
+                            vec![],
+                            "SUCCESS",
+                            "100",
+                        ),
+                    )
+                    .await;
+                    send_fixture_event(
+                        &mut socket,
+                        transaction_event(
+                            2,
+                            "22",
+                            42,
+                            vec![utxo(&subscribed_address, "bb", 0, "2500000")],
+                            vec![utxo(&subscribed_address, "aa", 0, "3000000")],
+                            "SUCCESS",
+                            "1500",
+                        ),
+                    )
+                    .await;
+                }
 
-            let target = if incremental { 3 } else { 2 };
-            send_fixture_event(
-                &mut socket,
-                json!({
-                    "unshieldedTransactions": {
-                        "__typename": "UnshieldedTransactionsProgress",
-                        "highestTransactionId": target
-                    }
-                }),
-            )
-            .await;
-            if incremental {
-                send_fixture_event(
-                    &mut socket,
-                    transaction_event(
-                        3,
-                        "33",
-                        43,
-                        vec![utxo(&subscribed_address, "cc", 0, "1000000")],
-                        vec![utxo(&subscribed_address, "bb", 0, "2500000")],
-                        "SUCCESS",
-                        "900",
-                    ),
+                let complete = socket
+                    .next()
+                    .await
+                    .expect("complete should arrive")
+                    .expect("complete should be readable");
+                let complete: Value = serde_json::from_str(
+                    complete
+                        .into_text()
+                        .expect("complete should be text")
+                        .as_str(),
                 )
-                .await;
-            } else {
-                send_fixture_event(
-                    &mut socket,
-                    transaction_event(
-                        1,
-                        "11",
-                        41,
-                        vec![utxo(&subscribed_address, "aa", 0, "3000000")],
-                        vec![],
-                        "SUCCESS",
-                        "100",
-                    ),
-                )
-                .await;
-                send_fixture_event(
-                    &mut socket,
-                    transaction_event(
-                        2,
-                        "22",
-                        42,
-                        vec![utxo(&subscribed_address, "bb", 0, "2500000")],
-                        vec![utxo(&subscribed_address, "aa", 0, "3000000")],
-                        "SUCCESS",
-                        "1500",
-                    ),
-                )
-                .await;
+                .expect("complete should be JSON");
+                assert_eq!(complete["type"], "complete");
+                break;
             }
-
-            let complete = socket
-                .next()
-                .await
-                .expect("complete should arrive")
-                .expect("complete should be readable");
-            let complete: Value = serde_json::from_str(
-                complete
-                    .into_text()
-                    .expect("complete should be text")
-                    .as_str(),
-            )
-            .expect("complete should be JSON");
-            assert_eq!(complete["type"], "complete");
         });
     });
     (endpoint, handle)
