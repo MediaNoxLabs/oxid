@@ -22,12 +22,12 @@ pub const DEFAULT_WALLET_REALM_LIFECYCLE_JITTER_WINDOW_MILLIS: u64 = 250;
 /// Validated bounds for the pure lifecycle policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WalletRealmLifecyclePolicyConfig {
-    pub debounce_millis: u64,
-    pub stale_age_millis: u64,
-    pub backoff_base_millis: u64,
-    pub backoff_max_millis: u64,
-    pub retry_ceiling: u8,
-    pub jitter_window_millis: u64,
+    debounce_millis: u64,
+    stale_age_millis: u64,
+    backoff_base_millis: u64,
+    backoff_max_millis: u64,
+    retry_ceiling: u8,
+    jitter_window_millis: u64,
 }
 
 impl Default for WalletRealmLifecyclePolicyConfig {
@@ -209,8 +209,10 @@ impl WalletRealmLifecyclePolicy {
             WalletRealmLifecycleInput::PeriodicTick { now_millis, facets } => {
                 self.automatic(config, now_millis, facets, true)
             }
-            WalletRealmLifecycleInput::ActionPreflight { now_millis, facets } => {
-                self.observe_freshness(now_millis, facets);
+            WalletRealmLifecycleInput::ActionPreflight {
+                now_millis,
+                facets: _,
+            } => {
                 let Some(identity) = self.active.clone() else {
                     return WalletRealmLifecycleDecision::Ignored;
                 };
@@ -233,9 +235,9 @@ impl WalletRealmLifecyclePolicy {
                     return WalletRealmLifecycleDecision::Ignored;
                 }
                 self.in_flight = None;
-                self.observe_freshness(now_millis, facets);
                 if succeeded {
                     self.retry_count = 0;
+                    self.observe_freshness(now_millis, facets);
                 } else {
                     self.retry_count = self.retry_count.saturating_add(1);
                 }
@@ -254,11 +256,13 @@ impl WalletRealmLifecyclePolicy {
         facets: WalletRealmReconciliationState,
         periodic: bool,
     ) -> WalletRealmLifecycleDecision {
-        self.observe_freshness(now_millis, facets);
         let Some(identity) = self.active.clone() else {
             return WalletRealmLifecycleDecision::Ignored;
         };
-        if !self.foreground || !is_stale(facets) || !self.outside_debounce(config, now_millis) {
+        if !self.foreground
+            || !self.stale_enough(config, now_millis, facets)
+            || !self.outside_debounce(config, now_millis)
+        {
             return WalletRealmLifecycleDecision::Ignored;
         }
         if periodic
@@ -321,7 +325,16 @@ impl WalletRealmLifecyclePolicy {
     fn outside_debounce(&self, config: WalletRealmLifecyclePolicyConfig, now_millis: u64) -> bool {
         self.last_request_millis
             .is_none_or(|last| now_millis.saturating_sub(last) >= config.debounce_millis)
-            && self
+    }
+
+    fn stale_enough(
+        &self,
+        config: WalletRealmLifecyclePolicyConfig,
+        now_millis: u64,
+        facets: WalletRealmReconciliationState,
+    ) -> bool {
+        is_stale(facets)
+            || self
                 .last_fresh_millis
                 .is_none_or(|last| now_millis.saturating_sub(last) >= config.stale_age_millis)
     }
@@ -444,12 +457,59 @@ mod tests {
             policy.reduce(
                 config,
                 WalletRealmLifecycleInput::Foreground {
-                    now_millis: 50_000,
+                    now_millis: 20_000,
                     facets: fresh()
                 }
             ),
             WalletRealmLifecycleDecision::Ignored
         );
+    }
+
+    #[test]
+    fn current_facets_age_from_the_last_successful_reconciliation() {
+        let config =
+            WalletRealmLifecyclePolicyConfig::new(1, 10, 1, 10, 2, 0).expect("valid bounds");
+        let mut policy = WalletRealmLifecyclePolicy::default();
+        let active = identity("preprod");
+        let _ = policy.reduce(
+            config,
+            WalletRealmLifecycleInput::Initialized {
+                identity: active.clone(),
+                now_millis: 0,
+                facets: fresh(),
+            },
+        );
+        let _ = policy.reduce(
+            config,
+            WalletRealmLifecycleInput::ReconciliationFinished {
+                identity: active,
+                sequence: 1,
+                now_millis: 1,
+                facets: fresh(),
+                succeeded: true,
+            },
+        );
+
+        assert_eq!(
+            policy.reduce(
+                config,
+                WalletRealmLifecycleInput::PeriodicTick {
+                    now_millis: 10,
+                    facets: fresh(),
+                },
+            ),
+            WalletRealmLifecycleDecision::Ignored
+        );
+        assert!(matches!(
+            policy.reduce(
+                config,
+                WalletRealmLifecycleInput::PeriodicTick {
+                    now_millis: 11,
+                    facets: fresh(),
+                },
+            ),
+            WalletRealmLifecycleDecision::Request(_)
+        ));
     }
 
     #[test]
