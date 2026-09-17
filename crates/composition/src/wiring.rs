@@ -155,26 +155,27 @@ use oxid_wallet_application::{
     GetWalletTransferDraftUseCase, GetWalletTransferSubmissionStatusUseCase,
     InitializeWalletSecurityUseCase, ListWalletKeysUseCase, ListWalletNetworksUseCase,
     ListWalletProfilesService, ListWalletTransferSubmissionsUseCase, LockWalletUseCase,
-    PortableWalletBackupDocumentPort, PrepareShieldedWalletTransferUseCase,
-    PrepareWalletDustRegistrationUseCase, PrepareWalletTransferUseCase,
-    ReconcileSelectedWalletRealmUseCase, ReconcileWalletDustRegistrationSubmissionUseCase,
-    ReconcileWalletRealmLifecycleUseCase, ReconcileWalletTransferSubmissionUseCase,
-    RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupUseCase,
-    RecoverPortableWalletBackupUseCase, SelectWalletNetworkUseCase, SelectWalletProfileService,
-    SelectedWalletRealmRuntime, SelectedWalletRealmSyncService, SignWalletDataUseCase,
-    StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
-    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferUseCase,
-    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
-    WalletAccountDerivationPort, WalletAccountDerivationService, WalletAccountReadPort,
-    WalletAccountService, WalletBackupReceiptRepository, WalletBackupReceiptService,
-    WalletDustRegistrationService, WalletDustSyncPort, WalletDustSyncService,
-    WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
-    WalletNetworkSelectionObserver, WalletNetworkService, WalletOnboardingService,
-    WalletPortableBackupPort, WalletPortableBackupService, WalletProfileAssociationRepository,
-    WalletProfileRepository, WalletProtectionPort, WalletProtectionService, WalletRealmFacetState,
-    WalletRealmLifecycleService, WalletRealmReconciliationState, WalletRootRecoveryPort,
-    WalletRootRecoveryService, WalletShieldedSyncPort, WalletShieldedSyncService,
-    WalletTransactionPort, WalletTransactionService,
+    ManageWalletActionWatchUseCase, PortableWalletBackupDocumentPort,
+    PrepareShieldedWalletTransferUseCase, PrepareWalletDustRegistrationUseCase,
+    PrepareWalletTransferUseCase, ReconcileSelectedWalletRealmUseCase,
+    ReconcileWalletDustRegistrationSubmissionUseCase, ReconcileWalletRealmLifecycleUseCase,
+    ReconcileWalletTransferSubmissionUseCase, RecordWalletBackupReceiptUseCase,
+    RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupUseCase,
+    SelectWalletNetworkUseCase, SelectWalletProfileService, SelectedWalletRealmRuntime,
+    SelectedWalletRealmSyncService, SignWalletDataUseCase, StartWalletDustSyncUseCase,
+    StartWalletShieldedSyncUseCase, SubmitWalletDustRegistrationUseCase,
+    SubmitWalletTransferUseCase, SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase,
+    UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
+    WalletAccountReadPort, WalletAccountService, WalletBackupReceiptRepository,
+    WalletBackupReceiptService, WalletDustRegistrationService, WalletDustSyncPort,
+    WalletDustSyncService, WalletJubjubChallengeSigningPort, WalletKeyOperationPort,
+    WalletKeyService, WalletNetworkPort, WalletNetworkSelectionObserver, WalletNetworkService,
+    WalletOnboardingService, WalletPortableBackupPort, WalletPortableBackupService,
+    WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
+    WalletProtectionService, WalletRealmFacetState, WalletRealmLifecycleService,
+    WalletRealmReconciliationState, WalletRootRecoveryPort, WalletRootRecoveryService,
+    WalletShieldedSyncPort, WalletShieldedSyncService, WalletTransactionPort,
+    WalletTransactionService,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -945,15 +946,18 @@ where
         selected_realm_sync.clone();
     let selected_realm_reconciliation: Arc<dyn ReconcileSelectedWalletRealmUseCase> =
         selected_realm_sync.clone();
+    let wallet_realm_lifecycle = Arc::new(WalletRealmLifecycleService::new(
+        selected_realm_reconciliation,
+        WalletRealmReconciliationState {
+            account: WalletRealmFacetState::Missing,
+            dust: WalletRealmFacetState::Missing,
+            shielded: WalletRealmFacetState::Missing,
+        },
+    ));
     let reconcile_wallet_realm_lifecycle: Arc<dyn ReconcileWalletRealmLifecycleUseCase> =
-        Arc::new(WalletRealmLifecycleService::new(
-            selected_realm_reconciliation,
-            WalletRealmReconciliationState {
-                account: WalletRealmFacetState::Missing,
-                dust: WalletRealmFacetState::Missing,
-                shielded: WalletRealmFacetState::Missing,
-            },
-        ));
+        wallet_realm_lifecycle.clone();
+    let manage_wallet_action_watch: Arc<dyn ManageWalletActionWatchUseCase> =
+        wallet_realm_lifecycle;
     let cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase> =
         selected_realm_sync.clone();
     let get_wallet_operation_timeline: Arc<dyn GetWalletOperationTimelineUseCase> =
@@ -1118,6 +1122,7 @@ where
         sync_selected_wallet_realm,
         get_selected_wallet_realm_sync,
         reconcile_wallet_realm_lifecycle,
+        manage_wallet_action_watch,
         cancel_selected_wallet_realm_sync,
         get_wallet_operation_timeline,
         get_wallet_dust_sync_status,

@@ -114,6 +114,46 @@ pub trait ReconcileWalletRealmLifecycleUseCase: Send + Sync {
     fn status(&self) -> Result<WalletRealmLifecycleStatus, WalletRealmLifecycleError>;
 }
 
+/// Presentation-neutral control surface for the action watch owned by the
+/// selected-realm lifecycle service.
+///
+/// Adapters retain the returned handle and must present it with every later
+/// transition. This keeps delayed work from an older realm or admission from
+/// settling the current watch.
+pub trait ManageWalletActionWatchUseCase: Send + Sync {
+    fn admit(
+        &self,
+        watch: WalletActionWatch,
+        deadline_millis: u64,
+        now_millis: u64,
+    ) -> Result<Option<WalletActionWatchHandle>, WalletRealmLifecycleError>;
+
+    fn observe(
+        &self,
+        handle: WalletActionWatchHandle,
+        observation: WalletActionWatchObservation,
+        now_millis: u64,
+    ) -> Result<(), WalletRealmLifecycleError>;
+
+    fn timeout(
+        &self,
+        handle: WalletActionWatchHandle,
+        now_millis: u64,
+    ) -> Result<(), WalletRealmLifecycleError>;
+
+    fn cancel(&self, handle: WalletActionWatchHandle) -> Result<(), WalletRealmLifecycleError>;
+
+    fn offline(&self, handle: WalletActionWatchHandle) -> Result<(), WalletRealmLifecycleError>;
+
+    fn degraded(&self, handle: WalletActionWatchHandle) -> Result<(), WalletRealmLifecycleError>;
+
+    fn suspend(&self, handle: WalletActionWatchHandle) -> Result<(), WalletRealmLifecycleError>;
+
+    fn resume(&self, handle: WalletActionWatchHandle) -> Result<(), WalletRealmLifecycleError>;
+
+    fn projection(&self) -> Result<Option<WalletActionWatchProjection>, WalletRealmLifecycleError>;
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct WalletRealmLifecycleCheckpoint {
     identity: Option<WalletRealmLifecycleIdentity>,
@@ -360,6 +400,30 @@ impl WalletRealmLifecycleService {
         Ok(())
     }
 
+    pub fn offline_action_watch(
+        &self,
+        handle: WalletActionWatchHandle,
+    ) -> Result<(), WalletRealmLifecycleError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
+        state.action_watch.offline(handle);
+        Ok(())
+    }
+
+    pub fn degrade_action_watch(
+        &self,
+        handle: WalletActionWatchHandle,
+    ) -> Result<(), WalletRealmLifecycleError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
+        state.action_watch.degraded(handle);
+        Ok(())
+    }
+
     pub fn suspend_action_watch(
         &self,
         handle: WalletActionWatchHandle,
@@ -490,6 +554,58 @@ impl WalletRealmLifecycleService {
                 settlement,
             })
         })
+    }
+}
+
+impl ManageWalletActionWatchUseCase for WalletRealmLifecycleService {
+    fn admit(
+        &self,
+        watch: WalletActionWatch,
+        deadline_millis: u64,
+        now_millis: u64,
+    ) -> Result<Option<WalletActionWatchHandle>, WalletRealmLifecycleError> {
+        self.admit_action_watch(watch, deadline_millis, now_millis)
+    }
+
+    fn observe(
+        &self,
+        handle: WalletActionWatchHandle,
+        observation: WalletActionWatchObservation,
+        now_millis: u64,
+    ) -> Result<(), WalletRealmLifecycleError> {
+        self.observe_action_watch(handle, observation, now_millis)
+    }
+
+    fn timeout(
+        &self,
+        handle: WalletActionWatchHandle,
+        now_millis: u64,
+    ) -> Result<(), WalletRealmLifecycleError> {
+        self.timeout_action_watch(handle, now_millis)
+    }
+
+    fn cancel(&self, handle: WalletActionWatchHandle) -> Result<(), WalletRealmLifecycleError> {
+        self.cancel_action_watch(handle)
+    }
+
+    fn offline(&self, handle: WalletActionWatchHandle) -> Result<(), WalletRealmLifecycleError> {
+        self.offline_action_watch(handle)
+    }
+
+    fn degraded(&self, handle: WalletActionWatchHandle) -> Result<(), WalletRealmLifecycleError> {
+        self.degrade_action_watch(handle)
+    }
+
+    fn suspend(&self, handle: WalletActionWatchHandle) -> Result<(), WalletRealmLifecycleError> {
+        self.suspend_action_watch(handle)
+    }
+
+    fn resume(&self, handle: WalletActionWatchHandle) -> Result<(), WalletRealmLifecycleError> {
+        self.resume_action_watch(handle)
+    }
+
+    fn projection(&self) -> Result<Option<WalletActionWatchProjection>, WalletRealmLifecycleError> {
+        self.action_watch()
     }
 }
 
