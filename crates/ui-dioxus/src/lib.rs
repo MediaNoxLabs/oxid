@@ -5965,6 +5965,7 @@ fn AccountSyncCard(
                             });
                             let services = action_services.clone();
                             let profile_id = action_profile.clone();
+                            let retained = retained_realm.clone();
                             spawn(async move {
                                 let command = SelectedWalletRealmSyncCommand {
                                     profile_id: profile_id.clone(),
@@ -5982,7 +5983,7 @@ fn AccountSyncCard(
                                             &action_state.read(),
                                             &updated,
                                         ) {
-                                            finish_account_sync_card_action(action_state, None);
+                                            finish_account_sync_card_action(action_state, &retained, None);
                                             return;
                                         }
                                         let should_poll = updated.observation.poll_after().is_some();
@@ -6007,10 +6008,12 @@ fn AccountSyncCard(
                                     }
                                     Ok(Err(error)) => finish_account_sync_card_action(
                                         action_state,
+                                        &retained,
                                         Some(error.to_string()),
                                     ),
                                     Err(error) => finish_account_sync_card_action(
                                         action_state,
+                                        &retained,
                                         Some(error.to_string()),
                                     ),
                                 }

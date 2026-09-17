@@ -198,6 +198,7 @@ pub(super) fn account_sync_card_accepts_projection(
 
 pub(super) fn finish_account_sync_card_action(
     mut state: Signal<AccountSyncCardState>,
+    expected: &SelectedWalletRealmProjection,
     error: Option<String>,
 ) {
     let next = match state.read().clone() {
@@ -205,12 +206,16 @@ pub(super) fn finish_account_sync_card_action(
             realm,
             operation_error,
             ..
-        } => Some(AccountSyncCardState::Ready {
-            realm,
-            action_busy: false,
-            operation_error: error.or(operation_error),
-        }),
-        AccountSyncCardState::Loading | AccountSyncCardState::Failed(_) => None,
+        } if realm.identity == expected.identity && realm.revision >= expected.revision => {
+            Some(AccountSyncCardState::Ready {
+                realm,
+                action_busy: false,
+                operation_error: error.or(operation_error),
+            })
+        }
+        AccountSyncCardState::Loading
+        | AccountSyncCardState::Ready { .. }
+        | AccountSyncCardState::Failed(_) => None,
     };
     if let Some(next) = next {
         state.set(next);
