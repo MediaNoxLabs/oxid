@@ -5,6 +5,8 @@
 //! Adapters supply observations and monotonic time. This module neither polls
 //! transport nor stores transaction payloads.
 
+use std::{error::Error, fmt};
+
 use oxid_wallet_domain::{ChainAccountId, ChainTransactionId};
 
 use crate::WalletRealmLifecycleIdentity;
@@ -32,6 +34,61 @@ pub enum WalletActionWatch {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletActionWatchInputError {
+    InvalidTransaction,
+    InvalidAccount,
+}
+
+impl fmt::Display for WalletActionWatchInputError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidTransaction => "wallet action transaction identifier is invalid",
+            Self::InvalidAccount => "wallet action account identifier is invalid",
+        })
+    }
+}
+
+impl Error for WalletActionWatchInputError {}
+
+/// Payload-free action category retained by projections so incoming adapters
+/// can show a watch only in the journey that owns it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletActionWatchKind {
+    SubmittedTransaction,
+    IncomingArrival,
+}
+
+impl WalletActionWatch {
+    pub fn submitted_transaction(
+        transaction_id: impl AsRef<str>,
+    ) -> Result<Self, WalletActionWatchInputError> {
+        ChainTransactionId::parse(transaction_id.as_ref().to_owned())
+            .map(|transaction| Self::SubmittedTransaction { transaction })
+            .map_err(|_| WalletActionWatchInputError::InvalidTransaction)
+    }
+
+    pub fn incoming_arrival(
+        account_id: impl AsRef<str>,
+        starting_checkpoint: u64,
+    ) -> Result<Self, WalletActionWatchInputError> {
+        ChainAccountId::parse(account_id.as_ref().to_owned())
+            .map(|account| Self::IncomingArrival {
+                account,
+                starting_checkpoint,
+            })
+            .map_err(|_| WalletActionWatchInputError::InvalidAccount)
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> WalletActionWatchKind {
+        match self {
+            Self::SubmittedTransaction { .. } => WalletActionWatchKind::SubmittedTransaction,
+            Self::IncomingArrival { .. } => WalletActionWatchKind::IncomingArrival,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WalletActionWatchObservation {
     SubmittedTransaction {
@@ -41,6 +98,28 @@ pub enum WalletActionWatchObservation {
         account: ChainAccountId,
         checkpoint: u64,
     },
+}
+
+impl WalletActionWatchObservation {
+    pub fn submitted_transaction(
+        transaction_id: impl AsRef<str>,
+    ) -> Result<Self, WalletActionWatchInputError> {
+        ChainTransactionId::parse(transaction_id.as_ref().to_owned())
+            .map(|transaction| Self::SubmittedTransaction { transaction })
+            .map_err(|_| WalletActionWatchInputError::InvalidTransaction)
+    }
+
+    pub fn incoming_arrival(
+        account_id: impl AsRef<str>,
+        checkpoint: u64,
+    ) -> Result<Self, WalletActionWatchInputError> {
+        ChainAccountId::parse(account_id.as_ref().to_owned())
+            .map(|account| Self::IncomingArrival {
+                account,
+                checkpoint,
+            })
+            .map_err(|_| WalletActionWatchInputError::InvalidAccount)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +143,7 @@ impl WalletActionWatchState {
 /// Payload-free projection suitable for UI or headless adapters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WalletActionWatchProjection {
+    pub kind: WalletActionWatchKind,
     pub state: WalletActionWatchState,
     pub realm_generation: u64,
 }
@@ -106,10 +186,12 @@ impl WalletActionWatchRuntime {
         deadline_millis: u64,
         now_millis: u64,
     ) -> Option<WalletActionWatchHandle> {
+        let kind = watch.kind();
         self.finish(WalletActionWatchState::Superseded);
         self.suspended = false;
         let Some(identity) = self.identity.clone() else {
             self.projection = Some(WalletActionWatchProjection {
+                kind,
                 state: WalletActionWatchState::Degraded,
                 realm_generation: self.generation,
             });
@@ -117,6 +199,7 @@ impl WalletActionWatchRuntime {
         };
         if deadline_millis <= now_millis {
             self.projection = Some(WalletActionWatchProjection {
+                kind,
                 state: WalletActionWatchState::Expired,
                 realm_generation: self.generation,
             });
@@ -134,6 +217,7 @@ impl WalletActionWatchRuntime {
             deadline_millis,
         });
         self.projection = Some(WalletActionWatchProjection {
+            kind,
             state: WalletActionWatchState::Waiting,
             realm_generation: self.generation,
         });
@@ -217,6 +301,7 @@ impl WalletActionWatchRuntime {
             debug_assert_eq!(self.identity.as_ref(), Some(&active.identity));
             self.suspended = false;
             self.projection = Some(WalletActionWatchProjection {
+                kind: active.watch.kind(),
                 state,
                 realm_generation: active.handle.realm_generation,
             });
@@ -262,6 +347,26 @@ fn matches_watch(watch: &WalletActionWatch, observation: &WalletActionWatchObser
 mod tests {
     use super::*;
 
+    #[test]
+    fn public_constructors_reject_invalid_identifiers() {
+        assert_eq!(
+            WalletActionWatch::submitted_transaction(""),
+            Err(WalletActionWatchInputError::InvalidTransaction)
+        );
+        assert_eq!(
+            WalletActionWatch::incoming_arrival("", 0),
+            Err(WalletActionWatchInputError::InvalidAccount)
+        );
+        assert_eq!(
+            WalletActionWatchObservation::submitted_transaction(""),
+            Err(WalletActionWatchInputError::InvalidTransaction)
+        );
+        assert_eq!(
+            WalletActionWatchObservation::incoming_arrival("", 1),
+            Err(WalletActionWatchInputError::InvalidAccount)
+        );
+    }
+
     fn realm(name: &str) -> WalletRealmLifecycleIdentity {
         WalletRealmLifecycleIdentity::parse("profile", name).expect("valid realm")
     }
@@ -292,6 +397,10 @@ mod tests {
         assert_eq!(
             runtime.projection().unwrap().state,
             WalletActionWatchState::Waiting
+        );
+        assert_eq!(
+            runtime.projection().unwrap().kind,
+            WalletActionWatchKind::SubmittedTransaction
         );
         runtime.observe(
             handle,
@@ -341,6 +450,10 @@ mod tests {
         assert_eq!(
             runtime.projection().unwrap().state,
             WalletActionWatchState::Waiting
+        );
+        assert_eq!(
+            runtime.projection().unwrap().kind,
+            WalletActionWatchKind::IncomingArrival
         );
         runtime.observe(
             handle,

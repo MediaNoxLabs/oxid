@@ -6161,6 +6161,7 @@ dependencies = [
  "dioxus-document",
  "futures",
  "oxid-capabilities-application",
+ "oxid-composition",
  "oxid-credential-application",
  "oxid-diagnostics-application",
  "oxid-identity-application",

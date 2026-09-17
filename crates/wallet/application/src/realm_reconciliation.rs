@@ -476,6 +476,7 @@ fn plan_family(
             | WalletRealmFacetState::Missing
             | WalletRealmFacetState::Blocked,
         )
+        | (WalletRealmReconciliationTrigger::ActionPreflight, WalletRealmFacetState::Current)
         | (
             WalletRealmReconciliationTrigger::Initial
             | WalletRealmReconciliationTrigger::ActionPreflight,
@@ -530,6 +531,19 @@ mod tests {
         );
         assert_eq!(
             manual.effects(),
+            [
+                WalletRealmReconciliationEffect::SyncAccount,
+                WalletRealmReconciliationEffect::SyncDust,
+                WalletRealmReconciliationEffect::SyncShielded,
+            ]
+        );
+
+        let preflight = WalletRealmReconciliationPlanner::plan(
+            WalletRealmReconciliationTrigger::ActionPreflight,
+            state,
+        );
+        assert_eq!(
+            preflight.effects(),
             [
                 WalletRealmReconciliationEffect::SyncAccount,
                 WalletRealmReconciliationEffect::SyncDust,
@@ -709,6 +723,7 @@ mod tests {
             [
                 WalletRealmCoordinatorEffect::new(2, WalletRealmReconciliationEffect::SyncAccount,),
                 WalletRealmCoordinatorEffect::new(2, WalletRealmReconciliationEffect::SyncDust,),
+                WalletRealmCoordinatorEffect::new(2, WalletRealmReconciliationEffect::SyncShielded,),
             ]
         );
     }

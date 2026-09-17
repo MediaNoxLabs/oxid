@@ -55,5 +55,8 @@ zeroize.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 futures.workspace = true
 
+[dev-dependencies]
+oxid-composition.workspace = true
+
 [lints]
 workspace = true

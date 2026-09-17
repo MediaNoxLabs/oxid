@@ -74,6 +74,16 @@ pub(super) async fn explicit_retry(
     command: SelectedWalletRealmSyncCommand,
 ) -> Result<SelectedWalletRealmProjection, String> {
     let lifecycle = services.reconcile_wallet_realm_lifecycle();
+    let (identity, status) = selected_identity_and_status(&services, &command.profile_id)
+        .await
+        .map_err(|_| "selected wallet realm is unavailable".to_owned())?;
+    if let Some(input) = preflight_selection_input(identity, &status, monotonic_millis()) {
+        execute_with_timeout(Arc::clone(&lifecycle), input)
+            .await
+            .map_err(|()| {
+                "selected-realm initialization did not settle before its deadline".to_owned()
+            })?;
+    }
     let status = lifecycle.status().map_err(|error| error.to_string())?;
     let result = execute_with_timeout(
         Arc::clone(&lifecycle),
@@ -84,10 +94,8 @@ pub(super) async fn explicit_retry(
     )
     .await
     .map_err(|()| "selected-realm reconciliation did not settle before its deadline".to_owned())?;
-    if matches!(
-        result.decision,
-        oxid_wallet_application::WalletRealmLifecycleDecision::Retained(_)
-    ) {
+    let status_after = lifecycle.status().map_err(|error| error.to_string())?;
+    if preflight_requires_idle_wait(&result, &status_after) {
         await_lifecycle_idle(Arc::clone(&lifecycle)).await?;
     }
     let projection = result.projection.map_or_else(
@@ -100,6 +108,38 @@ pub(super) async fn explicit_retry(
         Ok,
     )?;
     Ok(projection)
+}
+
+fn preflight_selection_input(
+    identity: WalletRealmLifecycleIdentity,
+    status: &WalletRealmLifecycleStatus,
+    now_millis: u64,
+) -> Option<WalletRealmLifecycleInput> {
+    if status.identity.as_ref() == Some(&identity) {
+        None
+    } else if status.identity.is_some() {
+        Some(WalletRealmLifecycleInput::RealmSelected {
+            identity,
+            now_millis,
+            facets: missing_facets(),
+        })
+    } else {
+        Some(WalletRealmLifecycleInput::Initialized {
+            identity,
+            now_millis,
+            facets: missing_facets(),
+        })
+    }
+}
+
+fn preflight_requires_idle_wait(
+    result: &WalletRealmLifecycleResult,
+    status: &WalletRealmLifecycleStatus,
+) -> bool {
+    matches!(
+        result.decision,
+        oxid_wallet_application::WalletRealmLifecycleDecision::Retained(_)
+    ) || status.in_flight.is_some()
 }
 
 async fn await_lifecycle_idle(
@@ -439,5 +479,47 @@ mod tests {
         scheduled.in_flight = None;
         scheduled.in_flight_deadline_millis = None;
         assert_eq!(next_driver_wait_millis(&scheduled, 1_000), None);
+    }
+
+    #[test]
+    fn duplicate_preflight_waits_for_the_already_active_request() {
+        let selected = identity("profile_one", "undeployed");
+        let request = oxid_wallet_application::WalletRealmLifecycleRequest {
+            identity: selected.clone(),
+            trigger: oxid_wallet_application::WalletRealmReconciliationTrigger::ActionPreflight,
+            sequence: 1,
+        };
+        let mut active = status(Some(selected));
+        active.in_flight = Some(request);
+        let ignored = WalletRealmLifecycleResult {
+            decision: oxid_wallet_application::WalletRealmLifecycleDecision::Ignored,
+            projection: None,
+            settlement: None,
+        };
+
+        assert!(preflight_requires_idle_wait(&ignored, &active));
+    }
+
+    #[test]
+    fn action_preflight_establishes_the_selected_realm_before_refreshing() {
+        let selected = identity("profile_one", "undeployed");
+        assert!(matches!(
+            preflight_selection_input(selected.clone(), &status(None), 1),
+            Some(WalletRealmLifecycleInput::Initialized { identity, .. })
+                if identity == selected
+        ));
+        assert!(matches!(
+            preflight_selection_input(
+                selected.clone(),
+                &status(Some(identity("profile_two", "preprod"))),
+                2,
+            ),
+            Some(WalletRealmLifecycleInput::RealmSelected { identity, .. })
+                if identity == selected
+        ));
+        assert_eq!(
+            preflight_selection_input(selected.clone(), &status(Some(selected)), 3),
+            None
+        );
     }
 }

@@ -2628,6 +2628,76 @@ textarea:focus-visible {
   margin-top: var(--space-4);
 }
 
+.action-watch-status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-4);
+}
+
+.action-watch-status__mark {
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-top: 0.3rem;
+  border-radius: var(--radius-pill);
+  background: var(--text-muted);
+}
+
+.action-watch-status div {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.action-watch-status p,
+.action-watch-status strong {
+  margin: 0;
+}
+
+.action-watch-status strong {
+  color: var(--text-strong);
+  font-size: var(--font-label);
+}
+
+.action-watch-status p:not(.card-eyebrow) {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  line-height: 1.45;
+}
+
+.action-watch-status.is-waiting {
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.action-watch-status.is-waiting .action-watch-status__mark {
+  background: var(--accent);
+  animation: pulse calc(var(--motion-slow) * 4) ease-in-out infinite;
+}
+
+.action-watch-status.is-confirmed {
+  border-color: color-mix(in srgb, var(--positive) 28%, transparent);
+}
+
+.action-watch-status.is-confirmed .action-watch-status__mark {
+  background: var(--positive);
+}
+
+.action-watch-status.needs-attention {
+  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+}
+
+.action-watch-status.needs-attention .action-watch-status__mark {
+  background: var(--warning);
+}
+
+.action-watch-status.is-muted .action-watch-status__mark {
+  opacity: 0.55;
+}
+
 .development-card {
   border-color: color-mix(in srgb, var(--warning) 26%, transparent);
   background:
@@ -3605,6 +3675,12 @@ select:focus-visible {
   }
 }
 
+@keyframes pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
 @media (min-width: 42rem) {
   .app-shell {
     padding-top: calc(var(--space-5) + env(safe-area-inset-top));
@@ -3739,7 +3815,8 @@ select:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .page-content,
   .receive-sheet,
-  .loading-mark {
+  .loading-mark,
+  .action-watch-status.is-waiting .action-watch-status__mark {
     animation: none;
   }
 

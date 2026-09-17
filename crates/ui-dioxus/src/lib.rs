@@ -31,6 +31,7 @@ mod send_recipient;
 mod wallet_onboarding;
 mod wallet_realm_lifecycle;
 mod wallet_realm_sync_services;
+pub use wallet_realm_sync_services::{WalletAccountUiServices, WalletRealmSyncUiServices};
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
 
@@ -58,6 +59,10 @@ use receive::standalone_funding_action;
 use receive::{
     default_receive_kind, grouped_address_preview, protected_receive_addresses,
     public_export_message, render_qr_svg,
+};
+use selected_realm_sync::action_watch::{
+    ReceiveBoundaryStatus, WalletActionWatchContext, WalletActionWatchStatus,
+    receive_address_ready, reset_receive_watch, start_receive_watch, use_action_watch_projection,
 };
 use send_recipient::{
     SendWizardProgress, SendWizardStep, is_public_recipient_candidate, scanned_recipient_update,
@@ -129,18 +134,16 @@ use oxid_wallet_application::WalletAddressView;
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationCommand, AuthorizeWalletDustRegistrationUseCase,
     AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase,
-    CancelSelectedWalletRealmSyncUseCase, CancelWalletDustRegistrationSubmissionCommand,
-    CancelWalletDustRegistrationSubmissionUseCase, CancelWalletDustSyncUseCase,
-    CancelWalletOnboardingUseCase, CancelWalletShieldedSyncUseCase,
+    CancelWalletDustRegistrationSubmissionCommand, CancelWalletDustRegistrationSubmissionUseCase,
+    CancelWalletDustSyncUseCase, CancelWalletOnboardingUseCase, CancelWalletShieldedSyncUseCase,
     CancelWalletTransferSubmissionUseCase, CompleteWalletOnboardingUseCase,
     CompleteWalletRecoverySummary, CreateWalletProfileCommand, CreateWalletProfileUseCase,
     DeriveWalletAccountCommand, DeriveWalletAccountUseCase, EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY,
     EXPORT_COMPLETE_WALLET_BACKUP_TITLE, ExportCompleteWalletBackupCommand,
-    ExportCompleteWalletBackupUseCase, GetActiveWalletProfileUseCase,
-    GetSelectedWalletRealmSyncUseCase, GetWalletAccountUseCase, GetWalletBackupReceiptUseCase,
-    GetWalletDustRegistrationCommand, GetWalletDustRegistrationStatusCommand,
-    GetWalletDustRegistrationStatusUseCase, GetWalletDustRegistrationUseCase,
-    GetWalletDustSyncStatusUseCase, GetWalletOperationTimelineUseCase,
+    ExportCompleteWalletBackupUseCase, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
+    GetWalletBackupReceiptUseCase, GetWalletDustRegistrationCommand,
+    GetWalletDustRegistrationStatusCommand, GetWalletDustRegistrationStatusUseCase,
+    GetWalletDustRegistrationUseCase, GetWalletDustSyncStatusUseCase,
     GetWalletSecurityStatusUseCase, GetWalletShieldedSyncStatusUseCase,
     GetWalletTransferDraftUseCase, GetWalletTransferSubmissionStatusUseCase,
     InitializeWalletSecurityUseCase, ListWalletNetworksUseCase, ListWalletProfilesUseCase,
@@ -153,24 +156,23 @@ use oxid_wallet_application::{
     RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY, RECOVER_COMPLETE_WALLET_BACKUP_TITLE,
     RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY, RECOVER_PORTABLE_WALLET_BACKUP_TITLE,
     ReconcileWalletDustRegistrationSubmissionCommand,
-    ReconcileWalletDustRegistrationSubmissionUseCase, ReconcileWalletRealmLifecycleUseCase,
-    ReconcileWalletTransferSubmissionUseCase, RecordWalletBackupReceiptUseCase,
-    RecoverCompleteWalletBackupCommand, RecoverCompleteWalletBackupUseCase,
-    RecoverPortableWalletBackupCommand, RecoverPortableWalletBackupUseCase,
-    SelectWalletNetworkCommand, SelectWalletNetworkUseCase, SelectWalletProfileCommand,
-    SelectWalletProfileUseCase, SelectedWalletRealmProjection, SelectedWalletRealmSyncCommand,
-    SelectedWalletRealmSyncView, SensitiveOperationConfirmation, StartWalletDustSyncUseCase,
-    StartWalletShieldedSyncUseCase, SubmitWalletDustRegistrationCommand,
-    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferCommand, SubmitWalletTransferUseCase,
-    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
-    WalletAccountError, WalletAccountPortError, WalletAccountQuery, WalletAccountView,
-    WalletBackupReceiptCommand, WalletBackupReceiptView, WalletDustRegistrationAssetView,
-    WalletDustRegistrationPreviewView, WalletDustRegistrationSubmissionStatusView,
-    WalletDustSyncView, WalletNetworkListView, WalletProfileSecurityCommand, WalletProfileView,
-    WalletRealmFamilyView, WalletRecoverySecret, WalletSecurityStatusView, WalletShieldedSyncView,
-    WalletSyncStatusView, WalletTransferDraftQuery, WalletTransferPreviewView,
-    WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
-    WalletTransferSubmissionView,
+    ReconcileWalletDustRegistrationSubmissionUseCase, ReconcileWalletTransferSubmissionUseCase,
+    RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupCommand,
+    RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupCommand,
+    RecoverPortableWalletBackupUseCase, SelectWalletNetworkCommand, SelectWalletNetworkUseCase,
+    SelectWalletProfileCommand, SelectWalletProfileUseCase, SelectedWalletRealmProjection,
+    SelectedWalletRealmSyncCommand, SelectedWalletRealmSyncView, SensitiveOperationConfirmation,
+    StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
+    SubmitWalletDustRegistrationCommand, SubmitWalletDustRegistrationUseCase,
+    SubmitWalletTransferCommand, SubmitWalletTransferUseCase, SyncWalletAccountUseCase,
+    UnlockWalletUseCase, WalletAccountError, WalletAccountPortError, WalletAccountQuery,
+    WalletAccountView, WalletBackupReceiptCommand, WalletBackupReceiptView,
+    WalletDustRegistrationAssetView, WalletDustRegistrationPreviewView,
+    WalletDustRegistrationSubmissionStatusView, WalletDustSyncView, WalletNetworkListView,
+    WalletProfileSecurityCommand, WalletProfileView, WalletRealmFamilyView, WalletRecoverySecret,
+    WalletSecurityStatusView, WalletShieldedSyncView, WalletSyncStatusView,
+    WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionQuery,
+    WalletTransferSubmissionStatusView, WalletTransferSubmissionView,
 };
 #[cfg(feature = "preprod-observation")]
 use oxid_wallet_application::{
@@ -866,50 +868,6 @@ impl WalletSecurityUiServices {
     pub fn with_root_recovery(mut self, recovery: WalletRootRecoveryUiServices) -> Self {
         self.root_recovery = Some(recovery);
         self
-    }
-}
-
-/// Midnight account use cases consumed by the Assets page.
-#[derive(Clone)]
-pub struct WalletRealmSyncUiServices {
-    sync: Arc<dyn SyncSelectedWalletRealmUseCase>,
-    get: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
-    lifecycle: Arc<dyn ReconcileWalletRealmLifecycleUseCase>,
-    cancel: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
-    timeline: Arc<dyn GetWalletOperationTimelineUseCase>,
-}
-
-/// Midnight account use cases consumed by the Assets page.
-pub struct WalletAccountUiServices {
-    list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
-    select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
-    derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
-    get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
-    sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
-    realm_sync: WalletRealmSyncUiServices,
-    public_text_exporter: Arc<dyn PublicTextExportPort>,
-}
-
-impl WalletAccountUiServices {
-    #[must_use]
-    pub fn new(
-        list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
-        select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
-        derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
-        get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
-        sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
-        realm_sync: WalletRealmSyncUiServices,
-        public_text_exporter: Arc<dyn PublicTextExportPort>,
-    ) -> Self {
-        Self {
-            list_wallet_networks,
-            select_wallet_network,
-            derive_wallet_account,
-            get_wallet_account,
-            sync_wallet_account,
-            realm_sync,
-            public_text_exporter,
-        }
     }
 }
 
@@ -5079,13 +5037,20 @@ fn ReceiveSheet(
     let mut state = use_signal(|| ReceiveSheetState::Loading);
     let mut selected_kind = use_signal(|| None::<String>);
     let mut export_notice = use_signal(|| None::<String>);
+    let watch_session = use_signal(|| false);
+    let mut watch_boundary_ready = use_signal(|| false);
+    let watch_generation = use_signal(|| 0_u64);
     let profile_id = active_profile.id.clone();
+    let action_watch_projection =
+        use_action_watch_projection(services.clone(), WalletActionWatchContext::Receive);
     let services_for_load = services.clone();
     use_effect(move || {
         let services = services_for_load.clone();
         let profile_id = profile_id.clone();
         spawn(async move {
-            let next = run_ui_blocking(move || load_receive_sheet(&services, &profile_id))
+            let query_services = services.clone();
+            let query_profile = profile_id.clone();
+            let next = run_ui_blocking(move || load_receive_sheet(&query_services, &query_profile))
                 .await
                 .unwrap_or(ReceiveSheetState::Failed);
             if let ReceiveSheetState::Ready { account, .. } = &next {
@@ -5093,6 +5058,19 @@ fn ReceiveSheet(
             }
             state.set(next);
         });
+    });
+    let watch_services = services.clone();
+    let watch_profile = active_profile.id.clone();
+    use_effect(move || {
+        if let (Some(_), ReceiveSheetState::Ready { account, .. }) = (selected_kind(), state()) {
+            start_receive_watch(
+                watch_services.clone(),
+                watch_profile.clone(),
+                *account,
+                selected_kind,
+                (watch_session, watch_boundary_ready, watch_generation),
+            );
+        }
     });
 
     let content = match state.read().clone() {
@@ -5114,10 +5092,14 @@ fn ReceiveSheet(
                         let services = services.clone();
                         let profile_id = active_profile.id.clone();
                         export_notice.set(None);
+                        selected_kind.set(None);
+                        reset_receive_watch((watch_session, watch_boundary_ready, watch_generation));
                         state.set(ReceiveSheetState::Loading);
                         spawn(async move {
+                            let query_services = services.clone();
+                            let query_profile = profile_id.clone();
                             let next = run_ui_blocking(move || {
-                                load_receive_sheet(&services, &profile_id)
+                                load_receive_sheet(&query_services, &query_profile)
                             })
                             .await
                             .unwrap_or(ReceiveSheetState::Failed);
@@ -5197,15 +5179,10 @@ fn ReceiveSheet(
                 &account.network_id,
                 &selected,
             );
-            // The scanner ingress is composed in this slice, so the QR may use
-            // the closed versioned request. Copy/share remain raw-address
-            // fallbacks for other wallets.
             let qr_payload = receive_request.as_deref().unwrap_or(&selected.value);
             let qr = render_qr_svg(qr_payload);
-            let qr_label = format!(
-                "QR code for {} receive address",
-                ui::address_kind(&selected.kind)
-            );
+            let address_kind = ui::address_kind(&selected.kind);
+            let qr_label = format!("QR code for {address_kind} receive address");
             let preview = grouped_address_preview(&selected.value);
             #[cfg(feature = "standalone-deployment-profile")]
             let route_class = Some(
@@ -5247,6 +5224,7 @@ fn ReceiveSheet(
                                     aria_pressed: if selected { "true" } else { "false" },
                                     aria_label: "Use {ui::receive_address_tab(&address.kind)} receive address",
                                     onclick: move |_| {
+                                        watch_boundary_ready.set(false);
                                         selected_kind.set(Some(kind.clone()));
                                         export_notice.set(None);
                                     },
@@ -5256,65 +5234,69 @@ fn ReceiveSheet(
                         }
                     }
                 }
-                div { class: "receive-sheet__address",
-                    div {
-                        strong { "{ui::address_kind(&selected.kind)}" }
-                        p { "{ui::address_purpose(&selected.kind)}" }
-                    }
-                    div {
-                        class: "address-qr privacy-qr",
-                        role: "img",
-                        aria_label: "{qr_label}",
-                        if let Some(svg) = qr {
-                            div { class: "address-qr__frame", dangerous_inner_html: "{svg}" }
-                        } else {
-                            p { role: "alert", "This address could not be encoded as a QR code." }
+                if receive_address_ready(&selected.kind, watch_boundary_ready()) {
+                    div { class: "receive-sheet__address",
+                        div {
+                            strong { "{ui::address_kind(&selected.kind)}" }
+                            p { "{ui::address_purpose(&selected.kind)}" }
+                        }
+                        div {
+                            class: "address-qr privacy-qr",
+                            role: "img",
+                            aria_label: "{qr_label}",
+                            if let Some(svg) = qr {
+                                div { class: "address-qr__frame", dangerous_inner_html: "{svg}" }
+                            } else {
+                                p { role: "alert", "This address could not be encoded as a QR code." }
+                            }
+                        }
+                        code {
+                            class: "receive-sheet__preview privacy-value",
+                            aria_label: "Full validated raw {ui::address_kind(&selected.kind)} receive address {selected.value}",
+                            "{preview}"
+                        }
+                        if receive_request.is_some() {
+                            p { "The QR carries a versioned public NIGHT request; copy and share export the raw address shown." }
                         }
                     }
-                    code {
-                        class: "receive-sheet__preview privacy-value",
-                        aria_label: "Full validated raw {ui::address_kind(&selected.kind)} receive address {selected.value}",
-                        "{preview}"
+                    div { class: "receive-sheet__actions",
+                        button {
+                            class: "receive-sheet__action",
+                            r#type: "button",
+                            aria_label: "Copy {ui::address_kind(&selected.kind)} receive address",
+                            onclick: move |_| {
+                                let result = PublicReceiveAddress::new(copy_value.clone())
+                                    .and_then(|address| copy_exporter.copy_receive_address(address));
+                                export_notice.set(Some(public_export_message(result, false)));
+                            },
+                            "Copy address"
+                        }
+                        button {
+                            class: "receive-sheet__action",
+                            r#type: "button",
+                            aria_label: "Share {ui::address_kind(&selected.kind)} receive address",
+                            onclick: move |_| {
+                                let result = PublicReceiveAddress::new(share_value.clone())
+                                    .and_then(|address| share_exporter.share_receive_address(address));
+                                export_notice.set(Some(public_export_message(result, true)));
+                            },
+                            "Share"
+                        }
                     }
-                    if receive_request.is_some() {
-                        p { "The QR carries a versioned public NIGHT request; copy and share export the raw address shown." }
+                    if let Some(message) = export_notice.read().as_deref() {
+                        p { class: "address-export-notice", role: "status", "{message}" }
                     }
-                }
-                div { class: "receive-sheet__actions",
-                    button {
-                        class: "receive-sheet__action",
-                        r#type: "button",
-                        aria_label: "Copy {ui::address_kind(&selected.kind)} receive address",
-                        onclick: move |_| {
-                            let result = PublicReceiveAddress::new(copy_value.clone())
-                                .and_then(|address| copy_exporter.copy_receive_address(address));
-                            export_notice.set(Some(public_export_message(result, false)));
-                        },
-                        "Copy address"
+                    if let Some(action) = funding_action {
+                        {action}
                     }
-                    button {
-                        class: "receive-sheet__action",
-                        r#type: "button",
-                        aria_label: "Share {ui::address_kind(&selected.kind)} receive address",
-                        onclick: move |_| {
-                            let result = PublicReceiveAddress::new(share_value.clone())
-                                .and_then(|address| share_exporter.share_receive_address(address));
-                            export_notice.set(Some(public_export_message(result, true)));
-                        },
-                        "Share"
-                    }
-                }
-                if let Some(message) = export_notice.read().as_deref() {
-                    p { class: "address-export-notice", role: "status", "{message}" }
-                }
-                if let Some(action) = funding_action {
-                    {action}
+                } else {
+                    ReceiveBoundaryStatus { failed: watch_session() }
                 }
                 p { class: "receive-sheet__guarantee",
                     if receive_request.is_some() {
                         "QR: versioned public NIGHT request. Copy/share: validated raw address."
                     } else {
-                        "QR, copy, and share contain the protected address shown."
+                        "QR, copy, and share contain the protected address shown. Automatic arrival confirmation is shown only for Public NIGHT."
                     }
                 }
             }
@@ -5346,6 +5328,11 @@ fn ReceiveSheet(
                     aria_label: "Close Receive",
                     onclick: move |event| on_close.call(event),
                     "Close"
+                }
+            }
+            if watch_session() {
+                if let Some(projection) = action_watch_projection() {
+                    WalletActionWatchStatus { projection }
                 }
             }
             {content}
@@ -7106,8 +7093,11 @@ fn SendTransferPanel(
     let recipient_scan_busy = use_signal(|| false);
     let mut recipient_scan_notice = use_signal(|| None::<String>);
     let recipient_scanner = services.qr_scanner();
+    let action_watch_projection =
+        use_action_watch_projection(services.clone(), WalletActionWatchContext::Send);
+    let show_action_watch = matches!(*panel.read(), TransferPanelState::Submitted(_));
 
-    match panel.read().clone() {
+    let content = match panel.read().clone() {
         TransferPanelState::Editing => match wizard_step() {
             SendWizardStep::Recipient => {
                 let scan_busy = recipient_scan_busy();
@@ -7534,6 +7524,7 @@ fn SendTransferPanel(
                             panel.set(TransferPanelState::Submitting(submitting_preview.clone()));
                             let service = services.submit_wallet_transfer();
                             let drafts = services.get_wallet_transfer_draft();
+                            let action_watches = services.manage_wallet_action_watch();
                             let profile_id = profile_id.clone();
                             let draft_id = draft_id.clone();
                             let confirmation = confirmation.clone();
@@ -7549,7 +7540,13 @@ fn SendTransferPanel(
                                 })
                                 .await
                                 {
-                                    Ok(Ok(submitted)) => panel.set(TransferPanelState::Submitted(Box::new(submitted))),
+                                    Ok(Ok(submitted)) => {
+                                        selected_realm_sync::action_watch::record_included_transfer(
+                                            &action_watches,
+                                            &submitted.transaction_id,
+                                        );
+                                        panel.set(TransferPanelState::Submitted(Box::new(submitted)));
+                                    }
                                     Ok(Err(error)) => {
                                         let retained = drafts.execute(WalletTransferDraftQuery {
                                             profile_id,
@@ -7709,6 +7706,15 @@ fn SendTransferPanel(
             }
             }
         }
+    };
+
+    rsx! {
+        if show_action_watch {
+            if let Some(projection) = action_watch_projection() {
+                WalletActionWatchStatus { projection }
+            }
+        }
+        {content}
     }
 }
 
