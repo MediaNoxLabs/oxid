@@ -18,6 +18,7 @@ const DELIVERY_PROFILE_OPTION = "--delivery-profile";
 const PRE_MUTATION_ASSESSMENT_OPTION = "--pre-mutation-assessment";
 const OXID_REPOSITORY = "medianoxlabs/oxid";
 const OXID_SIZE_BUDGET_COMMAND = "scripts/dev-loops.mjs gate size-budget";
+const OXID_PR_CREATE_COMMAND = "scripts/dev-loops.mjs pr create";
 
 export function applyOxidSanctionedCommandOverrides(envelope) {
   const sanctionedCommands = envelope?.sanctionedCommands;
@@ -31,6 +32,10 @@ export function applyOxidSanctionedCommandOverrides(envelope) {
       reads: {
         ...(sanctionedCommands.reads ?? {}),
         "size-budget": OXID_SIZE_BUDGET_COMMAND,
+      },
+      lifecycle: {
+        ...(sanctionedCommands.lifecycle ?? {}),
+        "pr-create": OXID_PR_CREATE_COMMAND,
       },
     },
   };

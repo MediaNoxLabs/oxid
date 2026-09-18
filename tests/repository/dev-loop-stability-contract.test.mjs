@@ -1671,6 +1671,14 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
     envelope.sanctionedCommands.reads["size-budget"],
     "scripts/dev-loops.mjs gate size-budget",
   );
+  assert.equal(
+    envelope.sanctionedCommands.lifecycle["pr-create"],
+    "scripts/dev-loops.mjs pr create",
+  );
+  assert.notEqual(
+    envelope.sanctionedCommands.lifecycle["pr-create"],
+    "scripts/github/create-pr.mjs",
+  );
 
   const fastPathResult = await run([
     "loop", "build-envelope", `--input=${input}`,
