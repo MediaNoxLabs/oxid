@@ -332,9 +332,9 @@ the public control receipt. Re-requesting a review for the same head is rejected
 After clean review or safe issue-backed deferral, `review-control.mjs freeze`
 makes that exact head terminal. `review`, `ready`, and `push` assertions fail;
 CI observation, metrics, merge, closeout, and status remain allowed. PRs created
-from the current template carry `oxid-review-control-required-v1`, so guarded
-merge audits reject a missing or unfrozen control receipt. Older open PRs are
-grandfathered without silently rewriting their history.
+against a guarded factory branch require this control unconditionally, so a
+mutable PR body cannot opt out. Existing open PRs receive the same one-time
+control and freeze before guarded merge rather than being grandfathered.
 
 Create controlled debt from a reviewed local draft with the dry-run-first
 helper; the body must already contain Problem, Delivery target, Acceptance

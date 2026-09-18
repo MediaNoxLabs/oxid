@@ -1,5 +1,3 @@
-<!-- oxid-review-control-required-v1 -->
-
 # Overview
 
 <!-- What changed, why, and which user/capability boundary owns it? -->

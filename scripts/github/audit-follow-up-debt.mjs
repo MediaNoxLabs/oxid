@@ -7,16 +7,9 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 
 import { deliveryTargetFromIssueBody } from "../lib/delivery-target.mjs";
-import { validateFollowUpIssue } from "./review-triage.mjs";
+import { markdownSection, originPullRequest, validateFollowUpIssue } from "./review-triage.mjs";
 
-const ORIGIN_PR = /(?:PR\s+#|\/pull\/)([1-9]\d*)/iu;
 const ISSUE_REFERENCE = /#([1-9]\d*)/gu;
-
-function section(body, heading) {
-  const source = typeof body === "string" ? body : "";
-  const match = source.match(new RegExp(`^## ${heading}[ \\t]*$([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, "imu"));
-  return match?.[1] ?? "";
-}
 
 export function followUpDebtRow(issue, { now = Date.now(), staleDays = 30, dependencyStates = new Map() } = {}) {
   const validation = validateFollowUpIssue(issue, { requireOpen: false });
@@ -24,8 +17,9 @@ export function followUpDebtRow(issue, { now = Date.now(), staleDays = 30, depen
   const labels = Array.isArray(issue?.labels)
     ? issue.labels.map((label) => typeof label === "string" ? label : label?.name).filter(Boolean)
     : [];
-  const originPr = Number(body.match(ORIGIN_PR)?.[1] ?? 0) || null;
-  const dependencies = [...section(body, "Dependencies").matchAll(ISSUE_REFERENCE)]
+  const dependencySection = markdownSection(body, "Dependencies") ?? "";
+  const originPr = originPullRequest(dependencySection);
+  const dependencies = [...dependencySection.matchAll(ISSUE_REFERENCE)]
     .map((match) => Number(match[1])).filter((number) => number !== originPr);
   const uniqueDependencies = [...new Set(dependencies)].sort((left, right) => left - right);
   const createdAt = Date.parse(issue?.createdAt ?? "");
@@ -108,7 +102,7 @@ export function cli(argv = process.argv.slice(2)) {
   ]));
   const dependencyNumbers = new Set();
   for (const issue of issues) {
-    for (const match of section(issue.body, "Dependencies").matchAll(ISSUE_REFERENCE)) dependencyNumbers.add(Number(match[1]));
+    for (const match of (markdownSection(issue.body, "Dependencies") ?? "").matchAll(ISSUE_REFERENCE)) dependencyNumbers.add(Number(match[1]));
   }
   const dependencyStates = new Map();
   for (const number of dependencyNumbers) {
@@ -120,10 +114,9 @@ export function cli(argv = process.argv.slice(2)) {
   for (const issue of issues.filter((candidate) => candidate.state === "CLOSED")) {
     const evidence = JSON.parse(run([
       "issue", "view", String(issue.number), "--repo", options.repo,
-      "--json", "closedByPullRequestsReferences,comments",
+      "--json", "closedByPullRequestsReferences",
     ]));
     issue.closedByPullRequest = evidence.closedByPullRequestsReferences?.length > 0;
-    issue.deliveryEvidence = evidence.comments?.some((comment) => /\/pull\/[1-9]\d*/u.test(comment.body ?? "")) ?? false;
   }
   const result = auditFollowUpDebt(issues, { staleDays: options.staleDays, dependencyStates });
   if (options.json) process.stdout.write(`${JSON.stringify(result)}\n`);

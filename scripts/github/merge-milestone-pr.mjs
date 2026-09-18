@@ -130,14 +130,12 @@ export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaul
 
   const comments = ghJson(run, ["api", `repos/${options.repo}/issues/${options.pr}/comments`, "--paginate", "--slurp"], root, "read review triage comments").flat();
   const triage = currentTriageReceipt(comments, pr.headRefOid);
-  if (pr.body.includes("<!-- oxid-review-control-required-v1 -->")) {
-    const control = currentReviewControl(comments, pr.headRefOid, { required: true });
-    if (!control.frozen) throw new Error("review control has not frozen the exact head");
-    assertReviewActionAllowed(control, { headSha: pr.headRefOid, action: "merge" });
-    if (JSON.stringify([...control.followUpIssues].sort((a, b) => a - b))
-      !== JSON.stringify([...triage.followUpIssues].sort((a, b) => a - b))) {
-      throw new Error("review control and triage receipt disagree on follow-up issues");
-    }
+  const control = currentReviewControl(comments, pr.headRefOid, { required: true });
+  if (!control.frozen) throw new Error("review control has not frozen the exact head");
+  assertReviewActionAllowed(control, { headSha: pr.headRefOid, action: "merge" });
+  if (JSON.stringify([...control.followUpIssues].sort((a, b) => a - b))
+    !== JSON.stringify([...triage.followUpIssues].sort((a, b) => a - b))) {
+    throw new Error("review control and triage receipt disagree on follow-up issues");
   }
   for (const followUp of triage.followUpIssues) {
     const item = ghJson(run, ["issue", "view", String(followUp), "--repo", options.repo, "--json", "state,body,labels"], root, `read follow-up issue #${followUp}`);

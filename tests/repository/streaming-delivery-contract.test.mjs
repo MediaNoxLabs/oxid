@@ -149,6 +149,12 @@ test("follow-up debt is labeled, acceptance-backed, target-bound, and origin-lin
   assert.match(validateFollowUpIssue(followUpIssue({ labels: [] }), { originPr: 42 }).failures.join("; "), /factory:follow-up/u);
   assert.match(validateFollowUpIssue(followUpIssue({ body: "## Problem\nToo little" }), { originPr: 42 }).failures.join("; "), /Acceptance criteria/u);
   assert.match(validateFollowUpIssue(followUpIssue(), { originPr: 43 }).failures.join("; "), /origin PR #43/u);
+  assert.match(validateFollowUpIssue(followUpIssue({
+    body: followUpIssue().body.replace("- [ ] The residual is resolved.", ""),
+  }), { originPr: 42 }).failures.join("; "), /substantive list items in Acceptance criteria/u);
+  assert.match(validateFollowUpIssue(followUpIssue({
+    body: followUpIssue().body.replace("- Origin: PR #42.", ""),
+  }), { originPr: 42 }).failures.join("; "), /substantive list items in Dependencies/u);
 });
 
 test("follow-up creation is dry-run-first and applies controlled debt labels", () => {
@@ -226,6 +232,10 @@ test("follow-up debt audit accepts closed items only with delivery evidence", ()
 function milestoneAuditRun({ reReadHead = "b".repeat(40), issueTarget = "milestone-0.4.0" } = {}) {
   const pr = milestonePr();
   const checks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" }));
+  const control = freezeReview(
+    authorizeReview(initialReviewControl(pr.headRefOid), { headSha: pr.headRefOid }),
+    { headSha: pr.headRefOid, disposition: "clean" },
+  );
   return (command, args) => {
     if (command === "git" && args[0] === "rev-parse" && args[1] === "--show-toplevel") return "/repo\n";
     if (command === "git" && args[0] === "rev-parse") return `${pr.baseRefOid}\n`;
@@ -241,9 +251,10 @@ function milestoneAuditRun({ reReadHead = "b".repeat(40), issueTarget = "milesto
       body: `## Goal\nShip one bounded increment safely.\n\n## Delivery target\n\n${issueTarget}\n\n## Acceptance criteria\n\n1. It works.`,
     });
     if (args[0] === "pr" && args[1] === "checks") return JSON.stringify(checks);
-    if (args[0] === "api") return JSON.stringify([[{
-      body: buildTriageReceipt({ headSha: pr.headRefOid }),
-    }]]);
+    if (args[0] === "api") return JSON.stringify([[
+      { body: buildTriageReceipt({ headSha: pr.headRefOid }) },
+      { body: buildReviewControlComment(control) },
+    ]]);
     throw new Error(`unexpected gh args ${args.join(" ")}`);
   };
 }
@@ -261,8 +272,8 @@ test("milestone merge implementation pins squash execution to the audited head",
   assert.match(source, /--match-head-commit/);
   assert.doesNotMatch(source, /--admin/);
   assert.match(source, /currentTriageReceipt/);
-  assert.match(source, /oxid-review-control-required-v1/);
   assert.match(source, /currentReviewControl/);
+  assert.doesNotMatch(source, /pr\.body\.includes/u);
   assert.match(source, /assertIssueTarget/);
   assert.match(source, /closeout-pr/);
   assert.match(source, /result\.headSha/);

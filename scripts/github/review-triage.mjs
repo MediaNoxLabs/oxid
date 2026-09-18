@@ -10,6 +10,9 @@ import { deliveryTargetFromIssueBody } from "../lib/delivery-target.mjs";
 
 export const TRIAGE_MARKER = "<!-- oxid-review-triage-v1 -->";
 const RECEIPT_KEYS = ["schemaVersion", "headSha", "blockingFindingCount", "followUpIssues"];
+const FOLLOW_UP_HEADINGS = new Set(["Problem", "Acceptance criteria", "Dependencies"]);
+const LIST_ITEM = /^\s*(?:[-*]|[1-9]\d*\.)\s+(?:\[[ xX]\]\s*)?\S/u;
+const ORIGIN_PR_REFERENCE = /\bOrigin\s*:?\s*(?:PR\s+#|https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/|\/pull\/)([1-9]\d*)/iu;
 
 export function buildTriageReceipt({ headSha, blockingFindingCount = 0, followUpIssues = [] }) {
   const receipt = { schemaVersion: 1, headSha, blockingFindingCount, followUpIssues };
@@ -57,6 +60,22 @@ export function currentTriageReceipt(comments, headSha) {
   return matches[0];
 }
 
+export function markdownSection(body, heading) {
+  if (typeof body !== "string" || !FOLLOW_UP_HEADINGS.has(heading)) return null;
+  const lines = body.split(/\r?\n/u);
+  const indexes = lines.flatMap((line, index) => line.trimEnd() === `## ${heading}` ? [index] : []);
+  if (indexes.length !== 1) return null;
+  const start = indexes[0] + 1;
+  const endOffset = lines.slice(start).findIndex((line) => /^##\s+/u.test(line));
+  const end = endOffset === -1 ? lines.length : start + endOffset;
+  return lines.slice(start, end).join("\n").trim();
+}
+
+export function originPullRequest(body) {
+  const match = (typeof body === "string" ? body : "").match(ORIGIN_PR_REFERENCE);
+  return match ? Number(match[1]) : null;
+}
+
 export function validateFollowUpIssue(issue, { originPr, requireOpen = true } = {}) {
   const failures = [];
   const labels = Array.isArray(issue?.labels)
@@ -66,17 +85,25 @@ export function validateFollowUpIssue(issue, { originPr, requireOpen = true } = 
   if (requireOpen && issue?.state !== "OPEN") failures.push("must be open");
   if (!requireOpen && !["OPEN", "CLOSED"].includes(issue?.state)) failures.push("must have a known lifecycle state");
   if (!labels.includes("factory:follow-up")) failures.push("must carry factory:follow-up");
-  if (body.trim().length < 40) failures.push("must contain a problem statement");
-  if (!/^## Acceptance criteria[ \t]*$/imu.test(body)) failures.push("must contain an Acceptance criteria section");
-  if (!/^## Dependencies[ \t]*$/imu.test(body)) failures.push("must contain a Dependencies section");
+  const problem = markdownSection(body, "Problem");
+  const acceptance = markdownSection(body, "Acceptance criteria");
+  const dependencies = markdownSection(body, "Dependencies");
+  if (!problem || problem.length < 20) failures.push("must contain a substantive Problem section");
+  if (!acceptance || !acceptance.split("\n").some((line) => LIST_ITEM.test(line))) {
+    failures.push("must contain substantive list items in Acceptance criteria");
+  }
+  if (!dependencies || !dependencies.split("\n").some((line) => LIST_ITEM.test(line))) {
+    failures.push("must contain substantive list items in Dependencies");
+  }
   try {
     deliveryTargetFromIssueBody(body);
   } catch {
     failures.push("must contain exactly one valid Delivery target");
   }
   if (originPr !== undefined) {
-    const origin = new RegExp(`(?:PR\\s+#${originPr}(?![0-9])|/pull/${originPr}(?![0-9]))`, "iu");
-    if (!origin.test(body)) failures.push(`must link origin PR #${originPr}`);
+    if (originPullRequest(dependencies) !== originPr) failures.push(`must link origin PR #${originPr} in Dependencies`);
+  } else if (originPullRequest(dependencies) === null) {
+    failures.push("must link an origin PR in Dependencies");
   }
   return { ok: failures.length === 0, failures, labels };
 }
