@@ -17,6 +17,24 @@ import { runEnsureWorktree } from "./loop/ensure-worktree.mjs";
 const DELIVERY_PROFILE_OPTION = "--delivery-profile";
 const PRE_MUTATION_ASSESSMENT_OPTION = "--pre-mutation-assessment";
 const OXID_REPOSITORY = "medianoxlabs/oxid";
+const OXID_SIZE_BUDGET_COMMAND = "scripts/dev-loops.mjs gate size-budget";
+
+export function applyOxidSanctionedCommandOverrides(envelope) {
+  const sanctionedCommands = envelope?.sanctionedCommands;
+  if (!sanctionedCommands || typeof sanctionedCommands !== "object" || Array.isArray(sanctionedCommands)) {
+    return envelope;
+  }
+  return {
+    ...envelope,
+    sanctionedCommands: {
+      ...sanctionedCommands,
+      reads: {
+        ...(sanctionedCommands.reads ?? {}),
+        "size-budget": OXID_SIZE_BUDGET_COMMAND,
+      },
+    },
+  };
+}
 
 function bindPrBase(args, target) {
   const bases = readLongOptionValues(args, "--base");
@@ -319,7 +337,7 @@ async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
       ...normalized,
       ...(assessmentArgs.assessment === undefined ? {} : { preMutationAssessment: assessmentArgs.assessment }),
     }, contract, profile, deliveryTarget);
-    const repositoryAcceptance = applyRepositoryAcceptance(profiled);
+    const repositoryAcceptance = applyOxidSanctionedCommandOverrides(applyRepositoryAcceptance(profiled));
     const envelope = await resolveHandoffRequiredReads(repositoryAcceptance, {
       repositoryRoot: repositoryAcceptance.cwd,
       packageRoot: resolved.packageRoot,
