@@ -108,6 +108,9 @@ Follow [the productive loop](docs/factory/productive-loop.md):
 - Routine work uses a 70% quality target and one automatic review round; all
   mandatory acceptance, correctness, security, provenance, and required-CI
   evidence still must be complete.
+- Claim and assign the issue before launching a model. A failed ownership
+  preflight is not useful model work and must consume zero implementation
+  rounds.
 - Before adding process, classify solution complexity from reversibility, blast
   radius, and evidence cost. A local ignored cache/package or exact-pinned
   configuration change with a one-command rollback is low complexity: implement
@@ -128,15 +131,28 @@ Follow [the productive loop](docs/factory/productive-loop.md):
    retry.
 4. Run the target plan locally, create the signed commit, then run or reuse the
    exact-head local gate before pushing one coherent current-head candidate.
-5. The external supervisor runs final correctness/security review and hosted CI
-   once. An unchanged-head reviewer verifies the producer's private local-gate
+   When the slice changes a reducer, coordinator, scheduler, or asynchronous
+   state machine, include a compact command/event property matrix covering
+   completion, recovery, supersession/replacement, cancellation, stale events,
+   and duplicate events before requesting review. Test the applicable cells or
+   state explicitly why a cell cannot occur.
+5. Before requesting review, the external supervisor records the exact head
+   with `scripts/github/review-control.mjs authorize-review`. It runs final
+   correctness/security review and hosted CI once. An unchanged-head reviewer verifies the producer's private local-gate
    receipt and performs focused review; it never repeats the full local gate.
    Resolve blocking findings; leave bounded non-blocking polish as a concrete
-   linked follow-up issue and visible PR triage comment without another
-   exact-head CI cycle.
+   linked `factory:follow-up` issue and visible PR triage comment without another
+   exact-head CI cycle. Internal maintainability work may additionally use
+   `technical-debt`; that label never waives correctness.
+   One routine round and at most two repair rounds are permitted. Further review
+   requires an explicit security, irreversible-effect, required-CI, or
+   currently-wired acceptance blocker.
 6. Invoke independent current-head Claude review only for a high-risk/release-profile
    change, an owner request, or a disputed finding.
-7. At merge, post the exact-head `review-triage.mjs` receipt and use the guarded
+7. After clean review or safe deferral, freeze the exact head with
+   `review-control.mjs freeze`. A frozen head permits only CI observation,
+   metrics, exact-head merge, closeout, and status; another push or review is a
+   harness error. At merge, post the exact-head `review-triage.mjs` receipt and use the guarded
    milestone-only wrapper for an eligible product increment, or hand a
    `develop`/`main` promotion to a human.
 8. After a PR merge, the supervisor records final metrics, leaves the merged
@@ -146,7 +162,9 @@ Follow [the productive loop](docs/factory/productive-loop.md):
 
 Automatic review is capped at one routine reviewer. Low-signal refinement
 stops. Do not add reviewers, retries, retrospective work, or a second gate to
-compensate for a provider or transport failure.
+compensate for a provider or transport failure. The hard ceiling is three
+reviewed heads unless a named blocker override is recorded; advisory polish
+after any clean round moves to controlled follow-up debt.
 
 Classify failures by origin before ordering rollback. A shell parser error that
 occurs before an agent-generated command starts its named helper is a
