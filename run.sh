@@ -42,6 +42,8 @@ done
 
 run_repository() {
   require_command node
+  node --test tests/repository/audit-report-contract.test.mjs
+  node --test tests/repository/audit-evidence-contract.test.mjs
   node --test tests/repository/contribution-policy-contract.test.mjs
   node --test tests/repository/local-git-hooks-contract.test.mjs
   node --test tests/repository/factory-metrics-contract.test.mjs

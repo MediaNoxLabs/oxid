@@ -377,7 +377,11 @@ from a dirty primary checkout nor tries the generic package's own
 at one bounded 10 GiB `sccache`; disposable worktree targets stay isolated. The
 Pi runtime resolver and devshell both reuse the common checkout's single
 `.pi/npm` installation through the managed package-store link; other mutable
-state is not linked into worktrees.
+state is not linked into worktrees. A real `.pi/npm` directory found in a
+linked worktree is never overwritten or silently deleted: provisioning moves
+it into Git-common private package quarantine, reports the recovery path, and
+then installs the managed link. Explicit closure cleanup reclaims quarantined
+stores only after the configured retention window.
 
 Recorded here because an empty section and a considered absence look identical
 in a diff.

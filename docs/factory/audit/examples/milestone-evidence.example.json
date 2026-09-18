@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "collectedAt": "2026-09-09T00:00:00Z",
+  "repository": "MediaNoxLabs/oxid",
+  "defaultBranch": "develop",
+  "branches": [
+    {
+      "name": "milestone-0.2.0",
+      "sha": "d34e65e0000000000000000000000000000000aa",
+      "role": "primary"
+    },
+    {
+      "name": "develop",
+      "sha": "259cc8c0000000000000000000000000000000bb",
+      "role": "comparison"
+    },
+    {
+      "name": "main",
+      "sha": "c7c5b5b0000000000000000000000000000000cc",
+      "role": "baseline"
+    }
+  ],
+  "collectors": {
+    "branch.protection": {
+      "status": "ok",
+      "source": [
+        "gh api repos/MediaNoxLabs/oxid/branches/milestone-0.2.0/protection"
+      ],
+      "facts": [
+        {
+          "branch": "milestone-0.2.0",
+          "protected": false,
+          "rulesetCount": 0,
+          "deleteBranchOnMerge": true
+        },
+        {
+          "branch": "develop",
+          "protected": true,
+          "requiredApprovals": 0,
+          "requiredChecks": [
+            "basic"
+          ]
+        }
+      ]
+    },
+    "gate.cannotFail": {
+      "status": "ok",
+      "facts": [
+        {
+          "context": "Validate PR title",
+          "declaredCriticalBy": "scripts/github/merge-milestone-pr.mjs",
+          "canReportFailure": false,
+          "publishedBy": ".github/workflows/contribution-metadata.yml:107",
+          "reason": "state is a literal success value; the computed result reaches only the description"
+        }
+      ]
+    },
+    "advisory.state": {
+      "status": "degraded",
+      "reason": "cargo audit unavailable offline; allowlist read from source",
+      "facts": {
+        "vulnerabilitiesFound": 0,
+        "classes": {
+          "yanked": 1
+        },
+        "allowlist": [
+          {
+            "entry": "arrayref@0.3.9",
+            "hasRationale": true,
+            "hasReviewDate": false
+          }
+        ]
+      }
+    }
+  }
+}

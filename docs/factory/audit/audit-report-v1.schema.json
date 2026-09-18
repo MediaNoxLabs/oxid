@@ -1,0 +1,351 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/MediaNoxLabs/oxid/develop/docs/factory/audit/audit-report-v1.schema.json",
+  "title": "Oxid audit report v1",
+  "description": "Closed contract for a published audit report. Carried as a fenced `json audit-report-v1` block in the Discussion body and validated by scripts/audit/check-audit-report.mjs before publication.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "anchor",
+    "plan",
+    "verdict",
+    "findings",
+    "verifiedSound",
+    "notVerified",
+    "slate",
+    "consolidation"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "anchor": {
+      "description": "Pinned scope. Reproducibility depends on every field here; a later audit deltas against it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "auditType",
+        "criteriaVersion",
+        "mode",
+        "recordedAt",
+        "defaultBranch",
+        "branches"
+      ],
+      "properties": {
+        "auditType": {
+          "enum": ["milestone", "security", "supply-chain", "architecture", "process"]
+        },
+        "criteriaVersion": { "type": "integer", "minimum": 1 },
+        "mode": { "enum": ["full", "delta"] },
+        "sinceAnchor": {
+          "description": "Required when mode is delta: the recordedAt of the prior published anchor of this type.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "recordedAt": { "type": "string", "format": "date-time" },
+        "defaultBranch": {
+          "description": "Collected, never assumed. Closing-keyword behaviour depends on it and it has changed before.",
+          "type": "string",
+          "minLength": 1
+        },
+        "branches": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "sha"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+              "role": { "enum": ["primary", "comparison", "baseline"] }
+            }
+          }
+        },
+        "excluded": {
+          "description": "What the audit deliberately did not examine. Scope states exclusions as explicitly as inclusions.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "delta" } }, "required": ["mode"] },
+          "then": { "required": ["sinceAnchor"] }
+        }
+      ]
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["objective", "issueCap", "roles"],
+      "properties": {
+        "objective": { "type": "string", "minLength": 1 },
+        "issueCap": {
+          "description": "Declared before the audit runs. Cannot be raised mid-audit; overflow collapses into one residual-debt slate entry.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "roles": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "passes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["statement", "blocking"],
+      "properties": {
+        "statement": { "type": "string", "minLength": 1 },
+        "releasable": {
+          "description": "Required in practice for milestone audits; null means the audit could not determine it, which is itself a finding.",
+          "type": ["boolean", "null"]
+        },
+        "blocking": {
+          "description": "Finding ids that block release of the audited scope. Empty when nothing blocks.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "exitQuestions": {
+          "description": "The type's exit questions and their answers. 'unknown' is permitted and is itself a finding.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["question", "answer"],
+            "properties": {
+              "question": { "type": "string", "minLength": 1 },
+              "answer": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    },
+    "verifiedSound": {
+      "description": "Required and may not be empty. A findings-only report makes coverage unknowable and the next delta impossible.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criterion", "claim", "evidence"],
+        "properties": {
+          "criterion": { "$ref": "#/$defs/criterionId" },
+          "claim": { "type": "string", "minLength": 1 },
+          "evidence": { "$ref": "#/$defs/evidenceList" },
+          "sampling": {
+            "description": "How much of the population was examined. Absent means exhaustive.",
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "notVerified": {
+      "description": "Required. Claims the audit could not settle, and what would settle them.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim", "reason"],
+        "properties": {
+          "claim": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 },
+          "wouldRequire": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "delta": {
+      "description": "Required when anchor.mode is delta. Every prior finding is classified; silently dropping one is non-conforming.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["priorId", "classification"],
+        "properties": {
+          "priorId": { "type": "string", "minLength": 1 },
+          "classification": {
+            "enum": ["fixed", "still-present", "regressed", "withdrawn"]
+          },
+          "evidence": { "$ref": "#/$defs/evidenceList" },
+          "note": {
+            "description": "Required for withdrawn: whether the finding was wrong or its criterion changed.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "classification": { "const": "withdrawn" } },
+              "required": ["classification"]
+            },
+            "then": { "required": ["note"] }
+          }
+        ]
+      }
+    },
+    "slate": {
+      "description": "Proposed issues. Never filed without owner approval.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "findings", "severity", "cost"],
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "findings": {
+            "description": "Finding ids this proposed issue covers. More than one means the consolidation rule merged them.",
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "severity": { "$ref": "#/$defs/severity" },
+          "cost": { "$ref": "#/$defs/cost" },
+          "labels": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "rank": { "type": "integer", "minimum": 1 },
+          "residual": {
+            "description": "True for the single overflow entry collapsing findings beyond the declared cap.",
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "consolidation": {
+      "description": "Consolidation is reported, not silent. A reader must see how many raw findings became how many proposed issues, and which rule did the work.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rawFindings", "proposedIssues"],
+      "properties": {
+        "rawFindings": { "type": "integer", "minimum": 0 },
+        "proposedIssues": { "type": "integer", "minimum": 0 },
+        "notFiledUnderTenLines": { "type": "integer", "minimum": 0 },
+        "mergedByCause": { "type": "integer", "minimum": 0 },
+        "duplicatesOfOpenIssues": { "type": "integer", "minimum": 0 },
+        "overflowToResidual": { "type": "integer", "minimum": 0 },
+        "notes": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "decisionsRequired": {
+      "description": "Questions only the owner can settle. Not filed as issues: the backlog cannot answer a question.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question"],
+        "properties": {
+          "question": { "type": "string", "minLength": 1 },
+          "recommendation": { "type": "string", "minLength": 1 },
+          "blocks": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    "limitations": {
+      "description": "Independence caveats, including any role that examined code it authored.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "discussionUrl": { "type": "string", "format": "uri" }
+  },
+  "$defs": {
+    "severity": { "enum": ["must-fix", "worth-fixing-now", "defer"] },
+    "cost": { "enum": ["minutes", "hours", "days", "weeks"] },
+    "radius": { "enum": ["class", "product", "local"] },
+    "criterionId": {
+      "description": "OXA-<TYPE>-<NN>, where TYPE is MIL, SEC, SUP, ARC, PRC, or ANY.",
+      "type": "string",
+      "pattern": "^OXA-(MIL|SEC|SUP|ARC|PRC|ANY)-[0-9]{2}$"
+    },
+    "evidenceList": {
+      "description": "At least one citation. An evidence anchor key from audit-evidence-v1, or a path:line the auditor read. The validator rejects an empty list; this is the framework's one hard mechanical rule.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "oneOf": [{ "required": ["anchor"] }, { "required": ["path"] }],
+        "properties": {
+          "anchor": {
+            "description": "Dotted evidence anchor key, e.g. branch.protection.",
+            "type": "string",
+            "pattern": "^[a-z][a-zA-Z0-9]*(\\.[a-zA-Z0-9]+)+$"
+          },
+          "path": { "type": "string", "minLength": 1 },
+          "line": { "type": "integer", "minimum": 1 },
+          "lines": { "type": "string", "pattern": "^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$" },
+          "quote": { "type": "string", "maxLength": 400 }
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "criterion",
+        "severity",
+        "radius",
+        "cost",
+        "summary",
+        "evidence",
+        "recommendation"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^F-[0-9]{2,3}$" },
+        "criterion": { "$ref": "#/$defs/criterionId" },
+        "severity": { "$ref": "#/$defs/severity" },
+        "radius": { "$ref": "#/$defs/radius" },
+        "cost": { "$ref": "#/$defs/cost" },
+        "summary": {
+          "description": "One sentence stating the defect, not its consequence. Consequence invites severity inflation.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "evidence": { "$ref": "#/$defs/evidenceList" },
+        "failureScenario": {
+          "description": "Required for must-fix: concrete inputs or state leading to the wrong outcome.",
+          "type": "string",
+          "minLength": 1
+        },
+        "recommendation": { "type": "string", "minLength": 1 },
+        "expiry": {
+          "description": "Why remediation cost rises if deferred. Required to invoke ranking rule 4.",
+          "type": "string",
+          "minLength": 1
+        },
+        "reverifiedBy": {
+          "description": "Required for must-fix: the role or person who independently reproduced it. Due care forbids publishing an unreproduced must-fix.",
+          "type": "string",
+          "minLength": 1
+        },
+        "raisedBy": { "type": "string", "minLength": 1 },
+        "mergedFrom": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "duplicateOf": { "type": "integer", "minimum": 1 },
+        "contextWidened": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "severity": { "const": "must-fix" } },
+            "required": ["severity"]
+          },
+          "then": { "required": ["failureScenario", "reverifiedBy"] }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "anchor": { "properties": { "mode": { "const": "delta" } }, "required": ["mode"] } } },
+      "then": { "required": ["delta"] }
+    }
+  ]
+}
