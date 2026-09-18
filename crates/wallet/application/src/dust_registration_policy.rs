@@ -342,10 +342,7 @@ pub fn reduce_wallet_dust_registration_settlement(
             WalletDustRegistrationSettlementState::ActionRequired
         ) && (!has_submitted_registration(projection)
             || registration_is_abandoned(projection))
-            && !projection
-                .abandoned_registration
-                .as_ref()
-                .is_some_and(|registration| registration.transaction_id.is_some())
+            && projection.abandoned_registration.is_none()
             && preparation_revision > projection.preparation_revision =>
         {
             next.preparation_revision = preparation_revision;
@@ -1758,6 +1755,70 @@ mod tests {
                 },
             ),
             rejected
+        );
+    }
+
+    #[test]
+    fn in_flight_secondary_draft_cannot_be_overwritten_after_primary_is_abandoned_again() {
+        let dropped = reduce(
+            &confirming(),
+            reconciliation(2, WalletDustRegistrationSettlementReconciliation::Dropped),
+        );
+        let first_abandoned = reduce(&dropped, abandon_dropped(3));
+        let secondary = reduce(&first_abandoned, authorization_request(other_draft(), 2));
+        let submitting_secondary = reduce(&secondary, authorization_success(other_draft()));
+
+        let restored_primary = reduce(&submitting_secondary, finality(4));
+        let dropped_primary = reduce(
+            &restored_primary,
+            reconciliation(5, WalletDustRegistrationSettlementReconciliation::Dropped),
+        );
+        let abandoned_primary = reduce(&dropped_primary, abandon_dropped(6));
+        let third_draft = WalletTransactionDraftId::parse("dustreg_third").unwrap();
+        assert_noop(&abandoned_primary, authorization_request(third_draft, 3));
+
+        let accepted_secondary = reduce(
+            &abandoned_primary,
+            submission(other_draft(), other_transaction()),
+        );
+        assert_eq!(
+            accepted_secondary
+                .abandoned_registration
+                .as_ref()
+                .and_then(|registration| registration.transaction_id.as_ref()),
+            Some(&other_transaction())
+        );
+    }
+
+    #[test]
+    fn accepted_secondary_remains_retained_when_primary_observations_arrive_later() {
+        let dropped = reduce(
+            &confirming(),
+            reconciliation(2, WalletDustRegistrationSettlementReconciliation::Dropped),
+        );
+        let first_abandoned = reduce(&dropped, abandon_dropped(3));
+        let secondary = reduce(&first_abandoned, authorization_request(other_draft(), 2));
+        let accepted_secondary = reduce(
+            &reduce(&secondary, authorization_success(other_draft())),
+            submission(other_draft(), other_transaction()),
+        );
+
+        let restored_primary = reduce(&accepted_secondary, finality(4));
+        let dropped_primary = reduce(
+            &restored_primary,
+            reconciliation(5, WalletDustRegistrationSettlementReconciliation::Dropped),
+        );
+        let abandoned_primary = reduce(&dropped_primary, abandon_dropped(6));
+        assert_noop(
+            &abandoned_primary,
+            authorization_request(WalletTransactionDraftId::parse("dustreg_third").unwrap(), 3),
+        );
+        assert_eq!(
+            abandoned_primary
+                .abandoned_registration
+                .as_ref()
+                .and_then(|registration| registration.transaction_id.as_ref()),
+            Some(&other_transaction())
         );
     }
 
