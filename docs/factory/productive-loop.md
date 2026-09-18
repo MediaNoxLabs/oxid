@@ -178,11 +178,25 @@ ledger and PR comment without blocking a clean verdict.
    verify the producer receipt and never rerun its full gate on an unchanged
    head. A bounded non-critical finding is complete for this increment only when
    its follow-up issue and mapping comment exist; a second automatic fix/review
-   cycle is forbidden for advisory-only findings. Post one current-head receipt
-   with `review-triage.mjs`; a new head invalidates it.
-7. For a release-profile/high-risk change, an owner request, or a disputed finding, run
+   cycle is forbidden for advisory-only findings. Before each review, reserve
+   the exact head through `review-control.mjs authorize-review`. The routine
+   budget is one round; two repair rounds remain available only for blocking
+   defects. A fourth round requires a named security, irreversible-effect,
+   required-CI, or currently-wired acceptance override. Post one current-head
+   receipt with `review-triage.mjs`; a new head invalidates it.
+   Reducer/coordinator/scheduler changes reach this step only after a compact
+   command/event property matrix covers completion, recovery, supersession or
+   replacement, cancellation, stale events, and duplicate events with tests or
+   explicit impossibility arguments.
+7. Classify every finding as repair-now, follow-up, or rejected noise. A safe
+   deferral must use an open `factory:follow-up` issue with acceptance criteria,
+   delivery target, dependencies, and origin PR. Apply `technical-debt` only as
+   a secondary maintainability classification. Freeze the reviewed head with
+   `review-control.mjs freeze`; review, ready, and push actions then fail while
+   CI observation, metrics, merge, closeout, and status remain allowed.
+8. For a release-profile/high-risk change, an owner request, or a disputed finding, run
    the manually invoked current-head Claude review once after the last edit.
-8. Recheck current-head and delivery-base freshness. Use
+9. Recheck current-head and delivery-base freshness. Use
    `scripts/github/merge-milestone-pr.mjs` for an eligible product increment;
    it audits by default and mutates only with `--execute`. Hand every
    milestone promotion, direct factory PR, and release promotion to a human.
@@ -258,6 +272,11 @@ cleanup authority.
 After a successful exact closeout, the receipt reports a bounded best-effort Pi
 package-closure cleanup. It removes only unreferenced age-eligible closures and
 stale interrupted state; a live same-host package installer lock is preserved.
+If a linked worktree unexpectedly contains a real `.pi/npm` directory,
+provisioning moves it into Git-common private quarantine before installing the
+managed closure link. The result reports `quarantinedStore`; cleanup retains
+that recoverable directory for the normal retention window before reclaiming
+it.
 A blocked or failed package cleanup is reported in `packageClosureCleanup` and
 does not undo the already successful worktree closeout. Audit or explicitly
 request that cleanup before closeout when needed:
@@ -358,3 +377,8 @@ reports contain aggregates only. The Quality Steward audits weekly and after an
 incident, reviews median/p90 and SLO violations monthly, and files bounded
 findings. Keep raw records for 90 days, then remove them only through an
 explicit owner maintenance action; the audit command is read-only.
+
+The Quality Steward also runs `just follow-up-audit` weekly and after review
+budget exhaustion. The audit is read-only and reports stale or invalid
+`factory:follow-up` inventory; triage or closure is a separate issue-backed
+decision.

@@ -29,7 +29,8 @@ See `docs/issue-branch-delivery.md`.
 - [ ] Branch, PR title, and every commit follow `docs/factory/contribution-policy.md`
 - [ ] Commits are OpenPGP signed, GitHub-verifiable, and include exact DCO `Signed-off-by` trailers
 - [ ] The diff was self-reviewed and the PR remains a draft until gates pass
-- [ ] Every finding is fixed as blocking or mapped to a concrete open follow-up issue
+- [ ] Every finding is fixed as blocking, rejected as noise, or mapped to an open `factory:follow-up` issue
+- [ ] The exact head has a terminal review-control freeze before merge
 - [ ] The final-head private metrics record and bounded closeout comment are complete, or unavailable counters are identified without estimates
 
 ## Links
