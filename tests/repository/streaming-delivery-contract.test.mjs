@@ -16,7 +16,23 @@ import {
   validateCriticalChecks,
   validateMilestonePr,
 } from "../../scripts/github/merge-milestone-pr.mjs";
-import { buildTriageReceipt, currentTriageReceipt, parseTriageComment } from "../../scripts/github/review-triage.mjs";
+import {
+  buildTriageReceipt,
+  currentTriageReceipt,
+  parseTriageComment,
+  validateFollowUpIssue,
+} from "../../scripts/github/review-triage.mjs";
+import {
+  assertReviewActionAllowed,
+  authorizeReview,
+  buildReviewControlComment,
+  currentReviewControl,
+  freezeReview,
+  initialReviewControl,
+  parseReviewControlComment,
+} from "../../scripts/github/review-control.mjs";
+import { auditFollowUpDebt, followUpDebtRow } from "../../scripts/github/audit-follow-up-debt.mjs";
+import { buildCreateFollowUpArgs } from "../../scripts/github/create-follow-up.mjs";
 import { normalizeDevLoopsArgs } from "../../scripts/dev-loops.mjs";
 
 test("delivery targets are exact develop or semantic milestone branches", () => {
@@ -112,9 +128,127 @@ test("review triage is exact-head and cannot defer a blocking finding", () => {
   assert.throws(() => currentTriageReceipt([{ body }, { body }], headSha), /exactly one/);
 });
 
+function followUpIssue(overrides = {}) {
+  return {
+    number: 51,
+    state: "OPEN",
+    createdAt: "2026-09-01T00:00:00.000Z",
+    labels: [{ name: "factory:follow-up" }],
+    body: [
+      "## Problem", "Keep one bounded residual visible.", "",
+      "## Delivery target", "", "`develop`", "",
+      "## Acceptance criteria", "", "- [ ] The residual is resolved.", "",
+      "## Dependencies", "", "- Origin: PR #42.",
+    ].join("\n"),
+    ...overrides,
+  };
+}
+
+test("follow-up debt is labeled, acceptance-backed, target-bound, and origin-linked", () => {
+  assert.equal(validateFollowUpIssue(followUpIssue(), { originPr: 42 }).ok, true);
+  assert.match(validateFollowUpIssue(followUpIssue({ labels: [] }), { originPr: 42 }).failures.join("; "), /factory:follow-up/u);
+  assert.match(validateFollowUpIssue(followUpIssue({ body: "## Problem\nToo little" }), { originPr: 42 }).failures.join("; "), /Acceptance criteria/u);
+  assert.match(validateFollowUpIssue(followUpIssue(), { originPr: 43 }).failures.join("; "), /origin PR #43/u);
+  assert.match(validateFollowUpIssue(followUpIssue({
+    body: followUpIssue().body.replace("- [ ] The residual is resolved.", ""),
+  }), { originPr: 42 }).failures.join("; "), /substantive list items in Acceptance criteria/u);
+  assert.match(validateFollowUpIssue(followUpIssue({
+    body: followUpIssue().body.replace("- Origin: PR #42.", ""),
+  }), { originPr: 42 }).failures.join("; "), /substantive list items in Dependencies/u);
+});
+
+test("follow-up creation is dry-run-first and applies controlled debt labels", () => {
+  const args = buildCreateFollowUpArgs({
+    repo: "MediaNoxLabs/oxid",
+    originPr: 42,
+    title: "fix(factory): retain one deferred review finding",
+    bodyFile: "/tmp/follow-up.md",
+    body: followUpIssue().body,
+    technicalDebt: true,
+  });
+  assert.deepEqual(args.slice(-4), ["--label", "factory:follow-up", "--label", "technical-debt"]);
+  assert.throws(() => buildCreateFollowUpArgs({
+    repo: "MediaNoxLabs/oxid", originPr: 42, title: "too short", bodyFile: "/tmp/follow-up.md", body: followUpIssue().body,
+  }), /title/u);
+});
+
+test("review control caps ordinary rounds, allows explicit blockers, and freezes exact heads", () => {
+  const heads = ["a", "b", "c", "d"].map((letter) => letter.repeat(40));
+  let control = initialReviewControl(heads[0]);
+  control = authorizeReview(control, { headSha: heads[0] });
+  control = authorizeReview(control, { headSha: heads[1] });
+  control = authorizeReview(control, { headSha: heads[2] });
+  assert.throws(() => authorizeReview(control, { headSha: heads[3] }), /budget exhausted/u);
+  control = authorizeReview(control, { headSha: heads[3], blockerOverride: "security" });
+  control = freezeReview(control, { headSha: heads[3], disposition: "follow-up", followUpIssues: [51] });
+  const body = buildReviewControlComment(control);
+  assert.deepEqual(parseReviewControlComment(body), control);
+  assert.deepEqual(currentReviewControl([{ body, user: { login: "yshyn-iohk" } }], heads[3], { required: true }), control);
+  assert.throws(() => currentReviewControl([{ body, user: { login: "untrusted-author" } }], heads[3], { required: true }), /missing/u);
+  assert.throws(() => assertReviewActionAllowed(control, { headSha: heads[3], action: "review" }), /rejects review/u);
+  assert.throws(() => assertReviewActionAllowed(control, { headSha: heads[3], action: "push" }), /rejects push/u);
+  assert.equal(assertReviewActionAllowed(control, { headSha: heads[3], action: "merge" }).ok, true);
+  assert.throws(() => assertReviewActionAllowed(control, { headSha: "e".repeat(40), action: "merge" }), /head changed/u);
+  assert.throws(() => authorizeReview(control, { headSha: "e".repeat(40) }), /requires a named blocker/u);
+  const reopened = authorizeReview(
+    currentReviewControl(
+      [{ body, user: { login: "yshyn-iohk" } }],
+      "e".repeat(40),
+      { required: true, allowFrozenHeadChange: true },
+    ),
+    { headSha: "e".repeat(40), blockerOverride: "security" },
+  );
+  assert.equal(reopened.frozen, false);
+  assert.equal(reopened.reviewRounds, 5);
+  assert.equal(reopened.blockerOverride, "security");
+});
+
+test("follow-up debt audit reports stale and invalid inventory without mutating it", () => {
+  const issues = [
+    followUpIssue(),
+    followUpIssue({ number: 52, labels: [{ name: "factory:follow-up" }, { name: "technical-debt" }], body: followUpIssue().body.replace("PR #42", "PR #43") }),
+  ];
+  const result = auditFollowUpDebt(issues, {
+    now: Date.parse("2026-10-15T00:00:00.000Z"),
+    staleDays: 30,
+    dependencyStates: new Map(),
+  });
+  assert.equal(result.total, 2);
+  assert.equal(result.open, 2);
+  assert.equal(result.stale, 2);
+  assert.equal(result.technicalDebt, 1);
+  assert.equal(result.invalid, 0);
+});
+
+test("follow-up debt audit accepts closed items only with delivery evidence", () => {
+  const body = `## Problem\nDelivered controlled debt.\n\n## Delivery target\n\ndevelop\n\n## Acceptance criteria\n- [x] Fixed.\n\n## Dependencies\n- Origin PR #603\n`;
+  const delivered = followUpDebtRow({
+    number: 604,
+    state: "CLOSED",
+    body,
+    labels: [{ name: "factory:follow-up" }],
+    createdAt: "2026-09-01T00:00:00Z",
+    closedByPullRequest: true,
+  });
+  const unproven = followUpDebtRow({
+    number: 605,
+    state: "CLOSED",
+    body,
+    labels: [{ name: "factory:follow-up" }],
+    createdAt: "2026-09-01T00:00:00Z",
+  });
+  assert.equal(delivered.valid, true);
+  assert.equal(unproven.valid, false);
+  assert.match(unproven.problems.join("; "), /closed without linked delivery evidence/u);
+});
+
 function milestoneAuditRun({ reReadHead = "b".repeat(40), issueTarget = "milestone-0.4.0" } = {}) {
   const pr = milestonePr();
   const checks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" }));
+  const control = freezeReview(
+    authorizeReview(initialReviewControl(pr.headRefOid), { headSha: pr.headRefOid }),
+    { headSha: pr.headRefOid, disposition: "clean" },
+  );
   return (command, args) => {
     if (command === "git" && args[0] === "rev-parse" && args[1] === "--show-toplevel") return "/repo\n";
     if (command === "git" && args[0] === "rev-parse") return `${pr.baseRefOid}\n`;
@@ -130,9 +264,10 @@ function milestoneAuditRun({ reReadHead = "b".repeat(40), issueTarget = "milesto
       body: `## Goal\nShip one bounded increment safely.\n\n## Delivery target\n\n${issueTarget}\n\n## Acceptance criteria\n\n1. It works.`,
     });
     if (args[0] === "pr" && args[1] === "checks") return JSON.stringify(checks);
-    if (args[0] === "api") return JSON.stringify([[{
-      body: buildTriageReceipt({ headSha: pr.headRefOid }),
-    }]]);
+    if (args[0] === "api") return JSON.stringify([[
+      { body: buildTriageReceipt({ headSha: pr.headRefOid }) },
+      { body: buildReviewControlComment(control), user: { login: "yshyn-iohk" } },
+    ]]);
     throw new Error(`unexpected gh args ${args.join(" ")}`);
   };
 }
@@ -150,6 +285,8 @@ test("milestone merge implementation pins squash execution to the audited head",
   assert.match(source, /--match-head-commit/);
   assert.doesNotMatch(source, /--admin/);
   assert.match(source, /currentTriageReceipt/);
+  assert.match(source, /currentReviewControl/);
+  assert.doesNotMatch(source, /pr\.body\.includes/u);
   assert.match(source, /assertIssueTarget/);
   assert.match(source, /closeout-pr/);
   assert.match(source, /result\.headSha/);
