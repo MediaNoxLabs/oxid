@@ -18,10 +18,19 @@ pub struct WalletDustRegistrationSettlementIdentity {
     pub generation: u64,
 }
 
+/// Retained authorization progress for a registration draft.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletDustRegistrationSettlementAuthorizationPhase {
+    AwaitingAuthorization,
+    Submitting,
+    Submitted,
+}
+
 /// Retained public identities after preparation and submission respectively.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WalletDustRegistrationSettlementRegistration {
     pub draft_id: WalletTransactionDraftId,
+    pub authorization_phase: WalletDustRegistrationSettlementAuthorizationPhase,
     pub transaction_id: Option<ChainTransactionId>,
     /// Maximum retained finality or reconciliation observation sequence.
     pub observation_revision: u64,
@@ -248,15 +257,66 @@ pub fn reduce_wallet_dust_registration_settlement(
             .abandoned_registration
             .as_ref()
             .is_some_and(|registration| {
-                registration.draft_id == *draft_id && registration.transaction_id.is_none()
+                registration.draft_id == *draft_id
+                    && registration.authorization_phase
+                        == WalletDustRegistrationSettlementAuthorizationPhase::Submitting
             })
     {
         let mut retained = projection.clone();
-        retained
+        let registration = retained.abandoned_registration.as_mut().unwrap();
+        registration.authorization_phase =
+            WalletDustRegistrationSettlementAuthorizationPhase::Submitted;
+        registration.transaction_id = Some(transaction_id.clone());
+        return retained;
+    }
+    if let WalletDustRegistrationSettlementEvent::AuthorizationSucceeded { draft_id, .. } = &event
+        && projection
             .abandoned_registration
-            .as_mut()
-            .unwrap()
-            .transaction_id = Some(transaction_id.clone());
+            .as_ref()
+            .is_some_and(|registration| {
+                registration.draft_id == *draft_id
+                    && registration.authorization_phase
+                        == WalletDustRegistrationSettlementAuthorizationPhase::AwaitingAuthorization
+            })
+    {
+        let mut retained = projection.clone();
+        if matches!(
+            latest_eligibility_state(projection),
+            WalletDustRegistrationSettlementState::NotEligible
+        ) {
+            retained.abandoned_registration = None;
+        } else {
+            retained
+                .abandoned_registration
+                .as_mut()
+                .unwrap()
+                .authorization_phase =
+                WalletDustRegistrationSettlementAuthorizationPhase::Submitting;
+        }
+        return retained;
+    }
+    if matches!(
+        event,
+        WalletDustRegistrationSettlementEvent::AuthorizationRejected { .. }
+            | WalletDustRegistrationSettlementEvent::Cancelled { .. }
+    ) && projection
+        .abandoned_registration
+        .as_ref()
+        .is_some_and(|registration| {
+            let draft_id = match &event {
+                WalletDustRegistrationSettlementEvent::AuthorizationRejected {
+                    draft_id, ..
+                }
+                | WalletDustRegistrationSettlementEvent::Cancelled { draft_id, .. } => draft_id,
+                _ => unreachable!(),
+            };
+            registration.draft_id == *draft_id
+                && registration.authorization_phase
+                    == WalletDustRegistrationSettlementAuthorizationPhase::AwaitingAuthorization
+        })
+    {
+        let mut retained = projection.clone();
+        retained.abandoned_registration = None;
         return retained;
     }
     if supersedes_abandoned_registration(projection, &event) {
@@ -394,6 +454,10 @@ pub fn reduce_wallet_dust_registration_settlement(
                 WalletDustRegistrationSettlementState::AwaitingAuthorization
             ) && has_draft(projection, &draft_id) =>
         {
+            if let Some(registration) = &mut next.registration {
+                registration.authorization_phase =
+                    WalletDustRegistrationSettlementAuthorizationPhase::Submitting;
+            }
             set_effective_state(&mut next, WalletDustRegistrationSettlementState::Submitting);
         }
         WalletDustRegistrationSettlementEvent::AuthorizationRejected { draft_id, .. }
@@ -415,6 +479,8 @@ pub fn reduce_wallet_dust_registration_settlement(
         ) && has_draft(projection, &draft_id) =>
         {
             if let Some(registration) = &mut next.registration {
+                registration.authorization_phase =
+                    WalletDustRegistrationSettlementAuthorizationPhase::Submitted;
                 registration.transaction_id = Some(transaction_id);
             }
             set_effective_state(&mut next, WalletDustRegistrationSettlementState::Confirming);
@@ -889,6 +955,8 @@ fn pending_registration(
 ) -> WalletDustRegistrationSettlementRegistration {
     WalletDustRegistrationSettlementRegistration {
         draft_id,
+        authorization_phase:
+            WalletDustRegistrationSettlementAuthorizationPhase::AwaitingAuthorization,
         transaction_id: None,
         observation_revision: 0,
         finality_revision: 0,
@@ -1759,6 +1827,46 @@ mod tests {
     }
 
     #[test]
+    fn terminal_awaiting_secondary_events_clear_only_secondary_evidence() {
+        let dropped = reduce(
+            &confirming(),
+            reconciliation(2, WalletDustRegistrationSettlementReconciliation::Dropped),
+        );
+        let first_abandoned = reduce(&dropped, abandon_dropped(3));
+        let secondary = reduce(&first_abandoned, authorization_request(other_draft(), 2));
+        let restored_primary = reduce(&secondary, finality(4));
+        let dropped_primary = reduce(
+            &restored_primary,
+            reconciliation(5, WalletDustRegistrationSettlementReconciliation::Dropped),
+        );
+        let abandoned_primary = reduce(&dropped_primary, abandon_dropped(6));
+
+        for terminal in [
+            WalletDustRegistrationSettlementEvent::AuthorizationRejected {
+                identity: selected_identity(),
+                draft_id: other_draft(),
+            },
+            cancellation(other_draft()),
+        ] {
+            let cleaned = reduce(&abandoned_primary, terminal.clone());
+            assert!(cleaned.abandoned_registration.is_none());
+            assert!(has_transaction(&cleaned, &transaction()));
+            assert_noop(&cleaned, terminal);
+            assert_eq!(
+                reduce(
+                    &cleaned,
+                    authorization_request(
+                        WalletTransactionDraftId::parse("dustreg_third").unwrap(),
+                        3,
+                    ),
+                )
+                .state,
+                State::AwaitingAuthorization
+            );
+        }
+    }
+
+    #[test]
     fn in_flight_secondary_draft_cannot_be_overwritten_after_primary_is_abandoned_again() {
         let dropped = reduce(
             &confirming(),
@@ -1776,6 +1884,14 @@ mod tests {
         let abandoned_primary = reduce(&dropped_primary, abandon_dropped(6));
         let third_draft = WalletTransactionDraftId::parse("dustreg_third").unwrap();
         assert_noop(&abandoned_primary, authorization_request(third_draft, 3));
+        assert_noop(
+            &abandoned_primary,
+            WalletDustRegistrationSettlementEvent::AuthorizationRejected {
+                identity: selected_identity(),
+                draft_id: other_draft(),
+            },
+        );
+        assert_noop(&abandoned_primary, cancellation(other_draft()));
 
         let accepted_secondary = reduce(
             &abandoned_primary,
@@ -1788,6 +1904,40 @@ mod tests {
                 .and_then(|registration| registration.transaction_id.as_ref()),
             Some(&other_transaction())
         );
+    }
+
+    #[test]
+    fn parked_secondary_advances_when_authorization_completes_late() {
+        let dropped = reduce(
+            &confirming(),
+            reconciliation(2, WalletDustRegistrationSettlementReconciliation::Dropped),
+        );
+        let first_abandoned = reduce(&dropped, abandon_dropped(3));
+        let secondary = reduce(&first_abandoned, authorization_request(other_draft(), 2));
+        let restored_primary = reduce(&secondary, finality(4));
+
+        let authorized_secondary = reduce(&restored_primary, authorization_success(other_draft()));
+        assert_eq!(
+            authorized_secondary
+                .abandoned_registration
+                .as_ref()
+                .map(|registration| registration.authorization_phase),
+            Some(WalletDustRegistrationSettlementAuthorizationPhase::Submitting)
+        );
+        assert!(has_transaction(&authorized_secondary, &transaction()));
+
+        let accepted_secondary = reduce(
+            &authorized_secondary,
+            submission(other_draft(), other_transaction()),
+        );
+        assert_eq!(
+            accepted_secondary
+                .abandoned_registration
+                .as_ref()
+                .and_then(|registration| registration.transaction_id.as_ref()),
+            Some(&other_transaction())
+        );
+        assert!(has_transaction(&accepted_secondary, &transaction()));
     }
 
     #[test]
