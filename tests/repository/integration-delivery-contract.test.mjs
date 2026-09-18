@@ -93,6 +93,8 @@ test("legacy develop wrapper retains exact-head audit but cannot execute a merge
     /pr[\s\S]*checks[\s\S]*--required/,
     /devLoops, "gates"/,
     /gate[\s\S]*detect-evidence/,
+    /currentReviewControl/,
+    /review control has not frozen the exact head/,
   ]) assert.match(source, required);
   assert.doesNotMatch(source, /gh", \["pr", "merge"|--admin|--match-head-commit|--squash/);
 });

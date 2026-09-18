@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-11
 - Source: Blueprint Sections 14, 17, 18, and 19 plus prototype review
-- Implementation state: M0 profile, wallet presentation shell, headless harness, and persistent profile lifecycle slices implemented
+- Implementation state: M0 profile, wallet presentation shell, headless harness, and persistent profile lifecycle slices implemented; the current capability matrix and `docs/design/` supersede prototype completeness and visual-parity assumptions
 - Amended by: ADR-0036, ADR-0037, ADR-0038, ADR-0039, ADR-0040, ADR-0041, ADR-0042, ADR-0043, ADR-0045, ADR-0046, ADR-0080
 
 ## Context
@@ -38,11 +38,36 @@ The next slices add a versioned headless driver and integrate profile
 onboarding, selection, management, and public-metadata persistence into that
 shell. ADR-0024 and ADR-0025 define their respective boundaries.
 
+### 2026-09-14 product-boundary refinement
+
+The immutable prototype is an evidence library, not a completeness mandate or
+the Oxid design authority. The current
+[capability matrix](../migration/midnight-prototype-capability-matrix.md)
+classifies product behavior as adopted, adapted, intentionally excluded, or
+open. Prototype provenance alone is neither a reason to retain a capability
+nor a reason to delete it.
+
+For presentation, [the Oxid design specification](../design/README.md) owns
+the target information architecture, visual composition, interaction, copy,
+accessibility, density, and UI profiles. Proven TLS, native lifecycle, Dioxus
+UI-thread/worker, safe-area, screen-privacy, bridge, custody, consent, and
+capability-honesty patterns remain reusable evidence and should survive behind
+focused Oxid-owned boundaries. Prototype-specific screens, navigation, copy,
+styling, controls, and aggregate component state may be incrementally
+redesigned or removed only with replacement or exclusion evidence; issue #528
+tracks that classification and cleanup.
+
+The general-purpose synthetic proof benchmark is explicitly outside the Oxid
+wallet boundary. Issue #527 tracks removal of the transitional port while
+product-bound proving conformance and smoke evidence remains in Oxid.
+
 ## Consequences
 
 - Each migrated capability is independently reviewable and testable.
 - Prototype feature parity arrives incrementally rather than through a bulk
   directory move.
+- Useful solved patterns can be retained without freezing prototype UI or
+  accidental functionality as product requirements.
 - Upstream behavior may need reimplementation instead of history-preserving
   file copies.
 - Every later source refresh must record a new immutable baseline and repeat

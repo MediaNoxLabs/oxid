@@ -38,6 +38,9 @@ for the supervisor; do not publish it directly.
 - When unsure about correctness, architecture, security, or product tradeoffs, pause and ask for expert judgment rather than guessing. Use the available project workflow for expert review when possible, or clearly report the decision needed.
 - Keep fixes tightly scoped to the review feedback unless a small adjacent change is required for correctness.
 - Do not start a second automatic fix/review cycle for non-blocking polish. After required defects are resolved, preserve advisory recommendations in follow-up work and keep the exact head stable for CI.
+- Refuse to edit a head frozen by `scripts/github/review-control.mjs`. Reopening
+  requires a named blocker override owned by the supervisor; a normal follow-up
+  issue is not permission for another repair push.
 - Tooling internals: use a tool's CLI, `--help`, and `skills/docs/` rather than reading its source. See Anti-patterns (pinned package path `.pi/npm/node_modules/dev-loops/skills/docs/anti-patterns.md#core-anti-patterns`).
 
 ## Review Workflow

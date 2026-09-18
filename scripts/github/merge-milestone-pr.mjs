@@ -7,8 +7,9 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 
 import { validatePullRequest } from "../ci/contribution-policy.mjs";
-import { assertIssueTarget, deliveryTargetFromIssueBody, parseDeliveryTarget } from "../lib/delivery-target.mjs";
-import { currentTriageReceipt } from "./review-triage.mjs";
+import { assertIssueTarget, parseDeliveryTarget } from "../lib/delivery-target.mjs";
+import { currentTriageReceipt, validateFollowUpIssue } from "./review-triage.mjs";
+import { assertReviewActionAllowed, currentReviewControl } from "./review-control.mjs";
 
 const REPOSITORY = "MediaNoxLabs/oxid";
 const BLOCKING_TITLE_MARKERS = /(?:\[?\bWIP\b\]?|\bDRAFT\b|DO NOT MERGE|🚧)/iu;
@@ -129,16 +130,17 @@ export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaul
 
   const comments = ghJson(run, ["api", `repos/${options.repo}/issues/${options.pr}/comments`, "--paginate", "--slurp"], root, "read review triage comments").flat();
   const triage = currentTriageReceipt(comments, pr.headRefOid);
+  const control = currentReviewControl(comments, pr.headRefOid, { required: true });
+  if (!control.frozen) throw new Error("review control has not frozen the exact head");
+  assertReviewActionAllowed(control, { headSha: pr.headRefOid, action: "merge" });
+  if (JSON.stringify([...control.followUpIssues].sort((a, b) => a - b))
+    !== JSON.stringify([...triage.followUpIssues].sort((a, b) => a - b))) {
+    throw new Error("review control and triage receipt disagree on follow-up issues");
+  }
   for (const followUp of triage.followUpIssues) {
-    const item = ghJson(run, ["issue", "view", String(followUp), "--repo", options.repo, "--json", "state,body"], root, `read follow-up issue #${followUp}`);
-    if (item?.state !== "OPEN" || typeof item?.body !== "string" || item.body.trim().length < 40) {
-      throw new Error(`follow-up issue #${followUp} must be open and contain acceptance criteria`);
-    }
-    deliveryTargetFromIssueBody(item.body);
-    const origin = new RegExp(`(?:#${options.pr}(?![0-9])|/pull/${options.pr}(?![0-9]))`, "u");
-    if (!/acceptance criteria/iu.test(item.body) || !origin.test(item.body)) {
-      throw new Error(`follow-up issue #${followUp} must contain acceptance criteria and link PR #${options.pr}`);
-    }
+    const item = ghJson(run, ["issue", "view", String(followUp), "--repo", options.repo, "--json", "state,body,labels"], root, `read follow-up issue #${followUp}`);
+    const validation = validateFollowUpIssue(item, { originPr: options.pr });
+    if (!validation.ok) throw new Error(`follow-up issue #${followUp} ${validation.failures.join("; ")}`);
   }
 
   run(process.execPath, [path.join(root, "scripts", "dev-loops.mjs"), "gates"], { cwd: root, label: "validate repository dev-loop policy" });

@@ -253,16 +253,27 @@ undetectable later. The check that matters is `gates` parsing.
   open follow-up issue. It cannot merge to `develop` or `main`.
 
   ```bash
+  node scripts/github/review-control.mjs authorize-review \
+    --repo MediaNoxLabs/oxid --pr "$PR" --head "$HEAD_SHA" --post
+  # Request exactly one review only after authorization. For a repair head,
+  # repeat authorization; the fourth ordinary round is rejected.
   node scripts/github/review-triage.mjs \
     --repo MediaNoxLabs/oxid --pr "$PR" --head "$HEAD_SHA" \
     --follow-up "$FOLLOW_UP_ISSUES" --post
+  node scripts/github/review-control.mjs freeze \
+    --repo MediaNoxLabs/oxid --pr "$PR" --head "$HEAD_SHA" \
+    --disposition follow-up --follow-up "$FOLLOW_UP_ISSUES" --post
   node scripts/github/merge-milestone-pr.mjs \
     --repo MediaNoxLabs/oxid --pr "$PR"       # audit only
   node scripts/github/merge-milestone-pr.mjs \
     --repo MediaNoxLabs/oxid --pr "$PR" --execute
   ```
 
-  Omit `--follow-up` when there are none. The receipt contains counts and issue
+  For a clean review, omit `--follow-up` and freeze with `--disposition clean`.
+  Every deferred issue must be open, labeled `factory:follow-up`, contain
+  acceptance criteria, one delivery target, a Dependencies section, and the
+  origin PR. `technical-debt` is an optional secondary label for maintainability
+  work. The receipt contains counts and issue
   numbers only; never copy review text, prompts, credentials, or product data
   into it.
 - **Advisory failures remain visible but do not acquire veto power.** GitHub's
@@ -294,6 +305,47 @@ undetectable later. The check that matters is `gates` parsing.
   bounded `medium` effort by default; a timeout remains a failed review rather
   than permission to merge. Concrete blocking findings stop delivery;
   recommendations are retained on the PR and tracked as follow-up issues.
+
+## Review budget and controlled debt
+
+The supervisor reserves each exact-head review with
+`review-control.mjs authorize-review`. One routine round is expected and three ordinary rounds are
+the hard ceiling. A later round requires `--blocker security`,
+`irreversible-effect`, `required-ci`, or `acceptance`; the choice is recorded in
+the public control receipt. Re-requesting a review for the same head is rejected.
+
+After clean review or safe issue-backed deferral, `review-control.mjs freeze`
+makes that exact head terminal. `review`, `ready`, and `push` assertions fail;
+CI observation, metrics, merge, closeout, and status remain allowed. PRs created
+against a guarded factory branch require this control unconditionally, so a
+mutable PR body cannot opt out. Existing open PRs receive the same one-time
+control and freeze before guarded merge rather than being grandfathered.
+Only repository-supervisor actors listed in the production-ready profile can
+author a control receipt; marker-shaped comments from contributors are ignored.
+A named blocker may reopen only a different head, never re-review the same
+frozen commit.
+
+Create controlled debt from a reviewed local draft with the dry-run-first
+helper; the body must already contain Problem, Delivery target, Acceptance
+criteria, Dependencies, and the origin `PR #N`:
+
+```bash
+node scripts/github/create-follow-up.mjs \
+  --repo MediaNoxLabs/oxid --origin-pr "$PR" \
+  --title 'fix(scope): concise deferred outcome' \
+  --body-file /absolute/private/follow-up.md
+# Re-run with --execute after inspecting the generated gh command.
+# Add --technical-debt only for internal maintainability work.
+```
+
+Run the read-only debt inventory weekly and after any exhausted review budget:
+
+```bash
+just follow-up-audit
+```
+
+The Product Manager allocates a bounded maintenance slice to stale or priority
+follow-ups. Audit never closes, relabels, or edits issues by itself.
 
 ## Model policy
 

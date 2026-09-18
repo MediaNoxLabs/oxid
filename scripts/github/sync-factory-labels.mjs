@@ -15,9 +15,16 @@ export const FACTORY_STATE_LABELS = Object.freeze([
   { name: "factory:blocked", color: "d73a4a", description: "Factory item is blocked with a recorded reason" },
 ]);
 
+export const FACTORY_DEBT_LABELS = Object.freeze([
+  { name: "factory:follow-up", color: "b60205", description: "Controlled debt deferred from a reviewed contribution" },
+  { name: "technical-debt", color: "c5def5", description: "Internal maintainability debt; never a correctness waiver" },
+]);
+
+export const FACTORY_LABELS = Object.freeze([...FACTORY_STATE_LABELS, ...FACTORY_DEBT_LABELS]);
+
 export function syncFactoryLabels({ repository = "MediaNoxLabs/oxid", execute = false, run = execFileSync, stdout = process.stdout } = {}) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) throw new Error("--repo must be OWNER/REPO");
-  for (const label of FACTORY_STATE_LABELS) {
+  for (const label of FACTORY_LABELS) {
     stdout.write(`${execute ? "sync" : "would sync"} ${label.name}\n`);
     if (execute) {
       run("gh", ["label", "create", label.name, "--repo", repository, "--color", label.color, "--description", label.description, "--force"], {

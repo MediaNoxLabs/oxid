@@ -92,6 +92,12 @@ critical-test, authenticity, freshness, conflict, or secret-exposure findings.
 Other bounded findings are
 mergeable only after the follow-up issue and mapping comment exist.
 
+Every deferred real finding carries `factory:follow-up`. Maintainability-only
+items may also carry `technical-debt`. These are backlog-control labels rather
+than lifecycle states: the originating contribution continues through its own
+gate state, while the follow-up issue independently enters `factory:ready` only
+after normal refinement and dependency checks.
+
 ## Retrospective and closeout
 
 Every work item leaves one bounded PR closeout comment stating whether the

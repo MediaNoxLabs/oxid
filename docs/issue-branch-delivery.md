@@ -90,12 +90,18 @@ increment only when all of the following are true:
 
 1. the current PR still satisfies the critical contract above;
 2. a concrete open follow-up issue exists with acceptance criteria, target
-   milestone or `develop`, and a link to the originating PR;
+   milestone or `develop`, a `## Dependencies` section, a link to the
+   originating PR, and the `factory:follow-up` label;
 3. the PR contains one visible triage comment mapping the finding to that issue;
 4. the required CI contexts are green at the exact head.
 
 The follow-up issue is delivery work, not a silent waiver. Optional reviews and
 non-critical checks inform this triage but are not branch-protection contexts.
+Internal maintainability debt may additionally carry `technical-debt`; product
+bugs, security findings, and missing mandatory evidence never use that label as
+a substitute for the blocking contract. The read-only follow-up audit reports
+age, target, dependency state, and missing delivery evidence so accepted debt
+remains a controlled backlog rather than disappearing after merge.
 “Green” therefore means all hardened critical contexts pass; it does not mean
 every advisory reviewer suggested no improvement.
 
