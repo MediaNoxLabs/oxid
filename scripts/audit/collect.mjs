@@ -783,7 +783,7 @@ export function collectPrCensus({ repository, since, until, run = runner, cwd })
  * assumed, because it has changed and a stale premise here produces confident,
  * wrong findings.
  */
-export function collectIssueClosureGap({ repository, defaultBranch, defaultBranchCollected = true, since, run = runner, cwd }) {
+export function collectIssueClosureGap({ repository, defaultBranch, defaultBranchCollected = true, since, until, run = runner, cwd }) {
   const source = [`gh pr list --repo ${repository} --state merged`];
   // Every verdict in this collector turns on which branch is default. An
   // assumed value produces confident, wrong findings — the exact failure the
@@ -808,10 +808,12 @@ export function collectIssueClosureGap({ repository, defaultBranch, defaultBranc
   }
 
   const lowerBound = since ? Date.parse(since) : Number.NEGATIVE_INFINITY;
+  const upperBound = until ? Date.parse(until) : Number.POSITIVE_INFINITY;
   const closing = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/giu;
   const candidates = new Map();
   for (const entry of list) {
-    if (Date.parse(entry.mergedAt) < lowerBound) continue;
+    const mergedAt = Date.parse(entry.mergedAt);
+    if (mergedAt < lowerBound || mergedAt > upperBound) continue;
     for (const match of (entry.body ?? "").matchAll(closing)) {
       const issue = Number(match[1]);
       if (!candidates.has(issue)) {
@@ -882,6 +884,9 @@ export function collect({
   }
   const branchNames = [primary, ...comparisons].filter(Boolean);
   const { defaultBranch, resolved, defaultResolved } = resolveBranches({ repository, branches: branchNames, run, cwd: root });
+  if (!defaultResolved || !defaultBranch) {
+    throw new Error("could not collect the repository default branch; refusing to emit schema-invalid audit evidence");
+  }
   const refs = branchNames.map((name) => `refs/remotes/origin/${name}`);
 
   // A collector that throws unexpectedly degrades to `unavailable` rather than
@@ -913,6 +918,7 @@ export function collect({
       defaultBranch,
       defaultBranchCollected: defaultResolved,
       since,
+      until,
       run,
       cwd: root,
     })),

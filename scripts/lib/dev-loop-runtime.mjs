@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
-import { cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const SETTINGS_PATH = path.join(".pi", "settings.json");
@@ -299,9 +299,20 @@ export async function ensureSharedPiPackageStore({
   if (localInfo?.isDirectory() && !localInfo.isSymbolicLink()) {
     if (gitRoot !== commonRoot) {
       const worktree = path.basename(gitRoot).replace(/[^A-Za-z0-9_.-]/gu, "_") || "linked-worktree";
-      quarantinedStore = path.join(paths.quarantine, `${worktree}.npm-${now()}-${process.pid}`);
+      const quarantinedAt = now();
+      quarantinedStore = path.join(paths.quarantine, `${worktree}.npm-${quarantinedAt}-${process.pid}`);
       if (await lstatIfPresent(quarantinedStore)) throw new Error(`Pi package quarantine target already exists: ${quarantinedStore}`);
       await rename(localStore, quarantinedStore);
+      // A rename preserves the source directory mtime. Start the recovery
+      // window when the store enters quarantine, not when its owner last
+      // happened to modify it, or routine cleanup can reclaim it immediately.
+      const quarantineTime = new Date(quarantinedAt);
+      try {
+        await utimes(quarantinedStore, quarantineTime, quarantineTime);
+      } catch (error) {
+        await rename(quarantinedStore, localStore).catch(() => {});
+        throw error;
+      }
     } else {
       if (await lstatIfPresent(legacyBackup)) throw new Error(`recoverable legacy Pi package store already exists: ${legacyBackup}`);
       await rename(localStore, legacyBackup);

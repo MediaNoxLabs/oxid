@@ -250,6 +250,16 @@ test("a slate ordered by the rubric is accepted", () => {
   assert.deepEqual(crossCheck(report, { evidence: exampleEvidence() }), []);
 });
 
+test("a slate entry cannot soften the highest severity of its findings", () => {
+  const report = exampleReport();
+  report.slate[0].severity = "defer";
+  const problems = crossCheck(report, { evidence: exampleEvidence() });
+  assert.ok(
+    problems.some((problem) => /softens its highest-severity finding must-fix/u.test(problem)),
+    JSON.stringify(problems),
+  );
+});
+
 test("missing, duplicate, and non-consecutive slate ranks are rejected", () => {
   const missing = exampleReport();
   delete missing.slate[0].rank;

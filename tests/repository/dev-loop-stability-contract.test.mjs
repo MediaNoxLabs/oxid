@@ -415,6 +415,7 @@ test("registered linked worktrees use one fail-closed Pi package store", async (
   assert.equal((await lstat(path.join(fixture.worktree, ".pi", "npm"))).isSymbolicLink(), true);
   assert.match(recovered.quarantinedStore, /quarantine\/issue-150\.npm-123456-/u);
   assert.equal(await readFile(path.join(recovered.quarantinedStore, "owner-data"), "utf8"), "recover me\n");
+  assert.equal((await stat(recovered.quarantinedStore)).mtimeMs, 123456, "quarantine starts a fresh recovery window");
   await rm(path.join(fixture.worktree, ".pi", "npm"));
   await writeFile(path.join(fixture.worktree, ".pi", "npm"), "owner data\n");
   await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /must be absent, a real primary directory, or a managed closure symlink/);

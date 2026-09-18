@@ -558,6 +558,15 @@ test("default branch resolution never invents develop after an API failure", () 
   assert.equal(result.defaultBranch, null);
 });
 
+test("collection refuses to emit evidence without a collected default branch", () => {
+  const failure = new Error("network down");
+  failure.stderr = "network down";
+  assert.throws(
+    () => collect({ repository: "o/r", primary: "develop", root: sandbox(), run: stubRunner({ "gh api": failure }) }),
+    /refusing to emit schema-invalid audit evidence/u,
+  );
+});
+
 // --- pr.census ---------------------------------------------------------------
 
 test("pr.census classifies conventional titles and counts approvals", () => {
@@ -607,6 +616,25 @@ test("issue.closureGap refuses to run on an assumed default branch", () => {
   });
   assert.equal(result.status, "unavailable");
   assert.match(result.reason, /default branch could not be collected/u);
+});
+
+test("issue.closureGap applies both bounds of a historical audit window", () => {
+  const run = stubRunner({
+    "gh pr list": JSON.stringify([
+      { number: 350, body: "Closes #94", baseRefName: "milestone-0.2.0", mergedAt: "2026-08-31T23:59:59Z" },
+      { number: 351, body: "Closes #95", baseRefName: "milestone-0.2.0", mergedAt: "2026-09-05T00:00:00Z" },
+      { number: 352, body: "Closes #96", baseRefName: "milestone-0.2.0", mergedAt: "2026-09-11T00:00:00Z" },
+    ]),
+    "gh issue list": JSON.stringify([{ number: 94 }, { number: 95 }, { number: 96 }]),
+  });
+  const result = collectIssueClosureGap({
+    repository: "o/r",
+    defaultBranch: "develop",
+    since: "2026-09-01T00:00:00Z",
+    until: "2026-09-10T23:59:59Z",
+    run,
+  });
+  assert.deepEqual(result.facts.map((entry) => entry.issue), [95]);
 });
 
 // --- determinism -------------------------------------------------------------

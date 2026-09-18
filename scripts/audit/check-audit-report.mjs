@@ -165,6 +165,19 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
   const RADIUS = { class: 0, product: 1, local: 2 };
   const COST = { minutes: 0, hours: 1, days: 2, weeks: 3 };
   const byId = new Map(findings.map((finding) => [finding.id, finding]));
+  const effectiveSeverity = (entry) => {
+    const members = (entry.findings ?? []).map((id) => byId.get(id)).filter(Boolean);
+    if (members.length === 0) return entry.severity;
+    return members.reduce((highest, finding) => (
+      (SEVERITY[finding.severity] ?? 9) < (SEVERITY[highest] ?? 9) ? finding.severity : highest
+    ), members[0].severity);
+  };
+  for (const [index, entry] of slate.entries()) {
+    const derived = effectiveSeverity(entry);
+    if (derived !== entry.severity) {
+      complain(`slate[${index}] severity ${entry.severity} softens its highest-severity finding ${derived}`);
+    }
+  }
   // An entry's radius is the widest radius among the findings it consolidates:
   // merging a class finding into an issue does not narrow that issue's reach.
   const rankKey = (entry) => {
@@ -172,7 +185,7 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
     const radius = members.length > 0
       ? Math.min(...members.map((finding) => RADIUS[finding.radius] ?? 9))
       : 9;
-    return [SEVERITY[entry.severity] ?? 9, radius, COST[entry.cost] ?? 9];
+    return [SEVERITY[effectiveSeverity(entry)] ?? 9, radius, COST[entry.cost] ?? 9];
   };
   const nonResidual = slate.filter((entry) => entry.residual !== true);
   const ranks = nonResidual.map((entry) => entry.rank);
