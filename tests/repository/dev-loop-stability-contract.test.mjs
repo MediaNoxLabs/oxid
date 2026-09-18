@@ -1658,6 +1658,10 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
   assert.deepEqual(envelope.overrides, { preferLocal: true });
   assert.equal(envelope.maxCopilotRounds, 2);
   assert.ok(envelope.sanctionedCommands);
+  assert.equal(
+    envelope.sanctionedCommands.reads["size-budget"],
+    "scripts/dev-loops.mjs gate size-budget",
+  );
 
   const fastPathResult = await run([
     "loop", "build-envelope", `--input=${input}`,
