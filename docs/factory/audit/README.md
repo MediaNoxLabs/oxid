@@ -48,7 +48,7 @@ because in practice they are the ones that lapse.
 1. **Evidence-based.** *Hard rule.* Every finding cites either an evidence
    anchor from the collected artifact or a `file:line` the auditor read. A
    finding that cites neither is rejected by
-   `scripts/audit/check-audit-report.mjs`,
+   [`scripts/audit/check-audit-report.mjs`](../../../scripts/audit/check-audit-report.mjs),
    not by reviewer taste. Sampling is stated wherever the audit sampled.
 2. **Fair presentation.** *Hard rule.* Completeness is part of accuracy. A
    report that lists only findings is non-conforming: what was examined and
@@ -80,7 +80,7 @@ before reaching a finding.
 
 ### Layer 1 — mechanical evidence
 
-`scripts/audit/collect.mjs` is
+[`scripts/audit/collect.mjs`](../../../scripts/audit/collect.mjs) is
 deterministic, read-only, and free of any language model. It emits an
 `audit-evidence-v1` artifact in which every fact carries a stable anchor key.
 
@@ -96,16 +96,18 @@ generation timestamp. This is a tested property, not an intention.
 ### Layer 2 — judgment
 
 Each role receives the same evidence artifact plus one angle, holds read-only
-tools, and returns an `audit-findings-v1` artifact at a deterministic path.
-Roles are declared per audit type. A role reads source to interpret and to
-confirm, and records any file it opened beyond its briefing.
+tools, and returns one complete `audit-findings-v1` object. The supervising
+caller persists that exact response at the deterministic path and validates it
+before dispatching another pass; the read-only role never claims it wrote a
+file. Roles are declared per audit type. A role reads source to interpret and
+to confirm, and records any file it opened beyond its briefing.
 
 ### Layer 3 — consolidation and publication
 
-One consolidator fans in every role's findings, deduplicates across roles,
-applies the consolidation rule, ranks, and renders **one** source into both the
-Discussion body and, when asked, a review artifact. It then stops at the owner
-gate.
+One consolidator fans in every persisted role artifact, deduplicates across
+roles, applies the consolidation rule, ranks, and returns **one** source as
+both report JSON and rendered Markdown. The supervising caller persists and
+validates both exact blocks. The consolidator then stops at the owner gate.
 
 ## Audit types
 
@@ -206,14 +208,16 @@ quantities as posture rather than exact figures where
 ```bash
 # Layer 1: collect mechanical evidence at an anchor.
 node scripts/audit/collect.mjs --type milestone --branch milestone-0.2.0 \
-  --since <anchor-sha> --out tmp/audit/milestone/<anchor>/evidence.json
+  --since <anchor-iso-date-time> --out tmp/audit/milestone/<anchor>/evidence.json
 
 # Layer 3: validate a rendered report before publishing it.
-node scripts/audit/check-audit-report.mjs tmp/audit/milestone/<anchor>/report.json
+node scripts/audit/check-audit-report.mjs \
+  tmp/audit/milestone/<anchor>/report.json \
+  --evidence tmp/audit/milestone/<anchor>/evidence.json
 ```
 
-Under Pi, `.pi/skills/oxid-audit/SKILL.md`
-wraps the sequence as `/audit <type> [--since <anchor>]`.
+Under Pi, [`.pi/skills/oxid-audit/SKILL.md`](../../../.pi/skills/oxid-audit/SKILL.md)
+wraps the sequence as `/audit <type> [--since <anchor-iso-date-time>]`.
 
 Artifacts live under `tmp/audit/<type>/<anchor>/` — evidence, one findings file
 per role, and the rendered report. The directory is the audit's state: a run
@@ -222,12 +226,31 @@ requirement rather than a convenience, for the reason in the next section.
 
 ## What refuses to work by design
 
-- **A six-role audit in one Pi session.** `.pi/subagent-policy.json` caps four
-  spawns per session, two concurrent, `dynamicFanout.maxItems: 2`, sixteen
-  turns and a 120k hard token ceiling per child. These caps exist because this
-  host has frozen from aggregate overcommit; they are not raised to fit an
-  audit. Audits run as resumable passes over the artifact directory instead,
-  which is also why the directory, not a session, holds the state.
+- **More than one judgment role in one Pi session.**
+  [`.pi/subagent-policy.json`](../../../.pi/subagent-policy.json) is the
+  authority, and it currently caps:
+
+  ```
+  "maxSubagentSpawnsPerSession": 1
+  "maxSubagentSpawnsPerRun": 1
+  "globalConcurrencyLimit": 2
+  ```
+
+  One spawn per session and per run, with an 80k soft / 120k hard token
+  envelope per child. These caps exist because this host has frozen from
+  aggregate overcommit; they are not raised to fit an audit. A six-role audit
+  is therefore **six sessions plus a consolidator**, run as resumable passes
+  over the artifact directory — which is why the directory, and not a session,
+  holds the audit's state.
+
+  Quote these figures from the policy file, never from memory or from a stale
+  checkout. They changed during this framework's own development, and an
+  earlier draft of this charter cited a spawn allowance and a per-child budget
+  grammar that the policy no longer used — the `OXA-PRC-08` failure class,
+  committed inside the document that defines it.
+  `tests/repository/audit-report-contract.test.mjs` now holds both this
+  document and the skill to the live policy, so the next drift fails a gate
+  instead of reaching an agent.
 - **A finding without a citation.** The validator rejects it. This blocks
   well-meant, true observations that the auditor did not evidence, and that is
   the intended cost.

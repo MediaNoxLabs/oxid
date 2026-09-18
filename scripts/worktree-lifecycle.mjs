@@ -507,6 +507,7 @@ export async function cleanupPiPackagesAfterWorktreeRemoval(root, { cleanup = cl
       removed: result.removed,
       reclaimedStaging: result.reclaimedStaging,
       reclaimedLocks: result.reclaimedLocks,
+      reclaimedQuarantine: result.reclaimedQuarantine,
     };
   } catch (error) {
     // The exact worktree removal already succeeded; retain its receipt and report cleanup separately.

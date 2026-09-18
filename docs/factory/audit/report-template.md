@@ -11,7 +11,7 @@ Text in `<angle brackets>` is a substitution point. A section may not be
 omitted; a section with nothing to report says so explicitly, because "no
 findings" and "did not look" must never render identically.
 
-Validate with `node scripts/audit/check-audit-report.mjs <report.json>` before
+Validate with `node scripts/audit/check-audit-report.mjs <report.json> --evidence <evidence.json>` before
 publishing. The validator checks the fenced block against
 [audit-report-v1.schema.json](audit-report-v1.schema.json) and confirms every
 finding carries a citation.
@@ -207,7 +207,9 @@ that it can fail.>
 
 ```bash
 # Validate first. Publication without a passing validator run is non-conforming.
-node scripts/audit/check-audit-report.mjs tmp/audit/<type>/<anchor>/report.json
+node scripts/audit/check-audit-report.mjs \
+  tmp/audit/<type>/<anchor>/report.json \
+  --evidence tmp/audit/<type>/<anchor>/evidence.json
 
 # Then publish, on owner request, to the Audits category when one exists and
 # General until then.
