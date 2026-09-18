@@ -56,6 +56,27 @@
         "maximumAutomaticReviewRounds": 1,
         "advisoryDisposition": "follow-up"
       },
+      "reviewControl": {
+        "routineRounds": 1,
+        "maximumRounds": 3,
+        "blockerOverrides": [
+          "security",
+          "irreversible-effect",
+          "required-ci",
+          "acceptance"
+        ],
+        "freezeRequired": true,
+        "frozenAllowedActions": [
+          "ci",
+          "metrics",
+          "merge",
+          "closeout",
+          "status"
+        ],
+        "followUpLabel": "factory:follow-up",
+        "technicalDebtLabel": "technical-debt",
+        "staleAfterDays": 30
+      },
       "targets": {
         "strategy": "path-and-risk",
         "featureCiProfile": "feature"

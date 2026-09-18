@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
+import { assertReviewActionAllowed, currentReviewControl } from "./review-control.mjs";
+
 const DEVELOP_BASE = "develop";
 const REPOSITORY = "MediaNoxLabs/oxid";
 const BLOCKING_TITLE_MARKERS = /(?:\[?\bWIP\b\]?|\bDRAFT\b|DO NOT MERGE|🚧)/i;
@@ -127,6 +129,13 @@ export function auditDevelopMerge(options, { cwd = process.cwd(), run = defaultR
     cwd: root,
     label: "verify current-head gate evidence and resolved conversations",
   });
+
+  if (pr.body.includes("<!-- oxid-review-control-required-v1 -->")) {
+    const comments = ghJson(run, ["api", `repos/${options.repo}/issues/${options.pr}/comments`, "--paginate", "--slurp"], root, "read review-control comments").flat();
+    const control = currentReviewControl(comments, pr.headRefOid, { required: true });
+    if (!control.frozen) throw new Error("review control has not frozen the exact head");
+    assertReviewActionAllowed(control, { headSha: pr.headRefOid, action: "merge" });
+  }
 
   const current = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", "baseRefName,baseRefOid,headRefOid"], root, "re-read pull request head");
   if (current?.baseRefName !== DEVELOP_BASE || current?.baseRefOid !== localBase || current?.headRefOid !== pr.headRefOid) {

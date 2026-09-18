@@ -33,6 +33,10 @@ factory-smoke:
     ./scripts/check-pi-devshell.sh
     node scripts/git-hooks/configure.mjs check
 
+# Read-only weekly inventory for review-derived controlled debt.
+follow-up-audit:
+    node scripts/github/audit-follow-up-debt.mjs --repo MediaNoxLabs/oxid
+
 run:
     cargo run -p oxid-app
 

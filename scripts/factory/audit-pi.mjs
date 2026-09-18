@@ -366,6 +366,21 @@ async function inspectDeliveryProfiles(repoRoot) {
       || production?.qualityBudget?.advisoryDisposition !== "follow-up") {
       problems.push("production-ready must preserve the 70 percent quality budget and complete mandatory invariants");
     }
+    const reviewControl = production?.reviewControl;
+    if (reviewControl?.routineRounds !== 1
+      || reviewControl?.maximumRounds !== 3
+      || JSON.stringify(reviewControl?.blockerOverrides) !== JSON.stringify([
+        "security", "irreversible-effect", "required-ci", "acceptance",
+      ])
+      || reviewControl?.freezeRequired !== true
+      || JSON.stringify(reviewControl?.frozenAllowedActions) !== JSON.stringify([
+        "ci", "metrics", "merge", "closeout", "status",
+      ])
+      || reviewControl?.followUpLabel !== "factory:follow-up"
+      || reviewControl?.technicalDebtLabel !== "technical-debt"
+      || reviewControl?.staleAfterDays !== 30) {
+      problems.push("production-ready review control must cap rounds, freeze exact heads, and retain labeled follow-up debt");
+    }
     const fastPath = production?.preMutationFastPath;
     if (fastPath?.executionProfile !== "small-slice"
       || fastPath?.maximumToolCallsBeforeOutcome !== 20
