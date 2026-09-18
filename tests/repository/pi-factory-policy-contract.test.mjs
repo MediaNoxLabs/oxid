@@ -11,7 +11,12 @@ import { fileURLToPath } from "node:url";
 import { createDeliveryBranchRewriteSink } from "../../scripts/loop/pre-flight-gate.mjs";
 import { auditPi, auditWorktreeAdmission, lifecycleCapacityChecks } from "../../scripts/factory/audit-pi.mjs";
 import { applyUserPolicy, mergePolicy, policyMismatches } from "../../scripts/factory/pi-policy.mjs";
-import { FACTORY_STATE_LABELS, syncFactoryLabels } from "../../scripts/github/sync-factory-labels.mjs";
+import {
+  FACTORY_DEBT_LABELS,
+  FACTORY_LABELS,
+  FACTORY_STATE_LABELS,
+  syncFactoryLabels,
+} from "../../scripts/github/sync-factory-labels.mjs";
 import {
   applyDeliveryProfile,
   extractDeliveryProfileArgs,
@@ -270,6 +275,17 @@ test("the handoff wrapper makes prototype local and production-ready the default
     mandatoryInvariantsPercent: 100,
     maximumAutomaticReviewRounds: 1,
     advisoryDisposition: "follow-up",
+  });
+  assert.deepEqual(contract.profiles["production-ready"].reviewControl, {
+    routineRounds: 1,
+    maximumRounds: 3,
+    blockerOverrides: ["security", "irreversible-effect", "required-ci", "acceptance"],
+    freezeRequired: true,
+    frozenAllowedActions: ["ci", "metrics", "merge", "closeout", "status"],
+    followUpLabel: "factory:follow-up",
+    technicalDebtLabel: "technical-debt",
+    staleAfterDays: 30,
+    trustedActors: ["yshyn-iohk"],
   });
   assert.equal(production.nextAction, base.nextAction);
   assert.deepEqual(production.supervision, contract.profiles["production-ready"].supervision);
@@ -551,8 +567,20 @@ test("Pi worker guidance confines external repository writes to approved supervi
   assert.match(runtime, /worker\s+guidance now limit issue-backed delivery writes to `MediaNoxLabs\/oxid`/u);
 });
 
+test("stateful work maps event permutations before external review", async () => {
+  const [agent, policy] = await Promise.all([
+    readFile(new URL("../../.pi/agents/dev-loop.agent.md", import.meta.url), "utf8"),
+    readFile(new URL("../../AGENT.md", import.meta.url), "utf8"),
+  ]);
+  for (const source of [agent, policy]) {
+    for (const term of ["property matrix", "recovery", "supersession", "cancellation", "stale", "duplicate"]) {
+      assert.match(source, new RegExp(term, "iu"));
+    }
+  }
+});
+
 test("factory state labels are complete, unique, and dry-run by default", () => {
-  const expected = [
+  const expectedStates = [
     "factory:ready",
     "factory:claimed",
     "factory:in-progress",
@@ -561,7 +589,11 @@ test("factory state labels are complete, unique, and dry-run by default", () => 
     "factory:merge-ready",
     "factory:blocked",
   ];
-  assert.deepEqual(FACTORY_STATE_LABELS.map((label) => label.name), expected);
+  const expectedDebt = ["factory:follow-up", "technical-debt"];
+  const expected = [...expectedStates, ...expectedDebt];
+  assert.deepEqual(FACTORY_STATE_LABELS.map((label) => label.name), expectedStates);
+  assert.deepEqual(FACTORY_DEBT_LABELS.map((label) => label.name), expectedDebt);
+  assert.deepEqual(FACTORY_LABELS.map((label) => label.name), expected);
   assert.equal(new Set(expected).size, expected.length);
   const output = [];
   let mutations = 0;

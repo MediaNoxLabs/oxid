@@ -20,6 +20,10 @@ factory work items. Duties:
   documentation, dependency, and governance work.
 - Order the backlog and mark items `factory:ready` only after the ready-check
   (fsm.md §Ready) passes.
+- Triage `factory:follow-up` inventory weekly: order real debt, reject duplicate
+  or obsolete noise, and reserve an explicit maintenance slice for stale P1/P2
+  items. `technical-debt` is a secondary maintainability classification, not a
+  release-blocker downgrade.
 
 ### Implementer
 Claims a `factory:ready` item and delivers a draft PR. Duties:
@@ -68,6 +72,9 @@ A standing role, independent of any single work item. Duties:
 - Run the read-only metrics audit weekly and after a harness incident. Review
   median/p90 and SLO violations monthly; file one bounded issue for each
   confirmed regression instead of tuning the harness inline.
+- Run the read-only follow-up debt audit weekly and after review-budget
+  exhaustion; report invalid labels/contracts, age, delivery target, dependency
+  state, and closure evidence.
 - File confirmed findings as factory work items; never fix-and-push directly.
 
 ### Release Manager (human)

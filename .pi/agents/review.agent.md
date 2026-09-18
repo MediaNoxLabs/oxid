@@ -82,6 +82,10 @@ When NOT given an angle scope, behave exactly as the full-PR review agent descri
 - Read the relevant plan before deciding whether scope or acceptance criteria were met.
 - Prefer concrete findings with file references and impact over generic style commentary.
 - A routine production-ready review has one automatic round and a 70% quality target. Only concrete correctness, security, acceptance-criterion, regression, or evidence-integrity defects are merge-blocking. Classify remaining polish as follow-up; do not require a new head merely to satisfy advisory taste.
+- Emit exactly one disposition for every finding: `repair-now`, `follow-up`, or
+  `reject`. A follow-up is real controlled debt and must be acceptance-backed;
+  a nit or stylistic preference that does not change an operator-visible result
+  is rejected rather than converted into backlog noise.
 - Use `must-fix` only for those blocking classes. Use `worth-fixing-now` for a high-value bounded improvement that fits the current round and `defer` for the rest; both advisory classes remain visible but do not block the configured gate.
 - Distinguish clearly between must-fix findings, lower-severity risks, and informational gaps.
 - If the PR description omits required sections, is too thin to ground review without reconstructing intent from commits, or includes verdict status, evidence, or changelog content, treat that as a first-class review issue.
