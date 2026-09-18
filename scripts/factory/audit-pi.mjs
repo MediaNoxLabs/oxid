@@ -157,7 +157,7 @@ function stripYamlComment(value, file) {
   return value;
 }
 
-function parseFrontmatter(source, file) {
+export function parseFrontmatter(source, file) {
   const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u);
   if (!match) throw new Error(`${file}: missing YAML frontmatter`);
   const result = {};
@@ -178,7 +178,7 @@ function parseFrontmatter(source, file) {
   return result;
 }
 
-function validateAgentBudget(file, fields) {
+export function validateAgentBudget(file, fields) {
   const problems = [];
   const timeoutMs = Number(fields.timeoutMs);
   if (!Number.isInteger(timeoutMs) || timeoutMs < 60_000 || timeoutMs > 3_600_000) {
@@ -231,11 +231,12 @@ async function inspectPackageClosureState(repoRoot) {
   try {
     const audit = await auditPiPackageClosures({ cwd: repoRoot });
     const unreferenced = audit.closures.filter((entry) => !entry.referenced).length;
-    return check("pi-package-closures", audit.cleanupBlocked ? "warn" : audit.closures.length > 32 ? "warn" : "pass",
+    const quarantined = audit.quarantine?.length ?? 0;
+    return check("pi-package-closures", audit.cleanupBlocked || audit.closures.length > 32 || quarantined > 0 ? "warn" : "pass",
       audit.cleanupBlocked
         ? "Pi package closure cleanup is blocked by malformed registered worktree settings"
-        : `${audit.closures.length} factory-managed Pi closures (${audit.referenced.length} referenced, ${unreferenced} unreferenced)`,
-      { closures: audit.closures.length, referenced: audit.referenced.length, unreferenced }, "operational");
+        : `${audit.closures.length} factory-managed Pi closures (${audit.referenced.length} referenced, ${unreferenced} unreferenced, ${quarantined} quarantined stores)`,
+      { closures: audit.closures.length, referenced: audit.referenced.length, unreferenced, quarantined }, "operational");
   } catch (error) {
     return check("pi-package-closures", "warn", `Pi package closure audit unavailable: ${error.message}`, undefined, "operational");
   }

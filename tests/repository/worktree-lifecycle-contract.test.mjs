@@ -28,13 +28,14 @@ test("post-removal closure cleanup reports bounded results without reversing clo
       removed: ["old"],
       reclaimedStaging: ["stage"],
       reclaimedLocks: ["lock"],
+      reclaimedQuarantine: ["quarantine"],
     }),
   });
   assert.deepEqual(completed, {
-    status: "completed", closures: 1, referenced: 1, removed: ["old"], reclaimedStaging: ["stage"], reclaimedLocks: ["lock"],
+    status: "completed", closures: 1, referenced: 1, removed: ["old"], reclaimedStaging: ["stage"], reclaimedLocks: ["lock"], reclaimedQuarantine: ["quarantine"],
   });
   const blocked = await cleanupPiPackagesAfterWorktreeRemoval("/repo", {
-    cleanup: async () => ({ cleanupBlocked: true, closures: [], referenced: [], removed: [], reclaimedStaging: [], reclaimedLocks: [] }),
+    cleanup: async () => ({ cleanupBlocked: true, closures: [], referenced: [], removed: [], reclaimedStaging: [], reclaimedLocks: [], reclaimedQuarantine: [] }),
   });
   assert.equal(blocked.status, "blocked");
   const failed = await cleanupPiPackagesAfterWorktreeRemoval("/repo", { cleanup: async () => { throw new Error("cleanup unavailable"); } });

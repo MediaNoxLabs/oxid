@@ -1,0 +1,218 @@
+{
+  "schemaVersion": 1,
+  "anchor": {
+    "auditType": "milestone",
+    "criteriaVersion": 1,
+    "mode": "full",
+    "recordedAt": "2026-09-09T00:00:00Z",
+    "defaultBranch": "develop",
+    "branches": [
+      {
+        "name": "milestone-0.2.0",
+        "sha": "d34e65e0000000000000000000000000000000aa",
+        "role": "primary"
+      },
+      {
+        "name": "develop",
+        "sha": "259cc8c0000000000000000000000000000000bb",
+        "role": "comparison"
+      },
+      {
+        "name": "main",
+        "sha": "c7c5b5b0000000000000000000000000000000cc",
+        "role": "baseline"
+      }
+    ],
+    "excluded": [
+      "no builds, emulators, simulators or containers were started",
+      "open pull requests and unmerged branches"
+    ]
+  },
+  "plan": {
+    "objective": "Is milestone-0.2.0 releasable, and what debt did it accumulate since issue #156?",
+    "issueCap": 15,
+    "roles": [
+      "release-readiness",
+      "security-custody",
+      "architecture-boundaries",
+      "reliability-concurrency",
+      "tests-ci-release",
+      "docs-adr-consistency"
+    ],
+    "passes": 3
+  },
+  "verdict": {
+    "statement": "Not releasable. The train carries no branch protection, two declared critical checks cannot report failure, and develop still carries a P0 this train already fixed.",
+    "releasable": false,
+    "blocking": [
+      "F-01",
+      "F-02",
+      "F-03"
+    ],
+    "exitQuestions": [
+      {
+        "question": "Can this train be released today?",
+        "answer": "No; F-01, F-02 and F-03 block."
+      },
+      {
+        "question": "Does the default branch carry any defect this train has fixed?",
+        "answer": "Yes, three."
+      }
+    ]
+  },
+  "findings": [
+    {
+      "id": "F-01",
+      "criterion": "OXA-MIL-01",
+      "severity": "must-fix",
+      "radius": "class",
+      "cost": "hours",
+      "summary": "The milestone train enforces no required check, review, force-push or deletion rule.",
+      "evidence": [
+        {
+          "anchor": "branch.protection"
+        },
+        {
+          "path": "docs/issue-branch-delivery.md",
+          "line": 25,
+          "quote": "trains MUST carry the protection contract"
+        }
+      ],
+      "failureScenario": "Any contributor with write access force-pushes or merges an unreviewed, failing change directly onto the branch holding all product work.",
+      "recommendation": "Add a refs/heads/milestone-* ruleset so future trains inherit protection at creation.",
+      "reverifiedBy": "steward",
+      "raisedBy": "release-readiness"
+    },
+    {
+      "id": "F-02",
+      "criterion": "OXA-MIL-03",
+      "severity": "must-fix",
+      "radius": "class",
+      "cost": "hours",
+      "summary": "Two contexts in CRITICAL_CHECKS are published with a literal success state regardless of their computed result.",
+      "evidence": [
+        {
+          "anchor": "gate.cannotFail"
+        },
+        {
+          "path": ".github/workflows/contribution-metadata.yml",
+          "line": 107
+        },
+        {
+          "path": "scripts/github/merge-milestone-pr.mjs",
+          "lines": "16-24"
+        }
+      ],
+      "failureScenario": "A pull request with a non-conforming title merges through the guarded wrapper while the merge receipt records seven green critical gates.",
+      "recommendation": "Drop both advisory contexts from CRITICAL_CHECKS, or publish the computed state.",
+      "reverifiedBy": "steward",
+      "raisedBy": "tests-ci-release"
+    },
+    {
+      "id": "F-03",
+      "criterion": "OXA-SEC-01",
+      "severity": "must-fix",
+      "radius": "product",
+      "cost": "minutes",
+      "summary": "Custody format version 4 seals the BIP-39 master seed under the legacy Argon2id policy.",
+      "evidence": [
+        {
+          "path": "crates/adapters/backup-portable/src/lib.rs",
+          "lines": "36-45,70-74,411"
+        }
+      ],
+      "failureScenario": "A v4 export derives its key at 19 MiB and t=2 against a 12-character minimum passphrase, where v5 carrying identical material uses 64 MiB and t=3.",
+      "recommendation": "Move CUSTODY_FORMAT_VERSION to the complete-wallet policy arm.",
+      "expiry": "Free until the first v4 export exists; a format migration afterwards.",
+      "reverifiedBy": "steward",
+      "raisedBy": "security-custody"
+    }
+  ],
+  "verifiedSound": [
+    {
+      "criterion": "OXA-SEC-04",
+      "claim": "The capability manifest is truthful in both directions: 112 declared methods against 102 dispatch arms, no undeclared method.",
+      "sampling": "exhaustive",
+      "evidence": [
+        {
+          "path": "crates/application/src/capabilities.rs",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "criterion": "OXA-ARC-02",
+      "claim": "All 16 core domain, port and application crates depend on no external technology.",
+      "sampling": "exhaustive",
+      "evidence": [
+        {
+          "path": "scripts/check-architecture.sh",
+          "line": 1
+        }
+      ]
+    }
+  ],
+  "notVerified": [
+    {
+      "claim": "Actual coverage percentages for the window.",
+      "reason": "The scope commands emit JSON only, so no totals reach the log, and no build was started.",
+      "wouldRequire": "One coverage run per scope."
+    }
+  ],
+  "slate": [
+    {
+      "title": "Protect every milestone train by ruleset",
+      "findings": [
+        "F-01"
+      ],
+      "severity": "must-fix",
+      "cost": "hours",
+      "labels": [
+        "follow",
+        "audit:milestone",
+        "P0",
+        "scope:ci"
+      ],
+      "rank": 1
+    },
+    {
+      "title": "Stop counting advisory PR-metadata statuses as critical merge checks",
+      "findings": [
+        "F-02"
+      ],
+      "severity": "must-fix",
+      "cost": "hours",
+      "labels": [
+        "follow",
+        "audit:milestone",
+        "P0",
+        "scope:ci"
+      ],
+      "rank": 2
+    }
+  ],
+  "consolidation": {
+    "rawFindings": 41,
+    "proposedIssues": 2,
+    "notFiledUnderTenLines": 4,
+    "mergedByCause": 12,
+    "duplicatesOfOpenIssues": 3,
+    "overflowToResidual": 0,
+    "notes": [
+      "five endpoint validators merged into one issue naming five sites"
+    ]
+  },
+  "decisionsRequired": [
+    {
+      "question": "Do the three verified-fixed security issues wait for the promotion, or close now with a note?",
+      "recommendation": "Wait. Closing now records a P0 as fixed on a branch that still carries it.",
+      "blocks": [
+        "F-03"
+      ]
+    }
+  ],
+  "limitations": [
+    "No role examined code it authored.",
+    "Every must-fix was reproduced by the steward independently of the raising role."
+  ]
+}
