@@ -183,11 +183,24 @@ test("review control caps ordinary rounds, allows explicit blockers, and freezes
   control = freezeReview(control, { headSha: heads[3], disposition: "follow-up", followUpIssues: [51] });
   const body = buildReviewControlComment(control);
   assert.deepEqual(parseReviewControlComment(body), control);
-  assert.deepEqual(currentReviewControl([{ body }], heads[3], { required: true }), control);
+  assert.deepEqual(currentReviewControl([{ body, user: { login: "yshyn-iohk" } }], heads[3], { required: true }), control);
+  assert.throws(() => currentReviewControl([{ body, user: { login: "untrusted-author" } }], heads[3], { required: true }), /missing/u);
   assert.throws(() => assertReviewActionAllowed(control, { headSha: heads[3], action: "review" }), /rejects review/u);
   assert.throws(() => assertReviewActionAllowed(control, { headSha: heads[3], action: "push" }), /rejects push/u);
   assert.equal(assertReviewActionAllowed(control, { headSha: heads[3], action: "merge" }).ok, true);
   assert.throws(() => assertReviewActionAllowed(control, { headSha: "e".repeat(40), action: "merge" }), /head changed/u);
+  assert.throws(() => authorizeReview(control, { headSha: "e".repeat(40) }), /requires a named blocker/u);
+  const reopened = authorizeReview(
+    currentReviewControl(
+      [{ body, user: { login: "yshyn-iohk" } }],
+      "e".repeat(40),
+      { required: true, allowFrozenHeadChange: true },
+    ),
+    { headSha: "e".repeat(40), blockerOverride: "security" },
+  );
+  assert.equal(reopened.frozen, false);
+  assert.equal(reopened.reviewRounds, 5);
+  assert.equal(reopened.blockerOverride, "security");
 });
 
 test("follow-up debt audit reports stale and invalid inventory without mutating it", () => {
@@ -253,7 +266,7 @@ function milestoneAuditRun({ reReadHead = "b".repeat(40), issueTarget = "milesto
     if (args[0] === "pr" && args[1] === "checks") return JSON.stringify(checks);
     if (args[0] === "api") return JSON.stringify([[
       { body: buildTriageReceipt({ headSha: pr.headRefOid }) },
-      { body: buildReviewControlComment(control) },
+      { body: buildReviewControlComment(control), user: { login: "yshyn-iohk" } },
     ]]);
     throw new Error(`unexpected gh args ${args.join(" ")}`);
   };

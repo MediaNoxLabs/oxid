@@ -335,6 +335,10 @@ CI observation, metrics, merge, closeout, and status remain allowed. PRs created
 against a guarded factory branch require this control unconditionally, so a
 mutable PR body cannot opt out. Existing open PRs receive the same one-time
 control and freeze before guarded merge rather than being grandfathered.
+Only repository-supervisor actors listed in the production-ready profile can
+author a control receipt; marker-shaped comments from contributors are ignored.
+A named blocker may reopen only a different head, never re-review the same
+frozen commit.
 
 Create controlled debt from a reviewed local draft with the dry-run-first
 helper; the body must already contain Problem, Delivery target, Acceptance

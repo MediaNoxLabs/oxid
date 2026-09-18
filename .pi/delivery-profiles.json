@@ -75,7 +75,10 @@
         ],
         "followUpLabel": "factory:follow-up",
         "technicalDebtLabel": "technical-debt",
-        "staleAfterDays": 30
+        "staleAfterDays": 30,
+        "trustedActors": [
+          "yshyn-iohk"
+        ]
       },
       "targets": {
         "strategy": "path-and-risk",

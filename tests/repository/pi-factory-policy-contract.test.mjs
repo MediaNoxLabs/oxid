@@ -264,6 +264,7 @@ test("the handoff wrapper makes prototype local and production-ready the default
     followUpLabel: "factory:follow-up",
     technicalDebtLabel: "technical-debt",
     staleAfterDays: 30,
+    trustedActors: ["yshyn-iohk"],
   });
   assert.equal(production.nextAction, base.nextAction);
   assert.deepEqual(production.supervision, contract.profiles["production-ready"].supervision);

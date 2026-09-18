@@ -378,7 +378,8 @@ async function inspectDeliveryProfiles(repoRoot) {
       ])
       || reviewControl?.followUpLabel !== "factory:follow-up"
       || reviewControl?.technicalDebtLabel !== "technical-debt"
-      || reviewControl?.staleAfterDays !== 30) {
+      || reviewControl?.staleAfterDays !== 30
+      || JSON.stringify(reviewControl?.trustedActors) !== JSON.stringify(["yshyn-iohk"])) {
       problems.push("production-ready review control must cap rounds, freeze exact heads, and retain labeled follow-up debt");
     }
     const fastPath = production?.preMutationFastPath;

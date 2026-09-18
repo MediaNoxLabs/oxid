@@ -10,6 +10,7 @@ import { validateFollowUpIssue } from "./review-triage.mjs";
 
 export const REVIEW_CONTROL_MARKER = "<!-- oxid-review-control-v1 -->";
 export const MAX_REVIEW_ROUNDS = 3;
+export const TRUSTED_REVIEW_CONTROL_ACTORS = Object.freeze(["yshyn-iohk"]);
 export const BLOCKER_OVERRIDES = Object.freeze([
   "security",
   "irreversible-effect",
@@ -103,9 +104,18 @@ export function parseReviewControlComment(body) {
   }
 }
 
-export function currentReviewControl(comments, headSha, { required = false } = {}) {
+function reviewControlActor(comment) {
+  return comment?.user?.login ?? comment?.author?.login ?? null;
+}
+
+export function currentReviewControl(comments, headSha, { required = false, allowFrozenHeadChange = false } = {}) {
   if (!Array.isArray(comments)) throw new Error("pull-request comments are unavailable");
-  const matches = comments.map((comment) => parseReviewControlComment(comment?.body)).filter(Boolean);
+  const matches = comments.flatMap((comment) => {
+    if (!TRUSTED_REVIEW_CONTROL_ACTORS.includes(reviewControlActor(comment))) return [];
+    const control = parseReviewControlComment(comment?.body);
+    if (control === null) return [];
+    return [control];
+  });
   if (matches.length > 1) throw new Error("multiple review-control comments exist");
   if (matches.length === 0) {
     if (required) throw new Error("review-control comment is missing");
@@ -113,7 +123,10 @@ export function currentReviewControl(comments, headSha, { required = false } = {
   }
   const control = matches[0];
   if (headSha !== undefined && control.headSha !== headSha) {
-    if (control.frozen) throw new Error(`frozen review head changed from ${control.headSha} to ${headSha}`);
+    if (control.frozen) {
+      if (allowFrozenHeadChange) return control;
+      throw new Error(`frozen review head changed from ${control.headSha} to ${headSha}`);
+    }
     control.headSha = sha(headSha);
   }
   return control;
@@ -122,7 +135,8 @@ export function currentReviewControl(comments, headSha, { required = false } = {
 export function authorizeReview(control, { headSha, blockerOverride = null } = {}) {
   const current = validateReviewControl(structuredClone(control));
   sha(headSha);
-  if (current.frozen) throw new Error(`head ${current.headSha} is frozen; another review is forbidden`);
+  if (current.frozen && blockerOverride === null) throw new Error(`head ${current.headSha} is frozen; another review requires a named blocker`);
+  if (current.frozen && current.headSha === headSha) throw new Error("a blocker override cannot re-review the same frozen head");
   if (current.reviewedHeads.includes(headSha)) throw new Error(`head ${headSha} already consumed a review round`);
   if (blockerOverride !== null && !BLOCKER_OVERRIDES.includes(blockerOverride)) throw new Error("blocker override is invalid");
   if (current.reviewRounds >= MAX_REVIEW_ROUNDS && blockerOverride === null) {
@@ -189,7 +203,10 @@ function readPr(repo, pr) {
 
 function upsert(repo, pr, comments, control) {
   const body = buildReviewControlComment(control);
-  const existing = comments.filter((comment) => parseReviewControlComment(comment?.body));
+  const existing = comments.filter((comment) => (
+    TRUSTED_REVIEW_CONTROL_ACTORS.includes(reviewControlActor(comment))
+    && parseReviewControlComment(comment?.body)
+  ));
   if (existing.length > 1) throw new Error("multiple review-control comments exist");
   if (existing.length === 1) {
     run("gh", ["api", "--method", "PATCH", `repos/${repo}/issues/comments/${existing[0].id}`, "-f", `body=${body}`]);
@@ -229,7 +246,9 @@ export function cli(argv = process.argv.slice(2)) {
   }
   const { headSha, comments } = readPr(options.repo, options.pr);
   if (options.head !== undefined && options.head !== headSha) throw new Error("PR head does not match --head");
-  const existing = currentReviewControl(comments, headSha);
+  const existing = currentReviewControl(comments, headSha, {
+    allowFrozenHeadChange: options.command === "authorize-review" && options.blocker !== null,
+  });
   if (options.command === "status") {
     process.stdout.write(`${JSON.stringify(existing ?? initialReviewControl(headSha))}\n`);
     return;
