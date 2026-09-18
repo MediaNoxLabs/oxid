@@ -342,24 +342,17 @@ pub fn reduce_wallet_dust_registration_settlement(
             WalletDustRegistrationSettlementState::ActionRequired
         ) && (!has_submitted_registration(projection)
             || registration_is_abandoned(projection))
+            && !projection
+                .abandoned_registration
+                .as_ref()
+                .is_some_and(|registration| registration.transaction_id.is_some())
             && preparation_revision > projection.preparation_revision =>
         {
             next.preparation_revision = preparation_revision;
             if registration_is_abandoned(projection) {
                 next.abandoned_registration = projection.registration.clone();
             }
-            next.registration = Some(WalletDustRegistrationSettlementRegistration {
-                draft_id,
-                transaction_id: None,
-                observation_revision: 0,
-                finality_revision: 0,
-                reconciliation_revision: 0,
-                dust_revision: 0,
-                dust_observation_revision: 0,
-                dust_ready: false,
-                included: false,
-                abandonment_revision: 0,
-            });
+            next.registration = Some(pending_registration(draft_id));
             set_effective_state(
                 &mut next,
                 WalletDustRegistrationSettlementState::AwaitingAuthorization,
@@ -380,18 +373,7 @@ pub fn reduce_wallet_dust_registration_settlement(
             && preparation_revision > projection.preparation_revision =>
         {
             next.preparation_revision = preparation_revision;
-            next.registration = Some(WalletDustRegistrationSettlementRegistration {
-                draft_id,
-                transaction_id: None,
-                observation_revision: 0,
-                finality_revision: 0,
-                reconciliation_revision: 0,
-                dust_revision: 0,
-                dust_observation_revision: 0,
-                dust_ready: false,
-                included: false,
-                abandonment_revision: 0,
-            });
+            next.registration = Some(pending_registration(draft_id));
         }
         WalletDustRegistrationSettlementEvent::AuthorizationSucceeded { draft_id, .. }
             if matches!(
@@ -905,6 +887,23 @@ fn has_submitted_registration(projection: &WalletDustRegistrationSettlementProje
         .is_some_and(|registration| registration.transaction_id.is_some())
 }
 
+fn pending_registration(
+    draft_id: WalletTransactionDraftId,
+) -> WalletDustRegistrationSettlementRegistration {
+    WalletDustRegistrationSettlementRegistration {
+        draft_id,
+        transaction_id: None,
+        observation_revision: 0,
+        finality_revision: 0,
+        reconciliation_revision: 0,
+        dust_revision: 0,
+        dust_observation_revision: 0,
+        dust_ready: false,
+        included: false,
+        abandonment_revision: 0,
+    }
+}
+
 fn registration_is_abandoned(projection: &WalletDustRegistrationSettlementProjection) -> bool {
     projection
         .registration
@@ -919,28 +918,51 @@ fn supersedes_abandoned_registration(
     let Some(registration) = &projection.abandoned_registration else {
         return false;
     };
-    let observation = match event {
+    let active_observation_revision = projection
+        .registration
+        .as_ref()
+        .map_or(0, |active| active.observation_revision);
+    let matches = |transaction| registration.transaction_id.as_ref() == Some(transaction);
+    match event {
         WalletDustRegistrationSettlementEvent::FinalityObserved {
             transaction_id,
             revision,
             ..
+        } => {
+            matches(transaction_id)
+                && *revision
+                    > active_observation_revision
+                        .max(registration.finality_revision)
+                        .max(registration.reconciliation_revision)
+                        .max(registration.abandonment_revision)
         }
-        | WalletDustRegistrationSettlementEvent::RegistrationReconciled {
+        WalletDustRegistrationSettlementEvent::RegistrationReconciled {
             transaction_id,
             revision,
+            reconciliation,
             ..
-        } => Some((transaction_id, *revision)),
+        } => {
+            matches(transaction_id)
+                && *revision
+                    > active_observation_revision
+                        .max(registration.reconciliation_revision)
+                        .max(registration.abandonment_revision)
+                && (*reconciliation != WalletDustRegistrationSettlementReconciliation::Dropped
+                    || *revision >= registration.finality_revision)
+        }
         WalletDustRegistrationSettlementEvent::DustRefreshed {
             transaction_id,
+            revision,
             after_observation_revision,
             ..
-        } => Some((transaction_id, *after_observation_revision)),
-        _ => None,
-    };
-    observation.is_some_and(|(transaction, revision)| {
-        registration.transaction_id.as_ref() == Some(transaction)
-            && revision > registration.abandonment_revision
-    })
+        } => {
+            matches(transaction_id)
+                && *after_observation_revision
+                    > active_observation_revision.max(registration.abandonment_revision)
+                && *revision > registration.dust_revision
+        }
+        _ => false,
+    }
 }
 
 fn registration_ready(projection: &WalletDustRegistrationSettlementProjection) -> bool {
@@ -991,9 +1013,16 @@ mod tests {
     }
 
     fn finality(revision: u64) -> WalletDustRegistrationSettlementEvent {
+        finality_for(transaction(), revision)
+    }
+
+    fn finality_for(
+        transaction_id: ChainTransactionId,
+        revision: u64,
+    ) -> WalletDustRegistrationSettlementEvent {
         WalletDustRegistrationSettlementEvent::FinalityObserved {
             identity: selected_identity(),
-            transaction_id: transaction(),
+            transaction_id,
             revision,
         }
     }
@@ -1106,6 +1135,13 @@ mod tests {
         reduce_wallet_dust_registration_settlement(projection, event)
     }
 
+    fn assert_noop(
+        projection: &WalletDustRegistrationSettlementProjection,
+        event: WalletDustRegistrationSettlementEvent,
+    ) {
+        assert_eq!(reduce(projection, event), projection.clone());
+    }
+
     fn retained(
         projection: &WalletDustRegistrationSettlementProjection,
     ) -> &WalletDustRegistrationSettlementRegistration {
@@ -1141,10 +1177,7 @@ mod tests {
     fn eligible_flow_requires_authorization_finality_reconciliation_and_dust_refresh() {
         let mut projection = eligible();
         assert_eq!(projection.state, State::ActionRequired);
-        assert_eq!(
-            reduce(&projection, authorization_success(draft()),),
-            projection
-        );
+        assert_noop(&projection, authorization_success(draft()));
         projection = reduce(&projection, authorization_request(draft(), 1));
         projection = reduce(&projection, authorization_success(draft()));
         assert_eq!(projection.state, State::Submitting);
@@ -1325,16 +1358,7 @@ mod tests {
         );
         assert_eq!(delayed_suspension.state, State::Ready);
         assert_eq!(delayed_suspension.recovery_revision, 5);
-        assert_eq!(
-            reduce(
-                &ready,
-                WalletDustRegistrationSettlementEvent::Cancelled {
-                    identity,
-                    draft_id: draft(),
-                },
-            ),
-            ready
-        );
+        assert_noop(&ready, cancellation(draft()));
     }
 
     #[test]
@@ -1668,31 +1692,9 @@ mod tests {
                 preparation_revision: 2,
             },
         );
-        assert_eq!(
-            reduce(
-                &reprepared,
-                WalletDustRegistrationSettlementEvent::Cancelled {
-                    identity: identity.clone(),
-                    draft_id: first_draft.clone(),
-                },
-            ),
-            reprepared
-        );
-        assert_eq!(
-            reduce(
-                &reprepared,
-                WalletDustRegistrationSettlementEvent::AuthorizationRequested {
-                    identity: identity.clone(),
-                    draft_id: first_draft.clone(),
-                    preparation_revision: 1,
-                },
-            ),
-            reprepared
-        );
-        assert_eq!(
-            reduce(&reprepared, authorization_success(first_draft),),
-            reprepared
-        );
+        assert_noop(&reprepared, cancellation(first_draft.clone()));
+        assert_noop(&reprepared, authorization_request(first_draft.clone(), 1));
+        assert_noop(&reprepared, authorization_success(first_draft));
         assert_eq!(
             reduce(
                 &reprepared,
@@ -1796,17 +1798,11 @@ mod tests {
         let recovered = reduce(&dropped, finality(3));
         assert_eq!(recovered.state, State::Reconciling);
         assert_eq!(retained(&recovered).reconciliation_revision, 2);
-        assert_eq!(
-            reduce(
-                &recovered,
-                reconciliation(1, WalletDustRegistrationSettlementReconciliation::Included),
-            ),
-            recovered
+        assert_noop(
+            &recovered,
+            reconciliation(1, WalletDustRegistrationSettlementReconciliation::Included),
         );
-        assert_eq!(
-            reduce(&dropped, authorization_request(other_draft(), 2)),
-            dropped
-        );
+        assert_noop(&dropped, authorization_request(other_draft(), 2));
         assert_eq!(reduce(&dropped, cancellation(draft())), dropped);
         assert_eq!(reduce(&dropped, abandon_dropped(2)), dropped);
         let abandoned = reduce(&dropped, abandon_dropped(3));
@@ -1835,6 +1831,19 @@ mod tests {
         assert_eq!(
             reduce(&accepted_first, finality(4)),
             reduce(&observed_first, replacement_submission)
+        );
+        let original_finalized = reduce(&accepted_first, finality(4));
+        let replacement_finalized =
+            reduce(&original_finalized, finality_for(other_transaction(), 5));
+        assert_noop(&replacement_finalized, finality(4));
+        let original_dropped = reduce(
+            &original_finalized,
+            reconciliation(6, WalletDustRegistrationSettlementReconciliation::Dropped),
+        );
+        let original_abandoned = reduce(&original_dropped, abandon_dropped(7));
+        assert_noop(
+            &original_abandoned,
+            authorization_request(WalletTransactionDraftId::parse("dustreg_third").unwrap(), 3),
         );
         let refresh_first = reduce(
             &reduce(&replacement, dust_refresh(1, 4, true)),
