@@ -1,0 +1,391 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/MediaNoxLabs/oxid/develop/docs/factory/audit/audit-evidence-v1.schema.json",
+  "title": "Oxid audit evidence v1",
+  "description": "Closed contract for mechanically collected audit facts, emitted by scripts/audit/collect.mjs. Inclusion rule: anything two runs must agree on. Two consecutive runs at one anchor produce byte-identical output apart from collectedAt. Findings cite these anchor keys.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "collectedAt", "repository", "defaultBranch", "branches", "collectors"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "collectedAt": {
+      "description": "The only field permitted to differ between two runs at the same anchor.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "defaultBranch": {
+      "description": "Collected, never assumed. Closing-keyword behaviour depends on it and it has changed before.",
+      "type": "string",
+      "minLength": 1
+    },
+    "branches": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "sha"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "role": { "enum": ["primary", "comparison", "baseline"] }
+        }
+      }
+    },
+    "collectors": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "branch.protection": {
+          "allOf": [{ "$ref": "#/$defs/envelope" }],
+          "properties": {
+            "facts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["branch", "protected"],
+                "properties": {
+                  "branch": { "type": "string", "minLength": 1 },
+                  "protected": { "type": "boolean" },
+                  "requiredChecks": { "type": "array", "items": { "type": "string" } },
+                  "requiredApprovals": { "type": "integer", "minimum": 0 },
+                  "allowsForcePush": { "type": "boolean" },
+                  "allowsDeletion": { "type": "boolean" },
+                  "requiresSignatures": { "type": "boolean" },
+                  "rulesetCount": { "type": "integer", "minimum": 0 },
+                  "deleteBranchOnMerge": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        },
+        "pr.census": {
+          "allOf": [{ "$ref": "#/$defs/envelope" }],
+          "properties": {
+            "facts": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["merged", "additions", "deletions"],
+              "properties": {
+                "merged": { "type": "integer", "minimum": 0 },
+                "additions": { "type": "integer", "minimum": 0 },
+                "deletions": { "type": "integer", "minimum": 0 },
+                "byType": {
+                  "type": "object",
+                  "additionalProperties": { "type": "integer", "minimum": 0 },
+                  "propertyNames": { "type": "string" }
+                },
+                "byTargetBranch": {
+                  "type": "object",
+                  "additionalProperties": { "type": "integer", "minimum": 0 },
+                  "propertyNames": { "type": "string" }
+                },
+                "withApprovingReview": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        },
+        "gate.branchCoverage": {
+          "allOf": [{ "$ref": "#/$defs/envelope" }],
+          "properties": {
+            "facts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["workflow", "branches"],
+                "properties": {
+                  "workflow": { "type": "string", "minLength": 1 },
+                  "branches": { "type": "array", "items": { "type": "string" } },
+                  "coversDefault": { "type": "boolean" },
+                  "missingFrom": {
+                    "description": "Branches examined by this audit that the workflow's filter excludes.",
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "gate.cannotFail": {
+          "allOf": [{ "$ref": "#/$defs/envelope" }],
+          "properties": {
+            "facts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["context", "declaredCriticalBy", "canReportFailure"],
+                "properties": {
+                  "context": { "type": "string", "minLength": 1 },
+                  "declaredCriticalBy": { "type": "string", "minLength": 1 },
+                  "canReportFailure": { "type": "boolean" },
+                  "publishedBy": { "type": "string", "minLength": 1 },
+                  "reason": {
+                    "description": "Why the context cannot report failure, e.g. a literal state or a warn-only step.",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "coverage.policyDrift": {
+          "allOf": [{ "$ref": "#/$defs/envelope" }],
+          "properties": {
+            "facts": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["enforced", "scopes"],
+              "properties": {
+                "enforced": {
+                  "description": "Whether the enforcing flag reaches the runner from any workflow.",
+                  "type": "boolean"
+                },
+                "enforcementPath": { "type": "string", "minLength": 1 },
+                "scopes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["scope", "hasFloor"],
+                    "properties": {
+                      "scope": { "type": "string", "minLength": 1 },
+                      "hasFloor": { "type": "boolean" },
+                      "floorPercent": { "type": "number", "minimum": 0, "maximum": 100 }
+                    }
+                  }
+                },
+                "documentedClaims": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["path", "claimedPercent"],
+                    "properties": {
+                      "path": { "type": "string", "minLength": 1 },
+                      "line": { "type": "integer", "minimum": 1 },
+                      "claimedPercent": { "type": "number", "minimum": 0, "maximum": 100 }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "adr.collisions": {
+          "allOf": [{ "$ref": "#/$defs/envelope" }],
+          "properties": {
+            "facts": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["duplicateNumbers", "statusBlindBacklinks"],
+              "properties": {
+                "duplicateNumbers": {
+                  "description": "Evaluated against the merged corpus, not either branch alone: distinct filenames sharing a number merge without conflict.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["number", "paths"],
+                    "properties": {
+                      "number": { "type": "string", "minLength": 1 },
+                      "paths": { "type": "array", "minItems": 2, "items": { "type": "string" } },
+                      "branches": { "type": "array", "items": { "type": "string" } }
+                    }
+                  }
+                },
+                "statusBlindBacklinks": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["from", "to"],
+                    "properties": {
+                      "from": { "type": "string", "minLength": 1 },
+                      "fromStatus": { "type": "string", "minLength": 1 },
+                      "to": { "type": "string", "minLength": 1 },
+                      "toStatus": { "type": "string", "minLength": 1 }
+                    }
+                  }
+                },
+                "mergedCorpusLintFailures": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        },
+        "facade.headroom": {
+          "allOf": [{ "$ref": "#/$defs/envelope" }],
+          "properties": {
+            "facts": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["governed", "governedCrateCount", "workspaceMemberCount"],
+              "properties": {
+                "governed": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["path", "ceiling", "actual"],
+                    "properties": {
+                      "path": { "type": "string", "minLength": 1 },
+                      "ceiling": { "type": "integer", "minimum": 1 },
+                      "actual": { "type": "integer", "minimum": 0 },
+                      "headroom": { "type": "integer" },
+                      "largestUngovernedSibling": {
+                        "description": "Where the mass moves to when one file is governed and its siblings are not.",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["path", "lines"],
+                        "properties": {
+                          "path": { "type": "string", "minLength": 1 },
+                          "lines": { "type": "integer", "minimum": 0 }
+                        }
+                      }
+                    }
+                  }
+                },
+                "governedCrateCount": { "type": "integer", "minimum": 0 },
+                "workspaceMemberCount": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        },
+        "advisory.state": {
+          "allOf": [{ "$ref": "#/$defs/envelope" }],
+          "properties": {
+            "facts": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["vulnerabilitiesFound", "classes", "allowlist"],
+              "properties": {
+                "vulnerabilitiesFound": { "type": "integer", "minimum": 0 },
+                "classes": {
+                  "type": "object",
+                  "additionalProperties": { "type": "integer", "minimum": 0 },
+                  "propertyNames": { "type": "string" }
+                },
+                "allowlist": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["entry"],
+                    "properties": {
+                      "entry": { "type": "string", "minLength": 1 },
+                      "hasRationale": { "type": "boolean" },
+                      "hasReviewDate": { "type": "boolean" }
+                    }
+                  }
+                },
+                "unpinnedActions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["workflow", "uses"],
+                    "properties": {
+                      "workflow": { "type": "string", "minLength": 1 },
+                      "uses": { "type": "string", "minLength": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "mainline.divergence": {
+          "allOf": [{ "$ref": "#/$defs/envelope" }],
+          "properties": {
+            "facts": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mergeBase", "pairs"],
+              "properties": {
+                "mergeBase": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+                "pairs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["left", "right", "changedFiles"],
+                    "properties": {
+                      "left": { "type": "string", "minLength": 1 },
+                      "right": { "type": "string", "minLength": 1 },
+                      "changedFiles": { "type": "integer", "minimum": 0 },
+                      "leftOnlyCommits": { "type": "integer", "minimum": 0 },
+                      "rightOnlyCommits": { "type": "integer", "minimum": 0 },
+                      "bothSidesModified": {
+                        "description": "Paths changed on both sides. A textual auto-merge here is silent and may not compile.",
+                        "type": "array",
+                        "items": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "issue.closureGap": {
+          "allOf": [{ "$ref": "#/$defs/envelope" }],
+          "properties": {
+            "facts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["issue", "closedBy", "mergedInto", "stillOpen"],
+                "properties": {
+                  "issue": { "type": "integer", "minimum": 1 },
+                  "closedBy": { "type": "integer", "minimum": 1 },
+                  "mergedInto": { "type": "string", "minLength": 1 },
+                  "stillOpen": { "type": "boolean" },
+                  "keywordWouldFire": {
+                    "description": "False when the merge target is not the default branch, which is why the gap exists.",
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "envelope": {
+      "description": "Every collector reports its own status. A collector that could not run says so rather than emitting empty facts, because an empty result and an unavailable collector are different conclusions and must not be confused.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "facts"],
+      "properties": {
+        "status": {
+          "enum": ["ok", "degraded", "unavailable"],
+          "description": "degraded means partial coverage; unavailable means no facts were obtained. Both require reason."
+        },
+        "reason": { "type": "string", "minLength": 1 },
+        "source": {
+          "description": "The read-only command or path the facts came from, so a reader can reproduce them.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "facts": {}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "enum": ["degraded", "unavailable"] } },
+            "required": ["status"]
+          },
+          "then": { "required": ["reason"] }
+        }
+      ]
+    }
+  }
+}
