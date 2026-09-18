@@ -18,7 +18,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { assertSupported, validate } from "../../scripts/audit/lib/json-schema.mjs";
-import { checkReport, crossCheck, extractReportBlock, findingIdsInProse } from "../../scripts/audit/check-audit-report.mjs";
+import { checkReport, crossCheck, extractReportBlock, findingIdsInProse, findingsInProse } from "../../scripts/audit/check-audit-report.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const AUDIT_DOCS = path.join(ROOT, "docs", "factory", "audit");
@@ -78,10 +78,21 @@ test("a citation naming an anchor no collector produced is rejected", () => {
   );
 });
 
+test("an anchor citation without a supplied evidence artifact is rejected", () => {
+  const problems = crossCheck(exampleReport());
+  assert.ok(problems.some((problem) => /no evidence artifact was supplied/u.test(problem)));
+});
+
 test("a citation setting both line and lines is rejected", () => {
   const report = exampleReport();
   report.findings[0].evidence = [{ path: "a.rs", line: 3, lines: "3-9" }];
   assert.ok(crossCheck(report, {}).some((problem) => /both line and lines/u.test(problem)));
+});
+
+test("a bare path citation without a line range is rejected", () => {
+  const report = exampleReport();
+  report.findings[0].evidence = [{ path: "a.rs" }];
+  assert.ok(crossCheck(report, {}).some((problem) => /must set exactly one of line or lines/u.test(problem)));
 });
 
 // --- fair presentation -------------------------------------------------------
@@ -239,6 +250,16 @@ test("a slate ordered by the rubric is accepted", () => {
   assert.deepEqual(crossCheck(report, { evidence: exampleEvidence() }), []);
 });
 
+test("missing, duplicate, and non-consecutive slate ranks are rejected", () => {
+  const missing = exampleReport();
+  delete missing.slate[0].rank;
+  assert.ok(crossCheck(missing, {}).some((problem) => /must declare an integer rank/u.test(problem)));
+
+  const duplicate = exampleReport();
+  duplicate.slate[1].rank = 1;
+  assert.ok(crossCheck(duplicate, {}).some((problem) => /unique and consecutive/u.test(problem)));
+});
+
 // --- delta completeness ------------------------------------------------------
 
 test("delta mode without sinceAnchor or a delta section is rejected", () => {
@@ -296,6 +317,12 @@ test("an unexpected top-level property is rejected", () => {
   assert.ok(validate(reportSchema, report).some((error) => /unexpected property "score"/u.test(error.message)));
 });
 
+test("report branch scope must match the supplied evidence artifact", () => {
+  const report = exampleReport();
+  report.anchor.branches[0].sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  assert.ok(crossCheck(report, { evidence: exampleEvidence() }).some((problem) => /branch scope does not match/u.test(problem)));
+});
+
 // --- markdown extraction and prose agreement ---------------------------------
 
 test("the report block is extracted from a rendered body", () => {
@@ -331,6 +358,23 @@ test("finding ids are read from prose while ignoring the data block", () => {
     "```",
   ].join("\n");
   assert.deepEqual([...findingIdsInProse(body)], ["F-01"]);
+});
+
+test("finding rows expose rendered severity and cost", () => {
+  const body = "| 1 | `F-01` | `OXA-MIL-01` | `defer` | `local` | `minutes` | x | y |\n";
+  assert.deepEqual(findingsInProse(body).get("F-01"), { severity: "defer", cost: "minutes" });
+});
+
+test("rendered severity and cost must agree with the data block", () => {
+  const report = exampleReport();
+  const rows = report.findings.map((finding, index) => [
+    "|", index + 1, `| \`${finding.id}\` | \`${finding.criterion}\` |`,
+    `\`${finding.id === "F-01" ? "defer" : finding.severity}\` | \`${finding.radius}\` |`,
+    `\`${finding.id === "F-02" ? "minutes" : finding.cost}\` | x | y |`,
+  ].join(" ")).join("\n");
+  const result = checkReport(report, { evidence: exampleEvidence(), markdown: rows });
+  assert.ok(result.proseErrors.some((problem) => /F-01 renders severity defer/u.test(problem)));
+  assert.ok(result.proseErrors.some((problem) => /F-02 renders cost minutes/u.test(problem)));
 });
 
 test("a finding present in the data block but not the prose is rejected", () => {

@@ -62,7 +62,10 @@ Do not spend turns on these; the rubric lists them and the consolidator drops th
 - An absence you did not verify. "There appear to be no tests for X" is a finding only once you have established that none exist; otherwise it is `notVerified`.
 
 ## Output
-Return a single JSON object, and write it to the deterministic path the invocation names (`tmp/audit/<type>/<anchor>/findings/<angle>.json`):
+Return a single JSON object. Your caller persists that exact response to the
+deterministic path named by the invocation
+(`tmp/audit/<type>/<anchor>/findings/<angle>.json`) because this role is
+intentionally read-only:
 
 ```json
 {
@@ -100,4 +103,6 @@ Return a single JSON object, and write it to the deterministic path the invocati
 
 `verdict` is `clean` if and only if `findings` is empty. `findings` may be empty; `verifiedSound` may not. Omit `id` and `reverifiedBy` — the consolidator assigns identifiers and arranges independent re-verification, because a role cannot re-verify its own finding.
 
-Return the artifact and stop. Do not propose issues, draft a slate, publish anything, or ask to remediate: the consolidator ranks and the owner decides.
+Return the artifact and stop. Do not claim that you wrote the file. Do not
+propose issues, draft a slate, publish anything, or ask to remediate: the
+caller persists the response, the consolidator ranks, and the owner decides.

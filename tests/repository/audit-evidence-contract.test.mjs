@@ -19,6 +19,7 @@ import test from "node:test";
 
 import {
   COLLECTOR_KEYS,
+  collect,
   collectAdrCollisions,
   collectAdvisoryState,
   collectBranchProtection,
@@ -29,6 +30,7 @@ import {
   collectIssueClosureGap,
   collectMainlineDivergence,
   collectPrCensus,
+  resolveBranches,
 } from "../../scripts/audit/collect.mjs";
 
 function sandbox() {
@@ -254,6 +256,19 @@ test("gate.branchCoverage degrades rather than claiming full coverage for an unr
   assert.match(result.reason, /no literal branch filter/u);
 });
 
+test("gate.branchCoverage interprets branches-ignore as exclusions", () => {
+  const root = sandbox();
+  plant(root, ".github/workflows/not-main.yml", "on:\n  push:\n    branches-ignore: [main]\n");
+  const result = collectGateBranchCoverage({
+    root,
+    branches: { default: "develop", examined: ["develop", "main", "feature/x"] },
+  });
+  assert.equal(result.status, "ok");
+  assert.deepEqual(result.facts[0].branchesIgnore, ["main"]);
+  assert.equal(result.facts[0].coversDefault, true);
+  assert.deepEqual(result.facts[0].missingFrom, ["main"]);
+});
+
 // --- coverage.policyDrift ----------------------------------------------------
 
 test("coverage.policyDrift reports an unenforced floor and a documented figure that disagrees", () => {
@@ -388,6 +403,23 @@ test("advisory.state records a review date when the exception carries one", () =
   assert.equal(result.facts.allowlist[0].hasReviewDate, true);
 });
 
+test("advisory.state preserves cargo-audit JSON when vulnerabilities make it exit nonzero", () => {
+  const root = sandbox();
+  const vulnerability = new Error("cargo audit found vulnerabilities");
+  vulnerability.stderr = "error: 1 vulnerability found";
+  vulnerability.stdout = JSON.stringify({
+    vulnerabilities: { count: 1, list: [{ advisory: { id: "RUSTSEC-TEST" } }] },
+    warnings: {},
+  });
+  vulnerability.status = 1;
+  const result = collectAdvisoryState({
+    root,
+    run: stubRunner({ "cargo audit --json": vulnerability }),
+  });
+  assert.equal(result.status, "ok");
+  assert.equal(result.facts.vulnerabilitiesFound, 1);
+});
+
 // --- adr.collisions ----------------------------------------------------------
 
 test("adr.collisions finds a duplicate number that no single branch sees", () => {
@@ -494,9 +526,36 @@ test("mainline.divergence reports paths modified on both sides", () => {
   assert.equal(result.status, "ok");
   assert.equal(result.facts.mergeBase, "5ba38b9b00000000000000000000000000000000");
   const [pair] = result.facts.pairs;
+  assert.equal(pair.changedFiles, 3, "changed files is the symmetric union of both branch tips");
   assert.equal(pair.leftOnlyCommits, 12);
   assert.equal(pair.rightOnlyCommits, 20);
   assert.deepEqual(pair.bothSidesModified, ["shared.rs"], "a path touched on both sides auto-merges silently");
+});
+
+test("invalid audit window bounds fail before any collector runs", () => {
+  assert.throws(
+    () => collect({ repository: "o/r", primary: "develop", since: "not-a-date", root: sandbox(), run: stubRunner({}) }),
+    /--since must be an ISO-8601 date-time/u,
+  );
+  assert.throws(
+    () => collect({
+      repository: "o/r",
+      primary: "develop",
+      since: "2026-09-02T00:00:00Z",
+      until: "2026-09-01T00:00:00Z",
+      root: sandbox(),
+      run: stubRunner({}),
+    }),
+    /--since must not be later than --until/u,
+  );
+});
+
+test("default branch resolution never invents develop after an API failure", () => {
+  const failure = new Error("network down");
+  failure.stderr = "network down";
+  const result = resolveBranches({ repository: "o/r", branches: ["develop"], run: stubRunner({ "gh api": failure }) });
+  assert.equal(result.defaultResolved, false);
+  assert.equal(result.defaultBranch, null);
 });
 
 // --- pr.census ---------------------------------------------------------------

@@ -99,6 +99,7 @@
                 "properties": {
                   "workflow": { "type": "string", "minLength": 1 },
                   "branches": { "type": "array", "items": { "type": "string" } },
+                  "branchesIgnore": { "type": "array", "items": { "type": "string" } },
                   "coversDefault": { "type": "boolean" },
                   "missingFrom": {
                     "description": "Branches examined by this audit that the workflow's filter excludes.",

@@ -272,6 +272,11 @@ cleanup authority.
 After a successful exact closeout, the receipt reports a bounded best-effort Pi
 package-closure cleanup. It removes only unreferenced age-eligible closures and
 stale interrupted state; a live same-host package installer lock is preserved.
+If a linked worktree unexpectedly contains a real `.pi/npm` directory,
+provisioning moves it into Git-common private quarantine before installing the
+managed closure link. The result reports `quarantinedStore`; cleanup retains
+that recoverable directory for the normal retention window before reclaiming
+it.
 A blocked or failed package cleanup is reported in `packageClosureCleanup` and
 does not undo the already successful worktree closeout. Audit or explicitly
 request that cleanup before closeout when needed:

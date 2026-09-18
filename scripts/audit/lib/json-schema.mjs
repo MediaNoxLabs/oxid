@@ -46,11 +46,28 @@ function resolveRef(ref, root) {
   if (!ref.startsWith("#/")) throw new Error(`unsupported $ref form: ${ref}`);
   let node = root;
   for (const segment of ref.slice(2).split("/")) {
-    node = node?.[segment.replace(/~1/gu, "/").replace(/~0/gu, "~")];
+    const decoded = segment.replace(/~1/gu, "/").replace(/~0/gu, "~");
+    const entry = node && typeof node === "object"
+      ? Object.entries(node).find(([key]) => key === decoded)
+      : undefined;
+    node = entry?.[1];
     if (node === undefined) throw new Error(`unresolvable $ref: ${ref}`);
   }
   return node;
 }
+
+// Audit schemas are tracked repository contracts, not user-provided regex
+// programs. Keep their complete pattern vocabulary explicit so validating an
+// untrusted report cannot turn a schema edit into dynamic regular-expression
+// execution or main-thread ReDoS.
+const SCHEMA_PATTERNS = new Map([
+  ["^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u],
+  ["^[0-9a-f]{40}$", /^[0-9a-f]{40}$/u],
+  ["^OXA-(MIL|SEC|SUP|ARC|PRC|ANY)-[0-9]{2}$", /^OXA-(MIL|SEC|SUP|ARC|PRC|ANY)-[0-9]{2}$/u],
+  ["^[a-z][a-zA-Z0-9]*(\\.[a-zA-Z0-9]+)+$", /^[a-z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)+$/u],
+  ["^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$", /^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$/u],
+  ["^F-[0-9]{2,3}$", /^F-[0-9]{2,3}$/u],
+]);
 
 function label(path) {
   return path === "" ? "<root>" : path;
@@ -91,8 +108,10 @@ export function validate(schema, data, { root = schema, path = "" } = {}) {
     if (schema.maxLength !== undefined && data.length > schema.maxLength) {
       push(`must be at most ${schema.maxLength} characters (received ${data.length})`);
     }
-    if (schema.pattern && !new RegExp(schema.pattern, "u").test(data)) {
-      push(`${JSON.stringify(data)} does not match ${schema.pattern}`);
+    if (schema.pattern) {
+      const pattern = SCHEMA_PATTERNS.get(schema.pattern);
+      if (!pattern) throw new Error(`unsupported schema pattern: ${schema.pattern}`);
+      if (!pattern.test(data)) push(`${JSON.stringify(data)} does not match ${schema.pattern}`);
     }
     if (schema.format === "date-time" && Number.isNaN(Date.parse(data))) {
       push(`${JSON.stringify(data)} is not a date-time`);
@@ -137,7 +156,8 @@ export function validate(schema, data, { root = schema, path = "" } = {}) {
     }
     for (const [key, subSchema] of Object.entries(schema.properties || {})) {
       if (Object.hasOwn(data, key)) {
-        errors.push(...validate(subSchema, data[key], { root, path: join(path, key) }));
+        const value = Object.getOwnPropertyDescriptor(data, key)?.value;
+        errors.push(...validate(subSchema, value, { root, path: join(path, key) }));
       }
     }
     if (schema.additionalProperties && typeof schema.additionalProperties === "object") {

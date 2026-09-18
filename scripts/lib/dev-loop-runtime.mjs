@@ -111,6 +111,7 @@ function closurePaths(commonRoot, identity) {
     closures: path.join(root, "closures"),
     staging: path.join(root, "staging"),
     locks: path.join(root, "locks"),
+    quarantine: path.join(root, "quarantine"),
     closure: path.join(root, "closures", identity),
     lock: path.join(root, "locks", `${identity}.lock`),
   };
@@ -229,7 +230,12 @@ export async function ensureSharedPiPackageStore({
   const settings = await readJson(path.join(gitRoot, SETTINGS_PATH), "project Pi settings");
   const { identity, configuration, pins } = piPackageClosureIdentity(settings);
   const paths = closurePaths(commonRoot, identity);
-  await Promise.all([mkdir(paths.closures, { recursive: true, mode: 0o700 }), mkdir(paths.staging, { recursive: true, mode: 0o700 }), mkdir(paths.locks, { recursive: true, mode: 0o700 })]);
+  await Promise.all([
+    mkdir(paths.closures, { recursive: true, mode: 0o700 }),
+    mkdir(paths.staging, { recursive: true, mode: 0o700 }),
+    mkdir(paths.locks, { recursive: true, mode: 0o700 }),
+    mkdir(paths.quarantine, { recursive: true, mode: 0o700 }),
+  ]);
 
   let published = false;
   if (!(await validClosure(paths.closure, identity, pins))) {
@@ -289,11 +295,18 @@ export async function ensureSharedPiPackageStore({
     throw new Error(`Pi package store must be absent, a real primary directory, or a managed closure symlink: ${localStore}`);
   }
   let movedLegacy = false;
+  let quarantinedStore = null;
   if (localInfo?.isDirectory() && !localInfo.isSymbolicLink()) {
-    if (gitRoot !== commonRoot) throw new Error(`linked worktree Pi package store must be absent or a managed closure symlink: ${localStore}`);
-    if (await lstatIfPresent(legacyBackup)) throw new Error(`recoverable legacy Pi package store already exists: ${legacyBackup}`);
-    await rename(localStore, legacyBackup);
-    movedLegacy = true;
+    if (gitRoot !== commonRoot) {
+      const worktree = path.basename(gitRoot).replace(/[^A-Za-z0-9_.-]/gu, "_") || "linked-worktree";
+      quarantinedStore = path.join(paths.quarantine, `${worktree}.npm-${now()}-${process.pid}`);
+      if (await lstatIfPresent(quarantinedStore)) throw new Error(`Pi package quarantine target already exists: ${quarantinedStore}`);
+      await rename(localStore, quarantinedStore);
+    } else {
+      if (await lstatIfPresent(legacyBackup)) throw new Error(`recoverable legacy Pi package store already exists: ${legacyBackup}`);
+      await rename(localStore, legacyBackup);
+      movedLegacy = true;
+    }
   }
   if (localInfo?.isSymbolicLink()) {
     let target = null;
@@ -309,10 +322,20 @@ export async function ensureSharedPiPackageStore({
     await replaceWithClosureLink(localStore, path.join(paths.closure, ".pi", "npm"));
   } catch (error) {
     if (movedLegacy) await rename(legacyBackup, localStore).catch(() => {});
+    if (quarantinedStore) await rename(quarantinedStore, localStore).catch(() => {});
     throw error;
   }
   if (movedLegacy || await lstatIfPresent(legacyBackup)) await rm(legacyBackup, { recursive: true, force: true });
-  return { mode: gitRoot === commonRoot ? "primary" : "linked", gitRoot, commonRoot, store: path.join(paths.closure, ".pi", "npm"), link: localStore, identity, published };
+  return {
+    mode: gitRoot === commonRoot ? "primary" : "linked",
+    gitRoot,
+    commonRoot,
+    store: path.join(paths.closure, ".pi", "npm"),
+    link: localStore,
+    identity,
+    published,
+    ...(quarantinedStore ? { quarantinedStore } : {}),
+  };
 }
 
 export async function auditPiPackageClosures({ cwd = process.cwd(), now = () => Date.now(), olderThanMs = PI_CLOSURE_RETENTION_MS } = {}) {
@@ -330,12 +353,18 @@ export async function auditPiPackageClosures({ cwd = process.cwd(), now = () => 
     const info = await stat(path.join(paths.closures, entry.name));
     return { identity: entry.name, referenced: referenced.has(entry.name), ageMs: now() - info.mtimeMs };
   }));
-  return { closures, referenced: [...referenced].sort(), cleanupBlocked: false, olderThanMs };
+  const quarantineEntries = await readdir(paths.quarantine, { withFileTypes: true })
+    .catch((error) => error?.code === "ENOENT" ? [] : Promise.reject(error));
+  const quarantine = await Promise.all(quarantineEntries.map(async (entry) => {
+    const info = await lstat(path.join(paths.quarantine, entry.name));
+    return { name: entry.name, ageMs: now() - info.mtimeMs };
+  }));
+  return { closures, referenced: [...referenced].sort(), quarantine, cleanupBlocked: false, olderThanMs };
 }
 
 export async function cleanupPiPackageClosures({ cwd = process.cwd(), now = () => Date.now(), olderThanMs = PI_CLOSURE_RETENTION_MS, staleMs = PI_CLOSURE_STALE_MS } = {}) {
   const audit = await auditPiPackageClosures({ cwd, now, olderThanMs });
-  if (audit.cleanupBlocked) return { ...audit, removed: [], reclaimedStaging: [], reclaimedLocks: [] };
+  if (audit.cleanupBlocked) return { ...audit, removed: [], reclaimedStaging: [], reclaimedLocks: [], reclaimedQuarantine: [] };
   const gitRoot = await findGitRoot(cwd);
   const paths = closurePaths(await resolveCommonCheckoutRoot(gitRoot), "placeholder");
   const removed = [];
@@ -345,7 +374,7 @@ export async function cleanupPiPackageClosures({ cwd = process.cwd(), now = () =
     await rm(path.join(paths.closures, closure.identity), { recursive: true, force: true });
     removed.push(closure.identity);
   }
-  const reclaim = async (directory, { protectLiveLocks = false } = {}) => {
+  const reclaim = async (directory, { protectLiveLocks = false, minimumAgeMs = staleMs } = {}) => {
     const entries = await readdir(directory, { withFileTypes: true }).catch((error) => error?.code === "ENOENT" ? [] : Promise.reject(error));
     const aged = [];
     for (const entry of entries) {
@@ -353,7 +382,7 @@ export async function cleanupPiPackageClosures({ cwd = process.cwd(), now = () =
       const info = await lstat(candidate);
       const ageMs = now() - info.mtimeMs;
       // A future lock timestamp is untrustworthy state, but a live local owner wins.
-      if (ageMs < staleMs && !(protectLiveLocks && ageMs < 0)) continue;
+      if (ageMs < minimumAgeMs && !(protectLiveLocks && ageMs < 0)) continue;
       if (protectLiveLocks && await liveSameHostLock(candidate, processIsAlive)) continue;
       aged.push({ entry, candidate, ageMs });
     }
@@ -371,6 +400,7 @@ export async function cleanupPiPackageClosures({ cwd = process.cwd(), now = () =
     removed,
     reclaimedStaging: await reclaim(paths.staging),
     reclaimedLocks: await reclaim(paths.locks, { protectLiveLocks: true }),
+    reclaimedQuarantine: await reclaim(paths.quarantine, { minimumAgeMs: olderThanMs }),
   };
 }
 

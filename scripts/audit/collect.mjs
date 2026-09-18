@@ -92,7 +92,12 @@ function tryRun(run, command, args, options) {
   try {
     return { ok: true, out: run(command, args, options) };
   } catch (error) {
-    return { ok: false, error: (error.stderr || error.message || "").toString().trim().split("\n")[0] };
+    return {
+      ok: false,
+      error: (error.stderr || error.message || "").toString().trim().split("\n")[0],
+      out: (error.stdout || "").toString().trim(),
+      status: error.status,
+    };
   }
 }
 
@@ -266,12 +271,15 @@ export function collectGateBranchCoverage({ root, branches, workflowDir = ".gith
     const content = readIfPresent(root, relative);
     if (content === null) continue;
 
-    const filters = new Set();
+    const included = new Set();
+    const excluded = new Set();
     let sawTrigger = false;
     const lines = content.split("\n");
     for (let index = 0; index < lines.length; index += 1) {
-      if (!/^\s*branches(-ignore)?:/u.test(lines[index])) continue;
+      const declaration = lines[index].match(/^\s*branches(-ignore)?:/u);
+      if (!declaration) continue;
       sawTrigger = true;
+      const filters = declaration[1] ? excluded : included;
       const inline = lines[index].match(/\[(.*)\]/u);
       if (inline) {
         for (const item of inline[1].split(",")) {
@@ -287,20 +295,21 @@ export function collectGateBranchCoverage({ root, branches, workflowDir = ".gith
       }
     }
 
-    const patterns = Array.from(filters).sort();
-    const covers = (branch) => patterns.some((pattern) => {
-      if (pattern === branch) return true;
-      if (!pattern.includes("*")) return false;
-      const expression = new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/gu, "\\$&").replace(/\*\*/gu, ".*").replace(/(?<!\.)\*/gu, "[^/]*")}$`, "u");
-      return expression.test(branch);
-    });
+    const includePatterns = Array.from(included).sort();
+    const excludePatterns = Array.from(excluded).sort();
+    const covers = (branch) => {
+      const selected = includePatterns.length === 0
+        || includePatterns.some((pattern) => branchPatternMatches(pattern, branch));
+      return selected && !excludePatterns.some((pattern) => branchPatternMatches(pattern, branch));
+    };
 
     if (!sawTrigger) unreadable.push(relative);
     facts.push({
       workflow: relative,
-      branches: patterns,
-      coversDefault: patterns.length === 0 ? true : covers(branches.default),
-      missingFrom: patterns.length === 0 ? [] : branches.examined.filter((branch) => !covers(branch)),
+      branches: includePatterns,
+      branchesIgnore: excludePatterns,
+      coversDefault: covers(branches.default),
+      missingFrom: branches.examined.filter((branch) => !covers(branch)),
     });
   }
 
@@ -309,6 +318,33 @@ export function collectGateBranchCoverage({ root, branches, workflowDir = ".gith
     return degraded(`no literal branch filter found in ${unreadable.length} workflow(s): ${unreadable.slice(0, 5).join(", ")}`, facts, source);
   }
   return ok(facts, source);
+}
+
+/** Match the `*` and `**` subset used by literal GitHub branch filters. */
+function branchPatternMatches(pattern, branch) {
+  const memo = new Map();
+  const visit = (patternIndex, branchIndex) => {
+    const key = `${patternIndex}:${branchIndex}`;
+    if (memo.has(key)) return memo.get(key);
+    let result;
+    if (patternIndex === pattern.length) {
+      result = branchIndex === branch.length;
+    } else if (pattern[patternIndex] !== "*") {
+      result = branchIndex < branch.length
+        && pattern[patternIndex] === branch[branchIndex]
+        && visit(patternIndex + 1, branchIndex + 1);
+    } else {
+      const double = pattern[patternIndex + 1] === "*";
+      const nextPattern = patternIndex + (double ? 2 : 1);
+      result = visit(nextPattern, branchIndex)
+        || (branchIndex < branch.length
+          && (double || branch[branchIndex] !== "/")
+          && visit(patternIndex, branchIndex + 1));
+    }
+    memo.set(key, result);
+    return result;
+  };
+  return visit(0, 0);
 }
 
 /**
@@ -578,7 +614,8 @@ export function collectAdvisoryState({
       const context = `${rationale}\n${exceptions.includes(crate) ? exceptions : ""}`;
       allowlist.push({
         entry,
-        hasRationale: new RegExp(`${crate}`, "iu").test(rationale) || exceptions.includes(crate),
+        hasRationale: rationale.toLocaleLowerCase("en-US").includes(crate.toLocaleLowerCase("en-US"))
+          || exceptions.includes(crate),
         hasReviewDate: /(?:review|revisit|expires?)\D{0,24}\d{4}-\d{2}-\d{2}/iu.test(context),
       });
     }
@@ -608,14 +645,14 @@ export function collectAdvisoryState({
   }
 
   const audit = tryRun(run, "cargo", ["audit", "--json"], { cwd });
-  if (!audit.ok) {
-    return degraded(`cargo audit unavailable: ${audit.error}`, { vulnerabilitiesFound: 0, ...base }, source);
-  }
   let report = {};
   try {
     report = JSON.parse(audit.out);
   } catch {
-    return degraded("cargo audit output is not valid JSON", { vulnerabilitiesFound: 0, ...base }, source);
+    const reason = audit.ok
+      ? "cargo audit output is not valid JSON"
+      : `cargo audit unavailable: ${audit.error}`;
+    return degraded(reason, { vulnerabilitiesFound: 0, ...base }, source);
   }
   const warnings = report.warnings ?? {};
   return ok(
@@ -653,7 +690,6 @@ export function collectMainlineDivergence({ branches, run = runner, cwd }) {
       if (!mergeBase) mergeBase = base.out;
       source.push(`git merge-base ${left} ${right}`);
 
-      const changed = tryRun(run, "git", ["diff", "--name-only", `${left}...${right}`], { cwd });
       const leftOnly = tryRun(run, "git", ["rev-list", "--count", `${base.out}..${left}`], { cwd });
       const rightOnly = tryRun(run, "git", ["rev-list", "--count", `${base.out}..${right}`], { cwd });
       const leftPaths = tryRun(run, "git", ["diff", "--name-only", `${base.out}..${left}`], { cwd });
@@ -662,11 +698,12 @@ export function collectMainlineDivergence({ branches, run = runner, cwd }) {
       const leftSet = new Set(leftPaths.ok ? leftPaths.out.split("\n").filter(Boolean) : []);
       const rightSet = new Set(rightPaths.ok ? rightPaths.out.split("\n").filter(Boolean) : []);
       const bothSidesModified = [...leftSet].filter((file) => rightSet.has(file)).sort();
+      const changedFiles = new Set([...leftSet, ...rightSet]).size;
 
       pairs.push({
         left,
         right,
-        changedFiles: changed.ok ? changed.out.split("\n").filter(Boolean).length : 0,
+        changedFiles,
         ...(leftOnly.ok ? { leftOnlyCommits: Number(leftOnly.out) } : {}),
         ...(rightOnly.ok ? { rightOnlyCommits: Number(rightOnly.out) } : {}),
         bothSidesModified,
@@ -818,7 +855,7 @@ export function collectIssueClosureGap({ repository, defaultBranch, defaultBranc
 
 export function resolveBranches({ repository, branches, run = runner, cwd }) {
   const defaultQuery = tryRun(run, "gh", ["api", `repos/${repository}`, "--jq", ".default_branch"], { cwd });
-  const defaultBranch = defaultQuery.ok && defaultQuery.out ? defaultQuery.out : "develop";
+  const defaultBranch = defaultQuery.ok && defaultQuery.out ? defaultQuery.out : null;
   const resolved = [];
   for (const branch of branches) {
     const sha = tryRun(run, "git", ["rev-parse", `refs/remotes/origin/${branch}`], { cwd });
@@ -838,6 +875,11 @@ export function collect({
   offline = false,
   now = () => new Date().toISOString(),
 }) {
+  validateWindowBound("since", since);
+  validateWindowBound("until", until);
+  if (since && until && Date.parse(since) > Date.parse(until)) {
+    throw new Error("--since must not be later than --until");
+  }
   const branchNames = [primary, ...comparisons].filter(Boolean);
   const { defaultBranch, resolved, defaultResolved } = resolveBranches({ repository, branches: branchNames, run, cwd: root });
   const refs = branchNames.map((name) => `refs/remotes/origin/${name}`);
@@ -857,7 +899,9 @@ export function collect({
   const collectors = {
     "branch.protection": guard("branch.protection", () => collectBranchProtection({ repository, branches: branchNames, run, cwd: root })),
     "pr.census": guard("pr.census", () => collectPrCensus({ repository, since, until, run, cwd: root })),
-    "gate.branchCoverage": guard("gate.branchCoverage", () => collectGateBranchCoverage({ root, branches: { default: defaultBranch, examined: branchNames } })),
+    "gate.branchCoverage": guard("gate.branchCoverage", () => defaultResolved
+      ? collectGateBranchCoverage({ root, branches: { default: defaultBranch, examined: branchNames } })
+      : unavailable("the default branch could not be collected", ["gh api repository default branch"])),
     "gate.cannotFail": guard("gate.cannotFail", () => collectGateCannotFail({ root })),
     "coverage.policyDrift": guard("coverage.policyDrift", () => collectCoveragePolicyDrift({ root })),
     "adr.collisions": guard("adr.collisions", () => collectAdrCollisions({ branches: refs, run, cwd: root })),
@@ -887,6 +931,12 @@ export function collect({
   };
 }
 
+function validateWindowBound(name, value) {
+  if (value !== null && !Number.isFinite(Date.parse(value))) {
+    throw new Error(`--${name} must be an ISO-8601 date-time, received ${JSON.stringify(value)}`);
+  }
+}
+
 function parseArguments(argv) {
   const options = {
     repository: "MediaNoxLabs/oxid",
@@ -909,7 +959,7 @@ function parseArguments(argv) {
     else if (argument === "--type") index += 1; // accepted for symmetry with the skill; collectors are type-independent
     else throw new Error(`unknown option ${argument}`);
   }
-  if (!options.primary) throw new Error("usage: collect.mjs --branch <branch> [--compare <branch>]... [--since <iso>] [--out <file>] [--offline]");
+  if (!options.primary) throw new Error("usage: collect.mjs --branch <branch> [--compare <branch>]... [--since <iso-date-time>] [--out <file>] [--offline]");
   return options;
 }
 

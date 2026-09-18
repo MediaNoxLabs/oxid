@@ -96,16 +96,18 @@ generation timestamp. This is a tested property, not an intention.
 ### Layer 2 — judgment
 
 Each role receives the same evidence artifact plus one angle, holds read-only
-tools, and returns an `audit-findings-v1` artifact at a deterministic path.
-Roles are declared per audit type. A role reads source to interpret and to
-confirm, and records any file it opened beyond its briefing.
+tools, and returns one complete `audit-findings-v1` object. The supervising
+caller persists that exact response at the deterministic path and validates it
+before dispatching another pass; the read-only role never claims it wrote a
+file. Roles are declared per audit type. A role reads source to interpret and
+to confirm, and records any file it opened beyond its briefing.
 
 ### Layer 3 — consolidation and publication
 
-One consolidator fans in every role's findings, deduplicates across roles,
-applies the consolidation rule, ranks, and renders **one** source into both the
-Discussion body and, when asked, a review artifact. It then stops at the owner
-gate.
+One consolidator fans in every persisted role artifact, deduplicates across
+roles, applies the consolidation rule, ranks, and returns **one** source as
+both report JSON and rendered Markdown. The supervising caller persists and
+validates both exact blocks. The consolidator then stops at the owner gate.
 
 ## Audit types
 
@@ -206,14 +208,16 @@ quantities as posture rather than exact figures where
 ```bash
 # Layer 1: collect mechanical evidence at an anchor.
 node scripts/audit/collect.mjs --type milestone --branch milestone-0.2.0 \
-  --since <anchor-sha> --out tmp/audit/milestone/<anchor>/evidence.json
+  --since <anchor-iso-date-time> --out tmp/audit/milestone/<anchor>/evidence.json
 
 # Layer 3: validate a rendered report before publishing it.
-node scripts/audit/check-audit-report.mjs tmp/audit/milestone/<anchor>/report.json
+node scripts/audit/check-audit-report.mjs \
+  tmp/audit/milestone/<anchor>/report.json \
+  --evidence tmp/audit/milestone/<anchor>/evidence.json
 ```
 
 Under Pi, [`.pi/skills/oxid-audit/SKILL.md`](../../../.pi/skills/oxid-audit/SKILL.md)
-wraps the sequence as `/audit <type> [--since <anchor>]`.
+wraps the sequence as `/audit <type> [--since <anchor-iso-date-time>]`.
 
 Artifacts live under `tmp/audit/<type>/<anchor>/` — evidence, one findings file
 per role, and the rendered report. The directory is the audit's state: a run

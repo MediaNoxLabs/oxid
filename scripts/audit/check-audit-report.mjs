@@ -49,6 +49,18 @@ export function findingIdsInProse(markdown) {
   return new Set(Array.from(withoutBlock.matchAll(/`(F-[0-9]{2,3})`/gu), (m) => m[1]));
 }
 
+/** Parse the fixed findings table into the fields duplicated from report.json. */
+export function findingsInProse(markdown) {
+  const withoutBlock = markdown.replace(/^```json audit-report-v1[\s\S]*?^```\s*$/mu, "");
+  const rendered = new Map();
+  for (const line of withoutBlock.split("\n")) {
+    const cells = line.split("|").slice(1, -1).map((cell) => cell.trim().replace(/^`|`$/gu, ""));
+    if (cells.length < 8 || !/^F-[0-9]{2,3}$/u.test(cells[1] ?? "")) continue;
+    rendered.set(cells[1], { severity: cells[3], cost: cells[5] });
+  }
+  return rendered;
+}
+
 function collectAnchorKeys(evidence) {
   return new Set(Object.keys(evidence?.collectors ?? {}));
 }
@@ -75,12 +87,29 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
   ];
   for (const [owner, citations] of cited) {
     for (const citation of citations ?? []) {
-      if (citation.anchor && anchors && !anchors.has(citation.anchor)) {
+      if (citation.anchor && !anchors) {
+        complain(`${owner} cites evidence anchor "${citation.anchor}" but no evidence artifact was supplied`);
+      } else if (citation.anchor && !anchors.has(citation.anchor)) {
         complain(`${owner} cites unknown evidence anchor "${citation.anchor}"`);
       }
       if (citation.line !== undefined && citation.lines !== undefined) {
         complain(`${owner} citation sets both line and lines`);
       }
+      if (citation.path && citation.line === undefined && citation.lines === undefined) {
+        complain(`${owner} path citation must set exactly one of line or lines`);
+      }
+    }
+  }
+
+  if (evidence) {
+    if (report.anchor?.defaultBranch !== evidence.defaultBranch) {
+      complain(`report default branch ${JSON.stringify(report.anchor?.defaultBranch)} does not match evidence ${JSON.stringify(evidence.defaultBranch)}`);
+    }
+    const scope = (branches) => (branches ?? [])
+      .map(({ name, sha, role }) => ({ name, sha, role }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    if (JSON.stringify(scope(report.anchor?.branches)) !== JSON.stringify(scope(evidence.branches))) {
+      complain("report branch scope does not match the supplied evidence artifact");
     }
   }
 
@@ -145,8 +174,19 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
       : 9;
     return [SEVERITY[entry.severity] ?? 9, radius, COST[entry.cost] ?? 9];
   };
-  const ranked = slate
-    .filter((entry) => entry.rank !== undefined && entry.residual !== true)
+  const nonResidual = slate.filter((entry) => entry.residual !== true);
+  const ranks = nonResidual.map((entry) => entry.rank);
+  if (ranks.some((rank) => !Number.isInteger(rank))) {
+    complain("every non-residual slate entry must declare an integer rank");
+  } else {
+    const expected = Array.from({ length: ranks.length }, (_, index) => index + 1);
+    const ordered = [...ranks].sort((a, b) => a - b);
+    if (JSON.stringify(ordered) !== JSON.stringify(expected)) {
+      complain("non-residual slate ranks must be unique and consecutive from 1");
+    }
+  }
+  const ranked = nonResidual
+    .filter((entry) => Number.isInteger(entry.rank))
     .sort((a, b) => a.rank - b.rank);
   for (let index = 1; index < ranked.length; index += 1) {
     const previous = ranked[index - 1];
@@ -190,9 +230,21 @@ export function checkReport(source, { evidence = null, prior = null, markdown = 
   const proseErrors = [];
   if (markdown && schemaErrors.length === 0) {
     const prose = findingIdsInProse(markdown);
+    const proseFindings = findingsInProse(markdown);
     const data = new Set((source.findings ?? []).map((finding) => finding.id));
-    for (const id of data) {
-      if (!prose.has(id)) proseErrors.push(`finding ${id} is in the data block but not rendered in the prose`);
+    for (const finding of source.findings ?? []) {
+      if (!prose.has(finding.id)) proseErrors.push(`finding ${finding.id} is in the data block but not rendered in the prose`);
+      const rendered = proseFindings.get(finding.id);
+      if (!rendered) {
+        proseErrors.push(`finding ${finding.id} has no row in the rendered findings table`);
+      } else {
+        if (rendered.severity !== finding.severity) {
+          proseErrors.push(`finding ${finding.id} renders severity ${rendered.severity} but data declares ${finding.severity}`);
+        }
+        if (rendered.cost !== finding.cost) {
+          proseErrors.push(`finding ${finding.id} renders cost ${rendered.cost} but data declares ${finding.cost}`);
+        }
+      }
     }
     for (const id of prose) {
       if (!data.has(id)) proseErrors.push(`finding ${id} is rendered in the prose but absent from the data block`);

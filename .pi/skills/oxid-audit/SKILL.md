@@ -39,8 +39,8 @@ session boundary costs nothing but wall-clock.
 ```
 tmp/audit/<type>/<anchor>/
   evidence.json            # pass 0, deterministic, no model
-  findings/<angle>.json    # one per role, written by `auditor`
-  report.json              # final pass, written by `audit-consolidator`
+  findings/<angle>.json    # caller persists each auditor's exact JSON response
+  report.json              # caller persists the consolidator's exact JSON block
   report.md
 ```
 
@@ -50,7 +50,8 @@ tmp/audit/<type>/<anchor>/
 | 1..N | 1 each | One `auditor`, one angle, one session. N is the role count for the type. |
 | final | 1 | One `audit-consolidator`, then stop at the owner gate. |
 
-Before each judgment pass, confirm the previous pass wrote its findings file.
+Before each judgment pass, confirm the caller persisted the previous pass's
+findings file.
 Each `auditor` receives the evidence path and **one** angle — never the
 orchestrator's conversation, opinions, or another role's conclusions.
 
@@ -85,8 +86,11 @@ git fetch origin develop main 'refs/heads/milestone-*:refs/remotes/origin/milest
 ## Passes 1..N — judge
 
 Dispatch `auditor` per angle, with the angles listed in the type's criteria
-document. Each child writes
-`tmp/audit/<type>/<anchor>/findings/<angle>.json`.
+document. The role is read-only and returns one complete JSON object. The
+supervising caller must persist that response verbatim to
+`tmp/audit/<type>/<anchor>/findings/<angle>.json`, parse it, and confirm its
+`angle` matches the requested angle before starting the next pass. A missing or
+malformed artifact stops the audit; never infer that the child wrote a file.
 
 If a child exhausts its turn budget, re-dispatch that angle alone rather than
 widening another role's scope. Findings derived per-role from re-discovered
@@ -94,7 +98,10 @@ facts are exactly what the evidence artifact exists to prevent.
 
 ## Final pass — consolidate and validate
 
-Dispatch `audit-consolidator` once, then validate before doing anything else:
+Dispatch `audit-consolidator` once. Persist its complete `report.json` and
+`report.md` blocks verbatim to the paths it names, confirm the fenced data block
+in Markdown is identical to `report.json`, then validate before doing anything
+else:
 
 ```bash
 node scripts/audit/check-audit-report.mjs \

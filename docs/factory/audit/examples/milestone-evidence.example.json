@@ -8,6 +8,16 @@
       "name": "milestone-0.2.0",
       "sha": "d34e65e0000000000000000000000000000000aa",
       "role": "primary"
+    },
+    {
+      "name": "develop",
+      "sha": "259cc8c0000000000000000000000000000000bb",
+      "role": "comparison"
+    },
+    {
+      "name": "main",
+      "sha": "c7c5b5b0000000000000000000000000000000cc",
+      "role": "baseline"
     }
   ],
   "collectors": {

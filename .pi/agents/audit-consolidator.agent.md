@@ -51,14 +51,22 @@ A slate entry's blast radius is the widest radius among the findings it consolid
 - `limitations` — independence caveats, uncovered angles, downgraded findings, and every gate the audit trusted without establishing that it can fail.
 
 ## Output
-Write two files under the anchor directory and report their paths:
+Return two complete artifacts for the caller to persist under the anchor
+directory. This role is intentionally read-only and must not claim it wrote
+either file:
 
 - `report.json` — one object conforming to `docs/factory/audit/audit-report-v1.schema.json`.
 - `report.md` — the body rendered from `report.json` per `docs/factory/audit/report-template.md`, in the template's fixed section order, ending with the fenced ` ```json audit-report-v1 ` block.
 
-Both are rendered from the same object. Never author the prose and the data separately: the validator compares finding ids, severities and costs between them and fails on disagreement, and a report whose table and block disagree is worse than either alone.
+Both are rendered from the same object. Return `report.json` first as a fenced
+JSON block and `report.md` second as a fenced Markdown block, with no omitted
+sections or ellipses. Never author the prose and the data separately: the
+validator compares finding ids, severities and costs between them and fails on
+disagreement, and a report whose table and block disagree is worse than either
+alone.
 
-Then state the command the operator must run, and stop:
+Then state the command the caller must run after persisting both exact blocks,
+and stop:
 
 ```
 node scripts/audit/check-audit-report.mjs tmp/audit/<type>/<anchor>/report.md --evidence tmp/audit/<type>/<anchor>/evidence.json
@@ -69,5 +77,5 @@ node scripts/audit/check-audit-report.mjs tmp/audit/<type>/<anchor>/report.md --
 - Do not add findings. If consolidation reveals a gap, record it in `notVerified`.
 - Do not raise the cap, soften a severity to fit the cap, or drop a `must-fix` to shorten the slate. A `must-fix` that reaches no slate entry and blocks nothing fails validation.
 
-After reporting the paths, ask the owner:
+After returning the artifacts and paths, ask the owner:
 > **Next step**: the report is validated and unpublished. Should I publish it as a Discussion, and do you want the proposed slate filed as issues?

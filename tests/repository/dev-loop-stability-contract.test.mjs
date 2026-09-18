@@ -356,10 +356,14 @@ test("closure cleanup is explicit, fail-closed, and selects stale state determin
     await utimes(candidate, fresh, fresh);
   }
   await mkdir(path.join(staging, "old-stage"));
+  const quarantine = path.join(state, "quarantine");
+  await mkdir(path.join(quarantine, "old-linked-store"), { recursive: true });
   const old = new Date(Date.now() - 16 * 60_000);
   await utimes(path.join(staging, "old-stage"), old, old);
-  const cleanup = await cleanupPiPackageClosures({ cwd: fixture.root, staleMs: 1 });
+  await utimes(path.join(quarantine, "old-linked-store"), old, old);
+  const cleanup = await cleanupPiPackageClosures({ cwd: fixture.root, staleMs: 1, olderThanMs: 1 });
   assert.deepEqual(cleanup.reclaimedStaging, ["old-stage"]);
+  assert.deepEqual(cleanup.reclaimedQuarantine, ["old-linked-store"]);
 
   await writeFile(path.join(fixture.worktree, ".pi", "settings.json"), "{broken\n");
   const command = spawnSync(process.execPath, [path.join(repoRoot, "scripts", "factory", "pi-package-closures.mjs"), "cleanup", "--execute"], {
@@ -406,8 +410,12 @@ test("registered linked worktrees use one fail-closed Pi package store", async (
 
   await rm(path.join(fixture.worktree, ".pi", "npm"));
   await mkdir(path.join(fixture.worktree, ".pi", "npm"));
-  await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /absent or a managed closure symlink/);
-  await rm(path.join(fixture.worktree, ".pi", "npm"), { recursive: true });
+  await writeFile(path.join(fixture.worktree, ".pi", "npm", "owner-data"), "recover me\n");
+  const recovered = await ensureSharedPiPackageStore({ cwd: fixture.worktree, now: () => 123456 });
+  assert.equal((await lstat(path.join(fixture.worktree, ".pi", "npm"))).isSymbolicLink(), true);
+  assert.match(recovered.quarantinedStore, /quarantine\/issue-150\.npm-123456-/u);
+  assert.equal(await readFile(path.join(recovered.quarantinedStore, "owner-data"), "utf8"), "recover me\n");
+  await rm(path.join(fixture.worktree, ".pi", "npm"));
   await writeFile(path.join(fixture.worktree, ".pi", "npm"), "owner data\n");
   await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /must be absent, a real primary directory, or a managed closure symlink/);
   assert.equal(await readFile(path.join(fixture.worktree, ".pi", "npm"), "utf8"), "owner data\n");
@@ -1817,12 +1825,9 @@ test("tracked pre-flight wrapper reports Pi child dispatch availability determin
     encoding: "utf8",
   }).trim().split(/\s+/, 1)[0];
   assert.equal(trackedMode, "100755");
-  const repositoryCheck = await runRepositoryPreflight(repoRoot);
-  if (repositoryCheck.ok) {
-    assert.match(repositoryCheck.resolved.source, /^git-(?:root|common-root)$/);
-  } else {
-    assert.match(repositoryCheck.message, /missing exact dev-loops@1\.0\.2; checked only/);
-  }
+  const repositoryCheck = await runRepositoryPreflight(fixture.root);
+  assert.equal(repositoryCheck.ok, true);
+  assert.equal(repositoryCheck.resolved.source, "git-root");
 });
 
 test("repository wrapper delegates generic and foreign CI while keeping the Oxid PR adapter output silent", async (t) => {
