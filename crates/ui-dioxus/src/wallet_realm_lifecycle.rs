@@ -66,7 +66,7 @@ pub(super) fn use_wallet_realm_lifecycle_driver(
         spawn(async move {
             drive_selected_realm_once(
                 services,
-                profile.id,
+                profile,
                 wake.resumed,
                 projection_wake,
                 &mut lifecycle_wake,
@@ -204,13 +204,14 @@ async fn await_lifecycle_idle(
 
 async fn drive_selected_realm_once(
     services: WalletUiServices,
-    profile_id: String,
+    profile: WalletProfileView,
     resumed: bool,
     mut projection_wake: Signal<u64>,
     lifecycle_wake: &mut Signal<WalletRealmLifecycleWake>,
 ) {
+    recover_public_demo_fixture(&services, &profile).await;
     let lifecycle = services.reconcile_wallet_realm_lifecycle();
-    let Ok((identity, status)) = selected_identity_and_status(&services, &profile_id).await else {
+    let Ok((identity, status)) = selected_identity_and_status(&services, &profile.id).await else {
         return;
     };
     let now_millis = monotonic_millis();
@@ -227,6 +228,34 @@ async fn drive_selected_realm_once(
     };
     tokio::time::sleep(Duration::from_millis(wait_millis)).await;
     advance_lifecycle_wake(lifecycle_wake);
+}
+
+async fn recover_public_demo_fixture(services: &WalletUiServices, profile: &WalletProfileView) {
+    #[cfg(feature = "public-standalone-genesis")]
+    if profile.display_name == PUBLIC_STANDALONE_PROFILE_NAME {
+        let query_services = services.clone();
+        let query_profile = profile.id.clone();
+        let loaded =
+            run_ui_blocking(move || load_account_page(&query_services, &query_profile)).await;
+        let Ok(AccountPageState::Ready {
+            account, security, ..
+        }) = loaded
+        else {
+            return;
+        };
+        if super::assets_page::wallet_account_activation_available(
+            false,
+            security.is_available(),
+            security.state_name(),
+            has_protected_account(&account),
+        ) {
+            let _ =
+                activate_protected_account(services.clone(), profile.id.clone(), security).await;
+        }
+    }
+
+    #[cfg(not(feature = "public-standalone-genesis"))]
+    let _ = (services, profile);
 }
 
 fn advance_projection_wake(projection_wake: &mut Signal<u64>) {

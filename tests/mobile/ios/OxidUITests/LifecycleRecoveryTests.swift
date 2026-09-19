@@ -16,14 +16,6 @@ final class LifecycleRecoveryTests: XCTestCase {
     }
 
     @MainActor
-    private func scrollTo(_ element: XCUIElement, in application: XCUIApplication) {
-        for _ in 0..<20 where !element.isHittable {
-            application.swipeUp()
-        }
-        XCTAssertTrue(element.isHittable)
-    }
-
-    @MainActor
     private func assertAutomaticReconciliation(_ application: XCUIApplication) {
         XCTAssertTrue(application.staticTexts["Synced"].waitForExistence(timeout: 30))
         XCTAssertTrue(application.staticTexts.matching(
