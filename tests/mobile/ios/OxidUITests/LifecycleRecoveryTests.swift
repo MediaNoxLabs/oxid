@@ -88,7 +88,7 @@ final class LifecycleRecoveryTests: XCTestCase {
             "I have securely saved or verified this recovery phrase."
         ].tap()
         let acknowledged = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == 1"),
+            predicate: NSPredicate(format: "value == %@", "1"),
             object: backupAcknowledgement
         )
         XCTAssertEqual(XCTWaiter.wait(for: [acknowledged], timeout: 10), .completed)
