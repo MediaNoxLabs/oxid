@@ -42,6 +42,12 @@ write from an older generation. Replacement work is single-flight per
 `(profile, realm)` and supersedes the previous transport without waiting for a
 close frame.
 
+When a `Deactivating` deadline expires, the coordinator cancels the remaining
+work, discards any uncommitted candidate checkpoint, and retains the preceding
+complete checkpoint. Deadline expiry cannot promote a partial projection or
+extend execution in the hope of finishing a write; the next activation or cold
+start performs normal reconciliation from the retained checkpoint.
+
 ### Durable boundary
 
 One atomic checkpoint contains the selected realm identity, coherent projection,
@@ -132,7 +138,8 @@ death/network replacement.
 
 ## References
 
-- Apple: [Managing your app's life cycle](https://developer.apple.com/documentation/uikit/managing-your-app-s-life-cycle)
+- Apple: [Managing your app's life cycle](https://developer.apple.com/documentation/uikit/managing-your-app-s-life-cycle),
+  [`ScenePhase.background`](https://developer.apple.com/documentation/swiftui/scenephase/background),
   and [Using background tasks to update your app](https://developer.apple.com/documentation/uikit/using-background-tasks-to-update-your-app).
 - Android: [Processes and app lifecycle](https://developer.android.com/guide/components/activities/process-lifecycle),
   [Save UI states](https://developer.android.com/topic/libraries/architecture/saving-states),
