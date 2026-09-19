@@ -111,7 +111,36 @@ impl Default for WalletDustRegistrationSettlementProjection {
     }
 }
 
+/// Reconstructs only the stable public projection retained by recovery v1.
+pub(crate) fn recovered_dust_registration_projection(
+    state: WalletDustRegistrationSettlementState,
+    identity: WalletDustRegistrationSettlementIdentity,
+    registration: Option<WalletDustRegistrationSettlementRegistration>,
+    checkpoint: WalletDustRegistrationSettlementCheckpoint,
+    preparation_revision: u64,
+    recovery_revision: u64,
+) -> WalletDustRegistrationSettlementProjection {
+    WalletDustRegistrationSettlementProjection {
+        state,
+        identity: Some(identity),
+        registration,
+        checkpoint: Some(checkpoint),
+        preparation_revision,
+        recovery_revision,
+        abandoned_registration: None,
+        resume_state: None,
+        pending_retry_revision: None,
+    }
+}
+
 impl WalletDustRegistrationSettlementProjection {
+    /// Recovery v1 intentionally excludes transient retry and parked replacement state.
+    pub(crate) fn is_exact_recovery_state(&self) -> bool {
+        self.abandoned_registration.is_none()
+            && self.resume_state.is_none()
+            && self.pending_retry_revision.is_none()
+    }
+
     /// A replacement registration parked while an older transaction is reconciled.
     ///
     /// This stays crate-private so presentation adapters cannot couple to the

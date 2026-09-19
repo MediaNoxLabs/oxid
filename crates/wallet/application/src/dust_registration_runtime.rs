@@ -148,6 +148,18 @@ impl Default for WalletDustRegistrationRuntime {
 }
 
 impl WalletDustRegistrationRuntime {
+    /// Installs validated recovered coordinator state with a fresh instance identity.
+    pub(crate) fn from_recovered_coordinator(
+        coordinator: WalletDustRegistrationCoordinator,
+    ) -> Self {
+        Self {
+            coordinator,
+            admitted_effect: None,
+            runtime_instance: next_runtime_instance(),
+            next_admission_sequence: 0,
+        }
+    }
+
     #[must_use]
     pub fn coordinator(&self) -> &WalletDustRegistrationCoordinator {
         &self.coordinator

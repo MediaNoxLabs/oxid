@@ -43,6 +43,17 @@ pub struct WalletDustRegistrationCoordinator {
     active_effect: Option<WalletDustRegistrationEffect>,
 }
 
+/// Reconstructs coordinator state after recovery validation without restoring admission.
+pub(crate) fn recovered_dust_registration_coordinator(
+    projection: Projection,
+) -> WalletDustRegistrationCoordinator {
+    let active_effect = next_effect(&projection, false, false);
+    WalletDustRegistrationCoordinator {
+        projection,
+        active_effect,
+    }
+}
+
 impl WalletDustRegistrationCoordinator {
     #[must_use]
     pub fn projection(&self) -> &Projection {
