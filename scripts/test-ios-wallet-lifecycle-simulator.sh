@@ -52,8 +52,9 @@ trap cleanup EXIT INT TERM HUP
 
 [ "$(uname -s)" = Darwin ] || fail platform
 [ -z "${OXID_IOS_DEVICE:-}" ] || fail ambient-device-selector
+[ -z "$(git -C "$ROOT" status --porcelain)" ] || fail dirty-source
 for command_name in git jq nix node rustup shasum timeout; do
-  command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
+  command -v "$command_name" >/dev/null 2>&1 || fail "missing-tool-$command_name"
 done
 readonly TIMEOUT="$(command -v timeout)"
 [ -x /usr/bin/xcodebuild ] && [ -x /usr/bin/xcrun ] && [ -x /usr/bin/plutil ] || fail xcode-tools
@@ -119,6 +120,9 @@ jq -e '
 ' "$DIAGNOSTIC" >/dev/null || fail diagnostic-contract
 
 artifact_sha="$(jq -er '.artifactSha256' "$ARTIFACT_RECEIPT")" || fail artifact-receipt
+[ "$(git -C "$ROOT" rev-parse HEAD)" = "$HEAD" ] || fail head-changed
+[ "$(git -C "$ROOT" rev-parse 'HEAD^{tree}')" = "$TREE" ] || fail tree-changed
+[ -z "$(git -C "$ROOT" status --porcelain)" ] || fail source-changed
 oxid_ios_delete_owned "$DEVELOPER_DIR_SELECTED" "$RECEIPT" >/dev/null \
   || fail simulator-cleanup
 simulator_owned=0
