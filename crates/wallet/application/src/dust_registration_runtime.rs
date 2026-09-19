@@ -47,6 +47,41 @@ impl std::fmt::Debug for WalletDustRegistrationRuntimeAdmissionToken {
     }
 }
 
+/// Current format accepted by [`WalletDustRegistrationRuntime::restore`].
+pub const WALLET_DUST_REGISTRATION_RUNTIME_CHECKPOINT_VERSION: u16 = 1;
+
+/// Versioned public state retained by the wallet application boundary.
+///
+/// Admission tokens are deliberately excluded: an executor must re-admit the
+/// restored current effect before a completion can change coordinator state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletDustRegistrationRuntimeCheckpoint {
+    pub version: u16,
+    pub coordinator: WalletDustRegistrationCoordinator,
+    next_admission_token: u64,
+}
+
+/// A checkpoint cannot be restored when its public format is unsupported.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletDustRegistrationRuntimeRestoreError {
+    UnsupportedCheckpointVersion { found: u16 },
+}
+
+impl std::fmt::Display for WalletDustRegistrationRuntimeRestoreError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedCheckpointVersion { found } => {
+                write!(
+                    formatter,
+                    "unsupported DUST registration checkpoint version {found}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for WalletDustRegistrationRuntimeRestoreError {}
+
 /// Result of attempting to admit an externally scheduled operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WalletDustRegistrationRuntimeAdmission {
@@ -78,6 +113,34 @@ impl WalletDustRegistrationRuntime {
     #[must_use]
     pub fn coordinator(&self) -> &WalletDustRegistrationCoordinator {
         &self.coordinator
+    }
+
+    /// Captures the durable public coordinator state without any in-flight admission.
+    #[must_use]
+    pub fn checkpoint(&self) -> WalletDustRegistrationRuntimeCheckpoint {
+        WalletDustRegistrationRuntimeCheckpoint {
+            version: WALLET_DUST_REGISTRATION_RUNTIME_CHECKPOINT_VERSION,
+            coordinator: self.coordinator.clone(),
+            next_admission_token: self.next_admission_token,
+        }
+    }
+
+    /// Restores a supported checkpoint and requires executors to re-admit work.
+    pub fn restore(
+        checkpoint: WalletDustRegistrationRuntimeCheckpoint,
+    ) -> Result<Self, WalletDustRegistrationRuntimeRestoreError> {
+        if checkpoint.version != WALLET_DUST_REGISTRATION_RUNTIME_CHECKPOINT_VERSION {
+            return Err(
+                WalletDustRegistrationRuntimeRestoreError::UnsupportedCheckpointVersion {
+                    found: checkpoint.version,
+                },
+            );
+        }
+        Ok(Self {
+            coordinator: checkpoint.coordinator,
+            admitted_effect: None,
+            next_admission_token: checkpoint.next_admission_token,
+        })
     }
 
     /// Applies an external policy observation without starting work.
@@ -299,5 +362,53 @@ mod tests {
             WalletDustRegistrationRuntimeAdmission::Busy
         );
         assert!(runtime.release(token));
+    }
+
+    #[test]
+    fn restores_a_versioned_checkpoint_without_reviving_an_in_flight_admission() {
+        let mut runtime = WalletDustRegistrationRuntime::default();
+        runtime.observe(WalletDustRegistrationSettlementEvent::Eligibility {
+            identity: identity(1),
+            revision: 1,
+            eligible: true,
+        });
+        let prepare = runtime.coordinator().active_effect().unwrap().clone();
+        let stale_token = admitted_token(runtime.admit_current(&prepare));
+
+        let mut restored = WalletDustRegistrationRuntime::restore(runtime.checkpoint()).unwrap();
+        assert_eq!(restored.coordinator().active_effect(), Some(&prepare));
+        assert!(!restored.complete(
+            stale_token,
+            completion::prepared(
+                identity(1),
+                oxid_wallet_domain::WalletTransactionDraftId::parse("dustreg_test").unwrap(),
+                1,
+            ),
+        ));
+
+        let restored_token = admitted_token(restored.admit_current(&prepare));
+        assert_ne!(restored_token, stale_token);
+        assert!(restored.complete(
+            restored_token,
+            completion::prepared(
+                identity(1),
+                oxid_wallet_domain::WalletTransactionDraftId::parse("dustreg_test").unwrap(),
+                1,
+            ),
+        ));
+    }
+
+    #[test]
+    fn rejects_unknown_checkpoint_versions() {
+        let mut checkpoint = WalletDustRegistrationRuntime::default().checkpoint();
+        checkpoint.version = WALLET_DUST_REGISTRATION_RUNTIME_CHECKPOINT_VERSION + 1;
+        assert_eq!(
+            WalletDustRegistrationRuntime::restore(checkpoint),
+            Err(
+                WalletDustRegistrationRuntimeRestoreError::UnsupportedCheckpointVersion {
+                    found: WALLET_DUST_REGISTRATION_RUNTIME_CHECKPOINT_VERSION + 1,
+                }
+            )
+        );
     }
 }
