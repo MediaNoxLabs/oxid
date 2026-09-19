@@ -36,7 +36,7 @@ pub(crate) fn standalone_funding_action(
 pub(crate) fn protected_receive_addresses(
     account: &WalletAccountView,
 ) -> Option<&[WalletAddressView]> {
-    super::has_protected_account(account).then_some(account.addresses.as_slice())
+    super::assets_page::has_protected_account(account).then_some(account.addresses.as_slice())
 }
 
 pub(crate) fn default_receive_kind(account: &WalletAccountView) -> Option<String> {

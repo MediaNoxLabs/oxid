@@ -6969,67 +6969,6 @@ fn protected_account_placeholder(networks: &WalletNetworkListView) -> Option<Wal
     })
 }
 
-async fn activate_protected_account(
-    services: WalletUiServices,
-    profile_id: String,
-    current: WalletSecurityStatusView,
-) -> Result<WalletSecurityStatusView, String> {
-    match run_ui_blocking(move || {
-        let command = || WalletProfileSecurityCommand {
-            profile_id: profile_id.clone(),
-        };
-        let security = match current.state_name() {
-            "Uninitialized" => services
-                .initialize_wallet_security()
-                .execute(command())
-                .map_err(|error| error.to_string())?,
-            "Locked" => services
-                .unlock_wallet()
-                .execute(command())
-                .map_err(|error| error.to_string())?,
-            "Unlocked" => current,
-            _ => return Err("wallet protection is unavailable".to_owned()),
-        };
-        services
-            .derive_wallet_account()
-            .execute(DeriveWalletAccountCommand {
-                profile_id,
-                account_index: 0,
-                address_index: 0,
-            })
-            .map_err(|error| error.to_string())?;
-        Ok(security)
-    })
-    .await
-    {
-        Ok(result) => result,
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-fn account_activation_operation(status: WalletSecurityStatusView) -> AccountOperation {
-    match status.state_name() {
-        "Uninitialized" => AccountOperation::Initializing,
-        "Locked" => AccountOperation::Unlocking,
-        _ => AccountOperation::Deriving,
-    }
-}
-
-fn has_protected_account(account: &WalletAccountView) -> bool {
-    account
-        .account_id
-        .as_deref()
-        .is_some_and(|account_id| account_id.starts_with("midnight_account_"))
-        && account
-            .addresses
-            .iter()
-            .any(|address| address.kind == "unshielded")
-        && account
-            .addresses
-            .iter()
-            .any(|address| address.kind == "shielded")
-}
-
 #[component]
 fn ReceiveAddress(kind: String, value: String) -> Element {
     let services = consume_context::<WalletUiServices>();
