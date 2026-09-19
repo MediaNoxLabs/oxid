@@ -51,7 +51,9 @@ final class LifecycleRecoveryTests: XCTestCase {
         privacy.tap()
         XCTAssertTrue(application.staticTexts["5 NIGHT"].waitForExistence(timeout: 10))
         XCTAssertTrue(application.staticTexts["12 DUST"].waitForExistence(timeout: 10))
-        XCTAssertTrue(application.staticTexts["1 shielded notes"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "1 protected notes")
+        ).firstMatch.waitForExistence(timeout: 10))
     }
 
     @MainActor
