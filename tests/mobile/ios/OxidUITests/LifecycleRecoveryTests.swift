@@ -84,7 +84,9 @@ final class LifecycleRecoveryTests: XCTestCase {
         ]
         XCTAssertTrue(backupAcknowledgement.waitForExistence(timeout: 10))
         scrollTo(backupAcknowledgement, in: application)
-        backupAcknowledgement.tap()
+        application.staticTexts[
+            "I have securely saved or verified this recovery phrase."
+        ].tap()
         let acknowledged = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == 1"),
             object: backupAcknowledgement
