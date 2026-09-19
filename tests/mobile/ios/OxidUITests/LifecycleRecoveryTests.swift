@@ -51,9 +51,25 @@ final class LifecycleRecoveryTests: XCTestCase {
 
         XCTAssertTrue(application.buttons["Create private wallet"].waitForExistence(timeout: 15))
         application.buttons["Create private wallet"].tap()
+        XCTAssertTrue(application.buttons["Create and continue"].waitForExistence(timeout: 15))
         application.buttons["Create and continue"].tap()
-        XCTAssertTrue(application.buttons["Skip for now"].waitForExistence(timeout: 15))
-        application.buttons["Skip for now"].tap()
+
+        let generatePhrase = application.buttons["Generate recovery phrase"]
+        XCTAssertTrue(generatePhrase.waitForExistence(timeout: 15))
+        generatePhrase.tap()
+        XCTAssertTrue(
+            application.otherElements["New wallet recovery phrase"]
+                .waitForExistence(timeout: 30)
+        )
+        let backupAcknowledgement = application.checkBoxes[
+            "I have securely saved or verified this recovery phrase."
+        ]
+        XCTAssertTrue(backupAcknowledgement.waitForExistence(timeout: 10))
+        backupAcknowledgement.tap()
+        let finishOnboarding = application.buttons["Finish and open wallet"]
+        XCTAssertTrue(finishOnboarding.waitForExistence(timeout: 10))
+        XCTAssertTrue(finishOnboarding.isEnabled)
+        finishOnboarding.tap()
 
         openWallet(application)
         let activate = application.buttons["Activate protected Midnight account"]
