@@ -39,7 +39,9 @@ mod wallet_root_recovery;
 pub use android_platform::{AndroidPlatformInitialization, App};
 use assets_page::AssetsPage;
 #[cfg(test)]
-use assets_page::{wallet_account_activation_available, wallet_write_actions_available};
+use assets_page::{
+    has_protected_account, wallet_account_activation_available, wallet_write_actions_available,
+};
 pub use brand::{BrandProfile, SecurityCopySnapshot, security_copy_snapshot};
 #[cfg(feature = "standalone-deployment-profile")]
 use deployment_profile::DeploymentProfileCard;

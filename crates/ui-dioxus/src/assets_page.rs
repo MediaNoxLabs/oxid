@@ -93,6 +93,19 @@ pub(super) fn AssetsPage(
             let protected_account = has_protected_account(&account);
             let protection_available = security.is_available();
             let protection_unlocked = security.state_name() == "Unlocked";
+            #[cfg(feature = "ui-profile-dev")]
+            let lifecycle_label = services
+                .reconcile_wallet_realm_lifecycle()
+                .status()
+                .ok()
+                .map(|status| {
+                    format!(
+                        "Wallet lifecycle generation {}",
+                        status.lifecycle_generation
+                    )
+                });
+            #[cfg(not(feature = "ui-profile-dev"))]
+            let lifecycle_label = None::<String>;
             let selected_network_id = networks.selected_network_id.clone();
             let select_services = services.clone();
             let select_profile_id = active_profile.id.clone();
@@ -130,7 +143,7 @@ pub(super) fn AssetsPage(
                     p { class: "wallet-hero__hint", "{account_hint}" }
                 }
 
-                section { class: "trust-line", role: "status",
+                section { class: "trust-line", role: "status", aria_label: lifecycle_label.as_deref(),
                     span { class: "trust-line__icon", aria_hidden: "true", if unavailable { "○" } else { "◇" } }
                     div {
                         strong { "{active_profile.display_name} · {account.network_name}" }

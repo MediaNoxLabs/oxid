@@ -16,7 +16,7 @@ final class LifecycleRecoveryTests: XCTestCase {
     }
 
     @MainActor
-    private func assertAutomaticReconciliation(_ application: XCUIApplication) {
+    private func assertAutomaticReconciliation(_ application: XCUIApplication) -> Int {
         XCTAssertTrue(application.staticTexts["Synced"].waitForExistence(timeout: 30))
         XCTAssertTrue(application.staticTexts.matching(
             NSPredicate(format: "label CONTAINS[c] %@", "Simulated source")
@@ -24,6 +24,11 @@ final class LifecycleRecoveryTests: XCTestCase {
         XCTAssertFalse(application.staticTexts.matching(
             NSPredicate(format: "label CONTAINS[c] %@", "last consistent checkpoint")
         ).firstMatch.exists)
+        let lifecycle = application.descendants(matching: .any).matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Wallet lifecycle generation ")
+        ).firstMatch
+        XCTAssertTrue(lifecycle.waitForExistence(timeout: 10))
+        return Int(lifecycle.label.split(separator: " ").last ?? "") ?? -1
     }
 
     @MainActor
@@ -99,7 +104,8 @@ final class LifecycleRecoveryTests: XCTestCase {
                 application.buttons["Use my receive address"].waitForExistence(timeout: 90)
             )
         }
-        assertAutomaticReconciliation(application)
+        let initialGeneration = assertAutomaticReconciliation(application)
+        XCTAssertGreaterThanOrEqual(initialGeneration, 0)
         revealAndAssertConsistentProjection(application)
 
         XCUIDevice.shared.press(.home)
@@ -109,13 +115,15 @@ final class LifecycleRecoveryTests: XCTestCase {
             "Open global application menu"
         ].waitForExistence(timeout: 15))
         XCTAssertFalse(application.staticTexts["5 NIGHT"].exists)
-        assertAutomaticReconciliation(application)
+        let foregroundGeneration = assertAutomaticReconciliation(application)
+        XCTAssertGreaterThan(foregroundGeneration, initialGeneration)
         revealAndAssertConsistentProjection(application)
 
         application.terminate()
         application.launch()
         openWallet(application)
-        assertAutomaticReconciliation(application)
+        let relaunchedGeneration = assertAutomaticReconciliation(application)
+        XCTAssertGreaterThan(relaunchedGeneration, foregroundGeneration)
         revealAndAssertConsistentProjection(application)
 
         try writeClosedDiagnostic()

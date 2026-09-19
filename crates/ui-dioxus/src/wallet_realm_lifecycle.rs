@@ -68,6 +68,7 @@ pub(super) fn use_wallet_realm_lifecycle_driver(
                 services,
                 profile,
                 wake.resumed,
+                wake.generation,
                 projection_wake,
                 &mut lifecycle_wake,
             )
@@ -206,6 +207,7 @@ async fn drive_selected_realm_once(
     services: WalletUiServices,
     profile: WalletProfileView,
     resumed: bool,
+    wake_generation: u64,
     mut projection_wake: Signal<u64>,
     lifecycle_wake: &mut Signal<WalletRealmLifecycleWake>,
 ) {
@@ -227,7 +229,7 @@ async fn drive_selected_realm_once(
         return;
     };
     tokio::time::sleep(Duration::from_millis(wait_millis)).await;
-    advance_lifecycle_wake(lifecycle_wake);
+    advance_lifecycle_wake_if_current(lifecycle_wake, wake_generation);
 }
 
 async fn recover_public_demo_fixture(services: &WalletUiServices, profile: &WalletProfileView) {
@@ -267,9 +269,18 @@ fn advance_projection_wake(projection_wake: &mut Signal<u64>) {
     *current = current.wrapping_add(1);
 }
 
-fn advance_lifecycle_wake(lifecycle_wake: &mut Signal<WalletRealmLifecycleWake>) {
+fn advance_lifecycle_wake_if_current(
+    lifecycle_wake: &mut Signal<WalletRealmLifecycleWake>,
+    expected_generation: u64,
+) {
     let mut current = lifecycle_wake.write();
-    *current = current.realm_changed();
+    if timer_wake_is_current(current.generation, expected_generation) {
+        *current = current.realm_changed();
+    }
+}
+
+const fn timer_wake_is_current(current_generation: u64, expected_generation: u64) -> bool {
+    current_generation == expected_generation
 }
 
 const DRIVER_IN_FLIGHT_POLL_MILLIS: u64 = 250;
@@ -499,6 +510,12 @@ mod tests {
         scheduled.in_flight = None;
         scheduled.in_flight_deadline_millis = None;
         assert_eq!(next_driver_wait_millis(&scheduled, 1_000), None);
+    }
+
+    #[test]
+    fn superseded_periodic_timer_cannot_schedule_another_worker() {
+        assert!(timer_wake_is_current(7, 7));
+        assert!(!timer_wake_is_current(8, 7));
     }
 
     #[test]
