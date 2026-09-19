@@ -111,6 +111,19 @@ impl Default for WalletDustRegistrationSettlementProjection {
     }
 }
 
+impl WalletDustRegistrationSettlementProjection {
+    /// A replacement registration parked while an older transaction is reconciled.
+    ///
+    /// This stays crate-private so presentation adapters cannot couple to the
+    /// policy's internal retention strategy. The coordinator uses it only to
+    /// resume the exact retained draft before preparing another one.
+    pub(crate) fn parked_registration(
+        &self,
+    ) -> Option<&WalletDustRegistrationSettlementRegistration> {
+        self.abandoned_registration.as_ref()
+    }
+}
+
 /// Typed observations accepted by the pure reducer.
 ///
 /// Events contain neither unrestricted adapter errors nor custody material.
