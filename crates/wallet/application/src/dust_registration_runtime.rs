@@ -37,10 +37,23 @@ impl From<WalletDustRegistrationEffect> for WalletDustRegistrationRuntimeOperati
     }
 }
 
+/// Opaque capability proving ownership of one admitted operation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct WalletDustRegistrationRuntimeAdmissionToken(u64);
+
+impl std::fmt::Debug for WalletDustRegistrationRuntimeAdmissionToken {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("WalletDustRegistrationRuntimeAdmissionToken(..)")
+    }
+}
+
 /// Result of attempting to admit an externally scheduled operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WalletDustRegistrationRuntimeAdmission {
-    Admitted(WalletDustRegistrationRuntimeOperation),
+    Admitted {
+        operation: WalletDustRegistrationRuntimeOperation,
+        token: WalletDustRegistrationRuntimeAdmissionToken,
+    },
     Busy,
     Stale,
     Idle,
@@ -54,7 +67,11 @@ pub enum WalletDustRegistrationRuntimeAdmission {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WalletDustRegistrationRuntime {
     coordinator: WalletDustRegistrationCoordinator,
-    admitted_effect: Option<WalletDustRegistrationEffect>,
+    admitted_effect: Option<(
+        WalletDustRegistrationEffect,
+        WalletDustRegistrationRuntimeAdmissionToken,
+    )>,
+    next_admission_token: u64,
 }
 
 impl WalletDustRegistrationRuntime {
@@ -65,8 +82,9 @@ impl WalletDustRegistrationRuntime {
 
     /// Applies an external policy observation without starting work.
     pub fn observe(&mut self, event: WalletDustRegistrationSettlementEvent) {
-        self.coordinator = self.coordinator.clone().reduce(event);
-        if self.admitted_effect.as_ref() != self.coordinator.active_effect() {
+        let next = self.coordinator.clone().reduce(event);
+        if next != self.coordinator {
+            self.coordinator = next;
             self.admitted_effect = None;
         }
     }
@@ -83,23 +101,33 @@ impl WalletDustRegistrationRuntime {
         if current != effect {
             return WalletDustRegistrationRuntimeAdmission::Stale;
         }
-        if self.admitted_effect.as_ref() == Some(effect) {
+        if self
+            .admitted_effect
+            .as_ref()
+            .is_some_and(|(admitted, _)| admitted == effect)
+        {
             return WalletDustRegistrationRuntimeAdmission::Busy;
         }
-        self.admitted_effect = Some(effect.clone());
-        WalletDustRegistrationRuntimeAdmission::Admitted(effect.clone().into())
+        self.next_admission_token = self.next_admission_token.wrapping_add(1);
+        let token = WalletDustRegistrationRuntimeAdmissionToken(self.next_admission_token);
+        self.admitted_effect = Some((effect.clone(), token));
+        WalletDustRegistrationRuntimeAdmission::Admitted {
+            operation: effect.clone().into(),
+            token,
+        }
     }
 
-    /// Accepts a completion only from the operation that this runtime admitted.
+    /// Accepts a completion only when its opaque admission token is current.
     #[must_use]
     pub fn complete(
         &mut self,
-        effect: &WalletDustRegistrationEffect,
+        token: WalletDustRegistrationRuntimeAdmissionToken,
         event: WalletDustRegistrationSettlementEvent,
     ) -> bool {
-        if self.admitted_effect.as_ref() != Some(effect)
-            || self.coordinator.active_effect() != Some(effect)
-        {
+        let Some((effect, admitted_token)) = &self.admitted_effect else {
+            return false;
+        };
+        if *admitted_token != token || self.coordinator.active_effect() != Some(effect) {
             return false;
         }
         let next = self.coordinator.clone().reduce(event);
@@ -107,6 +135,20 @@ impl WalletDustRegistrationRuntime {
             return false;
         }
         self.coordinator = next;
+        self.admitted_effect = None;
+        true
+    }
+
+    /// Releases an admitted operation without applying a completion.
+    #[must_use]
+    pub fn release(&mut self, token: WalletDustRegistrationRuntimeAdmissionToken) -> bool {
+        if self
+            .admitted_effect
+            .as_ref()
+            .is_none_or(|(_, admitted_token)| *admitted_token != token)
+        {
+            return false;
+        }
         self.admitted_effect = None;
         true
     }
@@ -178,8 +220,17 @@ mod tests {
         ));
     }
 
+    fn admitted_token(
+        admission: WalletDustRegistrationRuntimeAdmission,
+    ) -> WalletDustRegistrationRuntimeAdmissionToken {
+        match admission {
+            WalletDustRegistrationRuntimeAdmission::Admitted { token, .. } => token,
+            _ => panic!("expected an admitted operation"),
+        }
+    }
+
     #[test]
-    fn admits_each_current_effect_once_and_rejects_stale_completion_after_supersession() {
+    fn completion_matrix_accepts_current_token_and_rejects_stale_and_idle_tokens() {
         let mut runtime = WalletDustRegistrationRuntime::default();
         runtime.observe(WalletDustRegistrationSettlementEvent::Eligibility {
             identity: identity(1),
@@ -187,36 +238,66 @@ mod tests {
             eligible: true,
         });
         let prepare = runtime.coordinator().active_effect().unwrap().clone();
-        assert!(matches!(
-            runtime.admit_current(&prepare),
-            WalletDustRegistrationRuntimeAdmission::Admitted(
-                WalletDustRegistrationRuntimeOperation::Prepare(_)
-            )
+        let token = admitted_token(runtime.admit_current(&prepare));
+        assert!(runtime.complete(
+            token,
+            completion::prepared(
+                identity(1),
+                oxid_wallet_domain::WalletTransactionDraftId::parse("dustreg_test").unwrap(),
+                1,
+            ),
         ));
-        assert_eq!(
-            runtime.admit_current(&prepare),
-            WalletDustRegistrationRuntimeAdmission::Busy
-        );
+        assert!(matches!(
+            runtime.coordinator().active_effect(),
+            Some(WalletDustRegistrationEffect::RequestProtectedAuthorization { .. })
+        ));
+        assert!(!runtime.complete(
+            token,
+            completion::prepared(
+                identity(1),
+                oxid_wallet_domain::WalletTransactionDraftId::parse("dustreg_test").unwrap(),
+                1,
+            ),
+        ));
 
+        let authorization = runtime.coordinator().active_effect().unwrap().clone();
+        let stale_token = admitted_token(runtime.admit_current(&authorization));
         runtime.observe(WalletDustRegistrationSettlementEvent::Eligibility {
             identity: identity(2),
             revision: 1,
             eligible: true,
         });
-        assert!(!runtime.complete(
-            &prepare,
-            completion::prepared(
-                identity(1),
-                oxid_wallet_domain::WalletTransactionDraftId::parse("dustreg_test").unwrap(),
-                1
-            ),
-        ));
-        let replacement = runtime.coordinator().active_effect().unwrap().clone();
-        assert!(matches!(
-            runtime.admit_current(&replacement),
-            WalletDustRegistrationRuntimeAdmission::Admitted(
-                WalletDustRegistrationRuntimeOperation::Prepare(_)
-            )
-        ));
+        assert!(!runtime.release(stale_token));
+        assert_eq!(
+            runtime.admit_current(&prepare),
+            WalletDustRegistrationRuntimeAdmission::Stale
+        );
+        assert!(!WalletDustRegistrationRuntime::default().release(stale_token));
+        assert_eq!(
+            WalletDustRegistrationRuntime::default().admit_current(&prepare),
+            WalletDustRegistrationRuntimeAdmission::Idle
+        );
+    }
+
+    #[test]
+    fn ignored_observation_preserves_the_in_flight_admission() {
+        let mut runtime = WalletDustRegistrationRuntime::default();
+        runtime.observe(WalletDustRegistrationSettlementEvent::Eligibility {
+            identity: identity(1),
+            revision: 1,
+            eligible: true,
+        });
+        let prepare = runtime.coordinator().active_effect().unwrap().clone();
+        let token = admitted_token(runtime.admit_current(&prepare));
+        runtime.observe(WalletDustRegistrationSettlementEvent::Eligibility {
+            identity: identity(1),
+            revision: 1,
+            eligible: true,
+        });
+        assert_eq!(
+            runtime.admit_current(&prepare),
+            WalletDustRegistrationRuntimeAdmission::Busy
+        );
+        assert!(runtime.release(token));
     }
 }
