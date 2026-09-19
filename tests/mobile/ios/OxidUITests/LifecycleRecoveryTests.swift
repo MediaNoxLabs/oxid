@@ -71,7 +71,7 @@ final class LifecycleRecoveryTests: XCTestCase {
             application.otherElements["New wallet recovery phrase"]
                 .waitForExistence(timeout: 30)
         )
-        let backupAcknowledgement = application.checkBoxes[
+        let backupAcknowledgement = application.switches[
             "I have securely saved or verified this recovery phrase."
         ]
         XCTAssertTrue(backupAcknowledgement.waitForExistence(timeout: 10))
