@@ -24,15 +24,30 @@ final class LifecycleRecoveryTests: XCTestCase {
     }
 
     @MainActor
-    private func assertConsistentProjection(_ application: XCUIApplication) {
-        XCTAssertTrue(application.staticTexts["5 NIGHT"].waitForExistence(timeout: 30))
-        XCTAssertTrue(application.staticTexts["12 DUST"].waitForExistence(timeout: 10))
-        XCTAssertTrue(application.staticTexts["1 shielded notes"].waitForExistence(timeout: 10))
+    private func assertAutomaticReconciliation(_ application: XCUIApplication) {
+        XCTAssertTrue(application.staticTexts["Synced"].waitForExistence(timeout: 30))
+        XCTAssertTrue(application.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "Simulated source")
+        ).firstMatch.exists)
+        XCTAssertFalse(application.buttons["Sync now"].exists)
         XCTAssertFalse(application.buttons["Sync DUST"].exists)
         XCTAssertFalse(application.buttons["Sync shielded assets"].exists)
         XCTAssertFalse(application.staticTexts.matching(
             NSPredicate(format: "label CONTAINS[c] %@", "last consistent checkpoint")
         ).firstMatch.exists)
+    }
+
+    @MainActor
+    private func revealAndAssertConsistentProjection(_ application: XCUIApplication) {
+        let menu = application.buttons["Open global application menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.tap()
+        let privacy = application.buttons["Session privacy"]
+        XCTAssertTrue(privacy.waitForExistence(timeout: 5))
+        privacy.tap()
+        XCTAssertTrue(application.staticTexts["5 NIGHT"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["12 DUST"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["1 shielded notes"].waitForExistence(timeout: 10))
     }
 
     @MainActor
@@ -113,29 +128,22 @@ final class LifecycleRecoveryTests: XCTestCase {
                 application.buttons["Use my receive address"].waitForExistence(timeout: 90)
             )
         }
-        assertConsistentProjection(application)
-
-        let reveal = application.descendants(matching: .any)[
-            "Show private values for 30 seconds"
-        ]
-        XCTAssertTrue(reveal.waitForExistence(timeout: 10))
-        reveal.tap()
-        XCTAssertTrue(
-            application.descendants(matching: .any)["Hide private values"]
-                .waitForExistence(timeout: 5)
-        )
+        assertAutomaticReconciliation(application)
+        revealAndAssertConsistentProjection(application)
 
         XCUIDevice.shared.press(.home)
         RunLoop.current.run(until: Date().addingTimeInterval(2))
         application.activate()
-        XCTAssertTrue(reveal.waitForExistence(timeout: 15))
-        XCTAssertFalse(application.descendants(matching: .any)["Hide private values"].exists)
-        assertConsistentProjection(application)
+        XCTAssertTrue(application.buttons["Open global application menu"].waitForExistence(timeout: 15))
+        XCTAssertFalse(application.staticTexts["5 NIGHT"].exists)
+        assertAutomaticReconciliation(application)
+        revealAndAssertConsistentProjection(application)
 
         application.terminate()
         application.launch()
         openWallet(application)
-        assertConsistentProjection(application)
+        assertAutomaticReconciliation(application)
+        revealAndAssertConsistentProjection(application)
 
         try writeClosedDiagnostic()
     }

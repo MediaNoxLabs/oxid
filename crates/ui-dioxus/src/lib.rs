@@ -3640,10 +3640,12 @@ fn WalletApp() -> Element {
                     lifecycle_wake: identity_link_wake,
                     on_selected: move |profile| {
                         profile_session.set(ProfileSessionState::Active(profile));
+                        realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
                         navigation.write().select_primary(PrimaryDestination::Home);
                     },
                     on_root_recovered: move |profile| {
                         profile_session.set(ProfileSessionState::Active(profile));
+                        realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
                         navigation.write().select_primary(PrimaryDestination::Wallet);
                     },
                     on_retry: move |_| {
@@ -3794,6 +3796,7 @@ fn WalletApp() -> Element {
                     on_selected: move |profile| {
                         secret_mode.rearm();
                         profile_session.set(ProfileSessionState::Active(profile));
+                        realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
                         navigation.write().select_primary(PrimaryDestination::Home);
                         header_menu.set(HeaderMenu::Closed);
                     },
@@ -3980,6 +3983,7 @@ fn WalletApp() -> Element {
                             on_selected: move |profile| {
                                 secret_mode.rearm();
                                 profile_session.set(ProfileSessionState::Active(profile));
+                                realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
                                 navigation.write().select_primary(PrimaryDestination::Home);
                             },
                         }
