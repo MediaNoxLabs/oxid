@@ -7,11 +7,12 @@ import test from "node:test";
 const root = new URL("../../", import.meta.url);
 
 test("iOS lifecycle diagnostic owns one simulator and records only closed outcomes", async () => {
-  const [script, swift, project, justfile] = await Promise.all([
+  const [script, swift, project, justfile, lifecycle] = await Promise.all([
     readFile(new URL("scripts/test-ios-wallet-lifecycle-simulator.sh", root), "utf8"),
     readFile(new URL("tests/mobile/ios/OxidUITests/LifecycleRecoveryTests.swift", root), "utf8"),
     readFile(new URL("tests/mobile/ios/project.yml", root), "utf8"),
     readFile(new URL("Justfile", root), "utf8"),
+    readFile(new URL("crates/ui-dioxus/src/wallet_realm_lifecycle.rs", root), "utf8"),
   ]);
 
   assert.match(script, /oxid_ios_create_owned/u);
@@ -29,4 +30,7 @@ test("iOS lifecycle diagnostic owns one simulator and records only closed outcom
   assert.doesNotMatch(swift, /buttons\["Sync now"\]\.tap/u);
   assert.match(project, /OXID_LIFECYCLE_DIAGNOSTIC_PATH/u);
   assert.match(justfile, /ios-wallet-lifecycle-simulator:/u);
+  assert.match(lifecycle, /use_effect\(move \|\|/u);
+  assert.match(lifecycle, /spawn\(async move/u);
+  assert.doesNotMatch(lifecycle, /use_future\(move \|\|/u);
 });

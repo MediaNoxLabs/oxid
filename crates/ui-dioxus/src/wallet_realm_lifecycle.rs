@@ -47,19 +47,32 @@ impl WalletRealmLifecycleWake {
 pub(super) fn use_wallet_realm_lifecycle_driver(
     services: WalletUiServices,
     profile_session: Signal<ProfileSessionState>,
-    lifecycle_wake: Signal<WalletRealmLifecycleWake>,
+    mut lifecycle_wake: Signal<WalletRealmLifecycleWake>,
     projection_wake: Signal<u64>,
 ) {
-    use_future(move || {
+    use_effect(move || {
         let session = profile_session();
         let wake = lifecycle_wake();
         let services = services.clone();
-        async move {
-            let ProfileSessionState::Active(profile) = session else {
-                return;
-            };
-            drive_selected_realm(services, profile.id, wake.resumed, projection_wake).await;
-        }
+        let ProfileSessionState::Active(profile) = session else {
+            return;
+        };
+        // A reactive use_future is cancelled when either signal changes. That
+        // cancellation can happen after the domain policy admits a request,
+        // orphaning the in-flight reconciliation until its timeout. Scoped
+        // one-shot workers are not cancelled by a later effect run; concurrent
+        // wakes are serialized by the lifecycle policy's retained-request
+        // drain.
+        spawn(async move {
+            drive_selected_realm_once(
+                services,
+                profile.id,
+                wake.resumed,
+                projection_wake,
+                &mut lifecycle_wake,
+            )
+            .await;
+        });
     });
 }
 
@@ -189,11 +202,12 @@ async fn await_lifecycle_idle(
     })?
 }
 
-async fn drive_selected_realm(
+async fn drive_selected_realm_once(
     services: WalletUiServices,
     profile_id: String,
     resumed: bool,
     mut projection_wake: Signal<u64>,
+    lifecycle_wake: &mut Signal<WalletRealmLifecycleWake>,
 ) {
     let lifecycle = services.reconcile_wallet_realm_lifecycle();
     let Ok((identity, status)) = selected_identity_and_status(&services, &profile_id).await else {
@@ -205,70 +219,24 @@ async fn drive_selected_realm(
     // Keep this sole driver alive so it can observe that next wakeup.
     let _ = execute_with_timeout(Arc::clone(&lifecycle), input).await;
     advance_projection_wake(&mut projection_wake);
-
-    loop {
-        let Ok(status) = lifecycle.status() else {
-            return;
-        };
-        let now_millis = monotonic_millis();
-        let Some(wait_millis) = next_driver_wait_millis(&status, now_millis) else {
-            std::future::pending::<()>().await;
-            return;
-        };
-        tokio::time::sleep(Duration::from_millis(wait_millis)).await;
-
-        // Another caller can own the single in-flight request. Recheck until
-        // it settles rather than treating the temporary lack of a policy
-        // wakeup as the end of automatic reconciliation.
-        if let Ok(latest) = lifecycle.status() {
-            if let Some(request) = latest.in_flight {
-                let now_millis = monotonic_millis();
-                if latest
-                    .in_flight_deadline_millis
-                    .is_some_and(|deadline| now_millis >= deadline)
-                {
-                    let _ = execute_with_timeout(
-                        Arc::clone(&lifecycle),
-                        WalletRealmLifecycleInput::ReconciliationTimedOut {
-                            identity: request.identity,
-                            sequence: request.sequence,
-                            now_millis,
-                            facets: latest.facets,
-                        },
-                    )
-                    .await;
-                }
-                continue;
-            }
-        }
-
-        let Ok((identity, latest)) = selected_identity_and_status(&services, &profile_id).await
-        else {
-            return;
-        };
-        let now_millis = monotonic_millis();
-        let input = if latest.identity.as_ref() == Some(&identity) {
-            WalletRealmLifecycleInput::PeriodicTick {
-                now_millis,
-                facets: latest.facets,
-            }
-        } else {
-            WalletRealmLifecycleInput::RealmSelected {
-                identity,
-                now_millis,
-                facets: missing_facets(),
-            }
-        };
-        // Failure is a settled lifecycle outcome with a policy-owned backoff.
-        // Only an unreadable status ends the driver on the next iteration.
-        let _ = execute_with_timeout(Arc::clone(&lifecycle), input).await;
-        advance_projection_wake(&mut projection_wake);
-    }
+    let Ok(status) = lifecycle.status() else {
+        return;
+    };
+    let Some(wait_millis) = next_driver_wait_millis(&status, monotonic_millis()) else {
+        return;
+    };
+    tokio::time::sleep(Duration::from_millis(wait_millis)).await;
+    advance_lifecycle_wake(lifecycle_wake);
 }
 
 fn advance_projection_wake(projection_wake: &mut Signal<u64>) {
     let mut current = projection_wake.write();
     *current = current.wrapping_add(1);
+}
+
+fn advance_lifecycle_wake(lifecycle_wake: &mut Signal<WalletRealmLifecycleWake>) {
+    let mut current = lifecycle_wake.write();
+    *current = current.realm_changed();
 }
 
 const DRIVER_IN_FLIGHT_POLL_MILLIS: u64 = 250;
