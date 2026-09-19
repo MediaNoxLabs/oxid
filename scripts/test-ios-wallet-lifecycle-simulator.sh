@@ -4,6 +4,10 @@
 set -euo pipefail
 export LC_ALL=C
 export CDPATH=
+# A freshly created recent iOS runtime can need more than the shared helper's
+# 30-second default to finish first boot. This diagnostic owns the disposable
+# simulator and keeps every simulator operation bounded by two minutes.
+export OXID_IOS_OPERATION_TIMEOUT_SECONDS=120
 
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)"
 readonly ROOT
