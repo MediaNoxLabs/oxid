@@ -83,7 +83,7 @@ impl WalletDustRegistrationRuntime {
     /// Applies an external policy observation without starting work.
     pub fn observe(&mut self, event: WalletDustRegistrationSettlementEvent) {
         let next = self.coordinator.clone().reduce(event);
-        if next != self.coordinator {
+        if next.projection() != self.coordinator.projection() {
             self.coordinator = next;
             self.admitted_effect = None;
         }
@@ -131,7 +131,7 @@ impl WalletDustRegistrationRuntime {
             return false;
         }
         let next = self.coordinator.clone().reduce(event);
-        if next == self.coordinator {
+        if next.projection() == self.coordinator.projection() {
             return false;
         }
         self.coordinator = next;
