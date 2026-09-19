@@ -61,7 +61,7 @@ async fn settle_native_authorization_lifecycle() {
     // operation fenced until that bounded platform hand-off settles so the
     // trailing wake cannot cancel a successful ceremony as an unrelated
     // background transition.
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 }
 
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
