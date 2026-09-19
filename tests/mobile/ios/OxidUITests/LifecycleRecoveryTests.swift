@@ -123,7 +123,10 @@ final class LifecycleRecoveryTests: XCTestCase {
         application.launch()
         openWallet(application)
         let relaunchedGeneration = assertAutomaticReconciliation(application)
-        XCTAssertGreaterThan(relaunchedGeneration, foregroundGeneration)
+        // Generations are deliberately process-local. A positive receipt in
+        // the newly launched process proves that its own startup boundary ran;
+        // only boundaries within the same process must be monotonic.
+        XCTAssertGreaterThan(relaunchedGeneration, 0)
         revealAndAssertConsistentProjection(application)
 
         try writeClosedDiagnostic()

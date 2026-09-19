@@ -81,7 +81,7 @@ simulator_owned=1
 oxid_ios_owned_simctl "$DEVELOPER_DIR_SELECTED" "$RECEIPT" boot >/dev/null || fail simulator-boot
 oxid_ios_owned_simctl "$DEVELOPER_DIR_SELECTED" "$RECEIPT" bootstatus -b >/dev/null || fail simulator-ready
 
-OXID_IOS_DEVICE="$DEVICE" OXID_IOS_RESET_DATA=1 \
+OXID_IOS_DEVICE="$DEVICE" OXID_IOS_RESET_DATA=1 OXID_UI_PROFILE=dev \
 OXID_XCODE_DEVELOPER_DIR="$DEVELOPER_DIR_SELECTED" \
   "$ROOT/scripts/run-ios-simulator.sh" build || fail app-build
 oxid_ios_owned_simctl "$DEVELOPER_DIR_SELECTED" "$RECEIPT" install "$APP_BUNDLE" >/dev/null \

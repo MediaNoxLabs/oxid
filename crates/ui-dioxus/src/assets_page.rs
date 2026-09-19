@@ -143,7 +143,7 @@ pub(super) fn AssetsPage(
                     p { class: "wallet-hero__hint", "{account_hint}" }
                 }
 
-                section { class: "trust-line", role: "status", aria_label: lifecycle_label.as_deref(),
+                section { class: "trust-line", role: "status",
                     span { class: "trust-line__icon", aria_hidden: "true", if unavailable { "○" } else { "◇" } }
                     div {
                         strong { "{active_profile.display_name} · {account.network_name}" }
@@ -153,6 +153,9 @@ pub(super) fn AssetsPage(
                             } else {
                                 "{ui::sync_state(&account.sync.state)} · {source_label} source"
                             }
+                        }
+                        if let Some(lifecycle_label) = lifecycle_label.as_deref() {
+                            small { class: "dev-lifecycle-marker", "{lifecycle_label}" }
                         }
                     }
                 }
