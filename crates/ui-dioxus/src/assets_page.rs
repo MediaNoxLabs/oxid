@@ -112,11 +112,19 @@ pub(super) fn AssetsPage(
                         }
                     }
                     div { class: "wallet-hero__number-row",
-                        h1 { class: "privacy-value", "{night}" }
+                        h1 {
+                            class: "privacy-value",
+                            aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                            "{night}"
+                        }
                         span { "NIGHT" }
                     }
                     div { class: "dust-pill",
-                        strong { class: "privacy-value", "{dust}" }
+                        strong {
+                            class: "privacy-value",
+                            aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                            "{dust}"
+                        }
                         span { "DUST" }
                     }
                     p { class: "wallet-hero__hint", "{account_hint}" }
@@ -299,6 +307,7 @@ pub(super) fn AssetsPage(
 
                 AccountSyncCard {
                     profile_id: active_profile.id.clone(),
+                    secret_mode,
                     can_sync: protection_unlocked,
                     account_unavailable: unavailable,
                     on_account_updated: move |updated_account| {

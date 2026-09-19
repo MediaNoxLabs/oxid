@@ -5803,6 +5803,7 @@ fn SubmissionRecoveryPane(profile_id: String) -> Element {
 #[component]
 fn AccountSyncCard(
     profile_id: String,
+    secret_mode: SecretModeController,
     can_sync: bool,
     account_unavailable: bool,
     on_account_updated: EventHandler<WalletAccountView>,
@@ -5903,15 +5904,26 @@ fn AccountSyncCard(
                     div { class: "account-sync-card__rows",
                         div { class: "account-sync-card__row",
                             div {
-                                strong { class: "privacy-value", "{dust_balance}" }
+                                strong {
+                                    class: "privacy-value",
+                                    aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                                    "{dust_balance}"
+                                }
                                 small { "{dust_note}" }
                             }
                             span { class: "{dust_status_pill_class(dust_state)}", "{ui::sync_state(dust_state)}" }
                         }
                         div { class: "account-sync-card__row",
                             div {
-                                strong { class: "privacy-value", "{shielded_night}" }
-                                small { "Shielded NIGHT · {owned_notes} protected notes" }
+                                strong {
+                                    class: "privacy-value",
+                                    aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                                    "{shielded_night}"
+                                }
+                                small {
+                                    aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                                    "Shielded NIGHT · {owned_notes} protected notes"
+                                }
                                 small { "{shielded_note}" }
                             }
                             span { class: "{dust_status_pill_class(shielded_state)}", "{ui::sync_state(shielded_state)}" }
@@ -5924,7 +5936,11 @@ fn AccountSyncCard(
                                     div { class: "activity-row", key: "{balance.token_type_hex}",
                                         span { class: "activity-row__mark", aria_hidden: "true", "◈" }
                                         div {
-                                            strong { class: "privacy-value", "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}" }
+                                            strong {
+                                                class: "privacy-value",
+                                                aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                                                "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}"
+                                            }
                                             small { title: "{balance.token_type_hex}", "Protected token" }
                                         }
                                     }
