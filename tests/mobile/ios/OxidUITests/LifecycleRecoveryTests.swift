@@ -36,10 +36,15 @@ final class LifecycleRecoveryTests: XCTestCase {
 
     @MainActor
     private func revealAndAssertConsistentProjection(_ application: XCUIApplication) {
-        let menu = application.buttons["Open global application menu"]
+        // WebKit may expose ARIA menu controls as buttons, menu buttons, or
+        // checkboxes on different iOS runtimes. Select by the stable
+        // accessible name instead of coupling the diagnostic to that mapping.
+        let menu = application.descendants(matching: .any)[
+            "Open global application menu"
+        ]
         XCTAssertTrue(menu.waitForExistence(timeout: 10))
         menu.tap()
-        let privacy = application.buttons["Session privacy"]
+        let privacy = application.descendants(matching: .any)["Session privacy"]
         XCTAssertTrue(privacy.waitForExistence(timeout: 5))
         privacy.tap()
         XCTAssertTrue(application.staticTexts["5 NIGHT"].waitForExistence(timeout: 10))
@@ -131,7 +136,9 @@ final class LifecycleRecoveryTests: XCTestCase {
         XCUIDevice.shared.press(.home)
         RunLoop.current.run(until: Date().addingTimeInterval(2))
         application.activate()
-        XCTAssertTrue(application.buttons["Open global application menu"].waitForExistence(timeout: 15))
+        XCTAssertTrue(application.descendants(matching: .any)[
+            "Open global application menu"
+        ].waitForExistence(timeout: 15))
         XCTAssertFalse(application.staticTexts["5 NIGHT"].exists)
         assertAutomaticReconciliation(application)
         revealAndAssertConsistentProjection(application)
