@@ -139,6 +139,7 @@ ADR status and delivery state answer different questions:
 | [0113](0113-expose-fixed-standalone-funding-through-tailnet-discovery.md) Expose fixed standalone funding through Tailnet discovery | Accepted | ADR-0112; issue #540 | Receipt-scoped private HTTPS Serve discovery preserves unrelated routes, serves a fixed-policy page/QR, and gates live acceptance to the owner |
 | [0114](0114-model-wallet-runtime-as-typed-resources-and-reconcilers.md) Model wallet runtime as typed resources and reconcilers | Accepted | ADR-0106/0113; issues #558/#559 | Distinct mnemonic/seed/custody resources, typed facet state, pure reducers, application reconcilers, and shared headless/Dioxus projections replace UI-owned orchestration incrementally |
 | [0115](0115-keep-testkit-in-tree-and-out-of-product-closures.md) Keep testkit in-tree and out of product closures | Proposed | ADR-0003–0005/0020/0096; issue #518 | Reserves a non-published in-tree `oxid-testkit`, keeps small synthetic fixtures in Oxid, forbids production dependencies and chain-state distribution, and leaves reusable DUST synchronization optimization to the Midnight Rust stack |
+| [0116](0116-define-suspension-and-process-death-recovery-contract.md) Define suspension and process-death recovery contract | Accepted | ADR-0114; issues #558/#644–#646 | Defines disposable process/transport truth, atomic selected-realm recovery, generation fencing, `outcome_unknown` reconciliation, authorization expiry, and optional platform background opportunities |
 
 ## Current boundaries
 
