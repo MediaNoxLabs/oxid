@@ -205,7 +205,7 @@ pub(crate) fn WalletOnboarding(
                         r#type: "checkbox",
                         checked: acknowledged(),
                         disabled: busy,
-                        onchange: move |event| acknowledged.set(event.checked()),
+                        oninput: move |event| acknowledged.set(event.checked()),
                     }
                     "I have securely saved or verified this recovery phrase."
                 }
