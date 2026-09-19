@@ -19,6 +19,9 @@ pub(super) struct WalletRealmLifecycleWake {
     pub resumed: bool,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct WalletRealmProjectionWake(pub Signal<u64>);
+
 impl WalletRealmLifecycleWake {
     pub const INITIAL: Self = Self {
         generation: 0,
@@ -45,6 +48,7 @@ pub(super) fn use_wallet_realm_lifecycle_driver(
     services: WalletUiServices,
     profile_session: Signal<ProfileSessionState>,
     lifecycle_wake: Signal<WalletRealmLifecycleWake>,
+    projection_wake: Signal<u64>,
 ) {
     use_future(move || {
         let session = profile_session();
@@ -54,7 +58,7 @@ pub(super) fn use_wallet_realm_lifecycle_driver(
             let ProfileSessionState::Active(profile) = session else {
                 return;
             };
-            drive_selected_realm(services, profile.id, wake.resumed).await;
+            drive_selected_realm(services, profile.id, wake.resumed, projection_wake).await;
         }
     });
 }
@@ -185,7 +189,12 @@ async fn await_lifecycle_idle(
     })?
 }
 
-async fn drive_selected_realm(services: WalletUiServices, profile_id: String, resumed: bool) {
+async fn drive_selected_realm(
+    services: WalletUiServices,
+    profile_id: String,
+    resumed: bool,
+    mut projection_wake: Signal<u64>,
+) {
     let lifecycle = services.reconcile_wallet_realm_lifecycle();
     let Ok((identity, status)) = selected_identity_and_status(&services, &profile_id).await else {
         return;
@@ -195,6 +204,7 @@ async fn drive_selected_realm(services: WalletUiServices, profile_id: String, re
     // A settled transient error updates the policy's retry/backoff checkpoint.
     // Keep this sole driver alive so it can observe that next wakeup.
     let _ = execute_with_timeout(Arc::clone(&lifecycle), input).await;
+    advance_projection_wake(&mut projection_wake);
 
     loop {
         let Ok(status) = lifecycle.status() else {
@@ -252,7 +262,13 @@ async fn drive_selected_realm(services: WalletUiServices, profile_id: String, re
         // Failure is a settled lifecycle outcome with a policy-owned backoff.
         // Only an unreadable status ends the driver on the next iteration.
         let _ = execute_with_timeout(Arc::clone(&lifecycle), input).await;
+        advance_projection_wake(&mut projection_wake);
     }
+}
+
+fn advance_projection_wake(projection_wake: &mut Signal<u64>) {
+    let mut current = projection_wake.write();
+    *current = current.wrapping_add(1);
 }
 
 const DRIVER_IN_FLIGHT_POLL_MILLIS: u64 = 250;

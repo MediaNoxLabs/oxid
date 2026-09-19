@@ -209,7 +209,7 @@ use selected_realm_sync::{
 use selected_realm_sync::{
     dust_progress_percent, dust_sync_note, shielded_progress_percent, shielded_sync_note,
 };
-use wallet_realm_lifecycle::WalletRealmLifecycleWake;
+use wallet_realm_lifecycle::{WalletRealmLifecycleWake, WalletRealmProjectionWake};
 
 const BASE_STYLES: &str = include_str!("../assets/styles.css");
 const DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL: &str = "Protected DUST registration";
@@ -3491,11 +3491,14 @@ fn WalletApp() -> Element {
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let identity_link_wake = use_signal(|| 0_u64);
     let mut realm_lifecycle_wake = use_signal(|| WalletRealmLifecycleWake::INITIAL);
+    let realm_projection_wake = use_signal(|| 0_u64);
     use_context_provider(|| realm_lifecycle_wake);
+    use_context_provider(|| WalletRealmProjectionWake(realm_projection_wake));
     wallet_realm_lifecycle::use_wallet_realm_lifecycle_driver(
         services.clone(),
         profile_session,
         realm_lifecycle_wake,
+        realm_projection_wake,
     );
     let services_for_load = services.clone();
     use_effect(move || {
@@ -5806,10 +5809,13 @@ fn AccountSyncCard(
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut realm_lifecycle_wake = consume_context::<Signal<WalletRealmLifecycleWake>>();
+    let WalletRealmProjectionWake(realm_projection_wake) =
+        consume_context::<WalletRealmProjectionWake>();
     let state = use_signal(|| AccountSyncCardState::Loading);
     let load_services = services.clone();
     let load_profile = profile_id.clone();
     use_effect(move || {
+        let _projection_generation = realm_projection_wake();
         begin_account_sync_card_observation(
             load_services.clone(),
             load_profile.clone(),
