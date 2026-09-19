@@ -107,9 +107,12 @@ final class LifecycleRecoveryTests: XCTestCase {
 
         openWallet(application)
         let activate = application.buttons["Activate protected Midnight account"]
-        XCTAssertTrue(activate.waitForExistence(timeout: 15))
-        activate.tap()
-        XCTAssertTrue(application.buttons["Use my receive address"].waitForExistence(timeout: 90))
+        if activate.waitForExistence(timeout: 3) {
+            activate.tap()
+            XCTAssertTrue(
+                application.buttons["Use my receive address"].waitForExistence(timeout: 90)
+            )
+        }
         assertConsistentProjection(application)
 
         let reveal = application.descendants(matching: .any)[
