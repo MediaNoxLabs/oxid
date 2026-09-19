@@ -171,6 +171,11 @@ pub enum WalletOperationEffect {
     SyncAccount,
     SyncDust,
     SyncShielded,
+    DustRegistrationPrepare,
+    DustRegistrationAuthorization,
+    DustRegistrationSubmit,
+    DustRegistrationObserveTransaction,
+    DustRegistrationRefreshDust,
 }
 
 impl From<WalletRealmReconciliationEffect> for WalletOperationEffect {
@@ -246,10 +251,37 @@ impl WalletOperationResourceMeasurements {
     }
 }
 
+/// Closed, payload-free DUST registration recovery facts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletDustRegistrationTimelineCode {
+    EligibilityObserved,
+    Prepared,
+    AuthorizationSucceeded,
+    AuthorizationRejected,
+    SubmissionAccepted,
+    FinalityObserved,
+    ReconciliationPending,
+    ReconciliationIncluded,
+    ReconciliationDropped,
+    DustRefreshedReady,
+    DustRefreshedPending,
+    DroppedRegistrationAbandoned,
+    Cancelled,
+    Offline,
+    TimedOut,
+    AdapterFailed,
+    Suspended,
+    Resumed,
+    Retry,
+    Superseded,
+    Restored,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WalletOperationEvent {
     Admitted,
     EffectPlanned(WalletOperationEffect),
+    DustRegistration(WalletDustRegistrationTimelineCode),
     EffectCompleted {
         effect: WalletOperationEffect,
         outcome: WalletOperationOutcome,
@@ -340,7 +372,9 @@ impl WalletOperationTimelineSnapshot {
             let outcome = match record.event {
                 WalletOperationEvent::EffectCompleted { outcome, .. }
                 | WalletOperationEvent::Terminal { outcome, .. } => Some(outcome),
-                WalletOperationEvent::Admitted | WalletOperationEvent::EffectPlanned(_) => None,
+                WalletOperationEvent::Admitted
+                | WalletOperationEvent::EffectPlanned(_)
+                | WalletOperationEvent::DustRegistration(_) => None,
             };
             if let Some(outcome) = outcome {
                 let count = match outcome {
@@ -401,6 +435,12 @@ struct WalletOperationTimelineState {
     total_records: u64,
     evicted_records: u64,
     records: VecDeque<WalletOperationRecord>,
+}
+
+impl fmt::Debug for WalletOperationTimeline {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("WalletOperationTimeline(..)")
+    }
 }
 
 impl Default for WalletOperationTimeline {
