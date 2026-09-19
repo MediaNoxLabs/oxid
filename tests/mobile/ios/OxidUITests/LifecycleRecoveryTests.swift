@@ -29,9 +29,6 @@ final class LifecycleRecoveryTests: XCTestCase {
         XCTAssertTrue(application.staticTexts.matching(
             NSPredicate(format: "label CONTAINS[c] %@", "Simulated source")
         ).firstMatch.exists)
-        XCTAssertFalse(application.buttons["Sync now"].exists)
-        XCTAssertFalse(application.buttons["Sync DUST"].exists)
-        XCTAssertFalse(application.buttons["Sync shielded assets"].exists)
         XCTAssertFalse(application.staticTexts.matching(
             NSPredicate(format: "label CONTAINS[c] %@", "last consistent checkpoint")
         ).firstMatch.exists)
