@@ -192,6 +192,10 @@ pub trait ManageWalletActionWatchUseCase: Send + Sync {
         &self,
         observation: WalletActionWatchObservation,
     ) -> Result<bool, WalletRealmLifecycleError>;
+
+    /// Ends a bounded recovery attempt without asserting success. A later
+    /// action may be admitted only after the caller has surfaced this result.
+    fn expire_recovery(&self) -> Result<bool, WalletRealmLifecycleError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -361,10 +365,10 @@ impl WalletRealmLifecycleService {
         if matches!(&input, WalletRealmLifecycleInput::Backgrounded { .. }) {
             if !state.backgrounded {
                 state.backgrounded = true;
-                state.lifecycle_generation = state.lifecycle_generation.saturating_add(1);
                 if let Some(recovery) = state.action_watch.lifecycle_boundary() {
                     state.action_recovery = Some(recovery);
                 }
+                state.lifecycle_generation = state.action_watch.generation();
             }
         } else if matches!(
             &input,
@@ -384,6 +388,7 @@ impl WalletRealmLifecycleService {
                 state.action_recovery = None;
             }
             state.action_watch.select_realm(identity.clone());
+            state.lifecycle_generation = state.action_watch.generation();
         }
         Ok(state.policy.reduce(self.config, input))
     }
@@ -550,6 +555,18 @@ impl WalletRealmLifecycleService {
         Ok(true)
     }
 
+    pub fn expire_action_recovery(&self) -> Result<bool, WalletRealmLifecycleError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
+        let Some(recovery) = state.action_recovery.take() else {
+            return Ok(false);
+        };
+        state.action_watch.expire_recovery(recovery.kind());
+        Ok(true)
+    }
+
     fn fallback_facets(
         &self,
         identity: &WalletRealmLifecycleIdentity,
@@ -706,6 +723,10 @@ impl ManageWalletActionWatchUseCase for WalletRealmLifecycleService {
     ) -> Result<bool, WalletRealmLifecycleError> {
         self.reconcile_action_recovery(observation)
     }
+
+    fn expire_recovery(&self) -> Result<bool, WalletRealmLifecycleError> {
+        self.expire_action_recovery()
+    }
 }
 
 impl ReconcileWalletRealmLifecycleUseCase for WalletRealmLifecycleService {
@@ -794,7 +815,7 @@ impl ReconcileWalletRealmLifecycleUseCase for WalletRealmLifecycleService {
         state.policy = WalletRealmLifecyclePolicy::default();
         state.checkpoint = WalletRealmLifecycleCheckpoint {
             identity: snapshot.identity.clone(),
-            facets: snapshot.facets,
+            facets: durable_facets(snapshot.facets),
             // Monotonic time belongs to one process and is never restored.
             now_millis: 0,
         };
@@ -802,12 +823,17 @@ impl ReconcileWalletRealmLifecycleUseCase for WalletRealmLifecycleService {
         state.action_recovery = snapshot.action_recovery;
         state.lifecycle_generation = snapshot.lifecycle_generation.saturating_add(1);
         state.backgrounded = false;
+        let lifecycle_generation = state.lifecycle_generation;
         if let Some(identity) = snapshot.identity {
             state.policy.restore_active(identity.clone());
             if let Some(recovery) = state.action_recovery.clone() {
-                state.action_watch.restore_recovery(identity, &recovery);
+                state
+                    .action_watch
+                    .restore_recovery(identity, &recovery, lifecycle_generation);
             } else {
-                state.action_watch.select_realm(identity);
+                state
+                    .action_watch
+                    .restore_realm(identity, lifecycle_generation);
             }
         }
         Ok(())
@@ -1180,6 +1206,14 @@ mod tests {
                 .state,
             WalletActionWatchState::OutcomeUnknown
         );
+        assert_eq!(
+            restored
+                .action_watch()
+                .expect("watch projection")
+                .expect("recovery projection")
+                .realm_generation,
+            status.lifecycle_generation
+        );
 
         let result = resolve(restored.execute(WalletRealmLifecycleInput::Foreground {
             now_millis: 1,
@@ -1218,6 +1252,69 @@ mod tests {
         assert_eq!(
             service.restore(unsupported),
             Err(WalletRealmLifecycleError::InvalidSnapshot)
+        );
+
+        let updating = WalletRealmLifecycleSnapshot {
+            version: WALLET_REALM_LIFECYCLE_SNAPSHOT_VERSION,
+            identity: None,
+            facets: WalletRealmReconciliationState {
+                account: WalletRealmFacetState::Updating,
+                dust: WalletRealmFacetState::Updating,
+                shielded: WalletRealmFacetState::Updating,
+            },
+            lifecycle_generation: 4,
+            action_recovery: None,
+        };
+        service.restore(updating).expect("defensive restore");
+        assert_eq!(
+            service.status().expect("restored status").facets,
+            WalletRealmReconciliationState {
+                account: WalletRealmFacetState::Stale,
+                dust: WalletRealmFacetState::Stale,
+                shielded: WalletRealmFacetState::Stale,
+            }
+        );
+    }
+
+    #[test]
+    fn bounded_recovery_expiry_releases_admission_without_claiming_success() {
+        let realm = identity("profile_one", "standalone");
+        let reconciler = Arc::new(FakeReconciler::new([FakeOutcome::Immediate(Ok(
+            reconciliation(&realm, 1, WalletRealmFacetState::Current),
+        ))]));
+        let service = WalletRealmLifecycleService::new(reconciler, missing_facets());
+        resolve(service.execute(initialized(realm, 1, WalletRealmFacetState::Missing)))
+            .expect("initial reconciliation");
+        service
+            .admit_action_watch(
+                WalletActionWatch::submitted_transaction("tx-a").expect("transaction"),
+                10,
+                1,
+            )
+            .expect("watch admission")
+            .expect("watch handle");
+        resolve(service.execute(WalletRealmLifecycleInput::Backgrounded { now_millis: 2 }))
+            .expect("background");
+
+        assert!(service.expire_action_recovery().expect("expire recovery"));
+        assert!(!service.expire_action_recovery().expect("idempotent expiry"));
+        assert_eq!(
+            service
+                .action_watch()
+                .expect("watch projection")
+                .expect("projection")
+                .state,
+            WalletActionWatchState::Expired
+        );
+        assert!(
+            service
+                .admit_action_watch(
+                    WalletActionWatch::submitted_transaction("tx-b").expect("transaction"),
+                    20,
+                    3,
+                )
+                .expect("post-recovery admission")
+                .is_some()
         );
     }
 

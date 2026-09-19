@@ -387,9 +387,10 @@ impl WalletActionWatchRuntime {
         &mut self,
         identity: WalletRealmLifecycleIdentity,
         recovery: &WalletActionWatchRecovery,
+        lifecycle_generation: u64,
     ) {
-        self.select_realm(identity);
-        self.generation = self.generation.saturating_add(1);
+        self.identity = Some(identity);
+        self.generation = lifecycle_generation;
         self.active = None;
         self.suspended = false;
         self.projection = Some(WalletActionWatchProjection {
@@ -406,6 +407,19 @@ impl WalletActionWatchRuntime {
         });
     }
 
+    /// Restores a selected realm without reviving any process-local watch.
+    pub fn restore_realm(
+        &mut self,
+        identity: WalletRealmLifecycleIdentity,
+        lifecycle_generation: u64,
+    ) {
+        self.identity = Some(identity);
+        self.generation = lifecycle_generation;
+        self.active = None;
+        self.projection = None;
+        self.suspended = false;
+    }
+
     /// Publishes the result of querying a retained public identity. This never
     /// admits or resubmits an operation.
     pub fn settle_recovery(&mut self, kind: WalletActionWatchKind) {
@@ -416,6 +430,22 @@ impl WalletActionWatchRuntime {
             state: WalletActionWatchState::Confirmed,
             realm_generation: self.generation,
         });
+    }
+
+    /// Ends a bounded recovery window without claiming an on-chain result.
+    pub fn expire_recovery(&mut self, kind: WalletActionWatchKind) {
+        self.active = None;
+        self.suspended = false;
+        self.projection = Some(WalletActionWatchProjection {
+            kind,
+            state: WalletActionWatchState::Expired,
+            realm_generation: self.generation,
+        });
+    }
+
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
     }
 
     #[must_use]
