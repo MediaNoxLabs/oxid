@@ -893,6 +893,7 @@ mod tests {
             WalletActionWatchState::Cancelled,
         ];
         let titles = states.map(|state| present(state).title);
+        assert!(states.into_iter().all(WalletActionWatchState::terminal));
         for (index, title) in titles.iter().enumerate() {
             assert!(
                 !titles[..index].contains(title),

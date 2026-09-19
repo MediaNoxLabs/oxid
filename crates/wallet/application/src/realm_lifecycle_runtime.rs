@@ -120,11 +120,12 @@ pub struct WalletRealmLifecycleStatus {
     pub action_recovery_attempts_remaining: u8,
 }
 
-/// Atomic, payload-free durable boundary for foreground/cold-start recovery.
+/// Versioned, public-metadata candidate for foreground/cold-start recovery.
 ///
 /// Family-specific checkpoint stores remain authoritative for balances and
-/// cursors. This record binds their coherent public state to the selected realm
-/// and to any unresolved public action identity without retaining secrets,
+/// cursors. The platform adapter must encode and atomically protect this record
+/// at rest, bind it to the family checkpoint revision, and delete it with its
+/// realm. It contains linkable public chain identities, but never secrets,
 /// transport handles, authorization, or transaction bodies.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WalletRealmLifecycleSnapshot {
@@ -403,12 +404,15 @@ impl WalletRealmLifecycleService {
                 && state.backgrounded
                 && state.action_recovery.is_some()
             {
-                state.action_recovery_attempts_remaining =
-                    state.action_recovery_attempts_remaining.saturating_sub(1);
                 if state.action_recovery_attempts_remaining == 0 {
                     if let Some(recovery) = state.action_recovery.take() {
                         state.action_watch.expire_recovery(recovery.kind());
                     }
+                } else {
+                    // This foreground activation may perform one complete
+                    // attempt. Expiry happens only on a later activation, so
+                    // all configured attempts remain usable.
+                    state.action_recovery_attempts_remaining -= 1;
                 }
             }
             state.backgrounded = false;
@@ -416,13 +420,6 @@ impl WalletRealmLifecycleService {
         if let WalletRealmLifecycleInput::Initialized { identity, .. }
         | WalletRealmLifecycleInput::RealmSelected { identity, .. } = &input
         {
-            if previous_identity
-                .as_ref()
-                .is_some_and(|previous| previous != identity)
-            {
-                state.action_recovery = None;
-                state.action_recovery_attempts_remaining = 0;
-            }
             state.action_watch.select_realm(identity.clone());
             state.lifecycle_generation = state.action_watch.generation();
         }
@@ -897,6 +894,8 @@ impl ReconcileWalletRealmLifecycleUseCase for WalletRealmLifecycleService {
                     .action_watch
                     .restore_realm(identity, lifecycle_generation);
             }
+        } else {
+            state.action_watch.restore_unselected(lifecycle_generation);
         }
         Ok(())
     }
@@ -1378,13 +1377,29 @@ mod tests {
             action_recovery_attempts_remaining: 0,
         };
         service.restore(updating).expect("defensive restore");
+        let restored = service.status().expect("restored status");
         assert_eq!(
-            service.status().expect("restored status").facets,
+            restored.facets,
             WalletRealmReconciliationState {
                 account: WalletRealmFacetState::Stale,
                 dust: WalletRealmFacetState::Stale,
                 shielded: WalletRealmFacetState::Stale,
             }
+        );
+        service
+            .admit(initialized(
+                identity("profile_one", "standalone"),
+                1,
+                WalletRealmFacetState::Stale,
+            ))
+            .expect("first selection after unselected restore");
+        assert!(
+            service
+                .status()
+                .expect("selected status")
+                .lifecycle_generation
+                > restored.lifecycle_generation,
+            "the durable generation fence must never rewind"
         );
     }
 
@@ -1474,6 +1489,17 @@ mod tests {
                 .expect("background");
             }
         }
+
+        let exhausted = service.status().expect("exhausted status");
+        assert!(exhausted.action_recovery.is_some());
+        assert_eq!(exhausted.action_recovery_attempts_remaining, 0);
+        resolve(service.execute(WalletRealmLifecycleInput::Backgrounded { now_millis: 9 }))
+            .expect("final background");
+        resolve(service.execute(WalletRealmLifecycleInput::Foreground {
+            now_millis: 10,
+            facets: facets(WalletRealmFacetState::Current),
+        }))
+        .expect("bounded expiry foreground");
 
         let status = service.status().expect("status");
         assert_eq!(status.action_recovery, None);

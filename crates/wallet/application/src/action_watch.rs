@@ -378,7 +378,7 @@ impl WalletActionWatchRuntime {
 
     /// Invalidates transient workers at a lifecycle boundary and returns only
     /// the exact public identities that a new generation may reconcile.
-    pub fn lifecycle_boundary(&mut self) -> Option<WalletActionWatchRecovery> {
+    pub(crate) fn lifecycle_boundary(&mut self) -> Option<WalletActionWatchRecovery> {
         self.generation = self.generation.saturating_add(1);
         self.suspended = false;
         let active = self.active.take()?;
@@ -399,7 +399,7 @@ impl WalletActionWatchRuntime {
 
     /// Recreates only the payload-free recovery projection after process loss.
     /// No worker, deadline, authorization, or submission attempt is revived.
-    pub fn restore_recovery(
+    pub(crate) fn restore_recovery(
         &mut self,
         identity: WalletRealmLifecycleIdentity,
         recovery: &WalletActionWatchRecovery,
@@ -424,7 +424,7 @@ impl WalletActionWatchRuntime {
     }
 
     /// Restores a selected realm without reviving any process-local watch.
-    pub fn restore_realm(
+    pub(crate) fn restore_realm(
         &mut self,
         identity: WalletRealmLifecycleIdentity,
         lifecycle_generation: u64,
@@ -436,31 +436,38 @@ impl WalletActionWatchRuntime {
         self.suspended = false;
     }
 
+    /// Restores a generation fence before a realm has been selected.
+    pub(crate) fn restore_unselected(&mut self, lifecycle_generation: u64) {
+        self.identity = None;
+        self.generation = lifecycle_generation;
+        self.active = None;
+        self.projection = None;
+        self.suspended = false;
+    }
+
     /// Publishes the result of querying a retained public identity. This never
     /// admits or resubmits an operation.
-    pub fn settle_recovery(
+    pub(crate) fn settle_recovery(
         &mut self,
         kind: WalletActionWatchKind,
         outcome: WalletActionRecoveryOutcome,
     ) {
-        if outcome == WalletActionRecoveryOutcome::Pending {
-            return;
-        }
+        let state = match outcome {
+            WalletActionRecoveryOutcome::Pending => return,
+            WalletActionRecoveryOutcome::Confirmed => WalletActionWatchState::Confirmed,
+            WalletActionRecoveryOutcome::Failed => WalletActionWatchState::Failed,
+        };
         self.active = None;
         self.suspended = false;
         self.projection = Some(WalletActionWatchProjection {
             kind,
-            state: match outcome {
-                WalletActionRecoveryOutcome::Confirmed => WalletActionWatchState::Confirmed,
-                WalletActionRecoveryOutcome::Failed => WalletActionWatchState::Failed,
-                WalletActionRecoveryOutcome::Pending => unreachable!("pending returned above"),
-            },
+            state,
             realm_generation: self.generation,
         });
     }
 
     /// Ends a bounded recovery window without claiming an on-chain result.
-    pub fn expire_recovery(&mut self, kind: WalletActionWatchKind) {
+    pub(crate) fn expire_recovery(&mut self, kind: WalletActionWatchKind) {
         self.active = None;
         self.suspended = false;
         self.projection = Some(WalletActionWatchProjection {
