@@ -27,6 +27,15 @@ final class LifecycleRecoveryTests: XCTestCase {
         ).firstMatch.exists)
     }
 
+    @MainActor
+    private func authorizeSimulatorOwnerIfRequested() {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let passcode = springboard.secureTextFields.firstMatch
+        guard passcode.waitForExistence(timeout: 5) else { return }
+        passcode.tap()
+        passcode.typeText("1234\n")
+    }
+
     private func writeClosedDiagnostic() throws {
         let path = try XCTUnwrap(
             ProcessInfo.processInfo.environment["OXID_LIFECYCLE_DIAGNOSTIC_PATH"]
@@ -57,6 +66,7 @@ final class LifecycleRecoveryTests: XCTestCase {
         let generatePhrase = application.buttons["Generate recovery phrase"]
         XCTAssertTrue(generatePhrase.waitForExistence(timeout: 15))
         generatePhrase.tap()
+        authorizeSimulatorOwnerIfRequested()
         XCTAssertTrue(
             application.otherElements["New wallet recovery phrase"]
                 .waitForExistence(timeout: 30)
@@ -70,6 +80,7 @@ final class LifecycleRecoveryTests: XCTestCase {
         XCTAssertTrue(finishOnboarding.waitForExistence(timeout: 10))
         XCTAssertTrue(finishOnboarding.isEnabled)
         finishOnboarding.tap()
+        authorizeSimulatorOwnerIfRequested()
 
         openWallet(application)
         let activate = application.buttons["Activate protected Midnight account"]
