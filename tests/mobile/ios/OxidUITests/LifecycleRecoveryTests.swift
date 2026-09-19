@@ -75,7 +75,14 @@ final class LifecycleRecoveryTests: XCTestCase {
             "I have securely saved or verified this recovery phrase."
         ]
         XCTAssertTrue(backupAcknowledgement.waitForExistence(timeout: 10))
-        backupAcknowledgement.tap()
+        backupAcknowledgement.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)
+        ).tap()
+        let acknowledged = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == 1"),
+            object: backupAcknowledgement
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [acknowledged], timeout: 10), .completed)
         let finishOnboarding = application.buttons["Finish and open wallet"]
         XCTAssertTrue(finishOnboarding.waitForExistence(timeout: 10))
         let enabled = XCTNSPredicateExpectation(
