@@ -521,6 +521,14 @@ mod tests {
     }
 
     #[test]
+    fn ios_privacy_overlay_is_removed_after_the_scene_becomes_active() {
+        let ios = include_str!("../ios/Sources/OxidMobilePlugin.swift");
+        assert!(ios.contains("UIScene.didActivateNotification"));
+        assert!(ios.contains("UIApplication.shared.applicationState == .active"));
+        assert!(ios.contains("removeOverlays()"));
+    }
+
+    #[test]
     fn android_plugin_packages_the_pinned_platform_verifier_component() {
         let gradle = include_str!("../android/build.gradle.kts");
         assert!(gradle.contains("rustlsPlatformVerifierMavenPath()"));
