@@ -53,6 +53,11 @@ pub(super) fn begin_account_sync_card_observation(
             }
             _ => None,
         };
+        if let AccountSyncCardState::Ready { realm, .. } = &loaded
+            && let WalletRealmFamilyView::Ready(account) = &realm.view.account
+        {
+            on_account_updated.call(account.clone());
+        }
         state.set(loaded);
         if let Some(projection) = observation {
             poll_account_sync(services, profile_id, projection, state, on_account_updated);

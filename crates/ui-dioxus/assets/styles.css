@@ -1100,6 +1100,15 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--positive) 7%, transparent);
 }
 
+/* Development profiles expose a compact native-test receipt. */
+.dev-lifecycle-marker {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--font-micro);
+  font-weight: 600;
+}
+
 .trust-line__icon {
   color: var(--positive);
   font-size: var(--font-title);

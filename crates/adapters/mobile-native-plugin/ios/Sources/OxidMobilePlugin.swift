@@ -106,13 +106,23 @@ private final class ScreenPrivacyCoordinator: NSObject {
             name: UIScene.willEnterForegroundNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(sceneWillEnterForeground),
+            name: UIScene.didActivateNotification,
+            object: nil
+        )
     }
 
     func setEnabled(_ next: Bool) -> String {
         enabled = next
-        if next && UIApplication.shared.applicationState != .active {
-            installOverlays()
-        } else if !next {
+        if next {
+            if UIApplication.shared.applicationState == .active {
+                removeOverlays()
+            } else {
+                installOverlays()
+            }
+        } else {
             removeOverlays()
         }
         return next ? "protected" : "unprotected"

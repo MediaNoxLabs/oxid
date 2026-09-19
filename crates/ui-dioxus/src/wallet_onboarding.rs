@@ -54,6 +54,19 @@ fn may_admit_authorization_lifecycle(state: &WalletOnboardingState, expected: bo
         )
 }
 
+#[cfg(any(target_os = "ios", target_os = "android"))]
+async fn settle_native_authorization_lifecycle() {
+    // LocalAuthentication/Android credential surfaces can report their final
+    // resume after the blocking authorization callback has completed. Keep the
+    // operation fenced until that bounded platform hand-off settles so the
+    // trailing wake cannot cancel a successful ceremony as an unrelated
+    // background transition.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+async fn settle_native_authorization_lifecycle() {}
+
 const fn prepare_requires_native_authorization(intent: WalletOnboardingIntent) -> bool {
     matches!(intent, WalletOnboardingIntent::Create)
 }
@@ -192,7 +205,7 @@ pub(crate) fn WalletOnboarding(
                         r#type: "checkbox",
                         checked: acknowledged(),
                         disabled: busy,
-                        onchange: move |event| acknowledged.set(event.checked()),
+                        oninput: move |event| acknowledged.set(event.checked()),
                     }
                     "I have securely saved or verified this recovery phrase."
                 }
@@ -240,6 +253,9 @@ pub(crate) fn WalletOnboarding(
                                 prepare.execute(PrepareWalletOnboardingCommand { profile_id, mode })
                             })
                             .await;
+                            if prepare_requires_native_authorization(intent) {
+                                settle_native_authorization_lifecycle().await;
+                            }
                             let lifecycle_is_current = lifecycle_generation_is_current(
                                 lifecycle_generation,
                                 lifecycle_wake_for_prepare(),
@@ -309,6 +325,7 @@ pub(crate) fn WalletOnboarding(
                                 })
                             })
                             .await;
+                            settle_native_authorization_lifecycle().await;
                             let lifecycle_is_current = lifecycle_generation_is_current(
                                 lifecycle_generation,
                                 lifecycle_wake_for_completion(),

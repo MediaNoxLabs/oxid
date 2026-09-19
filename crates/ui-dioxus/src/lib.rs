@@ -39,7 +39,9 @@ mod wallet_root_recovery;
 pub use android_platform::{AndroidPlatformInitialization, App};
 use assets_page::AssetsPage;
 #[cfg(test)]
-use assets_page::{wallet_account_activation_available, wallet_write_actions_available};
+use assets_page::{
+    has_protected_account, wallet_account_activation_available, wallet_write_actions_available,
+};
 pub use brand::{BrandProfile, SecurityCopySnapshot, security_copy_snapshot};
 #[cfg(feature = "standalone-deployment-profile")]
 use deployment_profile::DeploymentProfileCard;
@@ -209,7 +211,7 @@ use selected_realm_sync::{
 use selected_realm_sync::{
     dust_progress_percent, dust_sync_note, shielded_progress_percent, shielded_sync_note,
 };
-use wallet_realm_lifecycle::WalletRealmLifecycleWake;
+use wallet_realm_lifecycle::{WalletRealmLifecycleWake, WalletRealmProjectionWake};
 
 const BASE_STYLES: &str = include_str!("../assets/styles.css");
 const DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL: &str = "Protected DUST registration";
@@ -3491,11 +3493,14 @@ fn WalletApp() -> Element {
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let identity_link_wake = use_signal(|| 0_u64);
     let mut realm_lifecycle_wake = use_signal(|| WalletRealmLifecycleWake::INITIAL);
+    let realm_projection_wake = use_signal(|| 0_u64);
     use_context_provider(|| realm_lifecycle_wake);
+    use_context_provider(|| WalletRealmProjectionWake(realm_projection_wake));
     wallet_realm_lifecycle::use_wallet_realm_lifecycle_driver(
         services.clone(),
         profile_session,
         realm_lifecycle_wake,
+        realm_projection_wake,
     );
     let services_for_load = services.clone();
     use_effect(move || {
@@ -3640,10 +3645,12 @@ fn WalletApp() -> Element {
                     lifecycle_wake: identity_link_wake,
                     on_selected: move |profile| {
                         profile_session.set(ProfileSessionState::Active(profile));
+                        realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
                         navigation.write().select_primary(PrimaryDestination::Home);
                     },
                     on_root_recovered: move |profile| {
                         profile_session.set(ProfileSessionState::Active(profile));
+                        realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
                         navigation.write().select_primary(PrimaryDestination::Wallet);
                     },
                     on_retry: move |_| {
@@ -3794,6 +3801,7 @@ fn WalletApp() -> Element {
                     on_selected: move |profile| {
                         secret_mode.rearm();
                         profile_session.set(ProfileSessionState::Active(profile));
+                        realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
                         navigation.write().select_primary(PrimaryDestination::Home);
                         header_menu.set(HeaderMenu::Closed);
                     },
@@ -3980,6 +3988,7 @@ fn WalletApp() -> Element {
                             on_selected: move |profile| {
                                 secret_mode.rearm();
                                 profile_session.set(ProfileSessionState::Active(profile));
+                                realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
                                 navigation.write().select_primary(PrimaryDestination::Home);
                             },
                         }
@@ -5796,16 +5805,20 @@ fn SubmissionRecoveryPane(profile_id: String) -> Element {
 #[component]
 fn AccountSyncCard(
     profile_id: String,
+    secret_mode: SecretModeController,
     can_sync: bool,
     account_unavailable: bool,
     on_account_updated: EventHandler<WalletAccountView>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut realm_lifecycle_wake = consume_context::<Signal<WalletRealmLifecycleWake>>();
+    let WalletRealmProjectionWake(realm_projection_wake) =
+        consume_context::<WalletRealmProjectionWake>();
     let state = use_signal(|| AccountSyncCardState::Loading);
     let load_services = services.clone();
     let load_profile = profile_id.clone();
     use_effect(move || {
+        let _projection_generation = realm_projection_wake();
         begin_account_sync_card_observation(
             load_services.clone(),
             load_profile.clone(),
@@ -5893,15 +5906,26 @@ fn AccountSyncCard(
                     div { class: "account-sync-card__rows",
                         div { class: "account-sync-card__row",
                             div {
-                                strong { class: "privacy-value", "{dust_balance}" }
+                                strong {
+                                    class: "privacy-value",
+                                    aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                                    "{dust_balance}"
+                                }
                                 small { "{dust_note}" }
                             }
                             span { class: "{dust_status_pill_class(dust_state)}", "{ui::sync_state(dust_state)}" }
                         }
                         div { class: "account-sync-card__row",
                             div {
-                                strong { class: "privacy-value", "{shielded_night}" }
-                                small { "Shielded NIGHT · {owned_notes} protected notes" }
+                                strong {
+                                    class: "privacy-value",
+                                    aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                                    "{shielded_night}"
+                                }
+                                small {
+                                    aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                                    "Shielded NIGHT · {owned_notes} protected notes"
+                                }
                                 small { "{shielded_note}" }
                             }
                             span { class: "{dust_status_pill_class(shielded_state)}", "{ui::sync_state(shielded_state)}" }
@@ -5914,7 +5938,11 @@ fn AccountSyncCard(
                                     div { class: "activity-row", key: "{balance.token_type_hex}",
                                         span { class: "activity-row__mark", aria_hidden: "true", "◈" }
                                         div {
-                                            strong { class: "privacy-value", "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}" }
+                                            strong {
+                                                class: "privacy-value",
+                                                aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                                                "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}"
+                                            }
                                             small { title: "{balance.token_type_hex}", "Protected token" }
                                         }
                                     }
@@ -6941,67 +6969,6 @@ fn protected_account_placeholder(networks: &WalletNetworkListView) -> Option<Wal
         },
         transactions: Vec::new(),
     })
-}
-
-async fn activate_protected_account(
-    services: WalletUiServices,
-    profile_id: String,
-    current: WalletSecurityStatusView,
-) -> Result<WalletSecurityStatusView, String> {
-    match run_ui_blocking(move || {
-        let command = || WalletProfileSecurityCommand {
-            profile_id: profile_id.clone(),
-        };
-        let security = match current.state_name() {
-            "Uninitialized" => services
-                .initialize_wallet_security()
-                .execute(command())
-                .map_err(|error| error.to_string())?,
-            "Locked" => services
-                .unlock_wallet()
-                .execute(command())
-                .map_err(|error| error.to_string())?,
-            "Unlocked" => current,
-            _ => return Err("wallet protection is unavailable".to_owned()),
-        };
-        services
-            .derive_wallet_account()
-            .execute(DeriveWalletAccountCommand {
-                profile_id,
-                account_index: 0,
-                address_index: 0,
-            })
-            .map_err(|error| error.to_string())?;
-        Ok(security)
-    })
-    .await
-    {
-        Ok(result) => result,
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-fn account_activation_operation(status: WalletSecurityStatusView) -> AccountOperation {
-    match status.state_name() {
-        "Uninitialized" => AccountOperation::Initializing,
-        "Locked" => AccountOperation::Unlocking,
-        _ => AccountOperation::Deriving,
-    }
-}
-
-fn has_protected_account(account: &WalletAccountView) -> bool {
-    account
-        .account_id
-        .as_deref()
-        .is_some_and(|account_id| account_id.starts_with("midnight_account_"))
-        && account
-            .addresses
-            .iter()
-            .any(|address| address.kind == "unshielded")
-        && account
-            .addresses
-            .iter()
-            .any(|address| address.kind == "shielded")
 }
 
 #[component]
