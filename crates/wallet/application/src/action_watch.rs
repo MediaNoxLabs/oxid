@@ -126,6 +126,9 @@ impl WalletActionWatchObservation {
 pub enum WalletActionWatchState {
     Waiting,
     Confirmed,
+    /// A submission crossed a lifecycle boundary before its public identity
+    /// was observed. Reconciliation, not resubmission, owns the next step.
+    OutcomeUnknown,
     Expired,
     Superseded,
     Offline,
@@ -146,6 +149,38 @@ pub struct WalletActionWatchProjection {
     pub kind: WalletActionWatchKind,
     pub state: WalletActionWatchState,
     pub realm_generation: u64,
+}
+
+/// Public, payload-free identity retained across a lifecycle boundary.
+///
+/// An adapter persists this alongside its atomic selected-realm checkpoint and
+/// asks the reconciliation owner to query the exact identity after restart.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WalletActionWatchRecovery {
+    SubmittedTransaction {
+        transaction: ChainTransactionId,
+    },
+    IncomingArrival {
+        account: ChainAccountId,
+        starting_checkpoint: u64,
+    },
+}
+
+impl From<&WalletActionWatch> for WalletActionWatchRecovery {
+    fn from(watch: &WalletActionWatch) -> Self {
+        match watch {
+            WalletActionWatch::SubmittedTransaction { transaction } => Self::SubmittedTransaction {
+                transaction: transaction.clone(),
+            },
+            WalletActionWatch::IncomingArrival {
+                account,
+                starting_checkpoint,
+            } => Self::IncomingArrival {
+                account: account.clone(),
+                starting_checkpoint: *starting_checkpoint,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -288,6 +323,26 @@ impl WalletActionWatchRuntime {
         {
             self.suspended = false;
         }
+    }
+
+    /// Invalidates transient workers at a lifecycle boundary and returns only
+    /// the exact public identities that a new generation may reconcile.
+    pub fn lifecycle_boundary(&mut self) -> Option<WalletActionWatchRecovery> {
+        let active = self.active.take()?;
+        self.suspended = false;
+        let recovery = WalletActionWatchRecovery::from(&active.watch);
+        let state = match active.watch {
+            WalletActionWatch::SubmittedTransaction { .. } => {
+                WalletActionWatchState::OutcomeUnknown
+            }
+            WalletActionWatch::IncomingArrival { .. } => WalletActionWatchState::Offline,
+        };
+        self.projection = Some(WalletActionWatchProjection {
+            kind: active.watch.kind(),
+            state,
+            realm_generation: active.handle.realm_generation,
+        });
+        Some(recovery)
     }
 
     #[must_use]
@@ -565,6 +620,35 @@ mod tests {
         assert_eq!(
             runtime.projection().unwrap().state,
             WalletActionWatchState::Confirmed
+        );
+    }
+
+    #[test]
+    fn lifecycle_boundary_preserves_exact_public_identity_without_resubmitting() {
+        let mut runtime = WalletActionWatchRuntime::default();
+        runtime.select_realm(realm("preprod"));
+        let handle = runtime
+            .admit(outgoing("tx"), 10, 1)
+            .expect("watch admitted");
+
+        assert_eq!(
+            runtime.lifecycle_boundary(),
+            Some(WalletActionWatchRecovery::SubmittedTransaction {
+                transaction: ChainTransactionId::parse("tx").expect("valid transaction id"),
+            })
+        );
+        assert_eq!(
+            runtime.projection().expect("projection").state,
+            WalletActionWatchState::OutcomeUnknown
+        );
+        runtime.observe(
+            handle,
+            WalletActionWatchObservation::submitted_transaction("tx").expect("observation"),
+            2,
+        );
+        assert_eq!(
+            runtime.projection().expect("projection").state,
+            WalletActionWatchState::OutcomeUnknown
         );
     }
 

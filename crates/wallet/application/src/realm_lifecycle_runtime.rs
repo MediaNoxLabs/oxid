@@ -6,10 +6,10 @@ use crate::{
     DEFAULT_WALLET_REALM_LIFECYCLE_REQUEST_TIMEOUT_MILLIS, ReconcileSelectedWalletRealmUseCase,
     SelectedWalletRealmProjection, SelectedWalletRealmSyncCommand, SelectedWalletRealmSyncError,
     WalletActionWatch, WalletActionWatchHandle, WalletActionWatchObservation,
-    WalletActionWatchProjection, WalletActionWatchRuntime, WalletRealmFacetState,
-    WalletRealmLifecycleDecision, WalletRealmLifecycleIdentity, WalletRealmLifecycleInput,
-    WalletRealmLifecyclePolicy, WalletRealmLifecyclePolicyConfig, WalletRealmLifecycleRequest,
-    WalletRealmReconciliationState,
+    WalletActionWatchProjection, WalletActionWatchRecovery, WalletActionWatchRuntime,
+    WalletRealmFacetState, WalletRealmLifecycleDecision, WalletRealmLifecycleIdentity,
+    WalletRealmLifecycleInput, WalletRealmLifecyclePolicy, WalletRealmLifecyclePolicyConfig,
+    WalletRealmLifecycleRequest, WalletRealmReconciliationState,
 };
 use std::{
     error::Error,
@@ -101,6 +101,9 @@ pub struct WalletRealmLifecycleStatus {
     pub in_flight: Option<WalletRealmLifecycleRequest>,
     pub in_flight_deadline_millis: Option<u64>,
     pub request_timeout_millis: u64,
+    /// Safe identities to reconcile after a lifecycle boundary. Submitted
+    /// operations are never replayed from this record.
+    pub action_recovery: Option<WalletActionWatchRecovery>,
 }
 
 pub trait ReconcileWalletRealmLifecycleUseCase: Send + Sync {
@@ -258,6 +261,7 @@ struct WalletRealmLifecycleState {
     policy: WalletRealmLifecyclePolicy,
     checkpoint: WalletRealmLifecycleCheckpoint,
     action_watch: WalletActionWatchRuntime,
+    action_recovery: Option<WalletActionWatchRecovery>,
 }
 
 impl WalletRealmLifecycleService {
@@ -295,6 +299,7 @@ impl WalletRealmLifecycleService {
                 policy: WalletRealmLifecyclePolicy::default(),
                 checkpoint: WalletRealmLifecycleCheckpoint::new(facets),
                 action_watch: WalletActionWatchRuntime::default(),
+                action_recovery: None,
             }),
             config,
             request_timeout_millis: request_timeout_millis.max(1),
@@ -311,6 +316,9 @@ impl WalletRealmLifecycleService {
             .lock()
             .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
         state.checkpoint.observe(&input);
+        if matches!(&input, WalletRealmLifecycleInput::Backgrounded { .. }) {
+            state.action_recovery = state.action_watch.lifecycle_boundary();
+        }
         if let WalletRealmLifecycleInput::Initialized { identity, .. }
         | WalletRealmLifecycleInput::RealmSelected { identity, .. } = &input
         {
@@ -660,6 +668,7 @@ impl ReconcileWalletRealmLifecycleUseCase for WalletRealmLifecycleService {
                 .policy
                 .in_flight_deadline_millis(self.request_timeout_millis),
             request_timeout_millis: self.request_timeout_millis,
+            action_recovery: state.action_recovery.clone(),
         })
     }
 }
@@ -689,7 +698,8 @@ mod tests {
         SelectedWalletRealmActionReadiness, SelectedWalletRealmIdentity,
         SelectedWalletRealmObservation, SelectedWalletRealmReconciliation,
         SelectedWalletRealmReconciliationFuture, SelectedWalletRealmSyncView,
-        WalletRealmFamilyView, WalletRealmReconciliationTrigger,
+        WalletActionWatchRecovery, WalletActionWatchState, WalletRealmFamilyView,
+        WalletRealmReconciliationTrigger,
     };
     use oxid_wallet_domain::{ChainNetworkId, WalletProfileId};
     use std::{
@@ -850,6 +860,58 @@ mod tests {
                 "profile_one".to_owned(),
                 WalletRealmReconciliationTrigger::Initial,
             )]
+        );
+    }
+
+    #[test]
+    fn background_invalidates_action_workers_and_retains_only_exact_recovery_identity() {
+        let realm = identity("profile_one", "standalone");
+        let reconciler = Arc::new(FakeReconciler::new([FakeOutcome::Immediate(Ok(
+            reconciliation(&realm, 1, WalletRealmFacetState::Current),
+        ))]));
+        let service = WalletRealmLifecycleService::new(reconciler, missing_facets());
+        resolve(service.execute(initialized(realm, 1, WalletRealmFacetState::Missing)))
+            .expect("initial reconciliation");
+        let handle = service
+            .admit_action_watch(
+                WalletActionWatch::submitted_transaction("tx-a").expect("transaction"),
+                10,
+                1,
+            )
+            .expect("watch admission")
+            .expect("watch handle");
+
+        resolve(service.execute(WalletRealmLifecycleInput::Backgrounded { now_millis: 2 }))
+            .expect("background");
+        assert_eq!(
+            service.status().expect("status").action_recovery,
+            Some(WalletActionWatchRecovery::SubmittedTransaction {
+                transaction: oxid_wallet_domain::ChainTransactionId::parse("tx-a")
+                    .expect("transaction"),
+            })
+        );
+        assert_eq!(
+            service
+                .action_watch()
+                .expect("watch projection")
+                .expect("projection")
+                .state,
+            WalletActionWatchState::OutcomeUnknown
+        );
+        service
+            .observe_action_watch(
+                handle,
+                WalletActionWatchObservation::submitted_transaction("tx-a").expect("observation"),
+                3,
+            )
+            .expect("stale observation is ignored");
+        assert_eq!(
+            service
+                .action_watch()
+                .expect("watch projection")
+                .expect("projection")
+                .state,
+            WalletActionWatchState::OutcomeUnknown
         );
     }
 
