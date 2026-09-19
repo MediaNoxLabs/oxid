@@ -284,6 +284,10 @@ ios-backup-smoke:
 ios-native-custody-smoke:
     ./scripts/test-ios-native-custody.sh
 
+# Prove selected-realm recovery on one explicitly selected, receipt-owned simulator.
+ios-wallet-lifecycle-simulator:
+    @timeout -k 30s 1800s ./scripts/test-ios-wallet-lifecycle-simulator.sh
+
 android-run:
     ./scripts/run-android-emulator.sh
 

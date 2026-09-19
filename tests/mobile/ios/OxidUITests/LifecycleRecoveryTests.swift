@@ -1,0 +1,89 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import XCTest
+
+final class LifecycleRecoveryTests: XCTestCase {
+    private let applicationIdentifier = "io.medianox.oxid"
+
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+    }
+
+    @MainActor
+    private func openWallet(_ application: XCUIApplication) {
+        XCTAssertTrue(application.buttons["Wallet"].waitForExistence(timeout: 15))
+        application.buttons["Wallet"].tap()
+    }
+
+    @MainActor
+    private func assertConsistentProjection(_ application: XCUIApplication) {
+        XCTAssertTrue(application.staticTexts["5 NIGHT"].waitForExistence(timeout: 30))
+        XCTAssertTrue(application.staticTexts["12 DUST"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["1 shielded notes"].waitForExistence(timeout: 10))
+        XCTAssertFalse(application.buttons["Sync DUST"].exists)
+        XCTAssertFalse(application.buttons["Sync shielded assets"].exists)
+        XCTAssertFalse(application.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "last consistent checkpoint")
+        ).firstMatch.exists)
+    }
+
+    private func writeClosedDiagnostic() throws {
+        let path = try XCTUnwrap(
+            ProcessInfo.processInfo.environment["OXID_LIFECYCLE_DIAGNOSTIC_PATH"]
+        )
+        let document = """
+        {"schema":"oxid-ios-wallet-lifecycle-diagnostic-v1","backgroundForeground":"recovered","processRelaunch":"recovered","protectedInteraction":"rearmed","manualFamilySync":"not_used","staleObservation":"not_visible"}
+        """
+        try Data(document.utf8).write(
+            to: URL(fileURLWithPath: path),
+            options: [.atomic]
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: path
+        )
+    }
+
+    @MainActor
+    func testBackgroundAndColdRelaunchRecoverWithoutManualSync() throws {
+        let application = XCUIApplication(bundleIdentifier: applicationIdentifier)
+        application.launch()
+
+        XCTAssertTrue(application.buttons["Create private wallet"].waitForExistence(timeout: 15))
+        application.buttons["Create private wallet"].tap()
+        application.buttons["Create and continue"].tap()
+        XCTAssertTrue(application.buttons["Skip for now"].waitForExistence(timeout: 15))
+        application.buttons["Skip for now"].tap()
+
+        openWallet(application)
+        let activate = application.buttons["Activate protected Midnight account"]
+        XCTAssertTrue(activate.waitForExistence(timeout: 15))
+        activate.tap()
+        XCTAssertTrue(application.buttons["Use my receive address"].waitForExistence(timeout: 90))
+        assertConsistentProjection(application)
+
+        let reveal = application.descendants(matching: .any)[
+            "Show private values for 30 seconds"
+        ]
+        XCTAssertTrue(reveal.waitForExistence(timeout: 10))
+        reveal.tap()
+        XCTAssertTrue(
+            application.descendants(matching: .any)["Hide private values"]
+                .waitForExistence(timeout: 5)
+        )
+
+        XCUIDevice.shared.press(.home)
+        RunLoop.current.run(until: Date().addingTimeInterval(2))
+        application.activate()
+        XCTAssertTrue(reveal.waitForExistence(timeout: 15))
+        XCTAssertFalse(application.descendants(matching: .any)["Hide private values"].exists)
+        assertConsistentProjection(application)
+
+        application.terminate()
+        application.launch()
+        openWallet(application)
+        assertConsistentProjection(application)
+
+        try writeClosedDiagnostic()
+    }
+}
