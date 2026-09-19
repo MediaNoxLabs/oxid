@@ -16,6 +16,18 @@ final class LifecycleRecoveryTests: XCTestCase {
     }
 
     @MainActor
+    private func scrollTo(_ element: XCUIElement, in application: XCUIApplication) {
+        let safeBottom = application.frame.maxY - 90
+        for _ in 0..<20
+            where !element.isHittable || element.frame.maxY > safeBottom
+        {
+            application.swipeUp()
+        }
+        XCTAssertTrue(element.isHittable)
+        XCTAssertLessThanOrEqual(element.frame.maxY, safeBottom)
+    }
+
+    @MainActor
     private func assertConsistentProjection(_ application: XCUIApplication) {
         XCTAssertTrue(application.staticTexts["5 NIGHT"].waitForExistence(timeout: 30))
         XCTAssertTrue(application.staticTexts["12 DUST"].waitForExistence(timeout: 10))
@@ -75,9 +87,8 @@ final class LifecycleRecoveryTests: XCTestCase {
             "I have securely saved or verified this recovery phrase."
         ]
         XCTAssertTrue(backupAcknowledgement.waitForExistence(timeout: 10))
-        backupAcknowledgement.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)
-        ).tap()
+        scrollTo(backupAcknowledgement, in: application)
+        backupAcknowledgement.tap()
         let acknowledged = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == 1"),
             object: backupAcknowledgement
