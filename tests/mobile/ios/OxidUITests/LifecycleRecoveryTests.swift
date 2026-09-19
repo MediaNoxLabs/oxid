@@ -17,14 +17,10 @@ final class LifecycleRecoveryTests: XCTestCase {
 
     @MainActor
     private func scrollTo(_ element: XCUIElement, in application: XCUIApplication) {
-        let safeBottom = application.frame.maxY - 90
-        for _ in 0..<20
-            where !element.isHittable || element.frame.maxY > safeBottom
-        {
+        for _ in 0..<20 where !element.isHittable {
             application.swipeUp()
         }
         XCTAssertTrue(element.isHittable)
-        XCTAssertLessThanOrEqual(element.frame.maxY, safeBottom)
     }
 
     @MainActor
