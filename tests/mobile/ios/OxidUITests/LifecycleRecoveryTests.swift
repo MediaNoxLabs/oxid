@@ -78,7 +78,14 @@ final class LifecycleRecoveryTests: XCTestCase {
         backupAcknowledgement.tap()
         let finishOnboarding = application.buttons["Finish and open wallet"]
         XCTAssertTrue(finishOnboarding.waitForExistence(timeout: 10))
-        XCTAssertTrue(finishOnboarding.isEnabled)
+        let enabled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"),
+            object: finishOnboarding
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 10), .completed)
+        if !finishOnboarding.isHittable {
+            application.swipeUp()
+        }
         finishOnboarding.tap()
         authorizeSimulatorOwnerIfRequested()
 
