@@ -1239,6 +1239,26 @@ textarea:focus-visible {
   font-size: var(--font-caption);
 }
 
+.account-sync-card__summary {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.account-sync-card__details {
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-3);
+}
+
+.account-sync-card__details > summary {
+  color: var(--text-muted);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.account-sync-card__details[open] > summary {
+  margin-bottom: var(--space-3);
+}
+
 .account-sync-card__rows {
   display: grid;
   overflow: hidden;
@@ -1297,6 +1317,23 @@ textarea:focus-visible {
 
 .wallet-sync-error {
   color: var(--critical);
+}
+
+.diagnostic-operation-log {
+  border-top: 1px solid var(--line);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+}
+
+.diagnostic-operation-log > summary {
+  cursor: pointer;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.diagnostic-operation-log > summary small {
+  color: var(--text-muted);
+  font-weight: 400;
 }
 
 .dashboard-grid,

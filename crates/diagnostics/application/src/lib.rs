@@ -29,6 +29,8 @@ pub enum DiagnosticCode {
     MidnightTransferWorkerTerminated,
     MidnightTransferWorkerSpawnFailed,
     MidnightContractCallWorkerPanicked,
+    WalletLifecycleSuspended,
+    WalletLifecycleResumed,
     ScreenPrivacyActivationFailed,
 }
 
@@ -50,6 +52,8 @@ impl DiagnosticCode {
             Self::MidnightTransferWorkerTerminated => "midnight.transfer.worker_terminated",
             Self::MidnightTransferWorkerSpawnFailed => "midnight.transfer.worker_spawn_failed",
             Self::MidnightContractCallWorkerPanicked => "midnight.vault_call.worker_panicked",
+            Self::WalletLifecycleSuspended => "wallet.lifecycle.suspended",
+            Self::WalletLifecycleResumed => "wallet.lifecycle.resumed",
             Self::ScreenPrivacyActivationFailed => "platform.screen_privacy.activation_failed",
         }
     }
@@ -58,6 +62,7 @@ impl DiagnosticCode {
 /// Stable severity without a free-form logging level or target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DiagnosticSeverity {
+    Info,
     Warning,
     Error,
 }
@@ -67,6 +72,7 @@ impl DiagnosticSeverity {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Info => "info",
             Self::Warning => "warning",
             Self::Error => "error",
         }
@@ -393,9 +399,18 @@ mod tests {
             "midnight.dust.sync.worker_panicked"
         );
         assert_eq!(DiagnosticSeverity::Error.as_str(), "error");
+        assert_eq!(DiagnosticSeverity::Info.as_str(), "info");
         assert_eq!(
             DiagnosticCode::ScreenPrivacyActivationFailed.as_str(),
             "platform.screen_privacy.activation_failed"
+        );
+        assert_eq!(
+            DiagnosticCode::WalletLifecycleSuspended.as_str(),
+            "wallet.lifecycle.suspended"
+        );
+        assert_eq!(
+            DiagnosticCode::WalletLifecycleResumed.as_str(),
+            "wallet.lifecycle.resumed"
         );
     }
 }

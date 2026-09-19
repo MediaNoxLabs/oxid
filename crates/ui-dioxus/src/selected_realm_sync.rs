@@ -293,6 +293,55 @@ pub(super) fn selected_realm_sync_state(realm: &SelectedWalletRealmSyncView) -> 
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct SelectedRealmLifecyclePresentation {
+    pub label: &'static str,
+    pub note: &'static str,
+    pub retry: bool,
+}
+
+/// Product language for the application-owned selected-realm lifecycle.
+///
+/// Family-specific state remains available to developer diagnostics. The
+/// normal wallet surface deliberately presents one aggregate and offers a
+/// retry only after automatic recovery has stopped making progress.
+pub(super) fn selected_realm_lifecycle_presentation(
+    state: &str,
+) -> SelectedRealmLifecyclePresentation {
+    match state {
+        "syncing" | "never_synced" => SelectedRealmLifecyclePresentation {
+            label: "Updating",
+            note: "Balances and activity update automatically.",
+            retry: false,
+        },
+        "synced" => SelectedRealmLifecyclePresentation {
+            label: "Up to date",
+            note: "The selected wallet and network are ready.",
+            retry: false,
+        },
+        "cached" => SelectedRealmLifecyclePresentation {
+            label: "Updating",
+            note: "A saved checkpoint is visible while live state catches up.",
+            retry: false,
+        },
+        "stalled" | "cancelled" => SelectedRealmLifecyclePresentation {
+            label: "Needs attention",
+            note: "The last consistent state is retained. Try recovery again.",
+            retry: true,
+        },
+        "unavailable" => SelectedRealmLifecyclePresentation {
+            label: "Offline",
+            note: "The last consistent state is retained until the network returns.",
+            retry: true,
+        },
+        _ => SelectedRealmLifecyclePresentation {
+            label: "Action needed",
+            note: "Open diagnostics to review the selected wallet and network.",
+            retry: true,
+        },
+    }
+}
+
 pub(super) fn selected_realm_provenance(realm: &SelectedWalletRealmSyncView) -> String {
     match &realm.account {
         WalletRealmFamilyView::Ready(account) => format!(
@@ -556,5 +605,33 @@ mod poll_tests {
         assert!(action_busy);
         assert_eq!(retained_error, operation_error);
         assert!(!poll_owns_current_projection(true, true));
+    }
+
+    #[test]
+    fn lifecycle_presentation_keeps_automatic_states_action_free() {
+        for state in ["never_synced", "syncing", "synced", "cached"] {
+            assert!(
+                !selected_realm_lifecycle_presentation(state).retry,
+                "{state} must remain automatic"
+            );
+        }
+        assert_eq!(
+            selected_realm_lifecycle_presentation("synced").label,
+            "Up to date"
+        );
+    }
+
+    #[test]
+    fn lifecycle_presentation_offers_one_retry_after_recovery_stops() {
+        for state in ["stalled", "cancelled", "unavailable", "unknown"] {
+            assert!(
+                selected_realm_lifecycle_presentation(state).retry,
+                "{state} must offer bounded recovery"
+            );
+        }
+        assert_eq!(
+            selected_realm_lifecycle_presentation("unavailable").label,
+            "Offline"
+        );
     }
 }
