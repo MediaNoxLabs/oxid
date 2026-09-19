@@ -190,6 +190,14 @@ pub struct WalletRealmLifecyclePolicy {
 }
 
 impl WalletRealmLifecyclePolicy {
+    /// Restores only the durable selected identity. Runtime requests,
+    /// deadlines, retry counters, and freshness timestamps are process-local
+    /// and deliberately start empty so the next foreground input reconciles.
+    pub(crate) fn restore_active(&mut self, identity: WalletRealmLifecycleIdentity) {
+        *self = Self::default();
+        self.active = Some(identity);
+    }
+
     pub(crate) fn owns(&self, request: &WalletRealmLifecycleRequest) -> bool {
         self.active.as_ref() == Some(&request.identity)
             && self

@@ -512,6 +512,30 @@ const fn present(state: WalletActionWatchState) -> WalletActionWatchPresentation
             busy: false,
             alert: false,
         },
+        WalletActionWatchState::OutcomeUnknown => WalletActionWatchPresentation {
+            class: "needs-attention",
+            eyebrow: "Checking status",
+            title: "Transfer outcome is not known yet",
+            note: "The submitted transaction is being reconciled by its network identity; it has not been sent again.",
+            busy: true,
+            alert: false,
+        },
+        WalletActionWatchState::OutcomeUnresolved => WalletActionWatchPresentation {
+            class: "needs-attention",
+            eyebrow: "Status unresolved",
+            title: "Check activity before trying again",
+            note: "The network outcome could not be proved within the recovery window; no duplicate was started.",
+            busy: false,
+            alert: true,
+        },
+        WalletActionWatchState::Failed => WalletActionWatchPresentation {
+            class: "needs-attention",
+            eyebrow: "Not completed",
+            title: "Transfer failed",
+            note: "The selected network reported a terminal failure; balances and activity are reconciling.",
+            busy: false,
+            alert: true,
+        },
         WalletActionWatchState::Expired => WalletActionWatchPresentation {
             class: "needs-attention",
             eyebrow: "Needs attention",
@@ -857,15 +881,19 @@ mod tests {
     }
 
     #[test]
-    fn terminal_states_have_concise_distinct_presentations() {
+    fn non_waiting_states_have_concise_distinct_presentations() {
         let states = [
             WalletActionWatchState::Expired,
+            WalletActionWatchState::OutcomeUnknown,
+            WalletActionWatchState::OutcomeUnresolved,
+            WalletActionWatchState::Failed,
             WalletActionWatchState::Superseded,
             WalletActionWatchState::Offline,
             WalletActionWatchState::Degraded,
             WalletActionWatchState::Cancelled,
         ];
         let titles = states.map(|state| present(state).title);
+        assert!(states.into_iter().all(WalletActionWatchState::terminal));
         for (index, title) in titles.iter().enumerate() {
             assert!(
                 !titles[..index].contains(title),
