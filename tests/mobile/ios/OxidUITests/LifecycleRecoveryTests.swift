@@ -44,7 +44,9 @@ final class LifecycleRecoveryTests: XCTestCase {
         ]
         XCTAssertTrue(menu.waitForExistence(timeout: 10))
         menu.tap()
-        let privacy = application.descendants(matching: .any)["Session privacy"]
+        let privacy = application.descendants(matching: .any).matching(
+            NSPredicate(format: "label BEGINSWITH[c] %@", "Session privacy")
+        ).firstMatch
         XCTAssertTrue(privacy.waitForExistence(timeout: 5))
         privacy.tap()
         XCTAssertTrue(application.staticTexts["5 NIGHT"].waitForExistence(timeout: 10))
