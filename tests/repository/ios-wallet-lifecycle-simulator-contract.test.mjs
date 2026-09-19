@@ -22,7 +22,8 @@ test("iOS lifecycle diagnostic owns one simulator and records only closed outcom
   assert.match(script, /status --porcelain/u);
   assert.match(script, /-only-testing:"OxidUITests\/LifecycleRecoveryTests\//u);
   assert.match(script, /manualFamilySync:"not_used"/u);
-  assert.match(script, /OXID_MOBILE_CUSTODY=native/u);
+  assert.doesNotMatch(script, /OXID_MOBILE_CUSTODY=native/u);
+  assert.match(swift, /buttons\["Use public demo wallet"\]/u);
   assert.doesNotMatch(script, /Sync DUST|Sync shielded assets/u);
 
   assert.match(swift, /XCUIDevice\.shared\.press\(\.home\)/u);

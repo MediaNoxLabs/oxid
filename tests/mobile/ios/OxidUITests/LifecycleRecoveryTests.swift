@@ -89,41 +89,14 @@ final class LifecycleRecoveryTests: XCTestCase {
 
         XCTAssertTrue(application.buttons["Create private wallet"].waitForExistence(timeout: 15))
         application.buttons["Create private wallet"].tap()
+        let publicDemo = application.buttons["Use public demo wallet"]
+        XCTAssertTrue(publicDemo.waitForExistence(timeout: 10))
+        publicDemo.tap()
         XCTAssertTrue(application.buttons["Create and continue"].waitForExistence(timeout: 15))
         application.buttons["Create and continue"].tap()
-
-        let generatePhrase = application.buttons["Generate recovery phrase"]
-        XCTAssertTrue(generatePhrase.waitForExistence(timeout: 15))
-        generatePhrase.tap()
-        authorizeSimulatorOwnerIfRequested()
-        XCTAssertTrue(
-            application.otherElements["New wallet recovery phrase"]
-                .waitForExistence(timeout: 30)
-        )
-        let backupAcknowledgement = application.switches[
-            "I have securely saved or verified this recovery phrase."
-        ]
-        XCTAssertTrue(backupAcknowledgement.waitForExistence(timeout: 10))
-        scrollTo(backupAcknowledgement, in: application)
-        application.staticTexts[
-            "I have securely saved or verified this recovery phrase."
-        ].tap()
-        let acknowledged = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", "1"),
-            object: backupAcknowledgement
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [acknowledged], timeout: 10), .completed)
-        let finishOnboarding = application.buttons["Finish and open wallet"]
-        XCTAssertTrue(finishOnboarding.waitForExistence(timeout: 10))
-        let enabled = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "enabled == true"),
-            object: finishOnboarding
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 10), .completed)
-        if !finishOnboarding.isHittable {
-            application.swipeUp()
-        }
-        finishOnboarding.tap()
+        let enableProtection = application.buttons["Enable device protection"]
+        XCTAssertTrue(enableProtection.waitForExistence(timeout: 15))
+        enableProtection.tap()
         authorizeSimulatorOwnerIfRequested()
 
         openWallet(application)
