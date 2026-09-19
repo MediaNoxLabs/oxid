@@ -5,7 +5,7 @@
 use std::time::Instant;
 
 use crate::{
-    WalletDustRegistrationCoordinator, WalletDustRegistrationEffect,
+    MAX_WALLET_OPERATION_ATTEMPT, WalletDustRegistrationCoordinator, WalletDustRegistrationEffect,
     WalletDustRegistrationSettlementEvent, WalletDustRegistrationSettlementReconciliation,
     WalletDustRegistrationSettlementState, WalletDustRegistrationTimelineCode,
     WalletOperationAttempt, WalletOperationCausationId, WalletOperationCorrelationId,
@@ -251,8 +251,10 @@ impl WalletDustRegistrationRuntime {
                     Some(WalletOperationOutcome::Superseded),
                 );
             }
+            let terminal =
+                terminal_outcome(&event, self.coordinator.projection(), next.projection());
             self.coordinator = next;
-            self.record_observation(&event);
+            self.record_observation(&event, terminal);
             self.admitted_effect = None;
         }
     }
@@ -306,8 +308,9 @@ impl WalletDustRegistrationRuntime {
         if next.projection() == self.coordinator.projection() {
             return false;
         }
+        let terminal = terminal_outcome(&event, self.coordinator.projection(), next.projection());
         self.coordinator = next;
-        self.record_observation(&event);
+        self.record_observation(&event, terminal);
         self.admitted_effect = None;
         true
     }
@@ -334,11 +337,21 @@ impl WalletDustRegistrationRuntime {
         self.record_code(WalletDustRegistrationTimelineCode::Restored, None);
     }
 
-    fn record_observation(&mut self, event: &WalletDustRegistrationSettlementEvent) {
+    fn record_observation(
+        &mut self,
+        event: &WalletDustRegistrationSettlementEvent,
+        terminal: Option<WalletOperationOutcome>,
+    ) {
+        if self.timeline_operation.is_none()
+            && !matches!(
+                event,
+                WalletDustRegistrationSettlementEvent::Eligibility { .. }
+            )
+        {
+            return;
+        }
         let identity = event_identity(event).clone();
-        let projection = self.coordinator.projection();
-        let revision = projection.recovery_revision;
-        let terminal = terminal_outcome(event, projection);
+        let revision = self.coordinator.projection().recovery_revision;
         self.ensure_timeline_operation(&identity, revision);
         self.record_code(event_code(event), terminal);
     }
@@ -372,8 +385,13 @@ impl WalletDustRegistrationRuntime {
         let Some(context) = self.timeline_operation.as_mut() else {
             return;
         };
-        context.attempt = context.attempt.saturating_add(1).min(1_024);
-        let attempt = WalletOperationAttempt::new(context.attempt).expect("bounded attempt");
+        context.attempt = context
+            .attempt
+            .saturating_add(1)
+            .min(MAX_WALLET_OPERATION_ATTEMPT);
+        let Some(attempt) = WalletOperationAttempt::new(context.attempt).ok() else {
+            return;
+        };
         if let Ok(causation) = self.timeline.record(
             context.operation_id,
             context.correlation_id,
@@ -400,7 +418,9 @@ impl WalletDustRegistrationRuntime {
         let Some(identity) = self.coordinator.projection().identity.as_ref() else {
             return;
         };
-        let attempt = WalletOperationAttempt::new(context.attempt.max(1)).expect("bounded attempt");
+        let Some(attempt) = WalletOperationAttempt::new(context.attempt.max(1)).ok() else {
+            return;
+        };
         let duration = WalletOperationDurationMillis::bounded(context.started.elapsed());
         let resource = timeline_resource(identity, self.coordinator.projection().recovery_revision);
         if let Ok(causation) = self.timeline.record(
@@ -585,7 +605,8 @@ const fn event_code(
 
 const fn terminal_outcome(
     event: &WalletDustRegistrationSettlementEvent,
-    projection: &crate::WalletDustRegistrationSettlementProjection,
+    previous: &crate::WalletDustRegistrationSettlementProjection,
+    next: &crate::WalletDustRegistrationSettlementProjection,
 ) -> Option<WalletOperationOutcome> {
     match event {
         WalletDustRegistrationSettlementEvent::Cancelled { .. } => {
@@ -594,10 +615,8 @@ const fn terminal_outcome(
         WalletDustRegistrationSettlementEvent::Superseded { .. } => {
             Some(WalletOperationOutcome::Superseded)
         }
-        _ if matches!(
-            projection.state,
-            WalletDustRegistrationSettlementState::Ready
-        ) =>
+        _ if !matches!(previous.state, WalletDustRegistrationSettlementState::Ready)
+            && matches!(next.state, WalletDustRegistrationSettlementState::Ready) =>
         {
             Some(WalletOperationOutcome::Succeeded)
         }
@@ -975,7 +994,7 @@ mod tests {
         assert!(codes.contains(&WalletDustRegistrationTimelineCode::ReconciliationIncluded));
         assert!(codes.contains(&WalletDustRegistrationTimelineCode::DustRefreshedReady));
         assert!(timeline.query().unwrap().records().iter().all(|record| {
-            record.attempt.value() <= 1_024
+            record.attempt.value() <= MAX_WALLET_OPERATION_ATTEMPT
                 && record.duration.value() <= crate::MAX_WALLET_OPERATION_DURATION_MILLIS
                 && record.measurements.as_slice().is_empty()
         }));
@@ -992,6 +1011,109 @@ mod tests {
                         ..
                     }
                 ))
+        );
+    }
+
+    #[test]
+    fn terminal_success_is_emitted_once_on_the_transition_into_ready() {
+        let timeline = WalletOperationTimeline::with_capacity(32).unwrap();
+        let mut runtime = WalletDustRegistrationRuntime::with_operation_timeline(timeline.clone());
+        let draft = oxid_wallet_domain::WalletTransactionDraftId::parse("dustreg_test").unwrap();
+        let transaction = oxid_wallet_domain::ChainTransactionId::parse("tx_test").unwrap();
+        runtime.observe(WalletDustRegistrationSettlementEvent::Eligibility {
+            identity: identity(1),
+            revision: 1,
+            eligible: true,
+        });
+        let prepare = runtime.coordinator().active_effect().unwrap().clone();
+        let token = admitted_token(runtime.admit_current(&prepare));
+        assert!(runtime.complete(token, completion::prepared(identity(1), draft.clone(), 1)));
+        runtime.observe(completion::authorized(identity(1), draft.clone()));
+        runtime.observe(completion::submitted(
+            identity(1),
+            draft,
+            transaction.clone(),
+        ));
+        runtime.observe(completion::finality_observed(
+            identity(1),
+            transaction.clone(),
+            1,
+        ));
+        runtime.observe(completion::reconciled(
+            identity(1),
+            transaction.clone(),
+            2,
+            WalletDustRegistrationSettlementReconciliation::Included,
+        ));
+        runtime.observe(completion::dust_refreshed(
+            identity(1),
+            transaction.clone(),
+            1,
+            2,
+            true,
+        ));
+
+        let expected = vec![
+            WalletOperationEvent::Admitted,
+            WalletOperationEvent::DustRegistration(
+                WalletDustRegistrationTimelineCode::EligibilityObserved,
+            ),
+            WalletOperationEvent::EffectPlanned(
+                crate::WalletOperationEffect::DustRegistrationPrepare,
+            ),
+            WalletOperationEvent::DustRegistration(WalletDustRegistrationTimelineCode::Prepared),
+            WalletOperationEvent::DustRegistration(
+                WalletDustRegistrationTimelineCode::AuthorizationSucceeded,
+            ),
+            WalletOperationEvent::DustRegistration(
+                WalletDustRegistrationTimelineCode::SubmissionAccepted,
+            ),
+            WalletOperationEvent::DustRegistration(
+                WalletDustRegistrationTimelineCode::FinalityObserved,
+            ),
+            WalletOperationEvent::DustRegistration(
+                WalletDustRegistrationTimelineCode::ReconciliationIncluded,
+            ),
+            WalletOperationEvent::DustRegistration(
+                WalletDustRegistrationTimelineCode::DustRefreshedReady,
+            ),
+            WalletOperationEvent::Terminal {
+                outcome: WalletOperationOutcome::Succeeded,
+                failure: None,
+            },
+        ];
+        assert_eq!(
+            timeline
+                .query()
+                .unwrap()
+                .records()
+                .iter()
+                .map(|record| record.event.clone())
+                .collect::<Vec<_>>(),
+            expected
+        );
+
+        // This later refresh changes the projection but leaves it Ready.
+        runtime.observe(completion::dust_refreshed(
+            identity(1),
+            transaction,
+            2,
+            2,
+            true,
+        ));
+        assert_eq!(
+            runtime.coordinator().projection().state,
+            WalletDustRegistrationSettlementState::Ready
+        );
+        assert_eq!(
+            timeline
+                .query()
+                .unwrap()
+                .records()
+                .iter()
+                .map(|record| record.event.clone())
+                .collect::<Vec<_>>(),
+            expected
         );
     }
 
