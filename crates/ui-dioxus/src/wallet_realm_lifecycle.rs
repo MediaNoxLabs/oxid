@@ -437,6 +437,7 @@ mod tests {
             request_timeout_millis: 10,
             lifecycle_generation: 0,
             action_recovery: None,
+            action_recovery_attempts_remaining: 0,
         }
     }
 

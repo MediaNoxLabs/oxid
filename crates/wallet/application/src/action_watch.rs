@@ -129,11 +129,27 @@ pub enum WalletActionWatchState {
     /// A submission crossed a lifecycle boundary before its public identity
     /// was observed. Reconciliation, not resubmission, owns the next step.
     OutcomeUnknown,
+    /// Reconciliation stopped without proving either confirmation or failure.
+    /// The user must inspect activity before attempting another value action.
+    OutcomeUnresolved,
+    /// The selected network explicitly reported a terminal failed outcome.
+    Failed,
     Expired,
     Superseded,
     Offline,
     Degraded,
     Cancelled,
+}
+
+/// Closed result vocabulary for a retained public action identity.
+///
+/// Merely finding the identity is not success. The adapter must classify the
+/// network result explicitly and bind it to the current lifecycle generation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletActionRecoveryOutcome {
+    Pending,
+    Confirmed,
+    Failed,
 }
 
 impl WalletActionWatchState {
@@ -422,12 +438,23 @@ impl WalletActionWatchRuntime {
 
     /// Publishes the result of querying a retained public identity. This never
     /// admits or resubmits an operation.
-    pub fn settle_recovery(&mut self, kind: WalletActionWatchKind) {
+    pub fn settle_recovery(
+        &mut self,
+        kind: WalletActionWatchKind,
+        outcome: WalletActionRecoveryOutcome,
+    ) {
+        if outcome == WalletActionRecoveryOutcome::Pending {
+            return;
+        }
         self.active = None;
         self.suspended = false;
         self.projection = Some(WalletActionWatchProjection {
             kind,
-            state: WalletActionWatchState::Confirmed,
+            state: match outcome {
+                WalletActionRecoveryOutcome::Confirmed => WalletActionWatchState::Confirmed,
+                WalletActionRecoveryOutcome::Failed => WalletActionWatchState::Failed,
+                WalletActionRecoveryOutcome::Pending => unreachable!("pending returned above"),
+            },
             realm_generation: self.generation,
         });
     }
@@ -438,7 +465,7 @@ impl WalletActionWatchRuntime {
         self.suspended = false;
         self.projection = Some(WalletActionWatchProjection {
             kind,
-            state: WalletActionWatchState::Expired,
+            state: WalletActionWatchState::OutcomeUnresolved,
             realm_generation: self.generation,
         });
     }
