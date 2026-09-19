@@ -512,6 +512,14 @@ const fn present(state: WalletActionWatchState) -> WalletActionWatchPresentation
             busy: false,
             alert: false,
         },
+        WalletActionWatchState::OutcomeUnknown => WalletActionWatchPresentation {
+            class: "needs-attention",
+            eyebrow: "Checking status",
+            title: "Transfer outcome is not known yet",
+            note: "The submitted transaction is being reconciled by its network identity; it has not been sent again.",
+            busy: true,
+            alert: false,
+        },
         WalletActionWatchState::Expired => WalletActionWatchPresentation {
             class: "needs-attention",
             eyebrow: "Needs attention",
@@ -860,6 +868,7 @@ mod tests {
     fn terminal_states_have_concise_distinct_presentations() {
         let states = [
             WalletActionWatchState::Expired,
+            WalletActionWatchState::OutcomeUnknown,
             WalletActionWatchState::Superseded,
             WalletActionWatchState::Offline,
             WalletActionWatchState::Degraded,

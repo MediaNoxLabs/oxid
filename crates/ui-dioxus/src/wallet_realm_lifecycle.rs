@@ -435,6 +435,8 @@ mod tests {
             in_flight: None,
             in_flight_deadline_millis: None,
             request_timeout_millis: 10,
+            lifecycle_generation: 0,
+            action_recovery: None,
         }
     }
 

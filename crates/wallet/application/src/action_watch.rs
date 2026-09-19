@@ -183,6 +183,41 @@ impl From<&WalletActionWatch> for WalletActionWatchRecovery {
     }
 }
 
+impl WalletActionWatchRecovery {
+    #[must_use]
+    pub const fn kind(&self) -> WalletActionWatchKind {
+        match self {
+            Self::SubmittedTransaction { .. } => WalletActionWatchKind::SubmittedTransaction,
+            Self::IncomingArrival { .. } => WalletActionWatchKind::IncomingArrival,
+        }
+    }
+
+    #[must_use]
+    pub fn matches(&self, observation: &WalletActionWatchObservation) -> bool {
+        match (self, observation) {
+            (
+                Self::SubmittedTransaction {
+                    transaction: expected,
+                },
+                WalletActionWatchObservation::SubmittedTransaction {
+                    transaction: observed,
+                },
+            ) => expected == observed,
+            (
+                Self::IncomingArrival {
+                    account: expected,
+                    starting_checkpoint,
+                },
+                WalletActionWatchObservation::IncomingArrival {
+                    account: observed,
+                    checkpoint,
+                },
+            ) => expected == observed && checkpoint > starting_checkpoint,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ActiveWatch {
     watch: WalletActionWatch,
@@ -328,8 +363,9 @@ impl WalletActionWatchRuntime {
     /// Invalidates transient workers at a lifecycle boundary and returns only
     /// the exact public identities that a new generation may reconcile.
     pub fn lifecycle_boundary(&mut self) -> Option<WalletActionWatchRecovery> {
-        let active = self.active.take()?;
+        self.generation = self.generation.saturating_add(1);
         self.suspended = false;
+        let active = self.active.take()?;
         let recovery = WalletActionWatchRecovery::from(&active.watch);
         let state = match active.watch {
             WalletActionWatch::SubmittedTransaction { .. } => {
@@ -340,9 +376,46 @@ impl WalletActionWatchRuntime {
         self.projection = Some(WalletActionWatchProjection {
             kind: active.watch.kind(),
             state,
-            realm_generation: active.handle.realm_generation,
+            realm_generation: self.generation,
         });
         Some(recovery)
+    }
+
+    /// Recreates only the payload-free recovery projection after process loss.
+    /// No worker, deadline, authorization, or submission attempt is revived.
+    pub fn restore_recovery(
+        &mut self,
+        identity: WalletRealmLifecycleIdentity,
+        recovery: &WalletActionWatchRecovery,
+    ) {
+        self.select_realm(identity);
+        self.generation = self.generation.saturating_add(1);
+        self.active = None;
+        self.suspended = false;
+        self.projection = Some(WalletActionWatchProjection {
+            kind: recovery.kind(),
+            state: match recovery {
+                WalletActionWatchRecovery::SubmittedTransaction { .. } => {
+                    WalletActionWatchState::OutcomeUnknown
+                }
+                WalletActionWatchRecovery::IncomingArrival { .. } => {
+                    WalletActionWatchState::Offline
+                }
+            },
+            realm_generation: self.generation,
+        });
+    }
+
+    /// Publishes the result of querying a retained public identity. This never
+    /// admits or resubmits an operation.
+    pub fn settle_recovery(&mut self, kind: WalletActionWatchKind) {
+        self.active = None;
+        self.suspended = false;
+        self.projection = Some(WalletActionWatchProjection {
+            kind,
+            state: WalletActionWatchState::Confirmed,
+            realm_generation: self.generation,
+        });
     }
 
     #[must_use]

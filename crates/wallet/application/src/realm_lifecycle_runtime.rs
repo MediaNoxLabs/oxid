@@ -20,6 +20,7 @@ use std::{
 };
 
 const MAX_DRAINED_REQUESTS: usize = 32;
+pub const WALLET_REALM_LIFECYCLE_SNAPSHOT_VERSION: u8 = 1;
 
 pub type WalletRealmLifecycleFuture<'a> = Pin<
     Box<
@@ -65,6 +66,7 @@ impl WalletRealmLifecycleExecutionHandle {
 pub enum WalletRealmLifecycleError {
     Sync(SelectedWalletRealmSyncError),
     DrainLimit,
+    InvalidSnapshot,
     Poisoned,
 }
 
@@ -73,6 +75,9 @@ impl fmt::Display for WalletRealmLifecycleError {
         match self {
             Self::Sync(error) => error.fmt(formatter),
             Self::DrainLimit => formatter.write_str("wallet realm lifecycle drain limit reached"),
+            Self::InvalidSnapshot => {
+                formatter.write_str("wallet realm lifecycle checkpoint is invalid")
+            }
             Self::Poisoned => formatter.write_str("wallet realm lifecycle state is unavailable"),
         }
     }
@@ -101,8 +106,26 @@ pub struct WalletRealmLifecycleStatus {
     pub in_flight: Option<WalletRealmLifecycleRequest>,
     pub in_flight_deadline_millis: Option<u64>,
     pub request_timeout_millis: u64,
+    /// Increments at every accepted deactivation boundary. Adapters use it to
+    /// reject callbacks from a previous process/transport generation.
+    pub lifecycle_generation: u64,
     /// Safe identities to reconcile after a lifecycle boundary. Submitted
     /// operations are never replayed from this record.
+    pub action_recovery: Option<WalletActionWatchRecovery>,
+}
+
+/// Atomic, payload-free durable boundary for foreground/cold-start recovery.
+///
+/// Family-specific checkpoint stores remain authoritative for balances and
+/// cursors. This record binds their coherent public state to the selected realm
+/// and to any unresolved public action identity without retaining secrets,
+/// transport handles, authorization, or transaction bodies.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletRealmLifecycleSnapshot {
+    pub version: u8,
+    pub identity: Option<WalletRealmLifecycleIdentity>,
+    pub facets: WalletRealmReconciliationState,
+    pub lifecycle_generation: u64,
     pub action_recovery: Option<WalletActionWatchRecovery>,
 }
 
@@ -115,6 +138,13 @@ pub trait ReconcileWalletRealmLifecycleUseCase: Send + Sync {
     fn execute(&self, input: WalletRealmLifecycleInput) -> WalletRealmLifecycleFuture<'_>;
 
     fn status(&self) -> Result<WalletRealmLifecycleStatus, WalletRealmLifecycleError>;
+
+    fn checkpoint(&self) -> Result<WalletRealmLifecycleSnapshot, WalletRealmLifecycleError>;
+
+    fn restore(
+        &self,
+        snapshot: WalletRealmLifecycleSnapshot,
+    ) -> Result<(), WalletRealmLifecycleError>;
 }
 
 /// Presentation-neutral control surface for the action watch owned by the
@@ -155,6 +185,13 @@ pub trait ManageWalletActionWatchUseCase: Send + Sync {
     fn resume(&self, handle: WalletActionWatchHandle) -> Result<(), WalletRealmLifecycleError>;
 
     fn projection(&self) -> Result<Option<WalletActionWatchProjection>, WalletRealmLifecycleError>;
+
+    /// Settles a retained recovery record only when the exact public identity
+    /// is observed. A mismatch is a no-op and never triggers resubmission.
+    fn reconcile_recovery(
+        &self,
+        observation: WalletActionWatchObservation,
+    ) -> Result<bool, WalletRealmLifecycleError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -262,6 +299,8 @@ struct WalletRealmLifecycleState {
     checkpoint: WalletRealmLifecycleCheckpoint,
     action_watch: WalletActionWatchRuntime,
     action_recovery: Option<WalletActionWatchRecovery>,
+    lifecycle_generation: u64,
+    backgrounded: bool,
 }
 
 impl WalletRealmLifecycleService {
@@ -300,6 +339,8 @@ impl WalletRealmLifecycleService {
                 checkpoint: WalletRealmLifecycleCheckpoint::new(facets),
                 action_watch: WalletActionWatchRuntime::default(),
                 action_recovery: None,
+                lifecycle_generation: 0,
+                backgrounded: false,
             }),
             config,
             request_timeout_millis: request_timeout_millis.max(1),
@@ -315,13 +356,33 @@ impl WalletRealmLifecycleService {
             .state
             .lock()
             .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
+        let previous_identity = state.checkpoint.identity.clone();
         state.checkpoint.observe(&input);
         if matches!(&input, WalletRealmLifecycleInput::Backgrounded { .. }) {
-            state.action_recovery = state.action_watch.lifecycle_boundary();
+            if !state.backgrounded {
+                state.backgrounded = true;
+                state.lifecycle_generation = state.lifecycle_generation.saturating_add(1);
+                if let Some(recovery) = state.action_watch.lifecycle_boundary() {
+                    state.action_recovery = Some(recovery);
+                }
+            }
+        } else if matches!(
+            &input,
+            WalletRealmLifecycleInput::Initialized { .. }
+                | WalletRealmLifecycleInput::RealmSelected { .. }
+                | WalletRealmLifecycleInput::Foreground { .. }
+        ) {
+            state.backgrounded = false;
         }
         if let WalletRealmLifecycleInput::Initialized { identity, .. }
         | WalletRealmLifecycleInput::RealmSelected { identity, .. } = &input
         {
+            if previous_identity
+                .as_ref()
+                .is_some_and(|previous| previous != identity)
+            {
+                state.action_recovery = None;
+            }
             state.action_watch.select_realm(identity.clone());
         }
         Ok(state.policy.reduce(self.config, input))
@@ -366,6 +427,9 @@ impl WalletRealmLifecycleService {
             .state
             .lock()
             .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
+        if state.action_recovery.is_some() {
+            return Ok(None);
+        }
         Ok(state.action_watch.admit(watch, deadline_millis, now_millis))
     }
 
@@ -464,6 +528,26 @@ impl WalletRealmLifecycleService {
             .lock()
             .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
         Ok(state.action_watch.projection().cloned())
+    }
+
+    pub fn reconcile_action_recovery(
+        &self,
+        observation: WalletActionWatchObservation,
+    ) -> Result<bool, WalletRealmLifecycleError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
+        let Some(recovery) = state.action_recovery.as_ref() else {
+            return Ok(false);
+        };
+        if !recovery.matches(&observation) {
+            return Ok(false);
+        }
+        let kind = recovery.kind();
+        state.action_recovery = None;
+        state.action_watch.settle_recovery(kind);
+        Ok(true)
     }
 
     fn fallback_facets(
@@ -615,6 +699,13 @@ impl ManageWalletActionWatchUseCase for WalletRealmLifecycleService {
     fn projection(&self) -> Result<Option<WalletActionWatchProjection>, WalletRealmLifecycleError> {
         self.action_watch()
     }
+
+    fn reconcile_recovery(
+        &self,
+        observation: WalletActionWatchObservation,
+    ) -> Result<bool, WalletRealmLifecycleError> {
+        self.reconcile_action_recovery(observation)
+    }
 }
 
 impl ReconcileWalletRealmLifecycleUseCase for WalletRealmLifecycleService {
@@ -668,8 +759,58 @@ impl ReconcileWalletRealmLifecycleUseCase for WalletRealmLifecycleService {
                 .policy
                 .in_flight_deadline_millis(self.request_timeout_millis),
             request_timeout_millis: self.request_timeout_millis,
+            lifecycle_generation: state.lifecycle_generation,
             action_recovery: state.action_recovery.clone(),
         })
+    }
+
+    fn checkpoint(&self) -> Result<WalletRealmLifecycleSnapshot, WalletRealmLifecycleError> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
+        Ok(WalletRealmLifecycleSnapshot {
+            version: WALLET_REALM_LIFECYCLE_SNAPSHOT_VERSION,
+            identity: state.checkpoint.identity.clone(),
+            facets: durable_facets(state.checkpoint.facets),
+            lifecycle_generation: state.lifecycle_generation,
+            action_recovery: state.action_recovery.clone(),
+        })
+    }
+
+    fn restore(
+        &self,
+        snapshot: WalletRealmLifecycleSnapshot,
+    ) -> Result<(), WalletRealmLifecycleError> {
+        if snapshot.version != WALLET_REALM_LIFECYCLE_SNAPSHOT_VERSION
+            || (snapshot.identity.is_none() && snapshot.action_recovery.is_some())
+        {
+            return Err(WalletRealmLifecycleError::InvalidSnapshot);
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| WalletRealmLifecycleError::Poisoned)?;
+        state.policy = WalletRealmLifecyclePolicy::default();
+        state.checkpoint = WalletRealmLifecycleCheckpoint {
+            identity: snapshot.identity.clone(),
+            facets: snapshot.facets,
+            // Monotonic time belongs to one process and is never restored.
+            now_millis: 0,
+        };
+        state.action_watch = WalletActionWatchRuntime::default();
+        state.action_recovery = snapshot.action_recovery;
+        state.lifecycle_generation = snapshot.lifecycle_generation.saturating_add(1);
+        state.backgrounded = false;
+        if let Some(identity) = snapshot.identity {
+            state.policy.restore_active(identity.clone());
+            if let Some(recovery) = state.action_recovery.clone() {
+                state.action_watch.restore_recovery(identity, &recovery);
+            } else {
+                state.action_watch.select_realm(identity);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -681,6 +822,21 @@ fn admitted_request(
         | WalletRealmLifecycleDecision::Superseded { request, .. } => Some(request.clone()),
         WalletRealmLifecycleDecision::Retained(_) | WalletRealmLifecycleDecision::Ignored => None,
     }
+}
+
+const fn durable_facets(
+    mut facets: WalletRealmReconciliationState,
+) -> WalletRealmReconciliationState {
+    if matches!(facets.account, WalletRealmFacetState::Updating) {
+        facets.account = WalletRealmFacetState::Stale;
+    }
+    if matches!(facets.dust, WalletRealmFacetState::Updating) {
+        facets.dust = WalletRealmFacetState::Stale;
+    }
+    if matches!(facets.shielded, WalletRealmFacetState::Updating) {
+        facets.shielded = WalletRealmFacetState::Stale;
+    }
+    facets
 }
 
 const fn missing_facets() -> WalletRealmReconciliationState {
@@ -912,6 +1068,156 @@ mod tests {
                 .expect("projection")
                 .state,
             WalletActionWatchState::OutcomeUnknown
+        );
+
+        let generation = service.status().expect("status").lifecycle_generation;
+        resolve(service.execute(WalletRealmLifecycleInput::Backgrounded { now_millis: 3 }))
+            .expect("duplicate background");
+        let duplicate = service.status().expect("duplicate status");
+        assert_eq!(duplicate.lifecycle_generation, generation);
+        assert!(matches!(
+            duplicate.action_recovery,
+            Some(WalletActionWatchRecovery::SubmittedTransaction { .. })
+        ));
+        assert_eq!(
+            service
+                .admit_action_watch(
+                    WalletActionWatch::submitted_transaction("tx-b").expect("transaction"),
+                    20,
+                    4,
+                )
+                .expect("recovery admission is deterministic"),
+            None,
+            "an unresolved submission must reconcile before another watch is admitted"
+        );
+        assert!(
+            !service
+                .reconcile_action_recovery(
+                    WalletActionWatchObservation::submitted_transaction("tx-b")
+                        .expect("observation")
+                )
+                .expect("mismatched recovery")
+        );
+        assert!(
+            service
+                .reconcile_action_recovery(
+                    WalletActionWatchObservation::submitted_transaction("tx-a")
+                        .expect("observation")
+                )
+                .expect("exact recovery")
+        );
+        assert_eq!(
+            service.status().expect("settled status").action_recovery,
+            None
+        );
+        assert_eq!(
+            service
+                .action_watch()
+                .expect("watch projection")
+                .expect("projection")
+                .state,
+            WalletActionWatchState::Confirmed
+        );
+    }
+
+    #[test]
+    fn cold_start_restores_one_complete_checkpoint_and_reconciles_in_a_new_generation() {
+        let realm = identity("profile_one", "standalone");
+        let initial = Arc::new(FakeReconciler::new([FakeOutcome::Immediate(Ok(
+            reconciliation(&realm, 1, WalletRealmFacetState::Current),
+        ))]));
+        let service = WalletRealmLifecycleService::new(initial, missing_facets());
+        resolve(service.execute(initialized(
+            realm.clone(),
+            1,
+            WalletRealmFacetState::Missing,
+        )))
+        .expect("initial reconciliation");
+        service
+            .admit_action_watch(
+                WalletActionWatch::submitted_transaction("tx-a").expect("transaction"),
+                10,
+                1,
+            )
+            .expect("watch admission")
+            .expect("watch handle");
+        resolve(service.execute(WalletRealmLifecycleInput::Backgrounded { now_millis: 2 }))
+            .expect("background");
+        let committed = service.checkpoint().expect("atomic checkpoint");
+
+        // A candidate exists only in memory until the adapter atomically
+        // commits it. Simulated process death therefore restores the complete
+        // previous record, never a mixture of candidate and committed fields.
+        let mut uncommitted_candidate = committed.clone();
+        uncommitted_candidate.facets.dust = WalletRealmFacetState::Stale;
+        uncommitted_candidate.lifecycle_generation = 99;
+
+        let resumed = Arc::new(FakeReconciler::new([FakeOutcome::Immediate(Ok(
+            reconciliation(&realm, 2, WalletRealmFacetState::Current),
+        ))]));
+        let restored = WalletRealmLifecycleService::new(resumed, missing_facets());
+        restored
+            .restore(committed.clone())
+            .expect("restore checkpoint");
+        let status = restored.status().expect("restored status");
+        assert_eq!(status.identity, committed.identity);
+        assert_eq!(status.facets, committed.facets);
+        assert_eq!(status.action_recovery, committed.action_recovery);
+        assert_eq!(
+            status.lifecycle_generation,
+            committed.lifecycle_generation.saturating_add(1)
+        );
+        assert_ne!(status.facets, uncommitted_candidate.facets);
+        assert_ne!(
+            status.lifecycle_generation,
+            uncommitted_candidate.lifecycle_generation
+        );
+        assert_eq!(
+            restored
+                .action_watch()
+                .expect("watch projection")
+                .expect("recovery projection")
+                .state,
+            WalletActionWatchState::OutcomeUnknown
+        );
+
+        let result = resolve(restored.execute(WalletRealmLifecycleInput::Foreground {
+            now_millis: 1,
+            facets: status.facets,
+        }))
+        .expect("foreground reconciliation");
+        assert!(matches!(
+            result.decision,
+            WalletRealmLifecycleDecision::Request(_)
+        ));
+    }
+
+    #[test]
+    fn durable_snapshot_rejects_unknown_versions_and_never_restores_updating_work() {
+        let reconciler = Arc::new(FakeReconciler::new([]));
+        let service = WalletRealmLifecycleService::new(
+            reconciler,
+            WalletRealmReconciliationState {
+                account: WalletRealmFacetState::Updating,
+                dust: WalletRealmFacetState::Updating,
+                shielded: WalletRealmFacetState::Updating,
+            },
+        );
+        let snapshot = service.checkpoint().expect("checkpoint");
+        assert_eq!(
+            snapshot.facets,
+            WalletRealmReconciliationState {
+                account: WalletRealmFacetState::Stale,
+                dust: WalletRealmFacetState::Stale,
+                shielded: WalletRealmFacetState::Stale,
+            }
+        );
+
+        let mut unsupported = snapshot;
+        unsupported.version = 2;
+        assert_eq!(
+            service.restore(unsupported),
+            Err(WalletRealmLifecycleError::InvalidSnapshot)
         );
     }
 
