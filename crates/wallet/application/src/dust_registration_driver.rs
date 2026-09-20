@@ -365,6 +365,7 @@ impl WalletDustRegistrationDriver {
                 .map_err(|_| WalletDustRegistrationDriverError::Poisoned)?;
             match completion {
                 Ok(completion) => {
+                    let pause_after_completion = completion.requests_pause();
                     let event = completion.into_event();
                     if !completion_matches_operation(&expected_operation, &event) {
                         let _ = runtime.release(token);
@@ -381,6 +382,9 @@ impl WalletDustRegistrationDriver {
                     }
                     runtime_admission.disarm();
                     authorization_target = None;
+                    if pause_after_completion {
+                        return Ok(runtime.coordinator().projection().clone());
+                    }
                 }
                 Err(error) => {
                     let _ = runtime.release(token);
@@ -399,6 +403,18 @@ impl WalletDustRegistrationDriver {
         } else {
             Err(WalletDustRegistrationDriverError::DrainLimit)
         }
+    }
+}
+
+impl WalletDustRegistrationOperationCompletion {
+    fn requests_pause(&self) -> bool {
+        matches!(
+            &self.0,
+            WalletDustRegistrationSettlementEvent::RegistrationReconciled {
+                reconciliation: WalletDustRegistrationSettlementReconciliation::Pending,
+                ..
+            } | WalletDustRegistrationSettlementEvent::DustRefreshed { ready: false, .. }
+        )
     }
 }
 

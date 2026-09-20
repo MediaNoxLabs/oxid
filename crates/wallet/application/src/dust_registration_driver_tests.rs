@@ -198,21 +198,54 @@ fn busy_authorization_is_explicit_and_same_target_retry_executes_once() {
 }
 
 #[test]
-fn eighth_completion_returns_the_quiescent_projection() {
-    let executor = reconciliation_script(4, true);
+fn pending_reconciliation_pauses_until_a_later_observation() {
+    let executor = reconciliation_script(1, true);
     let driver = WalletDustRegistrationDriver::new(executor.clone());
     assert_eq!(
         resolve(driver.advance(eligibility(1, 1))).unwrap().state,
         State::AwaitingAuthorization
     );
 
-    assert_eq!(resolve(driver.authorize()).unwrap().state, State::Ready);
-    assert_eq!(executor.operation_count(), 9);
+    assert_eq!(
+        resolve(driver.authorize()).unwrap().state,
+        State::Confirming
+    );
+    assert_eq!(executor.operation_count(), 4);
+
+    assert_eq!(
+        resolve(driver.advance(eligibility(1, 2))).unwrap().state,
+        State::Ready
+    );
+    assert_eq!(executor.operation_count(), 6);
 }
 
 #[test]
-fn eighth_completion_reports_drain_limit_when_work_remains() {
-    let executor = reconciliation_script(6, false);
+fn incomplete_dust_refresh_pauses_until_a_later_observation() {
+    let executor = Arc::new(ScriptedExecutor::new([
+        Ok(completion::prepared(identity(1), draft(), 1)),
+        Ok(completion::authorized(identity(1), draft())),
+        Ok(completion::submitted(identity(1), draft(), transaction())),
+        Ok(completion::reconciled(
+            identity(1),
+            transaction(),
+            1,
+            Reconciliation::Included,
+        )),
+        Ok(completion::dust_refreshed(
+            identity(1),
+            transaction(),
+            1,
+            1,
+            false,
+        )),
+        Ok(completion::dust_refreshed(
+            identity(1),
+            transaction(),
+            2,
+            1,
+            true,
+        )),
+    ]));
     let driver = WalletDustRegistrationDriver::new(executor.clone());
     assert_eq!(
         resolve(driver.advance(eligibility(1, 1))).unwrap().state,
@@ -220,11 +253,16 @@ fn eighth_completion_reports_drain_limit_when_work_remains() {
     );
 
     assert_eq!(
-        resolve(driver.authorize()),
-        Err(WalletDustRegistrationDriverError::DrainLimit)
+        resolve(driver.authorize()).unwrap().state,
+        State::Reconciling
     );
-    assert_eq!(executor.operation_count(), 9);
-    assert_eq!(driver.projection().unwrap().state, State::Confirming);
+    assert_eq!(executor.operation_count(), 5);
+
+    assert_eq!(
+        resolve(driver.advance(eligibility(1, 2))).unwrap().state,
+        State::Ready
+    );
+    assert_eq!(executor.operation_count(), 6);
 }
 
 #[test]

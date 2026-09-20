@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use super::WalletDustSettlementCapability;
+
 use oxid_adapter_midnight::MidnightPublicCallContextSource;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_midnight::{MidnightContractCallFundingPort, MidnightContractCallSubmissionPort};
@@ -143,6 +145,7 @@ pub struct ApplicationServices {
         Arc<dyn CancelWalletDustRegistrationSubmissionUseCase>,
     pub(super) reconcile_wallet_dust_registration_submission:
         Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
+    pub(super) wallet_dust_settlement: Arc<WalletDustSettlementCapability>,
     pub(super) prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase>,
     pub(super) prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
     pub(super) authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
@@ -609,6 +612,11 @@ impl ApplicationServices {
         &self,
     ) -> Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase> {
         Arc::clone(&self.reconcile_wallet_dust_registration_submission)
+    }
+
+    #[must_use]
+    pub fn wallet_dust_settlement(&self) -> Arc<WalletDustSettlementCapability> {
+        Arc::clone(&self.wallet_dust_settlement)
     }
 
     #[must_use]

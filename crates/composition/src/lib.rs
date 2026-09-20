@@ -16,6 +16,7 @@ compile_error!("mobile-portal-tailnet is available only on Android");
 ))]
 mod portal;
 
+mod dust_settlement;
 mod environment;
 mod identity;
 mod passport_vault;
@@ -33,6 +34,7 @@ mod services;
 #[cfg(any(test, feature = "standalone-development"))]
 mod standalone_genesis;
 mod wiring;
+pub use dust_settlement::{WalletDustSettlementCapability, WalletDustSettlementError};
 pub use environment::*;
 pub use identity::*;
 pub use passport_vault::simulated_passport_vault_contract_address_hex;
