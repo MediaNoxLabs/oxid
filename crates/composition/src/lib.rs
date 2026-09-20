@@ -11,7 +11,6 @@ mod portal;
 
 mod dust_settlement;
 mod environment;
-mod guards;
 mod identity;
 mod passport_vault;
 mod profile_environment;
