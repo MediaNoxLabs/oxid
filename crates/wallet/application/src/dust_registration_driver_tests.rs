@@ -34,6 +34,10 @@ fn draft() -> WalletTransactionDraftId {
     WalletTransactionDraftId::parse("dustreg_test").unwrap()
 }
 
+fn other_draft() -> WalletTransactionDraftId {
+    WalletTransactionDraftId::parse("dustreg_other").unwrap()
+}
+
 fn transaction() -> ChainTransactionId {
     ChainTransactionId::parse("tx_test").unwrap()
 }
@@ -206,14 +210,20 @@ struct GatedExecutor {
 impl ExecuteWalletDustRegistrationOperation for GatedExecutor {
     fn execute(
         &self,
-        _operation: WalletDustRegistrationRuntimeOperation,
+        operation: WalletDustRegistrationRuntimeOperation,
     ) -> WalletDustRegistrationOperationFuture<'_> {
         *self.calls.lock().unwrap() += 1;
         let released = self.released.clone();
+        let WalletDustRegistrationRuntimeOperation::Prepare(
+            WalletDustRegistrationEffect::Prepare { identity },
+        ) = operation
+        else {
+            panic!("gated executor expects preparation");
+        };
         Box::pin(poll_fn(move |_| {
             if released.load(Ordering::SeqCst) {
                 Poll::Ready(Ok(WalletDustRegistrationOperationCompletion(
-                    completion::prepared(identity(1), draft(), 1),
+                    completion::prepared(identity.clone(), draft(), 1),
                 )))
             } else {
                 Poll::Pending
@@ -249,7 +259,7 @@ fn concurrent_drive_observes_busy_without_duplicate_io_or_held_mutex() {
 }
 
 #[test]
-fn supersession_does_not_start_a_second_worker_before_the_first_settles() {
+fn supersession_drains_replacement_only_after_the_first_worker_settles() {
     let released = Arc::new(AtomicBool::new(false));
     let executor = Arc::new(GatedExecutor {
         released: released.clone(),
@@ -266,11 +276,12 @@ fn supersession_does_not_start_a_second_worker_before_the_first_settles() {
     assert_eq!(*executor.calls.lock().unwrap(), 1);
 
     released.store(true, Ordering::SeqCst);
-    assert_eq!(
-        first.as_mut().poll(&mut context),
-        Poll::Ready(Err(WalletDustRegistrationDriverError::InvalidCompletion))
-    );
-    assert_eq!(*executor.calls.lock().unwrap(), 1);
+    let Poll::Ready(Ok(replacement)) = first.as_mut().poll(&mut context) else {
+        panic!("released worker must drain the retained replacement");
+    };
+    assert_eq!(replacement.state, State::AwaitingAuthorization);
+    assert_eq!(replacement.identity, Some(identity(2)));
+    assert_eq!(*executor.calls.lock().unwrap(), 2);
 }
 
 #[test]
@@ -302,6 +313,27 @@ fn authorization_is_bound_to_the_checked_identity_and_draft() {
         Err(WalletDustRegistrationDriverError::AuthorizationNotPending)
     );
     assert_eq!(executor.operation_count(), 2);
+}
+
+#[test]
+fn executor_completion_must_match_the_admitted_operation() {
+    let executor = Arc::new(ScriptedExecutor::new([
+        Ok(completion::prepared(identity(1), draft(), 1)),
+        Ok(completion::prepared(identity(1), other_draft(), 2)),
+    ]));
+    let driver = WalletDustRegistrationDriver::new(executor);
+    assert_eq!(
+        resolve(driver.advance(eligibility(1, 1))).unwrap().state,
+        State::AwaitingAuthorization
+    );
+
+    assert_eq!(
+        resolve(driver.authorize()),
+        Err(WalletDustRegistrationDriverError::InvalidCompletion)
+    );
+    let retained = driver.projection().unwrap();
+    assert_eq!(retained.state, State::AwaitingAuthorization);
+    assert_eq!(retained.registration.unwrap().draft_id, draft());
 }
 
 #[test]

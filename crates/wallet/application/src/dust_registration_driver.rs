@@ -347,6 +347,7 @@ impl WalletDustRegistrationDriver {
                 };
             };
 
+            let expected_operation = operation.clone();
             let mut runtime_admission =
                 WalletDustRegistrationRuntimeAdmissionGuard::new(&self.runtime, token);
             let completion = self.executor.execute(operation).await;
@@ -356,10 +357,19 @@ impl WalletDustRegistrationDriver {
                 .map_err(|_| WalletDustRegistrationDriverError::Poisoned)?;
             match completion {
                 Ok(completion) => {
-                    if !runtime.complete(token, completion.into_event()) {
+                    let event = completion.into_event();
+                    if !completion_matches_operation(&expected_operation, &event) {
                         let _ = runtime.release(token);
                         runtime_admission.disarm();
                         return Err(WalletDustRegistrationDriverError::InvalidCompletion);
+                    }
+                    if !runtime.complete(token, event) {
+                        let still_owned = runtime.release(token);
+                        runtime_admission.disarm();
+                        if authorization_target.is_some() || still_owned {
+                            return Err(WalletDustRegistrationDriverError::InvalidCompletion);
+                        }
+                        continue;
                     }
                     runtime_admission.disarm();
                     authorization_target = None;
@@ -428,6 +438,76 @@ fn is_executor_completion(event: &WalletDustRegistrationSettlementEvent) -> bool
             | WalletDustRegistrationSettlementEvent::DustRefreshed { .. }
             | WalletDustRegistrationSettlementEvent::DroppedRegistrationAbandoned { .. }
     )
+}
+
+fn completion_matches_operation(
+    operation: &WalletDustRegistrationRuntimeOperation,
+    event: &WalletDustRegistrationSettlementEvent,
+) -> bool {
+    match (operation, event) {
+        (
+            WalletDustRegistrationRuntimeOperation::Prepare(
+                WalletDustRegistrationEffect::Prepare { identity: expected },
+            ),
+            WalletDustRegistrationSettlementEvent::AuthorizationRequested { identity, .. },
+        ) => identity == expected,
+        (
+            WalletDustRegistrationRuntimeOperation::RequestProtectedAuthorization(
+                WalletDustRegistrationEffect::RequestProtectedAuthorization {
+                    identity: expected_identity,
+                    draft_id: expected_draft,
+                },
+            ),
+            WalletDustRegistrationSettlementEvent::AuthorizationSucceeded { identity, draft_id }
+            | WalletDustRegistrationSettlementEvent::AuthorizationRejected { identity, draft_id },
+        ) => identity == expected_identity && draft_id == expected_draft,
+        (
+            WalletDustRegistrationRuntimeOperation::Submit(WalletDustRegistrationEffect::Submit {
+                identity: expected_identity,
+                draft_id: expected_draft,
+            }),
+            WalletDustRegistrationSettlementEvent::SubmissionAccepted {
+                identity, draft_id, ..
+            },
+        ) => identity == expected_identity && draft_id == expected_draft,
+        (
+            WalletDustRegistrationRuntimeOperation::ObserveTransaction(
+                WalletDustRegistrationEffect::ObserveTransaction {
+                    identity: expected_identity,
+                    transaction_id: expected_transaction,
+                },
+            ),
+            WalletDustRegistrationSettlementEvent::FinalityObserved {
+                identity,
+                transaction_id,
+                ..
+            }
+            | WalletDustRegistrationSettlementEvent::RegistrationReconciled {
+                identity,
+                transaction_id,
+                ..
+            }
+            | WalletDustRegistrationSettlementEvent::DroppedRegistrationAbandoned {
+                identity,
+                transaction_id,
+                ..
+            },
+        ) => identity == expected_identity && transaction_id == expected_transaction,
+        (
+            WalletDustRegistrationRuntimeOperation::RefreshDust(
+                WalletDustRegistrationEffect::RefreshDust {
+                    identity: expected_identity,
+                    transaction_id: expected_transaction,
+                },
+            ),
+            WalletDustRegistrationSettlementEvent::DustRefreshed {
+                identity,
+                transaction_id,
+                ..
+            },
+        ) => identity == expected_identity && transaction_id == expected_transaction,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
