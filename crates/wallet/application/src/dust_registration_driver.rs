@@ -20,7 +20,10 @@ use std::{
     fmt,
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use oxid_wallet_domain::{ChainTransactionId, WalletTransactionDraftId};
@@ -223,6 +226,7 @@ impl Error for WalletDustRegistrationDriverError {}
 pub struct WalletDustRegistrationDriver {
     runtime: Mutex<WalletDustRegistrationRuntime>,
     executor: Arc<dyn ExecuteWalletDustRegistrationOperation>,
+    driving: AtomicBool,
 }
 
 impl WalletDustRegistrationDriver {
@@ -239,6 +243,7 @@ impl WalletDustRegistrationDriver {
         Self {
             runtime: Mutex::new(runtime),
             executor,
+            driving: AtomicBool::new(false),
         }
     }
 
@@ -294,6 +299,15 @@ impl WalletDustRegistrationDriver {
         &self,
         allow_authorization: bool,
     ) -> Result<WalletDustRegistrationSettlementProjection, WalletDustRegistrationDriverError> {
+        if self
+            .driving
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return self.projection();
+        }
+        let _driver_admission = WalletDustRegistrationDriverAdmission(&self.driving);
+
         for _ in 0..MAX_DRAINED_OPERATIONS {
             let admission = {
                 let mut runtime = self
@@ -346,6 +360,14 @@ impl WalletDustRegistrationDriver {
         }
 
         Err(WalletDustRegistrationDriverError::DrainLimit)
+    }
+}
+
+struct WalletDustRegistrationDriverAdmission<'a>(&'a AtomicBool);
+
+impl Drop for WalletDustRegistrationDriverAdmission<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
     }
 }
 

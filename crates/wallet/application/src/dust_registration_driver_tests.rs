@@ -249,6 +249,31 @@ fn concurrent_drive_observes_busy_without_duplicate_io_or_held_mutex() {
 }
 
 #[test]
+fn supersession_does_not_start_a_second_worker_before_the_first_settles() {
+    let released = Arc::new(AtomicBool::new(false));
+    let executor = Arc::new(GatedExecutor {
+        released: released.clone(),
+        calls: Mutex::new(0),
+    });
+    let driver = WalletDustRegistrationDriver::new(executor.clone());
+    let mut first = pin!(driver.advance(eligibility(1, 1)));
+    let mut context = Context::from_waker(Waker::noop());
+    assert!(matches!(first.as_mut().poll(&mut context), Poll::Pending));
+
+    let replacement = resolve(driver.advance(eligibility(2, 1))).unwrap();
+    assert_eq!(replacement.state, State::ActionRequired);
+    assert_eq!(replacement.identity, Some(identity(2)));
+    assert_eq!(*executor.calls.lock().unwrap(), 1);
+
+    released.store(true, Ordering::SeqCst);
+    assert_eq!(
+        first.as_mut().poll(&mut context),
+        Poll::Ready(Err(WalletDustRegistrationDriverError::InvalidCompletion))
+    );
+    assert_eq!(*executor.calls.lock().unwrap(), 1);
+}
+
+#[test]
 fn lifecycle_recovery_and_supersession_are_policy_owned() {
     let executor = Arc::new(ScriptedExecutor::new([Ok(completion::prepared(
         identity(1),
