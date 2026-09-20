@@ -52,7 +52,7 @@ use super::identity::{
 use super::passport_vault::{
     PassportVaultRepositoryComposition, headless_passport_vault_repository,
 };
-use super::services::ApplicationServices;
+use super::{WalletDustSettlementCapability, services::ApplicationServices};
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_platform_system::{NativePublicTextExporter, NativeScreenPrivacy};
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
@@ -961,7 +961,7 @@ where
     let cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase> =
         selected_realm_sync.clone();
     let get_wallet_operation_timeline: Arc<dyn GetWalletOperationTimelineUseCase> =
-        selected_realm_sync;
+        selected_realm_sync.clone();
     let get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase> = dust.clone();
     let start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase> = dust.clone();
     let cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase> = dust;
@@ -984,7 +984,16 @@ where
     > = dust_registrations.clone();
     let reconcile_wallet_dust_registration_submission: Arc<
         dyn ReconcileWalletDustRegistrationSubmissionUseCase,
-    > = dust_registrations;
+    > = dust_registrations.clone();
+    let wallet_dust_settlement = Arc::new(WalletDustSettlementCapability::new(
+        selected_realm_sync.clone(),
+        selected_realm_sync,
+        dust_registrations.clone(),
+        dust_registrations.clone(),
+        dust_registrations.clone(),
+        dust_registrations.clone(),
+        dust_registrations,
+    ));
     let prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase> =
         transactions.clone();
     let prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase> = transactions.clone();
@@ -1138,6 +1147,7 @@ where
         get_wallet_dust_registration_status,
         cancel_wallet_dust_registration_submission,
         reconcile_wallet_dust_registration_submission,
+        wallet_dust_settlement,
         prepare_shielded_wallet_transfer,
         prepare_wallet_transfer,
         authorize_wallet_transfer,

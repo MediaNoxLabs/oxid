@@ -98,7 +98,6 @@ midnight-onchain-runtime.workspace = true
 midnight-serialize.workspace = true
 midnight-storage.workspace = true
 midnight-zswap.workspace = true
-oxid-wallet-domain.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 zeroize.workspace = true

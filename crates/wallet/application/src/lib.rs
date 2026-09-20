@@ -6,7 +6,10 @@ use std::{error::Error, fmt, fmt::Write as _, sync::Arc};
 
 use oxid_foundation::OpaqueIdError;
 use oxid_platform_ports::{ClockPort, PlatformError, RandomPort};
-use oxid_wallet_domain::{ProfileName, ProfileNameError, WalletProfile, WalletProfileId};
+pub use oxid_wallet_domain::{
+    ChainNetworkId, ChainTransactionId, WalletProfileId, WalletTransactionDraftId,
+};
+use oxid_wallet_domain::{ProfileName, ProfileNameError, WalletProfile};
 
 mod action_watch;
 mod backup;

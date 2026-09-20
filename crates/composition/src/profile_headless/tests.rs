@@ -12,11 +12,11 @@ fn ordinary_standalone_composition_keeps_os_random_profile_custody() {
 
     use oxid_adapter_storage_memory::InMemoryWalletProfileRepository;
     use oxid_platform_ports::{PlatformError, RandomPort};
+    use oxid_wallet_application::WalletProfileId;
     use oxid_wallet_application::{
         CreateWalletProfileCommand, WalletDerivedSecretUsePort, WalletHdPath,
         WalletHdPathComponent, WalletProfileSecurityCommand,
     };
-    use oxid_wallet_domain::WalletProfileId;
 
     struct FixedRandom(Mutex<u8>);
 

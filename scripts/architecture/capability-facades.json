@@ -263,6 +263,13 @@
       },
       "capabilityOwners": [
         {
+          "name": "dust-settlement",
+          "modulePathPrefixes": [
+            "crates/composition/src/dust_settlement",
+            "crates/composition/src/dust_settlement_tests"
+          ]
+        },
+        {
           "name": "environment-policy",
           "modulePathPrefixes": [
             "crates/composition/src/environment"
