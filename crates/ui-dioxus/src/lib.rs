@@ -216,9 +216,8 @@ use wallet_realm_lifecycle::{WalletRealmLifecycleWake, WalletRealmProjectionWake
 const BASE_STYLES: &str = include_str!("../assets/styles.css");
 const DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL: &str = "Protected DUST registration";
 const DUST_REGISTRATION_AUTHORIZE_ACCESSIBLE_LABEL: &str = "Authorize DUST registration";
-const DUST_REGISTRATION_SUBMIT_ACCESSIBLE_LABEL: &str = "Register on Midnight";
-const DUST_REGISTRATION_RECONCILE_ACCESSIBLE_LABEL: &str =
-    "Reconcile DUST registration with Midnight";
+const DUST_REGISTRATION_STATUS_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const MAX_DUST_REGISTRATION_STATUS_POLLS: usize = 40;
 const CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS: &str =
     "Credential issuance terminal error: protocol unavailable";
 const CREDENTIAL_ISSUANCE_PROTOCOL_ERROR_STATUS: &str =
@@ -2451,8 +2450,8 @@ enum DustRegistrationPanelState {
     Preparing,
     Prepared(Box<WalletDustRegistrationPreviewView>),
     Authorizing(Box<WalletDustRegistrationPreviewView>),
-    Authorized(Box<WalletDustRegistrationPreviewView>),
     Submitting(Box<WalletDustRegistrationPreviewView>),
+    Refreshing(Box<WalletDustRegistrationPreviewView>),
     Cancelling,
     Pending {
         preview: Box<WalletDustRegistrationPreviewView>,
@@ -6152,7 +6151,7 @@ fn DustRegistrationPanel(
                     p { class: "card-eyebrow", "Review registration" }
                     h2 { "Authorize DUST registration?" }
                     DustRegistrationReview { preview: (*preview).clone() }
-                    p { class: "consent-copy", "Device protection authorizes only this exact registration. Proving and Midnight submission remain a separate action." }
+                    p { class: "consent-copy", "Device protection authorizes only this exact registration. After approval, the wallet continues proving, submission, confirmation, and DUST refresh automatically." }
                     div { class: "transfer-actions",
                         button {
                             class: "secondary-action",
@@ -6184,13 +6183,23 @@ fn DustRegistrationPanel(
                                         true,
                                     ),
                                 };
+                                let continuation_services = authorize_services.clone();
+                                let continuation_profile = authorize_profile.clone();
                                 spawn(async move {
                                     match run_ui_blocking(move || service.execute(command)).await {
-                                        Ok(Ok(authorized)) => state.set(
-                                            DustRegistrationPanelState::Authorized(Box::new(
-                                                authorized,
-                                            )),
-                                        ),
+                                        Ok(Ok(authorized)) => {
+                                            let preview = Box::new(authorized);
+                                            state.set(DustRegistrationPanelState::Submitting(
+                                                preview.clone(),
+                                            ));
+                                            continue_dust_registration_after_authorization(
+                                                continuation_services,
+                                                continuation_profile,
+                                                preview,
+                                                state,
+                                            )
+                                            .await;
+                                        }
                                         Ok(Err(error)) => state.set(
                                             DustRegistrationPanelState::Failed {
                                                 message: error.to_string(),
@@ -6227,148 +6236,37 @@ fn DustRegistrationPanel(
                 }
             }
         },
-        DustRegistrationPanelState::Authorized(preview) => {
-            let submit_services = services.clone();
-            let submit_profile = profile_id.clone();
-            let submit_preview = preview.clone();
-            let retained_preview = preview.clone();
-            rsx! {
-                article {
-                    id: "dust-registration",
-                    class: "surface-card account-sync-card confirm-sheet",
-                    aria_label: "Authorized protected DUST registration",
-                    p { class: "card-eyebrow", "Device confirmed" }
-                    h2 { "Register on Midnight?" }
-                    DustRegistrationReview { preview: (*preview).clone() }
-                    p { class: "consent-copy", "This separate action proves the registration, saves public recovery state, and submits it to Midnight." }
-                    button {
-                        class: "primary-action",
-                        r#type: "button",
-                        aria_label: DUST_REGISTRATION_SUBMIT_ACCESSIBLE_LABEL,
-                        onclick: move |_| {
-                            state.set(DustRegistrationPanelState::Submitting(
-                                submit_preview.clone(),
-                            ));
-                            let service = submit_services.submit_wallet_dust_registration();
-                            let recovery_services = submit_services.clone();
-                            let profile_id = submit_profile.clone();
-                            let recovery_profile = profile_id.clone();
-                            let preview = retained_preview.clone();
-                            let recovery_preview = preview.clone();
-                            let command = SubmitWalletDustRegistrationCommand {
-                                profile_id,
-                                draft_id: preview.draft_id.clone(),
-                                confirmation: submit_dust_registration_confirmation(
-                                    &preview,
-                                    true,
-                                ),
-                            };
-                            spawn(async move {
-                                match run_ui_future(async move { service.execute(command).await })
-                                    .await
-                                {
-                                    Ok(Ok(submitted)) => state.set(
-                                        DustRegistrationPanelState::Registered(Box::new(
-                                            submitted.registration,
-                                        )),
-                                    ),
-                                    Ok(Err(error)) => {
-                                        let message = error.to_string();
-                                        let fallback = recovery_preview.clone();
-                                        match run_ui_blocking(move || {
-                                            recover_dust_registration_state(
-                                                &recovery_services,
-                                                &recovery_profile,
-                                                &fallback,
-                                                Some(message),
-                                            )
-                                        })
-                                        .await
-                                        {
-                                            Ok(recovered) => state.set(recovered),
-                                            Err(error) => state.set(
-                                                DustRegistrationPanelState::Failed {
-                                                    message: error.to_string(),
-                                                    retained: Some(recovery_preview),
-                                                },
-                                            ),
-                                        }
-                                    }
-                                    Err(error) => state.set(
-                                        DustRegistrationPanelState::Failed {
-                                            message: error.to_string(),
-                                            retained: Some(recovery_preview),
-                                        },
-                                    ),
-                                }
-                            });
-                        },
-                        "Register on Midnight"
-                    }
+        DustRegistrationPanelState::Submitting(_preview) => rsx! {
+            article {
+                id: "dust-registration",
+                class: "surface-card account-sync-card submitting-card",
+                role: "status",
+                aria_live: "polite",
+                aria_busy: "true",
+                span { class: "loading-mark", aria_hidden: "true" }
+                div {
+                    p { class: "card-eyebrow", "Continuing automatically" }
+                    h2 { "Registering protected DUST key" }
+                    p { "Authorization succeeded. The wallet is proving locally, saving public recovery state, and submitting the exact registration." }
                 }
             }
-        }
-        DustRegistrationPanelState::Submitting(preview) => {
-            let cancel_services = services.clone();
-            let cancel_profile = profile_id.clone();
-            let cancel_command_preview = preview.clone();
-            rsx! {
-                article {
-                    id: "dust-registration",
-                    class: "surface-card account-sync-card submitting-card",
-                    role: "status",
-                    aria_live: "polite",
-                    aria_busy: "true",
-                    span { class: "loading-mark", aria_hidden: "true" }
-                    div {
-                        p { class: "card-eyebrow", "Registration pending" }
-                        h2 { "Registering protected DUST key" }
-                        p { "Proving locally and saving public recovery state. Cancellation is safe only before broadcast." }
-                        button {
-                            class: "secondary-action",
-                            r#type: "button",
-                            aria_label: "Cancel DUST registration before broadcast",
-                            onclick: move |_| {
-                                state.set(DustRegistrationPanelState::Cancelling);
-                                let services = cancel_services.clone();
-                                let profile_id = cancel_profile.clone();
-                                let preview = cancel_command_preview.clone();
-                                spawn(async move {
-                                    let service = services
-                                        .cancel_wallet_dust_registration_submission();
-                                    let command = CancelWalletDustRegistrationSubmissionCommand {
-                                        profile_id: profile_id.clone(),
-                                        draft_id: preview.draft_id.clone(),
-                                    };
-                                    match run_ui_blocking(move || service.execute(command)).await {
-                                        Ok(Ok(status)) => poll_dust_registration_status(
-                                            services,
-                                            profile_id,
-                                            preview,
-                                            state,
-                                            status,
-                                        ),
-                                        Ok(Err(error)) => state.set(
-                                            DustRegistrationPanelState::Failed {
-                                                message: error.to_string(),
-                                                retained: Some(preview),
-                                            },
-                                        ),
-                                        Err(error) => state.set(
-                                            DustRegistrationPanelState::Failed {
-                                                message: error.to_string(),
-                                                retained: Some(preview),
-                                            },
-                                        ),
-                                    }
-                                });
-                            },
-                            "Cancel before broadcast"
-                        }
-                    }
+        },
+        DustRegistrationPanelState::Refreshing(preview) => rsx! {
+            article {
+                id: "dust-registration",
+                class: "surface-card account-sync-card submitting-card",
+                role: "status",
+                aria_live: "polite",
+                aria_busy: "true",
+                span { class: "loading-mark", aria_hidden: "true" }
+                div {
+                    p { class: "card-eyebrow", "Registration finalized" }
+                    h2 { "Refreshing spendable DUST" }
+                    p { "Midnight included the protected key registration. The wallet is refreshing the selected realm automatically." }
+                    p { class: "consent-copy", "Registered {format_dust_registration_asset(&preview.registered_night)}." }
                 }
             }
-        }
+        },
         DustRegistrationPanelState::Cancelling => rsx! {
             article {
                 id: "dust-registration",
@@ -6394,9 +6292,6 @@ fn DustRegistrationPanel(
             let refresh_profile = profile_id.clone();
             let refresh_preview = preview.clone();
             let retained_status = status.clone();
-            let reconcile_services = services.clone();
-            let reconcile_profile = profile_id.clone();
-            let reconcile_preview = preview.clone();
             rsx! {
                 article {
                     id: "dust-registration",
@@ -6405,8 +6300,14 @@ fn DustRegistrationPanel(
                     aria_live: "polite",
                     aria_busy: if reconciling { "true" } else { "false" },
                     p { class: "card-eyebrow", "Registration pending" }
-                    h2 { "Midnight outcome requires confirmation" }
-                    p { "The wallet will not submit a replacement while this registration may have reached Midnight." }
+                    h2 { if reconciling { "Confirming with Midnight" } else { "Midnight outcome needs attention" } }
+                    p {
+                        if reconciling {
+                            "The wallet is reconciling the exact submitted transaction automatically."
+                        } else {
+                            "The last consistent checkpoint is retained. The wallet will not submit a replacement while this registration may have reached Midnight."
+                        }
+                    }
                     dl { class: "preview-list",
                         div { dt { "State" } dd { "{dust_registration_status_label(&status.state)}" } }
                         div { dt { "Registration" } dd { "{dust_registration_observation_label(&status.registration_observation)}" } }
@@ -6466,67 +6367,6 @@ fn DustRegistrationPanel(
                                 "Cancel before broadcast"
                             }
                         }
-                        if status.reconciliation_allowed {
-                            button {
-                                class: "primary-action",
-                                r#type: "button",
-                                disabled: reconciling,
-                                aria_label: DUST_REGISTRATION_RECONCILE_ACCESSIBLE_LABEL,
-                                onclick: move |_| {
-                                    state.set(DustRegistrationPanelState::Pending {
-                                        preview: reconcile_preview.clone(),
-                                        status: status.clone(),
-                                        reconciling: true,
-                                        operation_error: None,
-                                    });
-                                    let service = reconcile_services
-                                        .reconcile_wallet_dust_registration_submission();
-                                    let profile_id = reconcile_profile.clone();
-                                    let preview = reconcile_preview.clone();
-                                    let draft_id = preview.draft_id.clone();
-                                    let retained_status = status.clone();
-                                    spawn(async move {
-                                        match run_ui_future(async move {
-                                            service
-                                                .execute(
-                                                    ReconcileWalletDustRegistrationSubmissionCommand {
-                                                        profile_id,
-                                                        draft_id,
-                                                    },
-                                                )
-                                                .await
-                                        })
-                                        .await
-                                        {
-                                            Ok(Ok(status)) => state.set(
-                                                dust_registration_state_from_status(
-                                                    preview,
-                                                    &status,
-                                                    None,
-                                                ),
-                                            ),
-                                            Ok(Err(error)) => state.set(
-                                                DustRegistrationPanelState::Pending {
-                                                    preview,
-                                                    status: retained_status,
-                                                    reconciling: false,
-                                                    operation_error: Some(error.to_string()),
-                                                },
-                                            ),
-                                            Err(error) => state.set(
-                                                DustRegistrationPanelState::Pending {
-                                                    preview,
-                                                    status: retained_status,
-                                                    reconciling: false,
-                                                    operation_error: Some(error.to_string()),
-                                                },
-                                            ),
-                                        }
-                                    });
-                                },
-                                if reconciling { "Reconciling…" } else { "Reconcile with Midnight" }
-                            }
-                        }
                     }
                 }
             }
@@ -6540,7 +6380,7 @@ fn DustRegistrationPanel(
                 span { class: "transfer-status-mark", aria_hidden: "true", "✓" }
                 p { class: "card-eyebrow", "Registration finalized" }
                 h2 { "DUST key registered" }
-                p { "Waiting for spendable DUST — registration is included, but the protected DUST balance requires DUST synchronization before it can be used." }
+                p { "Registration is included and the selected realm refresh has been requested. Spendable DUST will appear when the refreshed ledger state is ready." }
                 dl { class: "preview-list",
                     div { dt { "Registered NIGHT" } dd { "{format_dust_registration_asset(&preview.registered_night)}" } }
                     div { dt { "DUST readiness" } dd { "Requires DUST synchronization" } }
@@ -6555,15 +6395,27 @@ fn DustRegistrationPanel(
                 aria_live: "polite",
                 p { class: "card-eyebrow", "Registration cancelled" }
                 h2 { "Nothing was broadcast" }
-                p { "The authorized registration remains available for an explicit retry." }
+                p { "The authorized registration remains available for one bounded retry." }
                 button {
                     class: "secondary-action",
                     r#type: "button",
-                    aria_label: "Return to authorized DUST registration",
-                    onclick: move |_| state.set(
-                        DustRegistrationPanelState::Authorized(preview.clone()),
-                    ),
-                    "Review registration again"
+                    aria_label: "Retry authorized DUST registration",
+                    onclick: move |_| {
+                        let preview = preview.clone();
+                        state.set(DustRegistrationPanelState::Submitting(preview.clone()));
+                        let services = services.clone();
+                        let profile_id = profile_id.clone();
+                        spawn(async move {
+                            continue_dust_registration_after_authorization(
+                                services,
+                                profile_id,
+                                preview,
+                                state,
+                            )
+                            .await;
+                        });
+                    },
+                    "Retry registration"
                 }
             }
         },
@@ -6581,11 +6433,31 @@ fn DustRegistrationPanel(
                         button {
                             class: "secondary-action",
                             r#type: "button",
-                            aria_label: "Return to DUST registration review",
-                            onclick: move |_| state.set(
-                                dust_registration_retry_state(preview.clone()),
-                            ),
-                            "Return to registration review"
+                            aria_label: if preview.submission_ready { "Retry authorized DUST registration" } else { "Return to DUST registration review" },
+                            onclick: move |_| {
+                                if preview.submission_ready {
+                                    let retry_preview = preview.clone();
+                                    state.set(DustRegistrationPanelState::Submitting(
+                                        retry_preview.clone(),
+                                    ));
+                                    let services = services.clone();
+                                    let profile_id = profile_id.clone();
+                                    spawn(async move {
+                                        continue_dust_registration_after_authorization(
+                                            services,
+                                            profile_id,
+                                            retry_preview,
+                                            state,
+                                        )
+                                        .await;
+                                    });
+                                } else {
+                                    state.set(DustRegistrationPanelState::Prepared(
+                                        preview.clone(),
+                                    ));
+                                }
+                            },
+                            if preview.submission_ready { "Retry registration" } else { "Return to registration review" }
                         }
                     } else {
                         button {
@@ -6631,6 +6503,174 @@ fn dust_registration_review(
     }
 }
 
+async fn continue_dust_registration_after_authorization(
+    services: WalletUiServices,
+    profile_id: String,
+    preview: Box<WalletDustRegistrationPreviewView>,
+    mut state: Signal<DustRegistrationPanelState>,
+) {
+    let service = services.submit_wallet_dust_registration();
+    let command = SubmitWalletDustRegistrationCommand {
+        profile_id: profile_id.clone(),
+        draft_id: preview.draft_id.clone(),
+        confirmation: submit_dust_registration_confirmation(&preview, true),
+    };
+    match run_ui_future(async move { service.execute(command).await }).await {
+        Ok(Ok(submitted)) => {
+            let preview = Box::new(submitted.registration);
+            refresh_dust_after_registration(&services, &profile_id, &preview, state).await;
+        }
+        Ok(Err(error)) => {
+            recover_dust_registration_automatically(
+                services,
+                profile_id,
+                preview,
+                state,
+                error.to_string(),
+            )
+            .await;
+        }
+        Err(error) => state.set(DustRegistrationPanelState::Failed {
+            message: error.to_string(),
+            retained: Some(preview),
+        }),
+    }
+}
+
+async fn recover_dust_registration_automatically(
+    services: WalletUiServices,
+    profile_id: String,
+    fallback: Box<WalletDustRegistrationPreviewView>,
+    mut state: Signal<DustRegistrationPanelState>,
+    submission_error: String,
+) {
+    let get_service = services.get_wallet_dust_registration();
+    let get_command = GetWalletDustRegistrationCommand {
+        profile_id: profile_id.clone(),
+        draft_id: fallback.draft_id.clone(),
+    };
+    let preview = match run_ui_blocking(move || get_service.execute(get_command)).await {
+        Ok(Ok(preview)) => Box::new(preview),
+        _ => fallback,
+    };
+    let status_service = services.get_wallet_dust_registration_status();
+    let status_command = GetWalletDustRegistrationStatusCommand {
+        profile_id: profile_id.clone(),
+        draft_id: preview.draft_id.clone(),
+    };
+    let status = match run_ui_blocking(move || status_service.execute(status_command)).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(error)) => {
+            state.set(DustRegistrationPanelState::Failed {
+                message: format!("{submission_error}; recovery status unavailable: {error}"),
+                retained: Some(preview),
+            });
+            return;
+        }
+        Err(error) => {
+            state.set(DustRegistrationPanelState::Failed {
+                message: format!("{submission_error}; recovery status unavailable: {error}"),
+                retained: Some(preview),
+            });
+            return;
+        }
+    };
+
+    if matches!(status.state.as_str(), "running" | "cancellation_requested") {
+        poll_dust_registration_status(services, profile_id, preview, state, status);
+        return;
+    }
+    if status.reconciliation_allowed {
+        let retained_status = DustRegistrationPublicStatus::from(&status);
+        state.set(DustRegistrationPanelState::Pending {
+            preview: preview.clone(),
+            status: retained_status.clone(),
+            reconciling: true,
+            operation_error: None,
+        });
+        let service = services.reconcile_wallet_dust_registration_submission();
+        let command = ReconcileWalletDustRegistrationSubmissionCommand {
+            profile_id: profile_id.clone(),
+            draft_id: preview.draft_id.clone(),
+        };
+        match run_ui_future(async move { service.execute(command).await }).await {
+            Ok(Ok(status)) => {
+                finish_dust_registration_status(
+                    &services,
+                    &profile_id,
+                    preview,
+                    &status,
+                    state,
+                    None,
+                )
+                .await;
+            }
+            Ok(Err(error)) => state.set(DustRegistrationPanelState::Pending {
+                preview,
+                status: retained_status,
+                reconciling: false,
+                operation_error: Some(error.to_string()),
+            }),
+            Err(error) => state.set(DustRegistrationPanelState::Pending {
+                preview,
+                status: retained_status,
+                reconciling: false,
+                operation_error: Some(error.to_string()),
+            }),
+        }
+        return;
+    }
+
+    finish_dust_registration_status(
+        &services,
+        &profile_id,
+        preview,
+        &status,
+        state,
+        Some(submission_error),
+    )
+    .await;
+}
+
+async fn finish_dust_registration_status(
+    services: &WalletUiServices,
+    profile_id: &str,
+    preview: Box<WalletDustRegistrationPreviewView>,
+    status: &WalletDustRegistrationSubmissionStatusView,
+    state: Signal<DustRegistrationPanelState>,
+    operation_error: Option<String>,
+) {
+    if status.state == "included" {
+        refresh_dust_after_registration(services, profile_id, &preview, state).await;
+    } else {
+        let mut state = state;
+        state.set(dust_registration_state_from_status(
+            preview,
+            status,
+            operation_error,
+        ));
+    }
+}
+
+async fn refresh_dust_after_registration(
+    services: &WalletUiServices,
+    profile_id: &str,
+    preview: &WalletDustRegistrationPreviewView,
+    mut state: Signal<DustRegistrationPanelState>,
+) {
+    state.set(DustRegistrationPanelState::Refreshing(Box::new(
+        preview.clone(),
+    )));
+    let service = services.sync_selected_wallet_realm();
+    let command = SelectedWalletRealmSyncCommand {
+        profile_id: profile_id.to_owned(),
+    };
+    let _ = run_ui_future(async move { service.execute(command).await }).await;
+    state.set(DustRegistrationPanelState::Registered(Box::new(
+        preview.clone(),
+    )));
+}
+
 fn poll_dust_registration_status(
     services: WalletUiServices,
     profile_id: String,
@@ -6640,12 +6680,20 @@ fn poll_dust_registration_status(
 ) {
     spawn(async move {
         let mut status = initial;
-        loop {
+        for _ in 0..MAX_DUST_REGISTRATION_STATUS_POLLS {
             if !matches!(status.state.as_str(), "running" | "cancellation_requested") {
-                state.set(dust_registration_state_from_status(preview, &status, None));
-                break;
+                finish_dust_registration_status(
+                    &services,
+                    &profile_id,
+                    preview,
+                    &status,
+                    state,
+                    None,
+                )
+                .await;
+                return;
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            tokio::time::sleep(DUST_REGISTRATION_STATUS_POLL_INTERVAL).await;
             let service = services.get_wallet_dust_registration_status();
             let command = GetWalletDustRegistrationStatusCommand {
                 profile_id: profile_id.clone(),
@@ -6660,7 +6708,7 @@ fn poll_dust_registration_status(
                         reconciling: false,
                         operation_error: Some(error.to_string()),
                     });
-                    break;
+                    return;
                 }
                 Err(error) => {
                     state.set(DustRegistrationPanelState::Pending {
@@ -6669,40 +6717,20 @@ fn poll_dust_registration_status(
                         reconciling: false,
                         operation_error: Some(error.to_string()),
                     });
-                    break;
+                    return;
                 }
             }
         }
+        state.set(DustRegistrationPanelState::Pending {
+            preview,
+            status: DustRegistrationPublicStatus::from(&status),
+            reconciling: false,
+            operation_error: Some(
+                "Automatic confirmation is still pending. The last consistent checkpoint is retained."
+                    .to_owned(),
+            ),
+        });
     });
-}
-
-fn recover_dust_registration_state(
-    services: &WalletUiServices,
-    profile_id: &str,
-    fallback: &WalletDustRegistrationPreviewView,
-    operation_error: Option<String>,
-) -> DustRegistrationPanelState {
-    let preview = services
-        .get_wallet_dust_registration()
-        .execute(GetWalletDustRegistrationCommand {
-            profile_id: profile_id.to_owned(),
-            draft_id: fallback.draft_id.clone(),
-        })
-        .unwrap_or_else(|_| fallback.clone());
-    match services.get_wallet_dust_registration_status().execute(
-        GetWalletDustRegistrationStatusCommand {
-            profile_id: profile_id.to_owned(),
-            draft_id: preview.draft_id.clone(),
-        },
-    ) {
-        Ok(status) => {
-            dust_registration_state_from_status(Box::new(preview), &status, operation_error)
-        }
-        Err(error) => DustRegistrationPanelState::Failed {
-            message: operation_error.unwrap_or_else(|| error.to_string()),
-            retained: Some(Box::new(preview)),
-        },
-    }
 }
 
 fn dust_registration_state_from_status(
@@ -6724,16 +6752,6 @@ fn dust_registration_state_from_status(
             reconciling: false,
             operation_error,
         },
-    }
-}
-
-fn dust_registration_retry_state(
-    preview: Box<WalletDustRegistrationPreviewView>,
-) -> DustRegistrationPanelState {
-    if preview.submission_ready {
-        DustRegistrationPanelState::Authorized(preview)
-    } else {
-        DustRegistrationPanelState::Prepared(preview)
     }
 }
 
@@ -6814,9 +6832,9 @@ fn submit_dust_registration_confirmation(
     confirmed: bool,
 ) -> SensitiveOperationConfirmation {
     SensitiveOperationConfirmation {
-        title: "Register on Midnight".to_owned(),
+        title: "Complete DUST registration".to_owned(),
         summary: format!(
-            "Prove and submit the authorized DUST registration for {} on {}.",
+            "Continue the authorized DUST registration for {} on {} through submission, confirmation, and selected-realm refresh.",
             format_dust_registration_asset(&preview.registered_night),
             ui::midnight_network(&preview.network_id),
         ),
@@ -12632,29 +12650,26 @@ mod tests {
             DUST_REGISTRATION_AUTHORIZE_ACCESSIBLE_LABEL,
             "Authorize DUST registration"
         );
-        assert_eq!(
-            DUST_REGISTRATION_SUBMIT_ACCESSIBLE_LABEL,
-            "Register on Midnight"
-        );
-        assert_eq!(
-            DUST_REGISTRATION_RECONCILE_ACCESSIBLE_LABEL,
-            "Reconcile DUST registration with Midnight"
-        );
     }
 
     #[test]
-    fn dust_registration_never_starts_or_confirms_implicitly() {
+    fn dust_registration_requires_one_explicit_authorization() {
         assert!(matches!(
             initial_dust_registration_panel_state(),
             DustRegistrationPanelState::Idle
         ));
         let preview = dust_registration_preview("prepared");
         let declined = authorize_dust_registration_confirmation(&preview, false);
-        let submit_declined = submit_dust_registration_confirmation(&preview, false);
         assert!(!declined.confirmed);
-        assert!(!submit_declined.confirmed);
         assert_eq!(declined.title, "Authorize DUST registration");
-        assert_eq!(submit_declined.title, "Register on Midnight");
+        let continuation = submit_dust_registration_confirmation(&preview, true);
+        assert!(continuation.confirmed);
+        assert_eq!(continuation.title, "Complete DUST registration");
+        assert_eq!(
+            DUST_REGISTRATION_STATUS_POLL_INTERVAL,
+            Duration::from_millis(250)
+        );
+        assert_eq!(MAX_DUST_REGISTRATION_STATUS_POLLS, 40);
     }
 
     #[test]
@@ -12720,10 +12735,6 @@ mod tests {
             std::any::type_name::<DustRegistrationPanelState>(),
             std::any::type_name::<TransferPanelState>()
         );
-        assert!(matches!(
-            dust_registration_retry_state(Box::new(dust_registration_preview("authorized"))),
-            DustRegistrationPanelState::Authorized(_)
-        ));
         assert!(matches!(
             dust_registration_state_from_status(
                 Box::new(dust_registration_preview("submitted")),
