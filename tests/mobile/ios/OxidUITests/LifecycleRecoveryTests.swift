@@ -17,7 +17,7 @@ final class LifecycleRecoveryTests: XCTestCase {
 
     @MainActor
     private func assertAutomaticReconciliation(_ application: XCUIApplication) -> Int {
-        XCTAssertTrue(application.staticTexts["Synced"].waitForExistence(timeout: 30))
+        XCTAssertTrue(application.staticTexts["Up to date"].waitForExistence(timeout: 30))
         XCTAssertTrue(application.staticTexts.matching(
             NSPredicate(format: "label CONTAINS[c] %@", "Simulated source")
         ).firstMatch.exists)
@@ -46,11 +46,25 @@ final class LifecycleRecoveryTests: XCTestCase {
         ).firstMatch
         XCTAssertTrue(privacy.waitForExistence(timeout: 5))
         privacy.tap()
-        XCTAssertTrue(application.staticTexts["5 NIGHT"].waitForExistence(timeout: 10))
-        XCTAssertTrue(application.staticTexts["12 DUST"].waitForExistence(timeout: 10))
-        XCTAssertTrue(application.staticTexts.matching(
+        XCTAssertTrue(application.staticTexts["5"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["NIGHT"].exists)
+        XCTAssertTrue(application.staticTexts["12"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["DUST"].exists)
+        let protectedNotes = application.staticTexts.matching(
             NSPredicate(format: "label CONTAINS[c] %@", "1 protected notes")
-        ).firstMatch.waitForExistence(timeout: 10))
+        ).firstMatch
+        if !protectedNotes.exists {
+            let synchronizationDetails = application.descendants(matching: .any)[
+                "Synchronization details"
+            ]
+            XCTAssertTrue(synchronizationDetails.waitForExistence(timeout: 5))
+            if !synchronizationDetails.isHittable {
+                application.swipeUp()
+            }
+            XCTAssertTrue(synchronizationDetails.isHittable)
+            synchronizationDetails.tap()
+        }
+        XCTAssertTrue(protectedNotes.waitForExistence(timeout: 10))
     }
 
     @MainActor

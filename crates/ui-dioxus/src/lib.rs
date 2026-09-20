@@ -87,9 +87,9 @@ use oxid_credential_application::{
     PreviewCredentialDisclosureUseCase, ReceiveCredentialUseCase, RevealCredentialClaimCommand,
     RevealCredentialClaimUseCase, ReverifyCredentialUseCase,
 };
-#[cfg(any(target_os = "ios", target_os = "android"))]
-use oxid_diagnostics_application::DiagnosticEventSinkPort;
 use oxid_diagnostics_application::{ClearDiagnosticsUseCase, GetDiagnosticSnapshotUseCase};
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use oxid_diagnostics_application::{DiagnosticCode, DiagnosticEventSinkPort, DiagnosticSeverity};
 use oxid_identity_application::{
     CreateDidCommand, CreateDidUseCase, DeactivateDidCommand, DeactivateDidUseCase,
     DidKeyAlgorithm, DidOperationConfirmation, DidOperationError, DidRecordQuery, DidRecordView,
@@ -203,9 +203,9 @@ use selected_realm_sync::{
     begin_account_sync_card_observation, dust_status_pill_class, finish_account_sync_card_action,
     non_native_shielded_balances, poll_account_sync, reload_account_sync_card,
     selected_realm_chain_tip, selected_realm_dust_balance, selected_realm_dust_note,
-    selected_realm_dust_state, selected_realm_is_syncing, selected_realm_provenance,
-    selected_realm_shielded_balance, selected_realm_shielded_note, selected_realm_shielded_state,
-    selected_realm_sync_progress, selected_realm_sync_state,
+    selected_realm_dust_state, selected_realm_is_syncing, selected_realm_lifecycle_presentation,
+    selected_realm_provenance, selected_realm_shielded_balance, selected_realm_shielded_note,
+    selected_realm_shielded_state, selected_realm_sync_progress, selected_realm_sync_state,
 };
 #[cfg(test)]
 use selected_realm_sync::{
@@ -3537,6 +3537,10 @@ fn WalletApp() -> Element {
                     identity_link_wake.set(identity_link_wake().wrapping_add(1));
                 }
                 dioxus::mobile::tao::event::Event::Suspended => {
+                    diagnostic_events_for_lifecycle.record(
+                        DiagnosticCode::WalletLifecycleSuspended,
+                        DiagnosticSeverity::Info,
+                    );
                     // Protect the OS snapshot immediately. Dioxus signal writes
                     // wait until Resumed, when the WebView is active again.
                     protect_suspended_snapshot(
@@ -3547,6 +3551,10 @@ fn WalletApp() -> Element {
                     wallet_realm_lifecycle::background(&realm_lifecycle_for_app_events);
                 }
                 dioxus::mobile::tao::event::Event::Resumed => {
+                    diagnostic_events_for_lifecycle.record(
+                        DiagnosticCode::WalletLifecycleResumed,
+                        DiagnosticSeverity::Info,
+                    );
                     identity_link_wake.set(identity_link_wake().wrapping_add(1));
                     realm_lifecycle_wake.set(realm_lifecycle_wake().resumed());
                     secret_mode.rearm();
@@ -5872,6 +5880,7 @@ fn AccountSyncCard(
             let realm = &projection.view;
             let syncing = selected_realm_is_syncing(realm);
             let overall_state = selected_realm_sync_state(realm);
+            let lifecycle = selected_realm_lifecycle_presentation(overall_state);
             let provenance = selected_realm_provenance(realm);
             let chain_tip = selected_realm_chain_tip(realm);
             let progress = selected_realm_sync_progress(realm);
@@ -5895,60 +5904,65 @@ fn AccountSyncCard(
                 article { class: "surface-card account-sync-card",
                     div { class: "wallet-sync-row__heading",
                         div {
-                            p { class: "card-eyebrow", "Account sync" }
-                            h2 { "Midnight account" }
+                            p { class: "card-eyebrow", "Selected realm" }
+                            h2 { "Wallet status" }
                         }
-                        span { class: "{dust_status_pill_class(overall_state)}", "{ui::sync_state(overall_state)}" }
+                        span { class: "{dust_status_pill_class(overall_state)}", "{lifecycle.label}" }
                     }
-                    p { class: "account-sync-card__provenance", "{provenance}" }
-                    p { class: "account-sync-card__provenance", "{chain_tip}" }
-                    p { "Refresh the public account, DUST balance, and shielded notes together. Each source retains its own authoritative status." }
-                    div { class: "account-sync-card__rows",
-                        div { class: "account-sync-card__row",
-                            div {
-                                strong {
-                                    class: "privacy-value",
-                                    aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
-                                    "{dust_balance}"
+                    p { class: "account-sync-card__summary", "{lifecycle.note}" }
+                    if cfg!(feature = "ui-profile-dev") {
+                    details { class: "account-sync-card__details",
+                        summary { "Synchronization details" }
+                        p { class: "account-sync-card__provenance", "{provenance}" }
+                        p { class: "account-sync-card__provenance", "{chain_tip}" }
+                        div { class: "account-sync-card__rows",
+                            div { class: "account-sync-card__row",
+                                div {
+                                    strong {
+                                        class: "privacy-value",
+                                        aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                                        "{dust_balance}"
+                                    }
+                                    small { "{dust_note}" }
                                 }
-                                small { "{dust_note}" }
+                                span { class: "{dust_status_pill_class(dust_state)}", "{ui::sync_state(dust_state)}" }
                             }
-                            span { class: "{dust_status_pill_class(dust_state)}", "{ui::sync_state(dust_state)}" }
-                        }
-                        div { class: "account-sync-card__row",
-                            div {
-                                strong {
-                                    class: "privacy-value",
-                                    aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
-                                    "{shielded_night}"
+                            div { class: "account-sync-card__row",
+                                div {
+                                    strong {
+                                        class: "privacy-value",
+                                        aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                                        "{shielded_night}"
+                                    }
+                                    small {
+                                        aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                                        "Shielded NIGHT · {owned_notes} protected notes"
+                                    }
+                                    small { "{shielded_note}" }
                                 }
-                                small {
-                                    aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
-                                    "Shielded NIGHT · {owned_notes} protected notes"
-                                }
-                                small { "{shielded_note}" }
+                                span { class: "{dust_status_pill_class(shielded_state)}", "{ui::sync_state(shielded_state)}" }
                             }
-                            span { class: "{dust_status_pill_class(shielded_state)}", "{ui::sync_state(shielded_state)}" }
                         }
-                    }
-                    if let WalletRealmFamilyView::Ready(shielded) = &realm.shielded {
-                        if non_native_shielded_balances(shielded).next().is_some() {
-                            div { class: "activity-list", aria_label: "Shielded token balances",
-                                for balance in non_native_shielded_balances(shielded) {
-                                    div { class: "activity-row", key: "{balance.token_type_hex}",
-                                        span { class: "activity-row__mark", aria_hidden: "true", "◈" }
-                                        div {
-                                            strong {
-                                                class: "privacy-value",
-                                                aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
-                                                "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}"
+                        if let WalletRealmFamilyView::Ready(shielded) = &realm.shielded {
+                            if non_native_shielded_balances(shielded).next().is_some() {
+                                div { class: "activity-list", aria_label: "Shielded token balances",
+                                    for balance in non_native_shielded_balances(shielded) {
+                                        div { class: "activity-row", key: "{balance.token_type_hex}",
+                                            span { class: "activity-row__mark", aria_hidden: "true", "◈" }
+                                            div {
+                                                strong {
+                                                    class: "privacy-value",
+                                                    aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                                                    "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}"
+                                                }
+                                                small { title: "{balance.token_type_hex}", "Protected token" }
                                             }
-                                            small { title: "{balance.token_type_hex}", "Protected token" }
                                         }
                                     }
                                 }
                             }
                         }
+                    }
                     }
                     if let Some(percent) = progress {
                         div { class: "wallet-sync-progress", aria_label: "Account synchronization progress",
@@ -5958,10 +5972,11 @@ fn AccountSyncCard(
                     if let Some(message) = operation_error {
                         p { class: "wallet-sync-error", role: "alert", "{message}" }
                     }
+                    if lifecycle.retry && !syncing && can_sync && !account_unavailable {
                     button {
                         class: "secondary-action wallet-sync-action",
                         r#type: "button",
-                        disabled: action_busy || (!syncing && (!can_sync || account_unavailable)),
+                        disabled: action_busy,
                         onclick: move |_| {
                             action_state.set(AccountSyncCardState::Ready {
                                 realm: retained_realm.clone(),
@@ -5975,24 +5990,16 @@ fn AccountSyncCard(
                                 let command = SelectedWalletRealmSyncCommand {
                                     profile_id: profile_id.clone(),
                                 };
-                                let result = if syncing {
-                                    let service = services.cancel_selected_wallet_realm_sync();
-                                    run_ui_blocking(move || {
-                                        service.execute(command).map_err(|error| error.to_string())
-                                    })
-                                    .await
-                                } else {
-                                    run_ui_future(wallet_realm_lifecycle::explicit_retry(
+                                let result = run_ui_future(
+                                    wallet_realm_lifecycle::explicit_retry(
                                         services.clone(),
                                         command,
-                                    ))
-                                    .await
-                                };
-                                if !syncing {
-                                    realm_lifecycle_wake.set(
-                                        realm_lifecycle_wake().realm_changed(),
-                                    );
-                                }
+                                    ),
+                                )
+                                .await;
+                                realm_lifecycle_wake.set(
+                                    realm_lifecycle_wake().realm_changed(),
+                                );
                                 match result {
                                     Ok(Ok(updated)) => {
                                         if !account_sync_card_accepts_projection(
@@ -6035,17 +6042,12 @@ fn AccountSyncCard(
                                 }
                             });
                         },
-                        if syncing {
-                            if action_busy { "Cancelling sync…" } else { "Cancel sync" }
-                        } else if !can_sync {
-                            "Unlock wallet to sync"
-                        } else if account_unavailable {
-                            "Sync unavailable"
-                        } else if action_busy {
-                            "Starting sync…"
+                        if action_busy {
+                            "Retrying…"
                         } else {
-                            "Sync now"
+                            "Retry"
                         }
+                    }
                     }
                 }
             }
