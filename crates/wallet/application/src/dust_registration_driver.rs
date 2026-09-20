@@ -394,12 +394,21 @@ impl WalletDustRegistrationDriver {
             .runtime
             .lock()
             .map_err(|_| WalletDustRegistrationDriverError::Poisoned)?;
-        if runtime.coordinator().active_effect().is_none() {
+        if drain_is_quiescent(runtime.coordinator().active_effect()) {
             Ok(runtime.coordinator().projection().clone())
         } else {
             Err(WalletDustRegistrationDriverError::DrainLimit)
         }
     }
+}
+
+fn drain_is_quiescent(effect: Option<&WalletDustRegistrationEffect>) -> bool {
+    effect.is_none_or(|effect| {
+        matches!(
+            effect,
+            WalletDustRegistrationEffect::RequestProtectedAuthorization { .. }
+        )
+    })
 }
 
 struct WalletDustRegistrationDriverAdmission<'a>(&'a AtomicBool);

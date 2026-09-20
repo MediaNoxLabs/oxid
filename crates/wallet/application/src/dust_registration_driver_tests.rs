@@ -228,6 +228,20 @@ fn eighth_completion_reports_drain_limit_when_work_remains() {
 }
 
 #[test]
+fn protected_authorization_boundary_is_quiescent_for_automatic_drain() {
+    let effect = WalletDustRegistrationEffect::RequestProtectedAuthorization {
+        identity: identity(1),
+        draft_id: draft(),
+    };
+    assert!(drain_is_quiescent(Some(&effect)));
+    assert!(!drain_is_quiescent(Some(
+        &WalletDustRegistrationEffect::Prepare {
+            identity: identity(1),
+        }
+    )));
+}
+
+#[test]
 fn rejected_authorization_never_submits() {
     let executor = Arc::new(ScriptedExecutor::new([
         Ok(completion::prepared(identity(1), draft(), 1)),
