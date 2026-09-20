@@ -2,13 +2,6 @@
 
 #![forbid(unsafe_code)]
 
-#[cfg(feature = "mobile-portal")]
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
-compile_error!("mobile-portal is available only on iOS and Android");
-
-#[cfg(all(feature = "mobile-portal-tailnet", not(target_os = "android")))]
-compile_error!("mobile-portal-tailnet is available only on Android");
-
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(any(
     not(any(target_os = "ios", target_os = "android")),
@@ -18,6 +11,7 @@ mod portal;
 
 mod dust_settlement;
 mod environment;
+mod guards;
 mod identity;
 mod passport_vault;
 mod profile_environment;
