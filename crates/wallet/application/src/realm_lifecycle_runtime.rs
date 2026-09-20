@@ -1041,6 +1041,7 @@ mod tests {
                     profile: identity.profile.clone(),
                     realm: identity.realm.clone(),
                 },
+                generation: 1,
                 revision,
                 fresh: state == WalletRealmFacetState::Current,
                 consistent: true,

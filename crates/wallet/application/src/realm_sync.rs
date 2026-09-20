@@ -112,6 +112,11 @@ impl SelectedWalletRealmObservation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectedWalletRealmProjection {
     pub identity: SelectedWalletRealmIdentity,
+    /// Monotonic authority epoch for this exact profile/realm selection.
+    ///
+    /// A later observation revision refines one selection; a later generation
+    /// invalidates work admitted by an earlier selection of the same realm.
+    pub generation: u64,
     pub revision: u64,
     pub fresh: bool,
     pub consistent: bool,
@@ -131,7 +136,9 @@ impl SelectedWalletRealmProjection {
     /// Rejects an observation belonging to another selected realm or an older revision.
     #[must_use]
     pub fn supersedes(&self, previous: &Self) -> bool {
-        self.identity == previous.identity && self.revision >= previous.revision
+        self.identity == previous.identity
+            && (self.generation > previous.generation
+                || self.generation == previous.generation && self.revision >= previous.revision)
     }
 }
 
@@ -1032,6 +1039,7 @@ impl<W> SelectedWalletRealmSyncService<W> {
         let refreshing = published.reconciling || selected_realm_is_refreshing(&view);
         SelectedWalletRealmProjection {
             identity: SelectedWalletRealmIdentity { profile, realm },
+            generation: published.authority_generation,
             revision: published.revision,
             fresh,
             consistent,
@@ -3395,6 +3403,7 @@ mod tests {
         let restored = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
             .expect("restored projection");
         assert_eq!(first.identity, restored.identity);
+        assert!(restored.generation > first.generation);
         assert!(restored.revision > first.revision);
         assert!(restored.supersedes(&first));
         assert!(!first.supersedes(&restored));
