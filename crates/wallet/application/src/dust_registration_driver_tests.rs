@@ -128,6 +128,39 @@ fn successful_script() -> Arc<ScriptedExecutor> {
     ]))
 }
 
+fn reconciliation_script(pending_observations: u64, include: bool) -> Arc<ScriptedExecutor> {
+    let mut completions = Vec::from([
+        Ok(completion::prepared(identity(1), draft(), 1)),
+        Ok(completion::authorized(identity(1), draft())),
+        Ok(completion::submitted(identity(1), draft(), transaction())),
+    ]);
+    completions.extend((1..=pending_observations).map(|revision| {
+        Ok(completion::reconciled(
+            identity(1),
+            transaction(),
+            revision,
+            Reconciliation::Pending,
+        ))
+    }));
+    if include {
+        let included_revision = pending_observations + 1;
+        completions.push(Ok(completion::reconciled(
+            identity(1),
+            transaction(),
+            included_revision,
+            Reconciliation::Included,
+        )));
+        completions.push(Ok(completion::dust_refreshed(
+            identity(1),
+            transaction(),
+            1,
+            included_revision,
+            true,
+        )));
+    }
+    Arc::new(ScriptedExecutor::new(completions))
+}
+
 #[test]
 fn preparation_stops_at_authorization_then_one_authorization_reaches_ready() {
     let executor = successful_script();
@@ -141,6 +174,57 @@ fn preparation_stops_at_authorization_then_one_authorization_reaches_ready() {
     assert_eq!(ready.state, State::Ready);
     assert_eq!(executor.operation_count(), 5);
     assert_eq!(driver.projection().unwrap(), ready);
+}
+
+#[test]
+fn busy_authorization_is_explicit_and_same_target_retry_executes_once() {
+    let executor = successful_script();
+    let driver = WalletDustRegistrationDriver::new(executor.clone());
+    assert_eq!(
+        resolve(driver.advance(eligibility(1, 1))).unwrap().state,
+        State::AwaitingAuthorization
+    );
+
+    driver.driving.store(true, Ordering::Release);
+    assert_eq!(
+        resolve(driver.authorize()),
+        Err(WalletDustRegistrationDriverError::Busy)
+    );
+    assert_eq!(executor.operation_count(), 1);
+
+    driver.driving.store(false, Ordering::Release);
+    assert_eq!(resolve(driver.authorize()).unwrap().state, State::Ready);
+    assert_eq!(executor.operation_count(), 5);
+}
+
+#[test]
+fn eighth_completion_returns_the_quiescent_projection() {
+    let executor = reconciliation_script(4, true);
+    let driver = WalletDustRegistrationDriver::new(executor.clone());
+    assert_eq!(
+        resolve(driver.advance(eligibility(1, 1))).unwrap().state,
+        State::AwaitingAuthorization
+    );
+
+    assert_eq!(resolve(driver.authorize()).unwrap().state, State::Ready);
+    assert_eq!(executor.operation_count(), 9);
+}
+
+#[test]
+fn eighth_completion_reports_drain_limit_when_work_remains() {
+    let executor = reconciliation_script(6, false);
+    let driver = WalletDustRegistrationDriver::new(executor.clone());
+    assert_eq!(
+        resolve(driver.advance(eligibility(1, 1))).unwrap().state,
+        State::AwaitingAuthorization
+    );
+
+    assert_eq!(
+        resolve(driver.authorize()),
+        Err(WalletDustRegistrationDriverError::DrainLimit)
+    );
+    assert_eq!(executor.operation_count(), 9);
+    assert_eq!(driver.projection().unwrap().state, State::Confirming);
 }
 
 #[test]
