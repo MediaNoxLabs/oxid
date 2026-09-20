@@ -194,6 +194,7 @@ pub trait ExecuteWalletDustRegistrationOperation: Send + Sync {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WalletDustRegistrationDriverError {
     Poisoned,
+    Busy,
     AuthorizationNotPending,
     InvalidObservation,
     InvalidCompletion,
@@ -205,6 +206,9 @@ impl fmt::Display for WalletDustRegistrationDriverError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Poisoned => formatter.write_str("DUST registration state is unavailable"),
+            Self::Busy => {
+                formatter.write_str("DUST registration driver is busy; retry the command")
+            }
             Self::AuthorizationNotPending => {
                 formatter.write_str("DUST registration authorization is not pending")
             }
@@ -305,7 +309,11 @@ impl WalletDustRegistrationDriver {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            return self.projection();
+            return if authorization_target.is_some() {
+                Err(WalletDustRegistrationDriverError::Busy)
+            } else {
+                self.projection()
+            };
         }
         let _driver_admission = WalletDustRegistrationDriverAdmission(&self.driving);
 
@@ -382,8 +390,25 @@ impl WalletDustRegistrationDriver {
             }
         }
 
-        Err(WalletDustRegistrationDriverError::DrainLimit)
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| WalletDustRegistrationDriverError::Poisoned)?;
+        if drain_is_quiescent(runtime.coordinator().active_effect()) {
+            Ok(runtime.coordinator().projection().clone())
+        } else {
+            Err(WalletDustRegistrationDriverError::DrainLimit)
+        }
     }
+}
+
+fn drain_is_quiescent(effect: Option<&WalletDustRegistrationEffect>) -> bool {
+    effect.is_none_or(|effect| {
+        matches!(
+            effect,
+            WalletDustRegistrationEffect::RequestProtectedAuthorization { .. }
+        )
+    })
 }
 
 struct WalletDustRegistrationDriverAdmission<'a>(&'a AtomicBool);
