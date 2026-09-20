@@ -80,7 +80,6 @@ oxid-passport-vault-application.workspace = true
 oxid-platform-ports.workspace = true
 oxid-protocol-application.workspace = true
 oxid-wallet-application.workspace = true
-oxid-wallet-domain.workspace = true
 oxid-capabilities-application.workspace = true
 tokio.workspace = true
 

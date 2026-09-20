@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationCommand, AuthorizeWalletDustRegistrationUseCase,
-    ExecuteWalletDustRegistrationOperation, GetSelectedWalletRealmSyncUseCase,
+    ChainTransactionId, ExecuteWalletDustRegistrationOperation, GetSelectedWalletRealmSyncUseCase,
     GetWalletDustRegistrationStatusCommand, GetWalletDustRegistrationStatusUseCase,
     PrepareWalletDustRegistrationCommand, PrepareWalletDustRegistrationUseCase,
     ReconcileWalletDustRegistrationSubmissionCommand,
@@ -24,8 +24,8 @@ use oxid_wallet_application::{
     WalletDustRegistrationRuntimeOperation, WalletDustRegistrationSettlementEvent,
     WalletDustRegistrationSettlementIdentity, WalletDustRegistrationSettlementProjection,
     WalletDustRegistrationSettlementReconciliation, WalletRealmFamilyView,
+    WalletTransactionDraftId,
 };
-use oxid_wallet_domain::{ChainTransactionId, WalletTransactionDraftId};
 
 /// Composition-owned capability shared by headless and graphical adapters.
 pub struct WalletDustSettlementCapability {

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use futures::executor::block_on;
 use oxid_wallet_application::{
-    AuthorizeWalletDustRegistrationCommand, GetSelectedWalletRealmSyncUseCase,
+    AuthorizeWalletDustRegistrationCommand, ChainNetworkId, GetSelectedWalletRealmSyncUseCase,
     GetWalletDustRegistrationStatusCommand, PrepareWalletDustRegistrationCommand,
     ReconcileWalletDustRegistrationSubmissionCommand, SelectedWalletRealmIdentity,
     SelectedWalletRealmObservation, SelectedWalletRealmProjectionFuture,
@@ -13,10 +13,9 @@ use oxid_wallet_application::{
     WalletDustRegistrationError, WalletDustRegistrationPortError,
     WalletDustRegistrationPreviewView, WalletDustRegistrationStatusViewFuture,
     WalletDustRegistrationSubmissionStatusView, WalletDustRegistrationSubmissionView,
-    WalletDustRegistrationSubmissionViewFuture, WalletDustSyncView, WalletRealmFamilyView,
-    WalletShieldedSyncView, WalletSyncStatusView,
+    WalletDustRegistrationSubmissionViewFuture, WalletDustSyncView, WalletProfileId,
+    WalletRealmFamilyView, WalletShieldedSyncView, WalletSyncStatusView,
 };
-use oxid_wallet_domain::{ChainNetworkId, WalletProfileId};
 
 use super::*;
 
