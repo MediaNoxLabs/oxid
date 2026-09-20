@@ -269,7 +269,7 @@ impl WalletDustRegistrationDriver {
             .lock()
             .map_err(|_| WalletDustRegistrationDriverError::Poisoned)?
             .observe(observation);
-        self.drain(false).await
+        self.drain(None).await
     }
 
     /// Executes the exact pending protected authorization and, only after it
@@ -277,27 +277,28 @@ impl WalletDustRegistrationDriver {
     pub async fn authorize(
         &self,
     ) -> Result<WalletDustRegistrationSettlementProjection, WalletDustRegistrationDriverError> {
-        let authorization_pending = self
+        let authorization_target = self
             .runtime
             .lock()
             .map_err(|_| WalletDustRegistrationDriverError::Poisoned)?
             .coordinator()
             .active_effect()
-            .is_some_and(|effect| {
+            .cloned()
+            .filter(|effect| {
                 matches!(
                     effect,
                     WalletDustRegistrationEffect::RequestProtectedAuthorization { .. }
                 )
             });
-        if !authorization_pending {
+        let Some(authorization_target) = authorization_target else {
             return Err(WalletDustRegistrationDriverError::AuthorizationNotPending);
-        }
-        self.drain(true).await
+        };
+        self.drain(Some(authorization_target)).await
     }
 
     async fn drain(
         &self,
-        allow_authorization: bool,
+        authorization_target: Option<WalletDustRegistrationEffect>,
     ) -> Result<WalletDustRegistrationSettlementProjection, WalletDustRegistrationDriverError> {
         if self
             .driving
@@ -308,6 +309,7 @@ impl WalletDustRegistrationDriver {
         }
         let _driver_admission = WalletDustRegistrationDriverAdmission(&self.driving);
 
+        let mut authorization_target = authorization_target;
         for _ in 0..MAX_DRAINED_OPERATIONS {
             let admission = {
                 let mut runtime = self
@@ -317,13 +319,18 @@ impl WalletDustRegistrationDriver {
                 let Some(effect) = runtime.coordinator().active_effect().cloned() else {
                     return Ok(runtime.coordinator().projection().clone());
                 };
-                if !allow_authorization
-                    && matches!(
+                match &authorization_target {
+                    Some(target) if &effect != target => {
+                        return Err(WalletDustRegistrationDriverError::AuthorizationNotPending);
+                    }
+                    None if matches!(
                         effect,
                         WalletDustRegistrationEffect::RequestProtectedAuthorization { .. }
-                    )
-                {
-                    return Ok(runtime.coordinator().projection().clone());
+                    ) =>
+                    {
+                        return Ok(runtime.coordinator().projection().clone());
+                    }
+                    _ => {}
                 }
                 runtime.admit_current(&effect)
             };
@@ -340,6 +347,8 @@ impl WalletDustRegistrationDriver {
                 };
             };
 
+            let mut runtime_admission =
+                WalletDustRegistrationRuntimeAdmissionGuard::new(&self.runtime, token);
             let completion = self.executor.execute(operation).await;
             let mut runtime = self
                 .runtime
@@ -349,11 +358,15 @@ impl WalletDustRegistrationDriver {
                 Ok(completion) => {
                     if !runtime.complete(token, completion.into_event()) {
                         let _ = runtime.release(token);
+                        runtime_admission.disarm();
                         return Err(WalletDustRegistrationDriverError::InvalidCompletion);
                     }
+                    runtime_admission.disarm();
+                    authorization_target = None;
                 }
                 Err(error) => {
                     let _ = runtime.release(token);
+                    runtime_admission.disarm();
                     return Err(WalletDustRegistrationDriverError::Executor(error));
                 }
             }
@@ -368,6 +381,38 @@ struct WalletDustRegistrationDriverAdmission<'a>(&'a AtomicBool);
 impl Drop for WalletDustRegistrationDriverAdmission<'_> {
     fn drop(&mut self) {
         self.0.store(false, Ordering::Release);
+    }
+}
+
+struct WalletDustRegistrationRuntimeAdmissionGuard<'a> {
+    runtime: &'a Mutex<WalletDustRegistrationRuntime>,
+    token: Option<crate::WalletDustRegistrationRuntimeAdmissionToken>,
+}
+
+impl<'a> WalletDustRegistrationRuntimeAdmissionGuard<'a> {
+    fn new(
+        runtime: &'a Mutex<WalletDustRegistrationRuntime>,
+        token: crate::WalletDustRegistrationRuntimeAdmissionToken,
+    ) -> Self {
+        Self {
+            runtime,
+            token: Some(token),
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.token = None;
+    }
+}
+
+impl Drop for WalletDustRegistrationRuntimeAdmissionGuard<'_> {
+    fn drop(&mut self) {
+        let Some(token) = self.token.take() else {
+            return;
+        };
+        if let Ok(mut runtime) = self.runtime.lock() {
+            let _ = runtime.release(token);
+        }
     }
 }
 

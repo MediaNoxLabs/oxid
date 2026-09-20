@@ -230,7 +230,7 @@ fn concurrent_drive_observes_busy_without_duplicate_io_or_held_mutex() {
         calls: Mutex::new(0),
     });
     let driver = WalletDustRegistrationDriver::new(executor.clone());
-    let mut first = pin!(driver.advance(eligibility(1, 1)));
+    let mut first = Box::pin(driver.advance(eligibility(1, 1)));
     let mut context = Context::from_waker(Waker::noop());
     assert!(matches!(first.as_mut().poll(&mut context), Poll::Pending));
 
@@ -271,6 +271,58 @@ fn supersession_does_not_start_a_second_worker_before_the_first_settles() {
         Poll::Ready(Err(WalletDustRegistrationDriverError::InvalidCompletion))
     );
     assert_eq!(*executor.calls.lock().unwrap(), 1);
+}
+
+#[test]
+fn authorization_is_bound_to_the_checked_identity_and_draft() {
+    let executor = Arc::new(ScriptedExecutor::new([
+        Ok(completion::prepared(identity(1), draft(), 1)),
+        Ok(completion::prepared(identity(2), draft(), 1)),
+    ]));
+    let driver = WalletDustRegistrationDriver::new(executor.clone());
+    assert_eq!(
+        resolve(driver.advance(eligibility(1, 1))).unwrap().state,
+        State::AwaitingAuthorization
+    );
+    let checked_target = driver
+        .runtime
+        .lock()
+        .unwrap()
+        .coordinator()
+        .active_effect()
+        .cloned()
+        .unwrap();
+
+    assert_eq!(
+        resolve(driver.advance(eligibility(2, 1))).unwrap().state,
+        State::AwaitingAuthorization
+    );
+    assert_eq!(
+        resolve(driver.drain(Some(checked_target))),
+        Err(WalletDustRegistrationDriverError::AuthorizationNotPending)
+    );
+    assert_eq!(executor.operation_count(), 2);
+}
+
+#[test]
+fn dropping_an_executor_future_releases_runtime_and_driver_admission() {
+    let released = Arc::new(AtomicBool::new(false));
+    let executor = Arc::new(GatedExecutor {
+        released: released.clone(),
+        calls: Mutex::new(0),
+    });
+    let driver = WalletDustRegistrationDriver::new(executor.clone());
+    let mut first = Box::pin(driver.advance(eligibility(1, 1)));
+    let mut context = Context::from_waker(Waker::noop());
+    assert!(matches!(first.as_mut().poll(&mut context), Poll::Pending));
+    drop(first);
+
+    released.store(true, Ordering::SeqCst);
+    assert_eq!(
+        resolve(driver.drain(None)).unwrap().state,
+        State::AwaitingAuthorization
+    );
+    assert_eq!(*executor.calls.lock().unwrap(), 2);
 }
 
 #[test]
