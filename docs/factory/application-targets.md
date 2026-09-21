@@ -23,6 +23,20 @@ commands accept the same environment variables as the existing launchers, such
 as `OXID_ANDROID_DEVICE`, `OXID_IOS_DEVICE`, `OXID_UI_PROFILE`,
 `OXID_MOBILE_CUSTODY`, and `OXID_STANDALONE_NETWORK_PROFILE`.
 
+The ordinary desktop pair keeps Cargo's unoptimized `dev` profile for short
+edit, compile, and test loops. Use the dedicated live pair for a standalone
+Midnight demo that performs cryptographic replay:
+
+```bash
+just desktop-live-build
+just desktop-live-run
+```
+
+These commands select `desktop,standalone-development,standalone-local` and the
+optimized, symbol-retaining `desktop-live` profile. They do not enable release
+LTO, stripping, or production-only behavior. Agents must use this pair rather
+than the ordinary desktop helpers when qualifying live standalone replay.
+
 The opt-in native proof benchmark has its own development-only desktop pair:
 
 ```bash

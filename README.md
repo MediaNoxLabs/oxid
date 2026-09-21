@@ -126,11 +126,17 @@ just desktop-build
 just desktop-run
 ```
 
-These live-demo helpers use the `desktop-live` Cargo profile: optimized replay
-and Midnight cryptography with bounded debug symbols, without release LTO or
-symbol stripping. Agents running a live standalone Midnight scenario must use
-these helpers (or pass `--profile desktop-live`); ordinary compile and test
-loops remain on Cargo's default `dev` profile.
+These ordinary development helpers keep Cargo's default `dev` profile. For a
+live standalone Midnight scenario, use the dedicated optimized helpers:
+
+```bash
+just desktop-live-build
+just desktop-live-run
+```
+
+They select the immutable standalone-local composition and the `desktop-live`
+Cargo profile: optimized replay and Midnight cryptography with bounded debug
+symbols, without release LTO or symbol stripping.
 
 Mobile targets also expose separate build and deploy operations for shorter
 device loops. Deploy verifies a private exact-source artifact receipt and does
