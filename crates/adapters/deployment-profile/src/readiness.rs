@@ -11,6 +11,7 @@ use oxid_capabilities_application::{
 };
 use reqwest::{Client, redirect::Policy};
 use tokio::time::timeout;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use url::{Host, Url};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -156,13 +157,39 @@ async fn probe_indexer(
 ) -> DeploymentServiceReadiness {
     let (http, websocket) = join(
         probe_http(client, http_endpoint),
-        probe_websocket(websocket_endpoint),
+        probe_indexer_websocket(websocket_endpoint),
     )
     .await;
     if http == DeploymentServiceReadiness::Ready && websocket == DeploymentServiceReadiness::Ready {
         DeploymentServiceReadiness::Ready
     } else {
         DeploymentServiceReadiness::Unavailable
+    }
+}
+
+async fn probe_indexer_websocket(endpoint: Url) -> DeploymentServiceReadiness {
+    let mut request = match endpoint.as_str().into_client_request() {
+        Ok(request) => request,
+        Err(_) => return DeploymentServiceReadiness::Unavailable,
+    };
+    let protocol = match "graphql-transport-ws".parse() {
+        Ok(protocol) => protocol,
+        Err(_) => return DeploymentServiceReadiness::Unavailable,
+    };
+    request
+        .headers_mut()
+        .insert("Sec-WebSocket-Protocol", protocol);
+    match timeout(REQUEST_TIMEOUT, tokio_tungstenite::connect_async(request)).await {
+        Ok(Ok((_, response)))
+            if response
+                .headers()
+                .get("Sec-WebSocket-Protocol")
+                .and_then(|value| value.to_str().ok())
+                == Some("graphql-transport-ws") =>
+        {
+            DeploymentServiceReadiness::Ready
+        }
+        Ok(Ok(_) | Err(_)) | Err(_) => DeploymentServiceReadiness::Unavailable,
     }
 }
 
@@ -277,6 +304,7 @@ mod tests {
     };
 
     use super::*;
+    use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 
     fn http_server() -> (String, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind local test server");
@@ -294,7 +322,45 @@ mod tests {
         (format!("http://{address}"), handle)
     }
 
-    fn websocket_server() -> (String, thread::JoinHandle<()>) {
+    fn graphql_websocket_server() -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind local WebSocket server");
+        let address = listener.local_addr().expect("WebSocket server address");
+        let handle = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("WebSocket test runtime");
+            runtime.block_on(async move {
+                let (stream, _) = listener.accept().expect("accept readiness WebSocket");
+                stream
+                    .set_nonblocking(true)
+                    .expect("configure readiness WebSocket stream");
+                tokio_tungstenite::accept_hdr_async(
+                    tokio::net::TcpStream::from_std(stream)
+                        .expect("convert readiness WebSocket stream"),
+                    |request: &Request, mut response: Response| {
+                        assert_eq!(
+                            request
+                                .headers()
+                                .get("Sec-WebSocket-Protocol")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("graphql-transport-ws")
+                        );
+                        response.headers_mut().insert(
+                            "Sec-WebSocket-Protocol",
+                            "graphql-transport-ws".parse().expect("static protocol"),
+                        );
+                        Ok(response)
+                    },
+                )
+                .await
+                .expect("complete readiness WebSocket handshake");
+            });
+        });
+        (format!("{}://{address}", "ws"), handle)
+    }
+
+    fn websocket_server_without_subprotocol() -> (String, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind local WebSocket server");
         let address = listener.local_addr().expect("WebSocket server address");
         let handle = thread::spawn(move || {
@@ -315,14 +381,29 @@ mod tests {
                 .expect("complete readiness WebSocket handshake");
             });
         });
-        // Local-only test listener; Tailnet validation below requires WSS.
         (format!("{}://{address}", "ws"), handle)
+    }
+
+    #[test]
+    fn indexer_probe_requires_negotiated_graphql_subprotocol() {
+        let (endpoint, handle) = websocket_server_without_subprotocol();
+        let endpoint = Url::parse(&endpoint).expect("valid local WebSocket URL");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+
+        assert_eq!(
+            runtime.block_on(probe_indexer_websocket(endpoint)),
+            DeploymentServiceReadiness::Unavailable
+        );
+        handle.join().expect("WebSocket server");
     }
 
     #[test]
     fn local_probes_are_independent_and_ssi_is_explicit() {
         let (indexer, indexer_handle) = http_server();
-        let (indexer_websocket, indexer_websocket_handle) = websocket_server();
+        let (indexer_websocket, indexer_websocket_handle) = graphql_websocket_server();
         let (node, node_handle) = http_server();
         let (prover, prover_handle) = http_server();
         let (ssi, ssi_handle) = http_server();

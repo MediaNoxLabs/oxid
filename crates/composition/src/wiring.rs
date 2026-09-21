@@ -53,8 +53,10 @@ use super::passport_vault::{
     PassportVaultRepositoryComposition, headless_passport_vault_repository,
 };
 use super::{WalletDustSettlementCapability, services::ApplicationServices};
+#[cfg(any(target_os = "ios", target_os = "android", target_os = "macos"))]
+use oxid_adapter_platform_system::NativePublicTextExporter;
 #[cfg(any(target_os = "ios", target_os = "android"))]
-use oxid_adapter_platform_system::{NativePublicTextExporter, NativeScreenPrivacy};
+use oxid_adapter_platform_system::NativeScreenPrivacy;
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_storage_json::JsonWalletProfileRepository;
@@ -103,13 +105,14 @@ use oxid_passport_vault_application::{
     UnavailablePassportVaultContractStateSource, UnavailablePassportVaultCredential,
     WithdrawPassportVaultLockUseCase,
 };
+#[cfg(not(any(target_os = "ios", target_os = "android", target_os = "macos")))]
+use oxid_platform_ports::UnavailablePublicTextExporter;
 use oxid_platform_ports::{
     IdentityLinkIngressPort, PublicTextExportPort, QrScannerPort, ScreenPrivacyPort,
 };
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use oxid_platform_ports::{
-    UnavailableIdentityLinkIngress, UnavailablePublicTextExporter, UnavailableQrScanner,
-    UnavailableScreenPrivacy,
+    UnavailableIdentityLinkIngress, UnavailableQrScanner, UnavailableScreenPrivacy,
 };
 use oxid_presentation_application::{
     AcceptCredentialPresentationUseCase, CancelCredentialPresentationUseCase,
@@ -570,9 +573,9 @@ where
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let identity_link_ingress: Arc<dyn IdentityLinkIngressPort> =
         Arc::new(UnavailableIdentityLinkIngress);
-    #[cfg(any(target_os = "ios", target_os = "android"))]
+    #[cfg(any(target_os = "ios", target_os = "android", target_os = "macos"))]
     let public_text_exporter: Arc<dyn PublicTextExportPort> = Arc::new(NativePublicTextExporter);
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    #[cfg(not(any(target_os = "ios", target_os = "android", target_os = "macos")))]
     let public_text_exporter: Arc<dyn PublicTextExportPort> =
         Arc::new(UnavailablePublicTextExporter);
     #[cfg(any(target_os = "ios", target_os = "android"))]
