@@ -235,8 +235,9 @@ pub enum WalletDustRegistrationSettlementEvent {
     /// Retire this projection after its selected identity is superseded.
     ///
     /// The outgoing identity remains as an unavailable tombstone so delayed
-    /// observations cannot resurrect it. A strictly newer selection starts a
-    /// replacement projection with an `Eligibility` event.
+    /// observations cannot resurrect it. The next explicitly selected
+    /// identity starts a replacement projection with an `Eligibility` event;
+    /// generations are compared only within one profile and realm.
     Superseded {
         identity: WalletDustRegistrationSettlementIdentity,
     },
@@ -251,6 +252,17 @@ pub fn reduce_wallet_dust_registration_settlement(
     let identity = event_identity(&event);
     let replaces_generation = match &projection.identity {
         Some(active) if identity == active => false,
+        Some(_)
+            if matches!(
+                event,
+                WalletDustRegistrationSettlementEvent::Eligibility { .. }
+            ) && matches!(
+                projection.state,
+                WalletDustRegistrationSettlementState::Unavailable
+            ) =>
+        {
+            true
+        }
         Some(active)
             if matches!(
                 event,
@@ -1502,7 +1514,7 @@ mod tests {
     #[test]
     fn cancellation_and_realm_supersession_are_terminal_and_generation_safe() {
         let selected = selected_identity();
-        let other = identity("profile_other", "preprod", 2);
+        let other = identity("profile_other", "preprod", 1);
         let projection = eligible();
         let awaiting = reduce(&projection, authorization_request(draft(), 1));
         assert_eq!(

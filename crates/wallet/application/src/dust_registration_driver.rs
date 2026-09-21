@@ -303,15 +303,18 @@ impl WalletDustRegistrationDriver {
         if is_executor_completion(&observation) {
             return Err(WalletDustRegistrationDriverError::InvalidObservation);
         }
-        let observed = {
+        let (previous, observed) = {
             let mut runtime = self
                 .runtime
                 .lock()
                 .map_err(|_| WalletDustRegistrationDriverError::Poisoned)?;
+            let previous = runtime.coordinator().projection().clone();
             runtime.observe(observation);
-            runtime.coordinator().projection().clone()
+            (previous, runtime.coordinator().projection().clone())
         };
-        self.publish(&observed);
+        if observed != previous {
+            self.publish(&observed);
+        }
         self.drain(None).await
     }
 
@@ -411,6 +414,7 @@ impl WalletDustRegistrationDriver {
                         runtime_admission.disarm();
                         return Err(WalletDustRegistrationDriverError::InvalidCompletion);
                     }
+                    let previous = runtime.coordinator().projection().clone();
                     if !runtime.complete(token, event) {
                         let still_owned = runtime.release(token);
                         runtime_admission.disarm();
@@ -422,7 +426,9 @@ impl WalletDustRegistrationDriver {
                     runtime_admission.disarm();
                     let projection = runtime.coordinator().projection().clone();
                     drop(runtime);
-                    self.publish(&projection);
+                    if projection != previous {
+                        self.publish(&projection);
+                    }
                     authorization_target = None;
                     if pause_after_completion {
                         return Ok(projection);

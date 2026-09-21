@@ -5945,16 +5945,15 @@ fn DustRegistrationPanel(profile_id: String, dust_balance_positive: bool) -> Ele
     let observations = settlement.subscribe();
     use_effect(move || {
         let mut observations = observations.clone();
+        let mut previous_state = projection().map(|projection| projection.state);
         spawn(async move {
             while observations.changed().await.is_ok() {
                 let updated = observations.borrow_and_update().clone();
-                let ready = matches!(
-                    updated.state,
-                    oxid_wallet_application::WalletDustRegistrationSettlementState::Ready
-                );
+                let entered_ready = dust_settlement_entered_ready(previous_state, updated.state);
+                previous_state = Some(updated.state);
                 projection.set(Some(updated));
                 operation_error.set(None);
-                if ready {
+                if entered_ready {
                     realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
                 }
             }
@@ -6146,6 +6145,14 @@ fn DustRegistrationPanel(profile_id: String, dust_balance_positive: bool) -> Ele
             }
         }
     }
+}
+
+const fn dust_settlement_entered_ready(
+    previous: Option<oxid_wallet_application::WalletDustRegistrationSettlementState>,
+    current: oxid_wallet_application::WalletDustRegistrationSettlementState,
+) -> bool {
+    use oxid_wallet_application::WalletDustRegistrationSettlementState as State;
+    !matches!(previous, Some(State::Ready)) && matches!(current, State::Ready)
 }
 
 #[component]
@@ -12066,6 +12073,14 @@ mod tests {
             dust_settlement_presentation_for_state(State::Suspended, false),
             DustSettlementPresentation::Suspended
         );
+        assert!(dust_settlement_entered_ready(
+            Some(State::Reconciling),
+            State::Ready
+        ));
+        assert!(!dust_settlement_entered_ready(
+            Some(State::Ready),
+            State::Ready
+        ));
     }
 
     #[test]

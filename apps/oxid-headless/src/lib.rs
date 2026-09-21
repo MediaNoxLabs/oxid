@@ -247,6 +247,15 @@ impl HeadlessWallet {
                 self.reconcile_dust_registration_submission(request)
             }
             "wallet.dust.registration.settlement" => self.dust_registration_settlement(request),
+            "wallet.dust.registration.settlement.refresh" => {
+                self.refresh_dust_registration_settlement(request)
+            }
+            "wallet.dust.registration.settlement.authorize" => {
+                self.authorize_dust_registration_settlement(request)
+            }
+            "wallet.dust.registration.settlement.retry" => {
+                self.retry_dust_registration_settlement(request)
+            }
             "wallet.shielded.sync.status" => self.shielded_sync_status(request),
             "wallet.shielded.sync.start" => self.start_shielded_sync(request),
             "wallet.shielded.sync.cancel" => self.cancel_shielded_sync(request),

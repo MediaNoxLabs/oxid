@@ -101,6 +101,13 @@ impl WalletDustSettlementCapability {
             .map_err(|_| WalletDustSettlementError::SelectedRealmUnavailable)?;
         let eligible = selected_realm_is_eligible(&selected);
         let identity = settlement_identity(&selected);
+        let current = self.projection()?;
+        if let Some(active) = current.identity.filter(|active| active != &identity) {
+            self.driver
+                .advance(WalletDustRegistrationSettlementEvent::Superseded { identity: active })
+                .await
+                .map_err(WalletDustSettlementError::Driver)?;
+        }
         self.executor.bind(selected)?;
         self.driver
             .advance(WalletDustRegistrationSettlementEvent::Eligibility {
@@ -454,8 +461,28 @@ impl ComposedDustRegistrationExecutor {
                 draft_id: draft_id.as_str().to_owned(),
                 confirmation: continuation_confirmation(&preview),
             })
-            .await
-            .map_err(map_registration_failure)?;
+            .await;
+        let submitted = match submitted {
+            Ok(submitted) => submitted,
+            Err(oxid_wallet_application::WalletDustRegistrationError::Operation(
+                oxid_wallet_application::WalletDustRegistrationPortError::SubmissionOutcomeUnknown
+                | oxid_wallet_application::WalletDustRegistrationPortError::SubmissionInProgress,
+            )) => {
+                let transaction_id = self
+                    .recover_submitted_transaction(&identity, &draft_id)
+                    .await?;
+                self.retained
+                    .lock()
+                    .map_err(|_| WalletDustRegistrationExecutorFailure::Unavailable)?
+                    .finality_observed = false;
+                return Ok(WalletDustRegistrationOperationCompletion::submitted(
+                    identity,
+                    draft_id,
+                    transaction_id,
+                ));
+            }
+            Err(error) => return Err(map_registration_failure(error)),
+        };
         if submitted.registration.draft_id != draft_id.as_str() {
             return Err(WalletDustRegistrationExecutorFailure::Degraded);
         }
@@ -472,6 +499,33 @@ impl ComposedDustRegistrationExecutor {
             draft_id,
             transaction_id,
         ))
+    }
+
+    async fn recover_submitted_transaction(
+        &self,
+        identity: &WalletDustRegistrationSettlementIdentity,
+        draft_id: &WalletTransactionDraftId,
+    ) -> Result<ChainTransactionId, WalletDustRegistrationExecutorFailure> {
+        let command = GetWalletDustRegistrationStatusCommand {
+            profile_id: identity.profile.as_str().to_owned(),
+            draft_id: draft_id.as_str().to_owned(),
+        };
+        let status = match self.status.execute(command.clone()) {
+            Ok(status) => status,
+            Err(_) => self
+                .reconcile
+                .execute(ReconcileWalletDustRegistrationSubmissionCommand {
+                    profile_id: command.profile_id,
+                    draft_id: command.draft_id,
+                })
+                .await
+                .map_err(map_registration_failure)?,
+        };
+        let transaction_id = status
+            .transaction_id
+            .ok_or(WalletDustRegistrationExecutorFailure::Degraded)?;
+        ChainTransactionId::parse(transaction_id)
+            .map_err(|_| WalletDustRegistrationExecutorFailure::Degraded)
     }
 
     async fn execute_observe(

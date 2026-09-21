@@ -28,16 +28,16 @@ use crate::{
         transaction_port_error,
     },
     parameters::{
-        AuthorizeDustRegistrationParams, AuthorizeTransferParams, ImportReceiveRequestParams,
-        PrepareShieldedTransferParams, PrepareTransferParams, SubmitTransferParams,
-        TransactionDraftParams, dust_registration_draft_params,
+        AuthorizeDustRegistrationParams, AuthorizeDustSettlementParams, AuthorizeTransferParams,
+        ImportReceiveRequestParams, PrepareShieldedTransferParams, PrepareTransferParams,
+        SubmitTransferParams, TransactionDraftParams, dust_registration_draft_params,
     },
     projections::{
-        account_value, address_value, balance_value, dust_registration_preview_value,
-        dust_registration_settlement_value, dust_registration_status_value,
-        dust_registration_submission_value, dust_sync_value, selected_realm_sync_value,
-        shielded_sync_value, sync_value, transaction_value, transfer_preview_value,
-        transfer_submission_status_value, transfer_submission_value,
+        account_value, address_value, balance_value, dust_registration_asset_value,
+        dust_registration_preview_value, dust_registration_settlement_value,
+        dust_registration_status_value, dust_registration_submission_value, dust_sync_value,
+        selected_realm_sync_value, shielded_sync_value, sync_value, transaction_value,
+        transfer_preview_value, transfer_submission_status_value, transfer_submission_value,
     },
     protocol::{Dispatch, Request, Response, params_are_empty},
 };
@@ -76,6 +76,90 @@ impl HeadlessWallet {
                 request.id,
                 "state_unavailable",
                 "DUST registration settlement state is unavailable",
+            )),
+        }
+    }
+
+    pub(super) fn refresh_dust_registration_settlement(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "wallet.dust.registration.settlement.refresh");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        let capability = self.application.wallet_dust_settlement();
+        match futures::executor::block_on(capability.refresh(profile_id)) {
+            Ok(projection) => {
+                let review = capability.authorization_review().ok().map(|review| {
+                    json!({
+                        "networkId": review.network_id,
+                        "registeredNight": dust_registration_asset_value(&review.registered_night),
+                        "inputCount": review.input_count,
+                        "maximumFeeAllowance": dust_registration_asset_value(&review.maximum_fee_allowance),
+                    })
+                });
+                Dispatch::continue_with(Response::success(
+                    request.id,
+                    json!({
+                        "dustRegistrationSettlement": dust_registration_settlement_value(&projection),
+                        "authorizationReview": review,
+                    }),
+                ))
+            }
+            Err(_) => Dispatch::continue_with(Response::error(
+                request.id,
+                "state_unavailable",
+                "DUST registration settlement could not be refreshed",
+            )),
+        }
+    }
+
+    pub(super) fn authorize_dust_registration_settlement(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<AuthorizeDustSettlementParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.dust.registration.settlement.authorize requires only confirmation",
+                ));
+            }
+        };
+        match futures::executor::block_on(
+            self.application
+                .wallet_dust_settlement()
+                .authorize(params.confirmation.into()),
+        ) {
+            Ok(projection) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({
+                    "dustRegistrationSettlement": dust_registration_settlement_value(&projection)
+                }),
+            )),
+            Err(_) => Dispatch::continue_with(Response::error(
+                request.id,
+                "operation_not_admitted",
+                "DUST registration authorization is not currently admitted",
+            )),
+        }
+    }
+
+    pub(super) fn retry_dust_registration_settlement(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "wallet.dust.registration.settlement.retry");
+        }
+        match futures::executor::block_on(self.application.wallet_dust_settlement().retry()) {
+            Ok(projection) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({
+                    "dustRegistrationSettlement": dust_registration_settlement_value(&projection)
+                }),
+            )),
+            Err(_) => Dispatch::continue_with(Response::error(
+                request.id,
+                "operation_not_admitted",
+                "DUST registration retry is not currently admitted",
             )),
         }
     }

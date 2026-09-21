@@ -460,6 +460,15 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
             .text("mode", "shared_projection")
             .text("policyOwner", "composition")
             .text("material", "public_state_only"),
+        CapabilityView::new("wallet.dust.registration.settlement.refresh", "ready")
+            .text("mode", "shared_projection")
+            .text("policyOwner", "composition"),
+        CapabilityView::new("wallet.dust.registration.settlement.authorize", "ready")
+            .text("mode", "protected_confirmation")
+            .text("policyOwner", "composition"),
+        CapabilityView::new("wallet.dust.registration.settlement.retry", "ready")
+            .text("mode", "policy_admitted")
+            .text("policyOwner", "composition"),
         CapabilityView::new("wallet.shielded.sync.status", "ready")
             .text("mode", "standalone")
             .texts("sources", &["simulated", "live", "cached", "unavailable"]),
