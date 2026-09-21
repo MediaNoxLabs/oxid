@@ -54,6 +54,7 @@ run_repository() {
   node --test tests/repository/bootstrap-dev-loop-contract.test.mjs
   node --test tests/repository/dev-loop-stability-contract.test.mjs
   node --test tests/repository/desktop-test-profile-contract.test.mjs
+  node --test tests/repository/desktop-live-profile-contract.test.mjs
   node --test tests/repository/ios-wallet-lifecycle-simulator-contract.test.mjs
   node --test scripts/app-artifact-receipt.test.mjs
   node --test scripts/android-verify-16k.test.mjs

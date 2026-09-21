@@ -46,6 +46,13 @@ desktop-build:
 desktop-run:
     cargo run -p oxid-app
 
+# Live standalone replay uses optimized cryptography without release behavior.
+desktop-live-build:
+    cargo build --profile desktop-live -p oxid-app --no-default-features --features desktop,standalone-development,standalone-local
+
+desktop-live-run:
+    cargo run --profile desktop-live -p oxid-app --no-default-features --features desktop,standalone-development,standalone-local
+
 desktop-proof-benchmark-build:
     cargo build -p oxid-app --no-default-features --features desktop,developer-proof-benchmark
 
