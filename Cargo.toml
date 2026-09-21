@@ -147,7 +147,7 @@ rustls = { version = "=0.23.45", default-features = false, features = ["ring", "
 rustls-platform-verifier-05 = { package = "rustls-platform-verifier", version = "=0.5.3" }
 rustls-platform-verifier-07 = { package = "rustls-platform-verifier", version = "=0.7.0" }
 rand = { version = "=0.8.8" }
-reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "=0.13.5", default-features = false, features = ["json", "rustls"] }
 subxt = { version = "=0.44.3" }
 tokio = { version = "=1.53.1", default-features = false, features = ["net", "rt", "time"] }
 tokio-tungstenite = { version = "=0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
