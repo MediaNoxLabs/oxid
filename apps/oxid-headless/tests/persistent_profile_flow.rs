@@ -910,7 +910,7 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
         restored_presentation["result"]["presentation"]["candidates"][0]["credentialId"]
             .as_str()
             .expect("restored presentation candidate");
-    let rejected_presentation = second_process.request(json!({
+    let presentation_after_restart = second_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "credential-presentation-restored-accept",
         "method": "credential.presentation.accept",
         "params": {
@@ -921,10 +921,10 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
         }
     }));
     assert_eq!(
-        rejected_presentation["error"]["code"],
-        "holder_not_authorized"
+        presentation_after_restart["error"]["code"],
+        "proof_unavailable"
     );
-    assert!(!rejected_presentation.to_string().contains("vp_token"));
+    assert!(!presentation_after_restart.to_string().contains("vp_token"));
     let deleted = second_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "credential-delete-restored",
         "method": "credential.delete",
@@ -1208,7 +1208,7 @@ fn executable_restores_profile_scoped_did_inventory_in_a_new_process() {
 }
 
 #[test]
-fn executable_restores_managed_did_as_public_but_not_owned_after_restart() {
+fn executable_restores_managed_did_ownership_after_restart() {
     let store = TestStore::new();
     let mut first_process = ProcessHarness::spawn(&store.path);
     let created = first_process.request(json!({
@@ -1237,7 +1237,10 @@ fn executable_restores_managed_did_as_public_but_not_owned_after_restart() {
         "protocol": "oxid.headless.v1", "id": "managed-did-create",
         "method": "did.create", "params": {}
     }));
-    assert_eq!(created_did["ok"], true);
+    assert_eq!(
+        created_did["ok"], true,
+        "unexpected response: {created_did}"
+    );
     let did = created_did["result"]["didRecord"]["document"]["id"]
         .as_str()
         .expect("created did")
@@ -1273,7 +1276,7 @@ fn executable_restores_managed_did_as_public_but_not_owned_after_restart() {
         restored["result"]["didRecord"]["document"]["alsoKnownAs"][0],
         "https://example.test/managed"
     );
-    let unmanaged = second_process.request(json!({
+    let updated_after_restart = second_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "managed-did-update-after-restart",
         "method": "did.update", "params": {
             "operation": "removeAlsoKnownAs",
@@ -1286,10 +1289,13 @@ fn executable_restores_managed_did_as_public_but_not_owned_after_restart() {
             }
         }
     }));
-    assert_eq!(unmanaged["error"]["code"], "failed_precondition");
     assert_eq!(
-        unmanaged["error"]["message"],
-        "DID is not managed by the current protected session"
+        updated_after_restart["ok"], true,
+        "unexpected response: {updated_after_restart}"
+    );
+    assert_eq!(
+        updated_after_restart["result"]["didRecord"]["document"]["alsoKnownAs"],
+        json!([])
     );
     second_process.quit();
 }
@@ -1979,6 +1985,118 @@ fn executable_exercises_the_standalone_protected_key_flow() {
 }
 
 #[test]
+fn executable_restores_two_wallet_profiles_in_one_realm_after_restart() {
+    let store = TestStore::new();
+    let mut first_process = ProcessHarness::spawn(&store.path);
+    let mut expected = Vec::new();
+
+    for (suffix, display_name) in [("first", "First wallet"), ("second", "Second wallet")] {
+        let created = first_process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": format!("create-{suffix}"),
+            "method": "wallet.profile.create",
+            "params": { "displayName": display_name }
+        }));
+        let profile_id = created["result"]["profile"]["id"]
+            .as_str()
+            .expect("created profile should have an identifier")
+            .to_owned();
+        assert_eq!(
+            first_process.request(json!({
+                "protocol": "oxid.headless.v1",
+                "id": format!("select-{suffix}"),
+                "method": "wallet.profile.select",
+                "params": { "profileId": &profile_id }
+            }))["ok"],
+            true
+        );
+        assert_eq!(
+            first_process.request(json!({
+                "protocol": "oxid.headless.v1",
+                "id": format!("initialize-{suffix}"),
+                "method": "wallet.security.initialize",
+                "params": {}
+            }))["result"]["security"]["state"],
+            "unlocked"
+        );
+        let derived = first_process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": format!("derive-{suffix}"),
+            "method": "wallet.account.derive",
+            "params": { "accountIndex": 0, "addressIndex": 0 }
+        }));
+        assert_eq!(derived["ok"], true, "unexpected response: {derived}");
+        expected.push((
+            profile_id,
+            derived["result"]["account"]["receiveAddress"]["value"]
+                .as_str()
+                .expect("public address should be returned")
+                .to_owned(),
+            derived["result"]["account"]["transactionKeyRef"]
+                .as_str()
+                .expect("opaque transaction key should be returned")
+                .to_owned(),
+        ));
+    }
+    assert_ne!(expected[0].1, expected[1].1);
+    first_process.quit();
+
+    let mut restarted = ProcessHarness::spawn(&store.path);
+    for (profile_id, address, key_reference) in expected {
+        assert_eq!(
+            restarted.request(json!({
+                "protocol": "oxid.headless.v1",
+                "id": format!("restart-select-{profile_id}"),
+                "method": "wallet.profile.select",
+                "params": { "profileId": &profile_id }
+            }))["ok"],
+            true
+        );
+        assert_eq!(
+            restarted.request(json!({
+                "protocol": "oxid.headless.v1",
+                "id": format!("restart-status-{profile_id}"),
+                "method": "wallet.security.status",
+                "params": {}
+            }))["result"]["security"]["state"],
+            "unlocked"
+        );
+        let derived = restarted.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": format!("restart-derive-{profile_id}"),
+            "method": "wallet.account.derive",
+            "params": { "accountIndex": 0, "addressIndex": 0 }
+        }));
+        assert_eq!(
+            derived["result"]["account"]["receiveAddress"]["value"],
+            address
+        );
+        assert_eq!(
+            derived["result"]["account"]["transactionKeyRef"],
+            key_reference
+        );
+        assert_eq!(
+            restarted.request(json!({
+                "protocol": "oxid.headless.v1",
+                "id": format!("restart-sign-{profile_id}"),
+                "method": "wallet.key.sign",
+                "params": {
+                    "keyRef": &key_reference,
+                    "payloadHex": "726573746172742d636f6e74696e75697479",
+                    "confirmation": {
+                        "title": "Verify restart continuity",
+                        "summary": "Authorize a bounded public regression-test payload",
+                        "confirmed": true
+                    }
+                }
+            }))["ok"],
+            true
+        );
+    }
+    restarted.quit();
+}
+
+#[test]
 fn executable_exercises_midnight_account_parity_without_secret_input() {
     let store = TestStore::new();
     let mut process = ProcessHarness::spawn(&store.path);
@@ -2406,7 +2524,7 @@ fn executable_derives_and_syncs_a_live_account_without_secret_input() {
 }
 
 #[test]
-fn executable_does_not_restore_a_public_account_checkpoint_without_custody() {
+fn executable_restores_a_public_account_checkpoint_with_custody() {
     let store = TestStore::new();
     let checkpoint_path = store.root.join("midnight-account-checkpoints.json");
     let checkpoint = checkpoint_path
@@ -2495,14 +2613,12 @@ fn executable_does_not_restore_a_public_account_checkpoint_without_custody() {
         "method": "wallet.account.get",
         "params": {}
     }));
-    assert_eq!(restored["error"]["code"], "failed_precondition");
-
-    let refused_sync = second.request(json!({
-        "protocol": "oxid.headless.v1",
-        "id": "checkpoint-sync-without-custody",
-        "method": "wallet.connect",
-        "params": {}
-    }));
-    assert_eq!(refused_sync["error"]["code"], "failed_precondition");
+    assert_eq!(restored["ok"], true, "unexpected response: {restored}");
+    assert_eq!(restored["result"]["account"]["source"], "cached");
+    assert_eq!(restored["result"]["account"]["sync"]["currentCursor"], 2);
+    assert_eq!(
+        restored["result"]["account"]["balances"][0]["atomicUnits"],
+        "2500000"
+    );
     second.quit();
 }

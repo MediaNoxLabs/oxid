@@ -136,9 +136,9 @@ funds each exactly once, establishes DUST readiness separately, sends NIGHT A
 → B using B's strict `midnight-receive:v1` request, then sends NIGHT B → A using
 A's validated raw Bech32m fallback. The run accepts only after observing the
 final balances, indexed incoming/outgoing confirmed history, and included
-submission journals. The process-local development custody root is intentionally
-not persisted, so this headless run makes no restart or recovery claim; native
-protected custody owns that production behavior.
+submission journals. Desktop and headless development custody is encrypted in
+an owner-private local store and survives process restart. It remains a
+development harness rather than a production hardware-backed custody claim.
 
 ```sh
 just standalone-up

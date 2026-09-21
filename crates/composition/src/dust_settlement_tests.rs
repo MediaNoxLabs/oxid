@@ -25,6 +25,7 @@ struct FakeServices {
     sync_ready: Mutex<Result<bool, ()>>,
     submit_unknown: Mutex<bool>,
     registration_already_current: Mutex<bool>,
+    registration_prepare_failure: Mutex<Option<WalletDustRegistrationPortError>>,
     calls: Mutex<Vec<&'static str>>,
 }
 
@@ -36,6 +37,7 @@ impl FakeServices {
             sync_ready: Mutex::new(Ok(true)),
             submit_unknown: Mutex::new(false),
             registration_already_current: Mutex::new(false),
+            registration_prepare_failure: Mutex::new(None),
             calls: Mutex::new(Vec::new()),
         }
     }
@@ -78,12 +80,40 @@ impl PrepareWalletDustRegistrationUseCase for FakeServices {
         _: PrepareWalletDustRegistrationCommand,
     ) -> Result<WalletDustRegistrationPreviewView, WalletDustRegistrationError> {
         self.record("prepare");
+        if let Some(error) = *self.registration_prepare_failure.lock().unwrap() {
+            return Err(WalletDustRegistrationError::Operation(error));
+        }
         if *self.registration_already_current.lock().unwrap() {
             return Err(WalletDustRegistrationError::Operation(
                 WalletDustRegistrationPortError::RegistrationAlreadyCurrent,
             ));
         }
         Ok(preview(false))
+    }
+}
+
+#[test]
+fn missing_or_locked_custody_is_not_flattened_into_generic_degradation() {
+    for (port_failure, expected) in [
+        (
+            WalletDustRegistrationPortError::ProtectionNotInitialized,
+            WalletDustRegistrationExecutorFailure::ProtectionNotInitialized,
+        ),
+        (
+            WalletDustRegistrationPortError::ProtectionLocked,
+            WalletDustRegistrationExecutorFailure::ProtectionLocked,
+        ),
+    ] {
+        let fake = Arc::new(FakeServices::new());
+        *fake.registration_prepare_failure.lock().unwrap() = Some(port_failure);
+        let capability = capability(&fake);
+
+        assert_eq!(
+            block_on(capability.refresh("profile_test".to_owned())),
+            Err(WalletDustSettlementError::Driver(
+                WalletDustRegistrationDriverError::Executor(expected)
+            ))
+        );
     }
 }
 

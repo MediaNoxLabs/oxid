@@ -73,7 +73,11 @@ byte slices or string aliases.
 - `EnvironmentObservation` is the independently refreshed compatibility and
   health state of those services. Changing an endpoint does not change realm
   identity; a healthy endpoint does not imply healthy siblings.
-- `WalletProfile` binds a custody root to one realm and its derived accounts.
+- One `NetworkRealm` may contain many `WalletProfile` resources. A
+  `WalletProfile` binds one custody root and its derived accounts to exactly one
+  realm in the current model. The aggregate identity is therefore
+  `(realm_id, wallet_profile_id)`, never the realm alone and never a process-
+  global "current wallet".
 - Unshielded, shielded, DUST, and activity are typed wallet facets. Each keeps
   its own cursor, freshness, failure, and consistency invariant.
 - Wallet and action readiness are derived projections, not mutable booleans
@@ -125,6 +129,12 @@ each `(profile, realm)` it:
 - resumes durable workflows idempotently after restart;
 - reports `ActionRequired` rather than crossing recovery, custody, signing, or
   transaction-authorization boundaries automatically.
+
+Changing the selected wallet inside the same realm advances the authority
+generation, cancels or supersedes the previous wallet's work, and loads only
+the new pair's custody handle, account association, checkpoints, facet state,
+and operations. No balance, DUST eligibility, cursor, retry, or readiness fact
+may be inferred from another wallet profile in that realm.
 
 Separate focused reconcilers may own environment, custody, synchronization,
 and transaction concerns. A wallet-level process manager composes their typed

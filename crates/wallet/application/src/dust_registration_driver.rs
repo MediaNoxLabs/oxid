@@ -47,6 +47,8 @@ pub enum WalletDustRegistrationExecutorFailure {
     Offline,
     TimedOut,
     Cancelled,
+    ProtectionNotInitialized,
+    ProtectionLocked,
     Degraded,
 }
 
@@ -57,6 +59,10 @@ impl fmt::Display for WalletDustRegistrationExecutorFailure {
             Self::Offline => "DUST registration operation is offline",
             Self::TimedOut => "DUST registration operation timed out",
             Self::Cancelled => "DUST registration operation was cancelled",
+            Self::ProtectionNotInitialized => {
+                "DUST registration requires wallet recovery or initialization"
+            }
+            Self::ProtectionLocked => "DUST registration requires wallet unlock",
             Self::Degraded => "DUST registration operation is degraded",
         })
     }

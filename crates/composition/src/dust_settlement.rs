@@ -727,6 +727,12 @@ fn map_registration_failure(
         oxid_wallet_application::WalletDustRegistrationError::Operation(PortError::Unavailable) => {
             WalletDustRegistrationExecutorFailure::Unavailable
         }
+        oxid_wallet_application::WalletDustRegistrationError::Operation(
+            PortError::ProtectionNotInitialized,
+        ) => WalletDustRegistrationExecutorFailure::ProtectionNotInitialized,
+        oxid_wallet_application::WalletDustRegistrationError::Operation(
+            PortError::ProtectionLocked,
+        ) => WalletDustRegistrationExecutorFailure::ProtectionLocked,
         _ => WalletDustRegistrationExecutorFailure::Degraded,
     }
 }

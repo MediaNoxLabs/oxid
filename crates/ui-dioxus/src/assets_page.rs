@@ -78,6 +78,7 @@ pub(super) fn AssetsPage(
             networks,
             account,
             security,
+            custody_recovery_required,
             busy,
         } => {
             let night = balance_for(&account, "NIGHT")
@@ -194,6 +195,7 @@ pub(super) fn AssetsPage(
                                             networks,
                                             account: Box::new(account),
                                             security,
+                                            custody_recovery_required: false,
                                             busy: None,
                                         });
                                         on_realm_changed.call(());
@@ -232,6 +234,7 @@ pub(super) fn AssetsPage(
                     protection_available,
                     security.state_name(),
                     protected_account,
+                    custody_recovery_required,
                 ) {
                     article { class: "surface-card development-card",
                         p { class: "card-eyebrow", if observation_only { "PreProd recovery" } else { "Standalone development" } }
@@ -252,7 +255,7 @@ pub(super) fn AssetsPage(
                             if observation_only {
                                 "Native custody already holds the recovered root. Authorize account 0/address 0 derivation without entering the root again."
                             } else {
-                                "This opt-in simulator/emulator mode uses process-local development custody. It is not durable production key protection."
+                                "This opt-in simulator/emulator mode uses development-only custody. It is not production key protection."
                             }
                         }
                         button {
@@ -265,6 +268,7 @@ pub(super) fn AssetsPage(
                                     networks: activate_networks.clone(),
                                     account: activate_account.clone(),
                                     security,
+                                    custody_recovery_required,
                                     busy: Some(account_activation_operation(security)),
                                 });
                                 let services = activate_services.clone();
@@ -291,6 +295,7 @@ pub(super) fn AssetsPage(
                                                 networks: networks.clone(),
                                                 account: account.clone(),
                                                 security: updated_security,
+                                                custody_recovery_required: false,
                                                 busy: Some(AccountOperation::Syncing),
                                             });
                                             match run_ui_future(async move {
@@ -302,6 +307,7 @@ pub(super) fn AssetsPage(
                                                     networks,
                                                     account: Box::new(account),
                                                     security: updated_security,
+                                                    custody_recovery_required: false,
                                                     busy: None,
                                                 }),
                                                 Ok(Err(error)) => activate_state.set(AccountPageState::Failed(error.to_string())),
@@ -333,18 +339,26 @@ pub(super) fn AssetsPage(
                             networks: networks.clone(),
                             account: Box::new(updated_account),
                             security,
+                            custody_recovery_required,
                             busy: None,
                         });
                     },
                 }
 
-                if observation_only {
+                if custody_recovery_required {
+                    article { class: "surface-card account-sync-card", role: "alert",
+                        p { class: "card-eyebrow", "Wallet recovery" }
+                        h2 { "Restore this wallet to continue" }
+                        p { "The saved profile still refers to a protected Midnight account, but this app process cannot access its custody root. Restore the original recovery phrase or complete backup before synchronizing, registering DUST, or sending funds." }
+                        p { class: "consent-copy", "Do not initialize a replacement root for this funded profile." }
+                    }
+                } else if observation_only {
                     article { class: "surface-card account-sync-card", role: "status",
                         p { class: "card-eyebrow", "PreProd observation" }
                         h2 { "Balances only" }
                         p { "This recovery profile exposes synchronization and receive addresses only. Sending, DUST registration, proving, and transaction submission are disabled for this slice." }
                     }
-                } else {
+                } else if protection_unlocked {
                     DustRegistrationPanel {
                         profile_id: active_profile.id.clone(),
                         dust_balance_positive,
@@ -464,8 +478,10 @@ pub(super) fn wallet_account_activation_available(
     protection_available: bool,
     protection_state: &str,
     protected_account: bool,
+    custody_recovery_required: bool,
 ) -> bool {
     protection_available
+        && !custody_recovery_required
         && (!observation_only || protection_state != "Uninitialized")
         && (protection_state != "Unlocked" || !protected_account)
 }

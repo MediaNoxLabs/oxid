@@ -105,6 +105,17 @@ use super::passport_vault::{
 use super::profile_headless::compose_headless_standalone;
 #[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
 use super::profile_headless::compose_public_genesis_standalone;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        all(not(target_os = "ios"), not(target_os = "android")),
+        all(
+            feature = "mobile-portal",
+            any(target_os = "ios", target_os = "android")
+        )
+    )
+))]
+use super::profile_headless::development_security_and_profiles;
 use super::services::ApplicationServices;
 #[cfg(all(
     not(target_arch = "wasm32"),
@@ -128,7 +139,7 @@ use super::wiring::{
 use super::wiring::{
     compose_with_adapters_and_presentation, with_wallet_onboarding as with_native_wallet_onboarding,
 };
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_platform_system::OsRandom;
 use oxid_adapter_platform_system::SystemClock;
 
@@ -613,11 +624,7 @@ pub(super) fn compose_development_portal_from_config(
     credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
-    let security = Arc::new(DevelopmentWalletSecurity::new(
-        Arc::clone(&clock),
-        Arc::new(OsRandom),
-    ));
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let (security, profiles) = development_security_and_profiles(&clock);
     compose_development_portal_with_security(
         config,
         portal,
@@ -641,11 +648,7 @@ fn compose_mobile_public_genesis_portal_from_config(
     credential_presentation: CredentialPresentationComposition,
 ) -> Result<ApplicationServices, HeadlessCompositionError> {
     let clock = Arc::new(SystemClock);
-    let security = Arc::new(DevelopmentWalletSecurity::new(
-        Arc::clone(&clock),
-        Arc::new(OsRandom),
-    ));
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let (security, profiles) = development_security_and_profiles(&clock);
     let network_id = config.indexer().network_id().as_str().to_owned();
     let public_network = public_standalone_network(&network_id)
         .ok_or(HeadlessCompositionError::PublicStandaloneGenesisRequiresUndeployed)?;
