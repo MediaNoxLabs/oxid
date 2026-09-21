@@ -6,11 +6,11 @@ use futures::executor::block_on;
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationCommand, ChainNetworkId, GetSelectedWalletRealmSyncUseCase,
     GetWalletDustRegistrationStatusCommand, PrepareWalletDustRegistrationCommand,
-    ReconcileWalletDustRegistrationSubmissionCommand, SelectedWalletRealmIdentity,
-    SelectedWalletRealmObservation, SelectedWalletRealmProjectionFuture,
-    SelectedWalletRealmSyncError, SelectedWalletRealmSyncView, SubmitWalletDustRegistrationCommand,
-    WalletAccountView, WalletAssetBalanceView, WalletDustRegistrationAssetView,
-    WalletDustRegistrationError, WalletDustRegistrationPortError,
+    ReconcileWalletDustRegistrationSubmissionCommand, SelectedWalletRealmActionReadiness,
+    SelectedWalletRealmIdentity, SelectedWalletRealmObservation,
+    SelectedWalletRealmProjectionFuture, SelectedWalletRealmSyncError, SelectedWalletRealmSyncView,
+    SubmitWalletDustRegistrationCommand, WalletAccountView, WalletAssetBalanceView,
+    WalletDustRegistrationAssetView, WalletDustRegistrationError, WalletDustRegistrationPortError,
     WalletDustRegistrationPreviewView, WalletDustRegistrationStatusViewFuture,
     WalletDustRegistrationSubmissionStatusView, WalletDustRegistrationSubmissionView,
     WalletDustRegistrationSubmissionViewFuture, WalletDustSyncView, WalletProfileId,
@@ -305,6 +305,16 @@ fn one_authorization_drives_submission_reconciliation_and_refresh() {
             "refresh"
         ]
     );
+}
+
+#[test]
+fn funded_live_night_is_eligible_before_private_facets_are_synchronized() {
+    let mut selected = selected_projection(1, 7, true);
+    selected.fresh = false;
+    selected.actionable = SelectedWalletRealmActionReadiness::Unavailable;
+    selected.view.dust = WalletRealmFamilyView::Ready(dust_view("never_synced"));
+
+    assert!(selected_realm_is_eligible(&selected));
 }
 
 #[test]
