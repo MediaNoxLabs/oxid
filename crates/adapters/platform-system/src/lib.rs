@@ -7,6 +7,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(target_os = "macos")]
+use std::{
+    io::Write,
+    process::{Command, Stdio},
+};
+
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_mobile_native::{
     NativeBridgeError, copy_public_receive_address as native_copy_public_receive_address,
@@ -167,7 +173,32 @@ fn copy_public_receive_address(address: PublicReceiveAddress) -> Result<(), Publ
     map_public_export_status(&status, "copied")
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[cfg(target_os = "macos")]
+fn copy_public_receive_address(address: PublicReceiveAddress) -> Result<(), PublicTextExportError> {
+    let mut child = Command::new("/usr/bin/pbcopy")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| PublicTextExportError::Unavailable)?;
+    child
+        .stdin
+        .take()
+        .ok_or(PublicTextExportError::Failed)?
+        .write_all(address.as_str().as_bytes())
+        .map_err(|_| PublicTextExportError::Failed)?;
+    if child
+        .wait()
+        .map_err(|_| PublicTextExportError::Failed)?
+        .success()
+    {
+        Ok(())
+    } else {
+        Err(PublicTextExportError::Failed)
+    }
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "android", target_os = "macos")))]
 fn copy_public_receive_address(
     _address: PublicReceiveAddress,
 ) -> Result<(), PublicTextExportError> {
@@ -223,11 +254,9 @@ mod tests {
         assert_ne!(bytes, [0_u8; 16]);
     }
 
+    #[cfg(not(any(target_os = "ios", target_os = "android", target_os = "macos")))]
     #[test]
     fn public_export_fails_closed_without_a_native_bridge() {
-        if cfg!(any(target_os = "ios", target_os = "android")) {
-            return;
-        }
         let address = PublicReceiveAddress::new("mn_addr_public".to_owned()).expect("address");
         assert_eq!(
             NativePublicTextExporter.copy_receive_address(address.clone()),
@@ -244,6 +273,16 @@ mod tests {
         assert_eq!(
             NativeScreenPrivacy.set_protected(false),
             Err(ScreenPrivacyError::Unavailable)
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn desktop_share_fails_closed_without_a_reviewed_host_adapter() {
+        let address = PublicReceiveAddress::new("mn_addr_public".to_owned()).expect("address");
+        assert_eq!(
+            NativePublicTextExporter.share_receive_address(address),
+            Err(PublicTextExportError::Unavailable)
         );
     }
 
