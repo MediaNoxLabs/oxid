@@ -136,7 +136,9 @@ just desktop-live-run
 
 They select the immutable standalone-local composition and the `desktop-live`
 Cargo profile: optimized replay and Midnight cryptography with bounded debug
-symbols, without release LTO or symbol stripping.
+symbols, without release LTO or symbol stripping. Cargo keeps this custom
+profile in a separate target directory, so the first build compiles the full
+optimized dependency graph; later live-demo builds reuse that cache.
 
 Mobile targets also expose separate build and deploy operations for shorter
 device loops. Deploy verifies a private exact-source artifact receipt and does

@@ -35,7 +35,9 @@ just desktop-live-run
 These commands select `desktop,standalone-development,standalone-local` and the
 optimized, symbol-retaining `desktop-live` profile. They do not enable release
 LTO, stripping, or production-only behavior. Agents must use this pair rather
-than the ordinary desktop helpers when qualifying live standalone replay.
+than the ordinary desktop helpers when qualifying live standalone replay. The
+first invocation builds the custom profile in its own target directory and is
+therefore expected to take longer than an incremental ordinary dev build.
 
 The opt-in native proof benchmark has its own development-only desktop pair:
 
