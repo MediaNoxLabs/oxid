@@ -2297,6 +2297,7 @@ enum AccountPageState {
         networks: WalletNetworkListView,
         account: Box<WalletAccountView>,
         security: WalletSecurityStatusView,
+        custody_recovery_required: bool,
         busy: Option<AccountOperation>,
     },
     Failed(String),
@@ -6395,29 +6396,20 @@ fn load_account_page(services: &WalletUiServices, profile_id: &str) -> AccountPa
             Ok(security) => security,
             Err(error) => return AccountPageState::Failed(error.to_string()),
         };
-    if !account_read_is_noninteractive(security.state_name()) {
-        let Some(account) = protected_account_placeholder(&networks) else {
-            return AccountPageState::Failed("selected Midnight network is unavailable".to_owned());
-        };
-        return AccountPageState::Ready {
-            networks,
-            account: Box::new(account),
-            security,
-            busy: None,
-        };
-    }
-    let account = match services.get_wallet_account().execute(query) {
-        Ok(account) => account,
-        Err(WalletAccountError::Port(
-            WalletAccountPortError::ProtectionNotInitialized
-            | WalletAccountPortError::ProtectionLocked,
-        )) if matches!(security.state_name(), "Uninitialized" | "Locked") => {
+    let (account, custody_recovery_required) = match services.get_wallet_account().execute(query) {
+        Ok(account) => (account, false),
+        Err(error)
+            if account_placeholder_recovery_required(security.state_name(), &error).is_some() =>
+        {
+            let custody_recovery_required =
+                account_placeholder_recovery_required(security.state_name(), &error)
+                    .expect("guard proves the placeholder state");
             let Some(account) = protected_account_placeholder(&networks) else {
                 return AccountPageState::Failed(
                     "selected Midnight network is unavailable".to_owned(),
                 );
             };
-            account
+            (account, custody_recovery_required)
         }
         Err(error) => return AccountPageState::Failed(error.to_string()),
     };
@@ -6425,7 +6417,25 @@ fn load_account_page(services: &WalletUiServices, profile_id: &str) -> AccountPa
         networks,
         account: Box::new(account),
         security,
+        custody_recovery_required,
         busy: None,
+    }
+}
+
+fn account_placeholder_recovery_required(
+    security_state: &str,
+    error: &WalletAccountError,
+) -> Option<bool> {
+    match (security_state, error) {
+        (
+            "Uninitialized",
+            WalletAccountError::Port(WalletAccountPortError::ProtectionNotInitialized),
+        ) => Some(true),
+        ("Locked", WalletAccountError::Port(WalletAccountPortError::ProtectionLocked))
+        | ("Uninitialized", WalletAccountError::Port(WalletAccountPortError::NotFound)) => {
+            Some(false)
+        }
+        _ => None,
     }
 }
 
@@ -6462,10 +6472,6 @@ fn load_home_page(services: &WalletUiServices, profile_id: &str) -> HomePageStat
         credentials,
         vault,
     }))
-}
-
-fn account_read_is_noninteractive(security_state: &str) -> bool {
-    !matches!(security_state, "Uninitialized" | "Locked")
 }
 
 fn protected_account_placeholder(networks: &WalletNetworkListView) -> Option<WalletAccountView> {
@@ -10276,21 +10282,30 @@ mod tests {
             true,
             "Uninitialized",
             false,
+            false,
         ));
         assert!(wallet_account_activation_available(
-            true, true, "Locked", false,
+            true, true, "Locked", false, false,
         ));
         assert!(wallet_account_activation_available(
-            true, true, "Unlocked", false,
+            true, true, "Unlocked", false, false,
         ));
         assert!(!wallet_account_activation_available(
-            true, true, "Unlocked", true,
+            true, true, "Unlocked", true, false,
         ));
         assert!(wallet_account_activation_available(
             false,
             true,
             "Uninitialized",
             false,
+            false,
+        ));
+        assert!(!wallet_account_activation_available(
+            false,
+            true,
+            "Uninitialized",
+            false,
+            true,
         ));
     }
 
@@ -11514,10 +11529,35 @@ mod tests {
     }
 
     #[test]
-    fn initial_account_read_never_enters_locked_custody() {
-        assert!(!account_read_is_noninteractive("Uninitialized"));
-        assert!(!account_read_is_noninteractive("Locked"));
-        assert!(account_read_is_noninteractive("Unlocked"));
+    fn account_read_distinguishes_empty_locked_and_orphaned_custody() {
+        assert_eq!(
+            account_placeholder_recovery_required(
+                "Uninitialized",
+                &WalletAccountError::Port(WalletAccountPortError::NotFound),
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            account_placeholder_recovery_required(
+                "Locked",
+                &WalletAccountError::Port(WalletAccountPortError::ProtectionLocked),
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            account_placeholder_recovery_required(
+                "Uninitialized",
+                &WalletAccountError::Port(WalletAccountPortError::ProtectionNotInitialized),
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            account_placeholder_recovery_required(
+                "Unlocked",
+                &WalletAccountError::Port(WalletAccountPortError::ProtectionNotInitialized),
+            ),
+            None
+        );
     }
 
     #[test]

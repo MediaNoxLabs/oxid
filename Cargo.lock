@@ -5843,12 +5843,14 @@ dependencies = [
  "midnight-transient-crypto",
  "oxid-adapter-backup-portable",
  "oxid-adapter-storage-memory",
+ "oxid-adapter-store-atomic",
  "oxid-foundation",
  "oxid-platform-ports",
  "oxid-wallet-application",
  "oxid-wallet-domain",
  "p256",
  "sha2 0.10.9",
+ "tempfile",
  "zeroize",
 ]
 

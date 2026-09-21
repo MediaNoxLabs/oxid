@@ -250,6 +250,7 @@ async fn recover_public_demo_fixture(services: &WalletUiServices, profile: &Wall
             security.is_available(),
             security.state_name(),
             super::assets_page::has_protected_account(&account),
+            false,
         ) {
             let _ = super::assets_page::activate_protected_account(
                 services.clone(),

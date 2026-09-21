@@ -42,8 +42,36 @@ use oxid_wallet_application::{
     WalletProtectionPort,
 };
 
-/// Wires persistent public profiles with an explicit process-local custody
-/// adapter for the standalone development harness.
+type DevelopmentStorage = (
+    Arc<DevelopmentWalletSecurity<SystemClock, OsRandom>>,
+    Arc<JsonWalletProfileRepository>,
+);
+
+pub(super) fn development_security_and_profiles(clock: &Arc<SystemClock>) -> DevelopmentStorage {
+    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        not(target_os = "ios"),
+        not(target_os = "android")
+    ))]
+    let security = profiles
+        .configured_path()
+        .and_then(|path| path.parent())
+        .map(|directory| {
+            DevelopmentWalletSecurity::persistent(
+                Arc::clone(clock),
+                Arc::new(OsRandom),
+                directory.join("private"),
+            )
+        })
+        .unwrap_or_else(|| DevelopmentWalletSecurity::new(Arc::clone(clock), Arc::new(OsRandom)));
+    #[cfg(any(target_arch = "wasm32", target_os = "ios", target_os = "android"))]
+    let security = DevelopmentWalletSecurity::new(Arc::clone(clock), Arc::new(OsRandom));
+    (Arc::new(security), profiles)
+}
+
+/// Wires persistent public profiles with an explicit encrypted development
+/// custody adapter for the standalone development harness.
 #[must_use]
 pub fn compose_headless() -> ApplicationServices {
     compose_headless_with_presentation(CredentialPresentationComposition::Standalone)
@@ -67,9 +95,7 @@ pub(super) fn compose_headless_with_credential_profile(
     credential_profile: HeadlessCredentialProfile,
 ) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
-    let random = Arc::new(OsRandom);
-    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let (security, profiles) = development_security_and_profiles(&clock);
     #[cfg(not(target_arch = "wasm32"))]
     let midnight = profiles
         .configured_path()
@@ -143,9 +169,7 @@ pub(super) fn compose_headless_live_with_checkpoint_options_and_presentation(
     credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
-    let random = Arc::new(OsRandom);
-    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let (security, profiles) = development_security_and_profiles(&clock);
     let midnight = Arc::new(
         protected_live_midnight_wallet_with_checkpoint_options(
             config,
@@ -190,9 +214,7 @@ pub(super) fn compose_headless_standalone_with_checkpoint_options_and_presentati
 ) -> ApplicationServices {
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
-    let random = Arc::new(OsRandom);
-    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let (security, profiles) = development_security_and_profiles(&clock);
     let midnight = Arc::new(
         protected_standalone_midnight_wallet_with_checkpoint_options(
             config,
@@ -234,9 +256,7 @@ pub(super) fn compose_headless_with_submission_journal_and_presentation(
     credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
-    let random = Arc::new(OsRandom);
-    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let (security, profiles) = development_security_and_profiles(&clock);
     let midnight = Arc::new(
         protected_simulated_midnight_wallet_with_submission_journal(
             journal,
@@ -259,9 +279,7 @@ pub(super) fn compose_headless_with_submission_journal_and_presentation(
 #[must_use]
 pub fn compose_headless_live(config: MidnightIndexerConfig) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
-    let random = Arc::new(OsRandom);
-    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let (security, profiles) = development_security_and_profiles(&clock);
     let midnight = Arc::new(
         protected_live_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))
             .with_profile_association_repository(profiles.clone()),
@@ -277,9 +295,7 @@ pub fn compose_headless_live_with_checkpoints(
     checkpoints: MidnightAccountCheckpointConfig,
 ) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
-    let random = Arc::new(OsRandom);
-    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let (security, profiles) = development_security_and_profiles(&clock);
     let midnight = Arc::new(
         protected_live_midnight_wallet_with_checkpoints(
             config,
@@ -297,9 +313,7 @@ pub fn compose_headless_live_with_checkpoints(
 #[must_use]
 pub fn compose_headless_standalone(config: MidnightStandaloneConfig) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
-    let random = Arc::new(OsRandom);
-    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let (security, profiles) = development_security_and_profiles(&clock);
     compose_headless_standalone_with_security(config, clock, security, profiles, |security| {
         security
     })
@@ -347,11 +361,7 @@ pub(super) fn compose_public_genesis_standalone(
     config: MidnightStandaloneConfig,
 ) -> Option<ApplicationServices> {
     let clock = Arc::new(SystemClock);
-    let security = Arc::new(DevelopmentWalletSecurity::new(
-        Arc::clone(&clock),
-        Arc::new(OsRandom),
-    ));
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let (security, profiles) = development_security_and_profiles(&clock);
     let network_id = config.indexer().network_id().as_str().to_owned();
     let public_network = public_standalone_network(&network_id)?;
     let protection_profiles = Arc::clone(&profiles);
@@ -400,9 +410,7 @@ pub fn compose_headless_standalone_with_checkpoints(
 ) -> ApplicationServices {
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
-    let random = Arc::new(OsRandom);
-    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let (security, profiles) = development_security_and_profiles(&clock);
     let midnight = Arc::new(
         protected_standalone_midnight_wallet_with_checkpoints(
             config,
@@ -427,9 +435,7 @@ pub fn compose_headless_standalone_with_dust_checkpoints(
 ) -> ApplicationServices {
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
-    let random = Arc::new(OsRandom);
-    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let (security, profiles) = development_security_and_profiles(&clock);
     let midnight = Arc::new(
         protected_standalone_midnight_wallet_with_dust_checkpoints(
             config,
@@ -455,9 +461,7 @@ pub fn compose_headless_standalone_with_all_checkpoints(
 ) -> ApplicationServices {
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
-    let random = Arc::new(OsRandom);
-    let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let (security, profiles) = development_security_and_profiles(&clock);
     let midnight = Arc::new(
         protected_standalone_midnight_wallet_with_all_checkpoints(
             config,

@@ -5,6 +5,9 @@
 use std::{
     collections::BTreeMap,
     fmt::Write as _,
+    fs::OpenOptions,
+    io::Write as _,
+    path::PathBuf,
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -31,6 +34,7 @@ use oxid_wallet_domain::{
     WalletSecurityStatus, WalletSignature,
 };
 use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
+use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
 #[cfg(feature = "development-fixture")]
@@ -44,6 +48,9 @@ const KEY_REFERENCE_ATTEMPTS: usize = 8;
 const P256_SCALAR_ATTEMPTS: usize = 128;
 const SECP256K1_SCALAR_ATTEMPTS: usize = 128;
 const JUBJUB_SEED_ATTEMPTS: usize = 128;
+const DEVELOPMENT_STORE_KEY_BYTES: usize = 32;
+const DEVELOPMENT_STORE_MAX_BACKUP_BYTES: usize = 80 * 1024 * 1024;
+const DEVELOPMENT_STORE_KEY_FILE: &str = "development-custody.key";
 
 /// Explicit non-production desktop policy. It deliberately does not claim
 /// native user presence; production desktop composition remains unavailable.
@@ -56,14 +63,91 @@ impl WalletOnboardingAuthorizationPort for DevelopmentWalletOnboardingAuthorizat
     }
 }
 
-/// Explicitly insecure, process-local adapter for tests and headless flows.
+/// Explicitly non-production adapter for tests and headless flows.
 ///
 /// Secret key objects stay inside this adapter and are zeroized by their
-/// cryptography implementations when removed or dropped. Nothing is persisted.
+/// cryptography implementations when removed or dropped. [`Self::new`] stays
+/// process-local. [`Self::persistent`] additionally seals each profile into an
+/// owner-private development store so desktop demos survive a process restart;
+/// it is not a production custody claim or a substitute for native user presence.
 pub struct DevelopmentWalletSecurity<C, N> {
     clock: Arc<C>,
     random: Arc<N>,
     profiles: Mutex<BTreeMap<String, DevelopmentProfile>>,
+    persistence: Option<DevelopmentCustodyPersistence>,
+}
+
+struct DevelopmentCustodyPersistence {
+    directory: PathBuf,
+}
+
+impl DevelopmentCustodyPersistence {
+    fn profile_path(&self, profile_id: &WalletProfileId) -> PathBuf {
+        let digest = Sha256::digest(profile_id.as_str().as_bytes());
+        self.directory
+            .join(format!("profile-{}.oxidbak", hex::encode(digest)))
+    }
+
+    fn key_path(&self) -> PathBuf {
+        self.directory.join(DEVELOPMENT_STORE_KEY_FILE)
+    }
+
+    fn load_secret(&self) -> Result<WalletRecoverySecret, WalletSecurityPortError> {
+        let Some(bytes) = oxid_adapter_store_atomic::read_owner_private_bounded(
+            &self.key_path(),
+            DEVELOPMENT_STORE_KEY_BYTES,
+        )
+        .map_err(|_| WalletSecurityPortError::InvalidOperation)?
+        else {
+            return Err(WalletSecurityPortError::InvalidOperation);
+        };
+        Self::secret_from_bytes(bytes)
+    }
+
+    fn load_or_create_secret<N>(
+        &self,
+        random: &N,
+    ) -> Result<WalletRecoverySecret, WalletSecurityPortError>
+    where
+        N: RandomPort,
+    {
+        if self.key_path().exists() {
+            return self.load_secret();
+        }
+        oxid_adapter_store_atomic::ensure_private_directory(&self.directory)
+            .map_err(|_| WalletSecurityPortError::Unavailable)?;
+        let mut bytes = Zeroizing::new(vec![0_u8; DEVELOPMENT_STORE_KEY_BYTES]);
+        random
+            .fill_bytes(&mut bytes)
+            .map_err(|_| WalletSecurityPortError::Unavailable)?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        match options.open(self.key_path()) {
+            Ok(mut file) => {
+                file.write_all(&bytes)
+                    .and_then(|()| file.sync_all())
+                    .map_err(|_| WalletSecurityPortError::Unavailable)?;
+                Self::secret_from_bytes(Vec::from(bytes.as_slice()))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => self.load_secret(),
+            Err(_) => Err(WalletSecurityPortError::Unavailable),
+        }
+    }
+
+    fn secret_from_bytes(bytes: Vec<u8>) -> Result<WalletRecoverySecret, WalletSecurityPortError> {
+        let bytes = Zeroizing::new(bytes);
+        if bytes.len() != DEVELOPMENT_STORE_KEY_BYTES {
+            return Err(WalletSecurityPortError::InvalidOperation);
+        }
+        let encoded = Zeroizing::new(hex::encode(bytes.as_slice()));
+        WalletRecoverySecret::parse(encoded.as_str())
+            .map_err(|_| WalletSecurityPortError::InvalidOperation)
+    }
 }
 
 impl<C, N> DevelopmentWalletSecurity<C, N> {
@@ -73,6 +157,24 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
             clock,
             random,
             profiles: Mutex::new(BTreeMap::new()),
+            persistence: None,
+        }
+    }
+
+    /// Creates an explicit development-only encrypted custody store.
+    ///
+    /// The wrapping key and encrypted profile vaults are separate owner-only
+    /// files. This protects against accidental disclosure and torn writes but
+    /// deliberately does not claim hardware-backed or user-presence security.
+    #[must_use]
+    pub fn persistent(clock: Arc<C>, random: Arc<N>, directory: impl Into<PathBuf>) -> Self {
+        Self {
+            clock,
+            random,
+            profiles: Mutex::new(BTreeMap::new()),
+            persistence: Some(DevelopmentCustodyPersistence {
+                directory: directory.into(),
+            }),
         }
     }
 
@@ -89,6 +191,7 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
         root_seed: Zeroizing<[u8; 32]>,
     ) -> Result<WalletSecurityStatus, WalletSecurityPortError>
     where
+        C: ClockPort,
         N: RandomPort,
     {
         self.initialize_profile(
@@ -103,6 +206,101 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
         self.profiles
             .lock()
             .map_err(|_| WalletSecurityPortError::Unavailable)
+    }
+
+    fn ensure_loaded(&self, profile_id: &WalletProfileId) -> Result<(), WalletSecurityPortError> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(());
+        };
+        let mut profiles = self.profiles()?;
+        if profiles.contains_key(profile_id.as_str()) {
+            return Ok(());
+        }
+        let path = persistence.profile_path(profile_id);
+        let Some(bytes) = oxid_adapter_store_atomic::read_owner_private_bounded(
+            &path,
+            DEVELOPMENT_STORE_MAX_BACKUP_BYTES,
+        )
+        .map_err(|_| WalletSecurityPortError::InvalidOperation)?
+        else {
+            return Ok(());
+        };
+        let secret = persistence.load_secret()?;
+        let backup = PortableWalletBackup::parse(bytes)
+            .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+        let vault = open_portable_custody(&backup, &secret, profile_id)
+            .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+        let profile = Self::restored_profile(&vault).map_err(map_backup_to_security_error)?;
+        profiles.insert(profile_id.as_str().to_owned(), profile);
+        Ok(())
+    }
+
+    fn persist_profile(
+        &self,
+        profile_id: &WalletProfileId,
+        profile: &DevelopmentProfile,
+    ) -> Result<(), WalletSecurityPortError>
+    where
+        C: ClockPort,
+        N: RandomPort,
+    {
+        let Some(persistence) = &self.persistence else {
+            return Ok(());
+        };
+        let vault = self
+            .portable_vault(profile_id, profile)
+            .map_err(map_backup_to_security_error)?;
+        let secret = persistence.load_or_create_secret(self.random.as_ref())?;
+        let backup = seal_portable_custody(&vault, &secret, self.random.as_ref())
+            .map_err(map_backup_to_security_error)?;
+        oxid_adapter_store_atomic::write_owner_private(
+            &persistence.profile_path(profile_id),
+            backup.as_bytes(),
+        )
+        .map_err(|_| WalletSecurityPortError::Unavailable)
+    }
+
+    fn portable_vault(
+        &self,
+        profile_id: &WalletProfileId,
+        profile: &DevelopmentProfile,
+    ) -> Result<PortableCustodyVault, WalletPortableBackupPortError>
+    where
+        C: ClockPort,
+    {
+        let keys = profile
+            .keys
+            .values()
+            .map(|stored| {
+                if let Some(path) = &stored.derivation {
+                    return Ok(PortableCustodyKey::derived(
+                        stored.descriptor.clone(),
+                        path.clone(),
+                    ));
+                }
+                let secret = match &stored.material {
+                    DevelopmentKeyMaterial::Ed25519(key) => key.to_bytes(),
+                    DevelopmentKeyMaterial::P256(key) => key.to_bytes().into(),
+                    DevelopmentKeyMaterial::Secp256k1Schnorr(key) => key.to_bytes().into(),
+                    DevelopmentKeyMaterial::Jubjub(key) => key.seed_bytes(),
+                };
+                Ok(PortableCustodyKey::generated(
+                    stored.descriptor.clone(),
+                    secret,
+                ))
+            })
+            .collect::<Result<Vec<_>, WalletPortableBackupPortError>>()?;
+        let exported_at_millis = self
+            .clock
+            .now()
+            .map_err(|_| WalletPortableBackupPortError::Unavailable)?
+            .value();
+        PortableCustodyVault::new_with_root(
+            profile_id.clone(),
+            exported_at_millis,
+            profile.root_seed.copy_for_protected_import(),
+            keys,
+        )
     }
 
     fn unlocked_profile<'a>(
@@ -137,8 +335,10 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
         root_seed: Option<WalletRootSeed>,
     ) -> Result<WalletSecurityStatus, WalletSecurityPortError>
     where
+        C: ClockPort,
         N: RandomPort,
     {
+        self.ensure_loaded(profile_id)?;
         let mut profiles = self.profiles()?;
         if profiles.contains_key(profile_id.as_str()) {
             return Err(WalletSecurityPortError::AlreadyInitialized);
@@ -152,14 +352,13 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
                 .map_err(|_| WalletSecurityPortError::Unavailable)?;
             WalletRootSeed::from_raw_development(*root_seed)
         };
-        profiles.insert(
-            profile_id.as_str().to_owned(),
-            DevelopmentProfile {
-                state: WalletProtectionState::Unlocked,
-                root_seed,
-                keys: BTreeMap::new(),
-            },
-        );
+        let profile = DevelopmentProfile {
+            state: WalletProtectionState::Unlocked,
+            root_seed,
+            keys: BTreeMap::new(),
+        };
+        self.persist_profile(profile_id, &profile)?;
+        profiles.insert(profile_id.as_str().to_owned(), profile);
         Ok(development_status(WalletProtectionState::Unlocked))
     }
 
@@ -409,6 +608,7 @@ where
         &self,
         profile_id: &WalletProfileId,
     ) -> Result<WalletSecurityStatus, WalletSecurityPortError> {
+        self.ensure_loaded(profile_id)?;
         let profiles = self.profiles()?;
         let state = profiles
             .get(profile_id.as_str())
@@ -429,6 +629,7 @@ where
         &self,
         profile_id: &WalletProfileId,
     ) -> Result<WalletSecurityStatus, WalletSecurityPortError> {
+        self.ensure_loaded(profile_id)?;
         let mut profiles = self.profiles()?;
         let profile = profiles
             .get_mut(profile_id.as_str())
@@ -441,6 +642,7 @@ where
         &self,
         profile_id: &WalletProfileId,
     ) -> Result<WalletSecurityStatus, WalletSecurityPortError> {
+        self.ensure_loaded(profile_id)?;
         let mut profiles = self.profiles()?;
         let profile = profiles
             .get_mut(profile_id.as_str())
@@ -474,6 +676,7 @@ where
         profile_id: &WalletProfileId,
         request: GenerateProtectedKeyRequest,
     ) -> Result<WalletKeyDescriptor, WalletSecurityPortError> {
+        self.ensure_loaded(profile_id)?;
         let mut profiles = self.profiles()?;
         let profile = Self::unlocked_profile_mut(&mut profiles, profile_id)?;
         if profile
@@ -506,6 +709,10 @@ where
                 derivation: None,
             },
         );
+        if let Err(error) = self.persist_profile(profile_id, profile) {
+            profile.keys.remove(reference.as_str());
+            return Err(error);
+        }
         Ok(descriptor)
     }
 
@@ -513,6 +720,7 @@ where
         &self,
         profile_id: &WalletProfileId,
     ) -> Result<Vec<WalletKeyDescriptor>, WalletSecurityPortError> {
+        self.ensure_loaded(profile_id)?;
         let profiles = self.profiles()?;
         let profile = Self::unlocked_profile(&profiles, profile_id)?;
         Ok(profile
@@ -528,6 +736,7 @@ where
         key_reference: &WalletKeyReference,
         payload: &[u8],
     ) -> Result<WalletSignature, WalletSecurityPortError> {
+        self.ensure_loaded(profile_id)?;
         let profiles = self.profiles()?;
         let profile = Self::unlocked_profile(&profiles, profile_id)?;
         let key = profile
@@ -565,13 +774,20 @@ where
         profile_id: &WalletProfileId,
         key_reference: &WalletKeyReference,
     ) -> Result<(), WalletSecurityPortError> {
+        self.ensure_loaded(profile_id)?;
         let mut profiles = self.profiles()?;
         let profile = Self::unlocked_profile_mut(&mut profiles, profile_id)?;
-        profile
+        let removed = profile
             .keys
             .remove(key_reference.as_str())
-            .map(|_| ())
-            .ok_or(WalletSecurityPortError::NotFound)
+            .ok_or(WalletSecurityPortError::NotFound)?;
+        if let Err(error) = self.persist_profile(profile_id, profile) {
+            profile
+                .keys
+                .insert(key_reference.as_str().to_owned(), removed);
+            return Err(error);
+        }
+        Ok(())
     }
 }
 
@@ -586,6 +802,7 @@ where
         key_reference: &WalletKeyReference,
         derive_challenge: &mut WalletJubjubChallengeDeriver<'_>,
     ) -> Result<WalletJubjubChallengeSignature, WalletSecurityPortError> {
+        self.ensure_loaded(profile_id)?;
         let mut nonce_seed = Zeroizing::new([0_u8; JUBJUB_COMPACT_BYTES]);
         self.random
             .fill_bytes(nonce_seed.as_mut())
@@ -615,6 +832,7 @@ where
         profile_id: &WalletProfileId,
         request: DeriveProtectedKeyRequest,
     ) -> Result<WalletKeyDescriptor, WalletSecurityPortError> {
+        self.ensure_loaded(profile_id)?;
         let mut profiles = self.profiles()?;
         let profile = Self::unlocked_profile_mut(&mut profiles, profile_id)?;
 
@@ -665,6 +883,10 @@ where
                 derivation: Some(request.path),
             },
         );
+        if let Err(error) = self.persist_profile(profile_id, profile) {
+            profile.keys.remove(reference.as_str());
+            return Err(error);
+        }
         Ok(descriptor)
     }
 }
@@ -680,6 +902,7 @@ where
         path: &WalletHdPath,
         operation: &mut dyn FnMut(&[u8; 32]) -> Result<(), WalletSecurityPortError>,
     ) -> Result<(), WalletSecurityPortError> {
+        self.ensure_loaded(profile_id)?;
         let secret = {
             let profiles = self.profiles()?;
             let profile = Self::unlocked_profile(&profiles, profile_id)?;
@@ -698,48 +921,20 @@ where
         &self,
         profile_id: &WalletProfileId,
     ) -> Result<PortableCustodyVault, WalletPortableBackupPortError> {
+        self.ensure_loaded(profile_id)
+            .map_err(map_backup_security_error)?;
         let profiles = self.profiles().map_err(map_backup_security_error)?;
         let profile =
             Self::unlocked_profile(&profiles, profile_id).map_err(map_backup_security_error)?;
-        let keys = profile
-            .keys
-            .values()
-            .map(|stored| {
-                if let Some(path) = &stored.derivation {
-                    return Ok(PortableCustodyKey::derived(
-                        stored.descriptor.clone(),
-                        path.clone(),
-                    ));
-                }
-                let secret = match &stored.material {
-                    DevelopmentKeyMaterial::Ed25519(key) => key.to_bytes(),
-                    DevelopmentKeyMaterial::P256(key) => key.to_bytes().into(),
-                    DevelopmentKeyMaterial::Secp256k1Schnorr(key) => key.to_bytes().into(),
-                    DevelopmentKeyMaterial::Jubjub(key) => key.seed_bytes(),
-                };
-                Ok(PortableCustodyKey::generated(
-                    stored.descriptor.clone(),
-                    secret,
-                ))
-            })
-            .collect::<Result<Vec<_>, WalletPortableBackupPortError>>()?;
-        let exported_at_millis = self
-            .clock
-            .now()
-            .map_err(|_| WalletPortableBackupPortError::Unavailable)?
-            .value();
-        PortableCustodyVault::new_with_root(
-            profile_id.clone(),
-            exported_at_millis,
-            profile.root_seed.copy_for_protected_import(),
-            keys,
-        )
+        self.portable_vault(profile_id, profile)
     }
 
     fn preflight_custody_recovery(
         &self,
         vault: &PortableCustodyVault,
     ) -> Result<WalletPortableRecoverySummary, WalletPortableBackupPortError> {
+        self.ensure_loaded(vault.profile_id())
+            .map_err(map_backup_security_error)?;
         let profiles = self.profiles().map_err(map_backup_security_error)?;
         if profiles.contains_key(vault.profile_id().as_str()) {
             return Err(WalletPortableBackupPortError::AlreadyInitialized);
@@ -755,6 +950,8 @@ where
         self.preflight_custody_recovery(vault)?;
         let restored = Self::restored_profile(vault)?;
         let restored_key_count = restored.keys.len();
+        self.persist_profile(vault.profile_id(), &restored)
+            .map_err(map_backup_security_error)?;
         let mut profiles = self.profiles().map_err(map_backup_security_error)?;
         if profiles.contains_key(vault.profile_id().as_str()) {
             return Err(WalletPortableBackupPortError::Conflict);
@@ -797,6 +994,8 @@ where
         backup: &PortableWalletBackup,
         recovery_secret: &WalletRecoverySecret,
     ) -> Result<WalletPortableRecoverySummary, WalletPortableBackupPortError> {
+        self.ensure_loaded(profile_id)
+            .map_err(map_backup_security_error)?;
         {
             let profiles = self.profiles().map_err(map_backup_security_error)?;
             if profiles.contains_key(profile_id.as_str()) {
@@ -1003,6 +1202,29 @@ const fn map_backup_security_error(
     }
 }
 
+const fn map_backup_to_security_error(
+    error: WalletPortableBackupPortError,
+) -> WalletSecurityPortError {
+    match error {
+        WalletPortableBackupPortError::Unavailable => WalletSecurityPortError::Unavailable,
+        WalletPortableBackupPortError::NotInitialized => WalletSecurityPortError::NotInitialized,
+        WalletPortableBackupPortError::AlreadyInitialized => {
+            WalletSecurityPortError::AlreadyInitialized
+        }
+        WalletPortableBackupPortError::Locked => WalletSecurityPortError::Locked,
+        WalletPortableBackupPortError::AuthorizationDenied => {
+            WalletSecurityPortError::AuthorizationDenied
+        }
+        WalletPortableBackupPortError::Conflict => WalletSecurityPortError::Conflict,
+        WalletPortableBackupPortError::InvalidPackage
+        | WalletPortableBackupPortError::AuthenticationFailed
+        | WalletPortableBackupPortError::WrongProfile
+        | WalletPortableBackupPortError::InvalidOperation => {
+            WalletSecurityPortError::InvalidOperation
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use ed25519_dalek::{Signature as Ed25519Signature, Verifier as _, VerifyingKey};
@@ -1166,6 +1388,132 @@ mod tests {
         assert_eq!(
             destination.recover_portable_backup(&profile_id(), &backup, &secret),
             Err(WalletPortableBackupPortError::AlreadyInitialized)
+        );
+    }
+
+    #[test]
+    fn persistent_development_custody_restores_multiple_profiles_independently() {
+        let directory = tempfile::tempdir().expect("temporary custody directory");
+        let custody_directory = directory.path().join("custody");
+        let first_profile = profile_id();
+        let second_profile =
+            WalletProfileId::parse("profile_second").expect("second profile is valid");
+        let path = midnight_night_path(0, 0);
+        let (first_descriptor, second_descriptor, first_secret, second_secret) = {
+            let adapter = DevelopmentWalletSecurity::persistent(
+                Arc::new(FixedClock),
+                Arc::new(IncrementingRandom::new()),
+                &custody_directory,
+            );
+            adapter
+                .initialize(&first_profile)
+                .expect("initialize first profile");
+            adapter
+                .initialize(&second_profile)
+                .expect("initialize second profile");
+            let request = |label: &str| DeriveProtectedKeyRequest {
+                label: WalletKeyLabel::parse(label).expect("label is valid"),
+                algorithm: WalletKeyAlgorithm::Secp256k1Schnorr,
+                purpose: WalletKeyPurpose::Transaction,
+                path: path.clone(),
+            };
+            let first_descriptor = adapter
+                .derive(&first_profile, request("First NIGHT account"))
+                .expect("derive first account");
+            let second_descriptor = adapter
+                .derive(&second_profile, request("Second NIGHT account"))
+                .expect("derive second account");
+            let mut first_secret = None;
+            adapter
+                .use_derived_secret(&first_profile, &path, &mut |secret| {
+                    first_secret = Some(*secret);
+                    Ok(())
+                })
+                .expect("read first bounded derived secret");
+            let mut second_secret = None;
+            adapter
+                .use_derived_secret(&second_profile, &path, &mut |secret| {
+                    second_secret = Some(*secret);
+                    Ok(())
+                })
+                .expect("read second bounded derived secret");
+            (
+                first_descriptor,
+                second_descriptor,
+                first_secret.expect("first secret was observed"),
+                second_secret.expect("second secret was observed"),
+            )
+        };
+
+        assert_ne!(first_secret, second_secret);
+        let restored = DevelopmentWalletSecurity::persistent(
+            Arc::new(FixedClock),
+            Arc::new(IncrementingRandom::new()),
+            &custody_directory,
+        );
+        assert_eq!(
+            restored
+                .status(&first_profile)
+                .expect("first status")
+                .state(),
+            WalletProtectionState::Unlocked
+        );
+        assert_eq!(
+            restored
+                .status(&second_profile)
+                .expect("second status")
+                .state(),
+            WalletProtectionState::Unlocked
+        );
+        assert_eq!(
+            restored.list(&first_profile).expect("first keys"),
+            vec![first_descriptor]
+        );
+        assert_eq!(
+            restored.list(&second_profile).expect("second keys"),
+            vec![second_descriptor]
+        );
+        let mut restored_first = None;
+        restored
+            .use_derived_secret(&first_profile, &path, &mut |secret| {
+                restored_first = Some(*secret);
+                Ok(())
+            })
+            .expect("restore first bounded secret");
+        let mut restored_second = None;
+        restored
+            .use_derived_secret(&second_profile, &path, &mut |secret| {
+                restored_second = Some(*secret);
+                Ok(())
+            })
+            .expect("restore second bounded secret");
+        assert_eq!(restored_first, Some(first_secret));
+        assert_eq!(restored_second, Some(second_secret));
+
+        drop(restored);
+        let persistence = DevelopmentCustodyPersistence {
+            directory: custody_directory.clone(),
+        };
+        std::fs::write(
+            persistence.profile_path(&first_profile),
+            b"corrupt profile vault",
+        )
+        .expect("corrupt only the first profile fixture");
+        let isolated = DevelopmentWalletSecurity::persistent(
+            Arc::new(FixedClock),
+            Arc::new(IncrementingRandom::new()),
+            &custody_directory,
+        );
+        assert_eq!(
+            isolated.status(&first_profile),
+            Err(WalletSecurityPortError::InvalidOperation)
+        );
+        assert_eq!(
+            isolated
+                .status(&second_profile)
+                .expect("second profile remains independently readable")
+                .state(),
+            WalletProtectionState::Unlocked
         );
     }
 

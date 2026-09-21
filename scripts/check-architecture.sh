@@ -131,7 +131,7 @@ check_workspace_dependencies oxid-adapter-diagnostics-memory \
 check_workspace_dependencies oxid-adapter-deployment-profile \
   oxid-capabilities-application
 check_workspace_dependencies oxid-adapter-storage-dev \
-  oxid-adapter-backup-portable oxid-foundation oxid-platform-ports \
+  oxid-adapter-backup-portable oxid-adapter-store-atomic oxid-foundation oxid-platform-ports \
   oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-custody-software \
   oxid-wallet-application oxid-wallet-domain
