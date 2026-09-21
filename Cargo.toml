@@ -228,3 +228,12 @@ strip = "debuginfo"
 inherits = "release"
 debug = 1
 strip = "none"
+
+# The live desktop demo spends most of its time in Midnight cryptography. Keep
+# that replay optimized while retaining bounded symbols and avoiding release LTO.
+[profile.desktop-live]
+inherits = "dev"
+opt-level = 3
+debug = 1
+lto = false
+strip = "none"

@@ -40,11 +40,12 @@ follow-up-audit:
 run:
     cargo run -p oxid-app
 
+# Live desktop replay defaults to the optimized, symbol-retaining profile.
 desktop-build:
-    cargo build -p oxid-app
+    cargo build --profile desktop-live -p oxid-app
 
 desktop-run:
-    cargo run -p oxid-app
+    cargo run --profile desktop-live -p oxid-app
 
 desktop-proof-benchmark-build:
     cargo build -p oxid-app --no-default-features --features desktop,developer-proof-benchmark

@@ -132,6 +132,12 @@ test("target recipes preserve run and expose receipt-gated build and deploy mode
     cargo,
     /\[profile\.android-dev\]\ninherits = "dev"\ndebug = 1\nopt-level = 1\nstrip = "debuginfo"/,
   );
+  assert.match(
+    cargo,
+    /\[profile\.desktop-live\]\ninherits = "dev"\nopt-level = 3\ndebug = 1\nlto = false\nstrip = "none"/,
+  );
+  assert.match(justfile, /^desktop-build:\n    cargo build --profile desktop-live -p oxid-app$/m);
+  assert.match(justfile, /^desktop-run:\n    cargo run --profile desktop-live -p oxid-app$/m);
   assert.doesNotMatch(android.slice(androidBuild, androidVerify), /--release/);
   assert.match(guide, /Physical iOS deployment is not\s+implemented/);
   const registration = "node --test scripts/app-artifact-receipt.test.mjs";
