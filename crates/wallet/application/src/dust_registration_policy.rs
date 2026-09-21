@@ -163,6 +163,14 @@ pub enum WalletDustRegistrationSettlementEvent {
         revision: u64,
         eligible: bool,
     },
+    /// The selected wallet's eligible NIGHT is already registered on-chain.
+    ///
+    /// This is a successful terminal observation, not an adapter failure. It
+    /// carries no draft or transaction because no new registration is needed.
+    RegistrationAlreadyCurrent {
+        identity: WalletDustRegistrationSettlementIdentity,
+        revision: u64,
+    },
     AuthorizationRequested {
         identity: WalletDustRegistrationSettlementIdentity,
         draft_id: WalletTransactionDraftId,
@@ -446,6 +454,16 @@ pub fn reduce_wallet_dust_registration_settlement(
                 });
                 apply_eligibility(&mut next, eligible);
             }
+        }
+        WalletDustRegistrationSettlementEvent::RegistrationAlreadyCurrent { revision, .. }
+            if matches!(
+                effective_state(projection),
+                WalletDustRegistrationSettlementState::ActionRequired
+            ) && revision > projection.preparation_revision =>
+        {
+            next.preparation_revision = revision;
+            next.registration = None;
+            set_effective_state(&mut next, WalletDustRegistrationSettlementState::Ready);
         }
         WalletDustRegistrationSettlementEvent::AuthorizationRequested {
             draft_id,
@@ -918,6 +936,7 @@ fn event_identity(
 ) -> &WalletDustRegistrationSettlementIdentity {
     match event {
         WalletDustRegistrationSettlementEvent::Eligibility { identity, .. }
+        | WalletDustRegistrationSettlementEvent::RegistrationAlreadyCurrent { identity, .. }
         | WalletDustRegistrationSettlementEvent::AuthorizationRequested { identity, .. }
         | WalletDustRegistrationSettlementEvent::AuthorizationSucceeded { identity, .. }
         | WalletDustRegistrationSettlementEvent::AuthorizationRejected { identity, .. }

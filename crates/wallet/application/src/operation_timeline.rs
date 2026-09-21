@@ -255,6 +255,7 @@ impl WalletOperationResourceMeasurements {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WalletDustRegistrationTimelineCode {
     EligibilityObserved,
+    RegistrationAlreadyCurrent,
     Prepared,
     AuthorizationSucceeded,
     AuthorizationRejected,

@@ -362,12 +362,20 @@ impl ComposedDustRegistrationExecutor {
     ) -> Result<WalletDustRegistrationOperationCompletion, WalletDustRegistrationExecutorFailure>
     {
         let bound = self.validate_bound(&identity)?;
-        let preview = self
-            .prepare
-            .execute(PrepareWalletDustRegistrationCommand {
-                profile_id: identity.profile.as_str().to_owned(),
-            })
-            .map_err(map_registration_failure)?;
+        let preview = match self.prepare.execute(PrepareWalletDustRegistrationCommand {
+            profile_id: identity.profile.as_str().to_owned(),
+        }) {
+            Ok(preview) => preview,
+            Err(oxid_wallet_application::WalletDustRegistrationError::Operation(
+                oxid_wallet_application::WalletDustRegistrationPortError::RegistrationAlreadyCurrent,
+            )) => {
+                return Ok(WalletDustRegistrationOperationCompletion::already_current(
+                    identity,
+                    bound.revision,
+                ));
+            }
+            Err(error) => return Err(map_registration_failure(error)),
+        };
         if preview.network_id != identity.realm.as_str() {
             return Err(WalletDustRegistrationExecutorFailure::Degraded);
         }

@@ -82,6 +82,14 @@ impl WalletDustRegistrationOperationCompletion {
     }
 
     #[must_use]
+    pub fn already_current(
+        identity: WalletDustRegistrationSettlementIdentity,
+        revision: u64,
+    ) -> Self {
+        Self(completion::already_current(identity, revision))
+    }
+
+    #[must_use]
     pub fn authorized(
         identity: WalletDustRegistrationSettlementIdentity,
         draft_id: WalletTransactionDraftId,
@@ -519,6 +527,7 @@ fn is_executor_completion(event: &WalletDustRegistrationSettlementEvent) -> bool
     matches!(
         event,
         WalletDustRegistrationSettlementEvent::AuthorizationRequested { .. }
+            | WalletDustRegistrationSettlementEvent::RegistrationAlreadyCurrent { .. }
             | WalletDustRegistrationSettlementEvent::AuthorizationSucceeded { .. }
             | WalletDustRegistrationSettlementEvent::AuthorizationRejected { .. }
             | WalletDustRegistrationSettlementEvent::SubmissionAccepted { .. }
@@ -539,6 +548,12 @@ fn completion_matches_operation(
                 WalletDustRegistrationEffect::Prepare { identity: expected },
             ),
             WalletDustRegistrationSettlementEvent::AuthorizationRequested { identity, .. },
+        )
+        | (
+            WalletDustRegistrationRuntimeOperation::Prepare(
+                WalletDustRegistrationEffect::Prepare { identity: expected },
+            ),
+            WalletDustRegistrationSettlementEvent::RegistrationAlreadyCurrent { identity, .. },
         ) => identity == expected,
         (
             WalletDustRegistrationRuntimeOperation::RequestProtectedAuthorization(
