@@ -191,17 +191,16 @@ use screen_privacy::protect_suspended_snapshot;
 use screen_privacy::route_forces_screen_privacy;
 use selected_realm_sync::{
     AccountSyncCardState, account_sync_card_accepts_projection,
-    begin_account_sync_card_observation, dust_status_pill_class, finish_account_sync_card_action,
-    non_native_shielded_balances, poll_account_sync, reload_account_sync_card,
-    selected_realm_chain_tip, selected_realm_dust_balance, selected_realm_dust_note,
-    selected_realm_dust_state, selected_realm_is_syncing, selected_realm_lifecycle_presentation,
-    selected_realm_provenance, selected_realm_shielded_balance, selected_realm_shielded_note,
-    selected_realm_shielded_state, selected_realm_sync_progress, selected_realm_sync_state,
+    begin_account_sync_card_observation, dust_progress_percent, dust_status_pill_class,
+    finish_account_sync_card_action, non_native_shielded_balances, poll_account_sync,
+    reload_account_sync_card, selected_realm_chain_tip, selected_realm_dust_balance,
+    selected_realm_dust_note, selected_realm_dust_state, selected_realm_is_syncing,
+    selected_realm_lifecycle_presentation, selected_realm_provenance,
+    selected_realm_shielded_balance, selected_realm_shielded_note, selected_realm_shielded_state,
+    selected_realm_sync_progress, selected_realm_sync_state,
 };
 #[cfg(test)]
-use selected_realm_sync::{
-    dust_progress_percent, dust_sync_note, shielded_progress_percent, shielded_sync_note,
-};
+use selected_realm_sync::{dust_sync_note, shielded_progress_percent, shielded_sync_note};
 use wallet_realm_lifecycle::{WalletRealmLifecycleWake, WalletRealmProjectionWake};
 
 const BASE_STYLES: &str = include_str!("../assets/styles.css");
@@ -2379,7 +2378,7 @@ enum TransferRecovery {
     ReconcileUnknown,
 }
 
-const SECRET_MODE_REVEAL_TIMEOUT: Duration = Duration::from_secs(30);
+const SECRET_MODE_REVEAL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SecretModeState {
@@ -5941,6 +5940,8 @@ fn DustRegistrationPanel(profile_id: String, dust_balance_positive: bool) -> Ele
     let initial_projection = settlement.projection().ok();
     let mut projection = use_signal(move || initial_projection);
     let mut operation_error = use_signal(|| None::<String>);
+    let mut dust_sync = use_signal(|| None::<WalletDustSyncView>);
+    let mut dust_observation_running = use_signal(|| false);
 
     let observations = settlement.subscribe();
     use_effect(move || {
@@ -5983,6 +5984,73 @@ fn DustRegistrationPanel(profile_id: String, dust_balance_positive: bool) -> Ele
         DustSettlementPresentation::Unavailable,
         dust_settlement_presentation,
     );
+    let observe_services = services.clone();
+    let observe_settlement = settlement.clone();
+    let observe_profile = profile_id.clone();
+    use_effect(move || {
+        let reconciling = projection.read().as_ref().is_some_and(|projection| {
+            projection.state
+                == oxid_wallet_application::WalletDustRegistrationSettlementState::Reconciling
+        });
+        if !reconciling {
+            dust_sync.set(None);
+            return;
+        }
+        if dust_observation_running() {
+            return;
+        }
+        dust_observation_running.set(true);
+        let services = observe_services.clone();
+        let settlement = observe_settlement.clone();
+        let profile_id = observe_profile.clone();
+        spawn(async move {
+            while projection.read().as_ref().is_some_and(|projection| {
+                projection.state
+                    == oxid_wallet_application::WalletDustRegistrationSettlementState::Reconciling
+            }) {
+                let query_services = services.clone();
+                let query_profile = profile_id.clone();
+                if let Ok(Ok(realm)) = run_ui_blocking(move || {
+                    query_services.get_selected_wallet_realm_sync().execute(
+                        SelectedWalletRealmSyncCommand {
+                            profile_id: query_profile,
+                        },
+                    )
+                })
+                .await
+                    && let WalletRealmFamilyView::Ready(status) = realm.view.dust
+                {
+                    dust_sync.set(Some(status));
+                }
+
+                let refresh_settlement = settlement.clone();
+                let refresh_profile = profile_id.clone();
+                match run_ui_future(
+                    async move { refresh_settlement.refresh(refresh_profile).await },
+                )
+                .await
+                {
+                    Ok(Ok(updated)) => {
+                        let complete = updated.state
+                            != oxid_wallet_application::WalletDustRegistrationSettlementState::Reconciling;
+                        projection.set(Some(updated));
+                        operation_error.set(None);
+                        if complete {
+                            break;
+                        }
+                    }
+                    Ok(Err(error)) => {
+                        operation_error.set(Some(error.to_string()));
+                    }
+                    Err(error) => {
+                        operation_error.set(Some(error.to_string()));
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            dust_observation_running.set(false);
+        });
+    });
     let review = if presentation == DustSettlementPresentation::AwaitingAuthorization {
         settlement.authorization_review().ok()
     } else {
@@ -6097,6 +6165,24 @@ fn DustRegistrationPanel(profile_id: String, dust_balance_positive: bool) -> Ele
                 },
                 DustSettlementPresentation::UpdatingBalance => rsx! {
                     p { class: "settlement-status", role: "status", aria_live: "polite", "Registration is confirmed. Updating the wallet balance automatically." }
+                    if let Some(status) = dust_sync.read().as_ref() {
+                        if let Some(percent) = dust_progress_percent(status) {
+                            div {
+                                class: "wallet-sync-progress",
+                                role: "progressbar",
+                                aria_label: "DUST synchronization progress",
+                                aria_valuemin: "0",
+                                aria_valuemax: "100",
+                                aria_valuenow: "{percent}",
+                                div { class: "wallet-sync-progress__bar", style: "width: {percent}%" }
+                            }
+                            p { class: "account-sync-card__provenance",
+                                "Scanning DUST history · {percent}% · {status.events_processed} events processed"
+                            }
+                        } else {
+                            p { class: "account-sync-card__provenance", "Starting the DUST history scan…" }
+                        }
+                    }
                 },
                 DustSettlementPresentation::Ready => rsx! {
                     p { class: "settlement-status", role: "status", aria_live: "polite",
@@ -11986,6 +12072,7 @@ mod tests {
 
     #[test]
     fn secret_mode_defaults_masked_and_ignores_stale_timeouts() {
+        assert_eq!(SECRET_MODE_REVEAL_TIMEOUT, Duration::from_secs(10 * 60));
         let mut state = SecretModeState::default();
         assert!(state.masked);
 

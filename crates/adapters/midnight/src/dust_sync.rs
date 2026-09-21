@@ -616,22 +616,28 @@ where
                     progress.state,
                 )
                 .map_err(map_checkpoint_error)?;
-            if !progress.segment_complete {
-                return Ok(());
-            }
-            let status = progress_snapshot(
-                &key.1,
+            let balance = if progress.segment_complete {
+                Some(
+                    progress
+                        .state
+                        .wallet_balance(current_time(progress.state.sync_time)),
+                )
+            } else {
+                running_balance(sessions, key, cancellation)
+                    .map_err(map_dust_to_transaction_error)?
+            };
+            let status = snapshot(
+                key.1.clone(),
                 WalletDustSyncState::Syncing,
-                progress.current_cursor,
-                progress.target_cursor,
+                Some(progress.current_cursor),
+                Some(progress.target_cursor),
                 u64::try_from(progress.events_processed)
                     .map_err(|_| WalletTransactionPortError::InvalidData)?,
-                progress
-                    .state
-                    .wallet_balance(current_time(progress.state.sync_time)),
-                updated_at,
+                balance,
+                Some(updated_at),
                 None,
-            )?;
+            )
+            .map_err(map_dust_to_transaction_error)?;
             update_running_snapshot(sessions, key, cancellation, status)
                 .map_err(map_dust_to_transaction_error)
         };
@@ -661,6 +667,23 @@ where
             None,
         )
     })
+}
+
+fn running_balance(
+    sessions: &Arc<Mutex<HashMap<(WalletProfileId, ChainNetworkId), LiveSession>>>,
+    key: &(WalletProfileId, ChainNetworkId),
+    cancellation: &Arc<AtomicBool>,
+) -> Result<Option<u128>, WalletDustSyncPortError> {
+    let sessions = sessions
+        .lock()
+        .map_err(|_| WalletDustSyncPortError::Unavailable)?;
+    let session = sessions
+        .get(key)
+        .ok_or(WalletDustSyncPortError::Unavailable)?;
+    if !Arc::ptr_eq(&session.cancellation, cancellation) {
+        return Err(WalletDustSyncPortError::Conflict);
+    }
+    Ok(session.snapshot.balance_atomic_units())
 }
 
 fn update_running_snapshot(

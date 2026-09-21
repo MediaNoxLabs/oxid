@@ -214,6 +214,11 @@ pub mod completion {
     }
 
     #[must_use]
+    pub fn already_current(identity: Identity, revision: u64) -> Event {
+        Event::RegistrationAlreadyCurrent { identity, revision }
+    }
+
+    #[must_use]
     pub fn authorized(identity: Identity, draft_id: WalletTransactionDraftId) -> Event {
         Event::AuthorizationSucceeded { identity, draft_id }
     }

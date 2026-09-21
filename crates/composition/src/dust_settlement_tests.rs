@@ -6,11 +6,11 @@ use futures::executor::block_on;
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationCommand, ChainNetworkId, GetSelectedWalletRealmSyncUseCase,
     GetWalletDustRegistrationStatusCommand, PrepareWalletDustRegistrationCommand,
-    ReconcileWalletDustRegistrationSubmissionCommand, SelectedWalletRealmIdentity,
-    SelectedWalletRealmObservation, SelectedWalletRealmProjectionFuture,
-    SelectedWalletRealmSyncError, SelectedWalletRealmSyncView, SubmitWalletDustRegistrationCommand,
-    WalletAccountView, WalletAssetBalanceView, WalletDustRegistrationAssetView,
-    WalletDustRegistrationError, WalletDustRegistrationPortError,
+    ReconcileWalletDustRegistrationSubmissionCommand, SelectedWalletRealmActionReadiness,
+    SelectedWalletRealmIdentity, SelectedWalletRealmObservation,
+    SelectedWalletRealmProjectionFuture, SelectedWalletRealmSyncError, SelectedWalletRealmSyncView,
+    SubmitWalletDustRegistrationCommand, WalletAccountView, WalletAssetBalanceView,
+    WalletDustRegistrationAssetView, WalletDustRegistrationError, WalletDustRegistrationPortError,
     WalletDustRegistrationPreviewView, WalletDustRegistrationStatusViewFuture,
     WalletDustRegistrationSubmissionStatusView, WalletDustRegistrationSubmissionView,
     WalletDustRegistrationSubmissionViewFuture, WalletDustSyncView, WalletProfileId,
@@ -24,6 +24,7 @@ struct FakeServices {
     reconcile_state: Mutex<String>,
     sync_ready: Mutex<Result<bool, ()>>,
     submit_unknown: Mutex<bool>,
+    registration_already_current: Mutex<bool>,
     calls: Mutex<Vec<&'static str>>,
 }
 
@@ -34,6 +35,7 @@ impl FakeServices {
             reconcile_state: Mutex::new("included".to_owned()),
             sync_ready: Mutex::new(Ok(true)),
             submit_unknown: Mutex::new(false),
+            registration_already_current: Mutex::new(false),
             calls: Mutex::new(Vec::new()),
         }
     }
@@ -76,6 +78,11 @@ impl PrepareWalletDustRegistrationUseCase for FakeServices {
         _: PrepareWalletDustRegistrationCommand,
     ) -> Result<WalletDustRegistrationPreviewView, WalletDustRegistrationError> {
         self.record("prepare");
+        if *self.registration_already_current.lock().unwrap() {
+            return Err(WalletDustRegistrationError::Operation(
+                WalletDustRegistrationPortError::RegistrationAlreadyCurrent,
+            ));
+        }
         Ok(preview(false))
     }
 }
@@ -305,6 +312,32 @@ fn one_authorization_drives_submission_reconciliation_and_refresh() {
             "refresh"
         ]
     );
+}
+
+#[test]
+fn funded_live_night_is_eligible_before_private_facets_are_synchronized() {
+    let mut selected = selected_projection(1, 7, true);
+    selected.fresh = false;
+    selected.actionable = SelectedWalletRealmActionReadiness::Unavailable;
+    selected.view.dust = WalletRealmFamilyView::Ready(dust_view("never_synced"));
+
+    assert!(selected_realm_is_eligible(&selected));
+}
+
+#[test]
+fn already_registered_night_is_ready_without_duplicate_authorization_or_submission() {
+    let fake = Arc::new(FakeServices::new());
+    *fake.registration_already_current.lock().unwrap() = true;
+    let capability = capability(&fake);
+
+    let ready = block_on(capability.refresh("profile_test".to_owned())).unwrap();
+
+    assert_eq!(
+        ready.state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Ready
+    );
+    assert!(ready.registration.is_none());
+    assert_eq!(*fake.calls.lock().unwrap(), ["prepare"]);
 }
 
 #[test]

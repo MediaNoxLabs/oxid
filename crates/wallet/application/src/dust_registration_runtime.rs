@@ -510,6 +510,7 @@ fn event_identity(
 ) -> &crate::WalletDustRegistrationSettlementIdentity {
     match event {
         WalletDustRegistrationSettlementEvent::Eligibility { identity, .. }
+        | WalletDustRegistrationSettlementEvent::RegistrationAlreadyCurrent { identity, .. }
         | WalletDustRegistrationSettlementEvent::AuthorizationRequested { identity, .. }
         | WalletDustRegistrationSettlementEvent::AuthorizationSucceeded { identity, .. }
         | WalletDustRegistrationSettlementEvent::AuthorizationRejected { identity, .. }
@@ -537,6 +538,9 @@ const fn event_code(
     match event {
         WalletDustRegistrationSettlementEvent::Eligibility { .. } => {
             WalletDustRegistrationTimelineCode::EligibilityObserved
+        }
+        WalletDustRegistrationSettlementEvent::RegistrationAlreadyCurrent { .. } => {
+            WalletDustRegistrationTimelineCode::RegistrationAlreadyCurrent
         }
         WalletDustRegistrationSettlementEvent::AuthorizationRequested { .. } => {
             WalletDustRegistrationTimelineCode::Prepared

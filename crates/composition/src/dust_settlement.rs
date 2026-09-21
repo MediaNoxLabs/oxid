@@ -16,8 +16,8 @@ use oxid_wallet_application::{
     GetWalletDustRegistrationStatusCommand, GetWalletDustRegistrationStatusUseCase,
     PrepareWalletDustRegistrationCommand, PrepareWalletDustRegistrationUseCase,
     ReconcileWalletDustRegistrationSubmissionCommand,
-    ReconcileWalletDustRegistrationSubmissionUseCase, SelectedWalletRealmActionReadiness,
-    SelectedWalletRealmProjection, SelectedWalletRealmSyncCommand, SensitiveOperationConfirmation,
+    ReconcileWalletDustRegistrationSubmissionUseCase, SelectedWalletRealmProjection,
+    SelectedWalletRealmSyncCommand, SensitiveOperationConfirmation,
     SubmitWalletDustRegistrationCommand, SubmitWalletDustRegistrationUseCase,
     SyncSelectedWalletRealmUseCase, WalletDustRegistrationDriver,
     WalletDustRegistrationDriverError, WalletDustRegistrationEffect,
@@ -362,12 +362,20 @@ impl ComposedDustRegistrationExecutor {
     ) -> Result<WalletDustRegistrationOperationCompletion, WalletDustRegistrationExecutorFailure>
     {
         let bound = self.validate_bound(&identity)?;
-        let preview = self
-            .prepare
-            .execute(PrepareWalletDustRegistrationCommand {
-                profile_id: identity.profile.as_str().to_owned(),
-            })
-            .map_err(map_registration_failure)?;
+        let preview = match self.prepare.execute(PrepareWalletDustRegistrationCommand {
+            profile_id: identity.profile.as_str().to_owned(),
+        }) {
+            Ok(preview) => preview,
+            Err(oxid_wallet_application::WalletDustRegistrationError::Operation(
+                oxid_wallet_application::WalletDustRegistrationPortError::RegistrationAlreadyCurrent,
+            )) => {
+                return Ok(WalletDustRegistrationOperationCompletion::already_current(
+                    identity,
+                    bound.revision,
+                ));
+            }
+            Err(error) => return Err(map_registration_failure(error)),
+        };
         if preview.network_id != identity.realm.as_str() {
             return Err(WalletDustRegistrationExecutorFailure::Degraded);
         }
@@ -672,15 +680,14 @@ impl ExecuteWalletDustRegistrationOperation for ComposedDustRegistrationExecutor
 }
 
 fn selected_realm_is_eligible(selected: &SelectedWalletRealmProjection) -> bool {
-    selected.fresh
-        && selected.consistent
-        && selected.actionable == SelectedWalletRealmActionReadiness::Ready
-        && matches!(&selected.view.account, WalletRealmFamilyView::Ready(account) if
-        account.network_id == selected.identity.realm.as_str()
-            && account.balances.iter().any(|balance| {
-                balance.asset_id == "midnight:night"
-                    && balance.atomic_units.parse::<u128>().is_ok_and(|value| value > 0)
-            }))
+    matches!(&selected.view.account, WalletRealmFamilyView::Ready(account) if
+    account.network_id == selected.identity.realm.as_str()
+        && account.source == "live"
+        && account.sync.state == "synced"
+        && account.balances.iter().any(|balance| {
+            balance.asset_id == "midnight:night"
+                && balance.atomic_units.parse::<u128>().is_ok_and(|value| value > 0)
+        }))
 }
 
 fn settlement_identity(
