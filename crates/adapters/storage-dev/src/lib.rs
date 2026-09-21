@@ -191,6 +191,7 @@ impl<C, N> DevelopmentWalletSecurity<C, N> {
         root_seed: Zeroizing<[u8; 32]>,
     ) -> Result<WalletSecurityStatus, WalletSecurityPortError>
     where
+        C: ClockPort,
         N: RandomPort,
     {
         self.initialize_profile(
