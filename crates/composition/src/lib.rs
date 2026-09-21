@@ -27,7 +27,9 @@ mod services;
 #[cfg(any(test, feature = "standalone-development"))]
 mod standalone_genesis;
 mod wiring;
-pub use dust_settlement::{WalletDustSettlementCapability, WalletDustSettlementError};
+pub use dust_settlement::{
+    WalletDustAuthorizationReview, WalletDustSettlementCapability, WalletDustSettlementError,
+};
 pub use environment::*;
 pub use identity::*;
 pub use passport_vault::simulated_passport_vault_contract_address_hex;

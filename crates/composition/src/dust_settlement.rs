@@ -34,6 +34,18 @@ pub struct WalletDustSettlementCapability {
     driver: WalletDustRegistrationDriver,
 }
 
+/// Public, presentation-safe facts for the one DUST authorization decision.
+///
+/// Draft identifiers, authorization challenges, and protected-key material stay
+/// inside composition; adapters receive only the facts a person can review.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletDustAuthorizationReview {
+    pub network_id: String,
+    pub registered_night: oxid_wallet_application::WalletDustRegistrationAssetView,
+    pub input_count: u16,
+    pub maximum_fee_allowance: oxid_wallet_application::WalletDustRegistrationAssetView,
+}
+
 impl WalletDustSettlementCapability {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -114,6 +126,21 @@ impl WalletDustSettlementCapability {
             self.executor.clear_confirmation();
         }
         result
+    }
+
+    /// Returns the exact public facts currently awaiting the single protected
+    /// authorization. This cannot reconstruct or expose a legacy draft.
+    pub fn authorization_review(
+        &self,
+    ) -> Result<WalletDustAuthorizationReview, WalletDustSettlementError> {
+        if self.projection()?.state
+            != oxid_wallet_application::WalletDustRegistrationSettlementState::AwaitingAuthorization
+        {
+            return Err(WalletDustSettlementError::Driver(
+                WalletDustRegistrationDriverError::AuthorizationNotPending,
+            ));
+        }
+        self.executor.authorization_review()
     }
 
     pub fn projection(
@@ -215,6 +242,24 @@ impl ComposedDustRegistrationExecutor {
         if let Ok(mut retained) = self.retained.lock() {
             retained.confirmation = None;
         }
+    }
+
+    fn authorization_review(
+        &self,
+    ) -> Result<WalletDustAuthorizationReview, WalletDustSettlementError> {
+        let preview = self
+            .retained
+            .lock()
+            .map_err(|_| WalletDustSettlementError::RetainedStateUnavailable)?
+            .preview
+            .clone()
+            .ok_or(WalletDustSettlementError::RetainedStateUnavailable)?;
+        Ok(WalletDustAuthorizationReview {
+            network_id: preview.network_id,
+            registered_night: preview.registered_night,
+            input_count: preview.input_count,
+            maximum_fee_allowance: preview.maximum_fee_allowance,
+        })
     }
 
     fn validate_bound(

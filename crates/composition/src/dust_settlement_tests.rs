@@ -308,6 +308,20 @@ fn one_authorization_drives_submission_reconciliation_and_refresh() {
 }
 
 #[test]
+fn authorization_review_exposes_only_presentation_safe_facts() {
+    let fake = Arc::new(FakeServices::new());
+    let capability = capability(&fake);
+    block_on(capability.refresh("profile_test".to_owned())).unwrap();
+
+    let review = capability.authorization_review().unwrap();
+    assert_eq!(review.network_id, "undeployed");
+    assert_eq!(review.registered_night.asset_id, "midnight:night");
+    assert_eq!(review.input_count, 1);
+    assert_eq!(review.maximum_fee_allowance.asset_id, "midnight:dust");
+    assert!(!format!("{review:?}").contains("authorization_challenge"));
+}
+
+#[test]
 fn declined_authorization_performs_no_protected_or_chain_operation() {
     let fake = Arc::new(FakeServices::new());
     let capability = capability(&fake);
