@@ -56,6 +56,7 @@
     "wallet.dust.registration.status",
     "wallet.dust.registration.cancel_submission",
     "wallet.dust.registration.reconcile_submission",
+    "wallet.dust.registration.settlement",
     "wallet.shielded.sync.status",
     "wallet.shielded.sync.start",
     "wallet.shielded.sync.cancel",

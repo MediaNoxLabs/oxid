@@ -81,7 +81,7 @@ oxid-platform-ports.workspace = true
 oxid-protocol-application.workspace = true
 oxid-wallet-application.workspace = true
 oxid-capabilities-application.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 
 # Native device adapters are available only to iOS/Android composition paths.
 # Non-mobile roots therefore do not resolve their dependency closure.

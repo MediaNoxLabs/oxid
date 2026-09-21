@@ -42,6 +42,72 @@ fn startup_failure(error: impl std::fmt::Display) -> ! {
     std::process::exit(2)
 }
 
+struct ComposedWalletDustSettlementUiPort {
+    capability: std::sync::Arc<oxid_composition::WalletDustSettlementCapability>,
+}
+
+impl ComposedWalletDustSettlementUiPort {
+    fn new(capability: std::sync::Arc<oxid_composition::WalletDustSettlementCapability>) -> Self {
+        Self { capability }
+    }
+}
+
+impl oxid_ui_dioxus::WalletDustSettlementUiPort for ComposedWalletDustSettlementUiPort {
+    fn projection(&self) -> Result<oxid_ui_dioxus::WalletDustSettlementProjection, String> {
+        self.capability
+            .projection()
+            .map_err(|error| error.to_string())
+    }
+
+    fn subscribe(&self) -> oxid_ui_dioxus::WalletDustSettlementSubscription {
+        self.capability.subscribe()
+    }
+
+    fn authorization_review(
+        &self,
+    ) -> Result<oxid_ui_dioxus::WalletDustAuthorizationReview, String> {
+        self.capability
+            .authorization_review()
+            .map(|review| oxid_ui_dioxus::WalletDustAuthorizationReview {
+                network_id: review.network_id,
+                registered_night: review.registered_night,
+                input_count: review.input_count,
+                maximum_fee_allowance: review.maximum_fee_allowance,
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    fn refresh(&self, profile_id: String) -> oxid_ui_dioxus::WalletDustSettlementUiFuture<'_> {
+        Box::pin(async move {
+            self.capability
+                .refresh(profile_id)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    fn authorize(
+        &self,
+        confirmation: oxid_ui_dioxus::WalletDustSettlementConfirmation,
+    ) -> oxid_ui_dioxus::WalletDustSettlementUiFuture<'_> {
+        Box::pin(async move {
+            self.capability
+                .authorize(confirmation)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    fn retry(&self) -> oxid_ui_dioxus::WalletDustSettlementUiFuture<'_> {
+        Box::pin(async move {
+            self.capability
+                .retry()
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+}
+
 fn main() {
     #[cfg(all(feature = "developer-proof-benchmark", target_arch = "wasm32"))]
     compile_error!("developer-proof-benchmark is available only on native targets");
@@ -483,17 +549,9 @@ fn main() {
                 application.start_wallet_dust_sync(),
                 application.cancel_wallet_dust_sync(),
             ),
-            oxid_ui_dioxus::WalletDustRegistrationUiServices::new(
-                application.prepare_wallet_dust_registration(),
-                application.authorize_wallet_dust_registration(),
-                application.submit_wallet_dust_registration(),
-                oxid_ui_dioxus::WalletDustRegistrationRecoveryUiServices::new(
-                    application.get_wallet_dust_registration(),
-                    application.get_wallet_dust_registration_status(),
-                    application.cancel_wallet_dust_registration_submission(),
-                    application.reconcile_wallet_dust_registration_submission(),
-                ),
-            ),
+            oxid_ui_dioxus::WalletDustSettlementUiServices::new(std::sync::Arc::new(
+                ComposedWalletDustSettlementUiPort::new(application.wallet_dust_settlement()),
+            )),
             oxid_ui_dioxus::WalletShieldedSyncUiServices::new(
                 application.get_wallet_shielded_sync_status(),
                 application.start_wallet_shielded_sync(),

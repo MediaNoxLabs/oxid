@@ -34,9 +34,10 @@ use crate::{
     },
     projections::{
         account_value, address_value, balance_value, dust_registration_preview_value,
-        dust_registration_status_value, dust_registration_submission_value, dust_sync_value,
-        selected_realm_sync_value, shielded_sync_value, sync_value, transaction_value,
-        transfer_preview_value, transfer_submission_status_value, transfer_submission_value,
+        dust_registration_settlement_value, dust_registration_status_value,
+        dust_registration_submission_value, dust_sync_value, selected_realm_sync_value,
+        shielded_sync_value, sync_value, transaction_value, transfer_preview_value,
+        transfer_submission_status_value, transfer_submission_value,
     },
     protocol::{Dispatch, Request, Response, params_are_empty},
 };
@@ -59,6 +60,26 @@ fn selected_realm_sync_dispatch(
 }
 
 impl HeadlessWallet {
+    pub(super) fn dust_registration_settlement(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "wallet.dust.registration.settlement");
+        }
+        match self.application.wallet_dust_settlement().projection() {
+            Ok(projection) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({
+                    "dustRegistrationSettlement":
+                        dust_registration_settlement_value(&projection)
+                }),
+            )),
+            Err(_) => Dispatch::continue_with(Response::error(
+                request.id,
+                "state_unavailable",
+                "DUST registration settlement state is unavailable",
+            )),
+        }
+    }
+
     pub(super) fn sync_account(&self, request: Request) -> Dispatch {
         let method = match request.method.as_str() {
             "wallet.connect" => "wallet.connect",

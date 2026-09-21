@@ -6,6 +6,28 @@ use serde_json::json;
 use super::support::execute_with_wallet;
 
 #[test]
+fn exposes_the_shared_dust_settlement_projection_without_secret_material() {
+    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let response = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"settlement","method":"wallet.dust.registration.settlement","params":{}}"#,
+    );
+    let settlement = &response[0]["result"]["dustRegistrationSettlement"];
+    assert_eq!(settlement["state"], "unavailable");
+    assert!(settlement["identity"].is_null());
+    assert!(settlement["registration"].is_null());
+    assert_eq!(settlement["preparationRevision"], 0);
+    assert_eq!(settlement["recoveryRevision"], 0);
+
+    let rejected = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"settlement-secret","method":"wallet.dust.registration.settlement","params":{"seedHex":"must-not-echo"}}"#,
+    );
+    assert_eq!(rejected[0]["error"]["code"], "invalid_params");
+    assert!(!rejected[0].to_string().contains("must-not-echo"));
+}
+
+#[test]
 fn selected_realm_sync_projects_public_dust_and_shielded_outcomes_together() {
     let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
     let created = execute_with_wallet(

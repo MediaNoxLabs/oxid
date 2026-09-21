@@ -456,6 +456,10 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
         CapabilityView::new("wallet.dust.registration.reconcile_submission", "ready")
             .text("mode", "standalone")
             .text("scope", "finalized_chain"),
+        CapabilityView::new("wallet.dust.registration.settlement", "ready")
+            .text("mode", "shared_projection")
+            .text("policyOwner", "composition")
+            .text("material", "public_state_only"),
         CapabilityView::new("wallet.shielded.sync.status", "ready")
             .text("mode", "standalone")
             .texts("sources", &["simulated", "live", "cached", "unavailable"]),

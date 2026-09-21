@@ -86,6 +86,8 @@ pub(super) fn AssetsPage(
             let dust = balance_for(&account, "DUST")
                 .map(|balance| ui::format_atomic_units(&balance.atomic_units, balance.decimals))
                 .unwrap_or_else(|| "—".to_owned());
+            let dust_balance_positive = balance_for(&account, "DUST")
+                .is_some_and(|balance| balance.atomic_units.bytes().any(|digit| digit != b'0'));
             let unavailable = account.source == "unavailable";
             let is_busy = busy.is_some();
             let account_hint = account_hint(&account, busy);
@@ -345,12 +347,7 @@ pub(super) fn AssetsPage(
                 } else {
                     DustRegistrationPanel {
                         profile_id: active_profile.id.clone(),
-                        availability: dust_registration_availability(
-                            protection_unlocked,
-                            protected_account,
-                            account.sync.state == "synced",
-                            unavailable,
-                        ),
+                        dust_balance_positive,
                     }
                 }
 

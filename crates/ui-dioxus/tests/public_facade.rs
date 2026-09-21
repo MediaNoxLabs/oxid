@@ -8,8 +8,8 @@ use oxid_ui_dioxus::{
     DiagnosticsUiServices, DidUiServices, IdentityIngressUiServices, IdentityUiServices,
     PassportVaultContractCallRecoveryUiServices, PassportVaultContractCallUiServices,
     PassportVaultUiServices, SecurityCopySnapshot, SelfIssuedAuthenticationUiServices,
-    WalletAccountUiServices, WalletBackupUiServices, WalletDustRegistrationRecoveryUiServices,
-    WalletDustRegistrationUiServices, WalletDustSyncUiServices, WalletOperationalUiServices,
+    WalletAccountUiServices, WalletBackupUiServices, WalletDustAuthorizationReview,
+    WalletDustSettlementUiServices, WalletDustSyncUiServices, WalletOperationalUiServices,
     WalletProfileUiServices, WalletRealmSyncUiServices, WalletSecurityUiServices,
     WalletShieldedSyncUiServices, WalletTransactionPreparationUiServices,
     WalletTransactionRecoveryUiServices, WalletTransactionUiServices, WalletUiServices,
@@ -45,8 +45,8 @@ fn service_facade_type_and_constructor_paths_remain_at_the_crate_root() {
     assert_public_type::<WalletAccountUiServices>();
     assert_public_type::<WalletRealmSyncUiServices>();
     assert_public_type::<WalletDustSyncUiServices>();
-    assert_public_type::<WalletDustRegistrationUiServices>();
-    assert_public_type::<WalletDustRegistrationRecoveryUiServices>();
+    assert_public_type::<WalletDustSettlementUiServices>();
+    assert_public_type::<WalletDustAuthorizationReview>();
     assert_public_type::<WalletShieldedSyncUiServices>();
     assert_public_type::<WalletTransactionUiServices>();
     assert_public_type::<WalletTransactionPreparationUiServices>();
@@ -60,7 +60,7 @@ fn service_facade_type_and_constructor_paths_remain_at_the_crate_root() {
         PassportVaultContractCallUiServices::new;
     let _: fn(
         WalletDustSyncUiServices,
-        WalletDustRegistrationUiServices,
+        WalletDustSettlementUiServices,
         WalletShieldedSyncUiServices,
         WalletTransactionUiServices,
         PassportVaultUiServices,
@@ -91,8 +91,7 @@ fn service_facade_type_and_constructor_paths_remain_at_the_crate_root() {
     assert_public_path(WalletRealmSyncUiServices::new);
     assert_public_path(WalletUiServices::get_wallet_operation_timeline);
     assert_public_path(WalletDustSyncUiServices::new);
-    assert_public_path(WalletDustRegistrationUiServices::new);
-    assert_public_path(WalletDustRegistrationRecoveryUiServices::new);
+    assert_public_path(WalletDustSettlementUiServices::new);
     assert_public_path(WalletShieldedSyncUiServices::new);
     assert_public_path(WalletTransactionUiServices::new);
     assert_public_path(WalletTransactionPreparationUiServices::new);

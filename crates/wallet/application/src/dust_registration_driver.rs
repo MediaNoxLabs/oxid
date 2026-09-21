@@ -191,6 +191,12 @@ pub trait ExecuteWalletDustRegistrationOperation: Send + Sync {
     ) -> WalletDustRegistrationOperationFuture<'_>;
 }
 
+/// Presentation-neutral observer notified after each accepted projection
+/// transition. Observers receive only the public settlement projection and do
+/// not participate in workflow policy or effect execution.
+pub type WalletDustRegistrationProjectionObserver =
+    Arc<dyn Fn(WalletDustRegistrationSettlementProjection) + Send + Sync>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WalletDustRegistrationDriverError {
     Poisoned,
@@ -230,13 +236,26 @@ impl Error for WalletDustRegistrationDriverError {}
 pub struct WalletDustRegistrationDriver {
     runtime: Mutex<WalletDustRegistrationRuntime>,
     executor: Arc<dyn ExecuteWalletDustRegistrationOperation>,
+    observer: Option<WalletDustRegistrationProjectionObserver>,
     driving: AtomicBool,
 }
 
 impl WalletDustRegistrationDriver {
     #[must_use]
     pub fn new(executor: Arc<dyn ExecuteWalletDustRegistrationOperation>) -> Self {
-        Self::with_runtime(executor, WalletDustRegistrationRuntime::default())
+        Self::with_runtime_and_observer(executor, WalletDustRegistrationRuntime::default(), None)
+    }
+
+    #[must_use]
+    pub fn with_projection_observer(
+        executor: Arc<dyn ExecuteWalletDustRegistrationOperation>,
+        observer: WalletDustRegistrationProjectionObserver,
+    ) -> Self {
+        Self::with_runtime_and_observer(
+            executor,
+            WalletDustRegistrationRuntime::default(),
+            Some(observer),
+        )
     }
 
     #[must_use]
@@ -244,10 +263,25 @@ impl WalletDustRegistrationDriver {
         executor: Arc<dyn ExecuteWalletDustRegistrationOperation>,
         runtime: WalletDustRegistrationRuntime,
     ) -> Self {
+        Self::with_runtime_and_observer(executor, runtime, None)
+    }
+
+    fn with_runtime_and_observer(
+        executor: Arc<dyn ExecuteWalletDustRegistrationOperation>,
+        runtime: WalletDustRegistrationRuntime,
+        observer: Option<WalletDustRegistrationProjectionObserver>,
+    ) -> Self {
         Self {
             runtime: Mutex::new(runtime),
             executor,
+            observer,
             driving: AtomicBool::new(false),
+        }
+    }
+
+    fn publish(&self, projection: &WalletDustRegistrationSettlementProjection) {
+        if let Some(observer) = &self.observer {
+            observer(projection.clone());
         }
     }
 
@@ -269,10 +303,15 @@ impl WalletDustRegistrationDriver {
         if is_executor_completion(&observation) {
             return Err(WalletDustRegistrationDriverError::InvalidObservation);
         }
-        self.runtime
-            .lock()
-            .map_err(|_| WalletDustRegistrationDriverError::Poisoned)?
-            .observe(observation);
+        let observed = {
+            let mut runtime = self
+                .runtime
+                .lock()
+                .map_err(|_| WalletDustRegistrationDriverError::Poisoned)?;
+            runtime.observe(observation);
+            runtime.coordinator().projection().clone()
+        };
+        self.publish(&observed);
         self.drain(None).await
     }
 
@@ -381,9 +420,12 @@ impl WalletDustRegistrationDriver {
                         continue;
                     }
                     runtime_admission.disarm();
+                    let projection = runtime.coordinator().projection().clone();
+                    drop(runtime);
+                    self.publish(&projection);
                     authorization_target = None;
                     if pause_after_completion {
-                        return Ok(runtime.coordinator().projection().clone());
+                        return Ok(projection);
                     }
                 }
                 Err(error) => {

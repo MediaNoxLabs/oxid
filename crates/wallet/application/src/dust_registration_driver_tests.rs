@@ -177,6 +177,34 @@ fn preparation_stops_at_authorization_then_one_authorization_reaches_ready() {
 }
 
 #[test]
+fn observer_receives_the_stable_settlement_progression_in_order() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let observed_sink = Arc::clone(&observed);
+    let observer: WalletDustRegistrationProjectionObserver = Arc::new(move |projection| {
+        observed_sink.lock().unwrap().push(projection.state);
+    });
+    let driver =
+        WalletDustRegistrationDriver::with_projection_observer(successful_script(), observer);
+
+    assert_eq!(
+        resolve(driver.advance(eligibility(1, 1))).unwrap().state,
+        State::AwaitingAuthorization
+    );
+    assert_eq!(resolve(driver.authorize()).unwrap().state, State::Ready);
+    assert_eq!(
+        *observed.lock().unwrap(),
+        vec![
+            State::ActionRequired,
+            State::AwaitingAuthorization,
+            State::Submitting,
+            State::Confirming,
+            State::Reconciling,
+            State::Ready,
+        ]
+    );
+}
+
+#[test]
 fn busy_authorization_is_explicit_and_same_target_retry_executes_once() {
     let executor = successful_script();
     let driver = WalletDustRegistrationDriver::new(executor.clone());

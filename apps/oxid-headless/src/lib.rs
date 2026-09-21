@@ -246,6 +246,7 @@ impl HeadlessWallet {
             "wallet.dust.registration.reconcile_submission" => {
                 self.reconcile_dust_registration_submission(request)
             }
+            "wallet.dust.registration.settlement" => self.dust_registration_settlement(request),
             "wallet.shielded.sync.status" => self.shielded_sync_status(request),
             "wallet.shielded.sync.start" => self.start_shielded_sync(request),
             "wallet.shielded.sync.cancel" => self.cancel_shielded_sync(request),
