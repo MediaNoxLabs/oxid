@@ -16,10 +16,12 @@ use oxid_presentation_application::CredentialPresentationView;
 use oxid_protocol_application::{CredentialIssuanceView, SelfIssuedAuthenticationView};
 use oxid_wallet_application::{
     DerivedWalletAccountView, SelectedWalletRealmProjection, WalletAccountView,
-    WalletDustRegistrationPreviewView, WalletDustRegistrationSubmissionStatusView,
-    WalletDustRegistrationSubmissionView, WalletDustSyncView, WalletKeyView, WalletNetworkListView,
-    WalletRealmFamilyView, WalletSecurityStatusView, WalletShieldedSyncView,
-    WalletTransferPreviewView, WalletTransferSubmissionStatusView, WalletTransferSubmissionView,
+    WalletDustRegistrationPreviewView, WalletDustRegistrationSettlementAuthorizationPhase,
+    WalletDustRegistrationSettlementProjection, WalletDustRegistrationSettlementState,
+    WalletDustRegistrationSubmissionStatusView, WalletDustRegistrationSubmissionView,
+    WalletDustSyncView, WalletKeyView, WalletNetworkListView, WalletRealmFamilyView,
+    WalletSecurityStatusView, WalletShieldedSyncView, WalletTransferPreviewView,
+    WalletTransferSubmissionStatusView, WalletTransferSubmissionView,
 };
 use oxid_wallet_domain::{
     PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyPurpose, WalletProtectionClass,
@@ -213,6 +215,58 @@ pub(super) fn dust_registration_asset_value(
         "decimals": asset.decimals,
         "atomicUnits": asset.atomic_units,
     })
+}
+
+pub(super) fn dust_registration_settlement_value(
+    projection: &WalletDustRegistrationSettlementProjection,
+) -> Value {
+    json!({
+        "state": dust_registration_settlement_state_name(projection.state),
+        "identity": projection.identity.as_ref().map(|identity| json!({
+            "profileId": identity.profile.to_string(),
+            "networkId": identity.realm.to_string(),
+            "generation": identity.generation,
+        })),
+        "registration": projection.registration.as_ref().map(|registration| json!({
+            "draftId": registration.draft_id.as_str(),
+            "authorizationPhase": match registration.authorization_phase {
+                WalletDustRegistrationSettlementAuthorizationPhase::AwaitingAuthorization => "awaiting_authorization",
+                WalletDustRegistrationSettlementAuthorizationPhase::Submitting => "submitting",
+                WalletDustRegistrationSettlementAuthorizationPhase::Submitted => "submitted",
+            },
+            "transactionId": registration.transaction_id.as_ref().map(oxid_wallet_application::ChainTransactionId::as_str),
+            "included": registration.included,
+            "dustReady": registration.dust_ready,
+            "observationRevision": registration.observation_revision,
+            "dustRevision": registration.dust_revision,
+        })),
+        "checkpoint": projection.checkpoint.as_ref().map(|checkpoint| json!({
+            "revision": checkpoint.revision,
+            "eligible": checkpoint.eligible,
+        })),
+        "preparationRevision": projection.preparation_revision,
+        "recoveryRevision": projection.recovery_revision,
+    })
+}
+
+const fn dust_registration_settlement_state_name(
+    state: WalletDustRegistrationSettlementState,
+) -> &'static str {
+    match state {
+        WalletDustRegistrationSettlementState::Unavailable => "unavailable",
+        WalletDustRegistrationSettlementState::NotEligible => "not_eligible",
+        WalletDustRegistrationSettlementState::ActionRequired => "action_required",
+        WalletDustRegistrationSettlementState::AwaitingAuthorization => "awaiting_authorization",
+        WalletDustRegistrationSettlementState::Submitting => "submitting",
+        WalletDustRegistrationSettlementState::Confirming => "confirming",
+        WalletDustRegistrationSettlementState::Reconciling => "reconciling",
+        WalletDustRegistrationSettlementState::Ready => "ready",
+        WalletDustRegistrationSettlementState::Cancelled => "cancelled",
+        WalletDustRegistrationSettlementState::Offline => "offline",
+        WalletDustRegistrationSettlementState::TimedOut => "timed_out",
+        WalletDustRegistrationSettlementState::Degraded => "degraded",
+        WalletDustRegistrationSettlementState::Suspended => "suspended",
+    }
 }
 
 pub(super) fn diagnostic_snapshot_value(snapshot: &DiagnosticSnapshotView) -> Value {

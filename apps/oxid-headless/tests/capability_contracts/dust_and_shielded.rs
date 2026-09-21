@@ -6,6 +6,95 @@ use serde_json::json;
 use super::support::execute_with_wallet;
 
 #[test]
+fn exposes_the_shared_dust_settlement_projection_without_secret_material() {
+    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let response = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"settlement","method":"wallet.dust.registration.settlement","params":{}}"#,
+    );
+    let settlement = &response[0]["result"]["dustRegistrationSettlement"];
+    assert_eq!(settlement["state"], "unavailable");
+    assert!(settlement["identity"].is_null());
+    assert!(settlement["registration"].is_null());
+    assert_eq!(settlement["preparationRevision"], 0);
+    assert_eq!(settlement["recoveryRevision"], 0);
+
+    let rejected = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"settlement-secret","method":"wallet.dust.registration.settlement","params":{"seedHex":"must-not-echo"}}"#,
+    );
+    assert_eq!(rejected[0]["error"]["code"], "invalid_params");
+    assert!(!rejected[0].to_string().contains("must-not-echo"));
+}
+
+#[test]
+fn drives_the_shared_dust_settlement_to_the_selected_realm_without_legacy_calls() {
+    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let created = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"settlement-create","method":"wallet.profile.create","params":{"displayName":"Settlement flow"}}"#,
+    );
+    let profile_id = created[0]["result"]["profile"]["id"]
+        .as_str()
+        .expect("profile id is returned");
+    let setup = execute_with_wallet(
+        &wallet,
+        &format!(
+            "{}\n{}\n{}\n{}",
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "settlement-select",
+                "method": "wallet.profile.select",
+                "params": { "profileId": profile_id }
+            }),
+            r#"{"protocol":"oxid.headless.v1","id":"settlement-init","method":"wallet.security.initialize","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"settlement-derive","method":"wallet.account.derive","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"settlement-sync","method":"wallet.connect","params":{}}"#,
+        ),
+    );
+    assert!(setup.iter().all(|response| response["ok"] == true));
+
+    let refreshed = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"settlement-refresh","method":"wallet.dust.registration.settlement.refresh","params":{}}"#,
+    );
+    assert_eq!(
+        refreshed[0]["result"]["dustRegistrationSettlement"]["state"],
+        "not_eligible"
+    );
+    assert_eq!(
+        refreshed[0]["result"]["dustRegistrationSettlement"]["identity"]["profileId"],
+        profile_id
+    );
+    assert!(refreshed[0]["result"]["authorizationReview"].is_null());
+
+    let authorized = execute_with_wallet(
+        &wallet,
+        &json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "settlement-authorize",
+            "method": "wallet.dust.registration.settlement.authorize",
+            "params": {
+                "confirmation": {
+                    "title": "Authorize DUST registration",
+                    "summary": "Register this wallet's eligible NIGHT with its protected DUST key",
+                    "confirmed": true
+                }
+            }
+        })
+        .to_string(),
+    );
+    assert_eq!(authorized[0]["error"]["code"], "operation_not_admitted");
+
+    let rejected = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"settlement-retry-secret","method":"wallet.dust.registration.settlement.retry","params":{"seedHex":"must-not-echo"}}"#,
+    );
+    assert_eq!(rejected[0]["error"]["code"], "invalid_params");
+    assert!(!rejected[0].to_string().contains("must-not-echo"));
+}
+
+#[test]
 fn selected_realm_sync_projects_public_dust_and_shielded_outcomes_together() {
     let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
     let created = execute_with_wallet(

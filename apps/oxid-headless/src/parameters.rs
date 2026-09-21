@@ -179,6 +179,12 @@ pub(super) struct AuthorizeDustRegistrationParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct AuthorizeDustSettlementParams {
+    pub(super) confirmation: ConfirmationParams,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct TransactionDraftParams {
     pub(super) draft_id: String,
 }

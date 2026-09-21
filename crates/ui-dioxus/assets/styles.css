@@ -3883,3 +3883,47 @@ select:focus-visible {
 [dir="rtl"] .back-action__icon {
   transform: rotate(180deg);
 }
+.settlement-steps {
+  display: grid;
+  gap: 0.7rem;
+  margin: 1rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settlement-step {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.65rem;
+  color: var(--text-muted);
+  font-weight: 650;
+}
+
+.settlement-step__mark {
+  display: grid;
+  width: 1.5rem;
+  height: 1.5rem;
+  place-items: center;
+  font-size: var(--font-caption);
+}
+
+.settlement-step-active {
+  color: var(--text-primary);
+}
+
+.settlement-step-active .settlement-step__mark {
+  color: var(--accent);
+}
+
+.settlement-step-complete {
+  color: var(--text-primary);
+}
+
+.settlement-step-complete .settlement-step__mark {
+  color: var(--success);
+}
+
+.settlement-status {
+  margin-top: 0.75rem;
+}

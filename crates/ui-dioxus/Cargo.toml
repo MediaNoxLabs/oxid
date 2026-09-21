@@ -49,7 +49,7 @@ oxid-presentation-application.workspace = true
 oxid-passport-vault-application.workspace = true
 oxid-platform-ports.workspace = true
 qrcode.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 zeroize.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

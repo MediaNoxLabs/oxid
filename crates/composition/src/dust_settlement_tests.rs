@@ -308,6 +308,20 @@ fn one_authorization_drives_submission_reconciliation_and_refresh() {
 }
 
 #[test]
+fn authorization_review_exposes_only_presentation_safe_facts() {
+    let fake = Arc::new(FakeServices::new());
+    let capability = capability(&fake);
+    block_on(capability.refresh("profile_test".to_owned())).unwrap();
+
+    let review = capability.authorization_review().unwrap();
+    assert_eq!(review.network_id, "undeployed");
+    assert_eq!(review.registered_night.asset_id, "midnight:night");
+    assert_eq!(review.input_count, 1);
+    assert_eq!(review.maximum_fee_allowance.asset_id, "midnight:dust");
+    assert!(!format!("{review:?}").contains("authorization_challenge"));
+}
+
+#[test]
 fn declined_authorization_performs_no_protected_or_chain_operation() {
     let fake = Arc::new(FakeServices::new());
     let capability = capability(&fake);
@@ -340,23 +354,47 @@ fn stale_generation_cannot_authorize_the_retained_preview() {
 }
 
 #[test]
-fn uncertain_submission_is_retained_without_a_second_submit() {
+fn profile_switch_supersedes_the_previous_identity_even_at_the_same_generation() {
+    let fake = Arc::new(FakeServices::new());
+    let capability = capability(&fake);
+    block_on(capability.refresh("profile_test".to_owned())).unwrap();
+
+    let mut selected = fake.selected.lock().unwrap();
+    selected.identity.profile = WalletProfileId::parse("profile_other").unwrap();
+    drop(selected);
+
+    let replacement = block_on(capability.refresh("profile_other".to_owned())).unwrap();
+    assert_eq!(
+        replacement.identity.unwrap().profile.as_str(),
+        "profile_other"
+    );
+    assert_eq!(
+        replacement.state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::AwaitingAuthorization
+    );
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "prepare")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn uncertain_submission_recovers_the_retained_transaction_without_a_second_submit() {
     let fake = Arc::new(FakeServices::new());
     *fake.submit_unknown.lock().unwrap() = true;
     let capability = capability(&fake);
     block_on(capability.refresh("profile_test".to_owned())).unwrap();
 
     assert_eq!(
-        block_on(capability.authorize(confirmation(true))),
-        Err(WalletDustSettlementError::Driver(
-            WalletDustRegistrationDriverError::Executor(
-                WalletDustRegistrationExecutorFailure::Degraded
-            )
-        ))
-    );
-    assert_eq!(
-        capability.projection().unwrap().state,
-        oxid_wallet_application::WalletDustRegistrationSettlementState::Submitting
+        block_on(capability.authorize(confirmation(true)))
+            .unwrap()
+            .state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Ready
     );
     assert_eq!(
         fake.calls
