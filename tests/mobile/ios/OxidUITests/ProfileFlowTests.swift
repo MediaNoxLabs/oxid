@@ -723,7 +723,7 @@ final class ProfileFlowTests: XCTestCase {
                 "App link recognized as a DID login request. Review the request before consent."
             ].waitForExistence(timeout: 10)
         )
-        XCTAssertTrue(application.staticTexts["Your DIDs"].exists)
+        XCTAssertTrue(application.staticTexts["My identities"].exists)
         application.buttons["Dismiss identity request"].tap()
 
         application.terminate()
