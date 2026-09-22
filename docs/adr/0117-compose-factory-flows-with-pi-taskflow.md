@@ -1,6 +1,6 @@
 # ADR-0117: Compose Factory flows with pi-taskflow
 
-- Status: Accepted for bounded adoption
+- Status: Accepted
 - Date: 2026-09-23
 - Issue: [#689](https://github.com/MediaNoxLabs/oxid/issues/689)
 - Depends on: ADR-0094 and the phased Portal lifecycle from #687/#688
