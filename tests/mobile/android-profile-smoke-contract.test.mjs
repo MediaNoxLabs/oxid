@@ -191,7 +191,7 @@ test("Android Home automation follows the realm-scoped product composition", asy
   assert.match(flow, /1 protected notes/);
   assert.doesNotMatch(flow, /1 shielded notes/);
   assert.match(flow, /clickButton\("Create a DID"\).*clickButton\("Create DID"\)/s);
-  assert.match(flow, /clickButton\("Open DID details"\)/);
+  assert.match(flow, /clickFirstDidCard\(\)/);
   assert.doesNotMatch(flow, /Use standalone login request/);
   assert.doesNotMatch(flow, /standalone-[12]/);
 });

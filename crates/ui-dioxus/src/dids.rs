@@ -10,6 +10,12 @@ enum DidJourney {
     Detail(String),
 }
 
+fn did_method_name(identifier: &str) -> &str {
+    identifier
+        .rsplit_once('#')
+        .map_or(identifier, |(_, fragment)| fragment)
+}
+
 #[component]
 pub(super) fn DidsPage(
     active_profile: WalletProfileView,
@@ -85,14 +91,14 @@ pub(super) fn DidsPage(
         DidPageState::Loading => rsx! {
             section { class: "page-heading",
                 p { class: "eyebrow", "Decentralized identity" }
-                h1 { "Your DIDs" }
+                h1 { "My identities" }
                 p { "Loading public DID records for this wallet profile…" }
             }
         },
         DidPageState::Failed(message) => rsx! {
             section { class: "page-heading",
                 p { class: "eyebrow", "Decentralized identity" }
-                h1 { "Your DIDs" }
+                h1 { "My identities" }
                 p { "DID inventory is an independently composed identity capability." }
             }
             article { class: "empty-state surface-card", role: "alert",
@@ -145,21 +151,39 @@ pub(super) fn DidsPage(
             let publication_profile = profile_id.clone();
             let login_request = services.standalone_self_issued_request();
             rsx! {
-                section { class: "page-heading",
-                    p { class: "eyebrow", "Decentralized identity" }
-                    h1 { "Your DIDs" }
-                    p { "Create, resolve, update, sign with, and deactivate standards-shaped did:midnight documents under the active profile." }
-                }
-                div { class: "action-row",
-                    button { class: "primary-action", r#type: "button", onclick: move |_| journey.set(DidJourney::Create), "Create a DID" }
-                    button { class: "secondary-action", r#type: "button", onclick: move |_| journey.set(DidJourney::Resolve), "Resolve DID" }
+                if active_journey == DidJourney::Inventory {
+                    section { class: "page-heading did-page-heading",
+                        p { class: "eyebrow", "Midnight identity" }
+                        h1 { "My identities" }
+                        p {
+                            if records.is_empty() {
+                                "Create a managed identity or save a public DID you want to follow."
+                            } else if records.len() == 1 {
+                                "1 identity in this wallet and network. Tap it to view or manage its DID document."
+                            } else {
+                                "{records.len()} identities in this wallet and network. Tap one to view or manage its DID document."
+                            }
+                        }
+                    }
                 }
                 if active_journey == DidJourney::Create {
-                    button { class: "secondary-action", r#type: "button", onclick: move |_| journey.set(DidJourney::Inventory), "Back to DID inventory" }
-                article { class: "surface-card did-resolver-card",
+                    div { class: "did-journey-header",
+                        button {
+                            class: "did-back-action",
+                            r#type: "button",
+                            aria_label: "Back to identities",
+                            onclick: move |_| journey.set(DidJourney::Inventory),
+                            span { aria_hidden: "true", "‹" }
+                        }
+                        div {
+                            p { class: "eyebrow", "Managed identity" }
+                            h1 { "Create a DID" }
+                        }
+                    }
+                    article { class: "surface-card did-resolver-card did-task-card",
                     p { class: "card-eyebrow", "Managed identity" }
-                    h2 { "Create DID" }
-                    p { class: "form-hint", "Creates protected Ed25519 authentication, P-256 assertion, and Jubjub holder-binding keys. Only the public DID document is persisted." }
+                    h2 { "Create your identity" }
+                    p { class: "form-hint", "The wallet creates protected authentication, assertion, and holder-binding methods. Only the public DID document leaves protected custody." }
                     if creation == DidCreationState::Ready {
                         button {
                             class: "primary-action", r#type: "button", disabled: resolving || selected_network().is_none(),
@@ -189,13 +213,15 @@ pub(super) fn DidsPage(
                                     .await;
                                     match result {
                                         Ok(Ok(record)) => {
+                                            let created_did = record.document.id.clone();
                                             let mut updated = records;
                                             updated.retain(|existing| existing.document.id != record.document.id);
                                             updated.push(record);
                                             updated.sort_by(|left, right| left.document.id.cmp(&right.document.id));
                                             state.set(DidPageState::Ready { records: updated, resolving: false, operation_error: None });
                                             did_creation.set(DidCreationState::Created);
-                                            did_creation_notice.set(Some("DID created. Review it below before creating another DID.".to_owned()));
+                                            did_creation_notice.set(Some("DID created.".to_owned()));
+                                            journey.set(DidJourney::Detail(created_did));
                                         }
                                         Ok(Err(error)) => {
                                             did_creation.set(DidCreationState::Failed);
@@ -260,56 +286,10 @@ pub(super) fn DidsPage(
                             class: "credential-reverification-success",
                             role: "status",
                             aria_live: "polite",
-                            "A protected managed DID is ready for credential issuance. Its management metadata is available only in this running wallet process."
+                            "A managed DID is ready. Open it from My identities to review or update its public document."
                         }
                     }
-                    if let (Some(service), Some(did)) = (publication_service, active_managed_did) {
-                        div { class: "did-resolver-card",
-                            h3 { "Tailnet demo bootstrap" }
-                            p { class: "form-hint", "Make this DID's public document available to the configured test issuer so it can verify holder proofs. This sends no private keys or credentials and does not publish the DID on chain." }
-                            button {
-                                class: "secondary-action",
-                                r#type: "button",
-                                disabled: did_publication_busy(),
-                                onclick: move |_| {
-                                    if did_publication_busy() {
-                                        return;
-                                    }
-                                    did_publication_busy.set(true);
-                                    did_publication_notice.set(None);
-                                    let service = service.clone();
-                                    let profile_id = publication_profile.clone();
-                                    let did = did.clone();
-                                    spawn(async move {
-                                        let result = run_ui_future(async move {
-                                            service.execute(PublishDidCommand {
-                                                profile_id,
-                                                did,
-                                                confirmed: true,
-                                                intent: PUBLISH_DID_TO_TEST_ISSUER_INTENT.to_owned(),
-                                            }).await
-                                        })
-                                        .await;
-                                        did_publication_busy.set(false);
-                                        match result {
-                                            Ok(Ok(())) => did_publication_notice.set(Some(
-                                                "Public DID document is available to the configured test issuer. You can accept its credential offer now.".to_owned(),
-                                            )),
-                                            Ok(Err(error)) => did_publication_notice
-                                                .set(Some(did_operation_message(error))),
-                                            Err(error) => did_publication_notice
-                                                .set(Some(error.to_string())),
-                                        }
-                                    });
-                                },
-                                if did_publication_busy() { "Publishing holder DID…" } else { "Publish active holder DID to test issuer" }
-                            }
-                            if let Some(message) = did_publication_notice.read().as_deref() {
-                                p { class: "form-hint", role: "status", aria_live: "polite", "{message}" }
-                            }
-                        }
                     }
-                }
                 }
                 if is_authentication_request {
                     article { class: "surface-card did-resolver-card",
@@ -522,9 +502,22 @@ pub(super) fn DidsPage(
                 }
                 }
                 if active_journey == DidJourney::Resolve {
-                    button { class: "secondary-action", r#type: "button", onclick: move |_| journey.set(DidJourney::Inventory), "Back to DID inventory" }
-                article { class: "surface-card did-resolver-card",
-                    p { class: "card-eyebrow", "Resolve a DID" }
+                    div { class: "did-journey-header",
+                        button {
+                            class: "did-back-action",
+                            r#type: "button",
+                            aria_label: "Back to identities",
+                            onclick: move |_| journey.set(DidJourney::Inventory),
+                            span { aria_hidden: "true", "‹" }
+                        }
+                        div {
+                            p { class: "eyebrow", "Public identity" }
+                            h1 { "Resolve a DID" }
+                        }
+                    }
+                    article { class: "surface-card did-resolver-card did-task-card",
+                    h2 { "Find a Midnight identity" }
+                    p { class: "form-hint", "Resolve a public DID document and save it to this profile. This does not give the wallet control of that identity." }
                     label { r#for: "did-identifier", "Midnight DID" }
                     input {
                         id: "did-identifier", r#type: "text", maxlength: 8192,
@@ -532,11 +525,14 @@ pub(super) fn DidsPage(
                         value: "{did_input}",
                         oninput: move |event| did_input.set(event.value()),
                     }
-                    p { class: "form-hint", "Start with an empty resolver input. A live resolver is used only when its base URL is explicitly configured." }
-                    button {
-                        class: "secondary-action", r#type: "button", disabled: resolving || creating_did,
-                        onclick: move |_| did_input.set(STANDALONE_DID_FIXTURE.to_owned()),
-                        "Load example DID"
+                    details { class: "did-development-tools",
+                        summary { "Development example" }
+                        p { class: "form-hint", "Load a fixture identifier for the selected development environment." }
+                        button {
+                            class: "secondary-action", r#type: "button", disabled: resolving || creating_did,
+                            onclick: move |_| did_input.set(STANDALONE_DID_FIXTURE.to_owned()),
+                            "Load example DID"
+                        }
                     }
                     button {
                         class: "primary-action", r#type: "button", disabled: !can_resolve,
@@ -553,146 +549,337 @@ pub(super) fn DidsPage(
                                 .await
                                 {
                                     Ok(Ok(record)) => {
+                                        let resolved_did = record.document.id.clone();
                                         records.retain(|existing| existing.document.id != record.document.id);
                                         records.push(record);
                                         records.sort_by(|left, right| left.document.id.cmp(&right.document.id));
                                         state.set(DidPageState::Ready { records, resolving: false, operation_error: None });
+                                        journey.set(DidJourney::Detail(resolved_did));
                                     }
                                     Ok(Err(error)) => state.set(DidPageState::Ready { records, resolving: false, operation_error: Some(did_operation_message(error)) }),
                                     Err(error) => state.set(DidPageState::Ready { records, resolving: false, operation_error: Some(error.to_string()) }),
                                 }
                             });
                         },
-                        if resolving { "Resolving…" } else { "Resolve and save" }
+                        if resolving { "Resolving DID…" } else { "Resolve DID" }
                     }
-                    if let Some(error) = operation_error {
+                    if let Some(error) = operation_error.as_deref() {
                         p { class: "field-error", role: "alert", "{error}" }
                     }
                 }
                 }
-                if records.is_empty() {
-                    article { class: "empty-state surface-card",
-                        span { class: "empty-state__mark", aria_hidden: "true", "◇" }
-                        h2 { "No saved DIDs" }
-                        p { "Resolve a did:midnight identifier to add its public document to this profile." }
-                        span { class: "status-pill", "Profile scoped" }
-                    }
-                } else {
-                    section { class: "did-inventory", aria_label: "Saved decentralized identifiers",
-                        for record in records.clone() {
-                            {
-                                let did = record.document.id.clone();
-                                let forget_did = did.clone();
-                                let forget_profile = profile_id.clone();
-                                let forget_services = services.clone();
-                                let retained = records.clone();
-                                let source = ui::did_source(&record.source);
-                                let management = did_record_management_label(
-                                    &record.source,
-                                    &record.managed_method_ids,
-                                );
-                                let version = record.document_metadata.version_id.clone().unwrap_or_else(|| "Unversioned".to_owned());
-                                rsx! {
-                                    article { class: "surface-card did-record", key: "{did}",
-                                        div { class: "did-record__heading",
-                                            div {
-                                                p { class: "card-eyebrow", "{ui::midnight_network(&record.document.network)} · {source}" }
-                                                p { class: "form-hint", "{management}" }
-                                                h2 { class: "privacy-value", "{truncate_middle(&did, 22, 12)}" }
-                                            }
-                                            span { class: if record.document_metadata.deactivated == Some(true) { "status-pill" } else { "status-pill success" },
-                                                if record.document_metadata.deactivated == Some(true) { "Deactivated" } else { "Resolved" }
-                                            }
-                                        }
-                                        dl { class: "did-record__facts",
-                                            div { dt { "Version" } dd { "{version}" } }
-                                            div { dt { "Public methods" } dd { "{record.document.verification_methods.len()}" } }
-                                            div { dt { "Services" } dd { "{record.document.services.len()}" } }
-                                        }
-                                        if !record.document.verification_methods.is_empty() {
-                                            ul { class: "did-method-list",
-                                                for method in record.document.verification_methods.clone() {
-                                                    li { key: "{method.id}",
-                                                        strong { "{ui::key_curve(&method.public_key_jwk.curve)}" }
-                                                        code { class: "privacy-value", "{truncate_middle(&method.id, 16, 8)}" }
-                                                    }
+                if active_journey == DidJourney::Inventory {
+                    if records.is_empty() {
+                        article { class: "empty-state surface-card did-empty-state",
+                            span { class: "empty-state__mark", aria_hidden: "true", "◇" }
+                            h2 { "No identities yet" }
+                            p { "Create a DID controlled by this wallet, or resolve an existing public DID." }
+                            span { class: "status-pill", "Profile and network scoped" }
+                        }
+                    } else {
+                        section { class: "did-inventory", aria_label: "Saved decentralized identifiers",
+                            for record in records.clone() {
+                                {
+                                    let did = record.document.id.clone();
+                                    let source = ui::did_source(&record.source);
+                                    let management = did_record_management_label(
+                                        &record.source,
+                                        &record.managed_method_ids,
+                                    );
+                                    let status = if record.document_metadata.deactivated == Some(true) {
+                                        "Deactivated"
+                                    } else if record.managed_method_ids.is_empty() {
+                                        "Observed"
+                                    } else {
+                                        "Active"
+                                    };
+                                    let status_class = if status == "Active" {
+                                        "did-inventory-card__status is-active"
+                                    } else {
+                                        "did-inventory-card__status"
+                                    };
+                                    rsx! {
+                                        button {
+                                            class: "did-inventory-card",
+                                            key: "{did}",
+                                            r#type: "button",
+                                            aria_label: "Open DID details for {did}",
+                                            onclick: {
+                                                let did = did.clone();
+                                                move |_| journey.set(DidJourney::Detail(did.clone()))
+                                            },
+                                            span { class: "did-inventory-card__mark", aria_hidden: "true" }
+                                            span { class: "did-inventory-card__body",
+                                                span { class: "did-inventory-card__topline",
+                                                    span { class: "privacy-value did-inventory-card__did", title: "{did}", "{truncate_middle(&did, 20, 10)}" }
+                                                    span { class: "{status_class}", "{status}" }
+                                                }
+                                                span { class: "did-inventory-card__context", "{ui::midnight_network(&record.document.network)} · {source} · {management}" }
+                                                span { class: "did-inventory-card__facts",
+                                                    span { "{record.document.verification_methods.len()} methods" }
+                                                    span { "{record.document.services.len()} services" }
+                                                    span { "{record.document.also_known_as.len()} aliases" }
                                                 }
                                             }
+                                            span { class: "did-inventory-card__chevron", aria_hidden: "true", "›" }
                                         }
-                                        button {
-                                            class: "secondary-action", r#type: "button",
-                                            aria_expanded: active_journey == DidJourney::Detail(did.clone()),
-                                            onclick: { let did = did.clone(); move |_| journey.set(DidJourney::Detail(did.clone())) },
-                                            "Open DID details"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    div { class: "did-inventory-actions",
+                        button {
+                            class: "primary-action",
+                            r#type: "button",
+                            onclick: move |_| journey.set(DidJourney::Create),
+                            "Create a DID"
+                        }
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            onclick: move |_| journey.set(DidJourney::Resolve),
+                            "Resolve a DID"
+                        }
+                    }
+                } else if let DidJourney::Detail(selected_did) = active_journey.clone() {
+                    if let Some(record) = records.iter().find(|record| record.document.id == selected_did).cloned() {
+                        {
+                            let did = record.document.id.clone();
+                            let managed_did = did.clone();
+                            let refresh_did = did.clone();
+                            let refresh_profile = profile_id.clone();
+                            let refresh_services = services.clone();
+                            let forget_did = did.clone();
+                            let forget_profile = profile_id.clone();
+                            let forget_services = services.clone();
+                            let retained_for_update = records.clone();
+                            let retained_for_forget = records.clone();
+                            let update_records = records.clone();
+                            let publication_did = did.clone();
+                            let source = ui::did_source(&record.source);
+                            let management = did_record_management_label(&record.source, &record.managed_method_ids);
+                            let version = record.document_metadata.version_id.clone().unwrap_or_else(|| "Unversioned".to_owned());
+                            let updated = record.document_metadata.updated.clone().unwrap_or_else(|| "No update timestamp".to_owned());
+                            let is_managed = !record.managed_method_ids.is_empty();
+                            let is_deactivated = record.document_metadata.deactivated == Some(true);
+                            rsx! {
+                                div { class: "did-journey-header",
+                                    button {
+                                        class: "did-back-action",
+                                        r#type: "button",
+                                        aria_label: "Back to identities",
+                                        onclick: move |_| journey.set(DidJourney::Inventory),
+                                        span { aria_hidden: "true", "‹" }
+                                    }
+                                    div {
+                                        p { class: "eyebrow", "DID details" }
+                                        h1 { "Identity" }
+                                    }
+                                }
+                                article { class: "surface-card did-detail-hero",
+                                    div { class: "did-detail-hero__status",
+                                        span { class: if is_deactivated { "status-pill" } else if is_managed { "status-pill success" } else { "status-pill" },
+                                            if is_deactivated { "Deactivated" } else if is_managed { "Managed" } else { "Observed" }
                                         }
-                                        if active_journey == DidJourney::Detail(did.clone()) {
-                                            p { class: "card-eyebrow", "DID detail" }
-                                            button { class: "secondary-action", r#type: "button", onclick: move |_| journey.set(DidJourney::Inventory), "Back to DID inventory" }
-                                        {
-                                            let managed_did = did.clone();
-                                            let retained = records.clone();
-                                            rsx! {
-                                                ManagedDidControls {
-                                                    profile_id: profile_id.clone(),
-                                                    record: record.clone(),
-                                                    on_record: move |result: Result<DidRecordView, String>| {
-                                                        match result {
-                                                            Ok(updated) => {
-                                                                let mut next = retained.clone();
-                                                                next.retain(|entry| entry.document.id != managed_did);
-                                                                next.push(updated);
-                                                                next.sort_by(|left, right| left.document.id.cmp(&right.document.id));
-                                                                state.set(DidPageState::Ready { records: next, resolving: false, operation_error: None });
-                                                            }
-                                                            Err(message) => state.set(DidPageState::Ready { records: retained.clone(), resolving: false, operation_error: Some(message) }),
+                                        span { "{ui::midnight_network(&record.document.network)} · {source}" }
+                                    }
+                                    code { class: "privacy-value did-detail-hero__identifier", title: "{did}", "{did}" }
+                                    p { "{management}" }
+                                    dl { class: "did-detail-facts",
+                                        div { dt { "Version" } dd { "{version}" } }
+                                        div { dt { "Updated" } dd { "{updated}" } }
+                                        div { dt { "Methods" } dd { "{record.document.verification_methods.len()}" } }
+                                        div { dt { "Services" } dd { "{record.document.services.len()}" } }
+                                    }
+                                    button {
+                                        class: "secondary-action",
+                                        r#type: "button",
+                                        disabled: resolving,
+                                        onclick: move |_| {
+                                            let service = refresh_services.resolve_did();
+                                            let profile_id = refresh_profile.clone();
+                                            let did = refresh_did.clone();
+                                            let target = did.clone();
+                                            let mut next = update_records.clone();
+                                            state.set(DidPageState::Ready { records: next.clone(), resolving: true, operation_error: None });
+                                            spawn(async move {
+                                                match run_ui_future(async move {
+                                                    service.execute(ResolveDidCommand { profile_id, did }).await
+                                                }).await {
+                                                    Ok(Ok(updated)) => {
+                                                        next.retain(|entry| entry.document.id != target);
+                                                        next.push(updated);
+                                                        next.sort_by(|left, right| left.document.id.cmp(&right.document.id));
+                                                        state.set(DidPageState::Ready { records: next, resolving: false, operation_error: None });
+                                                    }
+                                                    Ok(Err(error)) => state.set(DidPageState::Ready { records: next, resolving: false, operation_error: Some(did_operation_message(error)) }),
+                                                    Err(error) => state.set(DidPageState::Ready { records: next, resolving: false, operation_error: Some(error.to_string()) }),
+                                                }
+                                            });
+                                        },
+                                        if resolving { "Refreshing DID…" } else { "Refresh from Midnight" }
+                                    }
+                                    if let Some(error) = operation_error.clone() {
+                                        p { class: "field-error", role: "alert", "{error}" }
+                                    }
+                                }
+                                section { class: "did-detail-sections", aria_label: "DID document details",
+                                    article { class: "surface-card did-detail-section",
+                                        div { class: "did-detail-section__heading",
+                                            div { p { class: "card-eyebrow", "Public document" } h2 { "Verification methods" } }
+                                            span { class: "status-pill", "{record.document.verification_methods.len()}" }
+                                        }
+                                        if record.document.verification_methods.is_empty() {
+                                            p { "No verification methods are published." }
+                                        } else {
+                                            ul { class: "did-detail-list",
+                                                for method in record.document.verification_methods.clone() {
+                                                    li { key: "{method.id}",
+                                                        span {
+                                                            strong { "{did_method_name(&method.id)}" }
+                                                            small { "{ui::key_curve(&method.public_key_jwk.curve)} · {method.public_key_jwk.key_type}" }
+                                                        }
+                                                        if record.managed_method_ids.contains(&method.id) {
+                                                            span { class: "status-pill success", "Protected" }
                                                         }
                                                     }
                                                 }
                                             }
                                         }
-                                        button {
-                                            class: "secondary-action", r#type: "button",
-                                            aria_label: "Forget saved DID {did}",
-                                            onclick: move |_| {
-                                                let service = forget_services.forget_did();
-                                                let profile_id = forget_profile.clone();
-                                                let did = forget_did.clone();
-                                                let target = did.clone();
-                                                let records = retained.clone();
-                                                state.set(DidPageState::Ready { records: records.clone(), resolving: true, operation_error: None });
-                                                spawn(async move {
-                                                    let result = run_ui_blocking(move || {
-                                                        service.execute(DidRecordQuery {
-                                                            profile_id,
-                                                            did,
-                                                        })
-                                                    })
-                                                    .await;
-                                                    match result {
-                                                        Ok(Ok(())) => state.set(DidPageState::Ready {
-                                                            records: records.iter().filter(|record| record.document.id != target).cloned().collect(),
-                                                            resolving: false,
-                                                            operation_error: None,
-                                                        }),
-                                                        Ok(Err(error)) => state.set(DidPageState::Ready {
-                                                            records,
-                                                            resolving: false,
-                                                            operation_error: Some(did_operation_message(error)),
-                                                        }),
-                                                        Err(error) => state.set(DidPageState::Ready {
-                                                            records,
-                                                            resolving: false,
-                                                            operation_error: Some(error.to_string()),
-                                                        }),
-                                                    }
-                                                });
-                                            },
-                                            "Forget from profile"
+                                    }
+                                    article { class: "surface-card did-detail-section",
+                                        div { class: "did-detail-section__heading",
+                                            div { p { class: "card-eyebrow", "Public document" } h2 { "Services" } }
+                                            span { class: "status-pill", "{record.document.services.len()}" }
                                         }
+                                        if record.document.services.is_empty() {
+                                            p { "No service endpoints are published." }
+                                        } else {
+                                            ul { class: "did-detail-list",
+                                                for service in record.document.services.clone() {
+                                                    li { key: "{service.id}",
+                                                        span {
+                                                            strong { "{did_method_name(&service.id)}" }
+                                                            small { {service.types.join(", ")} }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    article { class: "surface-card did-detail-section",
+                                        div { class: "did-detail-section__heading",
+                                            div { p { class: "card-eyebrow", "Public document" } h2 { "Also known as" } }
+                                            span { class: "status-pill", "{record.document.also_known_as.len()}" }
+                                        }
+                                        if record.document.also_known_as.is_empty() {
+                                            p { "No aliases are published." }
+                                        } else {
+                                            ul { class: "did-detail-list",
+                                                for alias in record.document.also_known_as.clone() {
+                                                    li { key: "{alias}", code { class: "privacy-value", "{alias}" } }
+                                                }
+                                            }
                                         }
                                     }
                                 }
+                                if is_managed {
+                                    ManagedDidControls {
+                                        profile_id: profile_id.clone(),
+                                        record: record.clone(),
+                                        on_record: move |result: Result<DidRecordView, String>| {
+                                            match result {
+                                                Ok(updated) => {
+                                                    let mut next = retained_for_update.clone();
+                                                    next.retain(|entry| entry.document.id != managed_did);
+                                                    next.push(updated);
+                                                    next.sort_by(|left, right| left.document.id.cmp(&right.document.id));
+                                                    state.set(DidPageState::Ready { records: next, resolving: false, operation_error: None });
+                                                }
+                                                Err(message) => state.set(DidPageState::Ready { records: retained_for_update.clone(), resolving: false, operation_error: Some(message) }),
+                                            }
+                                        }
+                                    }
+                                }
+                                if let Some(service) = publication_service.clone() && is_managed && !is_deactivated {
+                                    details { class: "did-development-tools",
+                                        summary { "Development sharing" }
+                                        p { class: "form-hint", "Share this public DID document with the configured test issuer. Private keys and credentials stay in the wallet." }
+                                        button {
+                                            class: "secondary-action",
+                                            r#type: "button",
+                                            disabled: did_publication_busy(),
+                                            onclick: move |_| {
+                                                if did_publication_busy() { return; }
+                                                did_publication_busy.set(true);
+                                                did_publication_notice.set(None);
+                                                let service = service.clone();
+                                                let profile_id = publication_profile.clone();
+                                                let did = publication_did.clone();
+                                                spawn(async move {
+                                                    let result = run_ui_future(async move {
+                                                        service.execute(PublishDidCommand {
+                                                            profile_id,
+                                                            did,
+                                                            confirmed: true,
+                                                            intent: PUBLISH_DID_TO_TEST_ISSUER_INTENT.to_owned(),
+                                                        }).await
+                                                    }).await;
+                                                    did_publication_busy.set(false);
+                                                    match result {
+                                                        Ok(Ok(())) => did_publication_notice.set(Some("Public DID document shared with the configured test issuer.".to_owned())),
+                                                        Ok(Err(error)) => did_publication_notice.set(Some(did_operation_message(error))),
+                                                        Err(error) => did_publication_notice.set(Some(error.to_string())),
+                                                    }
+                                                });
+                                            },
+                                            if did_publication_busy() { "Sharing DID…" } else { "Share with test issuer" }
+                                        }
+                                        if let Some(message) = did_publication_notice.read().as_deref() {
+                                            p { class: "form-hint", role: "status", aria_live: "polite", "{message}" }
+                                        }
+                                    }
+                                }
+                                details { class: "did-danger-zone",
+                                    summary { "Remove from this profile" }
+                                    p { class: "form-hint", "This removes the saved record from this profile. It does not remove the public DID document from Midnight." }
+                                    button {
+                                        class: "danger-action", r#type: "button",
+                                        aria_label: "Forget saved DID {did}",
+                                        onclick: move |_| {
+                                            let service = forget_services.forget_did();
+                                            let profile_id = forget_profile.clone();
+                                            let did = forget_did.clone();
+                                            let target = did.clone();
+                                            let records = retained_for_forget.clone();
+                                            state.set(DidPageState::Ready { records: records.clone(), resolving: true, operation_error: None });
+                                            spawn(async move {
+                                                let result = run_ui_blocking(move || service.execute(DidRecordQuery { profile_id, did })).await;
+                                                match result {
+                                                    Ok(Ok(())) => {
+                                                        state.set(DidPageState::Ready {
+                                                            records: records.iter().filter(|record| record.document.id != target).cloned().collect(),
+                                                            resolving: false,
+                                                            operation_error: None,
+                                                        });
+                                                        journey.set(DidJourney::Inventory);
+                                                    }
+                                                    Ok(Err(error)) => state.set(DidPageState::Ready { records, resolving: false, operation_error: Some(did_operation_message(error)) }),
+                                                    Err(error) => state.set(DidPageState::Ready { records, resolving: false, operation_error: Some(error.to_string()) }),
+                                                }
+                                            });
+                                        },
+                                        "Forget from profile"
+                                    }
+                                }
                             }
+                        }
+                    } else {
+                        article { class: "empty-state surface-card", role: "alert",
+                            h2 { "Identity no longer available" }
+                            p { "Return to My identities and choose another DID." }
+                            button { class: "secondary-action", r#type: "button", onclick: move |_| journey.set(DidJourney::Inventory), "Back to identities" }
                         }
                     }
                 }
@@ -703,16 +890,24 @@ pub(super) fn DidsPage(
 
 #[cfg(test)]
 mod tests {
+    use super::did_method_name;
+
     #[test]
-    fn did_inventory_keeps_secondary_journeys_out_of_the_landing_surface() {
+    fn did_inventory_is_a_compact_master_detail_journey() {
         let source = include_str!("dids.rs");
         let production_source = source
             .split("#[cfg(test)]")
             .next()
             .expect("production source");
-        assert!(source.contains("Open DID details"));
+        assert!(source.contains("did-inventory-card"));
+        assert!(source.contains("Open DID details for"));
+        assert!(source.contains("did-detail-hero"));
+        assert!(source.contains("DID document details"));
+        assert!(source.contains("Refresh from Midnight"));
         assert!(source.contains("Create DID"));
         assert!(source.contains("Resolve DID"));
+        assert!(source.contains("Create a DID"));
+        assert!(source.contains("Resolve a DID"));
         assert!(source.contains("is_authentication_request"));
         assert!(!production_source.contains("Create a standalone DID"));
         assert!(source.contains("if is_authentication_request"));
@@ -722,5 +917,17 @@ mod tests {
         assert!(!production_source.contains("\"Standalone"));
         assert!(!production_source.contains("network: \"undeployed\""));
         assert!(source.contains("selected_network"));
+    }
+
+    #[test]
+    fn did_method_name_prefers_the_human_readable_fragment() {
+        assert_eq!(
+            did_method_name("did:midnight:undeployed:alice#authentication"),
+            "authentication"
+        );
+        assert_eq!(
+            did_method_name("did:midnight:undeployed:alice"),
+            "did:midnight:undeployed:alice"
+        );
     }
 }

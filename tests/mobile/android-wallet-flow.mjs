@@ -106,6 +106,23 @@ async function clickButtonByLabel(label) {
   }
 }
 
+async function clickFirstDidCard() {
+  const selector = "button.did-inventory-card";
+  await waitFor(
+    `(() => { const element = document.querySelector(${JSON.stringify(selector)}); return Boolean(element && !element.disabled); })()`,
+    "enabled DID inventory card",
+  );
+  const clicked = await evaluate(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    if (!element || element.disabled) return false;
+    element.click();
+    return true;
+  })()`);
+  if (!clicked) {
+    throw new Error("DID inventory card was disabled");
+  }
+}
+
 async function clickGlobalAction(label) {
   const selector = `button[data-global-action=${JSON.stringify(label)}]`;
   await waitFor(
@@ -407,7 +424,7 @@ try {
     await clickButton("Create a DID");
     await clickButton("Create DID");
     await waitFor(
-      "document.body.textContent.includes('A protected managed DID is ready for credential issuance.') && Boolean(document.querySelector('.did-record'))",
+      "document.body.textContent.includes('DID details') && Boolean(document.querySelector('.did-detail-hero'))",
       "managed DID for complete backup",
       30_000,
     );
@@ -478,7 +495,7 @@ try {
     );
     await openIdentities();
     await waitFor(
-      "document.body.textContent.includes('Wallet-managed record') && Boolean(document.querySelector('.did-record'))",
+      "document.body.textContent.includes('Wallet-managed record') && Boolean(document.querySelector('.did-inventory-card'))",
       "restored managed DID",
       30_000,
     );
@@ -699,10 +716,9 @@ try {
     await waitForButton("Create DID");
     await clickButton("Create DID");
     await waitFor(
-      "document.body.textContent.includes('A protected managed DID is ready for credential issuance.') && Boolean(document.querySelector('.did-record'))",
+      "document.body.textContent.includes('DID details') && Boolean(document.querySelector('.did-detail-hero'))",
       "created managed standalone DID",
     );
-    await clickButton("Open DID details");
     await waitFor(
       "document.body.textContent.includes('Manage this DID') && Boolean(document.querySelector('.did-manager'))",
       "managed DID details",
@@ -928,10 +944,10 @@ try {
 
     await openIdentities();
     await waitFor(
-      "Boolean(document.querySelector('.did-record')) && Boolean(Array.from(document.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Open DID details'))",
+      "Boolean(document.querySelector('.did-inventory-card'))",
       "managed DID before deactivation",
     );
-    await clickButton("Open DID details");
+    await clickFirstDidCard();
     await waitFor(
       "document.body.textContent.includes('Manage this DID') && Boolean(document.querySelector('.did-manager'))",
       "managed DID deactivation controls",

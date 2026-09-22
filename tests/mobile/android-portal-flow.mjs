@@ -361,16 +361,22 @@ try {
     await click("Create a DID");
     await click("Create DID");
     await waitFor(
-      'document.body.innerText.includes("A protected managed DID is ready for credential issuance.") || Array.from(document.querySelectorAll(".field-error")).some((element) => element.textContent.trim() === "protected DID key operation is unavailable")',
+      'Boolean(document.querySelector(".did-detail-hero")) || Array.from(document.querySelectorAll(".field-error")).some((element) => element.textContent.trim() === "protected DID key operation is unavailable")',
       "managed DID terminal state",
       30_000,
     );
     if (await evaluate('Array.from(document.querySelectorAll(".field-error")).some((element) => element.textContent.trim() === "protected DID key operation is unavailable")')) {
       throw new Error("managed DID creation ran without activated development custody");
     }
-    await click("Publish active holder DID to test issuer");
+    await evaluate(`(() => {
+      const sharing = document.querySelector("details.did-development-tools");
+      if (!sharing) return false;
+      sharing.open = true;
+      return true;
+    })()`);
+    await click("Share with test issuer");
     await waitFor(
-      'document.body.innerText.includes("Public DID document is available to the configured test issuer")',
+      'document.body.innerText.includes("Public DID document shared with the configured test issuer.")',
       "explicit holder DID bootstrap",
       30_000,
     );

@@ -274,12 +274,7 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertTrue(confirmCreateDid.waitForExistence(timeout: 10))
         scrollTo(confirmCreateDid, in: application)
         confirmCreateDid.tap()
-        let didReady = application.staticTexts.matching(
-            NSPredicate(
-                format: "label BEGINSWITH %@",
-                "A protected managed DID is ready for credential issuance."
-            )
-        ).firstMatch
+        let didReady = application.staticTexts["DID details"]
         XCTAssertTrue(didReady.waitForExistence(timeout: 30))
     }
 
