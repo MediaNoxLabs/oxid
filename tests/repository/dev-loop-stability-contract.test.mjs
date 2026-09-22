@@ -497,6 +497,41 @@ test("package resolution rejects mismatched identities and symlink escapes", asy
   await assert.rejects(resolveDevLoopsPackageRoot({ cwd: fixture.root }), /escapes allowed project roots/);
 });
 
+test("fresh closure resolution rejects a semver-compatible but unreviewed dev-loops core", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const settings = {
+    packages: ["npm:dev-loops@1.0.2", "npm:@dev-loops/core@1.0.2"],
+    subagents: { projectRootResolution: "git-root" },
+  };
+  for (const settingsRoot of [fixture.root, fixture.worktree]) {
+    await writeFile(path.join(settingsRoot, ".pi", "settings.json"), JSON.stringify(settings));
+  }
+  const coreRoot = path.join(fixture.root, ".pi", "npm", "node_modules", "@dev-loops", "core");
+  await mkdir(coreRoot, { recursive: true });
+  await writeFile(path.join(coreRoot, "package.json"), JSON.stringify({
+    name: "@dev-loops/core",
+    version: "1.0.3",
+  }));
+
+  await assert.rejects(
+    resolveDevLoopsPackageRoot({ cwd: fixture.root, includeAllPinnedPackages: true }),
+    /expected @dev-loops\/core@1\.0\.2.*found @dev-loops\/core@1\.0\.3/su,
+  );
+  await writeFile(path.join(coreRoot, "package.json"), JSON.stringify({
+    name: "@dev-loops/core",
+    version: "1.0.2",
+  }));
+  const resolved = await resolveDevLoopsPackageRoot({
+    cwd: fixture.root,
+    includeAllPinnedPackages: true,
+  });
+  assert.deepEqual(resolved.packageRoots.map(({ name, version }) => [name, version]), [
+    ["dev-loops", "1.0.2"],
+    ["@dev-loops/core", "1.0.2"],
+  ]);
+});
+
 test("linked milestone checkout rejects a shared package pin from a newer branch before dispatch", async (t) => {
   const fixture = await makeFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
