@@ -17,6 +17,7 @@ routes through a coordination server.
 | --- | --- | --- |
 | `pi-coding-agent` | Nix-pinned | immutable nixpkgs input in `flake.lock`; executable supplied by `devShells.default` |
 | `dev-loops` | `1.0.2` | `.pi/settings.json` → project-local `.pi/npm` |
+| `@dev-loops/core` | `1.0.2` | exact reviewed runtime paired with `dev-loops`; pinned directly to prevent transitive range drift |
 | `pi-subagents` | `0.67.0` | same |
 | `pi-taskflow` | `0.2.10` | installed as an `agent-review-pi` peer; all runtime resources disabled |
 | `typebox` | `1.3.9` | exact `agent-review-pi` peer |
@@ -37,6 +38,8 @@ the matching content-addressed closure beneath Git-common private state. A
 missing closure is assembled in a unique staging directory, validated against
 every exact pin, and atomically published. Linked worktrees can therefore use
 different tracked package versions without rewriting each other's dependencies.
+A direct `@dev-loops/core` pin keeps the packaged runtime at the same reviewed
+version as `dev-loops`, even when the latter's transitive semver range advances.
 A pre-existing primary-checkout package tree is migrated only after validation;
 a real package tree in a linked worktree or a foreign symlink fails closed for
 manual inspection. CI skips Pi tooling entirely.
