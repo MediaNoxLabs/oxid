@@ -32,4 +32,17 @@ for tailnet_contract in \
   grep -qF -- "$tailnet_contract" "$LIFECYCLE" || fail tailnet-private-mock
  done
 
-printf 'portal-consumer-lifecycle-contract: PASS pinned-image-tags=0.1.0 tailnet-private-mock=true\n'
+for preparation_contract in \
+  'prerequisite|prepare|prepared-status|up|status|down' \
+  'oxid-portal-consumer-prepared-v1' \
+  'prepare-checkpoint.json' \
+  'prepared-receipt.json' \
+  'midnight-did-resolver-image did-manager-image issuer-image' \
+  'localCacheHit:$cacheHit' \
+  'prepareDurationSeconds:$duration' \
+  'PORTAL_CONSUMER_PREPARED_RECEIPT' \
+  'prepared_receipt_valid "$EXTERNAL_PREPARED_RECEIPT" complete'; do
+  grep -qF -- "$preparation_contract" "$LIFECYCLE" || fail resumable-preparation
+done
+
+printf 'portal-consumer-lifecycle-contract: PASS pinned-image-tags=0.1.0 tailnet-private-mock=true resumable-preparation=true\n'

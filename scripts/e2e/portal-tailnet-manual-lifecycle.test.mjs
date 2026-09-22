@@ -15,15 +15,25 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
   ]);
 
   for (const recipe of [
+    "portal-tailnet-manual-prepare:",
     "portal-tailnet-manual-start:",
     "portal-tailnet-manual-status:",
     "portal-tailnet-manual-stop:",
   ]) assert.match(justfile, new RegExp(`^${recipe}`, "m"));
 
-  for (const operation of ["manual-start", "manual-status", "manual-stop", "--manual-supervise"]) {
+  for (const operation of ["manual-prepare", "manual-start", "manual-status", "manual-stop", "--manual-supervise"]) {
     assert.match(lifecycle, new RegExp(operation));
   }
   assert.match(lifecycle, /target\/portal-tailnet-manual\/runtime/);
+  assert.match(lifecycle, /target\/portal-tailnet-manual\/prepared/);
+  assert.match(lifecycle, /prepared-receipt\.json/);
+  assert.match(lifecycle, /manual_prepared_status/);
+  assert.match(lifecycle, /fail artifacts-not-prepared/);
+  assert.match(lifecycle, /PORTAL_CONSUMER_PREPARED_RECEIPT="\$prepared_receipt_for_support"/);
+  assert.match(lifecycle, /servicesSeconds/);
+  assert.match(lifecycle, /tailnetSeconds/);
+  assert.match(lifecycle, /androidSeconds/);
+  assert.match(lifecycle, /readySeconds/);
   assert.match(lifecycle, /manual-public-page-url/);
   assert.match(lifecycle, /readonly MOCK_STATE="\$STATE\/mock-state"/);
   assert.match(lifecycle, /tailnet-mock-transform\.mjs/);

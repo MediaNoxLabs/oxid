@@ -30,19 +30,35 @@ just android-portal-tailnet-physical-smoke
 ## Owner manual QR demonstration
 
 This optional lifecycle is a live owner demo, not physical-lane evidence and
-never a replacement for the automated physical or simulator lanes. From the
-same clean, healthy preconditions, start one fresh session:
+never a replacement for the automated physical or simulator lanes. Prepare the
+exact pinned Portal artifacts first. This phase does not require a phone,
+Tailscale, or the standalone stack and may be safely rerun after a failure:
+
+```bash
+just portal-tailnet-manual-prepare
+```
+
+Preparation realizes and loads the resolver, DID manager, and issuer images one
+at a time. Each completed image is checkpointed with its immutable image ID,
+Nix output path, cache-hit marker, and elapsed seconds. A retry resumes after
+the last validated checkpoint instead of rebuilding successful phases.
+
+With the preparation receipt complete, connect the phone and Tailscale, ensure
+the standalone stack is healthy on 6300, 8088, and 9944, and start one session:
 
 ```bash
 just portal-tailnet-manual-start
 just portal-tailnet-manual-status
 ```
 
-Start creates and validates the same private mode-`0600` pinned mock transform
-used by the browser contract, then exposes its KYC page under the receipt-owned
-same-origin HTTPS `/kyc` mount. It opens the Portal page in the Mac browser and
-prints the one permitted public page URL; status intentionally reveals no
-payload. This owner demo remains non-evidence.
+Start fails before changing Tailnet or phone state if the prepared source,
+receipt, Nix outputs, or loaded Docker image IDs no longer match. It creates and
+validates the same private mode-`0600` pinned mock transform used by the browser
+contract, then exposes its KYC page under the receipt-owned same-origin HTTPS
+`/kyc` mount. It opens the Portal page in the Mac browser and prints the one
+permitted public page URL plus service, Tailnet, Android, and total readiness
+timings; status intentionally reveals no payload. This owner demo remains
+non-evidence.
 
 On the phone, explicitly prepare the holder before accepting an offer:
 
@@ -73,8 +89,9 @@ just portal-tailnet-manual-stop
 ```
 
 Stop validates the session/process/Serve receipts, removes only owned Portal
-state, and restores the exact prior Serve baseline. If a receipt is ambiguous,
-it fails closed for owner review rather than deleting shared state.
+runtime state, and restores the exact prior Serve baseline. It retains prepared
+artifacts so the next start avoids a build-from-scratch. If a receipt is
+ambiguous, it fails closed for owner review rather than deleting shared state.
 
 ## Safety, evidence, and cleanup
 

@@ -17,6 +17,9 @@ readonly STATE="${OXID_PORTAL_CONSUMER_STATE_DIR:-}"
 readonly ENV_FILE="$STATE/runtime.env"
 readonly RECEIPT="$STATE/owner-receipt.json"
 readonly PRIVATE_LOG="$STATE/private.log"
+readonly PREPARED_RECEIPT="$STATE/prepared-receipt.json"
+readonly PREPARE_CHECKPOINT="$STATE/prepare-checkpoint.json"
+readonly EXTERNAL_PREPARED_RECEIPT="${PORTAL_CONSUMER_PREPARED_RECEIPT:-}"
 readonly TAILNET_MOCK_STATE="${PORTAL_TAILNET_MOCK_STATE_DIR:-}"
 readonly TAILNET_MOCK_TRANSFORM="$REPOSITORY_ROOT/scripts/e2e/tailnet-mock-transform.mjs"
 
@@ -25,7 +28,7 @@ fail() {
   exit 1
 }
 
-case "$OPERATION" in prerequisite|up|status|down) ;; *) fail usage ;; esac
+case "$OPERATION" in prerequisite|prepare|prepared-status|up|status|down) ;; *) fail usage ;; esac
 for command_name in awk curl docker git jq nix openssl shasum; do
   command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
 done
@@ -54,6 +57,13 @@ count_lines() {
   awk 'NF { count++ } END { print count + 0 }' <<<"$1"
 }
 
+private_regular_file() {
+  [ -f "$1" ] && [ ! -L "$1" ] || return 1
+  local mode
+  if mode="$(stat -c '%a' -- "$1" 2>/dev/null)"; then :; else mode="$(stat -f '%Lp' -- "$1")"; fi
+  [ "$mode" = 600 ]
+}
+
 shared_midnight_ready() {
   local all running labels
   all="$(docker ps -a --filter 'label=com.docker.compose.project=oxid-standalone' --quiet 2>/dev/null | sort)" || return 1
@@ -76,10 +86,7 @@ compose() {
 }
 
 receipt_valid() {
-  [ -f "$RECEIPT" ] && [ ! -L "$RECEIPT" ] || return 1
-  local mode
-  if mode="$(stat -c '%a' -- "$RECEIPT" 2>/dev/null)"; then :; else mode="$(stat -f '%Lp' -- "$RECEIPT" 2>/dev/null)"; fi
-  [ "$mode" = 600 ] || return 1
+  private_regular_file "$RECEIPT" || return 1
   jq -e \
     --arg commit "$PORTAL_COMMIT" \
     --arg tree "$PORTAL_TREE" \
@@ -92,6 +99,74 @@ receipt_valid() {
       and .containerIds == $ids
       and (.images | keys | sort == ["didManager","issuer","resolver"])' \
     "$RECEIPT" >/dev/null
+}
+
+image_tag_for() {
+  case "$1" in
+    midnight-did-resolver-image) printf '%s\n' midnight-did-resolver:0.1.0 ;;
+    did-manager-image) printf '%s\n' laceid-did-manager:0.1.0 ;;
+    issuer-image) printf '%s\n' laceid-issuer:0.1.0 ;;
+    *) return 1 ;;
+  esac
+}
+
+image_key_for() {
+  case "$1" in
+    midnight-did-resolver-image) printf '%s\n' resolver ;;
+    did-manager-image) printf '%s\n' didManager ;;
+    issuer-image) printf '%s\n' issuer ;;
+    *) return 1 ;;
+  esac
+}
+
+prepared_image_valid() {
+  local prepared="$1" key="$2" tag="$3" output image_id digest current_id
+  output="$(jq -r --arg key "$key" '.images[$key].outputPath // empty' "$prepared")"
+  image_id="$(jq -r --arg key "$key" '.images[$key].id // empty' "$prepared")"
+  digest="$(jq -r --arg key "$key" '.images[$key].digest // empty' "$prepared")"
+  [[ "$output" = /nix/store/* ]] && [ -f "$output" ] || return 1
+  [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  [ "$digest" = "$image_id" ] || return 1
+  current_id="$(docker image inspect --format '{{.Id}}' "$tag" 2>/dev/null)" || return 1
+  [ "$current_id" = "$image_id" ]
+}
+
+prepared_receipt_metadata_valid() {
+  local prepared="$1" status="${2:-complete}" host_system
+  private_regular_file "$prepared" || return 1
+  host_system="$(nix eval --raw --impure --expr builtins.currentSystem 2>/dev/null)" || return 1
+  jq -e \
+    --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" \
+    --arg status "$status" --arg host "$host_system" '
+      .schema == "oxid-portal-consumer-prepared-v1"
+      and .source == {commit:$commit,tree:$tree}
+      and .status == $status
+      and .hostSystem == $host
+      and (.startedAtEpoch | type == "number" and . >= 0)
+      and (.images | type == "object")
+      and ((.images | keys) - ["resolver","didManager","issuer"] | length == 0)
+      and ($status != "complete" or (
+        (.completedAtEpoch | type == "number")
+        and .completedAtEpoch >= .startedAtEpoch
+        and (.metrics.prepareDurationSeconds | type == "number" and . >= 0)
+      ))
+    ' "$prepared" >/dev/null || return 1
+}
+
+prepared_receipt_valid() {
+  local prepared="$1" status="${2:-complete}" key attribute tag
+  prepared_receipt_metadata_valid "$prepared" "$status" || return 1
+  [ "$status" = complete ] || return 0
+  [ "$(jq -r '.images | keys | sort | join(",")' "$prepared")" = didManager,issuer,resolver ] || return 1
+  for attribute in midnight-did-resolver-image did-manager-image issuer-image; do
+    key="$(image_key_for "$attribute")"; tag="$(image_tag_for "$attribute")"
+    if jq -e --arg key "$key" '.images[$key] != null' "$prepared" >/dev/null; then
+      prepared_image_valid "$prepared" "$key" "$tag" || return 1
+    else
+      return 1
+    fi
+  done
 }
 
 tailnet_mock_state_valid() {
@@ -114,9 +189,9 @@ emit_status() {
 }
 
 build_image() {
-  local attribute="$1" variable="$2" output image_id
+  local attribute="$1" variable="$2" output_variable="${3:-}" output image_id
   output="$(nix build --option access-tokens '' "$SOURCE#$attribute" --no-link --print-out-paths 2>>"$PRIVATE_LOG")" || return 1
-  [ -f "$output" ] || return 1
+  [ "$(count_lines "$output")" -eq 1 ] && [[ "$output" = /nix/store/* ]] && [ -f "$output" ] || return 1
   docker load <"$output" >>"$PRIVATE_LOG" 2>&1 || return 1
   case "$attribute" in
     midnight-did-resolver-image) image_id="$(docker image inspect --format '{{.Id}}' midnight-did-resolver:0.1.0 2>/dev/null)" ;;
@@ -126,11 +201,115 @@ build_image() {
   esac
   [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
   printf -v "$variable" '%s' "$image_id"
+  if [ -n "$output_variable" ]; then
+    printf -v "$output_variable" '%s' "$output"
+  fi
 }
 
 run_prerequisite() {
   shared_midnight_ready || fail shared-midnight
   jq -cn '{schema:"oxid-portal-midnight-prerequisite-v1",state:"ready",project:"oxid-standalone"}'
+}
+
+emit_prepared_status() {
+  jq -c '{
+      schema:"oxid-portal-consumer-prepare-status-v1",
+      state:"prepared",
+      source:.source,
+      metrics:.metrics,
+      images:(.images | with_entries(.value = {
+        id:.value.id,
+        digest:.value.digest,
+        durationSeconds:.value.durationSeconds,
+        localCacheHit:.value.localCacheHit
+      }))
+    }' "$PREPARED_RECEIPT"
+}
+
+run_prepare() {
+  local checkpoint_candidate started_at host_system attribute key tag prepared_image_id prepared_output
+  local phase_started phase_duration cache_hit prepare_duration
+  [ "$(count_lines "$(project_ids)")" -eq 0 ] || fail occupied-project
+  if prepared_receipt_valid "$PREPARED_RECEIPT" complete; then
+    emit_prepared_status
+    return
+  fi
+  if [ -e "$PREPARED_RECEIPT" ] || [ -L "$PREPARED_RECEIPT" ]; then
+    prepared_receipt_metadata_valid "$PREPARED_RECEIPT" complete || fail stale-prepared-receipt
+    [ ! -e "$PREPARE_CHECKPOINT" ] && [ ! -L "$PREPARE_CHECKPOINT" ] || fail ambiguous-prepare-state
+    checkpoint_candidate="$(mktemp "$STATE/.prepare-checkpoint.XXXXXX")"
+    jq '.status="partial" | del(.completedAtEpoch,.metrics)' "$PREPARED_RECEIPT" >"$checkpoint_candidate"
+    chmod 600 "$checkpoint_candidate"
+    mv "$checkpoint_candidate" "$PREPARE_CHECKPOINT"
+    rm -f -- "$PREPARED_RECEIPT"
+  fi
+  : >"$PRIVATE_LOG"
+  chmod 600 "$PRIVATE_LOG"
+
+  if [ -e "$PREPARE_CHECKPOINT" ] || [ -L "$PREPARE_CHECKPOINT" ]; then
+    prepared_receipt_valid "$PREPARE_CHECKPOINT" partial || fail prepare-checkpoint
+  else
+    started_at="$(date +%s)"
+    host_system="$(nix eval --raw --impure --expr builtins.currentSystem 2>>"$PRIVATE_LOG")" || fail nix-system
+    checkpoint_candidate="$(mktemp "$STATE/.prepare-checkpoint.XXXXXX")"
+    jq -cn \
+      --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" \
+      --arg host "$host_system" --argjson started "$started_at" \
+      '{schema:"oxid-portal-consumer-prepared-v1",status:"partial",source:{commit:$commit,tree:$tree},hostSystem:$host,startedAtEpoch:$started,images:{}}' \
+      >"$checkpoint_candidate"
+    chmod 600 "$checkpoint_candidate"
+    mv "$checkpoint_candidate" "$PREPARE_CHECKPOINT"
+  fi
+
+  for attribute in midnight-did-resolver-image did-manager-image issuer-image; do
+    key="$(image_key_for "$attribute")"; tag="$(image_tag_for "$attribute")"
+    if jq -e --arg key "$key" '.images[$key] != null' "$PREPARE_CHECKPOINT" >/dev/null \
+      && prepared_image_valid "$PREPARE_CHECKPOINT" "$key" "$tag"; then
+      continue
+    fi
+    cache_hit=false
+    if nix path-info --option access-tokens '' "$SOURCE#$attribute" >/dev/null 2>&1; then
+      cache_hit=true
+    fi
+    phase_started="$(date +%s)"
+    build_image "$attribute" prepared_image_id prepared_output || fail "$key-image"
+    phase_duration="$(( $(date +%s) - phase_started ))"
+    checkpoint_candidate="$(mktemp "$STATE/.prepare-checkpoint.XXXXXX")"
+    jq \
+      --arg key "$key" --arg attribute "$attribute" --arg output "$prepared_output" \
+      --arg id "$prepared_image_id" --arg digest "$prepared_image_id" \
+      --argjson duration "$phase_duration" --argjson cacheHit "$cache_hit" \
+      '.images[$key] = {
+        attribute:$attribute,
+        outputPath:$output,
+        id:$id,
+        digest:$digest,
+        durationSeconds:$duration,
+        localCacheHit:$cacheHit,
+        downloadedBytes:null
+      }' "$PREPARE_CHECKPOINT" >"$checkpoint_candidate"
+    chmod 600 "$checkpoint_candidate"
+    mv "$checkpoint_candidate" "$PREPARE_CHECKPOINT"
+    prepared_receipt_valid "$PREPARE_CHECKPOINT" partial || fail prepare-checkpoint
+  done
+
+  prepared_receipt_valid "$PREPARE_CHECKPOINT" partial || fail prepare-checkpoint
+  prepare_duration="$(( $(date +%s) - $(jq -r '.startedAtEpoch' "$PREPARE_CHECKPOINT") ))"
+  checkpoint_candidate="$(mktemp "$STATE/.prepared-receipt.XXXXXX")"
+  jq \
+    --argjson completed "$(date +%s)" --argjson duration "$prepare_duration" \
+    '.status="complete" | .completedAtEpoch=$completed | .metrics={prepareDurationSeconds:$duration}' \
+    "$PREPARE_CHECKPOINT" >"$checkpoint_candidate"
+  chmod 600 "$checkpoint_candidate"
+  mv "$checkpoint_candidate" "$PREPARED_RECEIPT"
+  prepared_receipt_valid "$PREPARED_RECEIPT" complete || fail prepared-receipt
+  rm -f -- "$PREPARE_CHECKPOINT"
+  emit_prepared_status
+}
+
+run_prepared_status() {
+  prepared_receipt_valid "$PREPARED_RECEIPT" complete || fail artifacts-not-prepared
+  emit_prepared_status
 }
 
 run_up() {
@@ -141,9 +320,17 @@ run_up() {
   chmod 600 "$PRIVATE_LOG"
   local resolver_image did_manager_image issuer_image wallet_seed env_candidate receipt_candidate mock_state
   docker pull 'ghcr.io/smocker-dev/smocker@sha256:b4106c3aec1d58df09b6b94a89eba801298cbe5303f3c9236d105dbcaaaf4ab2' >>"$PRIVATE_LOG" 2>&1 || fail smocker
-  build_image midnight-did-resolver-image resolver_image || fail resolver-image
-  build_image did-manager-image did_manager_image || fail did-manager-image
-  build_image issuer-image issuer_image || fail issuer-image
+  if [ -n "$EXTERNAL_PREPARED_RECEIPT" ]; then
+    [[ "$EXTERNAL_PREPARED_RECEIPT" = /* ]] || fail prepared-receipt
+    prepared_receipt_valid "$EXTERNAL_PREPARED_RECEIPT" complete || fail artifacts-not-prepared
+    resolver_image="$(jq -r '.images.resolver.id' "$EXTERNAL_PREPARED_RECEIPT")"
+    did_manager_image="$(jq -r '.images.didManager.id' "$EXTERNAL_PREPARED_RECEIPT")"
+    issuer_image="$(jq -r '.images.issuer.id' "$EXTERNAL_PREPARED_RECEIPT")"
+  else
+    build_image midnight-did-resolver-image resolver_image || fail resolver-image
+    build_image did-manager-image did_manager_image || fail did-manager-image
+    build_image issuer-image issuer_image || fail issuer-image
+  fi
   wallet_seed="$(awk '$1 == "WALLET_SEED:" { gsub(/[\" ]/, "", $2); print $2 }' "$SOURCE/docker/docker-compose.yml")"
   [[ "$wallet_seed" =~ ^[0-9a-f]{64}$ ]] || fail wallet-input
   [[ "${PORTAL_ISSUER_URL:-}" =~ ^https?:// ]] || fail issuer-origin
@@ -229,6 +416,8 @@ run_down() {
 
 case "$OPERATION" in
   prerequisite) run_prerequisite ;;
+  prepare) run_prepare ;;
+  prepared-status) run_prepared_status ;;
   up) run_up ;;
   status) run_status ;;
   down) run_down ;;

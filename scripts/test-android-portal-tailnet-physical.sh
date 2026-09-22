@@ -10,19 +10,24 @@ readonly PORTAL_COMMIT="25499870f84d77173c46e4af3021311decfb840b"
 readonly PORTAL_TREE="2d845d2293603dfd8adce5362c8a9941e6ba78a9"
 readonly REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly OPERATION="${1:-automated}"
-case "$OPERATION" in automated|manual-start|manual-status|manual-stop|--manual-supervise) ;; *)
+case "$OPERATION" in automated|manual-prepare|manual-start|manual-status|manual-stop|--manual-supervise) ;; *)
   printf '%s\n' 'android-portal-tailnet: FAIL phase=usage' >&2
   exit 1
   ;;
 esac
 readonly AUTOMATED_STATE="$REPOSITORY_ROOT/target/portal-android-physical/runtime"
 readonly MANUAL_STATE="$REPOSITORY_ROOT/target/portal-tailnet-manual/runtime"
+readonly MANUAL_PREPARED_ROOT="$REPOSITORY_ROOT/target/portal-tailnet-manual/prepared"
+readonly MANUAL_PREPARED_SOURCE="$MANUAL_PREPARED_ROOT/portal-source"
+readonly MANUAL_PREPARED_CONSUMER_STATE="$MANUAL_PREPARED_ROOT/portal-consumer"
+readonly MANUAL_PREPARED_RECEIPT="$MANUAL_PREPARED_CONSUMER_STATE/prepared-receipt.json"
 if [ "$OPERATION" = automated ]; then
   readonly STATE="$AUTOMATED_STATE"
+  readonly SOURCE="$STATE/portal-source"
 else
   readonly STATE="$MANUAL_STATE"
+  readonly SOURCE="$MANUAL_PREPARED_SOURCE"
 fi
-readonly SOURCE="$STATE/portal-source"
 readonly PRIVATE_LOG="$STATE/private.log"
 readonly READY_FIFO="$STATE/ready.fifo"
 readonly CAPABILITY_FIFO="$STATE/capability.fifo"
@@ -48,6 +53,10 @@ websocket_url=""
 cleanup_running=0
 manual_public_origin=""
 manual_mock_receipt_sha=""
+manual_start_epoch=0
+services_seconds=0
+tailnet_seconds=0
+android_seconds=0
 
 fail() {
   printf 'android-portal-tailnet: FAIL phase=%s\n' "$1" >&2
@@ -111,6 +120,10 @@ manual_session_load() {
       and (.serve.baselineSha256 | test("^[0-9a-f]{64}$"))
       and (.serve.activeSha256 | test("^[0-9a-f]{64}$"))
       and (.mock.transformReceiptSha256 | test("^[0-9a-f]{64}$"))
+      and (.metrics.servicesSeconds | type == "number" and . >= 0)
+      and (.metrics.tailnetSeconds | type == "number" and . >= 0)
+      and (.metrics.androidSeconds | type == "number" and . >= 0)
+      and (.metrics.readySeconds | type == "number" and . >= 0)
       and .mock.externalPath == "/kyc/mock-verification"
       and .mock.upstreamPath == "/mock-verification"
       and .page == {html:true,mockRoute:true,holderBootstrap:true}
@@ -175,7 +188,50 @@ manual_status() {
     && manual_select_physical_device \
     && manual_consumer_running \
     || fail manual-not-ready
-  printf '%s\n' 'portal-tailnet-manual: READY'
+  jq -r '"portal-tailnet-manual: READY services=\(.metrics.servicesSeconds)s tailnet=\(.metrics.tailnetSeconds)s android=\(.metrics.androidSeconds)s total=\(.metrics.readySeconds)s"' "$MANUAL_RECEIPT"
+}
+
+portal_source_valid() {
+  [ -d "$SOURCE" ] && [ ! -L "$SOURCE" ] \
+    && [ "$(git -C "$SOURCE" remote get-url origin 2>/dev/null)" = "$PORTAL_REMOTE" ] \
+    && [ "$(git -C "$SOURCE" rev-parse HEAD 2>/dev/null)" = "$PORTAL_COMMIT" ] \
+    && [ "$(git -C "$SOURCE" rev-parse 'HEAD^{tree}' 2>/dev/null)" = "$PORTAL_TREE" ] \
+    && [ -z "$(git -C "$SOURCE" status --porcelain --untracked-files=all 2>/dev/null)" ]
+}
+
+manual_prepare() {
+  local prepare_log="$MANUAL_PREPARED_ROOT/prepare.log"
+  local source_candidate="$MANUAL_PREPARED_ROOT/.portal-source.pending"
+  for command_name in docker git jq nix openssl shasum; do
+    command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
+  done
+  umask 077
+  mkdir -p "$MANUAL_PREPARED_ROOT"
+  chmod 700 "$MANUAL_PREPARED_ROOT"
+  if [ -e "$SOURCE" ] || [ -L "$SOURCE" ]; then
+    portal_source_valid || fail prepared-source
+  else
+    rm -rf -- "$source_candidate"
+    git clone --no-checkout "$SOURCE_INPUT" "$source_candidate" >>"$prepare_log" 2>&1 || fail source-clone
+    git -C "$source_candidate" remote set-url origin "$PORTAL_REMOTE"
+    git -C "$source_candidate" fetch origin "$PORTAL_COMMIT" >>"$prepare_log" 2>&1 || fail source-fetch
+    [ "$(git -C "$source_candidate" rev-parse 'FETCH_HEAD^{commit}')" = "$PORTAL_COMMIT" ] || fail source-commit
+    [ "$(git -C "$source_candidate" rev-parse 'FETCH_HEAD^{tree}')" = "$PORTAL_TREE" ] || fail source-tree
+    git -C "$source_candidate" checkout --detach "$PORTAL_COMMIT" >>"$prepare_log" 2>&1 || fail source-checkout
+    chmod 700 "$source_candidate"
+    mv "$source_candidate" "$SOURCE"
+    portal_source_valid || fail prepared-source
+  fi
+  PORTAL_INTEGRATION_CHECKOUT="$SOURCE" \
+  OXID_PORTAL_CONSUMER_STATE_DIR="$MANUAL_PREPARED_CONSUMER_STATE" \
+    "$REPOSITORY_ROOT/scripts/portal-consumer-lifecycle.sh" prepare
+}
+
+manual_prepared_status() {
+  PORTAL_INTEGRATION_CHECKOUT="$SOURCE" \
+  OXID_PORTAL_CONSUMER_STATE_DIR="$MANUAL_PREPARED_CONSUMER_STATE" \
+    "$REPOSITORY_ROOT/scripts/portal-consumer-lifecycle.sh" prepared-status >/dev/null \
+    || fail artifacts-not-prepared
 }
 
 manual_cleanup() {
@@ -261,6 +317,8 @@ manual_supervise() {
 }
 
 case "$OPERATION" in
+  manual-prepare) manual_prepare; exit 0 ;;
+  manual-start) manual_prepared_status; manual_start_epoch="$(date +%s)" ;;
   manual-status) manual_status; exit 0 ;;
   manual-stop) manual_stop; exit 0 ;;
   --manual-supervise) manual_supervise; exit 0 ;;
@@ -402,14 +460,17 @@ chmod 600 "$PRIVATE_LOG"
 printf '%s' "$baseline" >"$STATE/tailscale-baseline.json"
 chmod 600 "$STATE/tailscale-baseline.json"
 
-if ! git clone --no-checkout "$SOURCE_INPUT" "$SOURCE" >>"$PRIVATE_LOG" 2>&1; then fail source-clone; fi
-git -C "$SOURCE" remote set-url origin "$PORTAL_REMOTE"
-git -C "$SOURCE" fetch origin "$PORTAL_COMMIT" >>"$PRIVATE_LOG" 2>&1 || fail source-fetch
-[ "$(git -C "$SOURCE" rev-parse FETCH_HEAD^{commit})" = "$PORTAL_COMMIT" ] || fail source-commit
-[ "$(git -C "$SOURCE" rev-parse FETCH_HEAD^{tree})" = "$PORTAL_TREE" ] || fail source-tree
-git -C "$SOURCE" checkout --detach "$PORTAL_COMMIT" >>"$PRIVATE_LOG" 2>&1
-chmod 700 "$SOURCE"
-[ -z "$(git -C "$SOURCE" status --porcelain --untracked-files=all)" ] || fail source-dirty
+if [ "$OPERATION" = automated ]; then
+  if ! git clone --no-checkout "$SOURCE_INPUT" "$SOURCE" >>"$PRIVATE_LOG" 2>&1; then fail source-clone; fi
+  git -C "$SOURCE" remote set-url origin "$PORTAL_REMOTE"
+  git -C "$SOURCE" fetch origin "$PORTAL_COMMIT" >>"$PRIVATE_LOG" 2>&1 || fail source-fetch
+  [ "$(git -C "$SOURCE" rev-parse 'FETCH_HEAD^{commit}')" = "$PORTAL_COMMIT" ] || fail source-commit
+  [ "$(git -C "$SOURCE" rev-parse 'FETCH_HEAD^{tree}')" = "$PORTAL_TREE" ] || fail source-tree
+  git -C "$SOURCE" checkout --detach "$PORTAL_COMMIT" >>"$PRIVATE_LOG" 2>&1 || fail source-checkout
+  chmod 700 "$SOURCE"
+else
+  portal_source_valid || fail prepared-source
+fi
 [ -x "$SOURCE/scripts/tailscale-https-profile.sh" ] || fail profile-source
 if [ "$OPERATION" = manual-start ]; then
   node "$MOCK_TRANSFORM" --create "$SOURCE" "$MOCK_STATE" "$public_origin" || fail manual-mock-transform
@@ -423,12 +484,18 @@ chmod 600 "$READY_FIFO" "$CAPABILITY_FIFO"
 exec 8<>"$CAPABILITY_FIFO"
 exec 9<>"$READY_FIFO"
 manual_control_receipt=""
-if [ "$OPERATION" = manual-start ]; then manual_control_receipt=none; fi
+prepared_receipt_for_support=""
+if [ "$OPERATION" = manual-start ]; then
+  manual_control_receipt=none
+  prepared_receipt_for_support="$MANUAL_PREPARED_RECEIPT"
+fi
+services_started_epoch="$(date +%s)"
 PORTAL_INTEGRATION_CHECKOUT="$SOURCE" \
 OXID_PORTAL_MOBILE_STATE_DIR="$STATE" \
 OXID_PORTAL_MOBILE_READY_FIFO="$READY_FIFO" \
 OXID_PORTAL_MOBILE_CAPABILITY_FIFO="$CAPABILITY_FIFO" \
 PORTAL_CONSUMER_LIFECYCLE="$REPOSITORY_ROOT/scripts/portal-consumer-lifecycle.sh" \
+PORTAL_CONSUMER_PREPARED_RECEIPT="$prepared_receipt_for_support" \
 OXID_BUILD_PORTAL_PUBLIC_ORIGIN="$public_origin" \
 OXID_PORTAL_MOBILE_CONTROL_RECEIPT="$manual_control_receipt" \
   nohup node "$REPOSITORY_ROOT/scripts/e2e/portal-android-support.mjs" \
@@ -439,6 +506,7 @@ exec 9>&-
 rm -f -- "$READY_FIFO"
 [ "$ready_status" = READY ] || fail "${ready_status#FAIL:}"
 kill -0 "$support_pid" 2>/dev/null || fail support
+services_seconds="$(( $(date +%s) - services_started_epoch ))"
 
 ready="$STATE/ready.json"
 manifest_path="$(jq -r '.manifestPath // empty' "$ready")"
@@ -480,6 +548,7 @@ else
     ]}' >"$XDG_CONFIG/lace-id-portal/tailscale-https.json"
 fi
 chmod 600 "$XDG_CONFIG/lace-id-portal/tailscale-https.json"
+tailnet_started_epoch="$(date +%s)"
 XDG_CONFIG_HOME="$XDG_CONFIG" XDG_STATE_HOME="$XDG_STATE" \
   "$SOURCE/scripts/tailscale-https-profile.sh" setup >>"$PRIVATE_LOG" 2>&1 || fail profile-setup
 profile_active=1
@@ -490,9 +559,11 @@ if [ "$OPERATION" = manual-start ]; then
   grep -qF 'id="approve-btn"' "$STATE/manual-mock-page.html" || fail manual-mock-route
   rm -f -- "$STATE/manual-mock-page.html"
 fi
+tailnet_seconds="$(( $(date +%s) - tailnet_started_epoch ))"
 
 adb_reverse_before="$(adb_device reverse --list 2>/dev/null | sort)"
 adb_device shell pm clear io.medianox.oxid >/dev/null 2>&1 || true
+android_started_epoch="$(date +%s)"
 if ! OXID_MOBILE_CUSTODY=development \
   OXID_MOBILE_PORTAL_PROFILE=tailnet-android \
   OXID_BUILD_PORTAL_PUBLIC_ORIGIN="$public_origin" \
@@ -507,6 +578,7 @@ if ! OXID_MOBILE_CUSTODY=development \
   tail -n 80 "$PRIVATE_LOG" | redact_physical_failure >&2
   fail android-build
 fi
+android_seconds="$(( $(date +%s) - android_started_epoch ))"
 
 holder_stage_command="run-as io.medianox.oxid sh -c 'umask 077; target=files/portal-holder.capability; candidate=files/.portal-holder.capability.tmp; rm -f \"\$candidate\" \"\$target\"; cat >\"\$candidate\"; test \"\$(wc -c <\"\$candidate\")\" -eq 64; mv \"\$candidate\" \"\$target\"'"
 printf '%s' "$holder_capability" | adb_device shell "$holder_stage_command" \
@@ -526,13 +598,16 @@ if [ "$OPERATION" = manual-start ]; then
   active_serve="$(tailscale serve status --json | jq -S -c '.')" || fail manual-serve-receipt
   active_serve_sha="$(sha256_text "$active_serve")"
   support_command_sha="$(process_command_sha256 "$support_pid")" || fail manual-support-receipt
+  ready_seconds="$(( $(date +%s) - manual_start_epoch ))"
   jq -cn \
     --arg head "$OXID_HEAD" --arg tree "$(git -C "$REPOSITORY_ROOT" rev-parse 'HEAD^{tree}')" \
     --arg commit "$PORTAL_COMMIT" --arg portal_tree "$PORTAL_TREE" \
     --argjson support_pid "$support_pid" --arg support_sha "$support_command_sha" \
     --arg baseline_sha "$baseline_sha" --arg active_sha "$active_serve_sha" \
     --arg mock_receipt_sha "$mock_receipt_sha" \
-    '{schema:"oxid-portal-tailnet-manual-session-v1",oxid:{head:$head,tree:$tree},portal:{commit:$commit,tree:$portal_tree},support:{pid:$support_pid,commandSha256:$support_sha},supervisor:{pid:0,commandSha256:("0" * 64)},serve:{baselineSha256:$baseline_sha,activeSha256:$active_sha},mock:{transformReceiptSha256:$mock_receipt_sha,externalPath:"/kyc/mock-verification",upstreamPath:"/mock-verification"},page:{html:true,mockRoute:true,holderBootstrap:true}}' \
+    --argjson services "$services_seconds" --argjson tailnet "$tailnet_seconds" \
+    --argjson android "$android_seconds" --argjson ready "$ready_seconds" \
+    '{schema:"oxid-portal-tailnet-manual-session-v1",oxid:{head:$head,tree:$tree},portal:{commit:$commit,tree:$portal_tree},support:{pid:$support_pid,commandSha256:$support_sha},supervisor:{pid:0,commandSha256:("0" * 64)},serve:{baselineSha256:$baseline_sha,activeSha256:$active_sha},mock:{transformReceiptSha256:$mock_receipt_sha,externalPath:"/kyc/mock-verification",upstreamPath:"/mock-verification"},page:{html:true,mockRoute:true,holderBootstrap:true},metrics:{servicesSeconds:$services,tailnetSeconds:$tailnet,androidSeconds:$android,readySeconds:$ready}}' \
     >"$MANUAL_RECEIPT"
   chmod 600 "$MANUAL_RECEIPT"
   nohup bash "$REPOSITORY_ROOT/scripts/test-android-portal-tailnet-physical.sh" --manual-supervise \
@@ -549,7 +624,8 @@ if [ "$OPERATION" = manual-start ]; then
   rm -f -- "$CAPABILITY_FIFO" "$ready" "$manifest_path"
   open "$public_page_url" >>"$PRIVATE_LOG" 2>&1 || fail browser
   trap - EXIT
-  printf 'portal-tailnet-manual: READY url=%s\n' "$public_page_url"
+  printf 'portal-tailnet-manual: READY url=%s services=%ss tailnet=%ss android=%ss total=%ss\n' \
+    "$public_page_url" "$services_seconds" "$tailnet_seconds" "$android_seconds" "$ready_seconds"
   exit 0
 fi
 
