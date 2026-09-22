@@ -78,3 +78,58 @@ test("manual lifecycle is included in repository contracts exactly once", async 
   const registration = "node --test scripts/e2e/portal-tailnet-manual-lifecycle.test.mjs";
   assert.equal(runner.split(registration).length - 1, 1);
 });
+
+test("Portal preparation is a saved, static-first Taskflow with one explicit long-build boundary", async () => {
+  const flowPath = path.join(root, ".pi", "taskflows", "flows", "demos", "portal-tailnet-prepare.json");
+  const [flowSource, staticAdapter, stepAdapter, settings, gitignore] = await Promise.all([
+    readFile(flowPath, "utf8"),
+    readFile(path.join(root, "scripts", "factory", "taskflow-static.mjs"), "utf8"),
+    readFile(path.join(root, "scripts", "factory", "portal-tailnet-taskflow-step.sh"), "utf8"),
+    readFile(path.join(root, ".pi", "settings.json"), "utf8"),
+    readFile(path.join(root, ".gitignore"), "utf8"),
+  ]);
+  const flow = JSON.parse(flowSource);
+  const piSettings = JSON.parse(settings);
+
+  assert.equal(flow.name, "portal-tailnet-prepare");
+  assert.equal(flow.scriptCwd, "invocation");
+  assert.equal(flow.strictInterpolation, true);
+  assert.equal(flow.incremental, false);
+  assert.equal(flow.concurrency, 1);
+  assert.deepEqual(flow.args.mode.values, ["prepare-only"]);
+  assert.deepEqual(flow.phases.map(({ id }) => id), [
+    "preflight",
+    "prepare-artifacts",
+    "verify-prepared-artifacts",
+    "handoff",
+  ]);
+  assert.deepEqual(flow.phases.map(({ type }) => type), ["script", "approval", "script", "script"]);
+  assert.deepEqual(flow.phases[1].dependsOn, ["preflight"]);
+  assert.deepEqual(flow.phases[2].dependsOn, ["prepare-artifacts"]);
+  assert.deepEqual(flow.phases[3].dependsOn, ["verify-prepared-artifacts"]);
+  assert.equal(flow.phases[3].final, true);
+  assert.equal(flow.phases[1].idempotent, undefined);
+  assert.match(flow.phases[1].task, /just portal-tailnet-manual-prepare/);
+  assert.match(flow.phases[1].task, /five-minute script limit/);
+  for (const phase of flow.phases.filter(({ type }) => type === "script")) {
+    assert.ok(Array.isArray(phase.run), `${phase.id} must use argv execution`);
+    assert.ok(phase.timeout <= 300_000, `${phase.id} exceeds the pinned runtime script limit`);
+    assert.equal(phase.cache.scope, "off");
+  }
+  assert.equal(flow.phases.some(({ type }) => ["agent", "gate", "map", "reduce"].includes(type)), false);
+
+  assert.match(staticAdapter, /EXPECTED_TASKFLOW_VERSION = "0\.2\.10"/);
+  assert.match(staticAdapter, /resolveDevLoopsPackageRoot/);
+  assert.match(staticAdapter, /preflightTaskflow/);
+  assert.match(staticAdapter, /compileTaskflow/);
+  assert.match(staticAdapter, /validateTaskflow/);
+  assert.doesNotMatch(staticAdapter, /executeTaskflow|runTaskflow/);
+  assert.match(stepAdapter, /device=not-required tailnet=not-required/);
+  assert.match(stepAdapter, /manual-prepared-status/);
+
+  const taskflowPackage = piSettings.packages.find((entry) =>
+    typeof entry === "object" && entry.source === "npm:pi-taskflow@0.2.10");
+  assert.deepEqual(taskflowPackage.extensions, []);
+  assert.deepEqual(taskflowPackage.skills, []);
+  assert.match(gitignore, /!\/\.pi\/taskflows\/flows\/\*\*/);
+});

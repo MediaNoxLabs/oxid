@@ -150,6 +150,18 @@ portal-tailnet-manual-status:
 portal-tailnet-manual-stop:
     ./scripts/test-android-portal-tailnet-physical.sh manual-stop
 
+# Statically validate the first repository-owned Taskflow without enabling its mutating Pi extension.
+taskflow-portal-tailnet-verify:
+    node ./scripts/factory/taskflow-static.mjs verify ./.pi/taskflows/flows/demos/portal-tailnet-prepare.json
+
+# Render the zero-token bound arguments, phase order, and maximum agent-call count.
+taskflow-portal-tailnet-plan:
+    node ./scripts/factory/taskflow-static.mjs plan ./.pi/taskflows/flows/demos/portal-tailnet-prepare.json '{"mode":"prepare-only"}'
+
+# Render the reviewable Mermaid DAG and static verification report.
+taskflow-portal-tailnet-compile:
+    node ./scripts/factory/taskflow-static.mjs compile ./.pi/taskflows/flows/demos/portal-tailnet-prepare.json
+
 # Verify exact-sequence process ownership and bounded process-group cleanup without Android or Docker.
 android-portal-avd-safety-contract:
     ./scripts/e2e/android-avd-process-ownership.test.sh

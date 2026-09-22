@@ -519,7 +519,7 @@ export async function auditPi({
   }
   const taskflowEntry = configuredPackages.get("pi-taskflow")?.entry;
   if (JSON.stringify(taskflowEntry) !== JSON.stringify(TASKFLOW_SUPPRESSION)) {
-    packageProblems.push("pi-taskflow: inherited extension and skills must be fully suppressed until #301 and #196 pass");
+    packageProblems.push("pi-taskflow: mutating extension and skills must remain suppressed until the ADR-0117 / issue #690 long-process conformance canary passes");
   }
   checks.push(check("package-pins", packageProblems.length ? "fail" : "pass",
     packageProblems.length ? "Package pins are incomplete or floating" : "All Pi packages use exact tracked pins",

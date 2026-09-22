@@ -36,6 +36,25 @@ Require Tailscale online on the Mac and phone, exactly one approved non-QEMU ADB
 device, and validated HTTPS Serve configuration without logging identities. It
 never accepts a simulator substitute.
 
+Before an owner-requested Tailnet demonstration, use the ADR-0117 static
+Taskflow plane to verify and inspect the repository-owned preparation DAG:
+
+```bash
+just taskflow-portal-tailnet-verify
+just taskflow-portal-tailnet-plan
+```
+
+These commands execute no phases and spend no model tokens. The mutating
+Taskflow extension remains suppressed until issue #690 proves long-running
+progress, process-tree cancellation, resume, and orphan cleanup. Run the long,
+resumable preparation in a supervised foreground terminal, then verify its
+exact private receipt before requiring Tailscale or a phone:
+
+```bash
+just portal-tailnet-manual-prepare
+just portal-tailnet-manual-prepared-status
+```
+
 For an owner-requested browser-and-phone QR demonstration only (never evidence),
 use `just portal-tailnet-manual-start`; it opens and deliberately prints the one
 public page URL. `just portal-tailnet-manual-status` is payload-free, and
@@ -59,7 +78,15 @@ live-KYC claim.
   "commands": {
     "localLadder": ["just portal-macos-laptop-e2e", "just portal-mobile-simulators-e2e"],
     "physicalTailnet": "just android-portal-tailnet-physical-smoke",
+    "factoryFlow": {
+      "definition": ".pi/taskflows/flows/demos/portal-tailnet-prepare.json",
+      "verify": "just taskflow-portal-tailnet-verify",
+      "plan": "just taskflow-portal-tailnet-plan",
+      "execution": "suppressed-until-issue-690"
+    },
     "manualTailnet": {
+      "prepare": "just portal-tailnet-manual-prepare",
+      "preparedStatus": "just portal-tailnet-manual-prepared-status",
       "start": "just portal-tailnet-manual-start",
       "statusCommand": "just portal-tailnet-manual-status",
       "stop": "just portal-tailnet-manual-stop",

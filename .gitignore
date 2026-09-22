@@ -26,7 +26,9 @@ local.properties
 # Project-local agent package installs and transient state
 /.pi/npm
 /.pi/runner-coordination/
-/.pi/taskflows/
+/.pi/taskflows/*
+!/.pi/taskflows/flows/
+!/.pi/taskflows/flows/**
 /.pi-subagents/
 /review/
 

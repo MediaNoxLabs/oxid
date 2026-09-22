@@ -34,8 +34,26 @@ never a replacement for the automated physical or simulator lanes. Prepare the
 exact pinned Portal artifacts first. This phase does not require a phone,
 Tailscale, or the standalone stack and may be safely rerun after a failure:
 
+The first ADR-0117 Factory-flow canary makes this preparation sequence
+reviewable before it runs. The commands below resolve only the exact pinned
+Taskflow core and spend zero model tokens:
+
+```bash
+just taskflow-portal-tailnet-verify
+just taskflow-portal-tailnet-plan
+just taskflow-portal-tailnet-compile
+```
+
+The plan is `preflight → prepare-artifacts → verify-prepared-artifacts →
+handoff`. Taskflow execution remains disabled while issue #690 proves
+long-process progress, cancellation, resume, and orphan cleanup. To exercise the
+prototype interactively, open the saved flow in Pi after that conformance gate;
+until then, follow the same explicit checkpoint below. Rejecting its approval is
+supposed to halt the flow—there is no bypass around a failed preparation.
+
 ```bash
 just portal-tailnet-manual-prepare
+just portal-tailnet-manual-prepared-status
 ```
 
 Preparation realizes and loads the resolver, DID manager, and issuer images one
