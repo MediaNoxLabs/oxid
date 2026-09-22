@@ -14,6 +14,7 @@ import { assertReviewActionAllowed, currentReviewControl } from "./review-contro
 const REPOSITORY = "MediaNoxLabs/oxid";
 const BLOCKING_TITLE_MARKERS = /(?:\[?\bWIP\b\]?|\bDRAFT\b|DO NOT MERGE|🚧)/iu;
 const CLOSING_ISSUE = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#([1-9]\d*)\b/iu;
+const ELIGIBLE_MERGE_STATES = new Set(["CLEAN", "UNSTABLE"]);
 export const CRITICAL_CHECKS = Object.freeze([
   "Validate PR title",
   "Validate PR body",
@@ -23,6 +24,14 @@ export const CRITICAL_CHECKS = Object.freeze([
   "Audit, Licenses, Sources, and Documentation",
   "scan",
 ]);
+export const OPTIONAL_SARIF_PROJECTIONS = Object.freeze([
+  "Checkov",
+  "Opengrep OSS",
+  "Trivy",
+  "gitleaks",
+  "zizmor",
+]);
+const OPTIONAL_SARIF_PROJECTION_SET = new Set(OPTIONAL_SARIF_PROJECTIONS);
 
 function parseJson(source, label) {
   try {
@@ -69,7 +78,9 @@ export function validateMilestonePr(pr) {
   if (pr?.isCrossRepository === true) failures.push("cross-repository heads are not eligible for automated merge");
   if (BLOCKING_TITLE_MARKERS.test(pr?.title ?? "")) failures.push("title contains a merge-blocking marker");
   if (pr?.mergeable !== "MERGEABLE") failures.push(`mergeable is ${pr?.mergeable ?? "unknown"}`);
-  if (pr?.mergeStateStatus !== "CLEAN") failures.push(`mergeStateStatus is ${pr?.mergeStateStatus ?? "unknown"}, expected CLEAN`);
+  if (!ELIGIBLE_MERGE_STATES.has(pr?.mergeStateStatus)) {
+    failures.push(`mergeStateStatus is ${pr?.mergeStateStatus ?? "unknown"}, expected CLEAN or UNSTABLE`);
+  }
   for (const field of ["headRefOid", "baseRefOid"]) {
     if (typeof pr?.[field] !== "string" || !/^[0-9a-f]{40}$/u.test(pr[field])) failures.push(`${field} is missing or malformed`);
   }
@@ -88,6 +99,20 @@ export function validateCriticalChecks(checks) {
     const matches = checks.filter((check) => check?.name === name);
     if (matches.length !== 1) failures.push(`${name}: expected exactly one current check`);
     else if (matches[0].bucket !== "pass") failures.push(`${name}: ${matches[0].state ?? matches[0].bucket ?? "unknown"}`);
+  }
+  return { ok: failures.length === 0, failures };
+}
+
+export function validateMilestoneChecks(checks) {
+  const critical = validateCriticalChecks(checks);
+  const failures = [...critical.failures];
+  if (!Array.isArray(checks)) return { ok: false, failures };
+  const authoritativeScanGreen = checks.some((check) => check?.name === "scan" && check?.bucket === "pass");
+  for (const check of checks) {
+    if (CRITICAL_CHECKS.includes(check?.name) || check?.bucket === "pass") continue;
+    if (OPTIONAL_SARIF_PROJECTION_SET.has(check?.name)
+      && (check?.bucket === "pending" || authoritativeScanGreen)) continue;
+    failures.push(`${check?.name ?? "unnamed check"}: ${check?.state ?? check?.bucket ?? "unknown"}`);
   }
   return { ok: failures.length === 0, failures };
 }
@@ -125,7 +150,7 @@ export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaul
   run("git", ["merge-tree", "--write-tree", localBase, pr.headRefOid], { cwd: root, label: "verify conflict-free merge tree" });
 
   const checks = ghJson(run, ["pr", "checks", String(options.pr), "--repo", options.repo, "--json", "bucket,name,state,workflow"], root, "read current checks");
-  const checkResult = validateCriticalChecks(checks);
+  const checkResult = validateMilestoneChecks(checks);
   if (!checkResult.ok) throw new Error(`critical checks are not green: ${checkResult.failures.join("; ")}`);
 
   const comments = ghJson(run, ["api", `repos/${options.repo}/issues/${options.pr}/comments`, "--paginate", "--slurp"], root, "read review triage comments").flat();
