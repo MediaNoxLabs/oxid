@@ -150,11 +150,13 @@ longer proved that concrete private values stayed absent.
 Issue [#301](https://github.com/MediaNoxLabs/oxid/issues/301) therefore applies
 a local fail-closed mitigation: project settings suppress inherited taskflow
 extensions and skills, `/dev-loop` requires direct bounded `pi-subagents`
-dispatch, the smoke test proves taskflow is absent from effective commands, and
-validation remains target-plan/Cargo/Just/Nix native. Re-enable taskflow only
-after detached peer-resolution, nested-progress, cancellation, and orphan-cleanup
-behavior is fixed and verified. General cumulative budget and terminal-
-reconciliation improvements remain in #227.
+dispatch, and the smoke test proves taskflow is absent from effective commands.
+ADR-0117 now admits the exact pinned `taskflow-core` through a repository-owned
+static-only adapter for zero-token verify, plan, and compile operations; it does
+not enable flow execution. Re-enable mutating Taskflow execution only after
+detached peer-resolution, long-process progress, process-tree cancellation,
+resume, and orphan-cleanup behavior are fixed and verified under issue #690. General cumulative
+budget and terminal-reconciliation improvements remain in #227.
 
 ## Required operator flow
 
