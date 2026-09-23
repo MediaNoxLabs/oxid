@@ -7,10 +7,12 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const lifecyclePath = path.join(root, "scripts", "test-android-portal-tailnet-physical.sh");
+const consumerLifecyclePath = path.join(root, "scripts", "portal-consumer-lifecycle.sh");
 
 test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner demo", async () => {
-  const [lifecycle, justfile] = await Promise.all([
+  const [lifecycle, consumerLifecycle, justfile] = await Promise.all([
     readFile(lifecyclePath, "utf8"),
+    readFile(consumerLifecyclePath, "utf8"),
     readFile(path.join(root, "Justfile"), "utf8"),
   ]);
 
@@ -30,6 +32,7 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
   assert.match(lifecycle, /manual_prepared_status/);
   assert.match(lifecycle, /fail artifacts-not-prepared/);
   assert.match(lifecycle, /PORTAL_CONSUMER_PREPARED_RECEIPT="\$prepared_receipt_for_support"/);
+  assert.match(consumerLifecycle, /\[\.images\[\]\.durationSeconds\] \| add \/\/ 0/);
   assert.match(lifecycle, /servicesSeconds/);
   assert.match(lifecycle, /tailnetSeconds/);
   assert.match(lifecycle, /androidSeconds/);

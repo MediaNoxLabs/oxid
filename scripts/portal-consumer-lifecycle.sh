@@ -294,7 +294,7 @@ run_prepare() {
   done
 
   prepared_receipt_valid "$PREPARE_CHECKPOINT" partial || fail prepare-checkpoint
-  prepare_duration="$(( $(date +%s) - $(jq -r '.startedAtEpoch' "$PREPARE_CHECKPOINT") ))"
+  prepare_duration="$(jq '[.images[].durationSeconds] | add // 0' "$PREPARE_CHECKPOINT")"
   checkpoint_candidate="$(mktemp "$STATE/.prepared-receipt.XXXXXX")"
   jq \
     --argjson completed "$(date +%s)" --argjson duration "$prepare_duration" \
