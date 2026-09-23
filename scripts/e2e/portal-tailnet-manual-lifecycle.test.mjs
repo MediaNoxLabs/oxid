@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,16 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const lifecyclePath = path.join(root, "scripts", "test-android-portal-tailnet-physical.sh");
 const consumerLifecyclePath = path.join(root, "scripts", "portal-consumer-lifecycle.sh");
+const pinnedPackageClosure = path.join(root, ".pi", "npm", "node_modules", "dev-loops", "package.json");
+
+async function pathExists(file) {
+  try {
+    await access(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner demo", async () => {
   const [lifecycle, consumerLifecycle, justfile] = await Promise.all([
@@ -130,16 +140,6 @@ test("Portal preparation is a saved, static-first Taskflow with one explicit lon
   assert.match(stepAdapter, /device=not-required tailnet=not-required/);
   assert.doesNotMatch(stepAdapter, /manual-prepared-status/);
 
-  for (const action of ["verify", "compile"]) {
-    const result = spawnSync(process.execPath, [
-      path.join(root, "scripts", "factory", "taskflow-static.mjs"),
-      action,
-      path.relative(root, flowPath),
-      JSON.stringify({ mode: "prepare-only" }),
-    ], { cwd: root, encoding: "utf8" });
-    assert.equal(result.status, 0, `${action} failed:\n${result.stdout}\n${result.stderr}`);
-  }
-
   const scenario = inventory.scenarios.find(({ id }) => id === "portal-final-issuance-physical-tailnet");
   assert.ok(scenario, "physical Tailnet Portal scenario must remain inventoried");
   const target = scenario.targetPlans.find(({ targetId }) => targetId === "android-physical");
@@ -153,4 +153,19 @@ test("Portal preparation is a saved, static-first Taskflow with one explicit lon
   assert.deepEqual(taskflowPackage.extensions, []);
   assert.deepEqual(taskflowPackage.skills, []);
   assert.match(gitignore, /!\/\.pi\/taskflows\/flows\/demos\/\*\*/);
+});
+
+test("installed pinned Taskflow runtime verifies, plans, and compiles the saved flow", {
+  skip: !(await pathExists(pinnedPackageClosure)) && "pinned local Pi package closure is not installed",
+}, () => {
+  const flowPath = path.join(root, ".pi", "taskflows", "flows", "demos", "portal-tailnet-prepare.json");
+  for (const action of ["verify", "plan", "compile"]) {
+    const result = spawnSync(process.execPath, [
+      path.join(root, "scripts", "factory", "taskflow-static.mjs"),
+      action,
+      path.relative(root, flowPath),
+      JSON.stringify({ mode: "prepare-only" }),
+    ], { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 0, `${action} failed:\n${result.stdout}\n${result.stderr}`);
+  }
 });
