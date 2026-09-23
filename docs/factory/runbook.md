@@ -279,7 +279,9 @@ undetectable later. The check that matters is `gates` parsing.
 - **Advisory failures remain visible but do not acquire veto power.** GitHub's
   `UNSTABLE` merge state may be considered only by the guarded milestone audit.
   The wrapper still requires a non-empty, fully passing exact-head critical
-  check set, including GPG/DCO, before merge.
+  check set, including GPG/DCO, before merge. A named external SARIF projection
+  may remain pending only after the authoritative scan passes; failed,
+  cancelled, unknown, or workflow-owned projections remain blockers.
 - **Fan-out is on demand, not a milestone merge prerequisite.**
   `gates.requireFanoutEvidence: false` and `requireFanoutProvenance: false`
   keep the ordinary local-only path compatible with
