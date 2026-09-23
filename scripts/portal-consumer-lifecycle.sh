@@ -130,13 +130,16 @@ image_key_for() {
 }
 
 prepared_image_valid() {
-  local prepared="$1" key="$2" tag="$3" output gc_root image_id digest current_id current_digest
+  local prepared="$1" key="$2" tag="$3" prepared_directory output gc_root image_id digest current_id current_digest
+  prepared_directory="$(dirname -- "$prepared")"
+  [ -d "$prepared_directory" ] && [ ! -L "$prepared_directory" ] || return 1
+  prepared_directory="$(cd -- "$prepared_directory" && pwd -P)" || return 1
   output="$(jq -r --arg key "$key" '.images[$key].outputPath // empty' "$prepared")"
   gc_root="$(jq -r --arg key "$key" '.images[$key].gcRoot // empty' "$prepared")"
   image_id="$(jq -r --arg key "$key" '.images[$key].id // empty' "$prepared")"
   digest="$(jq -r --arg key "$key" '.images[$key].digest // empty' "$prepared")"
   [[ "$output" = /nix/store/* ]] && [ -f "$output" ] || return 1
-  [ "$gc_root" = "$STATE/nix-$key" ] && [ -L "$gc_root" ] || return 1
+  [ "$gc_root" = "$prepared_directory/nix-$key" ] && [ -L "$gc_root" ] || return 1
   [ "$(readlink "$gc_root")" = "$output" ] || return 1
   [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
   [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
