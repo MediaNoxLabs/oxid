@@ -19,20 +19,27 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const EXPECTED_VERSION = "0.2.10";
 
 function usage() {
-  process.stderr.write("Usage: node scripts/factory/taskflow-conformance.mjs [--json] [--step-ms <positive integer>]\n");
+  process.stderr.write("Usage: node scripts/factory/taskflow-conformance.mjs [--json] [--long-process] [--step-ms <positive integer>] [--heartbeat-ms <positive integer>]\n");
 }
 
 function parseArgs(argv) {
   let json = false;
+  let longProcess = false;
   let stepMs = 80;
+  let heartbeatMs = 30_000;
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === "--json") json = true;
+    else if (argv[index] === "--long-process") longProcess = true;
     else if (argv[index] === "--step-ms") {
       stepMs = Number(argv[++index]);
       if (!Number.isInteger(stepMs) || stepMs < 10 || stepMs > 600_000) throw new Error("--step-ms must be an integer from 10 to 600000");
+    } else if (argv[index] === "--heartbeat-ms") {
+      heartbeatMs = Number(argv[++index]);
+      if (!Number.isInteger(heartbeatMs) || heartbeatMs < 10 || heartbeatMs > 60_000) throw new Error("--heartbeat-ms must be an integer from 10 to 60000");
     } else throw new Error(`unknown argument: ${argv[index]}`);
   }
-  return { json, stepMs };
+  if (stepMs > 300_000 && !longProcess) throw new Error("--step-ms above 300000 requires explicit --long-process mode");
+  return { json, longProcess, stepMs, heartbeatMs };
 }
 
 async function loadCore() {
@@ -56,12 +63,16 @@ function script(id, run, timeout, extra = {}) {
 }
 
 async function executeProbe(core, state, events, dependencies = {}) {
+  const { onObservedProgress, ...runtimeDependencies } = dependencies;
   return core.executeTaskflow(state, {
-    ...dependencies,
+    ...runtimeDependencies,
     cwd: state.cwd,
     agents: [],
     usageAccounting: "unavailable",
-    onProgress(current) { events.push({ status: current.status, phases: Object.values(current.phases).map(({ id, status }) => `${id}:${status}`) }); },
+    onProgress(current) {
+      events.push({ observedAt: Date.now(), status: current.status, phases: Object.values(current.phases).map(({ id, status }) => `${id}:${status}`) });
+      onObservedProgress?.(current);
+    },
   });
 }
 
@@ -73,17 +84,40 @@ async function runProbe(core, cwd, def, args, events, dependencies = {}) {
 }
 
 async function main() {
-  const { json, stepMs } = parseArgs(process.argv.slice(2));
+  const { json, longProcess, stepMs, heartbeatMs } = parseArgs(process.argv.slice(2));
   const { core, versions } = await loadCore();
   const cwd = await mkdtemp(path.join(os.tmpdir(), "oxid-taskflow-conformance-"));
   try {
     const controlStepMs = Math.min(stepMs, 100);
     const events = [];
+    const progressStartedAt = Date.now();
     const progressFlow = {
       name: "synthetic-progress", version: 1, scriptCwd: "invocation", incremental: false, concurrency: 1,
-      phases: [script("progress", [process.execPath, "-e", `setTimeout(() => process.stdout.write('done'), ${stepMs})`], stepMs * 8, { final: true })],
+      phases: [script("progress", [process.execPath, "-e", `setTimeout(() => process.stdout.write('done'), ${stepMs})`], Math.max(1_000, stepMs * 8), { final: true })],
     };
-    const progress = await runProbe(core, cwd, progressFlow, {}, events);
+    const admission = core.validateTaskflow(progressFlow);
+    let heartbeatCount = 0;
+    let latestPhase = "not-started";
+    const heartbeat = longProcess ? setInterval(() => {
+      heartbeatCount += 1;
+      const elapsedMs = Date.now() - progressStartedAt;
+      process.stderr.write(`[taskflow-conformance] supervisor-heartbeat elapsedMs=${elapsedMs} phase=${latestPhase}\n`);
+    }, heartbeatMs) : null;
+    heartbeat?.unref();
+    let progress;
+    try {
+      progress = await runProbe(core, cwd, progressFlow, {}, events, {
+        onObservedProgress(current) {
+          latestPhase = Object.values(current.phases).map(({ id, status }) => `${id}:${status}`).join(",") || current.status;
+        },
+      });
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
+    }
+    const progressEndedAt = Date.now();
+    const callbackTimes = [progressStartedAt, ...events.map(({ observedAt }) => observedAt), progressEndedAt].sort((a, b) => a - b);
+    const maxCallbackGapMs = callbackTimes.slice(1).reduce((maximum, value, index) => Math.max(maximum, value - callbackTimes[index]), 0);
+    const boundedProgress = progress.ok && events.length > 0 && maxCallbackGapMs <= 60_000;
 
     const timeoutFlow = {
       name: "synthetic-timeout", version: 1, scriptCwd: "invocation", incremental: false, concurrency: 1,
@@ -121,14 +155,33 @@ async function main() {
       && repeated.reuse?.reusedCrossRun === 1;
 
     const matrix = [
-      { property: "bounded-progress-visibility", status: progress.ok && events.length > 0 ? "supported" : "unverified", evidence: `progress callbacks=${events.length}; terminal=${progress.state.status}` },
+      { property: "bounded-progress-visibility", status: boundedProgress ? "supported" : "unverified", evidence: `progress callbacks=${events.length}; maxCallbackGapMs=${maxCallbackGapMs}; terminal=${progress.state.status}` },
       { property: "slow-versus-stalled-classification", status: "unverified", evidence: timedOut.state.phases.slow?.timedOut ? "wall timeout is observable, but no distinct idle/stalled reason is exposed for script phases" : "no timeout classification" },
       { property: "process-tree-cancellation-escalation", status: "unverified", evidence: "public runtime result exposes timeout, but does not expose child-tree reap or SIGKILL escalation evidence" },
       { property: "terminal-cleanup", status: "unverified", evidence: "public runtime result has no process-registry cleanup observation" },
       { property: "immutable-resume", status: immutableResume ? "supported" : "unsupported", evidence: `parent=${timedOut.state.status}; child=${resumed.state.status}; parentUnchanged=${JSON.stringify(timedOut.state) === parentSnapshot}` },
       { property: "changed-input-invalidation", status: changedInputInvalidation ? "supported" : "unsupported", evidence: `changedExecuted=${changed.reuse?.executed ?? 0}; changedReused=${changed.reuse?.reusedCrossRun ?? 0}; repeatedReused=${repeated.reuse?.reusedCrossRun ?? 0}` },
     ];
-    const report = { schemaVersion: 1, mode: "synthetic-headless-black-box", versions, timings: { stepMs, realTimeOverFiveMinutes: "on-demand only" }, matrix };
+    if (longProcess) {
+      matrix.unshift(
+        { property: "saved-flow-long-script-admission", status: admission.ok ? "supported" : "unsupported", evidence: admission.ok ? "validated by the pinned public schema" : "pinned schema rejects a script timeout above 300000ms" },
+        { property: "direct-executor-long-script", status: progress.ok && progressEndedAt - progressStartedAt > 300_000 ? "supported" : "unverified", evidence: `durationMs=${progressEndedAt - progressStartedAt}; terminal=${progress.state.status}` },
+      );
+    }
+    const report = {
+      schemaVersion: 1,
+      mode: longProcess ? "long-process-headless-black-box" : "synthetic-headless-black-box",
+      versions,
+      timings: {
+        stepMs,
+        realTimeOverFiveMinutes: progressEndedAt - progressStartedAt > 300_000,
+        progressDurationMs: progressEndedAt - progressStartedAt,
+        progressCallbacks: events.length,
+        maxCallbackGapMs,
+        supervisorHeartbeats: heartbeatCount,
+      },
+      matrix,
+    };
     if (json) process.stdout.write(`${JSON.stringify(report)}\n`);
     else for (const row of matrix) process.stdout.write(`${row.status.toUpperCase()} ${row.property}: ${row.evidence}\n`);
   } finally {

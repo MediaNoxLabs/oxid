@@ -6,7 +6,7 @@ Run the repository-pinned runtime without loading the Taskflow Pi extension:
 node scripts/factory/taskflow-conformance.mjs --json
 ```
 
-The probe creates only a temporary directory and short-lived Node child processes. It
+The probe creates only a temporary directory and Node child processes. It
 never enables Taskflow mutations or touches Docker, Tailnet, devices, or factory
 flows. Timings are configurable with `--step-ms`; the default stays below one second.
 The report is deterministic JSON with the exact `pi-taskflow` and `taskflow-core`
@@ -16,11 +16,18 @@ closure versions and a capability status of `supported`, `unsupported`, or
 ## Current pinned-runtime result
 
 `pi-taskflow@0.2.10` and `taskflow-core@0.2.10` demonstrate bounded progress
-callbacks, immutable resume forks, and changed-argument cache invalidation. Distinct
+callbacks for short phases, immutable resume forks, and changed-argument cache invalidation. Distinct
 slow-versus-stalled classification, process-tree termination escalation, and terminal
 registry cleanup remain **unverified** because their public black-box result has no
 idle/stall reason, child-tree receipt, or registry observation. This is not admission
 evidence for real long-running factory work.
+
+The explicit long-process mode also separates two facts which must not be conflated:
+the core executor can keep a directly constructed script phase alive beyond five
+minutes, while the public saved-flow validator rejects that phase because script
+timeouts are capped at 300,000 ms. Supervisor heartbeats show that this probe is still
+alive; they are labelled as supervisor evidence and do not masquerade as Taskflow
+phase progress. The report records the maximum gap between genuine Taskflow callbacks.
 
 ## Smallest upstream-ready delta
 
@@ -36,9 +43,10 @@ The on-demand real-duration acceptance command, intentionally excluded from fast
 is:
 
 ```sh
-node scripts/factory/taskflow-conformance.mjs --json --step-ms 360000
+node scripts/factory/taskflow-conformance.mjs --json --long-process --step-ms 360000
 ```
 
-A future upstream version must add an explicit `--long-process` mode before this command
-is treated as a five-minute-plus acceptance probe; the current bounded synthetic command
-is only a timing-scale smoke and must not be used to claim long-process admission.
+This command is an evidence probe, not an admission bypass. Until the
+`saved-flow-long-script-admission` row is supported, Portal preparation must retain its
+explicit foreground approval boundary. A successful `direct-executor-long-script` row
+alone is insufficient to admit long mechanical phases.
