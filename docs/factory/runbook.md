@@ -17,6 +17,7 @@ routes through a coordination server.
 | --- | --- | --- |
 | `pi-coding-agent` | Nix-pinned | immutable nixpkgs input in `flake.lock`; executable supplied by `devShells.default` |
 | `dev-loops` | `1.0.2` | `.pi/settings.json` → project-local `.pi/npm` |
+| `@dev-loops/core` | `1.0.2` | exact runtime companion for the `dev-loops` wrapper; pinned separately because the package declares a floating compatible range |
 | `pi-subagents` | `0.67.0` | same |
 | `pi-taskflow` | `0.2.10` | installed as an `agent-review-pi` peer; all runtime resources disabled |
 | `typebox` | `1.3.9` | exact `agent-review-pi` peer |
@@ -35,7 +36,8 @@ The devshell's `shellHook` reads `.pi/settings.json`, derives a stable identity
 from the complete ordered package configuration, and resolves this checkout to
 the matching content-addressed closure beneath Git-common private state. A
 missing closure is assembled in a unique staging directory, validated against
-every exact pin, and atomically published. Linked worktrees can therefore use
+every exact pin—including the separately pinned `@dev-loops/core` runtime—and
+atomically published. Linked worktrees can therefore use
 different tracked package versions without rewriting each other's dependencies.
 A pre-existing primary-checkout package tree is migrated only after validation;
 a real package tree in a linked worktree or a foreign symlink fails closed for

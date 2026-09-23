@@ -44,6 +44,7 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
       source: "npm:dev-loops@1.0.2",
       extensions: [],
     },
+    "npm:@dev-loops/core@1.0.2",
     "npm:@playwright/test@1.60.0",
     "npm:@axe-core/playwright@4.10.0",
     "npm:pi-subagents@0.67.0",
