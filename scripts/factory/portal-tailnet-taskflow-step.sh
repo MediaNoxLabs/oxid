@@ -28,7 +28,6 @@ case "$OPERATION" in
     printf '%s\n' 'portal-tailnet-taskflow: PREFLIGHT mode=prepare-only device=not-required tailnet=not-required'
     ;;
   handoff)
-    "$REPOSITORY_ROOT/scripts/test-android-portal-tailnet-physical.sh" manual-prepared-status >/dev/null
     printf '%s\n' 'portal-tailnet-taskflow: PREPARED next=owner-gated-tailnet-start device=not-yet-required'
     ;;
   *)

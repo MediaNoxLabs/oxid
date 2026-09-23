@@ -28,7 +28,9 @@ local.properties
 /.pi/runner-coordination/
 /.pi/taskflows/*
 !/.pi/taskflows/flows/
-!/.pi/taskflows/flows/**
+/.pi/taskflows/flows/*
+!/.pi/taskflows/flows/demos/
+!/.pi/taskflows/flows/demos/**
 /.pi-subagents/
 /review/
 

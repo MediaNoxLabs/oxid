@@ -32,7 +32,7 @@ just android-portal-tailnet-physical-smoke
 This optional lifecycle is a live owner demo, not physical-lane evidence and
 never a replacement for the automated physical or simulator lanes. Prepare the
 exact pinned Portal artifacts first. This phase does not require a phone,
-Tailscale, or the standalone stack and may be safely rerun after a failure:
+Tailscale, or the standalone stack and may be safely rerun after a failure.
 
 The first ADR-0117 Factory-flow canary makes this preparation sequence
 reviewable before it runs. The commands below resolve only the exact pinned

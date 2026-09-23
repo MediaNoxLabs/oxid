@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -81,15 +82,17 @@ test("manual lifecycle is included in repository contracts exactly once", async 
 
 test("Portal preparation is a saved, static-first Taskflow with one explicit long-build boundary", async () => {
   const flowPath = path.join(root, ".pi", "taskflows", "flows", "demos", "portal-tailnet-prepare.json");
-  const [flowSource, staticAdapter, stepAdapter, settings, gitignore] = await Promise.all([
+  const [flowSource, staticAdapter, stepAdapter, settings, gitignore, inventorySource] = await Promise.all([
     readFile(flowPath, "utf8"),
     readFile(path.join(root, "scripts", "factory", "taskflow-static.mjs"), "utf8"),
     readFile(path.join(root, "scripts", "factory", "portal-tailnet-taskflow-step.sh"), "utf8"),
     readFile(path.join(root, ".pi", "settings.json"), "utf8"),
     readFile(path.join(root, ".gitignore"), "utf8"),
+    readFile(path.join(root, "docs", "factory", "demo-inventory.json"), "utf8"),
   ]);
   const flow = JSON.parse(flowSource);
   const piSettings = JSON.parse(settings);
+  const inventory = JSON.parse(inventorySource);
 
   assert.equal(flow.name, "portal-tailnet-prepare");
   assert.equal(flow.scriptCwd, "invocation");
@@ -125,11 +128,29 @@ test("Portal preparation is a saved, static-first Taskflow with one explicit lon
   assert.match(staticAdapter, /validateTaskflow/);
   assert.doesNotMatch(staticAdapter, /executeTaskflow|runTaskflow/);
   assert.match(stepAdapter, /device=not-required tailnet=not-required/);
-  assert.match(stepAdapter, /manual-prepared-status/);
+  assert.doesNotMatch(stepAdapter, /manual-prepared-status/);
+
+  for (const action of ["verify", "compile"]) {
+    const result = spawnSync(process.execPath, [
+      path.join(root, "scripts", "factory", "taskflow-static.mjs"),
+      action,
+      path.relative(root, flowPath),
+      JSON.stringify({ mode: "prepare-only" }),
+    ], { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 0, `${action} failed:\n${result.stdout}\n${result.stderr}`);
+  }
+
+  const scenario = inventory.scenarios.find(({ id }) => id === "portal-final-issuance-physical-tailnet");
+  assert.ok(scenario, "physical Tailnet Portal scenario must remain inventoried");
+  const target = scenario.targetPlans.find(({ targetId }) => targetId === "android-physical");
+  assert.ok(target?.dependencyIds.includes("portal-tailnet-consumer-harness"));
+  assert.ok(target?.commandIds.run.includes("portal-android-tailnet-diagnostic"));
+  const runCommand = inventory.commands.find(({ id }) => id === "portal-android-tailnet-diagnostic");
+  assert.equal(runCommand?.reference, "docs/factory/portal-android-tailnet-physical.md");
 
   const taskflowPackage = piSettings.packages.find((entry) =>
     typeof entry === "object" && entry.source === "npm:pi-taskflow@0.2.10");
   assert.deepEqual(taskflowPackage.extensions, []);
   assert.deepEqual(taskflowPackage.skills, []);
-  assert.match(gitignore, /!\/\.pi\/taskflows\/flows\/\*\*/);
+  assert.match(gitignore, /!\/\.pi\/taskflows\/flows\/demos\/\*\*/);
 });
