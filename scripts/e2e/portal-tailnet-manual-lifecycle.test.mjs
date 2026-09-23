@@ -7,23 +7,44 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const lifecyclePath = path.join(root, "scripts", "test-android-portal-tailnet-physical.sh");
+const consumerLifecyclePath = path.join(root, "scripts", "portal-consumer-lifecycle.sh");
 
 test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner demo", async () => {
-  const [lifecycle, justfile] = await Promise.all([
+  const [lifecycle, consumerLifecycle, justfile] = await Promise.all([
     readFile(lifecyclePath, "utf8"),
+    readFile(consumerLifecyclePath, "utf8"),
     readFile(path.join(root, "Justfile"), "utf8"),
   ]);
 
   for (const recipe of [
+    "portal-tailnet-manual-prepare:",
+    "portal-tailnet-manual-prepared-status:",
     "portal-tailnet-manual-start:",
     "portal-tailnet-manual-status:",
     "portal-tailnet-manual-stop:",
   ]) assert.match(justfile, new RegExp(`^${recipe}`, "m"));
 
-  for (const operation of ["manual-start", "manual-status", "manual-stop", "--manual-supervise"]) {
+  for (const operation of ["manual-prepare", "manual-prepared-status", "manual-start", "manual-status", "manual-stop", "--manual-supervise"]) {
     assert.match(lifecycle, new RegExp(operation));
   }
   assert.match(lifecycle, /target\/portal-tailnet-manual\/runtime/);
+  assert.match(lifecycle, /target\/portal-tailnet-manual\/prepared/);
+  assert.match(lifecycle, /prepared-receipt\.json/);
+  assert.match(lifecycle, /manual_prepared_status/);
+  assert.match(lifecycle, /fail artifacts-not-prepared/);
+  assert.match(lifecycle, /PORTAL_CONSUMER_PREPARED_RECEIPT="\$prepared_receipt_for_support"/);
+  assert.match(consumerLifecycle, /\[\.images\[\]\.durationSeconds\] \| add \/\/ 0/);
+  assert.match(consumerLifecycle, /fail preparation-busy/);
+  assert.match(consumerLifecycle, /docker pull "\$SMOCKER_IMAGE"/);
+  assert.match(consumerLifecycle, /docker image inspect "\$SMOCKER_IMAGE"/);
+  assert.match(consumerLifecycle, /--out-link "\$gc_root"/);
+  assert.match(consumerLifecycle, /current_digest="sha256:\$\(shasum -a 256 "\$output"/);
+  assert.match(consumerLifecycle, /gc_root" = "\$prepared_directory\/nix-\$key"/);
+  assert.match(lifecycle, /portal_source_valid \|\| fail source-dirty/);
+  assert.match(lifecycle, /servicesSeconds/);
+  assert.match(lifecycle, /tailnetSeconds/);
+  assert.match(lifecycle, /androidSeconds/);
+  assert.match(lifecycle, /readySeconds/);
   assert.match(lifecycle, /manual-public-page-url/);
   assert.match(lifecycle, /readonly MOCK_STATE="\$STATE\/mock-state"/);
   assert.match(lifecycle, /tailnet-mock-transform\.mjs/);

@@ -130,7 +130,15 @@ portal-android-flow-contract:
 android-portal-tailnet-physical-smoke:
     ./scripts/test-android-portal-tailnet-physical.sh
 
-# Start a fresh, owner-invoked physical Android Portal QR demo; it is not E2E evidence.
+# Prepare or resume the three exact pinned Portal images without requiring a phone or Tailnet.
+portal-tailnet-manual-prepare:
+    ./scripts/test-android-portal-tailnet-physical.sh manual-prepare
+
+# Verify the exact pinned Portal source and prepared image receipt without starting Tailnet or a device.
+portal-tailnet-manual-prepared-status:
+    ./scripts/test-android-portal-tailnet-physical.sh manual-prepared-status
+
+# Start a fresh demo from a completed preparation receipt; it is not E2E evidence.
 portal-tailnet-manual-start:
     ./scripts/test-android-portal-tailnet-physical.sh manual-start
 
