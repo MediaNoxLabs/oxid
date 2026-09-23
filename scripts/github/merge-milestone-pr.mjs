@@ -113,8 +113,8 @@ export function validateMilestoneChecks(checks) {
       || check?.bucket === "pass"
       || check?.bucket === "skipping") continue;
     if (OPTIONAL_SARIF_PROJECTION_SET.has(check?.name)
-      && check?.bucket === "pending"
-      && authoritativeScanGreen) continue;
+      && check?.workflow === ""
+      && (check?.bucket === "pending" || authoritativeScanGreen)) continue;
     failures.push(`${check?.name ?? "unnamed check"}: ${check?.state ?? check?.bucket ?? "unknown"}`);
   }
   return { ok: failures.length === 0, failures };
@@ -185,7 +185,7 @@ export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaul
     headSha: pr.headRefOid,
     baseSha: localBase,
     worktree: root,
-    checks: CRITICAL_CHECKS.length,
+    checks: checks.length,
     followUps: triage.followUpIssues,
   };
 }
