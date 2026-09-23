@@ -134,6 +134,10 @@ android-portal-tailnet-physical-smoke:
 portal-tailnet-manual-prepare:
     ./scripts/test-android-portal-tailnet-physical.sh manual-prepare
 
+# Verify the exact pinned Portal source and prepared image receipt without starting Tailnet or a device.
+portal-tailnet-manual-prepared-status:
+    ./scripts/test-android-portal-tailnet-physical.sh manual-prepared-status
+
 # Start a fresh demo from a completed preparation receipt; it is not E2E evidence.
 portal-tailnet-manual-start:
     ./scripts/test-android-portal-tailnet-physical.sh manual-start

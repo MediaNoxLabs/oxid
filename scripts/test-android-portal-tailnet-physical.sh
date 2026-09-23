@@ -10,7 +10,7 @@ readonly PORTAL_COMMIT="25499870f84d77173c46e4af3021311decfb840b"
 readonly PORTAL_TREE="2d845d2293603dfd8adce5362c8a9941e6ba78a9"
 readonly REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly OPERATION="${1:-automated}"
-case "$OPERATION" in automated|manual-prepare|manual-start|manual-status|manual-stop|--manual-supervise) ;; *)
+case "$OPERATION" in automated|manual-prepare|manual-prepared-status|manual-start|manual-status|manual-stop|--manual-supervise) ;; *)
   printf '%s\n' 'android-portal-tailnet: FAIL phase=usage' >&2
   exit 1
   ;;
@@ -318,6 +318,7 @@ manual_supervise() {
 
 case "$OPERATION" in
   manual-prepare) manual_prepare; exit 0 ;;
+  manual-prepared-status) manual_prepared_status; printf '%s\n' 'portal-tailnet-manual: PREPARED'; exit 0 ;;
   manual-start) manual_prepared_status; manual_start_epoch="$(date +%s)" ;;
   manual-status) manual_status; exit 0 ;;
   manual-stop) manual_stop; exit 0 ;;

@@ -41,7 +41,8 @@ just portal-tailnet-manual-prepare
 Preparation realizes and loads the resolver, DID manager, and issuer images one
 at a time and pulls the pinned Smocker support image before the interactive
 window. Each completed Portal image is checkpointed with its immutable image ID,
-Nix output path, cache-hit marker, and elapsed seconds. A retry resumes after
+independent archive digest, Nix output path and persistent GC root, cache-hit
+marker, and elapsed seconds. A retry resumes after
 the last validated checkpoint instead of rebuilding successful phases.
 
 Only one preparation process may own the receipt. `preparation-busy` means an

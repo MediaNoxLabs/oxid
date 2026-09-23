@@ -130,14 +130,18 @@ image_key_for() {
 }
 
 prepared_image_valid() {
-  local prepared="$1" key="$2" tag="$3" output image_id digest current_id
+  local prepared="$1" key="$2" tag="$3" output gc_root image_id digest current_id current_digest
   output="$(jq -r --arg key "$key" '.images[$key].outputPath // empty' "$prepared")"
+  gc_root="$(jq -r --arg key "$key" '.images[$key].gcRoot // empty' "$prepared")"
   image_id="$(jq -r --arg key "$key" '.images[$key].id // empty' "$prepared")"
   digest="$(jq -r --arg key "$key" '.images[$key].digest // empty' "$prepared")"
   [[ "$output" = /nix/store/* ]] && [ -f "$output" ] || return 1
+  [ "$gc_root" = "$STATE/nix-$key" ] && [ -L "$gc_root" ] || return 1
+  [ "$(readlink "$gc_root")" = "$output" ] || return 1
   [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
   [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
-  [ "$digest" = "$image_id" ] || return 1
+  current_digest="sha256:$(shasum -a 256 "$output" | awk '{print $1}')" || return 1
+  [ "$digest" = "$current_digest" ] || return 1
   current_id="$(docker image inspect --format '{{.Id}}' "$tag" 2>/dev/null)" || return 1
   [ "$current_id" = "$image_id" ]
 }
@@ -200,9 +204,12 @@ emit_status() {
 }
 
 build_image() {
-  local attribute="$1" variable="$2" output_variable="${3:-}" output image_id
-  output="$(nix build --option access-tokens '' "$SOURCE#$attribute" --no-link --print-out-paths 2>>"$PRIVATE_LOG")" || return 1
+  local attribute="$1" variable="$2" output_variable="${3:-}" key gc_root output image_id
+  key="$(image_key_for "$attribute")" || return 1
+  gc_root="$STATE/nix-$key"
+  output="$(nix build --option access-tokens '' "$SOURCE#$attribute" --out-link "$gc_root" --print-out-paths 2>>"$PRIVATE_LOG")" || return 1
   [ "$(count_lines "$output")" -eq 1 ] && [[ "$output" = /nix/store/* ]] && [ -f "$output" ] || return 1
+  [ -L "$gc_root" ] && [ "$(readlink "$gc_root")" = "$output" ] || return 1
   docker load <"$output" >>"$PRIVATE_LOG" 2>&1 || return 1
   case "$attribute" in
     midnight-did-resolver-image) image_id="$(docker image inspect --format '{{.Id}}' midnight-did-resolver:0.1.0 2>/dev/null)" ;;
@@ -238,7 +245,7 @@ emit_prepared_status() {
 }
 
 run_prepare() {
-  local checkpoint_candidate started_at host_system attribute key tag prepared_image_id prepared_output
+  local checkpoint_candidate started_at host_system attribute key tag prepared_image_id prepared_output prepared_digest
   local phase_started phase_duration cache_hit prepare_duration
   mkdir "$PREPARE_LOCK" 2>/dev/null || fail preparation-busy
   prepare_lock_held=1
@@ -292,15 +299,17 @@ run_prepare() {
     fi
     phase_started="$(date +%s)"
     build_image "$attribute" prepared_image_id prepared_output || fail "$key-image"
+    prepared_digest="sha256:$(shasum -a 256 "$prepared_output" | awk '{print $1}')" || fail "$key-digest"
     phase_duration="$(( $(date +%s) - phase_started ))"
     checkpoint_candidate="$(mktemp "$STATE/.prepare-checkpoint.XXXXXX")"
     jq \
       --arg key "$key" --arg attribute "$attribute" --arg output "$prepared_output" \
-      --arg id "$prepared_image_id" --arg digest "$prepared_image_id" \
+      --arg root "$STATE/nix-$key" --arg id "$prepared_image_id" --arg digest "$prepared_digest" \
       --argjson duration "$phase_duration" --argjson cacheHit "$cache_hit" \
       '.images[$key] = {
         attribute:$attribute,
         outputPath:$output,
+        gcRoot:$root,
         id:$id,
         digest:$digest,
         durationSeconds:$duration,

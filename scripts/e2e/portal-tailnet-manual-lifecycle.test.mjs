@@ -18,12 +18,13 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
 
   for (const recipe of [
     "portal-tailnet-manual-prepare:",
+    "portal-tailnet-manual-prepared-status:",
     "portal-tailnet-manual-start:",
     "portal-tailnet-manual-status:",
     "portal-tailnet-manual-stop:",
   ]) assert.match(justfile, new RegExp(`^${recipe}`, "m"));
 
-  for (const operation of ["manual-prepare", "manual-start", "manual-status", "manual-stop", "--manual-supervise"]) {
+  for (const operation of ["manual-prepare", "manual-prepared-status", "manual-start", "manual-status", "manual-stop", "--manual-supervise"]) {
     assert.match(lifecycle, new RegExp(operation));
   }
   assert.match(lifecycle, /target\/portal-tailnet-manual\/runtime/);
@@ -36,6 +37,8 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
   assert.match(consumerLifecycle, /fail preparation-busy/);
   assert.match(consumerLifecycle, /docker pull "\$SMOCKER_IMAGE"/);
   assert.match(consumerLifecycle, /docker image inspect "\$SMOCKER_IMAGE"/);
+  assert.match(consumerLifecycle, /--out-link "\$gc_root"/);
+  assert.match(consumerLifecycle, /current_digest="sha256:\$\(shasum -a 256 "\$output"/);
   assert.match(lifecycle, /portal_source_valid \|\| fail source-dirty/);
   assert.match(lifecycle, /servicesSeconds/);
   assert.match(lifecycle, /tailnetSeconds/);
