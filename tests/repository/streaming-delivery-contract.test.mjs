@@ -14,6 +14,7 @@ import {
   auditMilestoneMerge,
   parseMergeMilestoneArgs,
   validateCriticalChecks,
+  validateMilestoneChecks,
   validateMilestonePr,
 } from "../../scripts/github/merge-milestone-pr.mjs";
 import {
@@ -116,6 +117,19 @@ test("critical checks are fixed, unique, and green", () => {
   assert.equal(validateCriticalChecks(passing.filter((check) => check.name !== "scan")).ok, false);
   assert.equal(validateCriticalChecks(passing.map((check) => check.name === "scan" ? { ...check, bucket: "fail" } : check)).ok, false);
   assert.equal(validateCriticalChecks([...passing, passing[0]]).ok, false);
+});
+
+test("milestone audit permits only pending known SARIF projections after scan passes", () => {
+  const passing = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS" }));
+  const pendingProjection = { name: "Checkov", bucket: "pending", state: "QUEUED", workflow: "" };
+  assert.equal(validateMilestoneChecks([...passing, pendingProjection]).ok, true);
+  assert.equal(validateMilestoneChecks([...passing.map((check) => check.name === "scan" ? { ...check, bucket: "fail" } : check), pendingProjection]).ok, false);
+  assert.equal(validateMilestoneChecks([...passing, { ...pendingProjection, workflow: "Scan" }]).ok, false);
+  assert.equal(validateMilestoneChecks([...passing, { name: "unrecognized external check", bucket: "pending", state: "QUEUED" }]).ok, false);
+  assert.equal(validateMilestoneChecks([...passing, { ...pendingProjection, bucket: "fail", state: "FAILURE" }]).ok, false);
+  assert.equal(validateMilestoneChecks([...passing, { ...pendingProjection, bucket: "cancel", state: "CANCELLED" }]).ok, false);
+  assert.equal(validateMilestoneChecks([...passing.map((check) => check.name === "scan" ? { ...check, bucket: "fail" } : check), { ...pendingProjection, bucket: "cancel", state: "CANCELLED" }]).ok, false);
+  assert.equal(validateMilestoneChecks([...passing, { name: "Unit tests (Linux host)", bucket: "skipping", state: "SKIPPED" }]).ok, true);
 });
 
 test("review triage is exact-head and cannot defer a blocking finding", () => {
