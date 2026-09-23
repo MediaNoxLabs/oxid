@@ -109,9 +109,12 @@ export function validateMilestoneChecks(checks) {
   if (!Array.isArray(checks)) return { ok: false, failures };
   const authoritativeScanGreen = checks.some((check) => check?.name === "scan" && check?.bucket === "pass");
   for (const check of checks) {
-    if (CRITICAL_CHECKS.includes(check?.name) || check?.bucket === "pass") continue;
+    if (CRITICAL_CHECKS.includes(check?.name)
+      || check?.bucket === "pass"
+      || check?.bucket === "skipping") continue;
     if (OPTIONAL_SARIF_PROJECTION_SET.has(check?.name)
-      && (check?.bucket === "pending" || authoritativeScanGreen)) continue;
+      && check?.bucket === "pending"
+      && authoritativeScanGreen) continue;
     failures.push(`${check?.name ?? "unnamed check"}: ${check?.state ?? check?.bucket ?? "unknown"}`);
   }
   return { ok: failures.length === 0, failures };
@@ -151,7 +154,7 @@ export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaul
 
   const checks = ghJson(run, ["pr", "checks", String(options.pr), "--repo", options.repo, "--json", "bucket,name,state,workflow"], root, "read current checks");
   const checkResult = validateMilestoneChecks(checks);
-  if (!checkResult.ok) throw new Error(`critical checks are not green: ${checkResult.failures.join("; ")}`);
+  if (!checkResult.ok) throw new Error(`pull request checks are not green: ${checkResult.failures.join("; ")}`);
 
   const comments = ghJson(run, ["api", `repos/${options.repo}/issues/${options.pr}/comments`, "--paginate", "--slurp"], root, "read review triage comments").flat();
   const triage = currentTriageReceipt(comments, pr.headRefOid);
