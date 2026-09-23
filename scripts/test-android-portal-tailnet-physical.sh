@@ -468,6 +468,7 @@ if [ "$OPERATION" = automated ]; then
   [ "$(git -C "$SOURCE" rev-parse 'FETCH_HEAD^{tree}')" = "$PORTAL_TREE" ] || fail source-tree
   git -C "$SOURCE" checkout --detach "$PORTAL_COMMIT" >>"$PRIVATE_LOG" 2>&1 || fail source-checkout
   chmod 700 "$SOURCE"
+  portal_source_valid || fail source-dirty
 else
   portal_source_valid || fail prepared-source
 fi

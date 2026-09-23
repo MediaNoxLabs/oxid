@@ -9,6 +9,7 @@ readonly PORTAL_COMMIT="25499870f84d77173c46e4af3021311decfb840b"
 readonly PORTAL_TREE="2d845d2293603dfd8adce5362c8a9941e6ba78a9"
 readonly PORTAL_REMOTE="https://github.com/input-output-hk/lace-id-portal.git"
 readonly PROJECT="oxid-portal-consumer"
+readonly SMOCKER_IMAGE="ghcr.io/smocker-dev/smocker@sha256:b4106c3aec1d58df09b6b94a89eba801298cbe5303f3c9236d105dbcaaaf4ab2"
 readonly REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly COMPOSE_FILE="$REPOSITORY_ROOT/scripts/portal-consumer-stack.yml"
 readonly OPERATION="${1:-}"
@@ -19,6 +20,7 @@ readonly RECEIPT="$STATE/owner-receipt.json"
 readonly PRIVATE_LOG="$STATE/private.log"
 readonly PREPARED_RECEIPT="$STATE/prepared-receipt.json"
 readonly PREPARE_CHECKPOINT="$STATE/prepare-checkpoint.json"
+readonly PREPARE_LOCK="$STATE/prepare.lock"
 readonly EXTERNAL_PREPARED_RECEIPT="${PORTAL_CONSUMER_PREPARED_RECEIPT:-}"
 readonly TAILNET_MOCK_STATE="${PORTAL_TAILNET_MOCK_STATE_DIR:-}"
 readonly TAILNET_MOCK_TRANSFORM="$REPOSITORY_ROOT/scripts/e2e/tailnet-mock-transform.mjs"
@@ -62,6 +64,14 @@ private_regular_file() {
   local mode
   if mode="$(stat -c '%a' -- "$1" 2>/dev/null)"; then :; else mode="$(stat -f '%Lp' -- "$1")"; fi
   [ "$mode" = 600 ]
+}
+
+prepare_lock_held=0
+release_prepare_lock() {
+  if [ "$prepare_lock_held" -eq 1 ]; then
+    rmdir -- "$PREPARE_LOCK" 2>/dev/null || true
+    prepare_lock_held=0
+  fi
 }
 
 shared_midnight_ready() {
@@ -167,6 +177,7 @@ prepared_receipt_valid() {
       return 1
     fi
   done
+  docker image inspect "$SMOCKER_IMAGE" >/dev/null 2>&1 || return 1
 }
 
 tailnet_mock_state_valid() {
@@ -229,9 +240,16 @@ emit_prepared_status() {
 run_prepare() {
   local checkpoint_candidate started_at host_system attribute key tag prepared_image_id prepared_output
   local phase_started phase_duration cache_hit prepare_duration
+  mkdir "$PREPARE_LOCK" 2>/dev/null || fail preparation-busy
+  prepare_lock_held=1
+  trap 'release_prepare_lock' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   [ "$(count_lines "$(project_ids)")" -eq 0 ] || fail occupied-project
   if prepared_receipt_valid "$PREPARED_RECEIPT" complete; then
     emit_prepared_status
+    release_prepare_lock
+    trap - EXIT INT TERM
     return
   fi
   if [ -e "$PREPARED_RECEIPT" ] || [ -L "$PREPARED_RECEIPT" ]; then
@@ -245,6 +263,7 @@ run_prepare() {
   fi
   : >"$PRIVATE_LOG"
   chmod 600 "$PRIVATE_LOG"
+  docker pull "$SMOCKER_IMAGE" >>"$PRIVATE_LOG" 2>&1 || fail smocker
 
   if [ -e "$PREPARE_CHECKPOINT" ] || [ -L "$PREPARE_CHECKPOINT" ]; then
     prepared_receipt_valid "$PREPARE_CHECKPOINT" partial || fail prepare-checkpoint
@@ -305,6 +324,8 @@ run_prepare() {
   prepared_receipt_valid "$PREPARED_RECEIPT" complete || fail prepared-receipt
   rm -f -- "$PREPARE_CHECKPOINT"
   emit_prepared_status
+  release_prepare_lock
+  trap - EXIT INT TERM
 }
 
 run_prepared_status() {
@@ -319,7 +340,11 @@ run_up() {
   : >"$PRIVATE_LOG"
   chmod 600 "$PRIVATE_LOG"
   local resolver_image did_manager_image issuer_image wallet_seed env_candidate receipt_candidate mock_state
-  docker pull 'ghcr.io/smocker-dev/smocker@sha256:b4106c3aec1d58df09b6b94a89eba801298cbe5303f3c9236d105dbcaaaf4ab2' >>"$PRIVATE_LOG" 2>&1 || fail smocker
+  if [ -n "$EXTERNAL_PREPARED_RECEIPT" ]; then
+    docker image inspect "$SMOCKER_IMAGE" >/dev/null 2>&1 || fail artifacts-not-prepared
+  else
+    docker pull "$SMOCKER_IMAGE" >>"$PRIVATE_LOG" 2>&1 || fail smocker
+  fi
   if [ -n "$EXTERNAL_PREPARED_RECEIPT" ]; then
     [[ "$EXTERNAL_PREPARED_RECEIPT" = /* ]] || fail prepared-receipt
     prepared_receipt_valid "$EXTERNAL_PREPARED_RECEIPT" complete || fail artifacts-not-prepared

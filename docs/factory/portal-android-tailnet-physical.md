@@ -39,9 +39,15 @@ just portal-tailnet-manual-prepare
 ```
 
 Preparation realizes and loads the resolver, DID manager, and issuer images one
-at a time. Each completed image is checkpointed with its immutable image ID,
+at a time and pulls the pinned Smocker support image before the interactive
+window. Each completed Portal image is checkpointed with its immutable image ID,
 Nix output path, cache-hit marker, and elapsed seconds. A retry resumes after
 the last validated checkpoint instead of rebuilding successful phases.
+
+Only one preparation process may own the receipt. `preparation-busy` means an
+existing preparer still owns the lock; wait for it to finish. If start reports
+`artifacts-not-prepared`, rerun `just portal-tailnet-manual-prepare` and then
+`just portal-tailnet-manual-prepared-status` before reconnecting the phone.
 
 With the preparation receipt complete, connect the phone and Tailscale, ensure
 the standalone stack is healthy on 6300, 8088, and 9944, and start one session:

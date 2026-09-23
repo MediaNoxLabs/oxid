@@ -33,6 +33,10 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
   assert.match(lifecycle, /fail artifacts-not-prepared/);
   assert.match(lifecycle, /PORTAL_CONSUMER_PREPARED_RECEIPT="\$prepared_receipt_for_support"/);
   assert.match(consumerLifecycle, /\[\.images\[\]\.durationSeconds\] \| add \/\/ 0/);
+  assert.match(consumerLifecycle, /fail preparation-busy/);
+  assert.match(consumerLifecycle, /docker pull "\$SMOCKER_IMAGE"/);
+  assert.match(consumerLifecycle, /docker image inspect "\$SMOCKER_IMAGE"/);
+  assert.match(lifecycle, /portal_source_valid \|\| fail source-dirty/);
   assert.match(lifecycle, /servicesSeconds/);
   assert.match(lifecycle, /tailnetSeconds/);
   assert.match(lifecycle, /androidSeconds/);
