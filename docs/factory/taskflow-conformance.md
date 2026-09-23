@@ -16,10 +16,11 @@ closure versions and a capability status of `supported`, `unsupported`, or
 ## Current pinned-runtime result
 
 `pi-taskflow@0.2.10` and `taskflow-core@0.2.10` demonstrate bounded progress
-callbacks, timeout classification, immutable independent runs, and changed-argument
-invalidation. Process-tree termination escalation and terminal registry cleanup remain
-**unverified** because their public black-box result has no child-tree or registry
-observation. This is not admission evidence for real long-running factory work.
+callbacks, immutable resume forks, and changed-argument cache invalidation. Distinct
+slow-versus-stalled classification, process-tree termination escalation, and terminal
+registry cleanup remain **unverified** because their public black-box result has no
+idle/stall reason, child-tree receipt, or registry observation. This is not admission
+evidence for real long-running factory work.
 
 ## Smallest upstream-ready delta
 
