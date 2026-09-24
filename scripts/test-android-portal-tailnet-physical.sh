@@ -10,7 +10,7 @@ readonly PORTAL_COMMIT="25499870f84d77173c46e4af3021311decfb840b"
 readonly PORTAL_TREE="2d845d2293603dfd8adce5362c8a9941e6ba78a9"
 readonly REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly OPERATION="${1:-automated}"
-case "$OPERATION" in automated|manual-prepare|manual-prepared-status|manual-start|manual-status|manual-stop|--manual-supervise) ;; *)
+case "$OPERATION" in automated|manual-prepare|manual-prepared-status|manual-start|manual-status|manual-stop) ;; *)
   printf '%s\n' 'android-portal-tailnet: FAIL phase=usage' >&2
   exit 1
   ;;
@@ -174,11 +174,14 @@ manual_consumer_running() {
     "$REPOSITORY_ROOT/scripts/portal-consumer-lifecycle.sh" status >/dev/null 2>&1
 }
 
-manual_status() {
-  for command_name in git jq node ps shasum tailscale; do
-    command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
-  done
-  [ -x "$adb" ] || fail adb
+manual_public_page_ready() {
+  local page_content_type
+  page_content_type="$(curl --noproxy '*' --fail --silent --show-error --max-time 30 \
+    --output /dev/null --write-out '%{content_type}' "$manual_public_origin/issue/index.html")" || return 1
+  [[ "$page_content_type" = text/html* ]]
+}
+
+manual_ready() {
   manual_session_load \
     && manual_page_url_valid \
     && manual_mock_state_valid \
@@ -187,7 +190,15 @@ manual_status() {
     && manual_process_matches "$manual_supervisor_pid" "$manual_supervisor_command_sha" \
     && manual_select_physical_device \
     && manual_consumer_running \
-    || fail manual-not-ready
+    && manual_public_page_ready
+}
+
+manual_status() {
+  for command_name in git jq node ps shasum tailscale; do
+    command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
+  done
+  [ -x "$adb" ] || fail adb
+  manual_ready || fail manual-not-ready
   jq -r '"portal-tailnet-manual: READY services=\(.metrics.servicesSeconds)s tailnet=\(.metrics.tailnetSeconds)s android=\(.metrics.androidSeconds)s total=\(.metrics.readySeconds)s"' "$MANUAL_RECEIPT"
 }
 
@@ -290,15 +301,11 @@ manual_stop() {
 }
 
 manual_supervise() {
-  sleep 1
-  manual_session_load \
-    && manual_page_url_valid \
-    && manual_mock_state_valid \
-    && manual_serve_receipt_valid \
+  manual_ready \
     && [ "$manual_supervisor_pid" = "$$" ] \
     && [ "$(process_command_sha256 "$$")" = "$manual_supervisor_command_sha" ] \
     || return 1
-  trap 'manual_cleanup || exit 1; exit 0' INT TERM
+  trap 'manual_cleanup; result=$?; trap - EXIT INT TERM HUP; exit "$result"' INT TERM HUP
   while :; do
     if [ -e "$MANUAL_STOP_REQUEST" ] || [ -L "$MANUAL_STOP_REQUEST" ]; then
       private_regular_file "$MANUAL_STOP_REQUEST" \
@@ -307,10 +314,21 @@ manual_supervise() {
         || return 1
       return
     fi
-    manual_session_load && manual_page_url_valid && manual_mock_state_valid && manual_serve_receipt_valid || return 1
+    manual_session_load \
+      && manual_page_url_valid \
+      && manual_mock_state_valid \
+      && manual_serve_receipt_valid \
+      || return 1
     if ! manual_process_matches "$manual_support_pid" "$manual_support_command_sha"; then
       manual_cleanup || return 1
       return
+    fi
+    if ! manual_process_matches "$manual_supervisor_pid" "$manual_supervisor_command_sha" \
+      || ! manual_select_physical_device \
+      || ! manual_consumer_running \
+      || ! manual_public_page_ready; then
+      manual_cleanup || return 1
+      return 1
     fi
     sleep 2
   done
@@ -322,7 +340,6 @@ case "$OPERATION" in
   manual-start) manual_prepared_status; manual_start_epoch="$(date +%s)" ;;
   manual-status) manual_status; exit 0 ;;
   manual-stop) manual_stop; exit 0 ;;
-  --manual-supervise) manual_supervise; exit 0 ;;
 esac
 
 control_curl() {
@@ -601,33 +618,30 @@ if [ "$OPERATION" = manual-start ]; then
   active_serve_sha="$(sha256_text "$active_serve")"
   support_command_sha="$(process_command_sha256 "$support_pid")" || fail manual-support-receipt
   ready_seconds="$(( $(date +%s) - manual_start_epoch ))"
+  supervisor_pid="$$"
+  supervisor_command_sha="$(process_command_sha256 "$supervisor_pid")" || fail manual-supervisor-receipt
   jq -cn \
     --arg head "$OXID_HEAD" --arg tree "$(git -C "$REPOSITORY_ROOT" rev-parse 'HEAD^{tree}')" \
     --arg commit "$PORTAL_COMMIT" --arg portal_tree "$PORTAL_TREE" \
     --argjson support_pid "$support_pid" --arg support_sha "$support_command_sha" \
+    --argjson supervisor_pid "$supervisor_pid" --arg supervisor_sha "$supervisor_command_sha" \
     --arg baseline_sha "$baseline_sha" --arg active_sha "$active_serve_sha" \
     --arg mock_receipt_sha "$mock_receipt_sha" \
     --argjson services "$services_seconds" --argjson tailnet "$tailnet_seconds" \
     --argjson android "$android_seconds" --argjson ready "$ready_seconds" \
-    '{schema:"oxid-portal-tailnet-manual-session-v1",oxid:{head:$head,tree:$tree},portal:{commit:$commit,tree:$portal_tree},support:{pid:$support_pid,commandSha256:$support_sha},supervisor:{pid:0,commandSha256:("0" * 64)},serve:{baselineSha256:$baseline_sha,activeSha256:$active_sha},mock:{transformReceiptSha256:$mock_receipt_sha,externalPath:"/kyc/mock-verification",upstreamPath:"/mock-verification"},page:{html:true,mockRoute:true,holderBootstrap:true},metrics:{servicesSeconds:$services,tailnetSeconds:$tailnet,androidSeconds:$android,readySeconds:$ready}}' \
+    '{schema:"oxid-portal-tailnet-manual-session-v1",oxid:{head:$head,tree:$tree},portal:{commit:$commit,tree:$portal_tree},support:{pid:$support_pid,commandSha256:$support_sha},supervisor:{pid:$supervisor_pid,commandSha256:$supervisor_sha},serve:{baselineSha256:$baseline_sha,activeSha256:$active_sha},mock:{transformReceiptSha256:$mock_receipt_sha,externalPath:"/kyc/mock-verification",upstreamPath:"/mock-verification"},page:{html:true,mockRoute:true,holderBootstrap:true},metrics:{servicesSeconds:$services,tailnetSeconds:$tailnet,androidSeconds:$android,readySeconds:$ready}}' \
     >"$MANUAL_RECEIPT"
   chmod 600 "$MANUAL_RECEIPT"
-  nohup bash "$REPOSITORY_ROOT/scripts/test-android-portal-tailnet-physical.sh" --manual-supervise \
-    </dev/null >>"$PRIVATE_LOG" 2>&1 &
-  supervisor_pid=$!
-  supervisor_command_sha="$(process_command_sha256 "$supervisor_pid")" || fail manual-supervisor-receipt
-  receipt_candidate="$(mktemp "$STATE/.manual-receipt.XXXXXX")" || fail manual-receipt
-  jq --argjson supervisor_pid "$supervisor_pid" --arg supervisor_sha "$supervisor_command_sha" \
-    '.supervisor = {pid:$supervisor_pid,commandSha256:$supervisor_sha}' \
-    "$MANUAL_RECEIPT" >"$receipt_candidate"
-  chmod 600 "$receipt_candidate"
-  mv "$receipt_candidate" "$MANUAL_RECEIPT"
   exec 8>&-
   rm -f -- "$CAPABILITY_FIFO" "$ready" "$manifest_path"
+  manual_ready || fail manual-not-ready
+  sleep 2
+  manual_ready || fail manual-readiness-unstable
   open "$public_page_url" >>"$PRIVATE_LOG" 2>&1 || fail browser
-  trap - EXIT
   printf 'portal-tailnet-manual: READY url=%s services=%ss tailnet=%ss android=%ss total=%ss\n' \
     "$public_page_url" "$services_seconds" "$tailnet_seconds" "$android_seconds" "$ready_seconds"
+  manual_supervise || fail manual-supervisor
+  trap - EXIT INT TERM
   exit 0
 fi
 

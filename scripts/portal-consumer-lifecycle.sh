@@ -17,6 +17,7 @@ readonly SOURCE="${PORTAL_INTEGRATION_CHECKOUT:-}"
 readonly STATE="${OXID_PORTAL_CONSUMER_STATE_DIR:-}"
 readonly ENV_FILE="$STATE/runtime.env"
 readonly RECEIPT="$STATE/owner-receipt.json"
+readonly STARTING_RECEIPT="$STATE/starting-receipt.json"
 readonly PRIVATE_LOG="$STATE/private.log"
 readonly PREPARED_RECEIPT="$STATE/prepared-receipt.json"
 readonly PREPARE_CHECKPOINT="$STATE/prepare-checkpoint.json"
@@ -109,6 +110,20 @@ receipt_valid() {
       and .containerIds == $ids
       and (.images | keys | sort == ["didManager","issuer","resolver"])' \
     "$RECEIPT" >/dev/null
+}
+
+starting_receipt_valid() {
+  private_regular_file "$STARTING_RECEIPT" || return 1
+  jq -e \
+    --arg commit "$PORTAL_COMMIT" \
+    --arg tree "$PORTAL_TREE" \
+    --arg compose "$(shasum -a 256 "$COMPOSE_FILE" | awk '{print $1}')" '
+      .schema == "oxid-portal-consumer-starting-v1"
+      and .source == {commit:$commit,tree:$tree}
+      and .composeSha256 == $compose
+      and .project == "oxid-portal-consumer"
+      and (.startedAtEpoch | type == "number" and . >= 0)
+    ' "$STARTING_RECEIPT" >/dev/null
 }
 
 image_tag_for() {
@@ -348,6 +363,7 @@ run_prepared_status() {
 run_up() {
   [ "$(count_lines "$(project_ids)")" -eq 0 ] || fail occupied-project
   [ ! -e "$RECEIPT" ] && [ ! -L "$RECEIPT" ] || fail stale-receipt
+  [ ! -e "$STARTING_RECEIPT" ] && [ ! -L "$STARTING_RECEIPT" ] || fail stale-starting-receipt
   shared_midnight_ready || fail shared-midnight
   : >"$PRIVATE_LOG"
   chmod 600 "$PRIVATE_LOG"
@@ -391,11 +407,28 @@ run_up() {
   } >"$env_candidate"
   chmod 600 "$env_candidate"
   mv "$env_candidate" "$ENV_FILE"
+  receipt_candidate="$(mktemp "$STATE/.starting-receipt.XXXXXX")"
+  jq -cn \
+    --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" \
+    --arg compose "$(shasum -a 256 "$COMPOSE_FILE" | awk '{print $1}')" \
+    --argjson started "$(date +%s)" \
+    '{schema:"oxid-portal-consumer-starting-v1",source:{commit:$commit,tree:$tree},composeSha256:$compose,project:"oxid-portal-consumer",startedAtEpoch:$started}' \
+    >"$receipt_candidate"
+  chmod 600 "$receipt_candidate"
+  mv "$receipt_candidate" "$STARTING_RECEIPT"
+  starting_receipt_valid || fail starting-receipt
+  up_cleanup_running=0
   cleanup_failed_up() {
+    if [ "$up_cleanup_running" -eq 1 ]; then return; fi
+    up_cleanup_running=1
+    starting_receipt_valid || return 1
     compose down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 || true
-    rm -f -- "$ENV_FILE" "$RECEIPT" "$PRIVATE_LOG"
+    [ -z "$(project_ids)" ] || return 1
+    rm -f -- "$ENV_FILE" "$RECEIPT" "$STARTING_RECEIPT" "$PRIVATE_LOG"
   }
-  trap cleanup_failed_up ERR INT TERM
+  trap cleanup_failed_up ERR
+  trap 'cleanup_failed_up; exit 130' INT
+  trap 'cleanup_failed_up; exit 143' TERM
   compose up -d --wait --wait-timeout 600 >>"$PRIVATE_LOG" 2>&1
   curl --fail --silent --show-error --max-time 30 -H 'Content-Type: application/x-yaml' \
     --data-binary "@$mock_state" 'http://127.0.0.1:8081/mocks?reset=true' \
@@ -417,6 +450,7 @@ run_up() {
     >"$receipt_candidate"
   chmod 600 "$receipt_candidate"
   mv "$receipt_candidate" "$RECEIPT"
+  rm -f -- "$STARTING_RECEIPT"
   trap - ERR INT TERM
   emit_status running
 }
@@ -426,6 +460,7 @@ run_status() {
   ids="$(project_ids)"; running="$(running_ids)"
   if [ -z "$ids" ]; then
     [ ! -e "$RECEIPT" ] && [ ! -L "$RECEIPT" ] || fail stale-receipt
+    [ ! -e "$STARTING_RECEIPT" ] && [ ! -L "$STARTING_RECEIPT" ] || fail interrupted-startup
     emit_status stopped
     return
   fi
@@ -439,15 +474,18 @@ run_down() {
   ids="$(project_ids)"
   if [ -z "$ids" ]; then
     [ ! -e "$RECEIPT" ] && [ ! -L "$RECEIPT" ] || fail stale-receipt
-    rm -f -- "$ENV_FILE" "$PRIVATE_LOG"
+    if [ -e "$STARTING_RECEIPT" ] || [ -L "$STARTING_RECEIPT" ]; then
+      starting_receipt_valid || fail ownership
+    fi
+    rm -f -- "$ENV_FILE" "$STARTING_RECEIPT" "$PRIVATE_LOG"
     emit_status stopped
     return
   fi
-  receipt_valid || fail ownership
+  receipt_valid || starting_receipt_valid || fail ownership
   [ -f "$ENV_FILE" ] && [ ! -L "$ENV_FILE" ] || fail private-state
   compose down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 || fail cleanup
   [ -z "$(project_ids)" ] || fail cleanup-incomplete
-  rm -f -- "$ENV_FILE" "$RECEIPT" "$PRIVATE_LOG"
+  rm -f -- "$ENV_FILE" "$RECEIPT" "$STARTING_RECEIPT" "$PRIVATE_LOG"
   emit_status stopped
 }
 

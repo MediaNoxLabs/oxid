@@ -16,11 +16,12 @@ closure versions and a capability status of `supported`, `unsupported`, or
 ## Current pinned-runtime result
 
 `pi-taskflow@0.2.10` and `taskflow-core@0.2.10` demonstrate bounded progress
-callbacks for short phases, immutable resume forks, and changed-argument cache invalidation. Distinct
-slow-versus-stalled classification, process-tree termination escalation, and terminal
-registry cleanup remain **unverified** because their public black-box result has no
-idle/stall reason, child-tree receipt, or registry observation. This is not admission
-evidence for real long-running factory work.
+callbacks for short phases, immutable resume forks, changed-argument cache
+invalidation, and process-group cleanup after a timed-out script. The cleanup probe
+records the spawned group leader and one descendant, then verifies that both are gone
+when the executor returns. Distinct slow-versus-stalled classification remains
+**unverified** because script phases expose a wall timeout but no separate idle/stall
+reason. This is not admission evidence for real long-running factory work.
 
 The explicit long-process mode also separates two facts which must not be conflated:
 the core executor can keep a directly constructed script phase alive beyond five
@@ -31,13 +32,12 @@ phase progress. The report records the maximum gap between genuine Taskflow call
 
 ## Smallest upstream-ready delta
 
-Taskflow needs a public, deterministic lifecycle receipt for script phases. The receipt
-should expose the spawned process-group identity, TERM request timestamp, KILL escalation
-timestamp/result, and terminal reap/registry-removal result without exposing command
-secrets. A configurable script timeout above 300,000 ms must be accepted only when a
-flow explicitly opts in, while preserving the existing default cap. With that public
-receipt, this probe can classify cancellation escalation and terminal cleanup as
-supported or unsupported rather than unverified; no Oxid scheduler is required.
+Taskflow still needs a public, deterministic lifecycle receipt for script phases. The
+black-box probe proves the terminal effect, but a receipt should expose the spawned
+process-group identity, TERM request timestamp, KILL escalation timestamp/result, and
+terminal registry-removal result without exposing command secrets. A configurable
+script timeout above 300,000 ms must be accepted only when a flow explicitly opts in,
+while preserving the existing default cap. No Oxid scheduler is required.
 
 The on-demand real-duration acceptance command, intentionally excluded from fast CI,
 is:

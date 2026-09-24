@@ -57,7 +57,9 @@ just portal-tailnet-manual-prepared-status
 
 For an owner-requested browser-and-phone QR demonstration only (never evidence),
 use `just portal-tailnet-manual-start`; it opens and deliberately prints the one
-public page URL. `just portal-tailnet-manual-status` is payload-free, and
+public page URL only after a stable readiness interval, then remains the
+foreground owner. Keep that terminal open. From another terminal,
+`just portal-tailnet-manual-status` is payload-free, and
 `just portal-tailnet-manual-stop` receipt-validates cleanup and restores the
 prior Serve baseline. Stop before any retry: every manual start is a fresh
 one-shot session and a consumed QR is never reused.

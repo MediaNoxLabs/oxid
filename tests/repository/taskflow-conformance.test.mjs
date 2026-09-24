@@ -19,13 +19,14 @@ test("synthetic Taskflow conformance matrix is pinned, fast, and headless", () =
   assert.deepEqual(report.matrix.map(({ property, status }) => [property, status]), [
     ["bounded-progress-visibility", "supported"],
     ["slow-versus-stalled-classification", "unverified"],
-    ["process-tree-cancellation-escalation", "unverified"],
-    ["terminal-cleanup", "unverified"],
+    ["process-tree-cancellation-escalation", "supported"],
+    ["terminal-cleanup", "supported"],
     ["immutable-resume", "supported"],
     ["changed-input-invalidation", "supported"],
   ]);
   assert.match(report.matrix.find(({ property }) => property === "immutable-resume").evidence, /parentUnchanged=true/u);
   assert.match(report.matrix.find(({ property }) => property === "changed-input-invalidation").evidence, /changedExecuted=1; changedReused=0; repeatedReused=1/u);
+  assert.match(report.matrix.find(({ property }) => property === "process-tree-cancellation-escalation").evidence, /descendantsReaped=true/u);
 });
 
 test("long-process mode labels supervisor heartbeats without claiming five-minute admission", () => {

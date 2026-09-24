@@ -73,7 +73,6 @@ the standalone stack is healthy on 6300, 8088, and 9944, and start one session:
 
 ```bash
 just portal-tailnet-manual-start
-just portal-tailnet-manual-status
 ```
 
 Start fails before changing Tailnet or phone state if the prepared source,
@@ -83,7 +82,14 @@ contract, then exposes its KYC page under the receipt-owned same-origin HTTPS
 `/kyc` mount. It opens the Portal page in the Mac browser and prints the one
 permitted public page URL plus service, Tailnet, Android, and total readiness
 timings; status intentionally reveals no payload. This owner demo remains
-non-evidence.
+non-evidence. Start is the foreground owner and deliberately remains running;
+do not close that terminal. It reports `READY` only after two independent
+receipt, process, Docker, device, Serve, and public-page checks. Run status or
+stop from another terminal:
+
+```bash
+just portal-tailnet-manual-status
+```
 
 On the phone, explicitly prepare the holder before accepting an offer:
 
@@ -117,6 +123,9 @@ Stop validates the session/process/Serve receipts, removes only owned Portal
 runtime state, and restores the exact prior Serve baseline. It retains prepared
 artifacts so the next start avoids a build-from-scratch. If a receipt is
 ambiguous, it fails closed for owner review rather than deleting shared state.
+An interrupted Portal Compose startup leaves a private provisional ownership
+receipt, so the exact project can be recovered with the same stop/cleanup path
+instead of becoming an unowned partial stack.
 
 ## Safety, evidence, and cleanup
 
