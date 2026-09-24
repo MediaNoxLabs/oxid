@@ -138,6 +138,10 @@ portal-tailnet-manual-prepare:
 portal-tailnet-manual-prepared-status:
     ./scripts/test-android-portal-tailnet-physical.sh manual-prepared-status
 
+# Check every interactive demo prerequisite without building, installing, routing, or clearing app data.
+portal-tailnet-manual-doctor:
+    ./scripts/test-android-portal-tailnet-physical.sh manual-doctor
+
 # Start a state-preserving demo from a completed preparation receipt; it is not E2E evidence.
 portal-tailnet-manual-start:
     ./scripts/test-android-portal-tailnet-physical.sh manual-start
