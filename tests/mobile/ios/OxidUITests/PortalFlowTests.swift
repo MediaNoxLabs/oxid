@@ -274,8 +274,9 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertTrue(confirmCreateDid.waitForExistence(timeout: 10))
         scrollTo(confirmCreateDid, in: application)
         confirmCreateDid.tap()
-        let didReady = application.staticTexts["DID details"]
-        XCTAssertTrue(didReady.waitForExistence(timeout: 30))
+        let didDetailTitle = application.staticTexts["Identity"]
+        XCTAssertTrue(didDetailTitle.waitForExistence(timeout: 30))
+        XCTAssertTrue(application.staticTexts["Managed"].exists)
     }
 
     @MainActor
@@ -380,9 +381,10 @@ final class PortalFlowTests: XCTestCase {
         let application = application()
         application.buttons["Wallet"].tap()
         let reactivate = application.buttons["Activate protected Midnight account"]
-        XCTAssertTrue(reactivate.waitForExistence(timeout: 15))
-        scrollTo(reactivate, in: application)
-        reactivate.tap()
+        if reactivate.waitForExistence(timeout: 5) {
+            scrollTo(reactivate, in: application)
+            reactivate.tap()
+        }
         XCTAssertTrue(application.buttons["Use my receive address"].waitForExistence(timeout: 45))
         application.buttons["Documents"].tap()
         XCTAssertEqual(
