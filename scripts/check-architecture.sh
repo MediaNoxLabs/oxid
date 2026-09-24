@@ -129,7 +129,7 @@ check_workspace_dependencies oxid-adapter-storage-memory \
 check_workspace_dependencies oxid-adapter-diagnostics-memory \
   oxid-diagnostics-application
 check_workspace_dependencies oxid-adapter-deployment-profile \
-  oxid-capabilities-application
+  oxid-adapter-platform-system oxid-capabilities-application
 check_workspace_dependencies oxid-adapter-storage-dev \
   oxid-adapter-backup-portable oxid-adapter-store-atomic oxid-foundation oxid-platform-ports \
   oxid-wallet-application oxid-wallet-domain
@@ -155,12 +155,12 @@ check_workspace_dependencies oxid-adapter-mobile-native
 check_workspace_dependencies oxid-adapter-platform-system \
   oxid-adapter-mobile-native oxid-foundation oxid-platform-ports
 check_workspace_dependencies oxid-adapter-midnight \
-  oxid-adapter-store-atomic oxid-diagnostics-application oxid-foundation oxid-platform-ports \
+  oxid-adapter-platform-system oxid-adapter-store-atomic oxid-diagnostics-application oxid-foundation oxid-platform-ports \
   oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-did-midnight \
-  oxid-identity-application oxid-identity-domain oxid-wallet-application oxid-wallet-domain
+  oxid-adapter-platform-system oxid-identity-application oxid-identity-domain oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-identity-ingress \
-  oxid-adapter-mobile-native oxid-platform-ports oxid-protocol-application
+  oxid-adapter-mobile-native oxid-adapter-platform-system oxid-platform-ports oxid-protocol-application
 check_workspace_dependencies oxid-adapter-storage-identity-json \
   oxid-adapter-store-atomic oxid-identity-application oxid-identity-domain
 check_workspace_dependencies oxid-adapter-store-atomic
@@ -171,7 +171,7 @@ check_workspace_dependencies oxid-adapter-vc-midnight \
   oxid-identity-application oxid-identity-domain oxid-platform-ports \
   oxid-presentation-application oxid-presentation-domain
 check_workspace_dependencies oxid-adapter-openid4vci \
-  oxid-credential-application oxid-identity-application oxid-platform-ports \
+  oxid-adapter-platform-system oxid-credential-application oxid-identity-application oxid-platform-ports \
   oxid-protocol-application oxid-protocol-domain
 check_workspace_dependencies oxid-adapter-openid4vp \
   oxid-credential-application oxid-platform-ports \
@@ -180,7 +180,7 @@ check_workspace_dependencies oxid-adapter-siopv2 \
   oxid-identity-application oxid-platform-ports \
   oxid-protocol-application oxid-protocol-domain
 check_workspace_dependencies oxid-adapter-passport-vault \
-  oxid-adapter-vc-midnight oxid-credential-application oxid-credential-domain \
+  oxid-adapter-platform-system oxid-adapter-vc-midnight oxid-credential-application oxid-credential-domain \
   oxid-foundation oxid-passport-vault-application oxid-passport-vault-domain \
   oxid-platform-ports
 check_workspace_dependencies oxid-ui-dioxus \

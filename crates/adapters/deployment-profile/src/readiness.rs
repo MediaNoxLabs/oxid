@@ -5,6 +5,7 @@
 use std::{fmt, time::Duration};
 
 use futures::future::{join, join4};
+use oxid_adapter_platform_system::{http_client_builder_for, websocket_connector_for};
 use oxid_capabilities_application::{
     DeploymentReadinessPort, DeploymentServiceReadiness, DeploymentServiceSnapshot,
     StandaloneDeploymentProfile,
@@ -101,14 +102,18 @@ impl StandaloneDeploymentReadiness {
     }
 
     async fn inspect_on_runtime(&self) -> DeploymentServiceSnapshot {
-        let client = match Client::builder()
-            .no_proxy()
-            .redirect(Policy::none())
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
-            .user_agent("oxid-identity-wallet/0.1")
-            .build()
-        {
+        let client = match http_client_builder_for(&self.indexer_http)
+            .map_err(|_| ())
+            .and_then(|builder| {
+                builder
+                    .no_proxy()
+                    .redirect(Policy::none())
+                    .connect_timeout(CONNECT_TIMEOUT)
+                    .timeout(REQUEST_TIMEOUT)
+                    .user_agent("oxid-identity-wallet/0.1")
+                    .build()
+                    .map_err(|_| ())
+            }) {
             Ok(client) => client,
             Err(_) => return DeploymentServiceSnapshot::unavailable(self.ssi.is_some()),
         };
@@ -179,7 +184,16 @@ async fn probe_indexer_websocket(endpoint: Url) -> DeploymentServiceReadiness {
     request
         .headers_mut()
         .insert("Sec-WebSocket-Protocol", protocol);
-    match timeout(REQUEST_TIMEOUT, tokio_tungstenite::connect_async(request)).await {
+    let connector = match websocket_connector_for(&endpoint) {
+        Ok(connector) => connector,
+        Err(_) => return DeploymentServiceReadiness::Unavailable,
+    };
+    match timeout(
+        REQUEST_TIMEOUT,
+        tokio_tungstenite::connect_async_tls_with_config(request, None, false, connector),
+    )
+    .await
+    {
         Ok(Ok((_, response)))
             if response
                 .headers()
@@ -194,9 +208,13 @@ async fn probe_indexer_websocket(endpoint: Url) -> DeploymentServiceReadiness {
 }
 
 async fn probe_websocket(endpoint: Url) -> DeploymentServiceReadiness {
+    let connector = match websocket_connector_for(&endpoint) {
+        Ok(connector) => connector,
+        Err(_) => return DeploymentServiceReadiness::Unavailable,
+    };
     match timeout(
         REQUEST_TIMEOUT,
-        tokio_tungstenite::connect_async(endpoint.as_str()),
+        tokio_tungstenite::connect_async_tls_with_config(endpoint.as_str(), None, false, connector),
     )
     .await
     {

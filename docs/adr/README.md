@@ -141,6 +141,7 @@ ADR status and delivery state answer different questions:
 | [0115](0115-keep-testkit-in-tree-and-out-of-product-closures.md) Keep testkit in-tree and out of product closures | Proposed | ADR-0003–0005/0020/0096; issue #518 | Reserves a non-published in-tree `oxid-testkit`, keeps small synthetic fixtures in Oxid, forbids production dependencies and chain-state distribution, and leaves reusable DUST synchronization optimization to the Midnight Rust stack |
 | [0116](0116-define-suspension-and-process-death-recovery-contract.md) Define suspension and process-death recovery contract | Accepted | ADR-0114; issues #558/#644–#646 | Defines disposable process/transport truth, atomic selected-realm recovery, generation fencing, `outcome_unknown` reconciliation, authorization expiry, and optional platform background opportunities |
 | [0117](0117-compose-factory-flows-with-pi-taskflow.md) Compose Factory flows with pi-taskflow | Accepted | Issue #689; ADR-0094 | Selects Taskflow as the reusable DAG/compiler/runtime, retains Nix and repository scripts as deterministic execution boundaries, and admits only static planning plus one supervised Tailnet preparation canary before mutating automation |
+| [0118](0118-centralize-native-transport-trust.md) Centralize native transport trust | Accepted | ADR-0097/0098/0103/0116; issue #699 | One closed native policy now constructs HTTP and WebSocket trust for platform-public, Tailnet-public, and loopback routes; the repository gate rejects ad-hoc or unsafe clients |
 
 ## Current boundaries
 
