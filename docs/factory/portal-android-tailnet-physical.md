@@ -127,6 +127,21 @@ An interrupted Portal Compose startup leaves a private provisional ownership
 receipt, so the exact project can be recovered with the same stop/cleanup path
 instead of becoming an unowned partial stack.
 
+Manual start installs a compatible APK with Android's data-preserving upgrade
+path and does **not** clear profiles, custody associations, credentials,
+preferences, or diagnostics. If the owner explicitly needs an empty Oxid data
+container, stop the session first and invoke the destructive operation by name:
+
+```bash
+just portal-tailnet-manual-reset
+```
+
+Reset prints the exact package and `application-data` scope before mutation,
+refuses to run while a manual session is active, preserves the installed APK,
+and verifies that the package still exists. The automated physical conformance
+lane remains clean-room evidence and therefore selects app-data reset explicitly
+inside its owned disposable run.
+
 ## Safety, evidence, and cleanup
 
 Every retry uses a fresh offer, capability, app state, and runtime. The holder

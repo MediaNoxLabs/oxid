@@ -63,6 +63,9 @@ foreground owner. Keep that terminal open. From another terminal,
 `just portal-tailnet-manual-stop` receipt-validates cleanup and restores the
 prior Serve baseline. Stop before any retry: every manual start is a fresh
 one-shot session and a consumed QR is never reused.
+Manual start preserves Oxid application data. Only an explicit
+`just portal-tailnet-manual-reset`, after stop, may clear the package's
+application data; never substitute reset for service recovery.
 
 For every retry create a completely fresh offer, capability, app state, and
 runtime; never reuse a consumed offer. Preserve explicit consent, zero secret
@@ -91,8 +94,10 @@ live-KYC claim.
       "preparedStatus": "just portal-tailnet-manual-prepared-status",
       "start": "just portal-tailnet-manual-start",
       "statusCommand": "just portal-tailnet-manual-status",
+      "reset": "just portal-tailnet-manual-reset",
       "stop": "just portal-tailnet-manual-stop",
       "evidence": false,
+      "deviceDataMode": "preserved",
       "statusOutput": "payload-free"
     }
   },

@@ -32,10 +32,11 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
     "portal-tailnet-manual-prepared-status:",
     "portal-tailnet-manual-start:",
     "portal-tailnet-manual-status:",
+    "portal-tailnet-manual-reset:",
     "portal-tailnet-manual-stop:",
   ]) assert.match(justfile, new RegExp(`^${recipe}`, "m"));
 
-  for (const operation of ["manual-prepare", "manual-prepared-status", "manual-start", "manual-status", "manual-stop"]) {
+  for (const operation of ["manual-prepare", "manual-prepared-status", "manual-start", "manual-status", "manual-reset", "manual-stop"]) {
     assert.match(lifecycle, new RegExp(operation));
   }
   assert.doesNotMatch(lifecycle, /--manual-supervise/);
@@ -44,6 +45,12 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
   assert.match(lifecycle, /manual_ready \|\| fail manual-not-ready/);
   assert.match(lifecycle, /sleep 2\n  manual_ready \|\| fail manual-readiness-unstable/);
   assert.match(lifecycle, /manual_public_page_ready/);
+  assert.match(lifecycle, /deviceDataMode == "preserved"/);
+  assert.match(lifecycle, /deviceDataMode:"preserved"/);
+  assert.match(lifecycle, /if \[ "\$OPERATION" = automated \]; then\n  adb_device shell pm clear io\.medianox\.oxid/);
+  assert.doesNotMatch(lifecycle, /adb_reverse_before=.*\nadb_device shell pm clear io\.medianox\.oxid/);
+  assert.match(lifecycle, /manual-session-active/);
+  assert.match(lifecycle, /RESET package=io\.medianox\.oxid scope=application-data/);
   assert.match(lifecycle, /target\/portal-tailnet-manual\/runtime/);
   assert.match(lifecycle, /target\/portal-tailnet-manual\/prepared/);
   assert.match(lifecycle, /prepared-receipt\.json/);
