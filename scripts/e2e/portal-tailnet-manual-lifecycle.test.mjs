@@ -35,9 +35,15 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
     "portal-tailnet-manual-stop:",
   ]) assert.match(justfile, new RegExp(`^${recipe}`, "m"));
 
-  for (const operation of ["manual-prepare", "manual-prepared-status", "manual-start", "manual-status", "manual-stop", "--manual-supervise"]) {
+  for (const operation of ["manual-prepare", "manual-prepared-status", "manual-start", "manual-status", "manual-stop"]) {
     assert.match(lifecycle, new RegExp(operation));
   }
+  assert.doesNotMatch(lifecycle, /--manual-supervise/);
+  assert.doesNotMatch(lifecycle, /nohup bash .*manual-supervise/);
+  assert.match(lifecycle, /supervisor_pid="\$\$"/);
+  assert.match(lifecycle, /manual_ready \|\| fail manual-not-ready/);
+  assert.match(lifecycle, /sleep 2\n  manual_ready \|\| fail manual-readiness-unstable/);
+  assert.match(lifecycle, /manual_public_page_ready/);
   assert.match(lifecycle, /target\/portal-tailnet-manual\/runtime/);
   assert.match(lifecycle, /target\/portal-tailnet-manual\/prepared/);
   assert.match(lifecycle, /prepared-receipt\.json/);
@@ -46,6 +52,10 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
   assert.match(lifecycle, /PORTAL_CONSUMER_PREPARED_RECEIPT="\$prepared_receipt_for_support"/);
   assert.match(consumerLifecycle, /\[\.images\[\]\.durationSeconds\] \| add \/\/ 0/);
   assert.match(consumerLifecycle, /fail preparation-busy/);
+  assert.match(consumerLifecycle, /oxid-portal-consumer-starting-v1/);
+  assert.match(consumerLifecycle, /starting_receipt_valid/);
+  assert.match(consumerLifecycle, /stale-starting-receipt/);
+  assert.match(consumerLifecycle, /receipt_valid \|\| starting_receipt_valid \|\| fail ownership/);
   assert.match(consumerLifecycle, /docker pull "\$SMOCKER_IMAGE"/);
   assert.match(consumerLifecycle, /docker image inspect "\$SMOCKER_IMAGE"/);
   assert.match(consumerLifecycle, /--out-link "\$gc_root"/);

@@ -62,6 +62,25 @@ function script(id, run, timeout, extra = {}) {
   return { id, type: "script", run, timeout, idempotent: true, cache: { scope: "off" }, ...extra };
 }
 
+function processExists(pid) {
+  if (!Number.isInteger(pid) || pid < 2) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+async function waitForProcessExit(pids, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (pids.every((pid) => !processExists(pid))) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return pids.every((pid) => !processExists(pid));
+}
+
 async function executeProbe(core, state, events, dependencies = {}) {
   const { onObservedProgress, ...runtimeDependencies } = dependencies;
   return core.executeTaskflow(state, {
@@ -124,6 +143,17 @@ async function main() {
       phases: [script("slow", [process.execPath, "-e", `setTimeout(() => process.stdout.write('late'), ${controlStepMs * 8})`], controlStepMs, { final: true })],
     };
     const timedOut = await runProbe(core, cwd, timeoutFlow, {}, []);
+    const processReceipt = path.join(cwd, "process-tree.txt");
+    const processTreeFlow = {
+      name: "synthetic-process-tree-timeout", version: 1, scriptCwd: "invocation", incremental: false, concurrency: 1,
+      phases: [script("tree", ["/bin/sh", "-c", `sleep 60 & child=$!; printf '%s\\n%s\\n' $$ $child > '${processReceipt}'; wait`], 100, { final: true })],
+    };
+    const processTreeResult = await runProbe(core, cwd, processTreeFlow, {}, []);
+    const processPids = (await readFile(processReceipt, "utf8"))
+      .trim()
+      .split("\n")
+      .map(Number);
+    const processTreeReaped = await waitForProcessExit(processPids);
     const parentSnapshot = JSON.stringify(timedOut.state);
     const resumeState = core.forkRunForResume(timedOut.state, {
       cwd,
@@ -157,8 +187,8 @@ async function main() {
     const matrix = [
       { property: "bounded-progress-visibility", status: boundedProgress ? "supported" : "unverified", evidence: `progress callbacks=${events.length}; maxCallbackGapMs=${maxCallbackGapMs}; terminal=${progress.state.status}` },
       { property: "slow-versus-stalled-classification", status: "unverified", evidence: timedOut.state.phases.slow?.timedOut ? "wall timeout is observable, but no distinct idle/stalled reason is exposed for script phases" : "no timeout classification" },
-      { property: "process-tree-cancellation-escalation", status: "unverified", evidence: "public runtime result exposes timeout, but does not expose child-tree reap or SIGKILL escalation evidence" },
-      { property: "terminal-cleanup", status: "unverified", evidence: "public runtime result has no process-registry cleanup observation" },
+      { property: "process-tree-cancellation-escalation", status: processTreeResult.state.phases.tree?.timedOut && processTreeReaped ? "supported" : "unsupported", evidence: `timedOut=${Boolean(processTreeResult.state.phases.tree?.timedOut)}; descendantsReaped=${processTreeReaped}; observedPids=${processPids.length}` },
+      { property: "terminal-cleanup", status: processTreeReaped ? "supported" : "unsupported", evidence: `processGroupLeaderAndChildAbsent=${processTreeReaped}` },
       { property: "immutable-resume", status: immutableResume ? "supported" : "unsupported", evidence: `parent=${timedOut.state.status}; child=${resumed.state.status}; parentUnchanged=${JSON.stringify(timedOut.state) === parentSnapshot}` },
       { property: "changed-input-invalidation", status: changedInputInvalidation ? "supported" : "unsupported", evidence: `changedExecuted=${changed.reuse?.executed ?? 0}; changedReused=${changed.reuse?.reusedCrossRun ?? 0}; repeatedReused=${repeated.reuse?.reusedCrossRun ?? 0}` },
     ];
