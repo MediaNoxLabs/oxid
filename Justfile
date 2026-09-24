@@ -138,13 +138,17 @@ portal-tailnet-manual-prepare:
 portal-tailnet-manual-prepared-status:
     ./scripts/test-android-portal-tailnet-physical.sh manual-prepared-status
 
-# Start a fresh demo from a completed preparation receipt; it is not E2E evidence.
+# Start a state-preserving demo from a completed preparation receipt; it is not E2E evidence.
 portal-tailnet-manual-start:
     ./scripts/test-android-portal-tailnet-physical.sh manual-start
 
 # Report only receipt-supervised manual-demo readiness; this never reveals payloads.
 portal-tailnet-manual-status:
     ./scripts/test-android-portal-tailnet-physical.sh manual-status
+
+# Explicitly clear only Oxid application data on one authorized physical device.
+portal-tailnet-manual-reset:
+    ./scripts/test-android-portal-tailnet-physical.sh manual-reset
 
 # Stop one receipt-supervised manual demo and restore its exact prior Serve baseline.
 portal-tailnet-manual-stop:
