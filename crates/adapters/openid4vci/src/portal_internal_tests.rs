@@ -649,7 +649,7 @@ fn native_transport_source_disables_ambient_routing_and_automatic_replay() {
         ".no_proxy()",
         ".redirect(Policy::none())",
         ".retry(reqwest::retry::never())",
-        ".tls_certs_only(roots)",
+        "http_client_builder_for(&endpoint)",
     ] {
         assert!(
             source.contains(required),

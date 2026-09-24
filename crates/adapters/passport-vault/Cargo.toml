@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 oxid-adapter-vc-midnight.workspace = true
+oxid-adapter-platform-system.workspace = true
 oxid-credential-application.workspace = true
 oxid-credential-domain.workspace = true
 oxid-foundation.workspace = true
@@ -36,7 +37,6 @@ serde_json.workspace = true
 sha2.workspace = true
 subxt.workspace = true
 tokio.workspace = true
-webpki-root-certs.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]

@@ -16,11 +16,10 @@ portal-http-mobile = [
   "dep:bytes",
   "dep:futures",
   "dep:hex",
+  "dep:oxid-adapter-platform-system",
   "dep:reqwest",
-  "dep:rustls",
   "dep:sha2",
   "dep:tokio",
-  "dep:webpki-root-certs",
 ]
 
 [dependencies]
@@ -42,25 +41,22 @@ bytes.workspace = true
 futures.workspace = true
 hex.workspace = true
 reqwest = { workspace = true, features = ["form", "stream"] }
-rustls.workspace = true
 sha2.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
-webpki-root-certs.workspace = true
+oxid-adapter-platform-system.workspace = true
 
 [target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
 bytes = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 reqwest = { workspace = true, features = ["form", "stream"], optional = true }
-rustls = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt-multi-thread"], optional = true }
-webpki-root-certs = { workspace = true, optional = true }
+oxid-adapter-platform-system = { workspace = true, optional = true }
 
 [dev-dependencies]
 hex.workspace = true
 oxid-adapter-did-midnight.workspace = true
-oxid-adapter-platform-system.workspace = true
 oxid-adapter-storage-dev.workspace = true
 oxid-adapter-storage-memory.workspace = true
 oxid-credential-domain.workspace = true

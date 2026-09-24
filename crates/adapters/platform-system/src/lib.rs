@@ -2,6 +2,14 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(not(target_arch = "wasm32"))]
+mod transport;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use transport::{
+    TransportTrustError, TransportTrustPolicy, http_client_builder_for, websocket_connector_for,
+};
+
 use std::{
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},

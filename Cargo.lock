@@ -5586,6 +5586,7 @@ dependencies = [
  "ed25519-dalek",
  "futures",
  "hex",
+ "oxid-adapter-platform-system",
  "oxid-capabilities-application",
  "reqwest 0.13.4",
  "rustls",
@@ -5618,12 +5619,10 @@ dependencies = [
  "oxid-wallet-domain",
  "p256",
  "reqwest 0.13.4",
- "rustls",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tokio",
- "webpki-root-certs 1.0.9",
  "zeroize",
 ]
 
@@ -5632,15 +5631,14 @@ name = "oxid-adapter-identity-ingress"
 version = "0.1.0"
 dependencies = [
  "oxid-adapter-mobile-native",
+ "oxid-adapter-platform-system",
  "oxid-platform-ports",
  "oxid-protocol-application",
  "reqwest 0.13.4",
- "rustls",
  "serde",
  "serde_json",
  "tokio",
  "url",
- "webpki-root-certs 1.0.9",
  "zeroize",
 ]
 
@@ -5662,6 +5660,7 @@ dependencies = [
  "midnight-transient-crypto",
  "midnight-zkir",
  "midnight-zswap",
+ "oxid-adapter-platform-system",
  "oxid-adapter-store-atomic",
  "oxid-diagnostics-application",
  "oxid-foundation",
@@ -5677,6 +5676,7 @@ dependencies = [
  "subxt",
  "tokio",
  "tokio-tungstenite",
+ "url",
  "zeroize",
 ]
 
@@ -5717,13 +5717,11 @@ dependencies = [
  "oxid-wallet-domain",
  "p256",
  "reqwest 0.13.4",
- "rustls",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tokio",
  "url",
- "webpki-root-certs 1.0.9",
  "zeroize",
 ]
 
@@ -5762,6 +5760,7 @@ dependencies = [
  "midnight-transient-crypto",
  "midnight-zkir",
  "midnight-zswap",
+ "oxid-adapter-platform-system",
  "oxid-adapter-vc-midnight",
  "oxid-credential-application",
  "oxid-credential-domain",
@@ -5777,7 +5776,6 @@ dependencies = [
  "sha2 0.10.9",
  "subxt",
  "tokio",
- "webpki-root-certs 1.0.9",
  "zeroize",
 ]
 
@@ -5789,7 +5787,13 @@ dependencies = [
  "oxid-adapter-mobile-native",
  "oxid-foundation",
  "oxid-platform-ports",
+ "reqwest 0.13.4",
+ "rustls",
+ "rustls-platform-verifier 0.7.0",
  "sysinfo",
+ "tokio-tungstenite",
+ "url",
+ "webpki-root-certs 1.0.9",
 ]
 
 [[package]]
