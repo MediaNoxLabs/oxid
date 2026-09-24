@@ -55,6 +55,11 @@ just portal-tailnet-manual-prepare
 just portal-tailnet-manual-prepared-status
 ```
 
+After connecting exactly one phone, run
+`just portal-tailnet-manual-doctor`. It is the required read-only admission
+checkpoint and must report `DOCTOR-READY` before start. Follow its single
+remediation instead of bypassing a failed prerequisite with ad hoc commands.
+
 For an owner-requested browser-and-phone QR demonstration only (never evidence),
 use `just portal-tailnet-manual-start`; it opens and deliberately prints the one
 public page URL only after a stable readiness interval, then remains the
@@ -92,6 +97,7 @@ live-KYC claim.
     "manualTailnet": {
       "prepare": "just portal-tailnet-manual-prepare",
       "preparedStatus": "just portal-tailnet-manual-prepared-status",
+      "doctor": "just portal-tailnet-manual-doctor",
       "start": "just portal-tailnet-manual-start",
       "statusCommand": "just portal-tailnet-manual-status",
       "reset": "just portal-tailnet-manual-reset",
