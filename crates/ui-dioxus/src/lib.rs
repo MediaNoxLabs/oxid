@@ -93,10 +93,10 @@ use oxid_diagnostics_application::{DiagnosticCode, DiagnosticEventSinkPort, Diag
 use oxid_identity_application::{
     CreateDidCommand, CreateDidUseCase, DeactivateDidCommand, DeactivateDidUseCase,
     DidKeyAlgorithm, DidOperationConfirmation, DidOperationError, DidRecordQuery, DidRecordView,
-    DidUpdate, ForgetDidUseCase, ListDidRecordsQuery, ListDidRecordsUseCase,
-    PUBLISH_DID_TO_TEST_ISSUER_INTENT, PublishDidCommand, PublishDidUseCase, ResolveDidCommand,
-    ResolveDidUseCase, SignDidPayloadCommand, SignDidPayloadUseCase, UpdateDidCommand,
-    UpdateDidUseCase,
+    DidRefreshAvailability, DidUpdate, ForgetDidUseCase, ListDidRecordsQuery,
+    ListDidRecordsUseCase, PUBLISH_DID_TO_TEST_ISSUER_INTENT, PublishDidCommand, PublishDidUseCase,
+    ResolveDidCommand, ResolveDidUseCase, SignDidPayloadCommand, SignDidPayloadUseCase,
+    UpdateDidCommand, UpdateDidUseCase,
 };
 use oxid_identity_domain::VerificationRelationship;
 use oxid_passport_vault_application::{

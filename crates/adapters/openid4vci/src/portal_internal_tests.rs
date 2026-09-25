@@ -4,7 +4,7 @@ use crate::ZeroizingHolderProofJwt;
 
 use oxid_identity_application::{
     DidDocumentMetadataView, DidDocumentView, DidOperationError, DidRecordQuery, DidRecordView,
-    PublicJwkView, VerificationMethodView, VerificationRelationshipView,
+    DidRefreshAvailability, PublicJwkView, VerificationMethodView, VerificationRelationshipView,
 };
 use oxid_protocol_application::{
     CredentialHolderProofPort, HolderProofError, HolderProofFuture, HolderProofJwt,
@@ -63,6 +63,7 @@ struct Did;
 impl GetDidRecordUseCase for Did {
     fn execute(&self, query: DidRecordQuery) -> Result<DidRecordView, DidOperationError> {
         Ok(DidRecordView {
+            refresh_availability: DidRefreshAvailability::Unavailable,
             document: DidDocumentView {
                 contexts: vec![],
                 id: query.did,

@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use oxid_identity_application::{
-    DidResolutionPort, DidResolutionPortError, DidResolutionPortFuture,
+    DidRefreshAvailability, DidResolutionPort, DidResolutionPortError, DidResolutionPortFuture,
 };
 
 mod lifecycle;
@@ -63,6 +63,15 @@ impl DidResolutionPort for StandaloneDidResolver {
             _ => Err(DidResolutionPortError::NotFound),
         };
         Box::pin(async move { result })
+    }
+
+    fn refresh_availability(&self, did: &MidnightDid) -> DidRefreshAvailability {
+        match did.as_str() {
+            STANDALONE_FIXTURE_DID
+            | STANDALONE_PASSPORT_ISSUER_DID
+            | STANDALONE_COMPACT_PASSPORT_ISSUER_DID => DidRefreshAvailability::Available,
+            _ => DidRefreshAvailability::NotApplicable,
+        }
     }
 }
 
@@ -365,6 +374,10 @@ mod http {
                     .await
                     .unwrap_or(Err(DidResolutionPortError::Unavailable))
             })
+        }
+
+        fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+            DidRefreshAvailability::Available
         }
     }
 
@@ -810,6 +823,10 @@ mod tests {
     fn standalone_resolves_only_the_documented_fixture() {
         let resolver = StandaloneDidResolver;
         let fixture = MidnightDid::parse(STANDALONE_FIXTURE_DID).expect("fixture DID");
+        assert_eq!(
+            resolver.refresh_availability(&fixture),
+            DidRefreshAvailability::Available
+        );
         let resolved = futures::executor::block_on(resolver.resolve(&fixture)).expect("resolve");
         assert_eq!(resolved.document().verification_methods().len(), 2);
         let compact_issuer =
@@ -837,6 +854,10 @@ mod tests {
         );
         let unknown =
             MidnightDid::parse(format!("did:midnight:undeployed:{}", "f".repeat(64))).expect("DID");
+        assert_eq!(
+            resolver.refresh_availability(&unknown),
+            DidRefreshAvailability::NotApplicable
+        );
         assert_eq!(
             futures::executor::block_on(resolver.resolve(&unknown)),
             Err(DidResolutionPortError::NotFound)
