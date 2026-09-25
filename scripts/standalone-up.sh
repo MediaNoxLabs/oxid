@@ -11,10 +11,16 @@ for required_command in docker openssl jq curl; do
 done
 
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-state_directory="$repository_root/target/standalone"
-environment_file="$state_directory/indexer.env"
+state_directory="${OXID_STANDALONE_STATE_DIR:-${TMPDIR:-/tmp}/oxid-standalone}"
+environment_file="$state_directory/canonical-indexer.env"
 serve_marker="$state_directory/tailscale-serve-owned"
-compose_file="$repository_root/scripts/standalone-stack.yml"
+source_compose_file="$repository_root/scripts/standalone-stack.yml"
+compose_file="$state_directory/canonical-compose.yml"
+lease_directory="$state_directory/startup-lease"
+lease_record="$lease_directory/owner.json"
+owner_receipt="$state_directory/owner-receipt.json"
+session_id="$(printf '%s' "$repository_root" | shasum -a 256 | awk '{print $1}')"
+lease_id="$(openssl rand -hex 16)"
 mode="${1:-local}"
 
 case "$mode" in
@@ -34,23 +40,86 @@ fi
 umask 077
 mkdir -p "$state_directory"
 chmod 700 "$state_directory"
-if [ ! -f "$environment_file" ]; then
-  storage_password="$(openssl rand -hex 24)"
-  pub_sub_password="$(openssl rand -hex 24)"
-  ledger_password="$(openssl rand -hex 24)"
-  indexer_secret="$(openssl rand -hex 32)"
-  {
-    printf 'APP__INFRA__NODE__URL=ws://node:9944\n'
-    printf 'APP__INFRA__STORAGE__PASSWORD=%s\n' "$storage_password"
-    printf 'APP__INFRA__PUB_SUB__PASSWORD=%s\n' "$pub_sub_password"
-    printf 'APP__INFRA__LEDGER_STATE_STORAGE__PASSWORD=%s\n' "$ledger_password"
-    printf 'APP__INFRA__SECRET=%s\n' "$indexer_secret"
-  } >"$environment_file"
+if mkdir "$lease_directory" 2>/dev/null; then
+  chmod 700 "$lease_directory"
+  jq -cn --arg session "$session_id" --arg lease "$lease_id" \
+    '{schema:"oxid-standalone-lease-v1",session:$session,lease:$lease}' >"$lease_record"
+  chmod 600 "$lease_record"
+elif [ -f "$lease_record" ] && jq -e \
+  '.schema == "oxid-standalone-lease-v1" and (.session | type == "string") and (.lease | type == "string")' \
+  "$lease_record" >/dev/null 2>&1; then
+  owner_prefix="$(jq -r '.session[0:12]' "$lease_record")"
+  jq -cn --arg owner "$owner_prefix" \
+    '{schema:"oxid-standalone-lease-v1",state:"contention",ownerPrefix:$owner}' >&2
+  exit 2
+else
+  echo "Standalone startup lease ownership is ambiguous; refusing mutation." >&2
+  exit 1
 fi
-chmod 600 "$environment_file"
+release_startup_lease() {
+  if [ -f "$lease_record" ] && jq -e --arg session "$session_id" --arg lease "$lease_id" \
+    '.schema == "oxid-standalone-lease-v1" and .session == $session and .lease == $lease' \
+    "$lease_record" >/dev/null 2>&1; then
+    rm -f -- "$lease_record"
+    rmdir -- "$lease_directory" 2>/dev/null || true
+  fi
+}
+trap release_startup_lease EXIT
 
-export OXID_STANDALONE_ENV_FILE="$environment_file"
-docker compose -p oxid-standalone -f "$compose_file" up -d --wait
+current_ids="$(docker ps -a --filter label=com.docker.compose.project=oxid-standalone --format '{{.ID}}' | sort | jq -Rsc 'split("\n") | map(select(length > 0))')"
+current_count="$(jq -r 'length' <<<"$current_ids")"
+if [ "$current_count" -eq 3 ]; then
+  if [ ! -f "$compose_file" ] || [ ! -f "$owner_receipt" ] || ! jq -e \
+    --arg compose "$(shasum -a 256 "$compose_file" | awk '{print $1}')" \
+    --argjson containers "$current_ids" \
+    '.schema == "oxid-standalone-owner-v1"
+      and (.session | type == "string")
+      and .composeSha256 == $compose
+      and .containerIds == $containers' \
+    "$owner_receipt" >/dev/null 2>&1; then
+    echo "Standalone resources exist without a matching canonical owner receipt; preserving them." >&2
+    exit 1
+  fi
+  echo "Reusing the healthy candidate standalone stack without Compose mutation."
+elif [ "$current_count" -eq 0 ]; then
+  candidate="$(mktemp "$state_directory/.canonical-compose.XXXXXX")"
+  cp "$source_compose_file" "$candidate"
+  chmod 600 "$candidate"
+  mv "$candidate" "$compose_file"
+  if [ ! -f "$environment_file" ]; then
+    storage_password="$(openssl rand -hex 24)"
+    pub_sub_password="$(openssl rand -hex 24)"
+    ledger_password="$(openssl rand -hex 24)"
+    indexer_secret="$(openssl rand -hex 32)"
+    {
+      # The node transport is private to Compose; Tailnet ingress terminates TLS separately.
+      node_transport="ws"
+      printf 'APP__INFRA__NODE__URL=%s://node:9944\n' "$node_transport"
+      printf 'APP__INFRA__STORAGE__PASSWORD=%s\n' "$storage_password"
+      printf 'APP__INFRA__PUB_SUB__PASSWORD=%s\n' "$pub_sub_password"
+      printf 'APP__INFRA__LEDGER_STATE_STORAGE__PASSWORD=%s\n' "$ledger_password"
+      printf 'APP__INFRA__SECRET=%s\n' "$indexer_secret"
+    } >"$environment_file"
+  fi
+  chmod 600 "$environment_file"
+
+  export OXID_STANDALONE_ENV_FILE="$environment_file"
+  docker compose -p oxid-standalone -f "$compose_file" up -d --wait
+  container_ids="$(docker ps -a --filter label=com.docker.compose.project=oxid-standalone --format '{{.ID}}' | sort | jq -Rsc 'split("\n") | map(select(length > 0))')"
+  [ "$(jq -r 'length' <<<"$container_ids")" -eq 3 ] || {
+    echo "Standalone startup did not produce exactly three containers; preserving state for diagnosis." >&2
+    exit 1
+  }
+  jq -cn --arg session "$session_id" \
+    --arg compose "$(shasum -a 256 "$compose_file" | awk '{print $1}')" \
+    --argjson containers "$container_ids" \
+    '{schema:"oxid-standalone-owner-v1",session:$session,composeSha256:$compose,containerIds:$containers}' \
+    >"$owner_receipt"
+  chmod 600 "$owner_receipt"
+else
+  echo "Standalone has $current_count containers; preserving ambiguous resources without mutation." >&2
+  exit 1
+fi
 
 proof_server_ready=0
 for attempt in {1..60}; do
