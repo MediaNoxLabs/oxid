@@ -6,6 +6,7 @@ set -euo pipefail
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../.." && pwd -P)"
 readonly ROOT
 readonly LIFECYCLE="$ROOT/scripts/portal-consumer-lifecycle.sh"
+readonly SERVICES_LIFECYCLE="$ROOT/scripts/e2e/portal-services-lifecycle.sh"
 
 fail() {
   printf 'portal-consumer-lifecycle-contract: FAIL phase=%s\n' "$1" >&2
@@ -13,6 +14,7 @@ fail() {
 }
 
 [ -f "$LIFECYCLE" ] || fail lifecycle
+[ -x "$SERVICES_LIFECYCLE" ] || fail services-lifecycle-wrapper
 for mapping in \
   "midnight-did-resolver-image) image_id=\"\$(docker image inspect --format '{{.Id}}' midnight-did-resolver:0.1.0" \
   "did-manager-image) image_id=\"\$(docker image inspect --format '{{.Id}}' laceid-did-manager:0.1.0" \
@@ -33,7 +35,7 @@ for tailnet_contract in \
  done
 
 for preparation_contract in \
-  'prerequisite|prepare|prepared-status|up|status|down' \
+  'prerequisite|prepare|prepared-status|up|status|down|services-up|services-status|services-stop' \
   'oxid-portal-consumer-prepared-v1' \
   'prepare-checkpoint.json' \
   'prepared-receipt.json' \
@@ -45,4 +47,25 @@ for preparation_contract in \
   grep -qF -- "$preparation_contract" "$LIFECYCLE" || fail resumable-preparation
 done
 
-printf 'portal-consumer-lifecycle-contract: PASS pinned-image-tags=0.1.0 tailnet-private-mock=true resumable-preparation=true\n'
+for services_contract in \
+  'run_services_up()' \
+  'run_services_status()' \
+  'run_services_stop()' \
+  'compose start smocker did-resolver did-manager issuer' \
+  'compose stop --timeout 30 smocker did-resolver did-manager issuer' \
+  'oxid-portal-consumer-services-status-v1'; do
+  grep -qF -- "$services_contract" "$LIFECYCLE" || fail services-lifecycle
+done
+
+for wrapper_contract in \
+  'portal-consumer-lifecycle.sh' \
+  'exec "$ROOT/scripts/portal-consumer-lifecycle.sh" "${1:-}"'; do
+  grep -qF -- "$wrapper_contract" "$SERVICES_LIFECYCLE" || fail services-lifecycle-wrapper
+done
+
+services_body="$(sed -n '/run_services_up()/,/run_down()/p' "$LIFECYCLE")"
+if grep -qE 'build_image|compose up|compose down|adb |pm clear' <<<"$services_body"; then
+  fail services-mutation-boundary
+fi
+
+printf 'portal-consumer-lifecycle-contract: PASS pinned-image-tags=0.1.0 tailnet-private-mock=true resumable-preparation=true services-no-build-install-launch-reset=true\n'
