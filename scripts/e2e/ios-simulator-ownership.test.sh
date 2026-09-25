@@ -36,7 +36,7 @@ case "${1:-}" in
   list)
     case "${2:-}" in
       runtimes)
-        printf '%s\n' '{"runtimes":[{"identifier":"com.apple.CoreSimulator.SimRuntime.iOS-26-4","isAvailable":true,"version":"26.4"}]}'
+        printf '%s\n' '{"runtimes":[{"identifier":"com.apple.CoreSimulator.SimRuntime.iOS-26-4","isAvailable":true,"version":"26.4","supportedDeviceTypes":[{"identifier":"com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro","productFamily":"iPhone"}]}]}'
         ;;
       devicetypes)
         printf '%s\n' '{"devicetypes":[{"identifier":"com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro","name":"iPhone 17 Pro"}]}'
@@ -72,6 +72,11 @@ export OXID_FAKE_SIM_DELETED="$temporary/simulator.deleted"
 export OXID_IOS_OPERATION_TIMEOUT_SECONDS=2
 readonly runtime="com.apple.CoreSimulator.SimRuntime.iOS-26-4"
 readonly device_type="com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
+
+[ "$(oxid_ios_discover_developer_directory "$developer")" = "$developer" ] || fail developer-discovery
+[ "$(oxid_ios_discover_selectors "$developer")" = "$runtime"$'\t'"$device_type" ] || fail selector-discovery
+[ "$(oxid_ios_resolve_selectors "$developer" "" "")" = "$runtime"$'\t'"$device_type" ] || fail selector-resolution
+if oxid_ios_resolve_selectors "$developer" "$runtime" "" >/dev/null; then fail partial-selector; fi
 
 : >"$log"
 if oxid_ios_preflight "" "$runtime" "$device_type"; then fail missing-xcode; fi
@@ -129,4 +134,4 @@ started=$SECONDS
 if oxid_ios_preflight "$developer" "$runtime" "$device_type"; then fail timeout-result; fi
 [ $((SECONDS - started)) -lt 5 ] || fail timeout-bounded
 
-printf 'ios-simulator-ownership-contract: PASS selection=explicit existing=ignored receipt=identity-bound cleanup=bounded keep-failed=rejected\n'
+printf 'ios-simulator-ownership-contract: PASS selection=discovered-or-explicit existing=ignored receipt=identity-bound cleanup=bounded keep-failed=rejected\n'

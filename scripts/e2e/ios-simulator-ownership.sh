@@ -45,6 +45,56 @@ oxid_ios_validate_selectors() {
   [ -x "${OXID_XCRUN:-/usr/bin/xcrun}" ] && [ -x "${OXID_XCODEBUILD:-/usr/bin/xcodebuild}" ] || return 1
 }
 
+oxid_ios_discover_developer_directory() {
+  local configured="${1:-}" selected
+  if [ -n "$configured" ]; then
+    selected="$configured"
+  else
+    selected="$(env -u DEVELOPER_DIR "${OXID_XCODE_SELECT:-/usr/bin/xcode-select}" -p 2>/dev/null)" || return 1
+  fi
+  [[ "$selected" = /* && "$selected" != *$'\n'* ]] || return 1
+  [ -d "$selected" ] && [ ! -L "$selected" ] || return 1
+  printf '%s\n' "$selected"
+}
+
+oxid_ios_discover_selectors() {
+  local developer_dir="$1" runtimes device_types selection runtime_id device_type_id
+  [[ "$developer_dir" = /* ]] || return 1
+  [ -x "${OXID_XCRUN:-/usr/bin/xcrun}" ] && [ -x "${OXID_XCODEBUILD:-/usr/bin/xcodebuild}" ] || return 1
+  oxid_ios_xcodebuild "$developer_dir" -version >/dev/null 2>&1 || return 1
+  runtimes="$(oxid_ios_xcrun "$developer_dir" simctl list runtimes -j)" || return 1
+  selection="$(jq -er '
+    [.runtimes[]
+      | select(.isAvailable == true)
+      | select(.identifier | test("^com\\.apple\\.CoreSimulator\\.SimRuntime\\.iOS-[0-9]+-[0-9]+$"))
+      | {identifier, supportedDeviceTypes, versionParts:(.version | split(".") | map(tonumber))}]
+    | sort_by(.versionParts)
+    | last
+    | [.identifier, first(.supportedDeviceTypes[]
+        | select(.productFamily == "iPhone")
+        | .identifier)]
+    | @tsv
+  ' <<<"$runtimes")" || return 1
+  IFS=$'\t' read -r runtime_id device_type_id <<<"$selection"
+  device_types="$(oxid_ios_xcrun "$developer_dir" simctl list devicetypes -j)" || return 1
+  jq -e --arg deviceType "$device_type_id" '
+    [.devicetypes[] | select(.identifier == $deviceType and (.name | startswith("iPhone")))] | length == 1
+  ' <<<"$device_types" >/dev/null || return 1
+  oxid_ios_validate_selectors "$developer_dir" "$runtime_id" "$device_type_id" || return 1
+  printf '%s\t%s\n' "$runtime_id" "$device_type_id"
+}
+
+oxid_ios_resolve_selectors() {
+  local developer_dir="$1" configured_runtime="${2:-}" configured_device_type="${3:-}"
+  if [ -n "$configured_runtime" ] || [ -n "$configured_device_type" ]; then
+    [ -n "$configured_runtime" ] && [ -n "$configured_device_type" ] || return 1
+    oxid_ios_preflight "$developer_dir" "$configured_runtime" "$configured_device_type" || return 1
+    printf '%s\t%s\n' "$configured_runtime" "$configured_device_type"
+    return 0
+  fi
+  oxid_ios_discover_selectors "$developer_dir"
+}
+
 oxid_ios_preflight() {
   local developer_dir="$1" runtime_id="$2" device_type_id="$3" runtimes device_types
   [ "${OXID_IOS_KEEP_FAILED:-0}" = 0 ] || return 1

@@ -24,6 +24,21 @@ temporary="$(timeout -k 1s 5s mktemp -d "${TMPDIR:-/tmp}/oxid-avd-contract.XXXXX
 cleanup() { timeout -k 1s 5s rm -rf -- "$temporary"; }
 trap cleanup EXIT
 
+discovery_root="$temporary/avd-discovery"
+mkdir -p "$discovery_root/sdk/emulator" "$discovery_root/avd"
+cat >"$discovery_root/sdk/emulator/emulator" <<'EOF'
+#!/usr/bin/env bash
+[ "${1:-}" = -list-avds ] || exit 90
+printf '%s\n' zeta-avd alpha-avd
+EOF
+chmod 700 "$discovery_root/sdk/emulator/emulator"
+: >"$discovery_root/avd/alpha-avd.ini"
+ANDROID_AVD_HOME="$discovery_root/avd"
+export ANDROID_AVD_HOME
+[ "$(oxid_android_discover_avd "$discovery_root/sdk/emulator/emulator")" = alpha-avd ] || fail avd-discovery
+oxid_android_avd_definition_exists alpha-avd || fail avd-definition
+if oxid_android_avd_definition_exists missing-avd; then fail missing-avd-definition; fi
+
 timeout_command="$(command -v timeout)"
 cat >"$temporary/android-failure-marker-fixture.sh" <<'EOF'
 #!/usr/bin/env bash

@@ -35,6 +35,28 @@ oxid_adb_inventory_snapshot() {
   timeout -k 2s "${deadline}s" env -u ANDROID_SERIAL "$adb" devices -l
 }
 
+oxid_android_avd_definition_exists() {
+  local candidate="$1"
+  [[ "$candidate" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  for avd_ini in "${ANDROID_AVD_HOME:-}/$candidate.ini" "${ANDROID_SDK_HOME:-}/avd/$candidate.ini" "$HOME/.android/avd/$candidate.ini"; do
+    if [ -f "$avd_ini" ] && [ ! -L "$avd_ini" ]; then return 0; fi
+  done
+  return 1
+}
+
+oxid_android_discover_avd() {
+  local emulator="$1" candidate
+  [ -x "$emulator" ] || return 1
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    if oxid_android_avd_definition_exists "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done < <("$emulator" -list-avds | LC_ALL=C sort -u)
+  return 1
+}
+
 oxid_require_empty_adb_inventory() {
   local adb="$1" inventory
   inventory="$(oxid_adb_inventory_snapshot "$adb")" || return 1
