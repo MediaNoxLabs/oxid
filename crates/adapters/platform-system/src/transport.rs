@@ -102,7 +102,11 @@ fn classify(endpoint: &Url, schemes: &[&str]) -> Result<TransportTrustPolicy, Tr
     }
     let host = endpoint
         .host_str()
-        .ok_or(TransportTrustError::InvalidEndpoint)?;
+        .ok_or(TransportTrustError::InvalidEndpoint)?
+        .trim_matches(['[', ']']);
+    if host.parse::<IpAddr>().is_ok_and(is_tailnet_address) {
+        return Err(TransportTrustError::InvalidEndpoint);
+    }
     match endpoint.scheme() {
         "http" | "ws" => {
             if is_loopback(host) {
@@ -128,6 +132,16 @@ fn is_loopback(host: &str) -> bool {
         || host
             .parse::<IpAddr>()
             .is_ok_and(|address| address.is_loopback())
+}
+
+fn is_tailnet_address(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => {
+            let octets = address.octets();
+            octets[0] == 100 && (64..=127).contains(&octets[1])
+        }
+        IpAddr::V6(address) => address.segments()[..3] == [0xfd7a, 0x115c, 0xa1e0],
+    }
 }
 
 fn is_magic_dns_name(host: &str) -> bool {
@@ -174,11 +188,48 @@ mod tests {
     }
 
     #[test]
-    fn rejects_plaintext_remote_and_noncanonical_tailnet_hosts() {
-        assert_eq!(
-            classify(&url("http://192.0.2.1:8080/"), &["http", "https"]),
-            Err(TransportTrustError::InsecureRemoteEndpoint)
-        );
+    fn rejects_remote_plaintext_and_direct_tailnet_ips_for_both_transports() {
+        for endpoint in ["http://192.0.2.1:8080/", "ws://192.0.2.1:8080/"] {
+            let schemes = if endpoint.starts_with("http") {
+                &["http", "https"][..]
+            } else {
+                &["ws", "wss"][..]
+            };
+            assert_eq!(
+                classify(&url(endpoint), schemes),
+                Err(TransportTrustError::InsecureRemoteEndpoint)
+            );
+        }
+        for endpoint in ["https://100.64.0.1/", "wss://[fd7a:115c:a1e0::1]/"] {
+            let schemes = if endpoint.starts_with("https") {
+                &["http", "https"][..]
+            } else {
+                &["ws", "wss"][..]
+            };
+            assert_eq!(
+                classify(&url(endpoint), schemes),
+                Err(TransportTrustError::InvalidEndpoint)
+            );
+        }
+    }
+
+    #[test]
+    fn gives_http_and_websocket_the_same_secure_policy_matrix() {
+        for (http, websocket, expected) in [
+            (
+                "https://public.example/",
+                "wss://public.example/",
+                TransportTrustPolicy::PlatformTrust,
+            ),
+            (
+                "https://wallet.example-tailnet.ts.net/",
+                "wss://wallet.example-tailnet.ts.net/",
+                TransportTrustPolicy::BundledPublicRoots,
+            ),
+        ] {
+            assert_eq!(classify(&url(http), &["http", "https"]), Ok(expected));
+            assert_eq!(classify(&url(websocket), &["ws", "wss"]), Ok(expected));
+        }
         assert_eq!(
             classify(&url("wss://-bad.example.ts.net/"), &["ws", "wss"]),
             Err(TransportTrustError::InvalidEndpoint)
