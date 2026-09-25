@@ -109,9 +109,15 @@ historical state. This method never reads, writes, or removes them, and they
 never authorize cleanup.
 
 Harness cleanup is receipt-scoped to `oxid-portal-consumer`; it never prunes
-Docker or removes `oxid-standalone`. If a receipt or lock cannot prove ownership
-and restoration, preserve the containers, state, and lock for owner review.
-Report cleanup failures and never force-delete containers, state, or locks.
+Docker or removes `oxid-standalone`. A host-local Portal consumer lease is held
+for the detached project lifetime, so a second session reports contention before
+querying or changing Docker. If a receipt or lease cannot prove ownership and
+restoration, preserve the containers, state, and lease for owner review. The
+manual lease recovery procedure requires first proving the recorded owner has no Portal consumer
+containers and that its state directory is no longer active; then remove the
+lease directory deliberately. Never force-delete a stale or ambiguous lease from
+the lifecycle command. Report cleanup failures and never force-delete
+containers, state, or locks.
 
 ## Pass evidence and exact-head rule
 

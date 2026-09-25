@@ -22,6 +22,10 @@ readonly PRIVATE_LOG="$STATE/private.log"
 readonly PREPARED_RECEIPT="$STATE/prepared-receipt.json"
 readonly PREPARE_CHECKPOINT="$STATE/prepare-checkpoint.json"
 readonly PREPARE_LOCK="$STATE/prepare.lock"
+readonly LEASE_DIR="${OXID_PORTAL_CONSUMER_LEASE_DIR:-${TMPDIR:-/tmp}/oxid-portal-consumer-lease}"
+readonly LEASE_RECORD="$LEASE_DIR/owner.json"
+readonly SESSION_ID="${OXID_PORTAL_CONSUMER_SESSION_ID:-$(printf '%s' "$STATE" | shasum -a 256 | awk '{print $1}')}"
+readonly STATE_FINGERPRINT="$(printf '%s' "$STATE" | shasum -a 256 | awk '{print $1}')"
 readonly EXTERNAL_PREPARED_RECEIPT="${PORTAL_CONSUMER_PREPARED_RECEIPT:-}"
 readonly TAILNET_MOCK_STATE="${PORTAL_TAILNET_MOCK_STATE_DIR:-}"
 readonly TAILNET_MOCK_TRANSFORM="$REPOSITORY_ROOT/scripts/e2e/tailnet-mock-transform.mjs"
@@ -44,9 +48,6 @@ done
 [ -f "$COMPOSE_FILE" ] || fail compose
 
 umask 077
-mkdir -p "$STATE"
-chmod 700 "$STATE"
-[ -d "$STATE" ] && [ ! -L "$STATE" ] || fail state
 
 project_ids() {
   docker ps -a --filter "label=com.docker.compose.project=$PROJECT" --quiet 2>/dev/null | sort
@@ -65,6 +66,63 @@ private_regular_file() {
   local mode
   if mode="$(stat -c '%a' -- "$1" 2>/dev/null)"; then :; else mode="$(stat -f '%Lp' -- "$1")"; fi
   [ "$mode" = 600 ]
+}
+
+lease_held=0
+lease_release_allowed=1
+lease_retained=0
+lease_reused=0
+emit_contention() {
+  local owner
+  if ! owner="$(jq -r '.session // empty' "$LEASE_RECORD" 2>/dev/null)"; then
+    fail lease-ambiguous
+  fi
+  [[ "$owner" =~ ^[0-9a-f]{64}$ ]] || fail lease-ambiguous
+  jq -cn --arg owner "${owner:0:16}" \
+    '{schema:"oxid-portal-consumer-lease-v1",state:"contention",owner:{session:$owner}}'
+  exit 2
+}
+lease_record_valid_for_session() {
+  private_regular_file "$LEASE_RECORD" && jq -e \
+    --arg session "$SESSION_ID" --arg fingerprint "$STATE_FINGERPRINT" \
+    '.schema == "oxid-portal-consumer-lease-v1" and .session == $session and .stateFingerprint == $fingerprint' \
+    "$LEASE_RECORD" >/dev/null
+}
+acquire_lease() {
+  [[ "$LEASE_DIR" = /* && "$SESSION_ID" =~ ^[0-9a-f]{64}$ ]] || fail lease-path
+  if mkdir "$LEASE_DIR" 2>/dev/null; then
+    chmod 700 "$LEASE_DIR" || fail lease-permissions
+    jq -cn --arg session "$SESSION_ID" --arg fingerprint "$STATE_FINGERPRINT" \
+      '{schema:"oxid-portal-consumer-lease-v1",session:$session,stateFingerprint:$fingerprint}' \
+      >"$LEASE_RECORD" || fail lease-write
+    chmod 600 "$LEASE_RECORD" || fail lease-permissions
+    lease_record_valid_for_session || fail lease-write
+    lease_held=1
+    return
+  fi
+  [ -d "$LEASE_DIR" ] && [ ! -L "$LEASE_DIR" ] || fail lease-ambiguous
+  if lease_record_valid_for_session; then
+    lease_held=1
+    lease_reused=1
+    # A later command from the same session may inspect or operate the detached
+    # project, but only a proven `down` path may release its lifetime lease.
+    lease_release_allowed=0
+    return
+  fi
+  emit_contention
+}
+release_lease() {
+  [ "$lease_held" -eq 1 ] || return 0
+  [ "$lease_release_allowed" -eq 1 ] || return 0
+  lease_record_valid_for_session || return 0
+  rm -f -- "$LEASE_RECORD" || return 0
+  rmdir -- "$LEASE_DIR" 2>/dev/null || return 0
+  lease_held=0
+}
+initialize_state() {
+  mkdir -p "$STATE"
+  chmod 700 "$STATE"
+  [ -d "$STATE" ] && [ ! -L "$STATE" ] || fail state
 }
 
 prepare_lock_held=0
@@ -267,7 +325,7 @@ run_prepare() {
   local phase_started phase_duration cache_hit prepare_duration
   mkdir "$PREPARE_LOCK" 2>/dev/null || fail preparation-busy
   prepare_lock_held=1
-  trap 'release_prepare_lock' EXIT
+  trap 'release_prepare_lock; release_lease' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
   [ "$(count_lines "$(project_ids)")" -eq 0 ] || fail occupied-project
@@ -361,7 +419,14 @@ run_prepared_status() {
 }
 
 run_up() {
-  [ "$(count_lines "$(project_ids)")" -eq 0 ] || fail occupied-project
+  if [ "$lease_reused" -eq 1 ]; then
+    lease_release_allowed=0
+    fail stale-lease
+  fi
+  if [ "$(count_lines "$(project_ids)")" -ne 0 ]; then
+    lease_release_allowed=0
+    fail occupied-project
+  fi
   [ ! -e "$RECEIPT" ] && [ ! -L "$RECEIPT" ] || fail stale-receipt
   [ ! -e "$STARTING_RECEIPT" ] && [ ! -L "$STARTING_RECEIPT" ] || fail stale-starting-receipt
   shared_midnight_ready || fail shared-midnight
@@ -424,11 +489,13 @@ run_up() {
     starting_receipt_valid || return 1
     compose down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 || true
     [ -z "$(project_ids)" ] || return 1
+    lease_release_allowed=1
     rm -f -- "$ENV_FILE" "$RECEIPT" "$STARTING_RECEIPT" "$PRIVATE_LOG"
   }
   trap cleanup_failed_up ERR
   trap 'cleanup_failed_up; exit 130' INT
   trap 'cleanup_failed_up; exit 143' TERM
+  lease_release_allowed=0
   compose up -d --wait --wait-timeout 600 >>"$PRIVATE_LOG" 2>&1
   curl --fail --silent --show-error --max-time 30 -H 'Content-Type: application/x-yaml' \
     --data-binary "@$mock_state" 'http://127.0.0.1:8081/mocks?reset=true' \
@@ -452,6 +519,7 @@ run_up() {
   mv "$receipt_candidate" "$RECEIPT"
   rm -f -- "$STARTING_RECEIPT"
   trap - ERR INT TERM
+  lease_retained=1
   emit_status running
 }
 
@@ -459,19 +527,23 @@ run_status() {
   local ids running
   ids="$(project_ids)"; running="$(running_ids)"
   if [ -z "$ids" ]; then
+    [ "$lease_reused" -eq 0 ] || fail stale-lease
     [ ! -e "$RECEIPT" ] && [ ! -L "$RECEIPT" ] || fail stale-receipt
     [ ! -e "$STARTING_RECEIPT" ] && [ ! -L "$STARTING_RECEIPT" ] || fail interrupted-startup
     emit_status stopped
     return
   fi
+  lease_release_allowed=0
   [ "$(count_lines "$ids")" -eq 5 ] && [ "$(count_lines "$running")" -eq 4 ] || fail project-shape
   receipt_valid || fail ownership
+  lease_retained=1
   emit_status running
 }
 
 run_services_status() {
   local ids running state
   ids="$(project_ids)"; running="$(running_ids)"
+  lease_release_allowed=0
   [ "$(count_lines "$ids")" -eq 5 ] || fail project-shape
   receipt_valid || fail ownership
   case "$(count_lines "$running")" in
@@ -502,6 +574,7 @@ run_down() {
   local ids
   ids="$(project_ids)"
   if [ -z "$ids" ]; then
+    [ "$lease_reused" -eq 0 ] || fail stale-lease
     [ ! -e "$RECEIPT" ] && [ ! -L "$RECEIPT" ] || fail stale-receipt
     if [ -e "$STARTING_RECEIPT" ] || [ -L "$STARTING_RECEIPT" ]; then
       starting_receipt_valid || fail ownership
@@ -510,14 +583,21 @@ run_down() {
     emit_status stopped
     return
   fi
+  lease_release_allowed=0
   receipt_valid || starting_receipt_valid || fail ownership
   [ -f "$ENV_FILE" ] && [ ! -L "$ENV_FILE" ] || fail private-state
   compose down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 || fail cleanup
   [ -z "$(project_ids)" ] || fail cleanup-incomplete
+  lease_release_allowed=1
   rm -f -- "$ENV_FILE" "$RECEIPT" "$STARTING_RECEIPT" "$PRIVATE_LOG"
   emit_status stopped
 }
 
+trap 'release_lease' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+acquire_lease
+initialize_state
 case "$OPERATION" in
   prerequisite) run_prerequisite ;;
   prepare) run_prepare ;;
@@ -525,7 +605,13 @@ case "$OPERATION" in
   up) run_up ;;
   status) run_status ;;
   down) run_down ;;
-  services-up) run_services_up ;;
-  services-status) run_services_status ;;
-  services-stop) run_services_stop ;;
+  services-up) run_services_up; lease_retained=1 ;;
+  services-status) run_services_status; lease_retained=1 ;;
+  services-stop) run_services_stop; lease_retained=1 ;;
 esac
+if [ "$lease_retained" -eq 1 ]; then
+  trap - EXIT INT TERM
+else
+  release_lease
+  trap - EXIT INT TERM
+fi
