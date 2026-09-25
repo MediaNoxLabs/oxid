@@ -22,7 +22,8 @@ fi
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=e2e/ios-simulator-ownership.sh
 source "$repository_root/scripts/e2e/ios-simulator-ownership.sh"
-oxid_ios_supervise_acceptance "$repository_root" ios-profile-flow 3600 "$0" "$@"
+oxid_ios_supervise_acceptance "$repository_root" ios-profile-flow 3600 \
+  "$repository_root/scripts/test-ios-profile-flow.sh" "$@"
 cd "$repository_root"
 
 device="${OXID_IOS_DEVICE:-}"
@@ -76,7 +77,7 @@ for test_name in "${test_names[@]}"; do
   /usr/bin/xcrun simctl uninstall "$device" "$bundle_identifier" >/dev/null 2>&1 || true
   /usr/bin/xcrun simctl install "$device" "$app_bundle"
 
-  scenario_name="profile-$(printf '%s' "$test_name" | tr '[:upper:]_' '[:lower:]-')"
+  scenario_name="$(oxid_ios_scenario_name profile "$test_name")"
   oxid_ios_run_xctest "$repository_root" "$scenario_name" 600 env -i \
     "DEVELOPER_DIR=$xcode_developer_dir" \
     "HOME=$HOME" \

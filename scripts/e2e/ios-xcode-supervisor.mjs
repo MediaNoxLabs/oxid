@@ -11,7 +11,10 @@ import { runManagedChild } from "../lib/managed-child-process.mjs";
 
 const SCENARIO = /^[a-z0-9][a-z0-9-]{0,79}$/u;
 const RECEIPT_SCHEMA = "oxid-ios-xcode-admission-v1";
-const DEFAULT_LEASE = path.join(os.tmpdir(), "oxid-ios-xcode-admission-v1");
+const DEFAULT_LEASE = path.join(
+  os.tmpdir(),
+  `oxid-ios-xcode-admission-v1-${typeof process.getuid === "function" ? process.getuid() : "user"}`,
+);
 
 function fail(message, code = 1) {
   process.stderr.write(`ios-xcode-supervisor: FAIL classification=${message}\n`);
@@ -23,7 +26,7 @@ export function parseProcessSnapshot(text) {
     const match = line.trim().match(/^(\d+)\s+(.+)$/u);
     if (!match) return [];
     const command = path.basename(match[2].trim().split(/\s+/u)[0] ?? "");
-    return command === "xcodebuild" || command === "simctl"
+    return ["simctl", "testmanagerd", "xcodebuild", "xctest"].includes(command)
       ? [{ pid: Number(match[1]), command }]
       : [];
   });
@@ -45,6 +48,11 @@ function processAlive(pid) {
 }
 
 export function readLease(leaseDir) {
+  const directory = lstatSync(leaseDir);
+  if (!directory.isDirectory() || directory.isSymbolicLink() || (directory.mode & 0o777) !== 0o700) {
+    throw new Error("invalid-lease-directory");
+  }
+  if (typeof process.getuid === "function" && directory.uid !== process.getuid()) throw new Error("invalid-lease-directory");
   const owner = path.join(leaseDir, "owner.json");
   const stat = lstatSync(owner);
   if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600) throw new Error("invalid-lease-receipt");
@@ -98,11 +106,13 @@ export function releaseLease(leaseDir, receipt) {
 }
 
 function parseArgs(argv) {
-  const childOnly = argv.includes("--child-only");
-  argv = argv.filter((value) => value !== "--child-only");
   const split = argv.indexOf("--");
   if (split < 0 || split === argv.length - 1) throw new Error("missing-command");
-  const flags = argv.slice(0, split);
+  const rawFlags = argv.slice(0, split);
+  const childOnlyCount = rawFlags.filter((value) => value === "--child-only").length;
+  if (childOnlyCount > 1) throw new Error("duplicate-child-only");
+  const childOnly = childOnlyCount === 1;
+  const flags = rawFlags.filter((value) => value !== "--child-only");
   const command = argv.slice(split + 1);
   const read = (name) => {
     const index = flags.indexOf(name);
@@ -118,14 +128,20 @@ function parseArgs(argv) {
   return { childOnly, scenario, timeoutMs: Math.ceil(timeoutSeconds * 1000), cwd, command: command[0], args: command.slice(1) };
 }
 
-export async function supervise(argv, { leaseDir = process.env.OXID_IOS_XCODE_LEASE_DIR || DEFAULT_LEASE } = {}) {
+export async function supervise(argv, {
+  leaseDir = process.env.OXID_IOS_XCODE_LEASE_DIR || DEFAULT_LEASE,
+  contenders,
+} = {}) {
   const options = parseArgs(argv);
   if (options.childOnly && process.env.OXID_IOS_XCODE_SUPERVISED !== "1") throw new Error("child-without-host-admission");
-  const receipt = options.childOnly ? null : acquireLease(leaseDir, options.scenario);
+  const receipt = options.childOnly ? null : acquireLease(leaseDir, options.scenario, { contenders });
   let privateDir;
   let logPath;
   let log;
   let logEnded = false;
+  let primaryError;
+  let releaseError;
+  let resultCode = 1;
   const endLog = async () => {
     if (!log || logEnded) return;
     logEnded = true;
@@ -141,7 +157,7 @@ export async function supervise(argv, { leaseDir = process.env.OXID_IOS_XCODE_LE
       stdout: log,
       stderr: log,
       label: options.scenario,
-      graceMs: 3000,
+      graceMs: 30_000,
       timeoutMs: options.timeoutMs,
     });
     process.stderr.write(`ios-xcode-supervisor: phase=admitted scenario=${options.scenario}\n`);
@@ -153,11 +169,23 @@ export async function supervise(argv, { leaseDir = process.env.OXID_IOS_XCODE_LE
     } else {
       process.stderr.write(`ios-xcode-supervisor: phase=complete scenario=${options.scenario} outcome=${code === 124 ? "timed-out" : "failed"} log=${logPath}\n`);
     }
-    return code;
+    resultCode = code;
+  } catch (error) {
+    primaryError = error;
   } finally {
     await endLog();
-    if (receipt) releaseLease(leaseDir, receipt);
+    if (receipt) {
+      try {
+        releaseLease(leaseDir, receipt);
+      } catch (error) {
+        releaseError = error;
+      }
+    }
   }
+  if (releaseError) process.stderr.write(`ios-xcode-supervisor: phase=release outcome=failed classification=${releaseError.message}\n`);
+  if (primaryError) throw primaryError;
+  if (releaseError && resultCode === 0) throw releaseError;
+  return resultCode;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

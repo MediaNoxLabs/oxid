@@ -19,7 +19,7 @@ test("iOS lifecycle diagnostic owns one simulator and records only closed outcom
   assert.match(script, /oxid_ios_owned_simctl/u);
   assert.match(script, /oxid_ios_delete_owned/u);
   assert.match(script, /oxid_ios_supervise_acceptance "\$ROOT" ios-wallet-lifecycle 1800/u);
-  assert.match(script, /oxid_ios_run_xctest "\$ROOT" lifecycle-background-recovery 900/u);
+  assert.match(script, /oxid_ios_run_xctest "\$ROOT" lifecycle-background-recovery 1200/u);
   assert.match(script, /\[ -z "\$\{OXID_IOS_DEVICE:-\}" \]/u);
   assert.match(script, /status --porcelain/u);
   assert.match(script, /-only-testing:"OxidUITests\/LifecycleRecoveryTests\//u);

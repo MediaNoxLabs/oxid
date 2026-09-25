@@ -20,6 +20,17 @@ oxid_ios_supervise_acceptance() {
     "$script" "$@"
 }
 
+oxid_ios_scenario_name() {
+  local prefix="$1" source="$2" value
+  value="$(printf '%s-%s' "$prefix" "$source" \
+    | tr '[:upper:]_' '[:lower:]-' \
+    | tr -cs 'a-z0-9-' '-' \
+    | sed 's/^-*//; s/-*$//' \
+    | cut -c1-80)" || return 1
+  [[ "$value" =~ ^[a-z0-9][a-z0-9-]{0,79}$ ]] || return 1
+  printf '%s\n' "$value"
+}
+
 oxid_ios_run_xctest() {
   local root="$1" scenario="$2" timeout_seconds="$3"
   shift 3

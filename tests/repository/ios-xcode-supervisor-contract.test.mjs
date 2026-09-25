@@ -17,16 +17,18 @@ import {
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const supervisor = path.join(root, "scripts/e2e/ios-xcode-supervisor.mjs");
+const deterministicDriver = path.join(root, "tests/fixtures/ios-xcode-supervisor-driver.mjs");
 
 function fixture() {
   const directory = mkdtempSync(path.join(os.tmpdir(), "oxid-ios-xcode-test."));
   return { directory, lease: path.join(directory, "lease") };
 }
 
-test("process contention recognizes only active Xcode owners", () => {
-  assert.deepEqual(parseProcessSnapshot(" 12 /usr/bin/xcodebuild\n13 /usr/bin/simctl\n14 /bin/sleep\n"), [
+test("process contention recognizes active Xcode and test owners but ignores a persistent Simulator UI", () => {
+  assert.deepEqual(parseProcessSnapshot(" 12 /usr/bin/xcodebuild\n13 /usr/bin/simctl\n14 /bin/sleep\n15 /Applications/Xcode.app/Simulator\n16 /usr/bin/xctest\n"), [
     { pid: 12, command: "xcodebuild" },
     { pid: 13, command: "simctl" },
+    { pid: 16, command: "xctest" },
   ]);
 });
 
@@ -70,7 +72,7 @@ test("CLI timeout is compact, bounded, group-owned, and releases admission", () 
   const started = Date.now();
   try {
     assert.throws(() => execFileSync(process.execPath, [
-      supervisor,
+      deterministicDriver,
       "--scenario", "timeout-fixture",
       "--timeout-seconds", "0.1",
       "--cwd", root,
@@ -112,7 +114,7 @@ test("parent interruption terminates descendants and removes the lease", async (
   const { directory, lease } = fixture();
   try {
     const child = spawn(process.execPath, [
-      supervisor,
+      deterministicDriver,
       "--scenario", "interrupt-fixture",
       "--timeout-seconds", "30",
       "--cwd", root,
