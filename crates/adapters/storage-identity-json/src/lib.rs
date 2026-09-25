@@ -11,9 +11,9 @@ use std::{
 use oxid_adapter_store_atomic as store_atomic;
 use oxid_identity_application::{DidRecordRepository, DidRecordRepositoryError};
 use oxid_identity_domain::{
-    DidDocument, DidDocumentMetadata, DidDocumentParts, DidRecord, DidResolution,
-    DidResolutionMetadata, DidResolutionSource, IdentityProfileId, JwkCurve, JwkKeyType,
-    MidnightDid, PublicJwk, Service, ServiceEndpointValue, VerificationMethod,
+    DidDocument, DidDocumentMetadata, DidDocumentParts, DidPublicationState, DidRecord,
+    DidResolution, DidResolutionMetadata, DidResolutionSource, IdentityProfileId, JwkCurve,
+    JwkKeyType, MidnightDid, PublicJwk, Service, ServiceEndpointValue, VerificationMethod,
     VerificationRelationship, VerificationRelationshipEntry,
 };
 use serde::{Deserialize, Serialize};
@@ -196,6 +196,12 @@ struct StoreDocument {
 struct StoredRecord {
     profile_id: String,
     resolution: StoredResolution,
+    #[serde(default = "unknown_publication_state")]
+    publication_state: String,
+}
+
+fn unknown_publication_state() -> String {
+    "unknown".to_owned()
 }
 
 #[derive(Deserialize, Serialize)]
@@ -287,6 +293,11 @@ impl From<&DidRecord> for StoredRecord {
         let metadata = resolution.document_metadata();
         Self {
             profile_id: record.profile_id().as_str().to_owned(),
+            publication_state: match record.publication_state() {
+                DidPublicationState::Published => "published".to_owned(),
+                DidPublicationState::Unpublished => "unpublished".to_owned(),
+                DidPublicationState::Unknown => "unknown".to_owned(),
+            },
             resolution: StoredResolution {
                 document: StoredDocument {
                     contexts: document.contexts().to_vec(),
@@ -513,7 +524,13 @@ impl StoredRecord {
             },
             DidResolutionSource::Stored,
         );
-        Ok(DidRecord::new(profile, resolution))
+        let publication_state = match self.publication_state.as_str() {
+            "published" => DidPublicationState::Published,
+            "unpublished" => DidPublicationState::Unpublished,
+            "unknown" => DidPublicationState::Unknown,
+            _ => return Err(DidRecordRepositoryError::Integrity),
+        };
+        Ok(DidRecord::new(profile, resolution).with_publication_state(publication_state))
     }
 }
 
@@ -714,6 +731,7 @@ mod tests {
                 DidResolutionSource::Standalone,
             ),
         )
+        .with_publication_state(DidPublicationState::Published)
     }
 
     #[test]
@@ -724,6 +742,7 @@ mod tests {
         let decoded = decode_portable_did_snapshot(&bytes).expect("snapshot decodes");
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].profile_id(), original.profile_id());
+        assert_eq!(decoded[0].publication_state(), original.publication_state());
         assert_eq!(
             decoded[0].resolution().document(),
             original.resolution().document()
@@ -740,6 +759,24 @@ mod tests {
             decoded[0].resolution().source(),
             DidResolutionSource::Stored
         );
+    }
+
+    #[test]
+    fn legacy_snapshot_without_publication_state_is_loaded_as_unknown() {
+        let original = rich_record("profile_legacy");
+        let encoded = encode_portable_did_snapshot(std::slice::from_ref(&original))
+            .expect("snapshot encodes");
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(&encoded).expect("snapshot is JSON");
+        legacy["records"][0]
+            .as_object_mut()
+            .expect("record object")
+            .remove("publicationState");
+        let decoded = decode_portable_did_snapshot(
+            &serde_json::to_vec(&legacy).expect("legacy snapshot encodes"),
+        )
+        .expect("legacy snapshot decodes");
+        assert_eq!(decoded[0].publication_state(), DidPublicationState::Unknown);
     }
 
     #[test]

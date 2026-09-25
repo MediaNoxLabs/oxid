@@ -43,6 +43,11 @@ fn DidRefreshControl(
             let message = "Saved locally. This managed DID is not published to the selected Midnight network.";
             rsx! { p { class: "form-hint", "{message}" } }
         }
+        DidRefreshAvailability::Unknown => {
+            let message =
+                "Network refresh is unavailable until this DID's publication state is known.";
+            rsx! { p { class: "form-hint", "{message}" } }
+        }
         DidRefreshAvailability::NotApplicable | DidRefreshAvailability::Unavailable => {
             let message =
                 "Network refresh is unavailable for this DID in the selected Midnight network.";
@@ -924,7 +929,10 @@ pub(super) fn DidsPage(
 #[cfg(test)]
 mod tests {
     use super::{DidRefreshControl, did_method_name};
-    use dioxus::{dioxus_core::Mutation, prelude::*};
+    use dioxus::{
+        dioxus_core::{AttributeValue, Mutation},
+        prelude::*,
+    };
     use oxid_identity_application::DidRefreshAvailability;
 
     #[derive(Clone, PartialEq, Props)]
@@ -946,7 +954,7 @@ mod tests {
     fn rendered_refresh(
         availability: DidRefreshAvailability,
         resolving: bool,
-    ) -> (Vec<String>, bool) {
+    ) -> (Vec<String>, bool, bool) {
         let mut dom = VirtualDom::new_with_props(
             refresh_harness,
             RefreshHarnessProps {
@@ -965,7 +973,17 @@ mod tests {
         let actionable = edits
             .iter()
             .any(|edit| matches!(edit, Mutation::NewEventListener { name, .. } if name == "click"));
-        (text, actionable)
+        let disabled = edits.iter().any(|edit| {
+            matches!(
+                edit,
+                Mutation::SetAttribute {
+                    name: "disabled",
+                    value: AttributeValue::Bool(true),
+                    ..
+                }
+            )
+        });
+        (text, actionable, disabled)
     }
 
     #[test]
@@ -1009,22 +1027,27 @@ mod tests {
 
     #[test]
     fn rendered_refresh_control_follows_typed_capability_state() {
-        let (available, actionable) = rendered_refresh(DidRefreshAvailability::Available, false);
+        let (available, actionable, disabled) =
+            rendered_refresh(DidRefreshAvailability::Available, false);
         assert_eq!(available, ["Refresh from Midnight"]);
         assert!(actionable);
+        assert!(!disabled);
 
-        let (busy, actionable) = rendered_refresh(DidRefreshAvailability::Available, true);
+        let (busy, actionable, disabled) =
+            rendered_refresh(DidRefreshAvailability::Available, true);
         assert_eq!(busy, ["Refreshing DID…"]);
         assert!(actionable);
+        assert!(disabled);
 
-        let (local, actionable) = rendered_refresh(DidRefreshAvailability::LocalUnpublished, false);
+        let (local, actionable, _) =
+            rendered_refresh(DidRefreshAvailability::LocalUnpublished, false);
         assert_eq!(
             local,
             ["Saved locally. This managed DID is not published to the selected Midnight network."]
         );
         assert!(!actionable);
 
-        let (unavailable, actionable) =
+        let (unavailable, actionable, _) =
             rendered_refresh(DidRefreshAvailability::Unavailable, false);
         assert_eq!(
             unavailable,
@@ -1032,11 +1055,18 @@ mod tests {
         );
         assert!(!actionable);
 
-        let (not_applicable, actionable) =
+        let (not_applicable, actionable, _) =
             rendered_refresh(DidRefreshAvailability::NotApplicable, false);
         assert_eq!(
             not_applicable,
             ["Network refresh is unavailable for this DID in the selected Midnight network."]
+        );
+        assert!(!actionable);
+
+        let (unknown, actionable, _) = rendered_refresh(DidRefreshAvailability::Unknown, false);
+        assert_eq!(
+            unknown,
+            ["Network refresh is unavailable until this DID's publication state is known."]
         );
         assert!(!actionable);
     }

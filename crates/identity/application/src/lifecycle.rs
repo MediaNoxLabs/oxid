@@ -4,8 +4,8 @@ use std::{error::Error, fmt};
 
 use oxid_foundation::OpaqueIdError;
 use oxid_identity_domain::{
-    DidRecord, DidResolution, IdentityProfileId, MidnightDid, MidnightDidError, MidnightNetwork,
-    VerificationRelationship,
+    DidPublicationState, DidRecord, DidResolution, IdentityProfileId, MidnightDid,
+    MidnightDidError, MidnightNetwork, VerificationRelationship,
 };
 
 use crate::{DidOperationError, DidRecordRepositoryError, DidRecordView, DidService};
@@ -347,23 +347,24 @@ fn persist(
     service: &DidService,
     profile_id: IdentityProfileId,
     resolution: DidResolution,
+    publication_state: DidPublicationState,
 ) -> Result<DidRecordView, DidOperationError> {
+    let record = DidRecord::new(profile_id, resolution).with_publication_state(publication_state);
     service
         .repository
-        .upsert(DidRecord::new(profile_id.clone(), resolution.clone()))
+        .upsert(record.clone())
         .map_err(DidOperationError::Persistence)?;
-    Ok(super::record_view(service, &profile_id, &resolution))
+    Ok(super::record_view(service, &record))
 }
 
 fn current(
     service: &DidService,
     profile_id: &IdentityProfileId,
     did: &MidnightDid,
-) -> Result<DidResolution, DidOperationError> {
+) -> Result<DidRecord, DidOperationError> {
     service
         .repository
         .get(profile_id, did)
-        .map(DidRecord::into_resolution)
         .map_err(DidOperationError::Persistence)
 }
 
@@ -376,7 +377,12 @@ impl CreateDidUseCase for DidService {
             .lifecycle
             .create(&profile_id, network)
             .map_err(DidOperationError::Lifecycle)?;
-        persist(self, profile_id, resolution)
+        persist(
+            self,
+            profile_id,
+            resolution,
+            DidPublicationState::Unpublished,
+        )
     }
 }
 
@@ -386,11 +392,12 @@ impl UpdateDidUseCase for DidService {
         let profile_id = parse_profile(command.profile_id)?;
         let did = parse_did(command.did)?;
         let prior = current(self, &profile_id, &did)?;
+        let publication_state = prior.publication_state();
         let resolution = self
             .lifecycle
-            .update(&profile_id, &prior, command.operation)
+            .update(&profile_id, prior.resolution(), command.operation)
             .map_err(DidOperationError::Lifecycle)?;
-        persist(self, profile_id, resolution)
+        persist(self, profile_id, resolution, publication_state)
     }
 }
 
@@ -400,11 +407,12 @@ impl DeactivateDidUseCase for DidService {
         let profile_id = parse_profile(command.profile_id)?;
         let did = parse_did(command.did)?;
         let prior = current(self, &profile_id, &did)?;
+        let publication_state = prior.publication_state();
         let resolution = self
             .lifecycle
-            .deactivate(&profile_id, &prior)
+            .deactivate(&profile_id, prior.resolution())
             .map_err(DidOperationError::Lifecycle)?;
-        persist(self, profile_id, resolution)
+        persist(self, profile_id, resolution, publication_state)
     }
 }
 
@@ -426,7 +434,7 @@ impl SignDidPayloadUseCase for DidService {
         self.lifecycle
             .sign(
                 &profile_id,
-                &prior,
+                prior.resolution(),
                 command.method_id.trim(),
                 command.payload,
             )
