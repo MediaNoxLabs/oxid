@@ -486,7 +486,8 @@ run_services_status() {
 run_services_up() {
   receipt_valid || fail ownership
   [ "$(count_lines "$(project_ids)")" -eq 5 ] || fail project-shape
-  compose start smocker did-resolver did-manager issuer >>"$PRIVATE_LOG" 2>&1 || fail services-start
+  compose up -d --wait --wait-timeout 600 smocker did-resolver did-manager issuer \
+    >>"$PRIVATE_LOG" 2>&1 || fail services-start
   run_services_status
 }
 

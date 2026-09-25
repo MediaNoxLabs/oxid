@@ -4,4 +4,7 @@
 set -euo pipefail
 
 readonly ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../.." && pwd -P)"
-exec "$ROOT/scripts/portal-consumer-lifecycle.sh" "${1:-}"
+readonly MANUAL_ROOT="$ROOT/target/portal-tailnet-manual"
+PORTAL_INTEGRATION_CHECKOUT="$MANUAL_ROOT/prepared/portal-source" \
+OXID_PORTAL_CONSUMER_STATE_DIR="$MANUAL_ROOT/runtime/portal-consumer" \
+  exec "$ROOT/scripts/portal-consumer-lifecycle.sh" "${1:-}"
