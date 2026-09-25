@@ -223,15 +223,22 @@ oxid_poll_job_dead() {
 }
 
 oxid_process_group_is_live() {
-  local pgid="$1" snapshot
-  snapshot="$(oxid_process_ps -axo pgid=,stat= 2>/dev/null)" || return 0
-  timeout -k 1s "${OXID_PROCESS_PS_TIMEOUT_SECONDS:-5}s" \
-    awk -v pgid="$pgid" '$1 == pgid && $2 !~ /^Z/ { found=1 } END { exit !found }' <<<"$snapshot"
-  case "$?" in
-    0) return 0 ;;
+  local pgid="$1" pids status=0 pid state
+  [[ "$pgid" =~ ^[1-9][0-9]*$ ]] || return 0
+  command -v pgrep >/dev/null 2>&1 || return 0
+  pids="$(timeout -k 1s "${OXID_PROCESS_PS_TIMEOUT_SECONDS:-5}s" pgrep -g "$pgid" 2>/dev/null)" \
+    || status=$?
+  case "$status" in
+    0) ;;
     1) return 1 ;;
     *) return 0 ;;
   esac
+  while IFS= read -r pid; do
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 0
+    state="$(oxid_process_ps -p "$pid" -o stat= 2>/dev/null)" || continue
+    [[ "$state" = Z* ]] || return 0
+  done <<<"$pids"
+  return 1
 }
 
 oxid_poll_process_group_dead() {

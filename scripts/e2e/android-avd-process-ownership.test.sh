@@ -5,6 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../.." && pwd -P)"
 readonly ROOT
+readonly FIXTURES="$ROOT/scripts/e2e/fixtures/android-avd-process-ownership"
 # shellcheck source=android-avd-process-ownership.sh
 source "$ROOT/scripts/e2e/android-avd-process-ownership.sh"
 
@@ -13,11 +14,25 @@ fail() {
   exit 1
 }
 
+# Pinned Bash 5.3 can block while materializing a large heredoc before its
+# command starts. Copy ordinary reviewed fixture files under an explicit bound.
+copy_fixture() {
+  local fixture="$1" destination="$2"
+  timeout -k 1s 5s cp -- "$FIXTURES/$fixture" "$destination"
+}
+
 command -v timeout >/dev/null 2>&1 || fail timeout-capability
 if timeout -k 1s 0.1s sleep 30; then
   fail timeout-result
 else
   [ "$?" -eq 124 ] || fail timeout-result
+fi
+if grep -q '<''<' "${BASH_SOURCE[0]}"; then
+  fail inline-heredoc-fixture
+fi
+if grep -qF 'oxid_process_ps -axo pgid=,stat=' \
+  "$ROOT/scripts/e2e/android-avd-process-ownership.sh"; then
+  fail host-wide-process-snapshot
 fi
 
 temporary="$(timeout -k 1s 5s mktemp -d "${TMPDIR:-/tmp}/oxid-avd-contract.XXXXXX")"
@@ -26,11 +41,7 @@ trap cleanup EXIT
 
 discovery_root="$temporary/avd-discovery"
 mkdir -p "$discovery_root/sdk/emulator" "$discovery_root/avd"
-cat >"$discovery_root/sdk/emulator/emulator" <<'EOF'
-#!/usr/bin/env bash
-[ "${1:-}" = -list-avds ] || exit 90
-printf '%s\n' zeta-avd alpha-avd
-EOF
+copy_fixture discovery-emulator.sh "$discovery_root/sdk/emulator/emulator"
 chmod 700 "$discovery_root/sdk/emulator/emulator"
 : >"$discovery_root/avd/alpha-avd.ini"
 ANDROID_AVD_HOME="$discovery_root/avd"
@@ -40,42 +51,7 @@ oxid_android_avd_definition_exists alpha-avd || fail avd-definition
 if oxid_android_avd_definition_exists missing-avd; then fail missing-avd-definition; fi
 
 timeout_command="$(command -v timeout)"
-cat >"$temporary/android-failure-marker-fixture.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-source "$1"
-mode="$2"
-cleanup_marker="$3"
-oxid_android_avd_failure_marker_reset
-failure_phase="unreported-timeout-or-abort"
-cleanup() {
-  incoming=$?
-  oxid_android_avd_emit_failure_marker "$incoming" "$failure_phase"
-  : >"$cleanup_marker"
-  exit "$incoming"
-}
-trap cleanup EXIT
-case "$mode" in
-  nonzero)
-    failure_phase="nonzero"
-    exit 1
-    ;;
-  unreported)
-    false
-    ;;
-  signal|timeout)
-    wait_pid=""
-    trap 'failure_phase=signal-term; if [ -n "${wait_pid:-}" ]; then kill -TERM "$wait_pid" 2>/dev/null || true; wait "$wait_pid" 2>/dev/null || true; fi; exit 143' TERM
-    if [ "$mode" = signal ]; then kill -TERM "$$"; fi
-    # A background child plus an explicit wait gives Bash an interruptible
-    # boundary without emitting platform-specific foreground-job diagnostics.
-    sleep 30 &
-    wait_pid=$!
-    wait "$wait_pid" 2>/dev/null || true
-    ;;
-  *) exit 64 ;;
-esac
-EOF
+copy_fixture failure-marker.sh "$temporary/android-failure-marker-fixture.sh"
 chmod 700 "$temporary/android-failure-marker-fixture.sh"
 
 assert_android_failure_marker() {
@@ -164,15 +140,7 @@ oxid_epoch_seconds_are_close 1700000000 1700000300 300 || fail emulator-clock-bo
 if oxid_epoch_seconds_are_close 1700000000 1700000301 300; then fail emulator-clock-outside-window; fi
 if oxid_epoch_seconds_are_close invalid 1700000000 300; then fail emulator-clock-invalid-value; fi
 
-cat >"$temporary/fake-adb" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"$OXID_FAKE_ADB_INVENTORY_LOG"
-[ "$*" = 'devices -l' ] || {
-  printf 'MUTATION\n' >>"$OXID_FAKE_ADB_INVENTORY_LOG"
-  exit 97
-}
-printf 'List of devices attached\nR5CT1234ABC\tdevice product:fixture transport_id:1\n'
-EOF
+copy_fixture fake-adb.sh "$temporary/fake-adb"
 chmod 700 "$temporary/fake-adb"
 : >"$temporary/adb-inventory.log"
 if OXID_FAKE_ADB_INVENTORY_LOG="$temporary/adb-inventory.log" \
@@ -182,20 +150,9 @@ fi
 [ "$(wc -l <"$temporary/adb-inventory.log" | tr -d ' ')" -eq 1 ] || fail adb-physical-mutation
 [ "$(<"$temporary/adb-inventory.log")" = 'devices -l' ] || fail adb-physical-command
 
-cat >"$temporary/grandchild.sh" <<'EOF'
-#!/usr/bin/env bash
-trap 'printf "TERM\n" >"$2"' TERM
-printf '%s\n' "$$" >"$1"
-while :; do sleep 1; done
-EOF
+copy_fixture grandchild.sh "$temporary/grandchild.sh"
 chmod 700 "$temporary/grandchild.sh"
-cat >"$temporary/owner.sh" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$$" >"$1"
-bash "$2" "$3" "$4"
-status=$?
-printf '%s\n' "$status" >/dev/null
-EOF
+copy_fixture owner.sh "$temporary/owner.sh"
 chmod 700 "$temporary/owner.sh"
 timeout -k 1s 30s "$temporary/owner.sh" "$temporary/owner.pid" \
   "$temporary/grandchild.sh" "$temporary/grandchild.pid" "$temporary/term.seen" &
@@ -260,11 +217,7 @@ if oxid_emulator_command_matches "/sdk/emulator -avd other_avd -read-only -no-sn
   fail emulator-avd-refusal
 fi
 
-cat >"$temporary/emulator.mjs" <<'EOF'
-import fs from "node:fs";
-process.on("SIGTERM", () => fs.writeFileSync(process.env.OXID_FAKE_EMULATOR_TERM, "TERM\n"));
-setInterval(() => {}, 1000);
-EOF
+copy_fixture emulator.mjs "$temporary/emulator.mjs"
 OXID_FAKE_EMULATOR_TERM="$temporary/emulator-term.seen" \
   node "$temporary/emulator.mjs" -avd exact_avd -read-only -no-snapshot -no-snapshot-save -port 5562 &
 fake_emulator_pid=$!
@@ -285,56 +238,8 @@ timeout -k 1s 5s mkdir -p "$fixture_root/scripts/e2e" "$fixture_root/scripts" "$
 timeout -k 1s 5s cp "$ROOT/scripts/e2e/portal-virtual-mobile-stack.sh" \
   "$ROOT/scripts/e2e/android-avd-process-ownership.sh" "$fixture_root/scripts/e2e/"
 timeout -k 1s 5s cp "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" "$fixture_root/scripts/"
-cat >"$temporary/fake-bin/docker" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"$OXID_FAKE_DOCKER_LOG"
-case "${1:-}" in
-  info) exit 0 ;;
-  ps)
-    count=0
-    [ ! -f "$OXID_FAKE_DOCKER_COUNT" ] || count="$(cat "$OXID_FAKE_DOCKER_COUNT")"
-    count=$((count + 1))
-    printf '%s\n' "$count" >"$OXID_FAKE_DOCKER_COUNT"
-    if [ "$count" -eq 1 ]; then
-      behavior="${OXID_FAKE_DOCKER_INITIAL:-empty}"
-    else
-      behavior="${OXID_FAKE_DOCKER_CLEANUP:-empty}"
-      receipt="$(find "$OXID_FAKE_STACK_ROOT/target/portal-virtual-mobile/stack.lock" \
-        -mindepth 1 -maxdepth 1 -type d -name 'receipt-*' -print -quit)"
-      case "${OXID_FAKE_STACK_MUTATION:-none}" in
-        receipt-nonempty) printf 'block\n' >"$receipt/blocker" ;;
-        replace-receipt)
-          rmdir "$receipt" && mkdir "$receipt" && printf 'foreign\n' >"$receipt/marker"
-          ;;
-        replace-lock)
-          rm -rf "$OXID_FAKE_STACK_ROOT/target/portal-virtual-mobile/stack.lock"
-          mkdir "$OXID_FAKE_STACK_ROOT/target/portal-virtual-mobile/stack.lock"
-          printf 'foreign\n' >"$OXID_FAKE_STACK_ROOT/target/portal-virtual-mobile/stack.lock/marker"
-          ;;
-      esac
-    fi
-    case "$behavior" in
-      empty) ;;
-      nonempty) printf 'occupied-public-project\n' ;;
-      error) exit 96 ;;
-      timeout) sleep 30 ;;
-      *) exit 95 ;;
-    esac
-    ;;
-  *) exit 97 ;;
-esac
-EOF
-cat >"$temporary/fake-bin/git" <<'EOF'
-#!/usr/bin/env bash
-if [ "${3:-}" = status ]; then exit 0; fi
-if [ "${1:-}" = clone ]; then
-  if [ "${OXID_FAKE_GIT_CLONE_MODE:-fail}" = block ]; then
-    printf 'ready\n' >"$OXID_FAKE_GIT_READY"
-    sleep 2
-  fi
-fi
-exit 97
-EOF
+copy_fixture fake-docker.sh "$temporary/fake-bin/docker"
+copy_fixture fake-git.sh "$temporary/fake-bin/git"
 chmod 700 "$temporary/fake-bin/docker" "$temporary/fake-bin/git"
 
 run_stack_fixture() {
@@ -544,21 +449,10 @@ launcher_bin="$temporary/launcher-bin"
 launcher_sdk="$temporary/android-sdk"
 timeout -k 1s 5s mkdir -p "$launcher_bin" "$launcher_sdk/platform-tools"
 for tool in nix rustup java node; do
-  cat >"$launcher_bin/$tool" <<'EOF'
-#!/usr/bin/env bash
-exit 97
-EOF
+  copy_fixture exit-97.sh "$launcher_bin/$tool"
   chmod 700 "$launcher_bin/$tool"
 done
-cat >"$launcher_sdk/platform-tools/adb" <<'EOF'
-#!/usr/bin/env bash
-parent="$(ps -p "$PPID" -o comm= 2>/dev/null)"
-printf 'parent=%s serial=%s args=%s\n' "$parent" "${ANDROID_SERIAL:-unset}" "$*" >>"$OXID_FAKE_ADB_LOG"
-case "${1:-}" in
-  devices) printf 'List of devices attached\nfixture-device\tdevice\n' ;;
-  get-state) printf 'offline\n' ;;
-esac
-EOF
+copy_fixture launcher-adb.sh "$launcher_sdk/platform-tools/adb"
 chmod 700 "$launcher_sdk/platform-tools/adb"
 fake_adb_log="$temporary/adb.log"
 if OXID_FAKE_ADB_LOG="$fake_adb_log" ANDROID_HOME="$launcher_sdk" \
