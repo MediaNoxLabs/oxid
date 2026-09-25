@@ -1673,8 +1673,8 @@ mod tests {
     use oxid_foundation::UnixTimestampMillis;
     #[cfg(not(target_arch = "wasm32"))]
     use oxid_identity_application::{
-        DidDocumentMetadataView, DidDocumentView, DidRecordView, PublicJwkView,
-        VerificationMethodView, VerificationRelationshipView,
+        DidDocumentMetadataView, DidDocumentView, DidRecordView, DidRefreshAvailability,
+        PublicJwkView, VerificationMethodView, VerificationRelationshipView,
     };
     use oxid_platform_ports::PlatformError;
 
@@ -2072,6 +2072,7 @@ mod tests {
         let (did, method_id) = holder_reference(&credential).expect("holder reference");
         let public_key = EmbeddedGroupAffine::generator() * EmbeddedFr::from(987_654_321_u64);
         DidRecordView {
+            refresh_availability: DidRefreshAvailability::Unavailable,
             document: DidDocumentView {
                 contexts: vec!["https://www.w3.org/ns/did/v1".to_owned()],
                 id: did.clone(),
