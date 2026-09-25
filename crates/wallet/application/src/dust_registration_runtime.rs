@@ -151,6 +151,7 @@ struct DustRegistrationTimelineOperation {
     correlation_id: WalletOperationCorrelationId,
     causation_id: WalletOperationCausationId,
     attempt: u16,
+    effect: Option<WalletDustRegistrationEffect>,
     started: Instant,
 }
 
@@ -342,12 +343,7 @@ impl WalletDustRegistrationRuntime {
         event: &WalletDustRegistrationSettlementEvent,
         terminal: Option<WalletOperationOutcome>,
     ) {
-        if self.timeline_operation.is_none()
-            && !matches!(
-                event,
-                WalletDustRegistrationSettlementEvent::Eligibility { .. }
-            )
-        {
+        if self.timeline_operation.is_none() && !opens_timeline_operation(event) {
             return;
         }
         let identity = event_identity(event).clone();
@@ -374,6 +370,7 @@ impl WalletDustRegistrationRuntime {
                 correlation_id,
                 causation_id,
                 attempt: 0,
+                effect: None,
                 started: Instant::now(),
             });
         }
@@ -385,10 +382,15 @@ impl WalletDustRegistrationRuntime {
         let Some(context) = self.timeline_operation.as_mut() else {
             return;
         };
-        context.attempt = context
-            .attempt
-            .saturating_add(1)
-            .min(MAX_WALLET_OPERATION_ATTEMPT);
+        context.attempt = if context.effect.as_ref() == Some(effect) {
+            context
+                .attempt
+                .saturating_add(1)
+                .min(MAX_WALLET_OPERATION_ATTEMPT)
+        } else {
+            1
+        };
+        context.effect = Some(effect.clone());
         let Some(attempt) = WalletOperationAttempt::new(context.attempt).ok() else {
             return;
         };
@@ -505,6 +507,19 @@ const fn effect_code(effect: &WalletDustRegistrationEffect) -> crate::WalletOper
     }
 }
 
+const fn opens_timeline_operation(event: &WalletDustRegistrationSettlementEvent) -> bool {
+    matches!(
+        event,
+        WalletDustRegistrationSettlementEvent::Eligibility { .. }
+            | WalletDustRegistrationSettlementEvent::Offline { .. }
+            | WalletDustRegistrationSettlementEvent::TimedOut { .. }
+            | WalletDustRegistrationSettlementEvent::Degraded { .. }
+            | WalletDustRegistrationSettlementEvent::Suspended { .. }
+            | WalletDustRegistrationSettlementEvent::Resumed { .. }
+            | WalletDustRegistrationSettlementEvent::Retry { .. }
+    )
+}
+
 fn event_identity(
     event: &WalletDustRegistrationSettlementEvent,
 ) -> &crate::WalletDustRegistrationSettlementIdentity {
@@ -618,6 +633,12 @@ const fn terminal_outcome(
         }
         WalletDustRegistrationSettlementEvent::Superseded { .. } => {
             Some(WalletOperationOutcome::Superseded)
+        }
+        WalletDustRegistrationSettlementEvent::Offline { .. }
+        | WalletDustRegistrationSettlementEvent::TimedOut { .. }
+        | WalletDustRegistrationSettlementEvent::Degraded { .. }
+        | WalletDustRegistrationSettlementEvent::Suspended { .. } => {
+            Some(WalletOperationOutcome::InProgress)
         }
         _ if !matches!(previous.state, WalletDustRegistrationSettlementState::Ready)
             && matches!(next.state, WalletDustRegistrationSettlementState::Ready) =>
@@ -928,6 +949,37 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn timeline_attempts_count_retries_of_one_effect_not_workflow_stages() {
+        let timeline = WalletOperationTimeline::with_capacity(32).unwrap();
+        let mut runtime = WalletDustRegistrationRuntime::with_operation_timeline(timeline.clone());
+        let draft = oxid_wallet_domain::WalletTransactionDraftId::parse("dustreg_test").unwrap();
+        runtime.observe(WalletDustRegistrationSettlementEvent::Eligibility {
+            identity: identity(1),
+            revision: 1,
+            eligible: true,
+        });
+        let prepare = runtime.coordinator().active_effect().unwrap().clone();
+        let first = admitted_token(runtime.admit_current(&prepare));
+        assert!(runtime.release(first));
+        let second = admitted_token(runtime.admit_current(&prepare));
+        assert!(runtime.complete(second, completion::prepared(identity(1), draft, 1)));
+        let authorization = runtime.coordinator().active_effect().unwrap().clone();
+        let _ = runtime.admit_current(&authorization);
+
+        let attempts = timeline
+            .query()
+            .unwrap()
+            .records()
+            .iter()
+            .filter_map(|record| match record.event {
+                WalletOperationEvent::EffectPlanned(_) => Some(record.attempt.value()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(attempts, vec![1, 2, 1]);
+    }
+
     type RecoveryScenario = (
         fn(
             crate::WalletDustRegistrationSettlementIdentity,
@@ -949,6 +1001,186 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn maps_every_settlement_event_to_its_closed_timeline_code() {
+        let identity = identity(1);
+        let draft = oxid_wallet_domain::WalletTransactionDraftId::parse("dustreg_test").unwrap();
+        let transaction = oxid_wallet_domain::ChainTransactionId::parse("tx_test").unwrap();
+        let cases = vec![
+            (
+                WalletDustRegistrationSettlementEvent::Eligibility {
+                    identity: identity.clone(),
+                    revision: 1,
+                    eligible: true,
+                },
+                WalletDustRegistrationTimelineCode::EligibilityObserved,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::RegistrationAlreadyCurrent {
+                    identity: identity.clone(),
+                    revision: 1,
+                },
+                WalletDustRegistrationTimelineCode::RegistrationAlreadyCurrent,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::AuthorizationRequested {
+                    identity: identity.clone(),
+                    draft_id: draft.clone(),
+                    preparation_revision: 1,
+                },
+                WalletDustRegistrationTimelineCode::Prepared,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::AuthorizationSucceeded {
+                    identity: identity.clone(),
+                    draft_id: draft.clone(),
+                },
+                WalletDustRegistrationTimelineCode::AuthorizationSucceeded,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::AuthorizationRejected {
+                    identity: identity.clone(),
+                    draft_id: draft.clone(),
+                },
+                WalletDustRegistrationTimelineCode::AuthorizationRejected,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::SubmissionAccepted {
+                    identity: identity.clone(),
+                    draft_id: draft.clone(),
+                    transaction_id: transaction.clone(),
+                },
+                WalletDustRegistrationTimelineCode::SubmissionAccepted,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::FinalityObserved {
+                    identity: identity.clone(),
+                    transaction_id: transaction.clone(),
+                    revision: 1,
+                },
+                WalletDustRegistrationTimelineCode::FinalityObserved,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::RegistrationReconciled {
+                    identity: identity.clone(),
+                    transaction_id: transaction.clone(),
+                    revision: 1,
+                    reconciliation: WalletDustRegistrationSettlementReconciliation::Pending,
+                },
+                WalletDustRegistrationTimelineCode::ReconciliationPending,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::RegistrationReconciled {
+                    identity: identity.clone(),
+                    transaction_id: transaction.clone(),
+                    revision: 1,
+                    reconciliation: WalletDustRegistrationSettlementReconciliation::Included,
+                },
+                WalletDustRegistrationTimelineCode::ReconciliationIncluded,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::RegistrationReconciled {
+                    identity: identity.clone(),
+                    transaction_id: transaction.clone(),
+                    revision: 1,
+                    reconciliation: WalletDustRegistrationSettlementReconciliation::Dropped,
+                },
+                WalletDustRegistrationTimelineCode::ReconciliationDropped,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::DustRefreshed {
+                    identity: identity.clone(),
+                    transaction_id: transaction.clone(),
+                    revision: 1,
+                    after_observation_revision: 1,
+                    ready: true,
+                },
+                WalletDustRegistrationTimelineCode::DustRefreshedReady,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::DustRefreshed {
+                    identity: identity.clone(),
+                    transaction_id: transaction.clone(),
+                    revision: 1,
+                    after_observation_revision: 1,
+                    ready: false,
+                },
+                WalletDustRegistrationTimelineCode::DustRefreshedPending,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::DroppedRegistrationAbandoned {
+                    identity: identity.clone(),
+                    transaction_id: transaction,
+                    after_observation_revision: 1,
+                },
+                WalletDustRegistrationTimelineCode::DroppedRegistrationAbandoned,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::Cancelled {
+                    identity: identity.clone(),
+                    draft_id: draft,
+                },
+                WalletDustRegistrationTimelineCode::Cancelled,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::Offline {
+                    identity: identity.clone(),
+                    revision: 1,
+                },
+                WalletDustRegistrationTimelineCode::Offline,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::TimedOut {
+                    identity: identity.clone(),
+                    revision: 1,
+                },
+                WalletDustRegistrationTimelineCode::TimedOut,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::Degraded {
+                    identity: identity.clone(),
+                    revision: 1,
+                },
+                WalletDustRegistrationTimelineCode::AdapterFailed,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::Suspended {
+                    identity: identity.clone(),
+                    revision: 1,
+                },
+                WalletDustRegistrationTimelineCode::Suspended,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::Resumed {
+                    identity: identity.clone(),
+                    revision: 1,
+                },
+                WalletDustRegistrationTimelineCode::Resumed,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::Retry {
+                    identity: identity.clone(),
+                    revision: 1,
+                },
+                WalletDustRegistrationTimelineCode::Retry,
+            ),
+            (
+                WalletDustRegistrationSettlementEvent::Superseded { identity },
+                WalletDustRegistrationTimelineCode::Superseded,
+            ),
+        ];
+
+        let actual = cases
+            .iter()
+            .map(|(event, _)| event_code(event))
+            .collect::<Vec<_>>();
+        let expected = cases
+            .into_iter()
+            .map(|(_, expected)| expected)
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
     }
 
     #[test]
@@ -1097,6 +1329,59 @@ mod tests {
             expected
         );
 
+        // A recoverable state closes the completed operation as continuing work.
+        // Resuming it explicitly starts a distinct lifecycle operation.
+        runtime.observe(WalletDustRegistrationSettlementEvent::Offline {
+            identity: identity(1),
+            revision: 3,
+        });
+        runtime.observe(WalletDustRegistrationSettlementEvent::Resumed {
+            identity: identity(1),
+            revision: 4,
+        });
+        let recovery_records = timeline.query().unwrap();
+        let terminal_events = recovery_records
+            .records()
+            .iter()
+            .filter_map(|record| match record.event {
+                WalletOperationEvent::Terminal { outcome, .. } => {
+                    Some((record.operation_id, outcome))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            terminal_events
+                .iter()
+                .filter(|(_, outcome)| *outcome == WalletOperationOutcome::InProgress)
+                .count(),
+            1
+        );
+        assert_eq!(
+            terminal_events
+                .iter()
+                .filter(|(_, outcome)| *outcome == WalletOperationOutcome::Succeeded)
+                .count(),
+            2
+        );
+        let continuing_operation = terminal_events
+            .iter()
+            .find_map(|(operation, outcome)| {
+                (*outcome == WalletOperationOutcome::InProgress).then_some(*operation)
+            })
+            .unwrap();
+        assert!(recovery_records.records().iter().all(|record| {
+            record.operation_id != continuing_operation
+                || !matches!(
+                    record.event,
+                    WalletOperationEvent::Terminal {
+                        outcome: WalletOperationOutcome::Succeeded,
+                        ..
+                    }
+                )
+        }));
+        let records_before_refresh = recovery_records.total_records();
+
         // This later refresh changes the projection but leaves it Ready.
         runtime.observe(completion::dust_refreshed(
             identity(1),
@@ -1110,14 +1395,8 @@ mod tests {
             WalletDustRegistrationSettlementState::Ready
         );
         assert_eq!(
-            timeline
-                .query()
-                .unwrap()
-                .records()
-                .iter()
-                .map(|record| record.event.clone())
-                .collect::<Vec<_>>(),
-            expected
+            timeline.query().unwrap().total_records(),
+            records_before_refresh
         );
     }
 

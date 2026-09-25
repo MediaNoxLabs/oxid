@@ -252,6 +252,14 @@ impl WalletOperationResourceMeasurements {
 }
 
 /// Closed, payload-free DUST registration recovery facts.
+///
+/// Each value is a presentation-neutral observation of a reducer event; consumers
+/// must use the accompanying [`WalletOperationEvent::Terminal`] record to identify
+/// a closed lifecycle outcome. Recoverable codes (`Offline`, `TimedOut`,
+/// `AdapterFailed`, and `Suspended`) close their current timeline operation as
+/// [`WalletOperationOutcome::InProgress`], never as a failure. A later `Resumed`
+/// or `Retry` observation starts a new operation when it changes the reducer
+/// projection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WalletDustRegistrationTimelineCode {
     EligibilityObserved,
