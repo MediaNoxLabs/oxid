@@ -52,6 +52,28 @@ cadence/evidence values, and scenarios without test mappings. Live, expensive
 or physical evidence remains on its declared cadence; it is not a universal PR
 gate.
 
+## Native transport trust readiness
+
+`transportTrustReadiness` is a closed, payload-free release-evidence manifest.
+It classifies the indexer, node, and prover consistently across three route
+classes: Standalone loopback uses `DevelopmentLoopback`, private Tailnet routes
+use `BundledPublicRoots`, and PreProd uses the operating system's
+`PlatformTrust`. The manifest stores prerequisites and evidence classes, never
+routes, peers, certificate material, credentials, or device identity.
+
+Android emulator and iOS Simulator results remain diagnostics. Physical Android
+is an explicit owner-invoked acceptance lane for Tailnet and PreProd; it is not
+part of ordinary merge CI. Physical iOS is recorded as planned/unsupported until
+signing, deployment, and a reviewed runbook exist. An unavailable capability is
+reported as unavailable rather than inferred from host or simulator evidence.
+
+The dependency audit deliberately records two verifier lines. The pinned
+Jsonrpsee 0.24.11 transport (through Subxt 0.44.3) owns
+`rustls-platform-verifier` 0.5.3, while Reqwest 0.13.4 and the shared platform
+boundary own 0.7.0. [`check-transport-trust.sh`](../../scripts/check-transport-trust.sh)
+keeps that temporary upstream split bounded; consolidation requires a separately
+verified Jsonrpsee/Subxt upgrade.
+
 ## Initial slice
 
 `wallet-root-recovery-native-presence` records the merged native-presence recovery

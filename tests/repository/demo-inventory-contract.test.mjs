@@ -145,6 +145,55 @@ test("inventory keeps Portal Final issuance evidence target-scoped", () => {
   assert.doesNotMatch(interactive, /just portal-tailnet-manual-reset/u);
 });
 
+test("inventory records closed native transport trust readiness without sensitive coordinates", () => {
+  const inventory = loadInventory();
+  const readiness = inventory.transportTrustReadiness;
+  assert.deepEqual(readiness.services, ["indexer", "node", "prover"]);
+  assert.deepEqual(readiness.environments.map(({ id, policy }) => [id, policy]), [
+    ["standalone", "development-loopback"],
+    ["tailnet", "bundled-public-roots"],
+    ["preprod", "platform-trust"],
+  ]);
+  for (const environment of readiness.environments) {
+    assert.deepEqual(environment.serviceIds, readiness.services);
+    assert.deepEqual(environment.targetEvidence.map(({ targetId }) => targetId), [
+      "android-emulator",
+      "ios-simulator",
+      "android-physical",
+      "ios-physical",
+    ]);
+  }
+  assert.deepEqual(readiness.environments[0].targetEvidence.map(({ availability, evidenceClass }) => [availability, evidenceClass]), [
+    ["automated", "diagnostic"],
+    ["automated", "diagnostic"],
+    ["unsupported", "planned"],
+    ["unsupported", "planned"],
+  ]);
+  assert.deepEqual(readiness.environments[1].targetEvidence.map(({ availability, evidenceClass }) => [availability, evidenceClass]), [
+    ["unsupported", "planned"],
+    ["manual", "diagnostic"],
+    ["manual", "acceptance"],
+    ["unsupported", "planned"],
+  ]);
+  assert.deepEqual(readiness.environments[2].targetEvidence.map(({ availability, evidenceClass }) => [availability, evidenceClass]), [
+    ["unsupported", "planned"],
+    ["unsupported", "planned"],
+    ["manual", "acceptance"],
+    ["unsupported", "planned"],
+  ]);
+  assert.deepEqual(readiness.verifierDependency.lines, [
+    { version: "0.5.3", owner: "jsonrpsee-client-transport-0.24.11" },
+    { version: "0.7.0", owner: "reqwest-0.13.4-and-platform-system" },
+  ]);
+  assert.equal(readiness.verifierDependency.disposition, "temporary-upstream-split");
+  assert.equal(readiness.verifierDependency.auditReference, "scripts/check-transport-trust.sh");
+
+  const publishedEvidence = JSON.stringify(readiness);
+  assert.doesNotMatch(publishedEvidence, /(?:https?|wss?):\/\//u);
+  assert.doesNotMatch(publishedEvidence, /(?:^|[^a-z])(?:endpoint|peer|credential|certificate-payload|device-identity)(?:[^a-z]|$)/iu);
+  assert.doesNotMatch(publishedEvidence, /(?:\d{1,3}\.){3}\d{1,3}/u);
+});
+
 test("validator rejects broken references, unsafe operations, and invalid evidence contracts", () => {
   const valid = loadInventory();
   const cases = [
@@ -162,6 +211,8 @@ test("validator rejects broken references, unsafe operations, and invalid eviden
     ["missing test mapping", (inventory) => { delete inventory.scenarios[0].testMapping; }, /missing a test mapping|schema required property 'testMapping'/u],
     ["unknown schema property", (inventory) => { inventory.products[0].unpublished = true; }, /schema.*additional property|additional property.*schema/u],
     ["invalid command oneOf", (inventory) => { inventory.commands[0].status = "manual"; }, /schema.*oneOf|oneOf.*schema/u],
+    ["unknown trust target", (inventory) => { inventory.transportTrustReadiness.environments[0].targetEvidence[0].targetId = "unknown-target"; }, /trust readiness.*unknown target/u],
+    ["missing trust service", (inventory) => { inventory.transportTrustReadiness.environments[0].serviceIds.pop(); }, /transportTrustReadiness.*serviceIds.*schema const|trust readiness.*service set/u],
   ];
   for (const [name, mutate, error] of cases) {
     const inventory = clone(valid); mutate(inventory);

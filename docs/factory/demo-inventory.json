@@ -2,6 +2,55 @@
   "version": 1,
   "evidenceClasses": ["preflight", "diagnostic", "acceptance", "planned"],
   "cadences": ["per-change", "weekly", "on-demand", "before-release", "manual"],
+  "transportTrustReadiness": {
+    "services": ["indexer", "node", "prover"],
+    "environments": [
+      {
+        "id": "standalone",
+        "policy": "development-loopback",
+        "serviceIds": ["indexer", "node", "prover"],
+        "prerequisites": ["owned-loopback-stack", "local-development-build"],
+        "targetEvidence": [
+          {"targetId": "android-emulator", "availability": "automated", "evidenceClass": "diagnostic"},
+          {"targetId": "ios-simulator", "availability": "automated", "evidenceClass": "diagnostic"},
+          {"targetId": "android-physical", "availability": "unsupported", "evidenceClass": "planned"},
+          {"targetId": "ios-physical", "availability": "unsupported", "evidenceClass": "planned"}
+        ]
+      },
+      {
+        "id": "tailnet",
+        "policy": "bundled-public-roots",
+        "serviceIds": ["indexer", "node", "prover"],
+        "prerequisites": ["magicdns-fqdn", "publicly-valid-host-certificate", "receipt-owned-serve-route"],
+        "targetEvidence": [
+          {"targetId": "android-emulator", "availability": "unsupported", "evidenceClass": "planned"},
+          {"targetId": "ios-simulator", "availability": "manual", "evidenceClass": "diagnostic"},
+          {"targetId": "android-physical", "availability": "manual", "evidenceClass": "acceptance"},
+          {"targetId": "ios-physical", "availability": "unsupported", "evidenceClass": "planned"}
+        ]
+      },
+      {
+        "id": "preprod",
+        "policy": "platform-trust",
+        "serviceIds": ["indexer", "node", "prover"],
+        "prerequisites": ["canonical-public-service-names", "operating-system-trust-store", "owner-authorized-account"],
+        "targetEvidence": [
+          {"targetId": "android-emulator", "availability": "unsupported", "evidenceClass": "planned"},
+          {"targetId": "ios-simulator", "availability": "unsupported", "evidenceClass": "planned"},
+          {"targetId": "android-physical", "availability": "manual", "evidenceClass": "acceptance"},
+          {"targetId": "ios-physical", "availability": "unsupported", "evidenceClass": "planned"}
+        ]
+      }
+    ],
+    "verifierDependency": {
+      "lines": [
+        {"version": "0.5.3", "owner": "jsonrpsee-client-transport-0.24.11"},
+        {"version": "0.7.0", "owner": "reqwest-0.13.4-and-platform-system"}
+      ],
+      "disposition": "temporary-upstream-split",
+      "auditReference": "scripts/check-transport-trust.sh"
+    }
+  },
   "products": [
     {
       "id": "oxid-wallet",

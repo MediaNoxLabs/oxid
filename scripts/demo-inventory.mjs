@@ -123,6 +123,31 @@ export function validateInventory(inventory, schema = JSON.parse(readFileSync(in
   const scenarios = idMap(inventory.scenarios, "scenarios");
   const demos = idMap(inventory.demos, "demos");
 
+  const trustReadiness = inventory.transportTrustReadiness;
+  const expectedServices = ["indexer", "node", "prover"];
+  if (!sameValue(trustReadiness.services, expectedServices)) fail("transport trust readiness must use the closed indexer, node, and prover service set");
+  const trustEnvironments = idMap(trustReadiness.environments, "transport trust readiness environments");
+  const expectedPolicies = new Map([
+    ["standalone", "development-loopback"],
+    ["tailnet", "bundled-public-roots"],
+    ["preprod", "platform-trust"],
+  ]);
+  if (!sameValue([...trustEnvironments.keys()], [...expectedPolicies.keys()])) fail("transport trust readiness must record standalone, tailnet, and preprod in order");
+  const expectedTrustTargets = ["android-emulator", "ios-simulator", "android-physical", "ios-physical"];
+  for (const [environmentId, policy] of expectedPolicies) {
+    const environment = trustEnvironments.get(environmentId);
+    if (environment.policy !== policy) fail(`transport trust readiness environment '${environmentId}' has the wrong policy`);
+    if (!sameValue(environment.serviceIds, expectedServices)) fail(`transport trust readiness environment '${environmentId}' has an incomplete service set`);
+    const evidenceTargets = environment.targetEvidence.map(({ targetId }) => targetId);
+    for (const { targetId } of environment.targetEvidence) if (!targets.has(targetId)) fail(`transport trust readiness references unknown target '${targetId}'`);
+    if (!sameValue(evidenceTargets, expectedTrustTargets)) fail(`transport trust readiness environment '${environmentId}' must classify every native target in order`);
+  }
+  safeRelativePath(trustReadiness.verifierDependency.auditReference, "transport trust readiness verifier audit reference");
+  const trustEvidence = JSON.stringify(trustReadiness);
+  if (/(?:https?|wss?):\/\//iu.test(trustEvidence) || /(?:\d{1,3}\.){3}\d{1,3}/u.test(trustEvidence) || /[a-z0-9-]+\.ts\.net/iu.test(trustEvidence)) {
+    fail("transport trust readiness must not retain service, Tailnet, or device coordinates");
+  }
+
   for (const command of commands.values()) {
     if (!commandPhases.has(command.phase)) fail(`command '${command.id}' has invalid phase`);
     safeRelativePath(command.reference, `command '${command.id}' reference`);
