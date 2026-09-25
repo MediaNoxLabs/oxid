@@ -22,7 +22,7 @@ pub trait DidResolutionPort: Send + Sync {
     fn resolve<'a>(&'a self, did: &'a MidnightDid) -> DidResolutionPortFuture<'a>;
 
     fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
-        DidRefreshAvailability::Available
+        DidRefreshAvailability::Unavailable
     }
 }
 
@@ -591,9 +591,15 @@ mod tests {
 
     const DID: &str =
         "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const OTHER_DID: &str =
+        "did:midnight:undeployed:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
 
     fn resolution() -> DidResolution {
-        let did = MidnightDid::parse(DID).expect("DID");
+        resolution_for(DID, None)
+    }
+
+    fn resolution_for(did: &str, updated: Option<&str>) -> DidResolution {
+        let did = MidnightDid::parse(did).expect("DID");
         DidResolution::new(
             DidDocument::new(DidDocumentParts {
                 contexts: vec![DID_CONTEXT.to_owned(), JWK_CONTEXT.to_owned()],
@@ -605,7 +611,10 @@ mod tests {
                 services: Vec::new(),
             })
             .expect("document"),
-            DidDocumentMetadata::default(),
+            DidDocumentMetadata {
+                updated: updated.map(str::to_owned),
+                ..DidDocumentMetadata::default()
+            },
             DidResolutionMetadata::default(),
             DidResolutionSource::Standalone,
         )
@@ -663,10 +672,89 @@ mod tests {
             }
         }
     }
+
+    struct RejectingUpsertRepository(Mutex<Vec<DidRecord>>);
+    impl DidRecordRepository for RejectingUpsertRepository {
+        fn upsert(&self, _: DidRecord) -> Result<(), DidRecordRepositoryError> {
+            Err(DidRecordRepositoryError::Integrity)
+        }
+
+        fn list(
+            &self,
+            profile: &IdentityProfileId,
+        ) -> Result<Vec<DidRecord>, DidRecordRepositoryError> {
+            Ok(self
+                .0
+                .lock()
+                .expect("lock")
+                .iter()
+                .filter(|record| record.profile_id() == profile)
+                .cloned()
+                .collect())
+        }
+
+        fn get(
+            &self,
+            profile: &IdentityProfileId,
+            did: &MidnightDid,
+        ) -> Result<DidRecord, DidRecordRepositoryError> {
+            self.list(profile)?
+                .into_iter()
+                .find(|record| record.resolution().document().id() == did)
+                .ok_or(DidRecordRepositoryError::NotFound)
+        }
+
+        fn remove(
+            &self,
+            _: &IdentityProfileId,
+            _: &MidnightDid,
+        ) -> Result<(), DidRecordRepositoryError> {
+            Err(DidRecordRepositoryError::Unavailable)
+        }
+    }
+
     struct FixedResolver;
     impl DidResolutionPort for FixedResolver {
         fn resolve<'a>(&'a self, _: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
             Box::pin(async { Ok(resolution()) })
+        }
+
+        fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+            DidRefreshAvailability::Available
+        }
+    }
+
+    struct UpdatedResolver;
+    impl DidResolutionPort for UpdatedResolver {
+        fn resolve<'a>(&'a self, _: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
+            Box::pin(async { Ok(resolution_for(DID, Some("2026-09-25T00:00:00Z"))) })
+        }
+
+        fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+            DidRefreshAvailability::Available
+        }
+    }
+
+    struct ErrorResolver(DidResolutionPortError);
+    impl DidResolutionPort for ErrorResolver {
+        fn resolve<'a>(&'a self, _: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
+            let error = self.0;
+            Box::pin(async move { Err(error) })
+        }
+
+        fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+            DidRefreshAvailability::Available
+        }
+    }
+
+    struct MismatchedResolver;
+    impl DidResolutionPort for MismatchedResolver {
+        fn resolve<'a>(&'a self, _: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
+            Box::pin(async { Ok(resolution_for(OTHER_DID, Some("2026-09-25T00:00:00Z"))) })
+        }
+
+        fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+            DidRefreshAvailability::Available
         }
     }
 
@@ -687,6 +775,14 @@ mod tests {
 
     struct FixedLifecycle;
     impl DidLifecyclePort for FixedLifecycle {
+        fn managed_method_ids(
+            &self,
+            _: &IdentityProfileId,
+            _: &DidResolution,
+        ) -> Result<Vec<String>, DidLifecyclePortError> {
+            Ok(vec![format!("{DID}#auth-1")])
+        }
+
         fn create(
             &self,
             _: &IdentityProfileId,
@@ -793,6 +889,178 @@ mod tests {
             },
         )
         .expect("forget");
+    }
+
+    #[test]
+    fn successful_refresh_replaces_the_saved_document_after_subject_validation() {
+        let repository = Arc::new(MemoryRepository::default());
+        let profile = IdentityProfileId::parse("profile_test").expect("profile");
+        let did = MidnightDid::parse(DID).expect("DID");
+        repository
+            .upsert(DidRecord::new(profile.clone(), resolution()))
+            .expect("seed record");
+        let service = DidService::new(repository.clone(), Arc::new(UpdatedResolver));
+
+        let refreshed = futures_for_test::block_on(ResolveDidUseCase::execute(
+            &service,
+            ResolveDidCommand {
+                profile_id: profile.as_str().to_owned(),
+                did: did.as_str().to_owned(),
+            },
+        ))
+        .expect("refresh");
+
+        assert_eq!(
+            refreshed.document_metadata.updated.as_deref(),
+            Some("2026-09-25T00:00:00Z")
+        );
+        assert_eq!(
+            repository
+                .get(&profile, &did)
+                .expect("saved record")
+                .resolution()
+                .document_metadata()
+                .updated
+                .as_deref(),
+            Some("2026-09-25T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn failed_remote_refreshes_retain_the_last_saved_document() {
+        for error in [
+            DidResolutionPortError::NotFound,
+            DidResolutionPortError::Unavailable,
+            DidResolutionPortError::InvalidResponse,
+        ] {
+            let repository = Arc::new(MemoryRepository::default());
+            let profile = IdentityProfileId::parse("profile_test").expect("profile");
+            let did = MidnightDid::parse(DID).expect("DID");
+            repository
+                .upsert(DidRecord::new(profile.clone(), resolution()))
+                .expect("seed record");
+            let service = DidService::new(repository.clone(), Arc::new(ErrorResolver(error)));
+
+            assert_eq!(
+                futures_for_test::block_on(ResolveDidUseCase::execute(
+                    &service,
+                    ResolveDidCommand {
+                        profile_id: profile.as_str().to_owned(),
+                        did: did.as_str().to_owned(),
+                    },
+                )),
+                Err(DidOperationError::Resolution(error))
+            );
+            assert_eq!(
+                repository
+                    .get(&profile, &did)
+                    .expect("last saved record")
+                    .resolution()
+                    .document_metadata()
+                    .updated,
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn subject_mismatch_and_persistence_failure_retain_the_last_saved_document() {
+        let profile = IdentityProfileId::parse("profile_test").expect("profile");
+        let did = MidnightDid::parse(DID).expect("DID");
+        let mismatch_repository = Arc::new(MemoryRepository::default());
+        mismatch_repository
+            .upsert(DidRecord::new(profile.clone(), resolution()))
+            .expect("seed record");
+        let mismatch_service =
+            DidService::new(mismatch_repository.clone(), Arc::new(MismatchedResolver));
+        assert_eq!(
+            futures_for_test::block_on(ResolveDidUseCase::execute(
+                &mismatch_service,
+                ResolveDidCommand {
+                    profile_id: profile.as_str().to_owned(),
+                    did: did.as_str().to_owned(),
+                },
+            )),
+            Err(DidOperationError::SubjectMismatch)
+        );
+        assert_eq!(
+            mismatch_repository
+                .get(&profile, &did)
+                .expect("last saved record")
+                .resolution()
+                .document_metadata()
+                .updated,
+            None
+        );
+
+        let rejecting_repository =
+            Arc::new(RejectingUpsertRepository(Mutex::new(vec![DidRecord::new(
+                profile.clone(),
+                resolution(),
+            )])));
+        let persistence_service =
+            DidService::new(rejecting_repository.clone(), Arc::new(UpdatedResolver));
+        assert_eq!(
+            futures_for_test::block_on(ResolveDidUseCase::execute(
+                &persistence_service,
+                ResolveDidCommand {
+                    profile_id: profile.as_str().to_owned(),
+                    did: did.as_str().to_owned(),
+                },
+            )),
+            Err(DidOperationError::Persistence(
+                DidRecordRepositoryError::Integrity
+            ))
+        );
+        assert_eq!(
+            rejecting_repository
+                .get(&profile, &did)
+                .expect("last saved record")
+                .resolution()
+                .document_metadata()
+                .updated,
+            None
+        );
+    }
+
+    #[test]
+    fn record_view_distinguishes_local_unpublished_from_unavailable() {
+        let repository = Arc::new(MemoryRepository::default());
+        let profile = IdentityProfileId::parse("profile_test").expect("profile");
+        repository
+            .upsert(DidRecord::new(profile.clone(), resolution()))
+            .expect("seed record");
+        let managed_service = DidService::from_ports(
+            repository.clone(),
+            Arc::new(UnavailableDidResolver),
+            Arc::new(FixedLifecycle),
+        );
+        assert_eq!(
+            GetDidRecordUseCase::execute(
+                &managed_service,
+                DidRecordQuery {
+                    profile_id: profile.as_str().to_owned(),
+                    did: DID.to_owned(),
+                },
+            )
+            .expect("managed record")
+            .refresh_availability,
+            DidRefreshAvailability::LocalUnpublished
+        );
+
+        let observed_service = DidService::new(repository, Arc::new(UnavailableDidResolver));
+        assert_eq!(
+            GetDidRecordUseCase::execute(
+                &observed_service,
+                DidRecordQuery {
+                    profile_id: profile.as_str().to_owned(),
+                    did: DID.to_owned(),
+                },
+            )
+            .expect("observed record")
+            .refresh_availability,
+            DidRefreshAvailability::Unavailable
+        );
     }
 
     #[test]

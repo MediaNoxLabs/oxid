@@ -17,6 +17,41 @@ fn did_method_name(identifier: &str) -> &str {
 }
 
 #[component]
+fn DidRefreshControl(
+    availability: DidRefreshAvailability,
+    resolving: bool,
+    on_refresh: EventHandler<MouseEvent>,
+) -> Element {
+    match availability {
+        DidRefreshAvailability::Available => {
+            let label = if resolving {
+                "Refreshing DID…"
+            } else {
+                "Refresh from Midnight"
+            };
+            rsx! {
+                button {
+                    class: "secondary-action",
+                    r#type: "button",
+                    disabled: resolving,
+                    onclick: move |event| on_refresh.call(event),
+                    "{label}"
+                }
+            }
+        }
+        DidRefreshAvailability::LocalUnpublished => {
+            let message = "Saved locally. This managed DID is not published to the selected Midnight network.";
+            rsx! { p { class: "form-hint", "{message}" } }
+        }
+        DidRefreshAvailability::Unavailable => {
+            let message =
+                "Network refresh is unavailable for this DID in the selected Midnight network.";
+            rsx! { p { class: "form-hint", "{message}" } }
+        }
+    }
+}
+
+#[component]
 pub(super) fn DidsPage(
     active_profile: WalletProfileView,
     pending_identity_request: Signal<Option<PendingIdentityRequest>>,
@@ -663,8 +698,6 @@ pub(super) fn DidsPage(
                             let updated = record.document_metadata.updated.clone().unwrap_or_else(|| "No update timestamp".to_owned());
                             let is_managed = !record.managed_method_ids.is_empty();
                             let is_deactivated = record.document_metadata.deactivated == Some(true);
-                            let refresh_available = record.refresh_availability == DidRefreshAvailability::Available;
-                            let refresh_unpublished = record.refresh_availability == DidRefreshAvailability::LocalUnpublished;
                             rsx! {
                                 div { class: "did-journey-header",
                                     button {
@@ -694,12 +727,10 @@ pub(super) fn DidsPage(
                                         div { dt { "Methods" } dd { "{record.document.verification_methods.len()}" } }
                                         div { dt { "Services" } dd { "{record.document.services.len()}" } }
                                     }
-                                    if refresh_available {
-                                        button {
-                                            class: "secondary-action",
-                                            r#type: "button",
-                                            disabled: resolving,
-                                        onclick: move |_| {
+                                    DidRefreshControl {
+                                        availability: record.refresh_availability,
+                                        resolving,
+                                        on_refresh: move |_| {
                                             let service = refresh_services.resolve_did();
                                             let profile_id = refresh_profile.clone();
                                             let did = refresh_did.clone();
@@ -720,13 +751,7 @@ pub(super) fn DidsPage(
                                                     Err(error) => state.set(DidPageState::Ready { records: next, resolving: false, operation_error: Some(error.to_string()) }),
                                                 }
                                             });
-                                        },
-                                            if resolving { "Refreshing DID…" } else { "Refresh from Midnight" }
                                         }
-                                    } else if refresh_unpublished {
-                                        p { class: "form-hint", "Saved locally. This managed DID is not published to the selected Midnight network." }
-                                    } else {
-                                        p { class: "form-hint", "Network refresh is unavailable for this DID in the selected Midnight network." }
                                     }
                                     if let Some(error) = operation_error.clone() {
                                         p { class: "field-error", role: "alert", "{error}" }
@@ -898,7 +923,50 @@ pub(super) fn DidsPage(
 
 #[cfg(test)]
 mod tests {
-    use super::did_method_name;
+    use super::{DidRefreshControl, did_method_name};
+    use dioxus::{dioxus_core::Mutation, prelude::*};
+    use oxid_identity_application::DidRefreshAvailability;
+
+    #[derive(Clone, PartialEq, Props)]
+    struct RefreshHarnessProps {
+        availability: DidRefreshAvailability,
+        resolving: bool,
+    }
+
+    fn refresh_harness(props: RefreshHarnessProps) -> Element {
+        rsx! {
+            DidRefreshControl {
+                availability: props.availability,
+                resolving: props.resolving,
+                on_refresh: move |_| {}
+            }
+        }
+    }
+
+    fn rendered_refresh(
+        availability: DidRefreshAvailability,
+        resolving: bool,
+    ) -> (Vec<String>, bool) {
+        let mut dom = VirtualDom::new_with_props(
+            refresh_harness,
+            RefreshHarnessProps {
+                availability,
+                resolving,
+            },
+        );
+        let edits = dom.rebuild_to_vec().edits;
+        let text = edits
+            .iter()
+            .filter_map(|edit| match edit {
+                Mutation::CreateTextNode { value, .. } => Some(value.to_string()),
+                _ => None,
+            })
+            .collect();
+        let actionable = edits
+            .iter()
+            .any(|edit| matches!(edit, Mutation::NewEventListener { name, .. } if name == "click"));
+        (text, actionable)
+    }
 
     #[test]
     fn did_inventory_is_a_compact_master_detail_journey() {
@@ -937,5 +1005,31 @@ mod tests {
             did_method_name("did:midnight:undeployed:alice"),
             "did:midnight:undeployed:alice"
         );
+    }
+
+    #[test]
+    fn rendered_refresh_control_follows_typed_capability_state() {
+        let (available, actionable) = rendered_refresh(DidRefreshAvailability::Available, false);
+        assert_eq!(available, ["Refresh from Midnight"]);
+        assert!(actionable);
+
+        let (busy, actionable) = rendered_refresh(DidRefreshAvailability::Available, true);
+        assert_eq!(busy, ["Refreshing DID…"]);
+        assert!(actionable);
+
+        let (local, actionable) = rendered_refresh(DidRefreshAvailability::LocalUnpublished, false);
+        assert_eq!(
+            local,
+            ["Saved locally. This managed DID is not published to the selected Midnight network."]
+        );
+        assert!(!actionable);
+
+        let (unavailable, actionable) =
+            rendered_refresh(DidRefreshAvailability::Unavailable, false);
+        assert_eq!(
+            unavailable,
+            ["Network refresh is unavailable for this DID in the selected Midnight network."]
+        );
+        assert!(!actionable);
     }
 }

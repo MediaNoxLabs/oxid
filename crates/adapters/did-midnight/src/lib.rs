@@ -823,6 +823,10 @@ mod tests {
     fn standalone_resolves_only_the_documented_fixture() {
         let resolver = StandaloneDidResolver;
         let fixture = MidnightDid::parse(STANDALONE_FIXTURE_DID).expect("fixture DID");
+        assert_eq!(
+            resolver.refresh_availability(&fixture),
+            DidRefreshAvailability::Available
+        );
         let resolved = futures::executor::block_on(resolver.resolve(&fixture)).expect("resolve");
         assert_eq!(resolved.document().verification_methods().len(), 2);
         let compact_issuer =
@@ -850,6 +854,10 @@ mod tests {
         );
         let unknown =
             MidnightDid::parse(format!("did:midnight:undeployed:{}", "f".repeat(64))).expect("DID");
+        assert_eq!(
+            resolver.refresh_availability(&unknown),
+            DidRefreshAvailability::Unavailable
+        );
         assert_eq!(
             futures::executor::block_on(resolver.resolve(&unknown)),
             Err(DidResolutionPortError::NotFound)
