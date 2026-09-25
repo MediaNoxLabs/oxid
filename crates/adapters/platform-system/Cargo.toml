@@ -25,5 +25,9 @@ webpki-root-certs.workspace = true
 [target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
 oxid-adapter-mobile-native.workspace = true
 
+[dev-dependencies]
+rcgen.workspace = true
+tokio.workspace = true
+
 [lints]
 workspace = true
