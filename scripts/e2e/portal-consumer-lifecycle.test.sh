@@ -51,7 +51,7 @@ for services_contract in \
   'run_services_up()' \
   'run_services_status()' \
   'run_services_stop()' \
-  'compose start smocker did-resolver did-manager issuer' \
+  'compose up -d --wait --wait-timeout 600 smocker did-resolver did-manager issuer' \
   'compose stop --timeout 30 smocker did-resolver did-manager issuer' \
   'oxid-portal-consumer-services-status-v1'; do
   grep -qF -- "$services_contract" "$LIFECYCLE" || fail services-lifecycle
@@ -64,7 +64,7 @@ for wrapper_contract in \
 done
 
 services_body="$(sed -n '/run_services_up()/,/run_down()/p' "$LIFECYCLE")"
-if grep -qE 'build_image|compose up|compose down|adb |pm clear' <<<"$services_body"; then
+if grep -qE 'build_image|compose down|adb |pm clear' <<<"$services_body"; then
   fail services-mutation-boundary
 fi
 
