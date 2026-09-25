@@ -35,6 +35,7 @@ use midnight_transient_crypto::{
     curve::Fr,
     proofs::{Proof, ProofPreimage, ProvingKeyMaterial, ProvingProvider},
 };
+use oxid_adapter_platform_system::{http_client_builder_for, websocket_connector_for};
 use oxid_platform_ports::ClockPort;
 use oxid_wallet_application::WalletTransactionPortError;
 use oxid_wallet_domain::WalletTransferSubmissionMode;
@@ -43,9 +44,8 @@ use reqwest::{Method, StatusCode, Url, header::CONTENT_TYPE};
 use serde_json::{Value, json};
 use subxt::{OnlineClient, SubstrateConfig, dynamic};
 use tokio::time::timeout;
-use tokio_tungstenite::{
-    connect_async_with_config,
-    tungstenite::{Message, client::IntoClientRequest, protocol::WebSocketConfig},
+use tokio_tungstenite::tungstenite::{
+    Message, client::IntoClientRequest, protocol::WebSocketConfig,
 };
 
 use crate::{
@@ -642,8 +642,9 @@ pub(crate) async fn fetch_chain_tip(
     endpoint: &str,
 ) -> Result<ChainTip, WalletTransactionPortError> {
     ensure_tls_provider()?;
-    let client = chain_tip_client()?;
-    let request = chain_tip_request(endpoint)?;
+    let endpoint = Url::parse(endpoint).map_err(|_| WalletTransactionPortError::Unavailable)?;
+    let client = chain_tip_client(&endpoint)?;
+    let request = chain_tip_request(endpoint.as_str())?;
     let response = client
         .execute(request)
         .await
@@ -668,8 +669,9 @@ fn chain_tip_request(endpoint: &str) -> Result<reqwest::Request, WalletTransacti
     Ok(request)
 }
 
-fn chain_tip_client() -> Result<reqwest::Client, WalletTransactionPortError> {
-    reqwest::Client::builder()
+fn chain_tip_client(endpoint: &Url) -> Result<reqwest::Client, WalletTransactionPortError> {
+    http_client_builder_for(endpoint)
+        .map_err(|_| WalletTransactionPortError::Unavailable)?
         // Standalone wallet routes are explicit trust-boundary configuration. Do not let
         // ambient proxy variables silently redirect them.
         .no_proxy()
@@ -806,9 +808,18 @@ pub(crate) async fn synchronize_dust_controlled(
             let mut websocket_config = WebSocketConfig::default();
             websocket_config.max_message_size = Some(MAX_MESSAGE_BYTES);
             websocket_config.max_frame_size = Some(MAX_FRAME_BYTES);
+            let endpoint_url =
+                Url::parse(endpoint).map_err(|_| WalletTransactionPortError::Unavailable)?;
+            let connector = websocket_connector_for(&endpoint_url)
+                .map_err(|_| WalletTransactionPortError::Unavailable)?;
             let connected = timeout(
                 CONNECT_TIMEOUT,
-                connect_async_with_config(request, Some(websocket_config), false),
+                tokio_tungstenite::connect_async_tls_with_config(
+                    request,
+                    Some(websocket_config),
+                    false,
+                    connector,
+                ),
             )
             .await;
             ensure_dust_sync_active(cancellation, started_at)?;
@@ -1368,7 +1379,10 @@ async fn prove_via_http(
     WalletTransactionPortError,
 > {
     ensure_tls_provider()?;
-    let client = reqwest::Client::builder()
+    let endpoint_url =
+        Url::parse(endpoint).map_err(|_| WalletTransactionPortError::ProvingFailed)?;
+    let client = http_client_builder_for(&endpoint_url)
+        .map_err(|_| WalletTransactionPortError::ProvingFailed)?
         // Keep proof material on the explicitly configured route rather than an ambient
         // process proxy. This also preserves loopback proving inside pure Nix builds.
         .no_proxy()

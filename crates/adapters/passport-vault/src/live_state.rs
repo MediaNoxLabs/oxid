@@ -11,13 +11,14 @@ use std::{
 };
 
 use futures::{StreamExt, channel::oneshot};
+use oxid_adapter_platform_system::http_client_builder_for;
 use oxid_passport_vault_application::{
     MAX_PASSPORT_VAULT_CONTRACT_STATE_BYTES, PassportVaultCallPortError,
     PassportVaultContractStateAuthentication, PassportVaultContractStateReadFuture,
     PassportVaultContractStateSnapshot, PassportVaultContractStateSourceError,
     PassportVaultContractStateSourcePort,
 };
-use reqwest::{Certificate, Client, Method, Url, header::CONTENT_TYPE, redirect::Policy};
+use reqwest::{Client, Method, Url, header::CONTENT_TYPE, redirect::Policy};
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -219,18 +220,13 @@ impl NodeAnchoredPassportVaultStateSource {
             .ok_or(NodeAnchoredPassportVaultStateConfigError::InvalidIndexerEndpoint)?;
         let node_endpoint = validate_node_endpoint(node_endpoint.as_ref())
             .ok_or(NodeAnchoredPassportVaultStateConfigError::InvalidNodeEndpoint)?;
-        let trusted_roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS
-            .iter()
-            .map(|certificate| Certificate::from_der(certificate.as_ref()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| NodeAnchoredPassportVaultStateConfigError::ClientUnavailable)?;
-        let client = Client::builder()
+        let client = http_client_builder_for(&indexer_endpoint)
+            .map_err(|_| NodeAnchoredPassportVaultStateConfigError::ClientUnavailable)?
             .no_proxy()
             .redirect(Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             .user_agent("oxid-identity-wallet/0.1")
-            .tls_certs_only(trusted_roots)
             .build()
             .map_err(|_| NodeAnchoredPassportVaultStateConfigError::ClientUnavailable)?;
         Ok(Self(Arc::new(NodeAnchoredPassportVaultStateConfig {

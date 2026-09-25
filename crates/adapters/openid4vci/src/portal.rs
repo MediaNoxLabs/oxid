@@ -13,6 +13,7 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose};
 use futures::StreamExt as _;
+use oxid_adapter_platform_system::http_client_builder_for;
 use oxid_identity_application::GetDidRecordUseCase;
 use oxid_protocol_application::{
     CredentialHolderProofPort, CredentialIssuanceProtocolPort, HolderProofRequest,
@@ -22,7 +23,7 @@ use oxid_protocol_application::{
 };
 use oxid_protocol_domain::{CredentialIssuanceId, CredentialOfferPreview};
 use reqwest::{
-    Certificate, Client, Response, StatusCode,
+    Client, Response, StatusCode,
     header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE},
     redirect::Policy,
 };
@@ -30,7 +31,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest as _, Sha256};
 use url::Url;
-use webpki_root_certs::TLS_SERVER_ROOT_CERTS;
 use zeroize::Zeroizing;
 
 use super::{
@@ -512,9 +512,10 @@ impl PortalOid4vciClientFactory {
     ) -> Result<Self, PortalDeploymentManifestError> {
         deployment.validate()?;
         let runtime = Arc::new(PortalRuntime::new()?);
+        let client = build_portal_http_client(&deployment)?;
         Ok(Self {
             deployment,
-            client: build_portal_http_client()?,
+            client,
             runtime,
         })
     }
@@ -544,21 +545,19 @@ impl PortalOid4vciClientFactory {
     }
 }
 
-fn build_portal_http_client() -> Result<Client, PortalDeploymentManifestError> {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let roots = TLS_SERVER_ROOT_CERTS
-        .iter()
-        .map(|certificate| Certificate::from_der(certificate.as_ref()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| PortalDeploymentManifestError::ClientUnavailable)?;
-    Client::builder()
+fn build_portal_http_client(
+    deployment: &PortalDeploymentManifest,
+) -> Result<Client, PortalDeploymentManifestError> {
+    let endpoint = Url::parse(deployment.issuer_origin())
+        .map_err(|_| PortalDeploymentManifestError::InvalidOrigin)?;
+    http_client_builder_for(&endpoint)
+        .map_err(|_| PortalDeploymentManifestError::ClientUnavailable)?
         .no_proxy()
         .redirect(Policy::none())
         .retry(reqwest::retry::never())
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)
         .user_agent("oxid-portal-openid4vci/0.1")
-        .tls_certs_only(roots)
         .build()
         .map_err(|_| PortalDeploymentManifestError::ClientUnavailable)
 }

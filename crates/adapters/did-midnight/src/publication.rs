@@ -7,12 +7,13 @@ use std::{
     time::Duration,
 };
 
+use oxid_adapter_platform_system::http_client_builder_for;
 use oxid_identity_application::{
     DidPublicationPort, DidPublicationPortError, DidPublicationPortFuture,
 };
 use oxid_identity_domain::DidResolution;
 use reqwest::{
-    Certificate, Client, StatusCode, Url,
+    Client, StatusCode, Url,
     header::{AUTHORIZATION, HeaderValue},
     redirect::Policy,
 };
@@ -37,20 +38,14 @@ pub struct PortalTailnetDidPublisher {
 impl PortalTailnetDidPublisher {
     pub fn new(public_origin: &str) -> Result<Self, DidPublicationPortError> {
         let endpoint = publication_endpoint(public_origin)?;
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS
-            .iter()
-            .map(|certificate| Certificate::from_der(certificate.as_ref()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| DidPublicationPortError::InvalidConfiguration)?;
-        let client = Client::builder()
+        let client = http_client_builder_for(&endpoint)
+            .map_err(|_| DidPublicationPortError::InvalidConfiguration)?
             .no_proxy()
             .redirect(Policy::none())
             .retry(reqwest::retry::never())
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             .user_agent("oxid-portal-holder-publication/0.1")
-            .tls_certs_only(roots)
             .build()
             .map_err(|_| DidPublicationPortError::InvalidConfiguration)?;
         Ok(Self {

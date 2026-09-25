@@ -237,13 +237,16 @@ mod loopback_test_offer_trigger {
     use std::time::{Duration, Instant};
 
     #[cfg(feature = "tailnet-test-offer-trigger")]
+    use oxid_adapter_platform_system::http_client_builder_for;
+    #[cfg(feature = "tailnet-test-offer-trigger")]
     use reqwest::{
-        Certificate, Client,
         header::{AUTHORIZATION, CONTENT_LENGTH, HeaderValue},
         redirect::Policy,
     };
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt as _;
+    #[cfg(feature = "tailnet-test-offer-trigger")]
+    use url::Url;
     use zeroize::Zeroizing;
 
     #[cfg_attr(not(feature = "loopback-test-offer-trigger"), allow(dead_code))]
@@ -302,20 +305,15 @@ mod loopback_test_offer_trigger {
         if capability.len() != CAPABILITY_BYTES {
             return Err(());
         }
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS
-            .iter()
-            .map(|certificate| Certificate::from_der(certificate.as_ref()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| ())?;
-        let client = Client::builder()
+        let endpoint = Url::parse(public_origin).map_err(|_| ())?;
+        let client = http_client_builder_for(&endpoint)
+            .map_err(|_| ())?
             .no_proxy()
             .redirect(Policy::none())
             .retry(reqwest::retry::never())
             .connect_timeout(Duration::from_secs(5))
             .timeout(CONTROL_TIMEOUT)
             .user_agent("oxid-portal-offer-handoff/0.1")
-            .tls_certs_only(roots)
             .build()
             .map_err(|_| ())?;
         let mut header_bytes = Zeroizing::new(Vec::with_capacity(7 + capability.len()));
