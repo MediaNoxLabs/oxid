@@ -29,6 +29,7 @@ pub trait DidResolutionPort: Send + Sync {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DidRefreshAvailability {
     Available,
+    NotApplicable,
     LocalUnpublished,
     Unavailable,
 }
@@ -401,14 +402,14 @@ fn record_view(
         .lifecycle
         .managed_method_ids(profile_id, resolution)
         .unwrap_or_default();
-    view.refresh_availability = service
+    let resolver_availability = service
         .resolver
         .refresh_availability(resolution.document().id());
-    if !view.managed_method_ids.is_empty()
-        && view.refresh_availability == DidRefreshAvailability::Unavailable
-    {
-        view.refresh_availability = DidRefreshAvailability::LocalUnpublished;
-    }
+    view.refresh_availability = match (resolver_availability, view.managed_method_ids.is_empty()) {
+        (DidRefreshAvailability::NotApplicable, false) => DidRefreshAvailability::LocalUnpublished,
+        (DidRefreshAvailability::NotApplicable, true) => DidRefreshAvailability::Unavailable,
+        (availability, _) => availability,
+    };
     view
 }
 
@@ -747,6 +748,17 @@ mod tests {
         }
     }
 
+    struct NotApplicableResolver;
+    impl DidResolutionPort for NotApplicableResolver {
+        fn resolve<'a>(&'a self, _: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
+            Box::pin(async { Err(DidResolutionPortError::NotFound) })
+        }
+
+        fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+            DidRefreshAvailability::NotApplicable
+        }
+    }
+
     struct MismatchedResolver;
     impl DidResolutionPort for MismatchedResolver {
         fn resolve<'a>(&'a self, _: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
@@ -1032,7 +1044,7 @@ mod tests {
             .expect("seed record");
         let managed_service = DidService::from_ports(
             repository.clone(),
-            Arc::new(UnavailableDidResolver),
+            Arc::new(NotApplicableResolver),
             Arc::new(FixedLifecycle),
         );
         assert_eq!(
@@ -1046,6 +1058,24 @@ mod tests {
             .expect("managed record")
             .refresh_availability,
             DidRefreshAvailability::LocalUnpublished
+        );
+
+        let unavailable_managed_service = DidService::from_ports(
+            repository.clone(),
+            Arc::new(UnavailableDidResolver),
+            Arc::new(FixedLifecycle),
+        );
+        assert_eq!(
+            GetDidRecordUseCase::execute(
+                &unavailable_managed_service,
+                DidRecordQuery {
+                    profile_id: profile.as_str().to_owned(),
+                    did: DID.to_owned(),
+                },
+            )
+            .expect("managed record without resolver")
+            .refresh_availability,
+            DidRefreshAvailability::Unavailable
         );
 
         let observed_service = DidService::new(repository, Arc::new(UnavailableDidResolver));

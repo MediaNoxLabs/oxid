@@ -70,7 +70,7 @@ impl DidResolutionPort for StandaloneDidResolver {
             STANDALONE_FIXTURE_DID
             | STANDALONE_PASSPORT_ISSUER_DID
             | STANDALONE_COMPACT_PASSPORT_ISSUER_DID => DidRefreshAvailability::Available,
-            _ => DidRefreshAvailability::Unavailable,
+            _ => DidRefreshAvailability::NotApplicable,
         }
     }
 }
@@ -856,7 +856,7 @@ mod tests {
             MidnightDid::parse(format!("did:midnight:undeployed:{}", "f".repeat(64))).expect("DID");
         assert_eq!(
             resolver.refresh_availability(&unknown),
-            DidRefreshAvailability::Unavailable
+            DidRefreshAvailability::NotApplicable
         );
         assert_eq!(
             futures::executor::block_on(resolver.resolve(&unknown)),

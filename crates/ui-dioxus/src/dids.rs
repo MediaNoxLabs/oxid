@@ -43,7 +43,7 @@ fn DidRefreshControl(
             let message = "Saved locally. This managed DID is not published to the selected Midnight network.";
             rsx! { p { class: "form-hint", "{message}" } }
         }
-        DidRefreshAvailability::Unavailable => {
+        DidRefreshAvailability::NotApplicable | DidRefreshAvailability::Unavailable => {
             let message =
                 "Network refresh is unavailable for this DID in the selected Midnight network.";
             rsx! { p { class: "form-hint", "{message}" } }
@@ -1028,6 +1028,14 @@ mod tests {
             rendered_refresh(DidRefreshAvailability::Unavailable, false);
         assert_eq!(
             unavailable,
+            ["Network refresh is unavailable for this DID in the selected Midnight network."]
+        );
+        assert!(!actionable);
+
+        let (not_applicable, actionable) =
+            rendered_refresh(DidRefreshAvailability::NotApplicable, false);
+        assert_eq!(
+            not_applicable,
             ["Network refresh is unavailable for this DID in the selected Midnight network."]
         );
         assert!(!actionable);
