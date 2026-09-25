@@ -6,7 +6,8 @@ use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 
 use oxid_foundation::OpaqueIdError;
 use oxid_identity_domain::{
-    DidDocument, DidRecord, DidResolution, IdentityProfileId, MidnightDid, MidnightDidError,
+    DidDocument, DidPublicationState, DidRecord, DidResolution, IdentityProfileId, MidnightDid,
+    MidnightDidError,
 };
 
 mod lifecycle;
@@ -32,6 +33,7 @@ pub enum DidRefreshAvailability {
     NotApplicable,
     LocalUnpublished,
     Unavailable,
+    Unknown,
 }
 
 pub type DidPublicationPortFuture<'a> =
@@ -392,23 +394,26 @@ impl DidPublicationService {
     }
 }
 
-fn record_view(
-    service: &DidService,
-    profile_id: &IdentityProfileId,
-    resolution: &DidResolution,
-) -> DidRecordView {
+fn record_view(service: &DidService, record: &DidRecord) -> DidRecordView {
+    let resolution = record.resolution();
     let mut view = DidRecordView::from(resolution);
     view.managed_method_ids = service
         .lifecycle
-        .managed_method_ids(profile_id, resolution)
+        .managed_method_ids(record.profile_id(), resolution)
         .unwrap_or_default();
-    let resolver_availability = service
-        .resolver
-        .refresh_availability(resolution.document().id());
-    view.refresh_availability = match (resolver_availability, view.managed_method_ids.is_empty()) {
-        (DidRefreshAvailability::NotApplicable, false) => DidRefreshAvailability::LocalUnpublished,
-        (DidRefreshAvailability::NotApplicable, true) => DidRefreshAvailability::Unavailable,
-        (availability, _) => availability,
+    view.refresh_availability = match record.publication_state() {
+        DidPublicationState::Unpublished => DidRefreshAvailability::LocalUnpublished,
+        DidPublicationState::Unknown => DidRefreshAvailability::Unknown,
+        DidPublicationState::Published => match service
+            .resolver
+            .refresh_availability(resolution.document().id())
+        {
+            DidRefreshAvailability::Available => DidRefreshAvailability::Available,
+            DidRefreshAvailability::NotApplicable
+            | DidRefreshAvailability::LocalUnpublished
+            | DidRefreshAvailability::Unavailable
+            | DidRefreshAvailability::Unknown => DidRefreshAvailability::Unavailable,
+        },
     };
     view
 }
@@ -462,10 +467,12 @@ impl ResolveDidUseCase for DidService {
             if resolution.document().id() != &did {
                 return Err(DidOperationError::SubjectMismatch);
             }
+            let record = DidRecord::new(profile_id, resolution)
+                .with_publication_state(DidPublicationState::Published);
             self.repository
-                .upsert(DidRecord::new(profile_id.clone(), resolution.clone()))
+                .upsert(record.clone())
                 .map_err(DidOperationError::Persistence)?;
-            Ok(record_view(self, &profile_id, &resolution))
+            Ok(record_view(self, &record))
         })
     }
 }
@@ -485,7 +492,7 @@ impl ListDidRecordsUseCase for DidService {
         });
         Ok(records
             .iter()
-            .map(|record| record_view(self, &profile_id, record.resolution()))
+            .map(|record| record_view(self, record))
             .collect())
     }
 }
@@ -498,7 +505,7 @@ impl GetDidRecordUseCase for DidService {
             .repository
             .get(&profile_id, &did)
             .map_err(DidOperationError::Persistence)?;
-        Ok(record_view(self, &profile_id, record.resolution()))
+        Ok(record_view(self, &record))
     }
 }
 
@@ -535,7 +542,10 @@ impl PublishDidUseCase for DidPublicationService {
             self.publisher
                 .publish(record.resolution().clone())
                 .await
-                .map_err(DidOperationError::Publication)
+                .map_err(DidOperationError::Publication)?;
+            self.repository
+                .upsert(record.with_publication_state(DidPublicationState::Published))
+                .map_err(DidOperationError::Persistence)
         })
     }
 }
@@ -1036,12 +1046,15 @@ mod tests {
     }
 
     #[test]
-    fn record_view_distinguishes_local_unpublished_from_unavailable() {
+    fn record_view_distinguishes_publication_state_from_custody_and_resolver_reachability() {
         let repository = Arc::new(MemoryRepository::default());
         let profile = IdentityProfileId::parse("profile_test").expect("profile");
         repository
-            .upsert(DidRecord::new(profile.clone(), resolution()))
-            .expect("seed record");
+            .upsert(
+                DidRecord::new(profile.clone(), resolution())
+                    .with_publication_state(DidPublicationState::Unpublished),
+            )
+            .expect("seed unpublished record");
         let managed_service = DidService::from_ports(
             repository.clone(),
             Arc::new(NotApplicableResolver),
@@ -1060,6 +1073,12 @@ mod tests {
             DidRefreshAvailability::LocalUnpublished
         );
 
+        repository
+            .upsert(
+                DidRecord::new(profile.clone(), resolution())
+                    .with_publication_state(DidPublicationState::Published),
+            )
+            .expect("seed published record");
         let unavailable_managed_service = DidService::from_ports(
             repository.clone(),
             Arc::new(UnavailableDidResolver),
@@ -1078,6 +1097,9 @@ mod tests {
             DidRefreshAvailability::Unavailable
         );
 
+        repository
+            .upsert(DidRecord::new(profile.clone(), resolution()))
+            .expect("seed legacy unknown record");
         let observed_service = DidService::new(repository, Arc::new(UnavailableDidResolver));
         assert_eq!(
             GetDidRecordUseCase::execute(
@@ -1087,9 +1109,9 @@ mod tests {
                     did: DID.to_owned(),
                 },
             )
-            .expect("observed record")
+            .expect("unknown record")
             .refresh_availability,
-            DidRefreshAvailability::Unavailable
+            DidRefreshAvailability::Unknown
         );
     }
 
