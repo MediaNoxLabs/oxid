@@ -97,6 +97,15 @@ line is:
 portal-macos-laptop-e2e: PASS evidence=target/portal-headless-e2e/evidence.json,target/portal-desktop-e2e/evidence.json
 ```
 
+The shared stack uses the canonical host-local state directory
+`${TMPDIR:-/tmp}/oxid-standalone`. Startup takes an atomic lease before reading
+or changing the fixed Compose project. A second worktree may reuse an exact
+three-container stack whose canonical receipt matches, but it never runs
+`docker compose up` or rewrites that receipt. Partial or unreceipted resources
+fail closed. Only the worktree session recorded by the owner receipt may run
+the matching `standalone-down`; caller ownership is verified before either
+Tailscale Serve or Compose cleanup.
+
 If the successful baseline was empty, only this Bash process may treat the
 stack as owned. A later failure invokes `just standalone-down` through the EXIT
 trap; if cleanup fails, the trap reports it, preserves the original failure,

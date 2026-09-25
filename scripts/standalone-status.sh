@@ -3,6 +3,8 @@
 
 set -euo pipefail
 
+state_directory="${OXID_STANDALONE_STATE_DIR:-${TMPDIR:-/tmp}/oxid-standalone}"
+compose_file="$state_directory/canonical-compose.yml"
 mode="${1:-local}"
 case "$mode" in
   local|phone) ;;
@@ -68,7 +70,13 @@ if ! [[ "$node_height" =~ ^0x[0-9a-fA-F]+$ ]] || ! [[ "$indexer_height" =~ ^[0-9
   exit 1
 fi
 node_height_decimal=$((16#${node_height#0x}))
+catching_up=false
 if (( indexer_height + 4 < node_height_decimal )); then
+  catching_up=true
+fi
+printf '{"schema":"oxid-standalone-readiness-v1","nodeHeight":%s,"indexerHeight":%s,"catchingUp":%s}\n' \
+  "$node_height_decimal" "$indexer_height" "$catching_up"
+if [ "$catching_up" = true ]; then
   echo "Oxid standalone indexer is behind the allowed readiness window." >&2
   exit 1
 fi

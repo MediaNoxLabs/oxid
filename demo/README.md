@@ -138,9 +138,12 @@ serve reset`, or recursive worktree cleanup as a recovery shortcut.
 
 The scripts do not print or track device IDs, MagicDNS identities, offers,
 request objects, capabilities, credentials, proofs, or protocol secrets.
-Private runtime state is under `target/` with restrictive permissions. The kit
-supports physical Android only; physical iOS signing and deployment are out of
-scope.
+Private demo receipts remain under `target/` with restrictive permissions. The
+shared standalone Compose definition, generated indexer environment, startup
+lease, and owner receipt live in the host-local
+`${TMPDIR:-/tmp}/oxid-standalone` directory so their identity does not change
+with the invoking worktree. The kit supports physical Android only; physical
+iOS signing and deployment are out of scope.
 
 For the underlying compile-time Tailnet profile and service ownership model,
 see [ADR-0097](../docs/adr/0097-build-standalone-phone-routes-at-compile-time.md).
