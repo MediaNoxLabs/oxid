@@ -150,6 +150,18 @@ portal-tailnet-manual-start:
 portal-tailnet-manual-status:
     ./scripts/test-android-portal-tailnet-physical.sh manual-status
 
+# Start already-created Portal services without building, installing, launching, or clearing app data.
+portal-tailnet-services-up:
+    ./scripts/e2e/portal-services-lifecycle.sh services-up
+
+# Report the receipt-owned Portal service state without changing any service or app state.
+portal-tailnet-services-status:
+    ./scripts/e2e/portal-services-lifecycle.sh services-status
+
+# Stop only receipt-owned Portal services; prepared images and app data remain intact.
+portal-tailnet-services-stop:
+    ./scripts/e2e/portal-services-lifecycle.sh services-stop
+
 # Explicitly clear only Oxid application data on one authorized physical device.
 portal-tailnet-manual-reset:
     ./scripts/test-android-portal-tailnet-physical.sh manual-reset

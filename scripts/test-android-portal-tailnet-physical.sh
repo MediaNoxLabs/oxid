@@ -184,6 +184,13 @@ manual_consumer_running() {
     "$REPOSITORY_ROOT/scripts/portal-consumer-lifecycle.sh" status >/dev/null 2>&1
 }
 
+manual_consumer_stopped() {
+  PORTAL_INTEGRATION_CHECKOUT="$SOURCE" \
+  OXID_PORTAL_CONSUMER_STATE_DIR="$STATE/portal-consumer" \
+    "$REPOSITORY_ROOT/scripts/portal-consumer-lifecycle.sh" services-status \
+      | jq -e '.state == "stopped"' >/dev/null 2>&1
+}
+
 manual_public_page_ready() {
   local page_content_type
   page_content_type="$(curl --noproxy '*' --fail --silent --show-error --max-time 30 \
@@ -383,8 +390,11 @@ manual_supervise() {
     fi
     if ! manual_process_matches "$manual_supervisor_pid" "$manual_supervisor_command_sha" \
       || ! manual_select_physical_device \
-      || ! manual_consumer_running \
       || ! manual_public_page_ready; then
+      manual_cleanup || return 1
+      return 1
+    fi
+    if ! manual_consumer_running && ! manual_consumer_stopped; then
       manual_cleanup || return 1
       return 1
     fi

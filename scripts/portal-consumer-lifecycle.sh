@@ -31,7 +31,7 @@ fail() {
   exit 1
 }
 
-case "$OPERATION" in prerequisite|prepare|prepared-status|up|status|down) ;; *) fail usage ;; esac
+case "$OPERATION" in prerequisite|prepare|prepared-status|up|status|down|services-up|services-status|services-stop) ;; *) fail usage ;; esac
 for command_name in awk curl docker git jq nix openssl shasum; do
   command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
 done
@@ -469,6 +469,35 @@ run_status() {
   emit_status running
 }
 
+run_services_status() {
+  local ids running state
+  ids="$(project_ids)"; running="$(running_ids)"
+  [ "$(count_lines "$ids")" -eq 5 ] || fail project-shape
+  receipt_valid || fail ownership
+  case "$(count_lines "$running")" in
+    4) state=running ;;
+    0) state=stopped ;;
+    *) fail project-shape ;;
+  esac
+  jq -cn --arg state "$state" \
+    '{schema:"oxid-portal-consumer-services-status-v1",state:$state}'
+}
+
+run_services_up() {
+  receipt_valid || fail ownership
+  [ "$(count_lines "$(project_ids)")" -eq 5 ] || fail project-shape
+  compose up -d --wait --wait-timeout 600 smocker did-resolver did-manager issuer \
+    >>"$PRIVATE_LOG" 2>&1 || fail services-start
+  run_services_status
+}
+
+run_services_stop() {
+  receipt_valid || fail ownership
+  [ "$(count_lines "$(project_ids)")" -eq 5 ] || fail project-shape
+  compose stop --timeout 30 smocker did-resolver did-manager issuer >>"$PRIVATE_LOG" 2>&1 || fail services-stop
+  run_services_status
+}
+
 run_down() {
   local ids
   ids="$(project_ids)"
@@ -496,4 +525,7 @@ case "$OPERATION" in
   up) run_up ;;
   status) run_status ;;
   down) run_down ;;
+  services-up) run_services_up ;;
+  services-status) run_services_status ;;
+  services-stop) run_services_stop ;;
 esac

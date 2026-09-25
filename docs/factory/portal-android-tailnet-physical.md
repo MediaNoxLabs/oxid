@@ -99,6 +99,22 @@ stop from another terminal:
 just portal-tailnet-manual-status
 ```
 
+## Service-only restart
+
+After a successful manual start, Portal services can be stopped and started independently
+without rebuilding images, installing or launching Oxid, or clearing application data:
+
+```bash
+just portal-tailnet-services-status
+just portal-tailnet-services-stop
+just portal-tailnet-services-up
+```
+
+These commands operate only on the receipt-owned Portal Compose services. They retain the
+prepared images, service containers, and Android application state. `services-up` requires
+that the existing ownership receipt and service shape remain valid; it never falls back to
+build, install, launch, or reset behavior.
+
 On the phone, explicitly prepare the holder before accepting an offer:
 
 1. Open **Wallet** and activate the development wallet if it is not active.
