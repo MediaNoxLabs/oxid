@@ -4,13 +4,19 @@ import { spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { Writable } from "node:stream";
+import { Readable, Writable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { createDeliveryBranchRewriteSink } from "../../scripts/loop/pre-flight-gate.mjs";
 import { auditPi, auditWorktreeAdmission, lifecycleCapacityChecks } from "../../scripts/factory/audit-pi.mjs";
 import { applyUserPolicy, mergePolicy, policyMismatches } from "../../scripts/factory/pi-policy.mjs";
+import {
+  PI_RPC_MAX_BYTES,
+  readBoundedPiRpcInput,
+  validatePiRpcCommandDiscovery,
+  validatePiModelCatalog,
+} from "../../scripts/factory/check-pi-rpc-commands.mjs";
 import {
   FACTORY_DEBT_LABELS,
   FACTORY_LABELS,
@@ -62,10 +68,15 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.equal(settings.subagents.defaultThinking, settings.defaultThinkingLevel);
   const smoke = await readFile(path.join(repoRoot, "scripts", "check-pi-devshell.sh"), "utf8");
   const smokeHelper = await readFile(path.join(repoRoot, "scripts", "factory", "check-pi-devshell-config.mjs"), "utf8");
-  const smokeContract = `${smoke}\n${smokeHelper}`;
+  const smokeRpcHelper = await readFile(path.join(repoRoot, "scripts", "factory", "check-pi-rpc-commands.mjs"), "utf8");
+  const smokeContract = `${smoke}\n${smokeHelper}\n${smokeRpcHelper}`;
   const bootstrap = await readFile(path.join(repoRoot, "bootstrap.sh"), "utf8");
   const devshell = await readFile(path.join(repoRoot, "nix", "devshells", "default.nix"), "utf8");
   assert.match(smoke, /pi --list-models/u);
+  assert.match(smoke, /timeout --kill-after=5s 30s pi --list-models/u);
+  assert.match(smoke, /timeout --kill-after=5s 30s pi --approve --offline --mode rpc --no-session/u);
+  assert.doesNotMatch(smoke, /timeout[^\n]*--foreground/u);
+  assert.doesNotMatch(smoke, /pi_rpc_output=/u);
   assert.match(smoke, /Pi 0\.85\.1 is required for native detached child dispatch/u);
   assert.match(smoke, /PI_CODING_AGENT_SESSION_DIR/u);
   assert.match(smoke, /PI_SUBAGENTS_TEMP_ROOT/u);
@@ -75,11 +86,11 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(smokeContract, /remembered detached foreground descendant/u);
   assert.match(smokeContract, /reconcileDetachedWorkflowChildCompletion/u);
   assert.match(smokeContract, /planWorkflowSettlement/u);
-  assert.match(smoke, /skill:taskflow/u);
-  assert.match(smoke, /unsafe inherited taskflow resources are active/u);
+  assert.match(smokeContract, /skill:taskflow/u);
+  assert.match(smokeContract, /unsafe inherited taskflow resources are active/u);
   assert.match(smoke, /Pi startup modified tracked project agent shadows/u);
   assert.match(smoke, /Failed to load skill/u);
-  assert.match(smoke, /Pi did not expose the tracked scenario and use-case commands/u);
+  assert.match(smokeContract, /Pi did not expose the tracked scenario and use-case commands/u);
   assert.doesNotMatch(smoke, /<<[-]?['"]?[A-Za-z0-9_]+['"]?/u);
   assert.doesNotMatch(smoke, /<<</u);
   assert.match(bootstrap, /bash scripts\/check-pi-devshell\.sh/u);
@@ -115,6 +126,36 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(devshell, /export PI_CODING_AGENT_SESSION_DIR/u);
   assert.match(devshell, /export PI_SUBAGENTS_TEMP_ROOT/u);
   assert.doesNotMatch(devshell, /export PI_CODING_AGENT_DIR/u);
+});
+
+test("Pi command discovery streams beyond pipe capacity and stays explicitly bounded", async () => {
+  const loaderPath = "/private/agent-review/SKILL.md";
+  const padding = Array.from({ length: 300 }, (_, index) => JSON.stringify({
+    type: "event",
+    index,
+    padding: "x".repeat(96),
+  }));
+  const commands = [
+    { name: "scenario" },
+    { name: "use-case" },
+    { name: "skill:agent-review", source: "skill", sourceInfo: { path: loaderPath } },
+  ];
+  const source = [...padding, JSON.stringify({ type: "response", command: "get_commands", data: { commands } })].join("\n");
+  assert.ok(Buffer.byteLength(source) > 16 * 1024);
+  assert.deepEqual(validatePiRpcCommandDiscovery(source, { loaderPath }), { commandCount: 3 });
+
+  const exact = await readBoundedPiRpcInput(Readable.from([Buffer.alloc(PI_RPC_MAX_BYTES)]));
+  assert.equal(Buffer.byteLength(exact), PI_RPC_MAX_BYTES);
+  await assert.rejects(
+    readBoundedPiRpcInput(Readable.from([Buffer.alloc(PI_RPC_MAX_BYTES), Buffer.from("x")])),
+    /exceeded the 1048576-byte limit/u,
+  );
+
+  const provider = "openai-codex";
+  const model = "gpt-fixture";
+  const catalog = `${"other model context ".repeat(1_024)}\n${provider} ${model} 200000`;
+  assert.ok(Buffer.byteLength(catalog) > 16 * 1024);
+  assert.deepEqual(validatePiModelCatalog(catalog, { provider, model }), { provider, model });
 });
 
 test("repository dev-loops layer uses the bounded 1.0.2 schema", async () => {

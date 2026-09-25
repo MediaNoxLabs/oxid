@@ -6,7 +6,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-for required_command in pi node jq realpath awk; do
+for required_command in pi node jq realpath timeout; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     echo "missing Pi devshell command: $required_command" >&2
     exit 1
@@ -56,9 +56,9 @@ pi_contract="$(node scripts/factory/check-pi-devshell-config.mjs)"
 expected_provider="$(printf '%s\n' "$pi_contract" | jq -er '.expectedProvider')"
 expected_model="$(printf '%s\n' "$pi_contract" | jq -er '.expectedModel')"
 review_package_root="$(printf '%s\n' "$pi_contract" | jq -er '.reviewPackageRoot')"
-if ! pi --list-models "$expected_provider/$expected_model" \
-  | awk -v provider="$expected_provider" -v model="$expected_model" \
-    'NR > 1 && $1 == provider && $2 == model { found = 1 } END { exit !found }'; then
+if ! timeout --kill-after=5s 30s pi --list-models "$expected_provider/$expected_model" \
+  | node scripts/factory/check-pi-rpc-commands.mjs \
+    --provider "$expected_provider" --model "$expected_model"; then
   echo "tracked Pi model is absent from the Nix-pinned catalog: $expected_provider/$expected_model" >&2
   exit 1
 fi
@@ -73,9 +73,11 @@ fi
 pi_rpc_stderr="$(mktemp "${TMPDIR:-/tmp}/oxid-pi-smoke.XXXXXX")"
 agent_hashes_before="$(git hash-object .pi/agents/*.agent.md)"
 trap 'rm -f "$pi_rpc_stderr"' EXIT
-if ! pi_rpc_output="$({
+loader_path="$repo_root/.pi/npm/node_modules/@input-output-hk/agent-review-pi/skills/agent-review/SKILL.md"
+if ! {
   printf '%s\n' '{"type":"get_commands"}'
-} | pi --approve --offline --mode rpc --no-session 2>"$pi_rpc_stderr")"; then
+} | timeout --kill-after=5s 30s pi --approve --offline --mode rpc --no-session 2>"$pi_rpc_stderr" \
+  | node scripts/factory/check-pi-rpc-commands.mjs --loader-path "$loader_path"; then
   echo "Pi offline RPC startup failed:" >&2
   sed -n '1,20p' "$pi_rpc_stderr" >&2
   exit 1
@@ -91,39 +93,6 @@ if [[ "$agent_hashes_after" != "$agent_hashes_before" ]]; then
   echo "Pi startup modified tracked project agent shadows:" >&2
   git diff --name-only -- .pi/agents >&2
   echo "suppress package extensions that rewrite consumer-owned policy before starting Pi" >&2
-  exit 1
-fi
-
-if printf '%s\n' "$pi_rpc_output" | jq -s -e '
-  map(select(.type == "response" and .command == "get_commands"))[0]
-  | .data.commands
-  | any(.name == "tf" or .name == "skill:taskflow")
-' >/dev/null; then
-  echo "unsafe inherited taskflow resources are active; project suppression did not take effect" >&2
-  echo "do not start Pi: detached peer resolution, nested progress, and descendant cancellation are unverified" >&2
-  exit 1
-fi
-
-if ! printf '%s\n' "$pi_rpc_output" | jq -s -e '
-  map(select(.type == "response" and .command == "get_commands"))[0]
-  | .data.commands
-  | (any(.name == "scenario")) and (any(.name == "use-case"))
-' >/dev/null; then
-  echo "Pi did not expose the tracked scenario and use-case commands" >&2
-  exit 1
-fi
-
-loader_path="$repo_root/.pi/npm/node_modules/@input-output-hk/agent-review-pi/skills/agent-review/SKILL.md"
-if ! printf '%s\n' "$pi_rpc_output" | jq -s -e --arg loader_path "$loader_path" '
-  map(select(.type == "response" and .command == "get_commands"))[0]
-  | .data.commands
-  | any(
-      .name == "skill:agent-review"
-      and .source == "skill"
-      and .sourceInfo.path == $loader_path
-    )
-' >/dev/null; then
-  echo "Pi did not expose the bundled agent-review 0.6.0 skill" >&2
   exit 1
 fi
 
