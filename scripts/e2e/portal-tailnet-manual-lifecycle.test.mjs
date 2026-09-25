@@ -30,12 +30,14 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
   for (const recipe of [
     "portal-tailnet-manual-prepare:",
     "portal-tailnet-manual-prepared-status:",
+    "portal-tailnet-manual-doctor:",
     "portal-tailnet-manual-start:",
     "portal-tailnet-manual-status:",
+    "portal-tailnet-manual-reset:",
     "portal-tailnet-manual-stop:",
   ]) assert.match(justfile, new RegExp(`^${recipe}`, "m"));
 
-  for (const operation of ["manual-prepare", "manual-prepared-status", "manual-start", "manual-status", "manual-stop"]) {
+  for (const operation of ["manual-prepare", "manual-prepared-status", "manual-doctor", "manual-start", "manual-status", "manual-reset", "manual-stop"]) {
     assert.match(lifecycle, new RegExp(operation));
   }
   assert.doesNotMatch(lifecycle, /--manual-supervise/);
@@ -44,11 +46,22 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
   assert.match(lifecycle, /manual_ready \|\| fail manual-not-ready/);
   assert.match(lifecycle, /sleep 2\n  manual_ready \|\| fail manual-readiness-unstable/);
   assert.match(lifecycle, /manual_public_page_ready/);
+  assert.match(lifecycle, /deviceDataMode == "preserved"/);
+  assert.match(lifecycle, /deviceDataMode:"preserved"/);
+  assert.match(lifecycle, /if \[ "\$OPERATION" = automated \]; then\n  adb_device shell pm clear io\.medianox\.oxid/);
+  assert.doesNotMatch(lifecycle, /adb_reverse_before=.*\nadb_device shell pm clear io\.medianox\.oxid/);
+  assert.match(lifecycle, /manual-session-active/);
+  assert.match(lifecycle, /RESET package=io\.medianox\.oxid scope=application-data/);
   assert.match(lifecycle, /target\/portal-tailnet-manual\/runtime/);
   assert.match(lifecycle, /target\/portal-tailnet-manual\/prepared/);
   assert.match(lifecycle, /prepared-receipt\.json/);
   assert.match(lifecycle, /manual_prepared_status/);
   assert.match(lifecycle, /fail artifacts-not-prepared/);
+  assert.match(lifecycle, /DOCTOR-READY artifacts=ready standalone=ready tailnet=ready device=ready app-data=preserved/);
+  assert.match(lifecycle, /manual_doctor_fail physical-device "connect-exactly-one-authorized-phone-and-close-emulators"/);
+  assert.match(lifecycle, /manual_doctor_fail portal-session-conflict "review-and-cleanup-owned-portal-receipt"/);
+  assert.match(lifecycle, /manual_doctor_fail standalone-tailnet "just-standalone-phone-up"/);
+  assert.match(lifecycle, /awk curl docker git jq nix node ps shasum tailscale/);
   assert.match(lifecycle, /PORTAL_CONSUMER_PREPARED_RECEIPT="\$prepared_receipt_for_support"/);
   assert.match(consumerLifecycle, /\[\.images\[\]\.durationSeconds\] \| add \/\/ 0/);
   assert.match(consumerLifecycle, /fail preparation-busy/);

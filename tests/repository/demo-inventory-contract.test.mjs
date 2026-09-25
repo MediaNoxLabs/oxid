@@ -120,6 +120,7 @@ test("inventory keeps Portal Final issuance evidence target-scoped", () => {
     "portal-final-issuance-localhost",
     "portal-final-issuance-virtual-mobile",
     "portal-final-issuance-physical-tailnet",
+    "portal-final-issuance-physical-tailnet-interactive",
   ]);
   const localhost = renderPreparationBrief(inventory, "portal-final-issuance-localhost", "headless-development");
   assert.match(localhost, /Target: headless-development \(supported; preflight\)/u);
@@ -134,6 +135,14 @@ test("inventory keeps Portal Final issuance evidence target-scoped", () => {
   assert.match(physical, /just android-portal-tailnet-physical-smoke/u);
   assert.match(physical, /not production, release, native-custody, live-KYC, or public-network acceptance/u);
   assert.match(physical, /restores its exact prior Serve baseline/u);
+
+  const interactive = renderPreparationBrief(inventory, "portal-final-issuance-physical-tailnet-interactive");
+  assert.match(interactive, /just portal-tailnet-manual-prepare/u);
+  assert.match(interactive, /just portal-tailnet-manual-start/u);
+  assert.match(interactive, /just portal-tailnet-manual-status/u);
+  assert.match(interactive, /just portal-tailnet-manual-stop/u);
+  assert.match(interactive, /preserves Oxid application data by default/u);
+  assert.doesNotMatch(interactive, /just portal-tailnet-manual-reset/u);
 });
 
 test("validator rejects broken references, unsafe operations, and invalid evidence contracts", () => {

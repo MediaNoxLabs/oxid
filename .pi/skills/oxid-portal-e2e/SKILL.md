@@ -55,6 +55,11 @@ just portal-tailnet-manual-prepare
 just portal-tailnet-manual-prepared-status
 ```
 
+After connecting exactly one phone, run
+`just portal-tailnet-manual-doctor`. It is the required read-only admission
+checkpoint and must report `DOCTOR-READY` before start. Follow its single
+remediation instead of bypassing a failed prerequisite with ad hoc commands.
+
 For an owner-requested browser-and-phone QR demonstration only (never evidence),
 use `just portal-tailnet-manual-start`; it opens and deliberately prints the one
 public page URL only after a stable readiness interval, then remains the
@@ -63,6 +68,9 @@ foreground owner. Keep that terminal open. From another terminal,
 `just portal-tailnet-manual-stop` receipt-validates cleanup and restores the
 prior Serve baseline. Stop before any retry: every manual start is a fresh
 one-shot session and a consumed QR is never reused.
+Manual start preserves Oxid application data. Only an explicit
+`just portal-tailnet-manual-reset`, after stop, may clear the package's
+application data; never substitute reset for service recovery.
 
 For every retry create a completely fresh offer, capability, app state, and
 runtime; never reuse a consumed offer. Preserve explicit consent, zero secret
@@ -89,10 +97,13 @@ live-KYC claim.
     "manualTailnet": {
       "prepare": "just portal-tailnet-manual-prepare",
       "preparedStatus": "just portal-tailnet-manual-prepared-status",
+      "doctor": "just portal-tailnet-manual-doctor",
       "start": "just portal-tailnet-manual-start",
       "statusCommand": "just portal-tailnet-manual-status",
+      "reset": "just portal-tailnet-manual-reset",
       "stop": "just portal-tailnet-manual-stop",
       "evidence": false,
+      "deviceDataMode": "preserved",
       "statusOutput": "payload-free"
     }
   },

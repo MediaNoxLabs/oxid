@@ -72,8 +72,16 @@ With the preparation receipt complete, connect the phone and Tailscale, ensure
 the standalone stack is healthy on 6300, 8088, and 9944, and start one session:
 
 ```bash
+just portal-tailnet-manual-doctor
 just portal-tailnet-manual-start
 ```
+
+Doctor is a read-only admission checkpoint. It checks the exact prepared
+artifacts, clean tracked source, Docker, the owned standalone Tailnet routes,
+MagicDNS/HTTPS identity, absence of a conflicting Portal project, and exactly
+one authorized non-QEMU phone. It does not build, install, launch, create a
+route, start a service, or clear application data. A failure names one bounded
+remediation; do not bypass it by manually combining partial state.
 
 Start fails before changing Tailnet or phone state if the prepared source,
 receipt, Nix outputs, or loaded Docker image IDs no longer match. It creates and
@@ -126,6 +134,21 @@ ambiguous, it fails closed for owner review rather than deleting shared state.
 An interrupted Portal Compose startup leaves a private provisional ownership
 receipt, so the exact project can be recovered with the same stop/cleanup path
 instead of becoming an unowned partial stack.
+
+Manual start installs a compatible APK with Android's data-preserving upgrade
+path and does **not** clear profiles, custody associations, credentials,
+preferences, or diagnostics. If the owner explicitly needs an empty Oxid data
+container, stop the session first and invoke the destructive operation by name:
+
+```bash
+just portal-tailnet-manual-reset
+```
+
+Reset prints the exact package and `application-data` scope before mutation,
+refuses to run while a manual session is active, preserves the installed APK,
+and verifies that the package still exists. The automated physical conformance
+lane remains clean-room evidence and therefore selects app-data reset explicitly
+inside its owned disposable run.
 
 ## Safety, evidence, and cleanup
 

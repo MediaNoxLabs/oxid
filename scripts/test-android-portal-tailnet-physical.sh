@@ -10,7 +10,7 @@ readonly PORTAL_COMMIT="25499870f84d77173c46e4af3021311decfb840b"
 readonly PORTAL_TREE="2d845d2293603dfd8adce5362c8a9941e6ba78a9"
 readonly REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly OPERATION="${1:-automated}"
-case "$OPERATION" in automated|manual-prepare|manual-prepared-status|manual-start|manual-status|manual-stop) ;; *)
+case "$OPERATION" in automated|manual-prepare|manual-prepared-status|manual-doctor|manual-start|manual-status|manual-reset|manual-stop) ;; *)
   printf '%s\n' 'android-portal-tailnet: FAIL phase=usage' >&2
   exit 1
   ;;
@@ -88,7 +88,7 @@ process_command_sha256() {
   sha256_text "$command_line"
 }
 
-manual_select_physical_device() {
+manual_select_connected_physical_device() {
   local physical_devices
   physical_devices="$("$adb" devices | awk 'NR > 1 && $2 == "device" && $1 !~ /^emulator-/ { print $1 }')"
   [ "$(awk 'NF { count++ } END { print count + 0 }' <<<"$physical_devices")" -eq 1 ] || return 1
@@ -99,7 +99,16 @@ manual_select_physical_device() {
   if "$adb" devices | awk '$1 ~ /^emulator-/ && $2 == "device" { found=1 } END { exit !found }'; then
     return 1
   fi
+}
+
+manual_select_physical_device() {
+  manual_select_connected_physical_device || return 1
   adb_device shell pm path io.medianox.oxid 2>/dev/null | grep -q '^package:'
+}
+
+manual_doctor_fail() {
+  printf 'portal-tailnet-manual: NOT-READY phase=%s remediation=%s\n' "$1" "$2" >&2
+  exit 1
 }
 
 manual_session_load() {
@@ -127,6 +136,7 @@ manual_session_load() {
       and .mock.externalPath == "/kyc/mock-verification"
       and .mock.upstreamPath == "/mock-verification"
       and .page == {html:true,mockRoute:true,holderBootstrap:true}
+      and .deviceDataMode == "preserved"
     ' "$MANUAL_RECEIPT" >/dev/null || return 1
   manual_support_pid="$(jq -r '.support.pid' "$MANUAL_RECEIPT")"
   manual_support_command_sha="$(jq -r '.support.commandSha256' "$MANUAL_RECEIPT")"
@@ -202,6 +212,18 @@ manual_status() {
   jq -r '"portal-tailnet-manual: READY services=\(.metrics.servicesSeconds)s tailnet=\(.metrics.tailnetSeconds)s android=\(.metrics.androidSeconds)s total=\(.metrics.readySeconds)s"' "$MANUAL_RECEIPT"
 }
 
+manual_reset() {
+  command -v awk >/dev/null 2>&1 || fail missing-tool
+  [ -x "$adb" ] || fail adb
+  [ ! -e "$STATE" ] && [ ! -L "$STATE" ] || fail manual-session-active
+  manual_select_physical_device || fail physical-device
+  printf '%s\n' 'portal-tailnet-manual: RESET package=io.medianox.oxid scope=application-data'
+  adb_device shell am force-stop io.medianox.oxid >/dev/null 2>&1 || fail manual-reset-stop
+  adb_device shell pm clear io.medianox.oxid >/dev/null 2>&1 || fail manual-reset-data
+  adb_device shell pm path io.medianox.oxid 2>/dev/null | grep -q '^package:' || fail manual-reset-package
+  printf '%s\n' 'portal-tailnet-manual: RESET-COMPLETE package=io.medianox.oxid scope=application-data'
+}
+
 portal_source_valid() {
   [ -d "$SOURCE" ] && [ ! -L "$SOURCE" ] \
     && [ "$(git -C "$SOURCE" remote get-url origin 2>/dev/null)" = "$PORTAL_REMOTE" ] \
@@ -238,11 +260,47 @@ manual_prepare() {
     "$REPOSITORY_ROOT/scripts/portal-consumer-lifecycle.sh" prepare
 }
 
-manual_prepared_status() {
+manual_prepared_valid() {
   PORTAL_INTEGRATION_CHECKOUT="$SOURCE" \
   OXID_PORTAL_CONSUMER_STATE_DIR="$MANUAL_PREPARED_CONSUMER_STATE" \
-    "$REPOSITORY_ROOT/scripts/portal-consumer-lifecycle.sh" prepared-status >/dev/null \
-    || fail artifacts-not-prepared
+    "$REPOSITORY_ROOT/scripts/portal-consumer-lifecycle.sh" prepared-status >/dev/null
+}
+
+manual_prepared_status() {
+  manual_prepared_valid || fail artifacts-not-prepared
+}
+
+manual_doctor() {
+  local portal_containers status_json dns_name
+  for command_name in awk curl docker git jq nix node ps shasum tailscale; do
+    command -v "$command_name" >/dev/null 2>&1 \
+      || manual_doctor_fail missing-tool "install-$command_name"
+  done
+  [ -x "$adb" ] || manual_doctor_fail adb "install-android-platform-tools"
+  [ -z "$(git -C "$REPOSITORY_ROOT" status --porcelain --untracked-files=no)" ] \
+    || manual_doctor_fail oxid-dirty "commit-or-stash-tracked-changes"
+  [ ! -e "$STATE" ] && [ ! -L "$STATE" ] \
+    || manual_doctor_fail manual-session-active "just-portal-tailnet-manual-status-or-stop"
+  manual_prepared_valid \
+    || manual_doctor_fail artifacts-not-prepared "just-portal-tailnet-manual-prepare"
+  docker info >/dev/null 2>&1 \
+    || manual_doctor_fail docker "start-docker-desktop"
+  portal_containers="$(docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet 2>/dev/null)" \
+    || manual_doctor_fail docker "start-docker-desktop"
+  [ -z "$portal_containers" ] \
+    || manual_doctor_fail portal-session-conflict "review-and-cleanup-owned-portal-receipt"
+  "$REPOSITORY_ROOT/scripts/standalone-status.sh" phone >/dev/null 2>&1 \
+    || manual_doctor_fail standalone-tailnet "just-standalone-phone-up"
+  status_json="$(tailscale status --json 2>/dev/null)" \
+    || manual_doctor_fail tailscale "connect-tailscale"
+  [ "$(jq -r '.BackendState' <<<"$status_json")" = Running ] \
+    || manual_doctor_fail tailscale "connect-tailscale"
+  dns_name="$(jq -r '.Self.DNSName | rtrimstr(".")' <<<"$status_json")"
+  OXID_TAILNET_ORIGIN_POLICY_INPUT="$dns_name" node "$ORIGIN_POLICY" --host-env >/dev/null \
+    || manual_doctor_fail tailscale-identity "enable-magicdns-and-https"
+  manual_select_connected_physical_device \
+    || manual_doctor_fail physical-device "connect-exactly-one-authorized-phone-and-close-emulators"
+  printf '%s\n' 'portal-tailnet-manual: DOCTOR-READY artifacts=ready standalone=ready tailnet=ready device=ready app-data=preserved'
 }
 
 manual_cleanup() {
@@ -337,8 +395,10 @@ manual_supervise() {
 case "$OPERATION" in
   manual-prepare) manual_prepare; exit 0 ;;
   manual-prepared-status) manual_prepared_status; printf '%s\n' 'portal-tailnet-manual: PREPARED'; exit 0 ;;
+  manual-doctor) manual_doctor; exit 0 ;;
   manual-start) manual_prepared_status; manual_start_epoch="$(date +%s)" ;;
   manual-status) manual_status; exit 0 ;;
+  manual-reset) manual_reset; exit 0 ;;
   manual-stop) manual_stop; exit 0 ;;
 esac
 
@@ -581,7 +641,9 @@ fi
 tailnet_seconds="$(( $(date +%s) - tailnet_started_epoch ))"
 
 adb_reverse_before="$(adb_device reverse --list 2>/dev/null | sort)"
-adb_device shell pm clear io.medianox.oxid >/dev/null 2>&1 || true
+if [ "$OPERATION" = automated ]; then
+  adb_device shell pm clear io.medianox.oxid >/dev/null 2>&1 || fail clean-room-reset
+fi
 android_started_epoch="$(date +%s)"
 if ! OXID_MOBILE_CUSTODY=development \
   OXID_MOBILE_PORTAL_PROFILE=tailnet-android \
@@ -629,7 +691,7 @@ if [ "$OPERATION" = manual-start ]; then
     --arg mock_receipt_sha "$mock_receipt_sha" \
     --argjson services "$services_seconds" --argjson tailnet "$tailnet_seconds" \
     --argjson android "$android_seconds" --argjson ready "$ready_seconds" \
-    '{schema:"oxid-portal-tailnet-manual-session-v1",oxid:{head:$head,tree:$tree},portal:{commit:$commit,tree:$portal_tree},support:{pid:$support_pid,commandSha256:$support_sha},supervisor:{pid:$supervisor_pid,commandSha256:$supervisor_sha},serve:{baselineSha256:$baseline_sha,activeSha256:$active_sha},mock:{transformReceiptSha256:$mock_receipt_sha,externalPath:"/kyc/mock-verification",upstreamPath:"/mock-verification"},page:{html:true,mockRoute:true,holderBootstrap:true},metrics:{servicesSeconds:$services,tailnetSeconds:$tailnet,androidSeconds:$android,readySeconds:$ready}}' \
+    '{schema:"oxid-portal-tailnet-manual-session-v1",oxid:{head:$head,tree:$tree},portal:{commit:$commit,tree:$portal_tree},support:{pid:$support_pid,commandSha256:$support_sha},supervisor:{pid:$supervisor_pid,commandSha256:$supervisor_sha},serve:{baselineSha256:$baseline_sha,activeSha256:$active_sha},mock:{transformReceiptSha256:$mock_receipt_sha,externalPath:"/kyc/mock-verification",upstreamPath:"/mock-verification"},page:{html:true,mockRoute:true,holderBootstrap:true},deviceDataMode:"preserved",metrics:{servicesSeconds:$services,tailnetSeconds:$tailnet,androidSeconds:$android,readySeconds:$ready}}' \
     >"$MANUAL_RECEIPT"
   chmod 600 "$MANUAL_RECEIPT"
   exec 8>&-
