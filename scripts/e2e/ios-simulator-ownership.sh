@@ -4,8 +4,28 @@
 oxid_ios_operation() {
   local developer_dir="$1"
   shift
-  local deadline="${OXID_IOS_OPERATION_TIMEOUT_SECONDS:-30}"
-  timeout -k 2s "${deadline}s" env DEVELOPER_DIR="$developer_dir" "$@"
+  local deadline="${OXID_IOS_OPERATION_TIMEOUT_SECONDS:-30}" support_root
+  support_root="$(cd -- "${BASH_SOURCE[0]%/*}/../.." && pwd -P)" || return 1
+  node "$support_root/scripts/lib/run-managed-command.mjs" \
+    --timeout-seconds "$deadline" --label ios-tool-operation -- \
+    env DEVELOPER_DIR="$developer_dir" "$@"
+}
+
+oxid_ios_supervise_acceptance() {
+  local root="$1" scenario="$2" timeout_seconds="$3" script="$4"
+  shift 4
+  [ "${OXID_IOS_XCODE_SUPERVISED:-0}" != 1 ] || return 0
+  exec node "$root/scripts/e2e/ios-xcode-supervisor.mjs" \
+    --scenario "$scenario" --timeout-seconds "$timeout_seconds" --cwd "$root" -- \
+    "$script" "$@"
+}
+
+oxid_ios_run_xctest() {
+  local root="$1" scenario="$2" timeout_seconds="$3"
+  shift 3
+  [ "${OXID_IOS_XCODE_SUPERVISED:-0}" = 1 ] || return 1
+  node "$root/scripts/e2e/ios-xcode-supervisor.mjs" --child-only \
+    --scenario "$scenario" --timeout-seconds "$timeout_seconds" --cwd "$root" -- "$@"
 }
 
 oxid_ios_xcrun() {
@@ -21,12 +41,12 @@ oxid_ios_xcodebuild() {
 }
 
 oxid_ios_filesystem_identity() {
-  local path="$1" deadline="${OXID_IOS_OPERATION_TIMEOUT_SECONDS:-30}"
-  if identity="$(timeout -k 2s "${deadline}s" stat -c '%d:%i' -- "$path" 2>/dev/null)"; then
+  local path="$1" identity
+  if identity="$(oxid_ios_operation / stat -c '%d:%i' -- "$path" 2>/dev/null)"; then
     printf '%s\n' "$identity"
     return 0
   fi
-  timeout -k 2s "${deadline}s" stat -f '%d:%i' -- "$path" 2>/dev/null
+  oxid_ios_operation / stat -f '%d:%i' -- "$path" 2>/dev/null
 }
 
 oxid_ios_receipt_mode_is_private() {
@@ -63,7 +83,7 @@ oxid_ios_discover_selectors() {
   [ -x "${OXID_XCRUN:-/usr/bin/xcrun}" ] && [ -x "${OXID_XCODEBUILD:-/usr/bin/xcodebuild}" ] || return 1
   oxid_ios_xcodebuild "$developer_dir" -version >/dev/null 2>&1 || return 1
   runtimes="$(oxid_ios_xcrun "$developer_dir" simctl list runtimes -j)" || return 1
-  selection="$(jq -er '
+  selection="$(printf '%s\n' "$runtimes" | jq -er '
     [.runtimes[]
       | select(.isAvailable == true)
       | select(.identifier | test("^com\\.apple\\.CoreSimulator\\.SimRuntime\\.iOS-[0-9]+-[0-9]+$"))
@@ -74,12 +94,12 @@ oxid_ios_discover_selectors() {
         | select(.productFamily == "iPhone")
         | .identifier)]
     | @tsv
-  ' <<<"$runtimes")" || return 1
+  ')" || return 1
   IFS=$'\t' read -r runtime_id device_type_id <<<"$selection"
   device_types="$(oxid_ios_xcrun "$developer_dir" simctl list devicetypes -j)" || return 1
-  jq -e --arg deviceType "$device_type_id" '
+  printf '%s\n' "$device_types" | jq -e --arg deviceType "$device_type_id" '
     [.devicetypes[] | select(.identifier == $deviceType and (.name | startswith("iPhone")))] | length == 1
-  ' <<<"$device_types" >/dev/null || return 1
+  ' >/dev/null || return 1
   oxid_ios_validate_selectors "$developer_dir" "$runtime_id" "$device_type_id" || return 1
   printf '%s\t%s\n' "$runtime_id" "$device_type_id"
 }
@@ -101,13 +121,13 @@ oxid_ios_preflight() {
   oxid_ios_validate_selectors "$developer_dir" "$runtime_id" "$device_type_id" || return 1
   oxid_ios_xcodebuild "$developer_dir" -version >/dev/null 2>&1 || return 1
   runtimes="$(oxid_ios_xcrun "$developer_dir" simctl list runtimes -j)" || return 1
-  jq -e --arg runtime "$runtime_id" '
+  printf '%s\n' "$runtimes" | jq -e --arg runtime "$runtime_id" '
     [.runtimes[] | select(.identifier == $runtime and .isAvailable == true)] | length == 1
-  ' <<<"$runtimes" >/dev/null || return 1
+  ' >/dev/null || return 1
   device_types="$(oxid_ios_xcrun "$developer_dir" simctl list devicetypes -j)" || return 1
-  jq -e --arg deviceType "$device_type_id" '
+  printf '%s\n' "$device_types" | jq -e --arg deviceType "$device_type_id" '
     [.devicetypes[] | select(.identifier == $deviceType and (.name | startswith("iPhone")))] | length == 1
-  ' <<<"$device_types" >/dev/null || return 1
+  ' >/dev/null || return 1
 }
 
 oxid_ios_create_owned() {
@@ -166,13 +186,13 @@ oxid_ios_receipt_matches_simulator() {
   [ "$receipt_developer" = "$developer_dir" ] || return 1
   oxid_ios_validate_selectors "$developer_dir" "$runtime_id" "$device_type_id" || return 1
   devices="$(oxid_ios_xcrun "$developer_dir" simctl list devices -j)" || return 1
-  jq -e --arg runtime "$runtime_id" --arg deviceType "$device_type_id" \
+  printf '%s\n' "$devices" | jq -e --arg runtime "$runtime_id" --arg deviceType "$device_type_id" \
     --arg name "$name" --arg udid "$udid" '
       (.devices[$runtime] // [])
       | [.[] | select(.udid == $udid and .name == $name
           and .deviceTypeIdentifier == $deviceType and .isAvailable == true)]
       | length == 1
-    ' <<<"$devices" >/dev/null
+    ' >/dev/null
 }
 
 oxid_ios_owned_simctl() {
@@ -197,9 +217,9 @@ oxid_ios_delete_owned() {
   values="$(oxid_ios_receipt_values "$receipt")" || return 1
   IFS=$'\t' read -r receipt_developer runtime_id device_type_id name udid <<<"$values"
   devices="$(oxid_ios_xcrun "$developer_dir" simctl list devices -j)" || return 1
-  state="$(jq -er --arg runtime "$runtime_id" --arg udid "$udid" '
+  state="$(printf '%s\n' "$devices" | jq -er --arg runtime "$runtime_id" --arg udid "$udid" '
     first(.devices[$runtime][] | select(.udid == $udid) | .state)
-  ' <<<"$devices")" || return 1
+  ')" || return 1
   [ "$(oxid_ios_filesystem_identity "$receipt")" = "$receipt_identity" ] || return 1
   if [ "$state" != Shutdown ]; then
     oxid_ios_xcrun "$developer_dir" simctl shutdown "$udid" || return 1
@@ -208,8 +228,8 @@ oxid_ios_delete_owned() {
   [ "$(oxid_ios_filesystem_identity "$receipt")" = "$receipt_identity" ] || return 1
   oxid_ios_xcrun "$developer_dir" simctl delete "$udid" || return 1
   devices="$(oxid_ios_xcrun "$developer_dir" simctl list devices -j)" || return 1
-  if jq -e --arg udid "$udid" '[.devices[][] | select(.udid == $udid)] | length > 0' \
-    <<<"$devices" >/dev/null; then
+  if printf '%s\n' "$devices" | \
+    jq -e --arg udid "$udid" '[.devices[][] | select(.udid == $udid)] | length > 0' >/dev/null; then
     return 1
   fi
   [ "$(oxid_ios_filesystem_identity "$receipt")" = "$receipt_identity" ] || return 1

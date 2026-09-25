@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import { execFileSync } from "node:child_process";
+import { createWriteStream, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
+
+import { runManagedChild } from "../lib/managed-child-process.mjs";
+
+const SCENARIO = /^[a-z0-9][a-z0-9-]{0,79}$/u;
+const RECEIPT_SCHEMA = "oxid-ios-xcode-admission-v1";
+const DEFAULT_LEASE = path.join(os.tmpdir(), "oxid-ios-xcode-admission-v1");
+
+function fail(message, code = 1) {
+  process.stderr.write(`ios-xcode-supervisor: FAIL classification=${message}\n`);
+  process.exitCode = code;
+}
+
+export function parseProcessSnapshot(text) {
+  return String(text).split(/\r?\n/u).flatMap((line) => {
+    const match = line.trim().match(/^(\d+)\s+(.+)$/u);
+    if (!match) return [];
+    const command = path.basename(match[2].trim().split(/\s+/u)[0] ?? "");
+    return command === "xcodebuild" || command === "simctl"
+      ? [{ pid: Number(match[1]), command }]
+      : [];
+  });
+}
+
+export function processSnapshot() {
+  return parseProcessSnapshot(execFileSync("/bin/ps", ["-axo", "pid=,comm="], { encoding: "utf8" }));
+}
+
+function processAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid < 1) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+export function readLease(leaseDir) {
+  const owner = path.join(leaseDir, "owner.json");
+  const stat = lstatSync(owner);
+  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600) throw new Error("invalid-lease-receipt");
+  const value = JSON.parse(readFileSync(owner, "utf8"));
+  if (value?.schema !== RECEIPT_SCHEMA || !Number.isSafeInteger(value.pid) || value.pid < 1 || !SCENARIO.test(value.scenario ?? "")) {
+    throw new Error("invalid-lease-receipt");
+  }
+  return value;
+}
+
+function removeStaleLease(leaseDir, expected) {
+  const stat = lstatSync(leaseDir);
+  const quarantine = `${leaseDir}.stale-${process.pid}`;
+  renameSync(leaseDir, quarantine);
+  const moved = lstatSync(quarantine);
+  if (stat.dev !== moved.dev || stat.ino !== moved.ino) throw new Error("lease-identity-changed");
+  const actual = readLease(quarantine);
+  if (actual.pid !== expected.pid || actual.startedAt !== expected.startedAt) throw new Error("lease-owner-changed");
+  rmSync(quarantine, { recursive: true });
+}
+
+export function acquireLease(leaseDir, scenario, { contenders = processSnapshot(), now = new Date().toISOString() } = {}) {
+  if (!path.isAbsolute(leaseDir) || !SCENARIO.test(scenario)) throw new Error("invalid-admission-input");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      mkdirSync(leaseDir, { mode: 0o700 });
+      const foreign = contenders.filter(({ pid }) => pid !== process.pid);
+      if (foreign.length > 0) {
+        rmSync(leaseDir, { recursive: true });
+        throw new Error(`external-contention-${foreign[0].command}`);
+      }
+      const receipt = { schema: RECEIPT_SCHEMA, pid: process.pid, scenario, startedAt: now };
+      writeFileSync(path.join(leaseDir, "owner.json"), `${JSON.stringify(receipt)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      return receipt;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      const existing = readLease(leaseDir);
+      if (processAlive(existing.pid)) throw new Error(`lease-busy-${existing.scenario}`);
+      removeStaleLease(leaseDir, existing);
+    }
+  }
+  throw new Error("lease-retry-exhausted");
+}
+
+export function releaseLease(leaseDir, receipt) {
+  const current = readLease(leaseDir);
+  if (current.pid !== receipt.pid || current.startedAt !== receipt.startedAt || current.scenario !== receipt.scenario) {
+    throw new Error("lease-owner-changed");
+  }
+  rmSync(leaseDir, { recursive: true });
+}
+
+function parseArgs(argv) {
+  const childOnly = argv.includes("--child-only");
+  argv = argv.filter((value) => value !== "--child-only");
+  const split = argv.indexOf("--");
+  if (split < 0 || split === argv.length - 1) throw new Error("missing-command");
+  const flags = argv.slice(0, split);
+  const command = argv.slice(split + 1);
+  const read = (name) => {
+    const index = flags.indexOf(name);
+    if (index < 0 || index === flags.length - 1 || flags.indexOf(name, index + 1) >= 0) throw new Error(`missing-${name.slice(2)}`);
+    return flags[index + 1];
+  };
+  const scenario = read("--scenario");
+  const timeoutSeconds = Number(read("--timeout-seconds"));
+  const cwd = read("--cwd");
+  if (!SCENARIO.test(scenario) || !Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0 || timeoutSeconds > 7200 || !path.isAbsolute(cwd)) {
+    throw new Error("invalid-arguments");
+  }
+  return { childOnly, scenario, timeoutMs: Math.ceil(timeoutSeconds * 1000), cwd, command: command[0], args: command.slice(1) };
+}
+
+export async function supervise(argv, { leaseDir = process.env.OXID_IOS_XCODE_LEASE_DIR || DEFAULT_LEASE } = {}) {
+  const options = parseArgs(argv);
+  if (options.childOnly && process.env.OXID_IOS_XCODE_SUPERVISED !== "1") throw new Error("child-without-host-admission");
+  const receipt = options.childOnly ? null : acquireLease(leaseDir, options.scenario);
+  let privateDir;
+  let logPath;
+  let log;
+  let logEnded = false;
+  const endLog = async () => {
+    if (!log || logEnded) return;
+    logEnded = true;
+    await new Promise((resolve) => log.end(resolve));
+  };
+  try {
+    privateDir = mkdtempSync(path.join(os.tmpdir(), "oxid-ios-xcode-run."));
+    logPath = path.join(privateDir, "child.log");
+    log = createWriteStream(logPath, { flags: "wx", mode: 0o600 });
+    const completion = runManagedChild(options.command, options.args, {
+      cwd: options.cwd,
+      env: { ...process.env, OXID_IOS_XCODE_SUPERVISED: "1" },
+      stdout: log,
+      stderr: log,
+      label: options.scenario,
+      graceMs: 3000,
+      timeoutMs: options.timeoutMs,
+    });
+    process.stderr.write(`ios-xcode-supervisor: phase=admitted scenario=${options.scenario}\n`);
+    const code = await completion;
+    await endLog();
+    if (code === 0) {
+      rmSync(privateDir, { recursive: true });
+      process.stderr.write(`ios-xcode-supervisor: phase=complete scenario=${options.scenario} outcome=passed\n`);
+    } else {
+      process.stderr.write(`ios-xcode-supervisor: phase=complete scenario=${options.scenario} outcome=${code === 124 ? "timed-out" : "failed"} log=${logPath}\n`);
+    }
+    return code;
+  } finally {
+    await endLog();
+    if (receipt) releaseLease(leaseDir, receipt);
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  supervise(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (error) => fail(error.message, /contention|busy/u.test(error.message) ? 75 : 1));
+}

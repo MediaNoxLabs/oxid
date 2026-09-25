@@ -15,6 +15,8 @@ test("virtual mobile lanes discover capability and publish truthful state", asyn
 
   assert.match(ios, /oxid_ios_discover_developer_directory/u);
   assert.match(ios, /oxid_ios_resolve_selectors/u);
+  assert.match(ios, /oxid_ios_supervise_acceptance "\$ROOT" ios-portal-exact-sequence 7200/u);
+  assert.match(ios, /oxid_ios_run_xctest "\$ROOT" "\$scenario_name" 600/u);
   assert.match(android, /oxid_android_discover_avd/u);
   for (const harness of [ios, android]) {
     assert.match(

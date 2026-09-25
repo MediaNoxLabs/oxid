@@ -23,6 +23,7 @@ readonly PACKAGE="io.medianox.oxid"
 
 # shellcheck source=e2e/ios-simulator-ownership.sh
 source "$ROOT/scripts/e2e/ios-simulator-ownership.sh"
+oxid_ios_supervise_acceptance "$ROOT" ios-wallet-lifecycle 1800 "$0" "$@"
 
 simulator_owned=0
 journey_passed=0
@@ -95,7 +96,7 @@ OXID_REPOSITORY_ROOT="$ROOT" "$xcodegen_output/bin/xcodegen" generate \
   >/dev/null || fail xcodegen
 
 host_user="$(id -un)"
-env -i \
+oxid_ios_run_xctest "$ROOT" lifecycle-background-recovery 900 env -i \
   "DEVELOPER_DIR=$DEVELOPER_DIR_SELECTED" \
   "HOME=$HOME" \
   "LANG=${LANG:-en_US.UTF-8}" \
@@ -104,7 +105,7 @@ env -i \
   "PATH=/usr/bin:/bin:/usr/sbin:/sbin" \
   "TMPDIR=${TMPDIR:-/tmp}" \
   "USER=$host_user" \
-  "$TIMEOUT" -k 30s 1200s /usr/bin/xcodebuild test \
+  /usr/bin/xcodebuild test \
     -project "$generated_project_root/OxidMobileSmoke.xcodeproj" \
     -scheme OxidUITests \
     -destination "platform=iOS Simulator,id=$DEVICE" \
