@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use oxid_identity_application::{
-    DidResolutionPort, DidResolutionPortError, DidResolutionPortFuture,
+    DidRefreshAvailability, DidResolutionPort, DidResolutionPortError, DidResolutionPortFuture,
 };
 
 mod lifecycle;
@@ -63,6 +63,15 @@ impl DidResolutionPort for StandaloneDidResolver {
             _ => Err(DidResolutionPortError::NotFound),
         };
         Box::pin(async move { result })
+    }
+
+    fn refresh_availability(&self, did: &MidnightDid) -> DidRefreshAvailability {
+        match did.as_str() {
+            STANDALONE_FIXTURE_DID
+            | STANDALONE_PASSPORT_ISSUER_DID
+            | STANDALONE_COMPACT_PASSPORT_ISSUER_DID => DidRefreshAvailability::Available,
+            _ => DidRefreshAvailability::Unavailable,
+        }
     }
 }
 
@@ -365,6 +374,10 @@ mod http {
                     .await
                     .unwrap_or(Err(DidResolutionPortError::Unavailable))
             })
+        }
+
+        fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+            DidRefreshAvailability::Available
         }
     }
 

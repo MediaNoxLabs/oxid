@@ -663,6 +663,8 @@ pub(super) fn DidsPage(
                             let updated = record.document_metadata.updated.clone().unwrap_or_else(|| "No update timestamp".to_owned());
                             let is_managed = !record.managed_method_ids.is_empty();
                             let is_deactivated = record.document_metadata.deactivated == Some(true);
+                            let refresh_available = record.refresh_availability == DidRefreshAvailability::Available;
+                            let refresh_unpublished = record.refresh_availability == DidRefreshAvailability::LocalUnpublished;
                             rsx! {
                                 div { class: "did-journey-header",
                                     button {
@@ -692,10 +694,11 @@ pub(super) fn DidsPage(
                                         div { dt { "Methods" } dd { "{record.document.verification_methods.len()}" } }
                                         div { dt { "Services" } dd { "{record.document.services.len()}" } }
                                     }
-                                    button {
-                                        class: "secondary-action",
-                                        r#type: "button",
-                                        disabled: resolving,
+                                    if refresh_available {
+                                        button {
+                                            class: "secondary-action",
+                                            r#type: "button",
+                                            disabled: resolving,
                                         onclick: move |_| {
                                             let service = refresh_services.resolve_did();
                                             let profile_id = refresh_profile.clone();
@@ -718,7 +721,12 @@ pub(super) fn DidsPage(
                                                 }
                                             });
                                         },
-                                        if resolving { "Refreshing DID…" } else { "Refresh from Midnight" }
+                                            if resolving { "Refreshing DID…" } else { "Refresh from Midnight" }
+                                        }
+                                    } else if refresh_unpublished {
+                                        p { class: "form-hint", "Saved locally. This managed DID is not published to the selected Midnight network." }
+                                    } else {
+                                        p { class: "form-hint", "Network refresh is unavailable for this DID in the selected Midnight network." }
                                     }
                                     if let Some(error) = operation_error.clone() {
                                         p { class: "field-error", role: "alert", "{error}" }

@@ -20,6 +20,17 @@ pub type DidResolutionPortFuture<'a> =
 /// deliberately narrow standalone fixture, but never receive a profile scope.
 pub trait DidResolutionPort: Send + Sync {
     fn resolve<'a>(&'a self, did: &'a MidnightDid) -> DidResolutionPortFuture<'a>;
+
+    fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+        DidRefreshAvailability::Available
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DidRefreshAvailability {
+    Available,
+    LocalUnpublished,
+    Unavailable,
 }
 
 pub type DidPublicationPortFuture<'a> =
@@ -326,6 +337,7 @@ pub struct DidDocumentMetadataView {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DidRecordView {
     pub document: DidDocumentView,
+    pub refresh_availability: DidRefreshAvailability,
     pub document_metadata: DidDocumentMetadataView,
     pub content_type: Option<String>,
     pub source: String,
@@ -337,6 +349,7 @@ impl From<&DidResolution> for DidRecordView {
         let metadata = resolution.document_metadata();
         Self {
             document: DidDocumentView::from(resolution.document()),
+            refresh_availability: DidRefreshAvailability::Unavailable,
             document_metadata: DidDocumentMetadataView {
                 created: metadata.created.clone(),
                 updated: metadata.updated.clone(),
@@ -388,6 +401,14 @@ fn record_view(
         .lifecycle
         .managed_method_ids(profile_id, resolution)
         .unwrap_or_default();
+    view.refresh_availability = service
+        .resolver
+        .refresh_availability(resolution.document().id());
+    if !view.managed_method_ids.is_empty()
+        && view.refresh_availability == DidRefreshAvailability::Unavailable
+    {
+        view.refresh_availability = DidRefreshAvailability::LocalUnpublished;
+    }
     view
 }
 
@@ -525,6 +546,10 @@ pub struct UnavailableDidResolver;
 impl DidResolutionPort for UnavailableDidResolver {
     fn resolve<'a>(&'a self, _: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
         Box::pin(async { Err(DidResolutionPortError::Unavailable) })
+    }
+
+    fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+        DidRefreshAvailability::Unavailable
     }
 }
 
