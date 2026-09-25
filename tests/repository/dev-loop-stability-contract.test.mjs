@@ -2005,7 +2005,7 @@ test("Oxid PR CI adapter reconciles only superseded same-head Actions failures",
     checkRuns: [
       {
         name: "Repository gate", app: { slug: "github-actions" },
-        details_url: "https://github.com/o/r/actions/runs/10/job/1", status: "completed", conclusion: "failure",
+        details_url: "https://github.com/o/r/actions/runs/10/job/1", status: "completed", conclusion: "cancelled",
       },
       ...(replacement.status === "completed" ? [{
         name: "Repository gate", app: { slug: "github-actions" },
