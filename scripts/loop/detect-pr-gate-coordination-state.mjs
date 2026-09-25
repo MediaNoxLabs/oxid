@@ -4,21 +4,32 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { normalizePrFactsOptionalSarif } from "../github/optional-sarif-policy.mjs";
+import { classifyOptionalSarifChecks, normalizePrFactsOptionalSarif } from "../github/optional-sarif-policy.mjs";
 import { runDevLoopsPackageScript } from "../lib/dev-loop-package-script.mjs";
 import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
 
-function runChild(command, args, env) {
-  const result = spawnSync(command, args, { encoding: "utf8", env, maxBuffer: 16 * 1024 * 1024 });
+function createRunChild(cwd, audit) {
+  return function runChild(command, args, env) {
+    const result = spawnSync(command, args, { cwd, encoding: "utf8", env, maxBuffer: 16 * 1024 * 1024 });
   const normalized = {
     code: result.status ?? 1,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? result.error?.message ?? "",
   };
   if (normalized.code === 0 && command === "gh" && args[0] === "pr" && args[1] === "view") {
-    normalized.stdout = JSON.stringify(normalizePrFactsOptionalSarif(JSON.parse(normalized.stdout)));
+      try {
+        const facts = JSON.parse(normalized.stdout);
+        const policy = classifyOptionalSarifChecks(facts?.statusCheckRollup);
+        normalized.stdout = JSON.stringify(normalizePrFactsOptionalSarif(facts));
+        if (policy.ignored.length > 0) {
+          audit.optionalSarifProjections = policy.ignored.map((check) => check?.name ?? check?.context);
+        }
+      } catch {
+        // Preserve malformed output so the pinned parser remains the fail-closed authority.
+      }
   }
   return normalized;
+  };
 }
 
 export async function runOxidPrGateCoordination(argv, {
@@ -42,10 +53,16 @@ export async function runOxidPrGateCoordination(argv, {
     return runDevLoopsPackageScript("scripts/loop/detect-pr-gate-coordination-state.mjs", argv, { cwd });
   }
   try {
+    const audit = { optionalSarifProjections: [] };
     const result = await detector.detectPrGateCoordinationState(options, {
-      cwd, repoRoot: cwd, env: process.env, runChild,
+      cwd, repoRoot: cwd, env: process.env, runChild: createRunChild(cwd, audit),
     });
-    return output.emitResult(result, { jq: options.jq, silent: options.silent, stdout, stderr });
+    const auditable = audit.optionalSarifProjections.length === 0 ? result : {
+      ...result,
+      optionalSarifPolicy: "authoritative-scan-v1",
+      optionalSarifProjections: audit.optionalSarifProjections,
+    };
+    return output.emitResult(auditable, { jq: options.jq, silent: options.silent, stdout, stderr });
   } catch (error) {
     stderr.write(`${helpers.formatCliError(error)}\n`);
     return 1;

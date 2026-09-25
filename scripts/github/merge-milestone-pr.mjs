@@ -10,22 +10,13 @@ import { validatePullRequest } from "../ci/contribution-policy.mjs";
 import { assertIssueTarget, parseDeliveryTarget } from "../lib/delivery-target.mjs";
 import { currentTriageReceipt, validateFollowUpIssue } from "./review-triage.mjs";
 import { assertReviewActionAllowed, currentReviewControl } from "./review-control.mjs";
-import { classifyOptionalSarifChecks, OPTIONAL_SARIF_PROJECTIONS } from "./optional-sarif-policy.mjs";
+import { classifyOptionalSarifChecks, CRITICAL_CHECKS, OPTIONAL_SARIF_PROJECTIONS } from "./optional-sarif-policy.mjs";
 
 const REPOSITORY = "MediaNoxLabs/oxid";
 const BLOCKING_TITLE_MARKERS = /(?:\[?\bWIP\b\]?|\bDRAFT\b|DO NOT MERGE|🚧)/iu;
 const CLOSING_ISSUE = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#([1-9]\d*)\b/iu;
 const ELIGIBLE_MERGE_STATES = new Set(["CLEAN", "UNSTABLE"]);
-export const CRITICAL_CHECKS = Object.freeze([
-  "Validate PR title",
-  "Validate PR body",
-  "Verify commit sign-offs",
-  "Repository gate (fmt, architecture, lint, tests, coverage)",
-  "Locked Nix package and Compact artifacts",
-  "Audit, Licenses, Sources, and Documentation",
-  "scan",
-]);
-export { OPTIONAL_SARIF_PROJECTIONS };
+export { CRITICAL_CHECKS, OPTIONAL_SARIF_PROJECTIONS };
 
 function parseJson(source, label) {
   try {

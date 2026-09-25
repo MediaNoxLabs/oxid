@@ -107,7 +107,8 @@ export function reconcileOptionalSarifProjectionWait(
     const facts = loadStatusRollup({ repo: options.repo, pr: options.pr });
     if (facts?.headRefOid !== result.headSha) return result;
     const policy = classifyOptionalSarifChecks(facts?.statusCheckRollup);
-    if (!policy.authoritativeScanGreen || policy.ignored.length === 0 || policy.blockers.length > 0) return result;
+    if (!policy.authoritativeScanGreen || !policy.criticalChecksGreen
+      || policy.ignored.length === 0 || policy.blockers.length > 0) return result;
     return {
       ...result,
       status: "success",

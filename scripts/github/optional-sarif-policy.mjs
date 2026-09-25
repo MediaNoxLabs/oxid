@@ -8,6 +8,16 @@ export const OPTIONAL_SARIF_PROJECTIONS = Object.freeze([
   "zizmor",
 ]);
 
+export const CRITICAL_CHECKS = Object.freeze([
+  "Validate PR title",
+  "Validate PR body",
+  "Verify commit sign-offs",
+  "Repository gate (fmt, architecture, lint, tests, coverage)",
+  "Locked Nix package and Compact artifacts",
+  "Audit, Licenses, Sources, and Documentation",
+  "scan",
+]);
+
 const OPTIONAL_SARIF_PROJECTION_SET = new Set(OPTIONAL_SARIF_PROJECTIONS);
 const PENDING_STATES = new Set(["IN_PROGRESS", "PENDING", "QUEUED", "WAITING"]);
 const PASS_CONCLUSIONS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
@@ -17,16 +27,28 @@ function checkName(check) {
 }
 
 function hasNoWorkflow(check) {
-  return check?.workflow === "" || check?.workflowName === "";
+  if (Object.hasOwn(check ?? {}, "workflow")) return check.workflow === "";
+  if (Object.hasOwn(check ?? {}, "workflowName")) return check.workflowName === "";
+  return false;
 }
 
-function isSuccessful(check) {
-  if (check?.bucket === "pass" || check?.bucket === "skipping") return true;
+function isStrictSuccess(check) {
+  if (check?.bucket === "pass") return true;
+  const conclusion = String(check?.conclusion ?? "").toUpperCase();
+  const status = String(check?.status ?? "").toUpperCase();
+  const state = String(check?.state ?? "").toUpperCase();
+  if (conclusion) return status === "COMPLETED" && conclusion === "SUCCESS";
+  return state === "SUCCESS";
+}
+
+function isSuccessfulOrSkipped(check) {
+  if (check?.bucket === "skipping") return true;
+  if (isStrictSuccess(check)) return true;
   const conclusion = String(check?.conclusion ?? "").toUpperCase();
   const status = String(check?.status ?? "").toUpperCase();
   const state = String(check?.state ?? "").toUpperCase();
   if (conclusion) return status === "COMPLETED" && PASS_CONCLUSIONS.has(conclusion);
-  return state === "SUCCESS" || state === "SKIPPED";
+  return state === "SKIPPED";
 }
 
 function isPending(check) {
@@ -41,11 +63,15 @@ export function classifyOptionalSarifChecks(checks) {
     return { authoritativeScanGreen: false, ignored: [], retained: [], blockers: [] };
   }
   const scans = checks.filter((check) => checkName(check) === "scan");
-  const authoritativeScanGreen = scans.length === 1 && isSuccessful(scans[0]);
+  const authoritativeScanGreen = scans.length > 0 && scans.every(isStrictSuccess);
+  const criticalChecksGreen = CRITICAL_CHECKS.every((name) => {
+    const matches = checks.filter((check) => checkName(check) === name);
+    return matches.length > 0 && matches.every(isStrictSuccess);
+  });
   const ignored = [];
   const retained = [];
   for (const check of checks) {
-    if (authoritativeScanGreen
+    if (authoritativeScanGreen && criticalChecksGreen
       && OPTIONAL_SARIF_PROJECTION_SET.has(checkName(check))
       && hasNoWorkflow(check)
       && isPending(check)) {
@@ -56,9 +82,10 @@ export function classifyOptionalSarifChecks(checks) {
   }
   return {
     authoritativeScanGreen,
+    criticalChecksGreen,
     ignored,
     retained,
-    blockers: retained.filter((check) => !isSuccessful(check)),
+    blockers: retained.filter((check) => !isSuccessfulOrSkipped(check)),
   };
 }
 
