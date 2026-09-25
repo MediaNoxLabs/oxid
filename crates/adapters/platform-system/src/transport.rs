@@ -208,6 +208,33 @@ mod tests {
         Rejected,
     }
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum LifecyclePhase {
+        InitialConnect,
+        Resume,
+        ReconnectAfterDisconnect,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum TransportClass {
+        Http,
+        WebSocket,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum FailureClass {
+        InvalidEndpoint,
+        InsecureRemoteEndpoint,
+        TlsConfigurationUnavailable,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct FailureEvidence {
+        phase: LifecyclePhase,
+        transport: TransportClass,
+        failure: FailureClass,
+    }
+
     #[derive(Clone, Copy)]
     enum ServerProtocol {
         Http,
@@ -325,6 +352,45 @@ mod tests {
             .expect("test runtime should build")
     }
 
+    fn recreate_transport(
+        phase: LifecyclePhase,
+        transport: TransportClass,
+        endpoint: &Url,
+    ) -> Result<TransportTrustPolicy, FailureEvidence> {
+        let (schemes, result) = match transport {
+            TransportClass::Http => (
+                &["http", "https"][..],
+                http_client_builder_for(endpoint).map(|_| ()),
+            ),
+            TransportClass::WebSocket => (
+                &["ws", "wss"][..],
+                websocket_connector_for(endpoint).map(|_| ()),
+            ),
+        };
+        result.map_err(|failure| FailureEvidence {
+            phase,
+            transport,
+            failure: failure.into(),
+        })?;
+        classify(endpoint, schemes).map_err(|failure| FailureEvidence {
+            phase,
+            transport,
+            failure: failure.into(),
+        })
+    }
+
+    impl From<TransportTrustError> for FailureClass {
+        fn from(value: TransportTrustError) -> Self {
+            match value {
+                TransportTrustError::InvalidEndpoint => Self::InvalidEndpoint,
+                TransportTrustError::InsecureRemoteEndpoint => Self::InsecureRemoteEndpoint,
+                TransportTrustError::TlsConfigurationUnavailable => {
+                    Self::TlsConfigurationUnavailable
+                }
+            }
+        }
+    }
+
     #[test]
     fn classifies_closed_trust_modes() {
         assert_eq!(
@@ -387,6 +453,55 @@ mod tests {
             classify(&url("wss://-bad.example.ts.net/"), &["ws", "wss"]),
             Err(TransportTrustError::InvalidEndpoint)
         );
+    }
+
+    #[test]
+    fn recreation_preserves_trust_after_resume_and_disconnect() {
+        for (transport, endpoint) in [
+            (
+                TransportClass::Http,
+                url("https://wallet.example-tailnet.ts.net/"),
+            ),
+            (
+                TransportClass::WebSocket,
+                url("wss://wallet.example-tailnet.ts.net/"),
+            ),
+        ] {
+            for phase in [
+                LifecyclePhase::InitialConnect,
+                LifecyclePhase::Resume,
+                LifecyclePhase::ReconnectAfterDisconnect,
+            ] {
+                assert_eq!(
+                    recreate_transport(phase, transport, &endpoint),
+                    Ok(TransportTrustPolicy::BundledPublicRoots),
+                    "{transport:?} changed trust policy during {phase:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn recreation_failure_evidence_is_closed_and_never_falls_back() {
+        for (transport, endpoint) in [
+            (TransportClass::Http, url("https://100.64.0.1/")),
+            (TransportClass::WebSocket, url("wss://[fd7a:115c:a1e0::1]/")),
+        ] {
+            for phase in [
+                LifecyclePhase::InitialConnect,
+                LifecyclePhase::Resume,
+                LifecyclePhase::ReconnectAfterDisconnect,
+            ] {
+                assert_eq!(
+                    recreate_transport(phase, transport, &endpoint),
+                    Err(FailureEvidence {
+                        phase,
+                        transport,
+                        failure: FailureClass::InvalidEndpoint,
+                    })
+                );
+            }
+        }
     }
 
     #[test]
