@@ -134,6 +134,25 @@ android-portal-tailnet-physical-smoke:
 portal-tailnet-manual-prepare:
     ./scripts/test-android-portal-tailnet-physical.sh manual-prepare
 
+# Receipt-bound, state-preserving Portal application phases. Configure precedes build.
+portal-tailnet-manual-configure:
+    ./scripts/portal-tailnet-manual-phases.sh configure
+
+portal-tailnet-manual-build:
+    ./scripts/portal-tailnet-manual-phases.sh build
+
+portal-tailnet-manual-admit:
+    ./scripts/portal-tailnet-manual-phases.sh admit
+
+portal-tailnet-manual-install:
+    ./scripts/portal-tailnet-manual-phases.sh install
+
+portal-tailnet-manual-launch:
+    ./scripts/portal-tailnet-manual-phases.sh launch
+
+portal-tailnet-manual-phase-status:
+    ./scripts/portal-tailnet-manual-phases.sh status
+
 # Verify the exact pinned Portal source and prepared image receipt without starting Tailnet or a device.
 portal-tailnet-manual-prepared-status:
     ./scripts/test-android-portal-tailnet-physical.sh manual-prepared-status
