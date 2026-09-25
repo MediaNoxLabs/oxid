@@ -762,6 +762,24 @@ mod tests {
     }
 
     #[test]
+    fn legacy_snapshot_without_publication_state_is_loaded_as_unknown() {
+        let original = rich_record("profile_legacy");
+        let encoded = encode_portable_did_snapshot(std::slice::from_ref(&original))
+            .expect("snapshot encodes");
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(&encoded).expect("snapshot is JSON");
+        legacy["records"][0]
+            .as_object_mut()
+            .expect("record object")
+            .remove("publicationState");
+        let decoded = decode_portable_did_snapshot(
+            &serde_json::to_vec(&legacy).expect("legacy snapshot encodes"),
+        )
+        .expect("legacy snapshot decodes");
+        assert_eq!(decoded[0].publication_state(), DidPublicationState::Unknown);
+    }
+
+    #[test]
     fn rejects_malformed_wrong_schema_and_unknown_fields_without_echoing_contents() {
         let documents = [
             br#"{"schemaVersion":1,"records":["private-store-sentinel""#.as_slice(),

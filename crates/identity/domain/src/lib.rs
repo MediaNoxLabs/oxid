@@ -793,10 +793,14 @@ impl DidResolution {
     }
 }
 
+/// Authoritative knowledge about whether a DID has been published to its network.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DidPublicationState {
+    /// A successful resolution or publication boundary established publication.
     Published,
+    /// The DID was created locally and has not crossed a publication boundary.
     Unpublished,
+    /// Legacy or incomplete lifecycle evidence cannot establish either state.
     Unknown,
 }
 

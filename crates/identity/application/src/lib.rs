@@ -1125,7 +1125,7 @@ mod tests {
             ))
             .expect("record");
         let publisher = Arc::new(RecordingPublisher::default());
-        let service = DidPublicationService::new(repository, publisher.clone());
+        let service = DidPublicationService::new(repository.clone(), publisher.clone());
 
         let denied = futures_for_test::block_on(PublishDidUseCase::execute(
             &service,
@@ -1150,6 +1150,16 @@ mod tests {
         ))
         .expect("publication");
         assert_eq!(publisher.0.lock().expect("lock").as_slice(), [DID]);
+        assert_eq!(
+            repository
+                .get(
+                    &IdentityProfileId::parse("profile_test").expect("profile"),
+                    &MidnightDid::parse(DID).expect("DID"),
+                )
+                .expect("published record")
+                .publication_state(),
+            DidPublicationState::Published
+        );
     }
 
     #[test]
@@ -1168,6 +1178,10 @@ mod tests {
         )
         .expect("create");
         assert_eq!(created.document.id, DID);
+        assert_eq!(
+            created.refresh_availability,
+            DidRefreshAvailability::LocalUnpublished
+        );
 
         let denied = UpdateDidUseCase::execute(
             &service,
