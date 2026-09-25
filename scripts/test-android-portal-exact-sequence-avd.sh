@@ -124,12 +124,8 @@ readonly EMULATOR="$android_sdk/emulator/emulator"
 [ -x "$ADB" ] && [ -x "$EMULATOR" ] || fail android-sdk
 
 avd="${OXID_ANDROID_AVD:-}"
-[[ "$avd" =~ ^[A-Za-z0-9._-]+$ ]] || fail explicit-avd
-avd_found=false
-for avd_ini in "${ANDROID_AVD_HOME:-}/$avd.ini" "${ANDROID_SDK_HOME:-}/avd/$avd.ini" "$HOME/.android/avd/$avd.ini"; do
-  if [ -f "$avd_ini" ] && [ ! -L "$avd_ini" ]; then avd_found=true; break; fi
-done
-[ "$avd_found" = true ] || fail avd-definition
+if [ -z "$avd" ]; then avd="$(oxid_android_discover_avd "$EMULATOR")" || fail simulator-capability; fi
+oxid_android_avd_definition_exists "$avd" || fail avd-definition
 
 run_deadline() {
   local seconds="$1" remaining status
@@ -332,6 +328,7 @@ write_evidence() {
       portal:{integrationCommit:"25499870f84d77173c46e4af3021311decfb840b",integrationTree:"2d845d2293603dfd8adce5362c8a9941e6ba78a9",provenanceSha256:"63d2dd182f1a315d8fe7677ae6481aecebd2fd9cff709cc438b6c0261a3cf4c7"},
       deployment:{manifestSchema:"oxid-portal-deployment-v3",authoritySchema:"oxid-app-profile-authority-v2"},
       platform:{kind:"android_emulator",osFamily:"android",apiLevel:$api,architecture:$architecture},
+      applicationState:{install:"fresh",restart:"preserved",migration:"not_exercised"},
       artifactSha256:$artifact,scenarios:$scenarios,totalCounters:$counters,
       offer:{triggerOnly:true,capabilityMode0600:$capabilityMode,capabilityHex64:$capabilityHex,
         stagedAtomically:$staged,burnedBeforeNetwork:$burned,oneShotReadyThenEmpty:$oneShot,

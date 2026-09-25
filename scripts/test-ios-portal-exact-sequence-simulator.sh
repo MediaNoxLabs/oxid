@@ -95,10 +95,13 @@ done
 [ -x /usr/bin/xcodebuild ] && [ -x /usr/bin/xcrun ] && [ -x /usr/bin/plutil ] || fail xcode-tools
 if timeout -k 1s 0.1s sleep 5; then fail timeout-capability; else [ "$?" -eq 124 ] || fail timeout-capability; fi
 
-readonly DEVELOPER_DIR_SELECTED="${OXID_XCODE_DEVELOPER_DIR:-}"
-readonly RUNTIME_ID="${OXID_IOS_RUNTIME_ID:-}"
-readonly DEVICE_TYPE_ID="${OXID_IOS_DEVICE_TYPE_ID:-}"
-oxid_ios_preflight "$DEVELOPER_DIR_SELECTED" "$RUNTIME_ID" "$DEVICE_TYPE_ID" || fail selectors
+developer_dir_selected="$(oxid_ios_discover_developer_directory "${OXID_XCODE_DEVELOPER_DIR:-}")" || fail simulator-capability
+selector_values="$(oxid_ios_resolve_selectors "$developer_dir_selected" "${OXID_IOS_RUNTIME_ID:-}" "${OXID_IOS_DEVICE_TYPE_ID:-}")" \
+  || fail simulator-capability
+IFS=$'\t' read -r runtime_id device_type_id <<<"$selector_values"
+readonly DEVELOPER_DIR_SELECTED="$developer_dir_selected"
+readonly RUNTIME_ID="$runtime_id"
+readonly DEVICE_TYPE_ID="$device_type_id"
 
 run_deadline() {
   local seconds="$1" remaining
@@ -182,6 +185,7 @@ write_evidence() {
       portal:{integrationCommit:"25499870f84d77173c46e4af3021311decfb840b",integrationTree:"2d845d2293603dfd8adce5362c8a9941e6ba78a9",provenanceSha256:"63d2dd182f1a315d8fe7677ae6481aecebd2fd9cff709cc438b6c0261a3cf4c7"},
       deployment:{manifestSchema:"oxid-portal-deployment-v3",authoritySchema:"oxid-app-profile-authority-v2"},
       platform:{kind:"ios_simulator",osFamily:"ios",apiLevel:$api,architecture:$architecture},
+      applicationState:{install:"fresh",restart:"preserved",migration:"not_exercised"},
       artifactSha256:$artifact,scenarios:$scenarios,totalCounters:$counters,
       offer:{triggerOnly:true,capabilityMode0600:$capabilityMode,capabilityHex64:$capabilityHex,
         stagedAtomically:$staged,burnedBeforeNetwork:$burned,oneShotReadyThenEmpty:$oneShot,

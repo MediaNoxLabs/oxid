@@ -637,11 +637,12 @@ plaintext, explicit consent, distinct managed authentication and Jubjub methods,
 exact three-part verified import, encrypted persistence, unavailable production
 composition, and compile-time mobile isolation. Never add a permissive Portal
 decoder, runtime production route switch, helper checkout, personal endpoint,
-or fixed device selector. The owner-invoked virtual-mobile lane builds from a
+or fixed device selector. The owner-invoked virtual-mobile lane discovers an
+installed simulator/AVD capability when no reviewed override is supplied, builds from a
 clean `git archive HEAD`, runs a shell-mediated nine-scenario journey without
 exposing the control capability to XCTest, inspects the development encrypted
 envelope, kills and replaces the app process without data reset, and publishes
-only the closed `oxid-portal-virtual-mobile-evidence-v1` record after exact
+only the closed `oxid-portal-virtual-mobile-evidence-v2` record after exact
 simulator/emulator, listener, stack, build, and private-artifact cleanup. iOS
 uses only a newly created receipt-matched UDID and never kills CoreSimulator;
 Android rejects every physical, mixed, wrong-serial, wrong-AVD, or non-QEMU
