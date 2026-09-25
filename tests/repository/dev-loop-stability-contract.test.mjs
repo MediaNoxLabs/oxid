@@ -463,11 +463,14 @@ test("Pi smoke resolution reuses every exact common-checkout package from a link
 
 test("Pi devshell smoke delegates package authority to the bounded exact-pin resolver", async () => {
   const smoke = await read("scripts/check-pi-devshell.sh");
+  const helper = await read("scripts/factory/check-pi-devshell-config.mjs");
   const devshell = await read("nix/devshells/default.nix");
-  assert.match(smoke, /resolveDevLoopsPackageRoot/);
-  assert.match(smoke, /includeAllPinnedPackages:\s*true/);
+  assert.match(helper, /resolveDevLoopsPackageRoot/);
+  assert.match(helper, /includeAllPinnedPackages:\s*true/);
   assert.doesNotMatch(smoke, /review_package_root=["']\.pi\/npm/);
-  assert.doesNotMatch(smoke, /(?:HOME|global|node_modules\/\.\.\/)/);
+  assert.doesNotMatch(`${smoke}\n${helper}`, /(?:HOME|global|node_modules\/\.\.\/)/);
+  assert.doesNotMatch(smoke, /<<[-]?['"]?[A-Za-z0-9_]+['"]?/u);
+  assert.doesNotMatch(smoke, /<<</u);
   assert.match(devshell, /provision-pi-packages\.mjs/);
   assert.match(devshell, /content-addressed closure/);
   assert.match(devshell, /GITHUB_TOKEN/);
