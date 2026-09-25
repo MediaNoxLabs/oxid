@@ -133,6 +133,30 @@ delete only that receipt-owned run directory after the failure is understood.
 
 ## Ownership and timeouts
 
+iOS acceptance first acquires one user-scoped, mode-`0700` host admission
+lease. The receipt records only the supervisor PID, scenario class, and start
+time and is removed after the exact owner exits. A valid dead-owner receipt is
+reclaimed through an exclusive in-directory claim; a concurrent live takeover
+is preserved. Malformed, symlinked, foreign-owned, or live receipts fail closed.
+Active `xcodebuild`, `simctl`, `testmanagerd`, or `xctest` processes cause an
+immediate exit `75` before a build starts. A persistent Simulator UI or idle
+CoreSimulator service alone is not proof of an active test owner and therefore
+does not block admission. This is the bounded-refusal policy: the harness never
+kills or waits on a foreign session. Finish that session and retry; do not
+manually remove a live receipt.
+`OXID_IOS_XCODE_LEASE_DIR` is a test/diagnostic override and must be an absolute
+private directory.
+
+The Portal preflight is bounded to 180 seconds and the complete Portal route to
+7,200 seconds. Profile acceptance is bounded to 3,600 seconds. Wallet lifecycle
+acceptance is bounded to 1,800 seconds, with 1,200 seconds reserved for its
+single XCTest. Every Portal and profile XCTest has a 600-second ceiling. A
+timeout or supervisor signal terminates the receipt-owned process group, allows
+30 seconds for shell traps and simulator deletion, and then escalates only that
+group. Supervisor output is limited to admitted/completed phase records. On a
+failure it names the owner-private `child.log`; remove that directory only
+after diagnosis. Successful runs remove the transient log.
+
 iOS creates a uniquely named simulator and stores the exact returned UDID in an
 owner-private receipt. Every operation is `simctl <operation> <receipt-UDID>`;
 existing booted simulators are ignored. Cold runtime startup has a ten-minute

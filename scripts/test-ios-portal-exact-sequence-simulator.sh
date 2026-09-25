@@ -31,6 +31,13 @@ readonly -a SHARED_PORTS=(6300 8088 9944)
 
 # shellcheck source=e2e/ios-simulator-ownership.sh
 source "$OWNERSHIP_SUPPORT"
+if [ "${1:-}" = --preflight ]; then
+  oxid_ios_supervise_acceptance "$ROOT" ios-portal-preflight 180 \
+    "$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh" "$@"
+else
+  oxid_ios_supervise_acceptance "$ROOT" ios-portal-exact-sequence 7200 \
+    "$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh" "$@"
+fi
 # shellcheck source=e2e/android-avd-process-ownership.sh
 source "$PROCESS_SUPPORT"
 
@@ -413,8 +420,9 @@ run_deadline 300 env OXID_REPOSITORY_ROOT="$BUILD_SOURCE" xcodegen generate \
   --spec "$BUILD_SOURCE/tests/mobile/ios/project.yml" --project "$xcode_project" >>"$PRIVATE_LOG" 2>&1 || fail xcodegen
 host_user="$(id -un)"
 run_ios_test() {
-  local method="$1" phase_directory="${2:-}"
-  run_deadline 600 env -i DEVELOPER_DIR="$DEVELOPER_DIR_SELECTED" HOME="$HOME" \
+  local method="$1" phase_directory="${2:-}" scenario_name
+  scenario_name="$(oxid_ios_scenario_name portal "$method")"
+  oxid_ios_run_xctest "$ROOT" "$scenario_name" 600 env -i DEVELOPER_DIR="$DEVELOPER_DIR_SELECTED" HOME="$HOME" \
     LANG="${LANG:-en_US.UTF-8}" LOGNAME="$host_user" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
     TMPDIR="${TMPDIR:-/tmp}" USER="$host_user" \
     /usr/bin/xcodebuild test -project "$xcode_project/OxidMobileSmoke.xcodeproj" -scheme OxidUITests \
