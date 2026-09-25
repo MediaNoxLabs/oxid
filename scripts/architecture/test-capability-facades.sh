@@ -10,6 +10,13 @@ fixtures="$repository_root/scripts/architecture/fixtures/capability-facades"
 fixture_root="$(mktemp -d)"
 trap 'rm -rf "$fixture_root"' EXIT
 
+deadline=()
+if command -v timeout >/dev/null 2>&1; then
+  deadline=(timeout 45)
+elif command -v gtimeout >/dev/null 2>&1; then
+  deadline=(gtimeout 45)
+fi
+
 init_fixture() {
   local repo="$1"
   local baseline="${2:-$fixtures/valid.json}"
@@ -33,9 +40,14 @@ run_checker() {
       -u CAPABILITY_FACADES_TODAY \
       -u CAPABILITY_FACADES_TEST_MODE \
       -u GIT_NO_REPLACE_OBJECTS \
-      "$checker"
+      "${deadline[@]}" "$checker"
   )
 }
+
+if rg -n 'jq .*<<<|done[[:space:]]*< <\(jq' "$checker" >/dev/null; then
+  echo "Capability façade checker must materialize jq inputs; here-strings and nested process substitutions can deadlock Bash 5.3." >&2
+  exit 1
+fi
 
 expect_failure() {
   local repo="$1"
