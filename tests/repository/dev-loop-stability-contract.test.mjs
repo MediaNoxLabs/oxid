@@ -22,7 +22,7 @@ import {
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
 import { normalizeDevLoopsArgs, resolveOxidCompatibilityRoute, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
 import { editPrBody, parseEditPrArgs } from "../../scripts/github/edit-pr.mjs";
-import { watchOxidPrCiStatus } from "../../scripts/github/watch-oxid-ci.mjs";
+import { reconcileOptionalSarifProjectionWait, watchOxidPrCiStatus } from "../../scripts/github/watch-oxid-ci.mjs";
 import { runResolveTrackerLocalSpec } from "../../scripts/github/resolve-tracker-local-spec.mjs";
 import { assertNoPreflightBypass, inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
 import { runBranchGuard } from "../../scripts/loop/pre-commit-branch-guard.mjs";
@@ -102,6 +102,27 @@ const capturedClaudeEffortEntry = [
 ].join("\n");
 const fixtureClaudeAuthHelp = "Usage: claude auth status [options]\n  --json Output as JSON (default)\n";
 const fixtureClaudeCliEfforts = ["low", "medium", "high", "xhigh", "max"];
+
+test("CI watcher settles only same-head optional SARIF projections after scan", () => {
+  const headSha = "a".repeat(40);
+  const pending = { status: "pending", settled: false, ciStatus: "pending", headSha };
+  const scan = { __typename: "CheckRun", name: "scan", status: "COMPLETED", conclusion: "SUCCESS", workflowName: "Scan" };
+  const projection = { __typename: "CheckRun", name: "Checkov", status: "QUEUED", conclusion: "", workflowName: "" };
+  const loadStatusRollup = () => ({ headRefOid: headSha, statusCheckRollup: [scan, projection] });
+  assert.equal(reconcileOptionalSarifProjectionWait(pending, { repo: "owner/repo", pr: 7 }, { loadStatusRollup }).status, "success");
+  assert.equal(reconcileOptionalSarifProjectionWait(pending, { repo: "owner/repo", pr: 7 }, {
+    loadStatusRollup: () => ({ headRefOid: "b".repeat(40), statusCheckRollup: [scan, projection] }),
+  }).status, "pending");
+  for (const blocker of [
+    { ...scan, conclusion: "FAILURE" },
+    { ...projection, name: "unknown" },
+    { ...projection, status: "COMPLETED", conclusion: "CANCELLED" },
+  ]) {
+    assert.equal(reconcileOptionalSarifProjectionWait(pending, { repo: "owner/repo", pr: 7 }, {
+      loadStatusRollup: () => ({ headRefOid: headSha, statusCheckRollup: blocker.name === "scan" ? [blocker, projection] : [scan, blocker] }),
+    }).status, "pending");
+  }
+});
 
 async function realMkdtemp(prefix) {
   return realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
