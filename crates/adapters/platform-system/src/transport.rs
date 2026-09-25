@@ -189,14 +189,13 @@ mod tests {
 
     #[test]
     fn rejects_remote_plaintext_and_direct_tailnet_ips_for_both_transports() {
-        for endpoint in ["http://192.0.2.1:8080/", "ws://192.0.2.1:8080/"] {
-            let schemes = if endpoint.starts_with("http") {
-                &["http", "https"][..]
-            } else {
-                &["ws", "wss"][..]
-            };
+        for (scheme, schemes) in [
+            ("http", &["http", "https"][..]),
+            ("ws", &["ws", "wss"][..]),
+        ] {
+            let endpoint = format!("{scheme}://192.0.2.1:8080/");
             assert_eq!(
-                classify(&url(endpoint), schemes),
+                classify(&url(&endpoint), schemes),
                 Err(TransportTrustError::InsecureRemoteEndpoint)
             );
         }
