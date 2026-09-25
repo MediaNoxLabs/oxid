@@ -48,6 +48,11 @@ function measurements(kind = "android_emulator") {
       apiLevel: ios ? 26 : 35,
       architecture: "arm64",
     },
+    applicationState: {
+      install: "fresh",
+      restart: "preserved",
+      migration: "not_exercised",
+    },
     artifactSha256: "c".repeat(64),
     scenarios: [
       { name: "cold-route", passed: true, counterDelta: delta() },
@@ -156,11 +161,12 @@ function measurements(kind = "android_emulator") {
 for (const kind of ["android_emulator", "ios_simulator"]) {
   test(`${kind} renders the same closed passing evidence contract`, () => {
     const evidence = buildEvidence(measurements(kind));
-    assert.equal(evidence.schema, "oxid-portal-virtual-mobile-evidence-v1");
+    assert.equal(evidence.schema, "oxid-portal-virtual-mobile-evidence-v2");
     assert.equal(evidence.platform.kind, kind);
     assert.equal(evidence.scenarios.length, 9);
     assert.equal(evidence.acceptance.accepted, true);
     assert.equal(evidence.acceptance.secretFreeEvidence, true);
+    assert.equal(evidence.acceptance.truthfulApplicationState, true);
     assert.doesNotThrow(() => validateEvidence(evidence, { requireAccepted: true }));
   });
 }
@@ -206,6 +212,14 @@ test("unknown fields and secret-bearing string sentinels fail closed", () => {
   const sentinel = measurements();
   sentinel.platform.osFamily = "https://secret.invalid";
   assert.throws(() => buildEvidence(sentinel), /secret|platform/u);
+});
+
+test("simulator state evidence never implies an unexecuted migration", () => {
+  for (const field of ["install", "restart", "migration"]) {
+    const altered = measurements();
+    altered.applicationState[field] = "migrated";
+    assert.throws(() => buildEvidence(altered), /applicationState/u, field);
+  }
 });
 
 test("exclusive publication does not clobber and leaves mode 0600", () => {

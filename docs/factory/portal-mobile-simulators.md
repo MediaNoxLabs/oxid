@@ -110,13 +110,19 @@ target/ios-portal-exact-sequence-simulator/evidence.json
 target/android-portal-exact-sequence-avd/evidence.json
 ```
 
-Both use `oxid-portal-virtual-mobile-evidence-v1`. They contain only the Oxid
+Both use `oxid-portal-virtual-mobile-evidence-v2`. They contain only the Oxid
 head/tree, reviewed Portal pins, schema versions, coarse virtual-platform facts,
 artifact digest, standardized scenario/counter results, derived booleans, and
 cleanup acceptance. They exclude simulator UDIDs and names, ADB serials and AVD
 names, DIDs, URLs, offers, grants, tokens, nonces, credentials, claims, proofs,
 capabilities, paths, PIDs, and timestamps. Private build sources, DerivedData,
 XCTest results, and logs are removed before publication.
+
+Each record classifies the disposable install as `fresh`, the process restart
+as `preserved`, and migration as `not_exercised`; the closed schema rejects a
+migration claim that the lane did not execute. When no reviewed override is
+supplied, the harness deterministically discovers an installed supported iOS
+runtime/device type or Android AVD without publishing its selector.
 
 On a failed iOS journey, the harness still removes its receipt-owned simulator,
 Portal stack, listeners, and detached build source, but retains the owner-private

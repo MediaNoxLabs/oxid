@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SCHEMA = "oxid-portal-virtual-mobile-evidence-v1";
+const SCHEMA = "oxid-portal-virtual-mobile-evidence-v2";
 const PORTAL = Object.freeze({
   integrationCommit: "25499870f84d77173c46e4af3021311decfb840b",
   integrationTree: "2d845d2293603dfd8adce5362c8a9941e6ba78a9",
@@ -110,6 +110,7 @@ const CLEANUP_KEYS = Object.freeze([
   "privateArtifactsRemoved",
   "headClean",
 ]);
+const APPLICATION_STATE_KEYS = Object.freeze(["install", "restart", "migration"]);
 const ACCEPTANCE_KEYS = Object.freeze([
   "exactOfferAndPreview",
   "preConsentBoundary",
@@ -120,6 +121,7 @@ const ACCEPTANCE_KEYS = Object.freeze([
   "exactTotalCounters",
   "cleanup",
   "virtualTargetOnly",
+  "truthfulApplicationState",
   "secretFreeEvidence",
   "accepted",
 ]);
@@ -197,7 +199,7 @@ function assertSecretFreeStrings(value) {
 
 function validateMeasurements(input) {
   assertClosedObject(input, [
-    "oxid", "portal", "deployment", "platform", "artifactSha256", "scenarios",
+    "oxid", "portal", "deployment", "platform", "applicationState", "artifactSha256", "scenarios",
     "totalCounters", "offer", "issuance", "storage", "restart", "cleanup",
   ], "measurements");
   assertClosedObject(input.oxid, ["head", "tree"], "oxid");
@@ -223,6 +225,12 @@ function validateMeasurements(input) {
       || input.platform.apiLevel > 99) throw new Error("platform.apiLevel is invalid");
   if (!new Set(["arm64", "x86_64"]).has(input.platform.architecture)) {
     throw new Error("platform.architecture is invalid");
+  }
+  assertClosedObject(input.applicationState, APPLICATION_STATE_KEYS, "applicationState");
+  if (input.applicationState.install !== "fresh"
+      || input.applicationState.restart !== "preserved"
+      || input.applicationState.migration !== "not_exercised") {
+    throw new Error("applicationState is not truthful for a disposable simulator run");
   }
   assertHex(input.artifactSha256, 64, "artifactSha256");
 
@@ -270,6 +278,9 @@ function deriveAcceptance(input) {
   const exactTotals = exactCounters(input.totalCounters, expectedTotals());
   const cleanup = allTrue(input.cleanup, CLEANUP_KEYS);
   const virtualTargetOnly = input.cleanup.virtualTargetOnly === true;
+  const truthfulApplicationState = input.applicationState.install === "fresh"
+    && input.applicationState.restart === "preserved"
+    && input.applicationState.migration === "not_exercised";
   const secretFreeEvidence = true;
   const accepted = [
     exactOfferAndPreview,
@@ -281,6 +292,7 @@ function deriveAcceptance(input) {
     exactTotals,
     cleanup,
     virtualTargetOnly,
+    truthfulApplicationState,
     secretFreeEvidence,
   ].every(Boolean);
   return {
@@ -293,6 +305,7 @@ function deriveAcceptance(input) {
     exactTotalCounters: exactTotals,
     cleanup,
     virtualTargetOnly,
+    truthfulApplicationState,
     secretFreeEvidence,
     accepted,
   };
@@ -306,6 +319,7 @@ export function buildEvidence(input) {
     portal: structuredClone(input.portal),
     deployment: structuredClone(input.deployment),
     platform: structuredClone(input.platform),
+    applicationState: structuredClone(input.applicationState),
     artifact: { sha256: input.artifactSha256 },
     scenarios: structuredClone(input.scenarios),
     measurements: { totalCounters: structuredClone(input.totalCounters) },
@@ -324,7 +338,7 @@ export function buildEvidence(input) {
 
 export function validateEvidence(evidence, { requireAccepted = false } = {}) {
   assertClosedObject(evidence, [
-    "schema", "oxid", "portal", "deployment", "platform", "artifact", "scenarios",
+    "schema", "oxid", "portal", "deployment", "platform", "applicationState", "artifact", "scenarios",
     "measurements", "observations", "acceptance",
   ], "evidence");
   if (evidence.schema !== SCHEMA) throw new Error("evidence schema is invalid");
@@ -340,6 +354,7 @@ export function validateEvidence(evidence, { requireAccepted = false } = {}) {
     portal: evidence.portal,
     deployment: evidence.deployment,
     platform: evidence.platform,
+    applicationState: evidence.applicationState,
     artifactSha256: evidence.artifact.sha256,
     scenarios: evidence.scenarios,
     totalCounters: evidence.measurements.totalCounters,
