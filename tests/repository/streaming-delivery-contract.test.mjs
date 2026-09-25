@@ -17,6 +17,7 @@ import {
   validateMilestoneChecks,
   validateMilestonePr,
 } from "../../scripts/github/merge-milestone-pr.mjs";
+import { classifyOptionalSarifChecks, normalizePrFactsOptionalSarif } from "../../scripts/github/optional-sarif-policy.mjs";
 import {
   buildTriageReceipt,
   currentTriageReceipt,
@@ -130,6 +131,30 @@ test("milestone audit permits only pending known SARIF projections after scan pa
   assert.equal(validateMilestoneChecks([...passing, { ...pendingProjection, bucket: "cancel", state: "CANCELLED" }]).ok, false);
   assert.equal(validateMilestoneChecks([...passing.map((check) => check.name === "scan" ? { ...check, bucket: "fail" } : check), { ...pendingProjection, bucket: "cancel", state: "CANCELLED" }]).ok, false);
   assert.equal(validateMilestoneChecks([...passing, { name: "Unit tests (Linux host)", bucket: "skipping", state: "SKIPPED" }]).ok, true);
+});
+
+test("pre-approval facts share the fail-closed optional SARIF policy", () => {
+  const required = CRITICAL_CHECKS.map((name) => name === "scan"
+    ? { __typename: "CheckRun", name, status: "COMPLETED", conclusion: "SUCCESS", workflowName: "Scan" }
+    : { __typename: "StatusContext", context: name, state: "SUCCESS" });
+  const scan = required.find((check) => check.name === "scan");
+  const projection = { __typename: "CheckRun", name: "Trivy", status: "QUEUED", conclusion: "", workflowName: "" };
+  const normalized = normalizePrFactsOptionalSarif({ headRefOid: "a".repeat(40), statusCheckRollup: [...required, projection] });
+  assert.deepEqual(normalized.statusCheckRollup, required);
+  assert.equal(classifyOptionalSarifChecks([...required, { ...scan }, projection]).ignored.length, 1);
+  assert.equal(classifyOptionalSarifChecks([...required, { ...scan, conclusion: "FAILURE" }, projection]).ignored.length, 0);
+  for (const blocker of [
+    { ...projection, name: "unknown" },
+    { ...projection, workflowName: "Scan" },
+    { ...projection, status: "COMPLETED", conclusion: "FAILURE" },
+    { ...projection, status: "COMPLETED", conclusion: "CANCELLED" },
+  ]) {
+    assert.equal(classifyOptionalSarifChecks([...required, blocker]).ignored.length, 0);
+  }
+  assert.equal(classifyOptionalSarifChecks([...required.filter((check) => check !== scan), { ...scan, conclusion: "SKIPPED" }, projection]).ignored.length, 0);
+  assert.equal(classifyOptionalSarifChecks([...required.filter((check) => check !== scan), { ...scan, conclusion: "NEUTRAL" }, projection]).ignored.length, 0);
+  assert.equal(classifyOptionalSarifChecks([...required.filter((check) => check.context !== "Validate PR body"), projection]).ignored.length, 0);
+  assert.equal(classifyOptionalSarifChecks([projection]).ignored.length, 0);
 });
 
 test("review triage is exact-head and cannot defer a blocking finding", () => {

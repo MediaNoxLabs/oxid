@@ -10,28 +10,13 @@ import { validatePullRequest } from "../ci/contribution-policy.mjs";
 import { assertIssueTarget, parseDeliveryTarget } from "../lib/delivery-target.mjs";
 import { currentTriageReceipt, validateFollowUpIssue } from "./review-triage.mjs";
 import { assertReviewActionAllowed, currentReviewControl } from "./review-control.mjs";
+import { classifyOptionalSarifChecks, CRITICAL_CHECKS, OPTIONAL_SARIF_PROJECTIONS } from "./optional-sarif-policy.mjs";
 
 const REPOSITORY = "MediaNoxLabs/oxid";
 const BLOCKING_TITLE_MARKERS = /(?:\[?\bWIP\b\]?|\bDRAFT\b|DO NOT MERGE|🚧)/iu;
 const CLOSING_ISSUE = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#([1-9]\d*)\b/iu;
 const ELIGIBLE_MERGE_STATES = new Set(["CLEAN", "UNSTABLE"]);
-export const CRITICAL_CHECKS = Object.freeze([
-  "Validate PR title",
-  "Validate PR body",
-  "Verify commit sign-offs",
-  "Repository gate (fmt, architecture, lint, tests, coverage)",
-  "Locked Nix package and Compact artifacts",
-  "Audit, Licenses, Sources, and Documentation",
-  "scan",
-]);
-export const OPTIONAL_SARIF_PROJECTIONS = Object.freeze([
-  "Checkov",
-  "Opengrep OSS",
-  "Trivy",
-  "gitleaks",
-  "zizmor",
-]);
-const OPTIONAL_SARIF_PROJECTION_SET = new Set(OPTIONAL_SARIF_PROJECTIONS);
+export { CRITICAL_CHECKS, OPTIONAL_SARIF_PROJECTIONS };
 
 function parseJson(source, label) {
   try {
@@ -107,15 +92,11 @@ export function validateMilestoneChecks(checks) {
   const critical = validateCriticalChecks(checks);
   const failures = [...critical.failures];
   if (!Array.isArray(checks)) return { ok: false, failures };
-  const authoritativeScanGreen = checks.some((check) => check?.name === "scan" && check?.bucket === "pass");
-  for (const check of checks) {
+  const policy = classifyOptionalSarifChecks(checks);
+  for (const check of policy.retained) {
     if (CRITICAL_CHECKS.includes(check?.name)
       || check?.bucket === "pass"
       || check?.bucket === "skipping") continue;
-    if (OPTIONAL_SARIF_PROJECTION_SET.has(check?.name)
-      && check?.workflow === ""
-      && check?.bucket === "pending"
-      && authoritativeScanGreen) continue;
     failures.push(`${check?.name ?? "unnamed check"}: ${check?.state ?? check?.bucket ?? "unknown"}`);
   }
   return { ok: failures.length === 0, failures };

@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 
 import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
 import { GITHUB_REST_HEADERS, runGhCommand } from "./rest-client.mjs";
+import { classifyOptionalSarifChecks } from "./optional-sarif-policy.mjs";
 
 function isNoneTerminal(result) {
   return result?.ciStatus === "none" && result.status === "success" && result.settled === true;
@@ -87,6 +88,37 @@ function loadPrLifecycleState({ repo, pr }) {
     throw new Error("GitHub pull-request lifecycle response was malformed");
   }
   return { state: pull.merged_at ? "MERGED" : pull.state.toUpperCase(), headSha: pull.head.sha };
+}
+
+function loadPrStatusRollup({ repo, pr }) {
+  return JSON.parse(runGhCommand("gh", [
+    "pr", "view", String(pr), "--repo", repo, "--json", "headRefOid,statusCheckRollup",
+  ], { failureLabel: "GitHub pull-request check-rollup request" }));
+}
+
+/** Settle only the exact optional projections accepted by the merge audit. */
+export function reconcileOptionalSarifProjectionWait(
+  result,
+  options,
+  { loadStatusRollup = loadPrStatusRollup } = {},
+) {
+  if (result?.status !== "pending" || result?.settled !== false) return result;
+  try {
+    const facts = loadStatusRollup({ repo: options.repo, pr: options.pr });
+    if (facts?.headRefOid !== result.headSha) return result;
+    const policy = classifyOptionalSarifChecks(facts?.statusCheckRollup);
+    if (!policy.authoritativeScanGreen || !policy.criticalChecksGreen
+      || policy.ignored.length === 0 || policy.blockers.length > 0) return result;
+    return {
+      ...result,
+      status: "success",
+      settled: true,
+      ciStatus: "success",
+      optionalSarifProjections: policy.ignored.map((check) => check?.name ?? check?.context),
+    };
+  } catch {
+    return result;
+  }
 }
 
 function mergedLifecycleResult(result, options, { loadPrLifecycle }) {
@@ -170,14 +202,16 @@ export async function watchOxidPrCiStatus(
     now = performance.now.bind(performance),
     loadWorkflowAttempts,
     loadPrLifecycle = loadPrLifecycleState,
+    loadStatusRollup,
     ...watchDependencies
   },
 ) {
   const reconcile = (result) => reconcileSupersededWorkflowFailure(result, options, { loadWorkflowAttempts });
+  const reconcileOptional = (result) => reconcileOptionalSarifProjectionWait(result, options, { loadStatusRollup });
   const settleMergedLifecycle = (result) => mergedLifecycleResult(result, options, { loadPrLifecycle });
   const startedAtMs = now();
   const initial = await watchCiStatus(options, watchDependencies);
-  const reconciledInitial = reconcile(initial);
+  const reconciledInitial = reconcileOptional(reconcile(initial));
   if (hasNoChecks(initial)) {
     const merged = settleMergedLifecycle(initial);
     if (merged) return merged;
@@ -205,7 +239,7 @@ export async function watchOxidPrCiStatus(
     const observed = await watchCiStatus({ ...options, timeoutMs: 0 }, watchDependencies);
     attempts += observed.attempts;
     const observedWithAttempts = { ...observed, attempts };
-    latest = reconcile(observedWithAttempts);
+    latest = reconcileOptional(reconcile(observedWithAttempts));
     if (observed.headSha !== baselineSha) return changedResult(observedWithAttempts);
     if (hasNoChecks(observed)) {
       const merged = settleMergedLifecycle(observedWithAttempts);
@@ -214,6 +248,7 @@ export async function watchOxidPrCiStatus(
     if (isNoneTerminal(observed)) {
       continue;
     }
+    if (latest.status === "success" && latest.settled === true) return latest;
     if (isSupersessionPending(latest)) continue;
 
     const remainingAfterObservation = remainingTimeoutMs(startedAtMs, options.timeoutMs, now);
@@ -223,7 +258,7 @@ export async function watchOxidPrCiStatus(
       timeoutMs: remainingAfterObservation,
     }, watchDependencies);
     if (resumed.headSha !== baselineSha) return changedResult(resumed);
-    const reconciledResumed = reconcile(resumed);
+    const reconciledResumed = reconcileOptional(reconcile(resumed));
     if (isSupersessionPending(reconciledResumed)) {
       latest = reconciledResumed;
       continue;
