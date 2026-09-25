@@ -12,6 +12,7 @@ import {
   acquireLease,
   parseProcessSnapshot,
   readLease,
+  reclaimStaleLease,
   releaseLease,
 } from "../../scripts/e2e/ios-xcode-supervisor.mjs";
 
@@ -62,6 +63,31 @@ test("a valid dead-owner receipt is reclaimed but external Xcode contention is n
     assert.throws(() => acquireLease(lease, "blocked-run", {
       contenders: [{ pid: 42, command: "xcodebuild" }],
     }), /external-contention-xcodebuild/u);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("stale reclaim never removes a live lease acquired during the claim window", () => {
+  const { directory, lease } = fixture();
+  try {
+    mkdirSync(lease, { mode: 0o700 });
+    const stale = {
+      schema: "oxid-ios-xcode-admission-v1",
+      pid: 2_000_000_000,
+      scenario: "stale-run",
+      startedAt: "2026-09-24T00:00:00.000Z",
+    };
+    writeFileSync(path.join(lease, "owner.json"), `${JSON.stringify(stale)}\n`, { mode: 0o600 });
+    const live = { ...stale, pid: process.pid, scenario: "live-run", startedAt: "2026-09-25T00:00:00.000Z" };
+    assert.equal(reclaimStaleLease(lease, stale, {
+      afterClaim: () => {
+        rmSync(lease, { recursive: true });
+        mkdirSync(lease, { mode: 0o700 });
+        writeFileSync(path.join(lease, "owner.json"), `${JSON.stringify(live)}\n`, { mode: 0o600 });
+      },
+    }), false);
+    assert.deepEqual(readLease(lease), live);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { createWriteStream, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createWriteStream, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -63,15 +63,36 @@ export function readLease(leaseDir) {
   return value;
 }
 
-function removeStaleLease(leaseDir, expected) {
-  const stat = lstatSync(leaseDir);
-  const quarantine = `${leaseDir}.stale-${process.pid}`;
-  renameSync(leaseDir, quarantine);
-  const moved = lstatSync(quarantine);
-  if (stat.dev !== moved.dev || stat.ino !== moved.ino) throw new Error("lease-identity-changed");
-  const actual = readLease(quarantine);
-  if (actual.pid !== expected.pid || actual.startedAt !== expected.startedAt) throw new Error("lease-owner-changed");
-  rmSync(quarantine, { recursive: true });
+export function reclaimStaleLease(leaseDir, expected, { afterClaim = () => {} } = {}) {
+  const claim = path.join(leaseDir, ".reclaim.json");
+  const token = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  try {
+    writeFileSync(claim, `${token}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  } catch (error) {
+    if (error?.code === "EEXIST" || error?.code === "ENOENT") return false;
+    throw error;
+  }
+  let removed = false;
+  try {
+    afterClaim();
+    const actual = readLease(leaseDir);
+    if (actual.pid !== expected.pid || actual.startedAt !== expected.startedAt || processAlive(actual.pid)) return false;
+    rmSync(leaseDir, { recursive: true });
+    removed = true;
+    return true;
+  } finally {
+    if (!removed) {
+      try {
+        const stat = lstatSync(claim);
+        if (stat.isFile() && !stat.isSymbolicLink() && (stat.mode & 0o777) === 0o600
+          && readFileSync(claim, "utf8") === `${token}\n`) {
+          rmSync(claim);
+        }
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+    }
+  }
 }
 
 export function acquireLease(leaseDir, scenario, { contenders = processSnapshot(), now = new Date().toISOString() } = {}) {
@@ -91,7 +112,7 @@ export function acquireLease(leaseDir, scenario, { contenders = processSnapshot(
       if (error?.code !== "EEXIST") throw error;
       const existing = readLease(leaseDir);
       if (processAlive(existing.pid)) throw new Error(`lease-busy-${existing.scenario}`);
-      removeStaleLease(leaseDir, existing);
+      if (!reclaimStaleLease(leaseDir, existing)) continue;
     }
   }
   throw new Error("lease-retry-exhausted");

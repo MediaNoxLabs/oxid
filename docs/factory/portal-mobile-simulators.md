@@ -136,7 +136,8 @@ delete only that receipt-owned run directory after the failure is understood.
 iOS acceptance first acquires one user-scoped, mode-`0700` host admission
 lease. The receipt records only the supervisor PID, scenario class, and start
 time and is removed after the exact owner exits. A valid dead-owner receipt is
-reclaimed; malformed, symlinked, foreign-owned, or live receipts fail closed.
+reclaimed through an exclusive in-directory claim; a concurrent live takeover
+is preserved. Malformed, symlinked, foreign-owned, or live receipts fail closed.
 Active `xcodebuild`, `simctl`, `testmanagerd`, or `xctest` processes cause an
 immediate exit `75` before a build starts. A persistent Simulator UI or idle
 CoreSimulator service alone is not proof of an active test owner and therefore
