@@ -102,4 +102,4 @@ else
   export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$tailnet_dns_name:$proof_port"
 fi
 
-exec "$repository_root/scripts/run-android-emulator.sh"
+exec "$repository_root/scripts/run-android-emulator.sh" "$@"
