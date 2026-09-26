@@ -22,13 +22,15 @@ XChaCha20-Poly1305 and a fresh 24-byte nonce. The whole header, including the
 version, algorithm identifiers, exact KDF tuple, salt, nonce, and ciphertext
 length, is authenticated associated data.
 
-The decoder first rejects unknown versions, mismatched work factors/algorithms,
-invalid lengths, and wrong payload families, before deriving a key. It never
-allocates an Argon2 arena from arbitrary header values. A changed v6 header
-claiming v1/v4 with unchanged strong parameters is invalid before derivation;
-changing both the version and parameters into an allowed legacy tuple still
-fails AEAD authentication. Substitution of the same-policy complete-wallet
-version also fails authentication. No fallback retries weaker policies.
+The entry point's version allowlist and exact work-factor/algorithm matching
+reject unknown versions, wrong payload families, mismatched parameters, and
+invalid lengths before deriving a key. Payload-schema validation occurs only
+after successful authentication and decryption. The decoder never allocates an
+Argon2 arena from arbitrary header values. A changed v6 header claiming v1/v4
+with unchanged strong parameters is invalid before derivation; changing both
+the version and parameters into an allowed legacy tuple still fails AEAD
+authentication. Substitution of the same-policy complete-wallet version also
+fails authentication. No fallback retries weaker policies.
 
 The 64 MiB arena is additional to document, plaintext, and application memory.
 It raises the cost of each offline guess but does not make a weak recovery

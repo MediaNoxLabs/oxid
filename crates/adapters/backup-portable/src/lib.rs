@@ -35,7 +35,7 @@ const LEGACY_COMPLETE_WALLET_FORMAT_VERSION: u16 = 2;
 const LEGACY_COMPLETE_WALLET_FORMAT_VERSION_V3: u16 = 3;
 const LEGACY_CUSTODY_FORMAT_VERSION_V4: u16 = 4;
 const COMPLETE_WALLET_FORMAT_VERSION: u16 = 5;
-const CUSTODY_FORMAT_VERSION: u16 = 6;
+const CURRENT_CUSTODY_FORMAT_VERSION: u16 = 6;
 const KDF_ARGON2ID: u8 = 1;
 const AEAD_XCHACHA20_POLY1305: u8 = 1;
 const LEGACY_ARGON2_POLICY: Argon2Policy = Argon2Policy {
@@ -52,6 +52,14 @@ const SALT_BYTES: usize = 16;
 const NONCE_BYTES: usize = 24;
 const TAG_BYTES: usize = 16;
 const HEADER_BYTES: usize = 8 + 2 + 1 + 1 + 4 + 4 + 4 + SALT_BYTES + NONCE_BYTES + 4;
+const HEADER_VERSION_OFFSET: usize = MAGIC.len();
+const HEADER_KDF_OFFSET: usize = HEADER_VERSION_OFFSET + size_of::<u16>();
+const HEADER_AEAD_OFFSET: usize = HEADER_KDF_OFFSET + size_of::<u8>();
+const HEADER_MEMORY_KIB_OFFSET: usize = HEADER_AEAD_OFFSET + size_of::<u8>();
+const HEADER_ITERATIONS_OFFSET: usize = HEADER_MEMORY_KIB_OFFSET + size_of::<u32>();
+const HEADER_LANES_OFFSET: usize = HEADER_ITERATIONS_OFFSET + size_of::<u32>();
+const HEADER_SALT_OFFSET: usize = HEADER_LANES_OFFSET + size_of::<u32>();
+const HEADER_NONCE_OFFSET: usize = HEADER_SALT_OFFSET + SALT_BYTES;
 const MAX_KEYS: usize = 256;
 const MAX_PUBLIC_KEY_BYTES: usize = 128;
 const COMPLETE_FRAME_MAGIC: &[u8; 8] = b"OXIDALL1";
@@ -73,7 +81,7 @@ const fn argon2_policy_for_format(format_version: u16) -> Option<Argon2Policy> {
         | LEGACY_CUSTODY_FORMAT_VERSION_V4 => Some(LEGACY_ARGON2_POLICY),
         LEGACY_COMPLETE_WALLET_FORMAT_VERSION_V3
         | COMPLETE_WALLET_FORMAT_VERSION
-        | CUSTODY_FORMAT_VERSION => Some(COMPLETE_WALLET_ARGON2_POLICY),
+        | CURRENT_CUSTODY_FORMAT_VERSION => Some(COMPLETE_WALLET_ARGON2_POLICY),
         _ => None,
     }
 }
@@ -409,7 +417,12 @@ pub fn seal_portable_custody(
     random: &dyn RandomPort,
 ) -> Result<PortableWalletBackup, WalletPortableBackupPortError> {
     let plaintext = encode_custody(vault)?;
-    seal_payload(CUSTODY_FORMAT_VERSION, &plaintext, recovery_secret, random)
+    seal_payload(
+        CURRENT_CUSTODY_FORMAT_VERSION,
+        &plaintext,
+        recovery_secret,
+        random,
+    )
 }
 
 /// Authenticate, decrypt, strictly decode, and profile-bind a custody package.
@@ -424,7 +437,7 @@ pub fn open_portable_custody(
         &[
             LEGACY_CUSTODY_FORMAT_VERSION,
             LEGACY_CUSTODY_FORMAT_VERSION_V4,
-            CUSTODY_FORMAT_VERSION,
+            CURRENT_CUSTODY_FORMAT_VERSION,
         ],
     )?;
     let vault = decode_custody(&plaintext)?;
@@ -769,14 +782,30 @@ fn decode_header(bytes: &[u8]) -> Result<DecodedHeader, WalletPortableBackupPort
     if bytes.len() < HEADER_BYTES || &bytes[..MAGIC.len()] != MAGIC {
         return Err(WalletPortableBackupPortError::InvalidPackage);
     }
-    let format_version = u16::from_be_bytes([bytes[8], bytes[9]]);
-    let memory = u32::from_be_bytes(bytes[12..16].try_into().expect("fixed header range"));
-    let iterations = u32::from_be_bytes(bytes[16..20].try_into().expect("fixed header range"));
-    let lanes = u32::from_be_bytes(bytes[20..24].try_into().expect("fixed header range"));
+    let format_version = u16::from_be_bytes(
+        bytes[HEADER_VERSION_OFFSET..HEADER_KDF_OFFSET]
+            .try_into()
+            .expect("fixed header range"),
+    );
+    let memory = u32::from_be_bytes(
+        bytes[HEADER_MEMORY_KIB_OFFSET..HEADER_ITERATIONS_OFFSET]
+            .try_into()
+            .expect("fixed header range"),
+    );
+    let iterations = u32::from_be_bytes(
+        bytes[HEADER_ITERATIONS_OFFSET..HEADER_LANES_OFFSET]
+            .try_into()
+            .expect("fixed header range"),
+    );
+    let lanes = u32::from_be_bytes(
+        bytes[HEADER_LANES_OFFSET..HEADER_SALT_OFFSET]
+            .try_into()
+            .expect("fixed header range"),
+    );
     let argon2_policy = argon2_policy_for_format(format_version)
         .ok_or(WalletPortableBackupPortError::InvalidPackage)?;
-    if bytes[10] != KDF_ARGON2ID
-        || bytes[11] != AEAD_XCHACHA20_POLY1305
+    if bytes[HEADER_KDF_OFFSET] != KDF_ARGON2ID
+        || bytes[HEADER_AEAD_OFFSET] != AEAD_XCHACHA20_POLY1305
         || memory != argon2_policy.memory_kib
         || iterations != argon2_policy.iterations
         || lanes != argon2_policy.lanes
@@ -792,9 +821,9 @@ fn decode_header(bytes: &[u8]) -> Result<DecodedHeader, WalletPortableBackupPort
         return Err(WalletPortableBackupPortError::InvalidPackage);
     }
     let mut salt = [0_u8; SALT_BYTES];
-    salt.copy_from_slice(&bytes[24..40]);
+    salt.copy_from_slice(&bytes[HEADER_SALT_OFFSET..HEADER_NONCE_OFFSET]);
     let mut nonce = [0_u8; NONCE_BYTES];
-    nonce.copy_from_slice(&bytes[40..64]);
+    nonce.copy_from_slice(&bytes[HEADER_NONCE_OFFSET..HEADER_BYTES - size_of::<u32>()]);
     Ok(DecodedHeader {
         format_version,
         argon2_policy,
@@ -1216,7 +1245,7 @@ mod tests {
             .expect("vault should encrypt");
         assert_eq!(
             u16::from_be_bytes([backup.as_bytes()[8], backup.as_bytes()[9]]),
-            CUSTODY_FORMAT_VERSION
+            CURRENT_CUSTODY_FORMAT_VERSION
         );
         let opened = open_portable_custody(&backup, &secret(), &profile("profile_bip39"))
             .expect("vault should decrypt");
@@ -1292,7 +1321,11 @@ mod tests {
             let mut bytes = encode_header(version, expected, &[1; 16], &[2; 24], 16);
             bytes.extend_from_slice(&[0; 16]);
             assert!(decode_header(&bytes).is_ok());
-            for offset in [12, 16, 20] {
+            for offset in [
+                HEADER_MEMORY_KIB_OFFSET,
+                HEADER_ITERATIONS_OFFSET,
+                HEADER_LANES_OFFSET,
+            ] {
                 for value in [0_u32, 1, u32::MAX] {
                     if bytes[offset..offset + 4] == value.to_be_bytes() {
                         continue;
@@ -1307,7 +1340,8 @@ mod tests {
             }
             for unknown in [0_u16, 7, u16::MAX] {
                 let mut changed = bytes.clone();
-                changed[8..10].copy_from_slice(&unknown.to_be_bytes());
+                changed[HEADER_VERSION_OFFSET..HEADER_KDF_OFFSET]
+                    .copy_from_slice(&unknown.to_be_bytes());
                 assert!(matches!(
                     decode_header(&changed),
                     Err(WalletPortableBackupPortError::InvalidPackage)
@@ -1322,13 +1356,15 @@ mod tests {
             .expect("custody should encrypt");
         for version in [1_u16, 4] {
             let mut bytes = backup.as_bytes().to_vec();
-            bytes[8..10].copy_from_slice(&version.to_be_bytes());
+            bytes[HEADER_VERSION_OFFSET..HEADER_KDF_OFFSET].copy_from_slice(&version.to_be_bytes());
             assert!(matches!(
                 decode_header(&bytes),
                 Err(WalletPortableBackupPortError::InvalidPackage)
             ));
-            bytes[12..16].copy_from_slice(&LEGACY_ARGON2_POLICY.memory_kib.to_be_bytes());
-            bytes[16..20].copy_from_slice(&LEGACY_ARGON2_POLICY.iterations.to_be_bytes());
+            bytes[HEADER_MEMORY_KIB_OFFSET..HEADER_ITERATIONS_OFFSET]
+                .copy_from_slice(&LEGACY_ARGON2_POLICY.memory_kib.to_be_bytes());
+            bytes[HEADER_ITERATIONS_OFFSET..HEADER_LANES_OFFSET]
+                .copy_from_slice(&LEGACY_ARGON2_POLICY.iterations.to_be_bytes());
             let changed = PortableWalletBackup::parse(bytes).expect("bounded package");
             assert_eq!(
                 open_portable_custody(&changed, &secret(), &profile("profile_one"))
@@ -1337,7 +1373,7 @@ mod tests {
             );
         }
         let mut bytes = backup.into_bytes();
-        bytes[8..10].copy_from_slice(&5_u16.to_be_bytes());
+        bytes[HEADER_VERSION_OFFSET..HEADER_KDF_OFFSET].copy_from_slice(&5_u16.to_be_bytes());
         let changed = PortableWalletBackup::parse(bytes).expect("bounded package");
         assert_eq!(
             open_complete_wallet_archive(&changed, &secret(), None)
@@ -1378,6 +1414,14 @@ mod tests {
             open_portable_custody(&backup, &wrong, &profile("profile_one"))
                 .expect_err("wrong secret must fail"),
             WalletPortableBackupPortError::AuthenticationFailed
+        );
+        let mut truncated = backup.as_bytes().to_vec();
+        truncated.pop();
+        let truncated = PortableWalletBackup::parse(truncated).expect("truncation stays bounded");
+        assert_eq!(
+            open_portable_custody(&truncated, &secret(), &profile("profile_one"))
+                .expect_err("current v6 truncation must fail before derivation"),
+            WalletPortableBackupPortError::InvalidPackage
         );
         let mut bytes = backup.into_bytes();
         *bytes.last_mut().expect("package should have ciphertext") ^= 1;
