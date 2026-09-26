@@ -14,6 +14,7 @@
 - [Architecture](architecture.md)
 - [System diagrams](system-diagrams.md)
 - [Security model](security-model.md)
+  - [Portable custody backup KDF](portable-custody-kdf.md)
 - [Quality north star](quality-north-star.md)
 - [Quality constitution](quality-constitution.md)
 - [Quality baseline](quality-baseline-2026-08-26.md)

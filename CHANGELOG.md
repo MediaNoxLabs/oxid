@@ -75,6 +75,10 @@ once public releases begin.
 
 ### Changed
 
+- Portable custody backups now emit authenticated format v6 with Argon2id
+  64 MiB, t=3, p=1. Custody v1/v4 remains read-only recoverable, but older
+  builds cannot open v6 exports; verify recovery with a compatible build before
+  replacing a legacy backup.
 - Routine feature delivery now uses a 70% quality/coverage budget, one
   automatic review round, and only the affected fast CI lanes; complete
   assurance remains available on demand and runs after delivery to `develop`.
