@@ -21,6 +21,7 @@ routes through a coordination server.
 | `pi-subagents` | `0.67.0` | same |
 | `pi-taskflow` | `0.2.10` | installed as an `agent-review-pi` peer; all runtime resources disabled |
 | `typebox` | `1.3.9` | exact `agent-review-pi` peer |
+| `@stixxert/pi-docker-sandbox` | `1.1.6` | exact optional deploy-target package; extension disabled by default |
 | `@input-output-hk/agent-review-pi` | `0.6.0` | same, **GitHub Packages — needs a token** |
 
 Oxid loads the exact `dev-loops` CLI, skills, and packaged agent sources but
@@ -70,6 +71,28 @@ native review tools, and the bundled skill through the pinned Pi runtime. The
 taskflow package is installed only to satisfy that peer contract; project
 filters disable all of its runtime resources because detached orchestration is
 not safe for Oxid's dev-loop topology.
+
+The Docker Sandbox package is also installed with its extension suppressed.
+Ordinary Pi sessions therefore receive no Docker tools and pay no sandbox
+startup cost. For a simulator-free issue whose target plan needs a disposable
+Docker or Compose environment, install and authenticate the host `sbx` CLI,
+then start the opt-in deploy-target lane:
+
+```bash
+brew install docker/tap/sbx
+sbx login
+scripts/factory/pi-docker-sandbox.sh --check
+scripts/factory/pi-docker-sandbox.sh
+```
+
+The launcher retains Pi, edits, credentials, Git, and signing on the host while
+giving the session a unique private Docker daemon. It mounts the worktree
+read-only, refuses the unsandboxed host fallback and broad environment
+passthrough, and removes the session sandbox on shutdown. Do not set a
+persistent `DOCKER_SANDBOX` name or forward credentials. This is the package's
+default deploy-target mode—not its `sandbox/` execution backend. ADR-0112
+records the routing matrix and the evidence required before full tool execution
+may be enabled.
 
 `pi-subagents@0.67.0` no longer enforces the historical `turnBudget` field.
 Oxid therefore removes that inert key, uses a fail-closed `toolBudget`, and caps

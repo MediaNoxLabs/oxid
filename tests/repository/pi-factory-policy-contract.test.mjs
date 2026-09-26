@@ -56,12 +56,17 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
       prompts: [],
       themes: [],
     },
+    {
+      source: "npm:@stixxert/pi-docker-sandbox@1.1.6",
+      extensions: [],
+    },
     "npm:@input-output-hk/agent-review-pi@0.6.0",
   ]);
   assert.equal(settings.subagents.defaultModel, `${settings.defaultProvider}/${settings.defaultModel}`);
   assert.equal(settings.subagents.defaultThinking, settings.defaultThinkingLevel);
   const smoke = await readFile(path.join(repoRoot, "scripts", "check-pi-devshell.sh"), "utf8");
   const bootstrap = await readFile(path.join(repoRoot, "bootstrap.sh"), "utf8");
+  const dockerSandboxLauncher = await readFile(path.join(repoRoot, "scripts", "factory", "pi-docker-sandbox.sh"), "utf8");
   const devshell = await readFile(path.join(repoRoot, "nix", "devshells", "default.nix"), "utf8");
   assert.match(smoke, /pi --list-models/u);
   assert.match(smoke, /Pi 0\.85\.1 is required for native detached child dispatch/u);
@@ -97,6 +102,13 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(devshell, /export PI_CODING_AGENT_SESSION_DIR/u);
   assert.match(devshell, /export PI_SUBAGENTS_TEMP_ROOT/u);
   assert.doesNotMatch(devshell, /export PI_CODING_AGENT_DIR/u);
+  assert.match(dockerSandboxLauncher, /@stixxert\/pi-docker-sandbox\/index\.ts/u);
+  assert.match(dockerSandboxLauncher, /DOCKER_SANDBOX_WORKSPACE_RO="1"/u);
+  assert.match(dockerSandboxLauncher, /DOCKER_SANDBOX_TEARDOWN="remove"/u);
+  assert.match(dockerSandboxLauncher, /unset DOCKER_SANDBOX_ALLOW_UNSANDBOXED/u);
+  assert.match(dockerSandboxLauncher, /unset DOCKER_SANDBOX_ENV_PASSTHROUGH/u);
+  assert.match(dockerSandboxLauncher, /unset DOCKER_SANDBOX/u);
+  assert.doesNotMatch(dockerSandboxLauncher, /\/sandbox(?:\/|")/u);
 });
 
 test("repository dev-loops layer uses the bounded 1.0.2 schema", async () => {
