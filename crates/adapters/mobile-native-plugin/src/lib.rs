@@ -2,6 +2,8 @@
 
 #![deny(unsafe_code)]
 
+pub mod custody;
+
 #[cfg(any(target_os = "android", test))]
 use serde::Deserialize;
 #[cfg(any(target_os = "ios", target_os = "android", test))]
@@ -184,6 +186,8 @@ pub fn authorize_recovery_phrase_reveal_json() -> Result<String, NativeBridgeErr
     call_android_custody("authorize_recovery_phrase_reveal", "", None, None)
 }
 
+// Legacy platform transport. New adapters implement the separate custody
+// byte contract; never wrap this JSON path to implement CustodyTransport.
 #[cfg(target_os = "ios")]
 pub fn inspect_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
     call_ios_custody("inspect", profile_id, None, None)

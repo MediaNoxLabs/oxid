@@ -10,6 +10,14 @@ remain in Rust ports and application services.
 Keeping one plugin package is required by Dioxus 0.7.10, whose iOS bundler
 compiles multiple Swift packages but embeds only its primary framework.
 
+## Custody migration boundary
+
+The [secret-safe custody contract](custody-contract.md) defines the shared
+mutable-byte Rust/native API, strict secret-free control schema, ownership,
+cleanup obligations, and command/event matrix. Host tests validate this boundary;
+existing Android and iOS managed-string transports remain explicitly legacy until
+their independent platform migrations. This is not end-to-end remediation yet.
+
 ## QR lifecycle contract
 
 Native code captures one QR value and returns only this closed JSON status
