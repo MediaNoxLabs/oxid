@@ -32,7 +32,7 @@ The envelope is the primary handoff artifact — it is derived from resolver out
 - `nextAction` — the bounded task to execute
 - `stopRules` — stop boundaries that MUST NOT be crossed without authorization
 - `acceptance` — self-validation criteria for declaring completion
-- `sanctionedCommands` — the operation → wrapper command map (reads/edits/lifecycle), plus the forbidden and orchestrator-owned lists. Carried by DEFAULT on every build so you never re-derive which wrapper performs a GitHub/loop operation. Do NOT restate the map here — the single source of truth is `scripts/loop/sanctioned-commands.mjs`, surfaced verbatim in the envelope.
+- `sanctionedCommands` — the operation → wrapper command map (reads/edits/lifecycle), plus the forbidden and orchestrator-owned lists. Carried by DEFAULT on every build so you never re-derive which wrapper performs a GitHub/loop operation. The exact pinned package owns the base map and `scripts/dev-loops.mjs` applies repository overrides. Consume the resulting map only from the validated envelope; do not resolve or read either implementation source to reconstruct it.
 
 **Construction sequence:**
 <!-- pi-only -->

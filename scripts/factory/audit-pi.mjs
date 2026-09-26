@@ -415,9 +415,10 @@ async function inspectDeliveryProfiles(repoRoot) {
       problems.push("delivery target must be explicit, session-local, and never inferred");
     }
 
-    const [devLoopAgent, rootAgent] = await Promise.all([
+    const [devLoopAgent, rootAgent, devLoopsWrapper] = await Promise.all([
       readFile(path.join(repoRoot, ".pi", "agents", "dev-loop.agent.md"), "utf8"),
       readFile(path.join(repoRoot, "AGENT.md"), "utf8"),
+      readFile(path.join(repoRoot, "scripts", "dev-loops.mjs"), "utf8"),
     ]);
     for (const [file, source] of [[".pi/agents/dev-loop.agent.md", devLoopAgent], ["AGENT.md", rootAgent]]) {
       if (!source.includes("/dev-loop prototype issue <n>")) problems.push(`${file} is missing the prototype entrypoint`);
@@ -431,6 +432,13 @@ async function inspectDeliveryProfiles(repoRoot) {
     }
     if (!devLoopAgent.includes("--pre-mutation-assessment")) {
       problems.push(".pi/agents/dev-loop.agent.md does not bind the deterministic fast-path assessment into the handoff envelope");
+    }
+    if (!devLoopAgent.includes("Consume the resulting map only from the validated envelope")
+      || devLoopAgent.includes("single source of truth is `scripts/loop/sanctioned-commands.mjs`")) {
+      problems.push(".pi/agents/dev-loop.agent.md must consume sanctioned commands from the validated envelope without naming a checkout-relative package path");
+    }
+    if (!devLoopsWrapper.includes("applyOxidSanctionedCommandOverrides(envelope)")) {
+      problems.push("scripts/dev-loops.mjs must apply repository sanctioned-command overrides before emitting the handoff envelope");
     }
     const tools = devLoopAgent.match(/^tools:\s*(.+)$/mu)?.[1]?.split(",").map((tool) => tool.trim()) ?? [];
     if (tools.includes("subagent") || !tools.includes("edit") || !tools.includes("write")) {
