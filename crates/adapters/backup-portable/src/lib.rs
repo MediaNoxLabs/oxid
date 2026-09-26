@@ -33,8 +33,9 @@ const MAGIC: &[u8; 8] = b"OXIDBAK1";
 const LEGACY_CUSTODY_FORMAT_VERSION: u16 = 1;
 const LEGACY_COMPLETE_WALLET_FORMAT_VERSION: u16 = 2;
 const LEGACY_COMPLETE_WALLET_FORMAT_VERSION_V3: u16 = 3;
-const CUSTODY_FORMAT_VERSION: u16 = 4;
+const LEGACY_CUSTODY_FORMAT_VERSION_V4: u16 = 4;
 const COMPLETE_WALLET_FORMAT_VERSION: u16 = 5;
+const CUSTODY_FORMAT_VERSION: u16 = 6;
 const KDF_ARGON2ID: u8 = 1;
 const AEAD_XCHACHA20_POLY1305: u8 = 1;
 const LEGACY_ARGON2_POLICY: Argon2Policy = Argon2Policy {
@@ -69,10 +70,10 @@ const fn argon2_policy_for_format(format_version: u16) -> Option<Argon2Policy> {
     match format_version {
         LEGACY_CUSTODY_FORMAT_VERSION
         | LEGACY_COMPLETE_WALLET_FORMAT_VERSION
-        | CUSTODY_FORMAT_VERSION => Some(LEGACY_ARGON2_POLICY),
-        LEGACY_COMPLETE_WALLET_FORMAT_VERSION_V3 | COMPLETE_WALLET_FORMAT_VERSION => {
-            Some(COMPLETE_WALLET_ARGON2_POLICY)
-        }
+        | LEGACY_CUSTODY_FORMAT_VERSION_V4 => Some(LEGACY_ARGON2_POLICY),
+        LEGACY_COMPLETE_WALLET_FORMAT_VERSION_V3
+        | COMPLETE_WALLET_FORMAT_VERSION
+        | CUSTODY_FORMAT_VERSION => Some(COMPLETE_WALLET_ARGON2_POLICY),
         _ => None,
     }
 }
@@ -420,7 +421,11 @@ pub fn open_portable_custody(
     let plaintext = open_payload(
         backup,
         recovery_secret,
-        &[LEGACY_CUSTODY_FORMAT_VERSION, CUSTODY_FORMAT_VERSION],
+        &[
+            LEGACY_CUSTODY_FORMAT_VERSION,
+            LEGACY_CUSTODY_FORMAT_VERSION_V4,
+            CUSTODY_FORMAT_VERSION,
+        ],
     )?;
     let vault = decode_custody(&plaintext)?;
     if vault.profile_id() != expected_profile_id {
@@ -1221,6 +1226,127 @@ mod tests {
     }
 
     #[test]
+    fn custody_exports_only_v6_with_the_strong_policy() {
+        let backup = seal_portable_custody(&vault(), &secret(), &IncrementingRandom::new())
+            .expect("custody should encrypt");
+        let header = decode_header(backup.as_bytes()).expect("valid header");
+        assert_eq!(header.format_version, 6);
+        assert_eq!(
+            header.argon2_policy,
+            Argon2Policy {
+                memory_kib: 65_536,
+                iterations: 3,
+                lanes: 1,
+            }
+        );
+        let opened = open_portable_custody(&backup, &secret(), &profile("profile_one"))
+            .expect("strong custody should decrypt");
+        assert_eq!(opened.root_seed(), &[7; 32]);
+    }
+
+    #[test]
+    fn legacy_v4_roots_remain_readable_and_reexport_as_v6() {
+        for vault in [
+            vault(),
+            PortableCustodyVault::new_with_root(
+                profile("profile_one"),
+                1,
+                WalletRootSeed::from_bip39_seed([8; 64]),
+                Vec::new(),
+            )
+            .expect("typed vault"),
+        ] {
+            let plaintext = encode_custody(&vault).expect("typed payload");
+            let backup = seal_payload(4, &plaintext, &secret(), &IncrementingRandom::new())
+                .expect("legacy v4 envelope");
+            assert_eq!(
+                decode_header(backup.as_bytes())
+                    .expect("header")
+                    .argon2_policy,
+                LEGACY_ARGON2_POLICY
+            );
+            let opened = open_portable_custody(&backup, &secret(), &profile("profile_one"))
+                .expect("legacy v4 must remain readable");
+            assert_eq!(opened.root_seed_kind(), vault.root_seed_kind());
+            assert_eq!(opened.root_seed(), vault.root_seed());
+            let reexported = seal_portable_custody(&opened, &secret(), &IncrementingRandom::new())
+                .expect("reexport");
+            assert_eq!(
+                decode_header(reexported.as_bytes())
+                    .expect("header")
+                    .format_version,
+                6
+            );
+        }
+    }
+
+    #[test]
+    fn version_policy_allowlist_rejects_unbounded_work_before_derivation() {
+        for version in 1..=6 {
+            let expected = if matches!(version, 1 | 2 | 4) {
+                LEGACY_ARGON2_POLICY
+            } else {
+                COMPLETE_WALLET_ARGON2_POLICY
+            };
+            assert_eq!(argon2_policy_for_format(version), Some(expected));
+            let mut bytes = encode_header(version, expected, &[1; 16], &[2; 24], 16);
+            bytes.extend_from_slice(&[0; 16]);
+            assert!(decode_header(&bytes).is_ok());
+            for offset in [12, 16, 20] {
+                for value in [0_u32, 1, u32::MAX] {
+                    if bytes[offset..offset + 4] == value.to_be_bytes() {
+                        continue;
+                    }
+                    let mut changed = bytes.clone();
+                    changed[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+                    assert!(matches!(
+                        decode_header(&changed),
+                        Err(WalletPortableBackupPortError::InvalidPackage)
+                    ));
+                }
+            }
+            for unknown in [0_u16, 7, u16::MAX] {
+                let mut changed = bytes.clone();
+                changed[8..10].copy_from_slice(&unknown.to_be_bytes());
+                assert!(matches!(
+                    decode_header(&changed),
+                    Err(WalletPortableBackupPortError::InvalidPackage)
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn coherent_custody_downgrades_still_fail_authentication() {
+        let backup = seal_portable_custody(&vault(), &secret(), &IncrementingRandom::new())
+            .expect("custody should encrypt");
+        for version in [1_u16, 4] {
+            let mut bytes = backup.as_bytes().to_vec();
+            bytes[8..10].copy_from_slice(&version.to_be_bytes());
+            assert!(matches!(
+                decode_header(&bytes),
+                Err(WalletPortableBackupPortError::InvalidPackage)
+            ));
+            bytes[12..16].copy_from_slice(&LEGACY_ARGON2_POLICY.memory_kib.to_be_bytes());
+            bytes[16..20].copy_from_slice(&LEGACY_ARGON2_POLICY.iterations.to_be_bytes());
+            let changed = PortableWalletBackup::parse(bytes).expect("bounded package");
+            assert_eq!(
+                open_portable_custody(&changed, &secret(), &profile("profile_one"))
+                    .expect_err("valid legacy tuple cannot authenticate changed associated data"),
+                WalletPortableBackupPortError::AuthenticationFailed
+            );
+        }
+        let mut bytes = backup.into_bytes();
+        bytes[8..10].copy_from_slice(&5_u16.to_be_bytes());
+        let changed = PortableWalletBackup::parse(bytes).expect("bounded package");
+        assert_eq!(
+            open_complete_wallet_archive(&changed, &secret(), None)
+                .expect_err("same-policy version substitution must fail authentication"),
+            WalletPortableBackupPortError::AuthenticationFailed
+        );
+    }
+
+    #[test]
     fn legacy_v1_custody_payload_remains_an_explicit_development_root() {
         let plaintext = serde_json::to_vec(&serde_json::json!({
             "profile_id": "profile_legacy",
@@ -1455,10 +1581,10 @@ mod tests {
         assert_eq!(error, WalletPortableBackupPortError::Conflict);
     }
 
-    // Property tests for the sealed-envelope codec. They run against the
-    // legacy version-1 Argon2id policy so each case derives in tens of
-    // milliseconds instead of the version-3 policy's deliberate slowness;
-    // the sealing/opening code path is identical apart from the parameters.
+    // Property tests exercise the shared sealed-envelope codec through the
+    // bounded legacy-v4 policy. Dedicated v6 tests above prove the current
+    // strong policy without multiplying expensive Argon2 work per generated
+    // case in the ordinary development loop.
     mod envelope_properties {
         use std::sync::OnceLock;
 
@@ -1475,7 +1601,7 @@ mod tests {
             static SEALED: OnceLock<Vec<u8>> = OnceLock::new();
             SEALED.get_or_init(|| {
                 seal_payload(
-                    CUSTODY_FORMAT_VERSION,
+                    LEGACY_CUSTODY_FORMAT_VERSION_V4,
                     b"oxid envelope corruption fixture payload",
                     &property_secret(),
                     &IncrementingRandom::new(),
@@ -1492,13 +1618,17 @@ mod tests {
             fn sealed_payloads_round_trip(payload in proptest::collection::vec(any::<u8>(), 0..512)) {
                 let secret = property_secret();
                 let sealed = seal_payload(
-                    CUSTODY_FORMAT_VERSION,
+                    LEGACY_CUSTODY_FORMAT_VERSION_V4,
                     &payload,
                     &secret,
                     &IncrementingRandom::new(),
                 )
                 .expect("sealing should succeed");
-                let opened = open_payload(&sealed, &secret, &[CUSTODY_FORMAT_VERSION])
+                let opened = open_payload(
+                    &sealed,
+                    &secret,
+                    &[LEGACY_CUSTODY_FORMAT_VERSION_V4],
+                )
                     .expect("opening an untampered envelope should succeed");
                 prop_assert_eq!(opened.as_slice(), payload.as_slice());
             }
@@ -1519,7 +1649,12 @@ mod tests {
                 let backup = PortableWalletBackup::parse(corrupted)
                     .expect("corrupted bytes stay within size bounds");
                 prop_assert!(
-                    open_payload(&backup, &property_secret(), &[CUSTODY_FORMAT_VERSION]).is_err(),
+                    open_payload(
+                        &backup,
+                        &property_secret(),
+                        &[LEGACY_CUSTODY_FORMAT_VERSION_V4],
+                    )
+                    .is_err(),
                     "corruption at byte {} must be rejected",
                     position
                 );
@@ -1536,8 +1671,12 @@ mod tests {
                 let backup = PortableWalletBackup::parse(sealed[..length].to_vec());
                 match backup {
                     Ok(backup) => prop_assert!(
-                        open_payload(&backup, &property_secret(), &[CUSTODY_FORMAT_VERSION])
-                            .is_err(),
+                        open_payload(
+                            &backup,
+                            &property_secret(),
+                            &[LEGACY_CUSTODY_FORMAT_VERSION_V4],
+                        )
+                        .is_err(),
                         "truncation to {} bytes must be rejected",
                         length
                     ),

@@ -37,11 +37,17 @@ size-bounded; checkpoint and journal stores persist public progress only.
 
 Portable backups are a versioned envelope: Argon2id key derivation with the
 KDF parameters, salt, nonce, and lengths bound as authenticated data.
-Complete-wallet exports (format v3) use hardened parameters (64 MiB, t=3),
-and each readable version maps to exactly one accepted KDF policy — a header
-cannot request arbitrary work, and legacy packages remain read-only
-recoverable. Recovery preflights destination emptiness and compares restored
-custody in constant time.
+Custody-only exports (format v6) and complete-wallet exports (format v5) use
+hardened parameters (64 MiB, t=3, p=1), and each readable version maps to
+exactly one accepted KDF policy — a header cannot request arbitrary work.
+Legacy custody v1/v4 packages remain readable but are never newly exported.
+Their offline-attack cost cannot be raised retroactively: explicitly re-export
+with a compatible build and verify recovery before replacing old backups.
+Recovery preflights destination emptiness and compares restored custody in
+constant time. The [custody KDF policy](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/security/portable-custody-kdf.md)
+records compatibility, shipping-history limits, host resource evidence, and the
+still-outstanding low-end mobile qualification; host evidence is not device
+or production readiness.
 
 ## Transactions and proofs
 
