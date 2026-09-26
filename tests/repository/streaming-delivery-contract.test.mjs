@@ -260,9 +260,9 @@ function milestoneAuditRun({
   reReadHead = "b".repeat(40),
   issueTarget = "milestone-0.4.0",
   requiredChecks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
+  selectedChecks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
 } = {}) {
   const pr = milestonePr();
-  const checks = requiredChecks;
   const control = freezeReview(
     authorizeReview(initialReviewControl(pr.headRefOid), { headSha: pr.headRefOid }),
     { headSha: pr.headRefOid, disposition: "clean" },
@@ -281,7 +281,9 @@ function milestoneAuditRun({
       state: "OPEN",
       body: `## Goal\nShip one bounded increment safely.\n\n## Delivery target\n\n${issueTarget}\n\n## Acceptance criteria\n\n1. It works.`,
     });
-    if (args[0] === "pr" && args[1] === "checks") return JSON.stringify(checks);
+    if (args[0] === "pr" && args[1] === "checks") {
+      return JSON.stringify(args.includes("--required") ? requiredChecks : selectedChecks);
+    }
     if (args[0] === "api") return JSON.stringify([[
       { body: buildTriageReceipt({ headSha: pr.headRefOid }) },
       { body: buildReviewControlComment(control), user: { login: "yshyn-iohk" } },
@@ -296,6 +298,12 @@ test("milestone audit binds issue target, base, selected required checks, triage
   assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ issueTarget: "develop" }) }), /does not match/);
   assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ reReadHead: "c".repeat(40) }) }), /changed during/);
   assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ requiredChecks: [] }) }), /no effective required checks/);
+  assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({
+    selectedChecks: [
+      ...CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
+      { name: "UI and application profiles (Linux host)", bucket: "fail", state: "FAILURE", workflow: "CI" },
+    ],
+  }) }), /pull request checks are not green/);
 });
 
 test("milestone merge implementation pins squash execution to the audited head", async () => {
