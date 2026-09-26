@@ -5,10 +5,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { classifyOptionalSarifChecks, normalizePrFactsOptionalSarif } from "../github/optional-sarif-policy.mjs";
+import { normalizeSupersededPrStatusRollup } from "../github/watch-oxid-ci.mjs";
 import { runDevLoopsPackageScript } from "../lib/dev-loop-package-script.mjs";
 import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
 
-function createRunChild(cwd, audit) {
+function createRunChild(cwd, audit, repo) {
   return function runChild(command, args, env) {
     const result = spawnSync(command, args, { cwd, encoding: "utf8", env, maxBuffer: 16 * 1024 * 1024 });
   const normalized = {
@@ -18,7 +19,7 @@ function createRunChild(cwd, audit) {
   };
   if (normalized.code === 0 && command === "gh" && args[0] === "pr" && args[1] === "view") {
       try {
-        const facts = JSON.parse(normalized.stdout);
+        const facts = normalizeSupersededPrStatusRollup(JSON.parse(normalized.stdout), { repo });
         const policy = classifyOptionalSarifChecks(facts?.statusCheckRollup);
         normalized.stdout = JSON.stringify(normalizePrFactsOptionalSarif(facts));
         if (policy.ignored.length > 0) {
@@ -55,7 +56,7 @@ export async function runOxidPrGateCoordination(argv, {
   try {
     const audit = { optionalSarifProjections: [] };
     const result = await detector.detectPrGateCoordinationState(options, {
-      cwd, repoRoot: cwd, env: process.env, runChild: createRunChild(cwd, audit),
+      cwd, repoRoot: cwd, env: process.env, runChild: createRunChild(cwd, audit, options.repo),
     });
     const auditable = audit.optionalSarifProjections.length === 0 ? result : {
       ...result,
@@ -69,4 +70,6 @@ export async function runOxidPrGateCoordination(argv, {
   }
 }
 
-process.exitCode = await runOxidPrGateCoordination(process.argv.slice(2));
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = await runOxidPrGateCoordination(process.argv.slice(2));
+}

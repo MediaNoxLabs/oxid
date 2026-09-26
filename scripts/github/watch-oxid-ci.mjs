@@ -49,9 +49,14 @@ function isSuccessfulWorkflowRun(run) {
 const FAILURE_CONCLUSIONS = new Set([
   "failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale",
 ]);
+const SUCCESS_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 
 function isFailedCheckRun(check) {
   return check?.status === "completed" && FAILURE_CONCLUSIONS.has(check?.conclusion);
+}
+
+function isSuccessfulCheckRun(check) {
+  return check?.status === "completed" && SUCCESS_CONCLUSIONS.has(check?.conclusion);
 }
 
 function newestWorkflowRun(runs) {
@@ -78,6 +83,48 @@ function loadWorkflowAttemptData({ repo, headSha }) {
     throw new Error("GitHub Actions workflow-attempt response was malformed");
   }
   return { checkRuns, workflowRuns };
+}
+
+/**
+ * Remove only stale GitHub Actions check-rollup entries whose workflow has a
+ * newer successful attempt on the same head. Gate coordination consumes the
+ * raw `gh pr view` rollup rather than the CI watcher result, so it needs the
+ * same bounded supersession rule at that boundary.
+ */
+export function normalizeSupersededPrStatusRollup(
+  facts,
+  { repo },
+  { loadWorkflowAttempts = loadWorkflowAttemptData } = {},
+) {
+  if (typeof facts?.headRefOid !== "string" || !Array.isArray(facts?.statusCheckRollup)) return facts;
+  try {
+    const { checkRuns, workflowRuns } = loadWorkflowAttempts({ repo, headSha: facts.headRefOid });
+    const runsById = new Map(workflowRuns.map((run) => [run?.id, run]));
+    const supersededIds = new Set();
+    for (const check of checkRuns) {
+      if (!isFailedCheckRun(check) || check?.app?.slug !== "github-actions") continue;
+      const failedRunId = actionRunId(check.details_url);
+      const failedRun = runsById.get(failedRunId);
+      if (!failedRun || !Number.isInteger(failedRun.workflow_id)) continue;
+      const replacement = newestWorkflowRun(workflowRuns.filter((candidate) => (
+        candidate?.workflow_id === failedRun.workflow_id && isNewerWorkflowRun(candidate, failedRun)
+      )));
+      if (replacement && isSuccessfulWorkflowRun(replacement)) supersededIds.add(failedRunId);
+    }
+    if (supersededIds.size === 0) return facts;
+    return {
+      ...facts,
+      statusCheckRollup: facts.statusCheckRollup.filter((check) => {
+        const detailsUrl = check?.detailsUrl ?? check?.details_url;
+        return !(isFailedCheckRun({
+          status: typeof check?.status === "string" ? check.status.toLowerCase() : check?.status,
+          conclusion: typeof check?.conclusion === "string" ? check.conclusion.toLowerCase() : check?.conclusion,
+        }) && supersededIds.has(actionRunId(detailsUrl)));
+      }),
+    };
+  } catch {
+    return facts;
+  }
 }
 
 function loadPrLifecycleState({ repo, pr }) {
@@ -140,16 +187,26 @@ function mergedLifecycleResult(result, options, { loadPrLifecycle }) {
  * same-head run and that workflow's newest bounded attempt has replaced it.
  */
 export function reconcileSupersededWorkflowFailure(result, options, { loadWorkflowAttempts = loadWorkflowAttemptData } = {}) {
-  if (result?.status !== "failure" || result?.settled !== true || !Array.isArray(result.failedChecks) || result.failedChecks.length === 0) {
+  const explicitFailure = result?.status === "failure" && result?.settled === true
+    && Array.isArray(result.failedChecks) && result.failedChecks.length > 0;
+  const unsupportedCompleted = result?.ciStatus === "none" && result?.settled === false
+    && (result?.status === "pending" || result?.status === "timeout")
+    && Array.isArray(result.failedChecks) && result.failedChecks.length === 0;
+  if (!explicitFailure && !unsupportedCompleted) {
     return result;
   }
   try {
     const { checkRuns, workflowRuns } = loadWorkflowAttempts({ repo: options.repo, headSha: result.headSha });
-    const failedCheckNames = result.failedChecks.map(({ name }) => name).filter((name) => typeof name === "string");
-    if (failedCheckNames.length !== result.failedChecks.length) return result;
+    const failedCheckNames = explicitFailure
+      ? result.failedChecks.map(({ name }) => name).filter((name) => typeof name === "string")
+      : [];
+    if (explicitFailure && failedCheckNames.length !== result.failedChecks.length) return result;
     const failedNames = new Set(failedCheckNames);
-    const matchingFailures = checkRuns.filter((check) => failedNames.has(check?.name) && isFailedCheckRun(check));
-    if ([...failedNames].some((name) => !matchingFailures.some((check) => check.name === name))) return result;
+    const matchingFailures = checkRuns.filter((check) => (
+      isFailedCheckRun(check) && (!explicitFailure || failedNames.has(check?.name))
+    ));
+    if (matchingFailures.length === 0) return result;
+    if (explicitFailure && [...failedNames].some((name) => !matchingFailures.some((check) => check.name === name))) return result;
     if (matchingFailures.some((check) => check?.app?.slug !== "github-actions")) return result;
     const failedActionRunIds = [...new Set(matchingFailures
       .map((check) => actionRunId(check.details_url))
@@ -179,6 +236,7 @@ export function reconcileSupersededWorkflowFailure(result, options, { loadWorkfl
         return { ...result, status: "pending", settled: false, ciStatus: "pending", workflowAttemptSelection: diagnostic };
       }
       if (currentChecks.some(isFailedCheckRun)) return result;
+      if (currentChecks.some((check) => !isSuccessfulCheckRun(check))) return result;
       return { ...result, status: "success", settled: true, ciStatus: "success", failedChecks: [], workflowAttemptSelection: diagnostic };
     }
     return result;

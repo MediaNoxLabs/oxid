@@ -22,7 +22,7 @@ import {
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
 import { normalizeDevLoopsArgs, resolveOxidCompatibilityRoute, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
 import { editPrBody, parseEditPrArgs } from "../../scripts/github/edit-pr.mjs";
-import { reconcileOptionalSarifProjectionWait, watchOxidPrCiStatus } from "../../scripts/github/watch-oxid-ci.mjs";
+import { normalizeSupersededPrStatusRollup, reconcileOptionalSarifProjectionWait, watchOxidPrCiStatus } from "../../scripts/github/watch-oxid-ci.mjs";
 import { CRITICAL_CHECKS } from "../../scripts/github/optional-sarif-policy.mjs";
 import { runResolveTrackerLocalSpec } from "../../scripts/github/resolve-tracker-local-spec.mjs";
 import { assertNoPreflightBypass, inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
@@ -2051,6 +2051,27 @@ test("Oxid PR CI adapter reconciles only superseded same-head Actions failures",
   });
   const watch = async () => failure;
 
+  await t.test("gate coordination removes only the superseded raw rollup entry", () => {
+    const facts = {
+      headRefOid: "head-a",
+      statusCheckRollup: [
+        { name: "Repository gate", status: "COMPLETED", conclusion: "CANCELLED", detailsUrl: "https://github.com/o/r/actions/runs/10/job/1" },
+        { name: "Repository gate", status: "COMPLETED", conclusion: "SUCCESS", detailsUrl: "https://github.com/o/r/actions/runs/11/job/2" },
+      ],
+    };
+    const successful = attemptData({ id: 11, workflow_id: 5, run_number: 9, status: "completed", conclusion: "success" });
+    assert.deepEqual(normalizeSupersededPrStatusRollup(facts, { repo: "owner/repo" }, {
+      loadWorkflowAttempts: () => successful,
+    }).statusCheckRollup, [facts.statusCheckRollup[1]]);
+    const failed = attemptData({ id: 11, workflow_id: 5, run_number: 9, status: "completed", conclusion: "failure" });
+    assert.equal(normalizeSupersededPrStatusRollup(facts, { repo: "owner/repo" }, {
+      loadWorkflowAttempts: () => failed,
+    }), facts);
+    assert.equal(normalizeSupersededPrStatusRollup(facts, { repo: "owner/repo" }, {
+      loadWorkflowAttempts: () => { throw new Error("fixture API failure"); },
+    }), facts);
+  });
+
   await t.test("an active replacement holds the stale failure pending", async () => {
     const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
       watchCiStatus: watch,
@@ -2069,6 +2090,44 @@ test("Oxid PR CI adapter reconciles only superseded same-head Actions failures",
     });
     assert.equal(result.status, "success");
     assert.deepEqual(result.failedChecks, []);
+  });
+
+  await t.test("a superseded cancellation also clears the upstream unsupported-completed none shape", async () => {
+    const unsupported = {
+      ok: true, status: "timeout", settled: false, ciStatus: "none", headSha: "head-a", attempts: 7,
+      failedChecks: [],
+    };
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
+      watchCiStatus: async () => unsupported,
+      loadWorkflowAttempts: () => attemptData({
+        id: 11, workflow_id: 5, run_number: 9, status: "completed", conclusion: "success",
+      }),
+    });
+    assert.deepEqual(result, {
+      ...unsupported, status: "success", settled: true, ciStatus: "success", failedChecks: [],
+      workflowAttemptSelection: {
+        examinedRuns: 2, supersededFailedRunIds: [10], selectedReplacementRunIds: [11],
+      },
+    });
+  });
+
+  await t.test("the none shape remains fail-closed for an unsupported current check", async () => {
+    const unsupported = {
+      ok: true, status: "timeout", settled: false, ciStatus: "none", headSha: "head-a", attempts: 7,
+      failedChecks: [],
+    };
+    const data = attemptData({
+      id: 11, workflow_id: 5, run_number: 9, status: "completed", conclusion: "success",
+    });
+    data.checkRuns.push({
+      name: "Current unknown", app: { slug: "external-ci" }, details_url: "https://ci.invalid/run/2",
+      status: "completed", conclusion: "unknown",
+    });
+    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
+      watchCiStatus: async () => unsupported,
+      loadWorkflowAttempts: () => data,
+    });
+    assert.equal(result, unsupported);
   });
 
   await t.test("a bounded watch waits for the active replacement instead of returning early", async () => {
@@ -2188,6 +2247,12 @@ test("PR body edits use the REST facade and fail closed outside its narrow contr
     runGh,
   }), 0);
   assert.match(output.join(""), /"edited":\["body"\]/);
+});
+
+test("gate coordination routes through the Oxid rollup adapter", () => {
+  assert.equal(typeof resolveOxidCompatibilityRoute([
+    "loop", "gate-coordination", "--repo", "MediaNoxLabs/oxid", "--pr", "786",
+  ]), "function");
 });
 
 test("checkpoint verdict upsert failures remain fail-closed", async (t) => {
