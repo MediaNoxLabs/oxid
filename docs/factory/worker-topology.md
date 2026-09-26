@@ -82,11 +82,14 @@ identity and key ID with the operator's approved values before configuration.
 
 The tracked default is `openai-codex/gpt-5.6-terra:medium`, not a provider
 lock. Pi accepts a deliberate session override, for example
-`./bootstrap.sh --pi --provider openai --model <model>`. The alternate provider
-must satisfy the same issue, evidence, commit-signing, and gate contract.
-For subagent overrides, use a provider-qualified model ID such as
-`openai-codex/gpt-5.6-terra`; a bare model name is ambiguous across providers.
-Prefer omitting the override when the tracked default is suitable.
+`./bootstrap.sh --pi --model openai-codex/gpt-6-astra --thinking high`.
+The alternate provider must satisfy the same issue, evidence, commit-signing,
+and gate contract. The sole `dev-loop` child inherits that exact active
+provider/model and reasoning through a per-run `provider/model:thinking`
+route. A strict agent-specific model scope and the tracked pre-dispatch guard
+reject omissions, unsupported routes, or parent/child disagreement before the
+child provider runs. Prefer omitting the override when the tracked default is
+suitable.
 
 Each engineer supplies their own GitHub and model-provider authentication.
 `./bootstrap.sh --configure-pi` preserves unrelated Pi settings and never reads

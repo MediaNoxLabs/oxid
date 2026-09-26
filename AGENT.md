@@ -102,9 +102,12 @@ Follow [the productive loop](docs/factory/productive-loop.md):
   review/CI/pre-approval continuation. The external supervisor owns focused
   review, hosted CI, every explicit retry, triage, metrics, merge, and closeout.
 - Route routine repository delivery to `openai-codex/gpt-5.6-terra`. Reserve
-  `gpt-5.6-sol` for a concrete architecture or hard-reasoning need; use Luna
-  for bounded scouting or small documentation changes, not repository-wide
-  implementation.
+  `gpt-5.6-sol` or `gpt-6-astra` for a concrete architecture, security, or
+  hard-reasoning need; use Luna for bounded scouting or small documentation
+  changes, not repository-wide implementation. A `/dev-loop` parent passes its
+  active model and reasoning to the sole child as the exact
+  `provider/model:thinking` per-run value. The tracked pre-dispatch guard blocks
+  omission or disagreement; never compensate with an automatic retry.
 - Routine work uses a 70% quality target and one automatic review round; all
   mandatory acceptance, correctness, security, provenance, and required-CI
   evidence still must be complete.

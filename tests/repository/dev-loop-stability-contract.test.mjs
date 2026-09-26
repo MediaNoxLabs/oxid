@@ -873,6 +873,7 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   const reviewTools = (await read(".pi/agents/review.agent.md")).match(/^tools:\s*(.+)$/m)?.[1] ?? "";
   assert.doesNotMatch(reviewTools, /\b(?:bash|edit|write)\b/, "review shadow exposes only read-only inspection tools");
   const devLoop = await read(".pi/agents/dev-loop.agent.md");
+  assert.match(devLoop, /^model: inherit$/mu, "the implementation child inherits the active supervisor model");
   assert.match(devLoop, /scripts\/dev-loops\.mjs/);
   assert.match(devLoop, /<git-root>` is always the exact output of `git rev-parse --show-toplevel`/u);
   assert.match(devLoop, /Never replace it with the primary\s+checkout derived from `--git-common-dir` or `git worktree list`/u);
@@ -881,6 +882,7 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   assert.match(devLoop, /MUST NOT call\n`subagent`, dispatch a reviewer, or create any nested workflow/u);
   assert.match(devLoop, /exact-head local gate, push, and draft PR/u);
   assert.match(devLoop, /MUST NOT place it inside `taskflow`/u);
+  assert.match(devLoop, /exact `provider\/model:thinking` per-run model value/u);
   assert.match(devLoop, /^worktree:\s*false$/mu, "the conductor reuses the canonical managed worktree");
   assert.match(devLoop, /Never substitute `npm run verify`/u);
   assert.match(devLoop, /shell parser diagnostic emitted before the named helper starts/u);
