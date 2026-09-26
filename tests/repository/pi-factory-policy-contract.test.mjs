@@ -23,6 +23,11 @@ import {
   extractPreMutationAssessmentArgs,
   selectPreMutationExecution,
 } from "../../scripts/dev-loops.mjs";
+import {
+  devLoopRoutingInstruction,
+  inspectDevLoopDispatch,
+  resolveSupervisorModelRoute,
+} from "../../scripts/lib/dev-loop-model-routing.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -64,6 +69,11 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   ]);
   assert.equal(settings.subagents.defaultModel, `${settings.defaultProvider}/${settings.defaultModel}`);
   assert.equal(settings.subagents.defaultThinking, settings.defaultThinkingLevel);
+  assert.deepEqual(settings.subagents.modelScope, {
+    enforce: true,
+    strict: true,
+    agents: { "dev-loop": { allow: ["inherit"] } },
+  });
   const smoke = await readFile(path.join(repoRoot, "scripts", "check-pi-devshell.sh"), "utf8");
   const bootstrap = await readFile(path.join(repoRoot, "bootstrap.sh"), "utf8");
   const dockerSandboxLauncher = await readFile(path.join(repoRoot, "scripts", "factory", "pi-docker-sandbox.sh"), "utf8");
@@ -109,6 +119,42 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(dockerSandboxLauncher, /unset DOCKER_SANDBOX_ENV_PASSTHROUGH/u);
   assert.match(dockerSandboxLauncher, /unset DOCKER_SANDBOX/u);
   assert.doesNotMatch(dockerSandboxLauncher, /\/sandbox(?:\/|")/u);
+});
+
+test("dev-loop routing binds the exact supervisor model and reasoning before dispatch", () => {
+  const trackedDefault = resolveSupervisorModelRoute(
+    { provider: "openai-codex", id: "gpt-5.6-terra" },
+    "medium",
+  );
+  assert.equal(trackedDefault.routedModel, "openai-codex/gpt-5.6-terra:medium");
+
+  const highRisk = devLoopRoutingInstruction(
+    { provider: "openai-codex", id: "gpt-6-astra" },
+    "high",
+  );
+  assert.equal(highRisk.route.routedModel, "openai-codex/gpt-6-astra:high");
+  assert.match(highRisk.text, /exact per-run model openai-codex\/gpt-6-astra:high/u);
+
+  assert.equal(inspectDevLoopDispatch({
+    toolName: "subagent",
+    input: { agent: "dev-loop", model: "openai-codex/gpt-6-astra:high" },
+    model: { provider: "openai-codex", id: "gpt-6-astra" },
+    thinking: "high",
+  }).block, false);
+  for (const model of [undefined, "openai-codex/gpt-5.6-terra:medium", "openai-codex/gpt-6-astra:medium"]) {
+    const decision = inspectDevLoopDispatch({
+      toolName: "subagent",
+      input: { agent: "dev-loop", ...(model ? { model } : {}) },
+      model: { provider: "openai-codex", id: "gpt-6-astra" },
+      thinking: "high",
+    });
+    assert.equal(decision.block, true);
+    assert.match(decision.reason, /must use the active supervisor route/u);
+  }
+  assert.throws(
+    () => resolveSupervisorModelRoute({ provider: "openai-codex", id: "gpt-6-astra" }, "unbounded"),
+    /unsupported/u,
+  );
 });
 
 test("repository dev-loops layer uses the bounded 1.0.2 schema", async () => {
