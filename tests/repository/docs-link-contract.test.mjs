@@ -129,10 +129,11 @@ test("Lychee remaps only the same-repository develop prefix and still checks all
   assert.equal(args.at(-1), "./**/*.md");
   assert.equal(args.includes("--include-fragments=none"), false);
   assert.equal(args.includes("--include-verbatim=false"), false);
-  assert.equal(args.includes("--offline"), false);
+  assert.equal(args.includes("--offline"), true);
   assert.equal(args.includes("--exclude"), false);
   const stableArgs = buildLycheeArgs(repoRoot);
   assert.equal(stableArgs.includes("--remap"), false);
+  assert.equal(stableArgs.includes("--offline"), false);
 });
 
 test("the renderer keeps durable develop URLs for candidate-only ADRs", () => {
