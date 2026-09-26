@@ -26,6 +26,12 @@ readonly CONTROL_ORIGIN="http://127.0.0.1:18095"
 readonly PORTAL_COMMIT="25499870f84d77173c46e4af3021311decfb840b"
 readonly PORTAL_TREE="2d845d2293603dfd8adce5362c8a9941e6ba78a9"
 readonly OPERATION="${1:-run}"
+# Keep compilation separate from product execution: a cold bundle gets one bounded
+# budget, while every XCTest scenario keeps its independent execution budget.
+readonly XCTEST_COLD_BUILD_TIMEOUT_SECONDS=1800
+readonly XCTEST_SCENARIO_TIMEOUT_SECONDS=600
+readonly PORTAL_JOURNEY_TIMEOUT_SECONDS=5400
+readonly PORTAL_ACCEPTANCE_TIMEOUT_SECONDS=9000
 readonly -a PORTAL_PORTS=(18090 18091 18092 18093 18094 18095)
 readonly -a SHARED_PORTS=(6300 8088 9944)
 
@@ -35,7 +41,7 @@ if [ "${1:-}" = --preflight ]; then
   oxid_ios_supervise_acceptance "$ROOT" ios-portal-preflight 180 \
     "$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh" "$@"
 else
-  oxid_ios_supervise_acceptance "$ROOT" ios-portal-exact-sequence 7200 \
+  oxid_ios_supervise_acceptance "$ROOT" ios-portal-exact-sequence "$PORTAL_ACCEPTANCE_TIMEOUT_SECONDS" \
     "$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh" "$@"
 fi
 # shellcheck source=e2e/android-avd-process-ownership.sh
@@ -413,24 +419,41 @@ run_deadline 5 mkdir -p "$app_support" || fail app-support
 capability_path="$app_support/portal-offer.capability"
 capability_candidate="$app_support/.portal-offer.capability.tmp"
 
-journey_deadline=$((SECONDS + 600))
 xcode_project="$PRIVATE_STATE/ios-project"
 run_deadline 5 mkdir "$xcode_project" || fail xcode-project-create
 run_deadline 300 env OXID_REPOSITORY_ROOT="$BUILD_SOURCE" xcodegen generate \
   --spec "$BUILD_SOURCE/tests/mobile/ios/project.yml" --project "$xcode_project" >>"$PRIVATE_LOG" 2>&1 || fail xcodegen
 host_user="$(id -un)"
+xcode_clang="$DEVELOPER_DIR_SELECTED/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
+xcode_clang_wrapper="$ROOT/scripts/e2e/xcode-swift-only-clang-wrapper.sh"
+[ -x "$xcode_clang" ] && [ ! -L "$xcode_clang" ] || fail xcode-clang
+[ -x "$xcode_clang_wrapper" ] && [ ! -L "$xcode_clang_wrapper" ] || fail xcode-clang-wrapper
+run_ios_build_for_testing() {
+  oxid_ios_run_xctest "$ROOT" portal-build-for-testing "$XCTEST_COLD_BUILD_TIMEOUT_SECONDS" env -i \
+    DEVELOPER_DIR="$DEVELOPER_DIR_SELECTED" HOME="$HOME" LANG="${LANG:-en_US.UTF-8}" \
+    LOGNAME="$host_user" PATH=/usr/bin:/bin:/usr/sbin:/sbin TMPDIR="${TMPDIR:-/tmp}" USER="$host_user" \
+    OXID_XCODE_REAL_CLANG="$xcode_clang" \
+    /usr/bin/xcodebuild build-for-testing -project "$xcode_project/OxidMobileSmoke.xcodeproj" -scheme OxidUITests \
+    -destination "platform=iOS Simulator,id=$udid" -derivedDataPath "$PRIVATE_STATE/derived-data" CODE_SIGNING_ALLOWED=NO \
+    CC="$xcode_clang_wrapper" LD="$xcode_clang" \
+    >>"$PRIVATE_LOG" 2>&1
+}
 run_ios_test() {
   local method="$1" phase_directory="${2:-}" scenario_name
   scenario_name="$(oxid_ios_scenario_name portal "$method")"
-  oxid_ios_run_xctest "$ROOT" "$scenario_name" 600 env -i DEVELOPER_DIR="$DEVELOPER_DIR_SELECTED" HOME="$HOME" \
-    LANG="${LANG:-en_US.UTF-8}" LOGNAME="$host_user" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-    TMPDIR="${TMPDIR:-/tmp}" USER="$host_user" \
-    /usr/bin/xcodebuild test -project "$xcode_project/OxidMobileSmoke.xcodeproj" -scheme OxidUITests \
+  oxid_ios_run_xctest "$ROOT" "$scenario_name" "$XCTEST_SCENARIO_TIMEOUT_SECONDS" env -i \
+    DEVELOPER_DIR="$DEVELOPER_DIR_SELECTED" HOME="$HOME" LANG="${LANG:-en_US.UTF-8}" \
+    LOGNAME="$host_user" PATH=/usr/bin:/bin:/usr/sbin:/sbin TMPDIR="${TMPDIR:-/tmp}" USER="$host_user" \
+    OXID_XCODE_REAL_CLANG="$xcode_clang" \
+    /usr/bin/xcodebuild test-without-building -project "$xcode_project/OxidMobileSmoke.xcodeproj" -scheme OxidUITests \
     -destination "platform=iOS Simulator,id=$udid" -derivedDataPath "$PRIVATE_STATE/derived-data" \
     -only-testing:"OxidUITests/PortalFlowTests/$method" CODE_SIGNING_ALLOWED=NO \
+    CC="$xcode_clang_wrapper" LD="$xcode_clang" \
     OXID_PORTAL_PHASE_DIRECTORY="$phase_directory" \
     OXID_PORTAL_PROTOCOL_ERROR_DIAGNOSTIC_PATH="$PROTOCOL_ERROR_DIAGNOSTIC" >>"$PRIVATE_LOG" 2>&1
 }
+run_ios_build_for_testing || fail xctest-build
+journey_deadline=$((SECONDS + PORTAL_JOURNEY_TIMEOUT_SECONDS))
 stage_capability() {
   local source_kind="$1" source_path="$2"
   run_deadline 5 rm -f -- "$capability_candidate" "$capability_path" || return 1
