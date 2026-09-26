@@ -376,6 +376,12 @@ export function resolveOxidCompatibilityRoute(args) {
       return main(routeArgs, runtime);
     };
   }
+  if (route.category === "loop" && route.command === "gate-coordination") {
+    return async (routeArgs, runtime) => {
+      const { runOxidPrGateCoordination } = await import("./loop/detect-pr-gate-coordination-state.mjs");
+      return runOxidPrGateCoordination(routeArgs, runtime);
+    };
+  }
   const repositories = readLongOptionValues(args, "--repo");
   const usesOxidRepository = repositories.length === 0
     || (repositories.length === 1 && repositories[0].toLowerCase() === OXID_REPOSITORY);
