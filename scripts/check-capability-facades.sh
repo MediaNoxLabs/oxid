@@ -191,11 +191,13 @@ awk -F '\t' '
 crate_index=0
 while IFS= read -r crate; do
   crate_index=$((crate_index + 1))
-  name="$(jq -r '.name' <<<"$crate")"
-  source_root="$(jq -r '.sourceRoot' <<<"$crate")"
-  maximum="$(jq -r '.facadeMaximumPhysicalLines' <<<"$crate")"
+  crate_file="$temporary_directory/crate-$crate_index.json"
+  printf '%s\n' "$crate" >"$crate_file"
+  name="$(jq -r '.name' "$crate_file")"
+  source_root="$(jq -r '.sourceRoot' "$crate_file")"
+  maximum="$(jq -r '.facadeMaximumPhysicalLines' "$crate_file")"
 
-  duplicate_facade="$(jq -r '.facadeFiles[]' <<<"$crate" | sort | uniq -d)"
+  duplicate_facade="$(jq -r '.facadeFiles[]' "$crate_file" | sort | uniq -d)"
   [ -z "$duplicate_facade" ] || fail "$name repeats façade path '$duplicate_facade'."
 
   while IFS= read -r facade; do
@@ -206,19 +208,19 @@ while IFS= read -r crate; do
       *) fail "$name façade '$facade' is not a Rust file below '$source_root'." ;;
     esac
     inventory_has "$facade" || fail "$name façade '$facade' is missing from the indexed inventory."
-  done < <(jq -r '.facadeFiles[]' <<<"$crate")
+  done < <(jq -r '.facadeFiles[]' "$crate_file")
 
   jq -e 'all(.capabilityOwners[];
     keys == ["modulePathPrefixes", "name"] and
     (.name | type == "string" and length > 0) and
     (.modulePathPrefixes | type == "array" and length > 0) and
     all(.modulePathPrefixes[]; type == "string" and length > 0)
-  )' <<<"$crate" >/dev/null || fail "$name capability-owner schema is invalid."
-  duplicate_owner="$(jq -r '.capabilityOwners[].name' <<<"$crate" | sort | uniq -d)"
+  )' "$crate_file" >/dev/null || fail "$name capability-owner schema is invalid."
+  duplicate_owner="$(jq -r '.capabilityOwners[].name' "$crate_file" | sort | uniq -d)"
   [ -z "$duplicate_owner" ] || fail "$name repeats capability owner '$duplicate_owner'."
 
   prefixes="$temporary_directory/prefixes-$crate_index"
-  jq -r '.capabilityOwners[] | .name as $owner | .modulePathPrefixes[] | [$owner, .] | @tsv' <<<"$crate" >"$prefixes"
+  jq -r '.capabilityOwners[] | .name as $owner | .modulePathPrefixes[] | [$owner, .] | @tsv' "$crate_file" >"$prefixes"
   while IFS=$'\t' read -r owner prefix; do
     path_has_glob "$prefix" && fail "$name owner '$owner' prefix '$prefix' must not contain a glob."
     case "$prefix" in
@@ -250,8 +252,8 @@ while IFS= read -r crate; do
     keys == ["classification", "path"] and
     (.classification == "fixture" or .classification == "generated") and
     (.path | type == "string" and length > 0)
-  )' <<<"$crate" >/dev/null || fail "$name exclusions must be exact paths classified as generated or fixture."
-  duplicate_exclusion="$(jq -r '.exclusions[].path' <<<"$crate" | sort | uniq -d)"
+  )' "$crate_file" >/dev/null || fail "$name exclusions must be exact paths classified as generated or fixture."
+  duplicate_exclusion="$(jq -r '.exclusions[].path' "$crate_file" | sort | uniq -d)"
   [ -z "$duplicate_exclusion" ] || fail "$name repeats exclusion '$duplicate_exclusion'."
   while IFS= read -r exclusion; do
     [ -n "$exclusion" ] || continue
@@ -261,7 +263,7 @@ while IFS= read -r crate; do
       *) fail "$name exclusion '$exclusion' is not a Rust file below '$source_root'." ;;
     esac
     inventory_has "$exclusion" || fail "$name exclusion '$exclusion' is missing from the indexed inventory."
-  done < <(jq -r '.exclusions[].path' <<<"$crate")
+  done < <(jq -r '.exclusions[].path' "$crate_file")
 
   jq -e 'all(.temporaryExceptions[];
     keys == ["expiresOn", "extraLineCeiling", "issue", "paths", "reason"] and
@@ -271,9 +273,9 @@ while IFS= read -r crate; do
     (.issue | type == "string" and length > 0) and
     (.reason | type == "string" and length > 0) and
     (.expiresOn | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
-  )' <<<"$crate" >/dev/null || fail "$name temporary-exception schema is invalid."
+  )' "$crate_file" >/dev/null || fail "$name temporary-exception schema is invalid."
 
-  duplicate_exception_path="$(jq -r '.temporaryExceptions[].paths[]' <<<"$crate" | sort | uniq -d)"
+  duplicate_exception_path="$(jq -r '.temporaryExceptions[].paths[]' "$crate_file" | sort | uniq -d)"
   [ -z "$duplicate_exception_path" ] || fail "$name repeats temporary exception path '$duplicate_exception_path'."
   exception_ceiling=0
   while IFS= read -r exception; do
@@ -282,9 +284,9 @@ while IFS= read -r crate; do
     [ "$expires_on" \> "$today" ] || fail "$name has an expired temporary exception ending '$expires_on'."
     exception_excess=0
     while IFS= read -r exception_path; do
-      jq -e --arg path "$exception_path" '.facadeFiles | index($path) != null' <<<"$crate" >/dev/null || fail "$name exception path '$exception_path' is not an exact façade path."
+      jq -e --arg path "$exception_path" '.facadeFiles | index($path) != null' "$crate_file" >/dev/null || fail "$name exception path '$exception_path' is not an exact façade path."
       lines="$(inventory_lines "$exception_path")"
-      path_maximum="$(jq -r --arg path "$exception_path" '.facadeMaximumPhysicalLinesByPath[$path]' <<<"$crate")"
+      path_maximum="$(jq -r --arg path "$exception_path" '.facadeMaximumPhysicalLinesByPath[$path]' "$crate_file")"
       if [ "$lines" -gt "$path_maximum" ]; then
         exception_excess=$((exception_excess + lines - path_maximum))
       fi
@@ -292,17 +294,17 @@ while IFS= read -r crate; do
     ceiling="$(jq -r '.extraLineCeiling' <<<"$exception")"
     [ "$exception_excess" -le "$ceiling" ] || fail "$name temporary exception needs $exception_excess extra lines across its exact paths; ceiling is $ceiling."
     exception_ceiling=$((exception_ceiling + ceiling))
-  done < <(jq -c '.temporaryExceptions[]' <<<"$crate")
+  done < <(jq -c '.temporaryExceptions[]' "$crate_file")
 
   facade_total=0
   while IFS= read -r facade; do
     lines="$(inventory_lines "$facade")"
     facade_total=$((facade_total + lines))
-    if ! jq -e --arg path "$facade" '[.temporaryExceptions[].paths[]] | index($path) != null' <<<"$crate" >/dev/null; then
-      path_maximum="$(jq -r --arg path "$facade" '.facadeMaximumPhysicalLinesByPath[$path]' <<<"$crate")"
+    if ! jq -e --arg path "$facade" '[.temporaryExceptions[].paths[]] | index($path) != null' "$crate_file" >/dev/null; then
+      path_maximum="$(jq -r --arg path "$facade" '.facadeMaximumPhysicalLinesByPath[$path]' "$crate_file")"
       [ "$lines" -le "$path_maximum" ] || fail "$name façade '$facade' has $lines lines; path maximum is $path_maximum."
     fi
-  done < <(jq -r '.facadeFiles[]' <<<"$crate")
+  done < <(jq -r '.facadeFiles[]' "$crate_file")
   allowed_total=$((maximum + exception_ceiling))
   [ "$facade_total" -le "$allowed_total" ] || fail "$name façade total $facade_total exceeds its allowed maximum $allowed_total."
 
@@ -312,10 +314,10 @@ while IFS= read -r crate; do
       "$source_root"/*.rs) ;;
       *) continue ;;
     esac
-    if jq -e --arg path "$path" '.facadeFiles | index($path) != null' <<<"$crate" >/dev/null; then
+    if jq -e --arg path "$path" '.facadeFiles | index($path) != null' "$crate_file" >/dev/null; then
       continue
     fi
-    if jq -e --arg path "$path" '.exclusions | map(.path) | index($path) != null' <<<"$crate" >/dev/null; then
+    if jq -e --arg path "$path" '.exclusions | map(.path) | index($path) != null' "$crate_file" >/dev/null; then
       continue
     fi
     owners=0

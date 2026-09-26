@@ -877,6 +877,8 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   const devLoop = await read(".pi/agents/dev-loop.agent.md");
   assert.match(devLoop, /^model: inherit$/mu, "the implementation child inherits the active supervisor model");
   assert.match(devLoop, /scripts\/dev-loops\.mjs/);
+  assert.match(devLoop, /successful tracked `loop build-envelope` result is already validated/u);
+  assert.match(devLoop, /Do not infer or invoke a second\s+`loop validate-envelope` route/u);
   assert.match(devLoop, /<git-root>` is always the exact output of `git rev-parse --show-toplevel`/u);
   assert.match(devLoop, /Never replace it with the primary\s+checkout derived from `--git-common-dir` or `git worktree list`/u);
   assert.match(devLoop, /common\s+checkout is a topology and shared-private-storage boundary only/u);
@@ -1487,7 +1489,7 @@ async function installPinnedEnvelopeFixture(root, { nestedCore = false } = {}) {
     '  const overrides = options.overrides ? parseJsonText(options.overrides) : undefined;',
     '  return {',
     '    handoffVersion: 1, target, nextAction: bundle.nextAction, requiredReads: Array.isArray(bundle.requiredReads) ? bundle.requiredReads : [],',
-    '    acceptance: { criteria: [{ id: "verify-green", must: "`npm run verify` passes with no failures.", severity: "required" }] }, stopRules: [], executionMode: bundle.executionMode,',
+    '    acceptance: { criteria: [{ id: "verify-green", must: "`bun run verify` passes with no failures.", severity: "required" }] }, stopRules: [], executionMode: bundle.executionMode,',
     '    asyncStartMode: "required", asyncStartEffective: "required", cwd: envelopeCwd,',
     '    ...gateState, overrides, maxCopilotRounds,',
     '    sanctionedCommands: { createPr: "scripts/dev-loops.mjs pr create" },',
@@ -1699,7 +1701,7 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
   assert.equal(envelope.requiredReads.every((requiredRead) => path.isAbsolute(requiredRead)), true);
   assert.equal(envelope.requiredReadManifest.roots.repository, issueTarget);
   assert.equal(envelope.requiredReadManifest.roots.package, await realpath(path.join(root, ".pi", "npm", "node_modules", "dev-loops")));
-  assert.doesNotMatch(envelope.acceptance.criteria.find(({ id }) => id === "verify-green").must, /npm run verify/u);
+  assert.doesNotMatch(envelope.acceptance.criteria.find(({ id }) => id === "verify-green").must, /(?:npm|bun) run verify/u);
   assert.match(envelope.acceptance.criteria.find(({ id }) => id === "verify-green").must, /Oxid target plan/u);
   assert.deepEqual(envelope.overrides, { preferLocal: true });
   assert.equal(envelope.maxCopilotRounds, 2);

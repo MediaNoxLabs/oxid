@@ -3,6 +3,15 @@
 
 set -euo pipefail
 
+# This contract validates Darwin job-control, process-group, signal, and child
+# ownership semantics. Run that evidence under the platform shell rather than
+# Nix Bash: Bash 5.3 on Darwin can block while preparing this test's generated
+# here-document fixtures before any bounded assertion starts.
+if [ "$(uname -s)" = Darwin ] && [ "${BASH:-}" != /bin/bash ] \
+  && [ -z "${OXID_ANDROID_AVD_SYSTEM_BASH_REEXEC:-}" ]; then
+  exec env OXID_ANDROID_AVD_SYSTEM_BASH_REEXEC=1 /bin/bash "$0" "$@"
+fi
+
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../.." && pwd -P)"
 readonly ROOT
 # shellcheck source=android-avd-process-ownership.sh
