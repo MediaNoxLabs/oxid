@@ -1,6 +1,7 @@
 ---
 name: "dev-loop"
 description: "Use as the single public workflow implementation child. Resolve canonical state, implement one issue, validate once per exact head, push, open a draft PR, and stop for external supervision. Keywords: dev-loop, public entrypoint, issue implementation."
+model: inherit
 tools: read, grep, find, ls, bash, edit, write
 argument-hint: "[prototype|production-ready] plus an issue/PR number or URL; production-ready is the default."
 systemPromptMode: append
@@ -109,6 +110,12 @@ The parent MUST dispatch this tracked `dev-loop` implementation agent directly t
 `subagent`, dispatch a reviewer, or create any nested workflow. If a taskflow
 tool or skill is visible, stop and run `./bootstrap.sh --check` instead of
 selecting it.
+
+The parent dispatch MUST carry the active supervisor model and reasoning as one
+exact `provider/model:thinking` per-run model value. The tracked Pi extension
+blocks a missing, downgraded, or different value before the child provider is
+invoked. The resolved launch contract/status is the private metrics authority;
+report its exact model and thinking at the terminal checkpoint.
 
 One parent invocation MUST dispatch this implementation child exactly once and return after
 its terminal checkpoint. The parent MUST NOT automatically resume or replace

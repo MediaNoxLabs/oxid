@@ -13,6 +13,11 @@ if (!/^[a-z0-9-]+$/u.test(settings.defaultProvider ?? "")
 if (settings.subagents?.defaultModel !== `${settings.defaultProvider}/${settings.defaultModel}`) {
   throw new Error("parent and subagent default models are not aligned");
 }
+const scope = settings.subagents?.modelScope;
+if (scope?.enforce !== true || scope?.strict !== true
+  || JSON.stringify(scope?.agents?.["dev-loop"]?.allow) !== JSON.stringify(["inherit"])) {
+  throw new Error("dev-loop must be strictly restricted to the active supervisor model");
+}
 
 const resolved = await resolveDevLoopsPackageRoot({
   cwd: process.cwd(),
