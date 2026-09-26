@@ -55,7 +55,10 @@ export function buildLycheeArgs(repoRoot, { candidate = false } = {}) {
     "--exclude-path", "LICENSE",
   ];
   if (candidate) {
-    args.push("--remap", `${DEVELOP_BLOB_REMAP_PATTERN} ${pathToFileURL(`${repoRoot}${path.sep}`).href}`);
+    args.push(
+      "--remap", `${DEVELOP_BLOB_REMAP_PATTERN} ${pathToFileURL(`${repoRoot}${path.sep}`).href}`,
+      "--offline",
+    );
   }
   return [...args, "./**/*.md"];
 }

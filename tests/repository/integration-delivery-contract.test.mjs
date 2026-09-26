@@ -160,9 +160,10 @@ test("documentation links preserve the PR context while probing only weekly or o
   assert.match(links, /^  workflow_dispatch: \{\}$/m);
   assert.match(links, /^  schedule:\n    - cron: "30 4 \* \* 0"$/m);
   assert.match(links, /name: Check documentation links\n    if: github\.event_name == 'pull_request'/);
-  assert.match(links, /name: Check documentation links\n    if: github\.event_name != 'pull_request'/);
-  assert.match(links, /nix develop \.#docs --command node scripts\/docs\/check-links\.mjs/);
-  assert.doesNotMatch(links, /--candidate/);
+  assert.match(links, /nix develop \.#docs --command node scripts\/docs\/check-links\.mjs --candidate/);
+  assert.doesNotMatch(links, /Defer outbound link probes|echo "Documentation link probes/);
+  assert.match(links, /name: Probe outbound documentation links\n    if: github\.event_name != 'pull_request'/);
+  assert.match(links, /nix develop \.#docs --command node scripts\/docs\/check-links\.mjs\n/);
 });
 
 test("Pages builds and publishes only from main", async () => {
