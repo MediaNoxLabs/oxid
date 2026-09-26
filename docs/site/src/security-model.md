@@ -44,7 +44,7 @@ Legacy custody v1/v4 packages remain readable but are never newly exported.
 Their offline-attack cost cannot be raised retroactively: explicitly re-export
 with a compatible build and verify recovery before replacing old backups.
 Recovery preflights destination emptiness and compares restored custody in
-constant time. The [custody KDF policy](../../security/portable-custody-kdf.md)
+constant time. The [custody KDF policy](portable-custody-kdf.md)
 records compatibility, shipping-history limits, host resource evidence, and the
 still-outstanding low-end mobile qualification; host evidence is not device
 or production readiness.

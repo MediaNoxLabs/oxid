@@ -43,7 +43,17 @@ const LEGACY_ARGON2_POLICY: Argon2Policy = Argon2Policy {
     iterations: 2,
     lanes: 1,
 };
-const COMPLETE_WALLET_ARGON2_POLICY: Argon2Policy = Argon2Policy {
+const COMPLETE_WALLET_V3_ARGON2_POLICY: Argon2Policy = Argon2Policy {
+    memory_kib: 64 * 1024,
+    iterations: 3,
+    lanes: 1,
+};
+const COMPLETE_WALLET_V5_ARGON2_POLICY: Argon2Policy = Argon2Policy {
+    memory_kib: 64 * 1024,
+    iterations: 3,
+    lanes: 1,
+};
+const CUSTODY_V6_ARGON2_POLICY: Argon2Policy = Argon2Policy {
     memory_kib: 64 * 1024,
     iterations: 3,
     lanes: 1,
@@ -51,7 +61,6 @@ const COMPLETE_WALLET_ARGON2_POLICY: Argon2Policy = Argon2Policy {
 const SALT_BYTES: usize = 16;
 const NONCE_BYTES: usize = 24;
 const TAG_BYTES: usize = 16;
-const HEADER_BYTES: usize = 8 + 2 + 1 + 1 + 4 + 4 + 4 + SALT_BYTES + NONCE_BYTES + 4;
 const HEADER_VERSION_OFFSET: usize = MAGIC.len();
 const HEADER_KDF_OFFSET: usize = HEADER_VERSION_OFFSET + size_of::<u16>();
 const HEADER_AEAD_OFFSET: usize = HEADER_KDF_OFFSET + size_of::<u8>();
@@ -60,6 +69,8 @@ const HEADER_ITERATIONS_OFFSET: usize = HEADER_MEMORY_KIB_OFFSET + size_of::<u32
 const HEADER_LANES_OFFSET: usize = HEADER_ITERATIONS_OFFSET + size_of::<u32>();
 const HEADER_SALT_OFFSET: usize = HEADER_LANES_OFFSET + size_of::<u32>();
 const HEADER_NONCE_OFFSET: usize = HEADER_SALT_OFFSET + SALT_BYTES;
+const HEADER_CIPHERTEXT_LEN_OFFSET: usize = HEADER_NONCE_OFFSET + NONCE_BYTES;
+const HEADER_BYTES: usize = HEADER_CIPHERTEXT_LEN_OFFSET + size_of::<u32>();
 const MAX_KEYS: usize = 256;
 const MAX_PUBLIC_KEY_BYTES: usize = 128;
 const COMPLETE_FRAME_MAGIC: &[u8; 8] = b"OXIDALL1";
@@ -79,9 +90,9 @@ const fn argon2_policy_for_format(format_version: u16) -> Option<Argon2Policy> {
         LEGACY_CUSTODY_FORMAT_VERSION
         | LEGACY_COMPLETE_WALLET_FORMAT_VERSION
         | LEGACY_CUSTODY_FORMAT_VERSION_V4 => Some(LEGACY_ARGON2_POLICY),
-        LEGACY_COMPLETE_WALLET_FORMAT_VERSION_V3
-        | COMPLETE_WALLET_FORMAT_VERSION
-        | CURRENT_CUSTODY_FORMAT_VERSION => Some(COMPLETE_WALLET_ARGON2_POLICY),
+        LEGACY_COMPLETE_WALLET_FORMAT_VERSION_V3 => Some(COMPLETE_WALLET_V3_ARGON2_POLICY),
+        COMPLETE_WALLET_FORMAT_VERSION => Some(COMPLETE_WALLET_V5_ARGON2_POLICY),
+        CURRENT_CUSTODY_FORMAT_VERSION => Some(CUSTODY_V6_ARGON2_POLICY),
         _ => None,
     }
 }
@@ -813,7 +824,7 @@ fn decode_header(bytes: &[u8]) -> Result<DecodedHeader, WalletPortableBackupPort
         return Err(WalletPortableBackupPortError::InvalidPackage);
     }
     let ciphertext_len = u32::from_be_bytes(
-        bytes[HEADER_BYTES - 4..HEADER_BYTES]
+        bytes[HEADER_CIPHERTEXT_LEN_OFFSET..HEADER_BYTES]
             .try_into()
             .expect("fixed header range"),
     ) as usize;
@@ -823,7 +834,7 @@ fn decode_header(bytes: &[u8]) -> Result<DecodedHeader, WalletPortableBackupPort
     let mut salt = [0_u8; SALT_BYTES];
     salt.copy_from_slice(&bytes[HEADER_SALT_OFFSET..HEADER_NONCE_OFFSET]);
     let mut nonce = [0_u8; NONCE_BYTES];
-    nonce.copy_from_slice(&bytes[HEADER_NONCE_OFFSET..HEADER_BYTES - size_of::<u32>()]);
+    nonce.copy_from_slice(&bytes[HEADER_NONCE_OFFSET..HEADER_CIPHERTEXT_LEN_OFFSET]);
     Ok(DecodedHeader {
         format_version,
         argon2_policy,
@@ -1259,7 +1270,8 @@ mod tests {
         let backup = seal_portable_custody(&vault(), &secret(), &IncrementingRandom::new())
             .expect("custody should encrypt");
         let header = decode_header(backup.as_bytes()).expect("valid header");
-        assert_eq!(header.format_version, 6);
+        assert_eq!(CURRENT_CUSTODY_FORMAT_VERSION, 6);
+        assert_eq!(header.format_version, CURRENT_CUSTODY_FORMAT_VERSION);
         assert_eq!(
             header.argon2_policy,
             Argon2Policy {
@@ -1286,8 +1298,13 @@ mod tests {
             .expect("typed vault"),
         ] {
             let plaintext = encode_custody(&vault).expect("typed payload");
-            let backup = seal_payload(4, &plaintext, &secret(), &IncrementingRandom::new())
-                .expect("legacy v4 envelope");
+            let backup = seal_payload(
+                LEGACY_CUSTODY_FORMAT_VERSION_V4,
+                &plaintext,
+                &secret(),
+                &IncrementingRandom::new(),
+            )
+            .expect("legacy v4 envelope");
             assert_eq!(
                 decode_header(backup.as_bytes())
                     .expect("header")
@@ -1304,19 +1321,36 @@ mod tests {
                 decode_header(reexported.as_bytes())
                     .expect("header")
                     .format_version,
-                6
+                CURRENT_CUSTODY_FORMAT_VERSION
             );
         }
     }
 
     #[test]
     fn version_policy_allowlist_rejects_unbounded_work_before_derivation() {
-        for version in 1..=6 {
-            let expected = if matches!(version, 1 | 2 | 4) {
-                LEGACY_ARGON2_POLICY
-            } else {
-                COMPLETE_WALLET_ARGON2_POLICY
-            };
+        assert_eq!(
+            COMPLETE_WALLET_V3_ARGON2_POLICY,
+            Argon2Policy {
+                memory_kib: 65_536,
+                iterations: 3,
+                lanes: 1,
+            }
+        );
+        let known_versions = [
+            (LEGACY_CUSTODY_FORMAT_VERSION, LEGACY_ARGON2_POLICY),
+            (LEGACY_COMPLETE_WALLET_FORMAT_VERSION, LEGACY_ARGON2_POLICY),
+            (
+                LEGACY_COMPLETE_WALLET_FORMAT_VERSION_V3,
+                COMPLETE_WALLET_V3_ARGON2_POLICY,
+            ),
+            (LEGACY_CUSTODY_FORMAT_VERSION_V4, LEGACY_ARGON2_POLICY),
+            (
+                COMPLETE_WALLET_FORMAT_VERSION,
+                COMPLETE_WALLET_V5_ARGON2_POLICY,
+            ),
+            (CURRENT_CUSTODY_FORMAT_VERSION, CUSTODY_V6_ARGON2_POLICY),
+        ];
+        for (version, expected) in known_versions {
             assert_eq!(argon2_policy_for_format(version), Some(expected));
             let mut bytes = encode_header(version, expected, &[1; 16], &[2; 24], 16);
             bytes.extend_from_slice(&[0; 16]);
@@ -1338,7 +1372,7 @@ mod tests {
                     ));
                 }
             }
-            for unknown in [0_u16, 7, u16::MAX] {
+            for unknown in [0_u16, CURRENT_CUSTODY_FORMAT_VERSION + 1, u16::MAX] {
                 let mut changed = bytes.clone();
                 changed[HEADER_VERSION_OFFSET..HEADER_KDF_OFFSET]
                     .copy_from_slice(&unknown.to_be_bytes());
@@ -1436,7 +1470,7 @@ mod tests {
     #[test]
     fn complete_wallet_round_trip_is_single_envelope_and_fresh_install_safe() {
         assert_eq!(
-            COMPLETE_WALLET_ARGON2_POLICY,
+            COMPLETE_WALLET_V5_ARGON2_POLICY,
             Argon2Policy {
                 memory_kib: 65_536,
                 iterations: 3,
@@ -1452,7 +1486,7 @@ mod tests {
         );
         assert_eq!(
             u32::from_be_bytes(backup.as_bytes()[12..16].try_into().expect("memory field")),
-            COMPLETE_WALLET_ARGON2_POLICY.memory_kib
+            COMPLETE_WALLET_V5_ARGON2_POLICY.memory_kib
         );
         assert_eq!(
             u32::from_be_bytes(
@@ -1460,7 +1494,7 @@ mod tests {
                     .try_into()
                     .expect("iteration field")
             ),
-            COMPLETE_WALLET_ARGON2_POLICY.iterations
+            COMPLETE_WALLET_V5_ARGON2_POLICY.iterations
         );
         for plaintext in [
             b"profile_one".as_slice(),
@@ -1521,7 +1555,7 @@ mod tests {
     }
 
     #[test]
-    fn custody_and_complete_wallet_versions_cannot_be_confused() {
+    fn genuinely_sealed_custody_and_complete_wallet_versions_cannot_be_confused() {
         let custody = seal_portable_custody(&vault(), &secret(), &IncrementingRandom::new())
             .expect("custody should encrypt");
         assert_eq!(

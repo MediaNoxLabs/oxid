@@ -2,7 +2,7 @@
 
 Custody-only exports use `OXIDBAK1` version **6**, adopting the fixed policy
 reviewed for complete-wallet backups in
-[ADR-0078](../adr/0078-harden-complete-wallet-backup-derivation.md).
+[ADR-0078](../../adr/0078-harden-complete-wallet-backup-derivation.md).
 This changes the authenticated envelope, not the custody payload schema.
 It does not establish production or physical-device readiness.
 
@@ -61,6 +61,21 @@ contain the v4 commit. This bounds the repository-hosted release evidence, but
 does **not** prove that no untagged binary or v4 file reached a user. Treat any
 existing v1/v4 file as needing the re-export guidance above.
 
+Reproduce the public inventory and ancestry check with:
+
+```sh
+gh release list -R MediaNoxLabs/oxid --limit 100 --json tagName
+gh api repos/MediaNoxLabs/oxid/tags --paginate \
+  --jq '.[] | [.name,.commit.sha] | @tsv'
+git merge-base --is-ancestor \
+  d25b15d1c9a3d2b54403d2d91f9ec4d4eaf5bb31 \
+  c7c5b5b8004bccbee8a0f3afcbb22b924d790fff
+```
+
+The last command exits 1 because `foundation-0` does not contain the v4
+commit. A future inventory must record any newer release or tag rather than
+reusing this dated conclusion.
+
 ## Bounded host evidence and outstanding mobile qualification
 
 On 2026-09-26, a single-threaded, unoptimized Rust test on macOS arm64,
@@ -72,12 +87,20 @@ with v6. `/usr/bin/time -l` around the compiled test executable reported:
 - peak footprint: **68,419,944 bytes**;
 - swaps: **0**; host swap before/after: **0 MiB**.
 
-Command: `target/debug/deps/oxid_adapter_backup_portable-<build-hash>
---exact tests::custody_exports_only_v6_with_the_strong_policy --test-threads=1`.
-The bounded attempt's 30-second timeout and functional round-trip assertion
-passed. This is a host smoke, not a release benchmark, maximum-payload budget,
-low-end mobile measurement, or separate export/recovery latency measurement.
-No device memory threshold is claimed to have passed.
+The measured binary was built by the pinned debug toolchain. Re-run the same
+functional assertion, including a fresh compile when needed, with:
+
+```sh
+CARGO_BUILD_JOBS=2 cargo test -p oxid-adapter-backup-portable --locked --lib \
+  tests::custody_exports_only_v6_with_the_strong_policy -- \
+  --exact --test-threads=1
+```
+
+The bounded attempt's 30-second test-execution timeout and functional
+round-trip assertion passed. Compilation/cache state is outside the reported
+binary-only timings. This is a host smoke, not a release benchmark,
+maximum-payload budget, low-end mobile measurement, or separate export/recovery
+latency measurement. No device memory threshold is claimed to have passed.
 
 Supported low-end iOS/Android qualification is **outstanding**, explicitly
 outside this fast-line implementation. Before release, the supervisor must
