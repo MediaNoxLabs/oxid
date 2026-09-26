@@ -34,6 +34,10 @@
       "prompts": [],
       "themes": []
     },
+    {
+      "source": "npm:@stixxert/pi-docker-sandbox@1.1.6",
+      "extensions": []
+    },
     "npm:@input-output-hk/agent-review-pi@0.6.0"
   ],
   "subagents": {

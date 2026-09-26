@@ -20,6 +20,7 @@ const EXPECTED_PACKAGES = new Map([
   ["@axe-core/playwright", "4.10.0"],
   ["typebox", "1.3.9"],
   ["pi-taskflow", "0.2.10"],
+  ["@stixxert/pi-docker-sandbox", "1.1.6"],
   ["@input-output-hk/agent-review-pi", "0.6.0"],
 ]);
 const DEV_LOOPS_RESOURCE_POLICY = Object.freeze({
@@ -32,6 +33,10 @@ const TASKFLOW_SUPPRESSION = Object.freeze({
   skills: [],
   prompts: [],
   themes: [],
+});
+const DOCKER_SANDBOX_SUPPRESSION = Object.freeze({
+  source: "npm:@stixxert/pi-docker-sandbox@1.1.6",
+  extensions: [],
 });
 const EXPECTED_PROJECT_VALUES = Object.freeze({
   "compaction.enabled": true,
@@ -521,6 +526,10 @@ export async function auditPi({
   const taskflowEntry = configuredPackages.get("pi-taskflow")?.entry;
   if (JSON.stringify(taskflowEntry) !== JSON.stringify(TASKFLOW_SUPPRESSION)) {
     packageProblems.push("pi-taskflow: inherited extension and skills must be fully suppressed until #301 and #196 pass");
+  }
+  const dockerSandboxEntry = configuredPackages.get("@stixxert/pi-docker-sandbox")?.entry;
+  if (JSON.stringify(dockerSandboxEntry) !== JSON.stringify(DOCKER_SANDBOX_SUPPRESSION)) {
+    packageProblems.push("@stixxert/pi-docker-sandbox: extension must remain opt-in through the bounded project launcher");
   }
   checks.push(check("package-pins", packageProblems.length ? "fail" : "pass",
     packageProblems.length ? "Package pins are incomplete or floating" : "All Pi packages use exact tracked pins",

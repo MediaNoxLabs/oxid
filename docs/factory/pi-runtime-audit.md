@@ -71,6 +71,7 @@ The owner-aware reconciliation of remaining dirty/unmerged state is tracked by
 | `agent-review-pi` | `0.6.0` | `0.6.0` | adopted with exact peers by [#301](https://github.com/MediaNoxLabs/oxid/issues/301) |
 | `pi-taskflow` | `0.2.10` | `0.3.0-beta.1.2` | peer only; runtime resources disabled |
 | `typebox` | `1.3.9` | `1.3.28` | minimum compatible exact peer; retain |
+| `@stixxert/pi-docker-sandbox` | `1.1.6` | `1.1.6` at adoption | opt-in private Docker deploy target; extension disabled in ordinary sessions by ADR-0112 |
 
 The `dev-loops@1.0.2` Pi extension is deliberately filtered while its exact
 CLI, skills, and agent sources remain installed. Its `session_start` handler
@@ -79,6 +80,16 @@ agents. Oxid owns policy-bearing compatibility shadows at that path, so loading
 the extension would erase runtime/tool budgets and delivery-profile handoff
 rules immediately before model dispatch. A real offline Pi RPC startup must
 leave every tracked agent hash unchanged.
+
+ADR-0112 applies the same explicit-resource rule to
+`@stixxert/pi-docker-sandbox@1.1.6`: the exact package is part of the immutable
+closure, but its extension loads only through
+`scripts/factory/pi-docker-sandbox.sh`. The normal factory surface is unchanged.
+The launcher uses host Pi with a read-only workspace and a disposable private
+Docker daemon; it does not enable the package's full `sandbox/` execution
+backend. A supervised generic-shell probe proved that backend lacks Oxid's
+pinned Nix/Pi/Rust toolchain and linked-worktree Git metadata, so admitting it
+requires a separate measured Nix-template and sandbox-local-clone gate.
 
 `pi-coding-agent@0.85.1` is locked through the Nix input and is the supported
 entrypoint for `pi-subagents@0.67.0`: its native child launcher receives the
