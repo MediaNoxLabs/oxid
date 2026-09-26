@@ -20,17 +20,21 @@ async function loadUpstreamSizeBudget(repoRoot) {
   return { ...sizeBudget, ...config, ...gateContext, ...output };
 }
 
-const SOURCE_EXTENSIONS = new Set([".rs", ".kt", ".swift"]);
+const SOURCE_EXTENSIONS = new Set([".rs", ".kt", ".swift", ".sh"]);
+const SHELL_SOURCE_EXTENSIONS = new Set([".sh"]);
 const EXCLUDED_NAMES = new Set([".devloops", "cargo.lock", "cargo.toml", "deny.toml", "flake.lock", "justfile", "rust-toolchain.toml"]);
 const EXCLUDED_EXTENSIONS = new Set([".gradle", ".json", ".kts", ".lock", ".md", ".mdx", ".nix", ".plist", ".properties", ".toml", ".xml", ".yaml", ".yml"]);
 const EXCLUDED_PATH = /(?:^|\/)(?:\.cargo|\.github|\.pi|ci|config|configs|docs|fixtures|generated|nix|vendor)\//u;
 const TEST_PATH = /(?:^|\/)(?:tests?|__tests__)\/|(?:_tests?|tests?)\.(?:rs|kt|swift)$/u;
+const SHELL_FIXTURE_PATH = /(?:^|\/)fixtures?\//u;
 
 export function classifyOxidSizePath(filePath) {
   const normalized = String(filePath).replaceAll("\\", "/").toLowerCase();
   const base = normalized.split("/").at(-1) ?? "";
-  if (EXCLUDED_NAMES.has(base) || EXCLUDED_EXTENSIONS.has(base.slice(base.lastIndexOf("."))) || EXCLUDED_PATH.test(normalized)) return "excluded";
   const extension = base.slice(base.lastIndexOf("."));
+  if (EXCLUDED_NAMES.has(base) || EXCLUDED_EXTENSIONS.has(extension)) return "excluded";
+  if (SHELL_SOURCE_EXTENSIONS.has(extension) && SHELL_FIXTURE_PATH.test(normalized)) return "test";
+  if (EXCLUDED_PATH.test(normalized)) return "excluded";
   if (!SOURCE_EXTENSIONS.has(extension)) return "unknown";
   return TEST_PATH.test(normalized) ? "test" : "code";
 }

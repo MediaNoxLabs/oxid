@@ -19,8 +19,15 @@ test("recognized embedded and path native tests retain the configured discount",
   assert.equal((await result([[8, 0, "apps/ios/WalletTests.swift"]])).wholeLogicLoc, 2);
 });
 
+test("tracked shell source and shell fixtures receive deterministic logic LOC", async () => {
+  assert.equal(classifyOxidSizePath("scripts/check.sh"), "code");
+  assert.equal(classifyOxidSizePath("fixtures/size-budget/check.sh"), "test");
+  assert.equal((await result([[8, 2, "scripts/check.sh"]])).wholeLogicLoc, 10);
+  assert.equal((await result([[8, 0, "fixtures/size-budget/check.sh"]])).wholeLogicLoc, 2);
+});
+
 test("docs, config, CI, generated paths, and lockfiles are excluded", async () => {
-  for (const file of ["docs/guide.rs", ".github/workflows/check.swift", ".pi/settings.json", "generated/api.kt", "Cargo.lock", "Cargo.toml", "flake.lock"]) assert.equal(classifyOxidSizePath(file), "excluded");
+  for (const file of ["docs/guide.rs", "config/tool.conf", ".github/workflows/check.swift", ".pi/settings.json", "generated/api.kt", "Cargo.lock", "Cargo.toml", "flake.lock"]) assert.equal(classifyOxidSizePath(file), "excluded");
   const outcome = await result([[100, 0, "docs/guide.rs"], [100, 0, "Cargo.lock"], [100, 0, "Cargo.toml"], [100, 0, ".pi/settings.json"]]);
   assert.equal(outcome.outcome, "pass");
   assert.equal(outcome.wholeLogicLoc, 0);
