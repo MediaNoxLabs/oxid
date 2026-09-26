@@ -503,6 +503,19 @@ export async function auditPi({
   if (settings.subagents?.defaultThinking !== settings.defaultThinkingLevel) {
     settingProblems.push("subagents.defaultThinking must match defaultThinkingLevel");
   }
+  const devLoopScope = settings.subagents?.modelScope;
+  if (devLoopScope?.enforce !== true || devLoopScope?.strict !== true
+    || JSON.stringify(devLoopScope?.agents?.["dev-loop"]?.allow) !== JSON.stringify(["inherit"])) {
+    settingProblems.push("subagents.modelScope must strictly restrict dev-loop to the active parent model");
+  }
+  try {
+    const devLoopAgent = await readFile(path.join(repoRoot, ".pi", "agents", "dev-loop.agent.md"), "utf8");
+    if (!/^model: inherit$/mu.test(devLoopAgent)) {
+      settingProblems.push(".pi/agents/dev-loop.agent.md must explicitly inherit the active supervisor model");
+    }
+  } catch (error) {
+    settingProblems.push(`could not read tracked dev-loop agent model contract: ${error.message}`);
+  }
   if (!["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(settings.defaultThinkingLevel)) {
     settingProblems.push(`defaultThinkingLevel: unsupported value ${JSON.stringify(settings.defaultThinkingLevel)}`);
   }
