@@ -209,6 +209,10 @@ android-portal-avd-safety-contract:
 ios-portal-simulator-safety-contract:
     ./scripts/e2e/ios-simulator-ownership.test.sh
 
+# Verify cold XCTest compilation and independent scenario execution budgets without a simulator.
+ios-portal-build-budget-contract:
+    ./scripts/e2e/ios-portal-build-budget-contract.test.sh
+
 # Verify the shared closed virtual-mobile evidence schema, derivation, redaction, and publication.
 portal-virtual-mobile-evidence-contract:
     node --test ./scripts/e2e/portal-virtual-mobile-evidence.test.mjs
@@ -219,7 +223,7 @@ android-portal-exact-sequence-avd:
 
 # Build and exercise the packaged Portal profile on one newly created disposable iOS Simulator.
 ios-portal-exact-sequence-simulator:
-    @timeout -k 30s 7200s ./scripts/test-ios-portal-exact-sequence-simulator.sh
+    @timeout -k 30s 9000s ./scripts/test-ios-portal-exact-sequence-simulator.sh
 
 # Preflight both virtual targets, prequalify shared macOS behavior, then run iOS before Android.
 portal-mobile-simulators-e2e:
@@ -227,7 +231,7 @@ portal-mobile-simulators-e2e:
     @./scripts/test-ios-portal-exact-sequence-simulator.sh --preflight >tmp/issue-213/aggregate-ios-preflight.log 2>&1 || { printf '%s\n' 'portal-mobile-simulators-e2e: FAIL phase=ios-preflight' >&2; exit 1; }
     @./scripts/test-android-portal-exact-sequence-avd.sh --preflight >tmp/issue-213/aggregate-android-preflight.log 2>&1 || { printf '%s\n' 'portal-mobile-simulators-e2e: FAIL phase=android-preflight' >&2; exit 1; }
     @timeout -k 30s 7200s just portal-macos-laptop-e2e >tmp/issue-213/aggregate-macos.log 2>&1 || { printf '%s\n' 'portal-mobile-simulators-e2e: FAIL phase=macos-prequalification' >&2; exit 1; }
-    @timeout -k 30s 7200s ./scripts/test-ios-portal-exact-sequence-simulator.sh
+    @timeout -k 30s 9000s ./scripts/test-ios-portal-exact-sequence-simulator.sh
     @timeout --preserve-status -k 180s 14400s ./scripts/test-android-portal-exact-sequence-avd.sh
     @jq -s -e --arg head "$(git rev-parse HEAD)" --arg tree "$(git rev-parse 'HEAD^{tree}')" 'length == 4 and all(.[]; .oxid == {head:$head,tree:$tree}) and (.[2].platform.kind == "ios_simulator") and (.[3].platform.kind == "android_emulator")' target/portal-headless-e2e/evidence.json target/portal-desktop-e2e/evidence.json target/ios-portal-exact-sequence-simulator/evidence.json target/android-portal-exact-sequence-avd/evidence.json >/dev/null
     @echo "portal-mobile-simulators-e2e: PASS evidence=target/ios-portal-exact-sequence-simulator/evidence.json,target/android-portal-exact-sequence-avd/evidence.json"

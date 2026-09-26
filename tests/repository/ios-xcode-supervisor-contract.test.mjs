@@ -136,6 +136,27 @@ test("child scenarios require an admitted host owner", () => {
   });
 });
 
+test("CLI admits the Portal cold-build acceptance budget", () => {
+  const { directory, lease } = fixture();
+  try {
+    const output = execFileSync(process.execPath, [
+      deterministicDriver,
+      "--scenario", "portal-build-budget",
+      "--timeout-seconds", "9000",
+      "--cwd", root,
+      "--", process.execPath, "-e", "process.exit(0)",
+    ], {
+      encoding: "utf8",
+      env: { ...process.env, OXID_IOS_XCODE_LEASE_DIR: lease },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.equal(output, "");
+    assert.throws(() => readLease(lease), /ENOENT/u);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("parent interruption terminates descendants and removes the lease", async () => {
   const { directory, lease } = fixture();
   try {

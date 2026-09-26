@@ -11,6 +11,7 @@ import { runManagedChild } from "../lib/managed-child-process.mjs";
 
 const SCENARIO = /^[a-z0-9][a-z0-9-]{0,79}$/u;
 const RECEIPT_SCHEMA = "oxid-ios-xcode-admission-v1";
+const MAX_TIMEOUT_SECONDS = 9000;
 const DEFAULT_LEASE = path.join(
   os.tmpdir(),
   `oxid-ios-xcode-admission-v1-${typeof process.getuid === "function" ? process.getuid() : "user"}`,
@@ -143,7 +144,7 @@ function parseArgs(argv) {
   const scenario = read("--scenario");
   const timeoutSeconds = Number(read("--timeout-seconds"));
   const cwd = read("--cwd");
-  if (!SCENARIO.test(scenario) || !Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0 || timeoutSeconds > 7200 || !path.isAbsolute(cwd)) {
+  if (!SCENARIO.test(scenario) || !Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0 || timeoutSeconds > MAX_TIMEOUT_SECONDS || !path.isAbsolute(cwd)) {
     throw new Error("invalid-arguments");
   }
   return { childOnly, scenario, timeoutMs: Math.ceil(timeoutSeconds * 1000), cwd, command: command[0], args: command.slice(1) };
