@@ -103,6 +103,15 @@ export function validateCriticalChecks(checks) {
   return { ok: failures.length === 0, failures };
 }
 
+export function validateRequiredMilestoneChecks(checks) {
+  const failures = [];
+  if (!Array.isArray(checks) || checks.length === 0) failures.push("no effective required checks were returned");
+  for (const check of Array.isArray(checks) ? checks : []) {
+    if (check?.bucket !== "pass") failures.push(`${check?.name ?? "unnamed check"}: ${check?.state ?? check?.bucket ?? "unknown"}`);
+  }
+  return { ok: failures.length === 0, failures };
+}
+
 export function validateMilestoneChecks(checks) {
   const critical = validateCriticalChecks(checks);
   const failures = [...critical.failures];
@@ -121,9 +130,9 @@ export function validateMilestoneChecks(checks) {
   return { ok: failures.length === 0, failures };
 }
 
-function defaultRun(command, args, { cwd, label = command } = {}) {
+function defaultRun(command, args, { cwd, label = command, timeout = 300_000 } = {}) {
   try {
-    return execFileSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return execFileSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout });
   } catch (error) {
     const detail = error?.stderr?.trim() || error?.message || "unknown failure";
     throw new Error(`${label} failed: ${detail}`, { cause: error });
@@ -153,9 +162,12 @@ export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaul
   run("git", ["merge-base", "--is-ancestor", localBase, pr.headRefOid], { cwd: root, label: "verify current-head freshness" });
   run("git", ["merge-tree", "--write-tree", localBase, pr.headRefOid], { cwd: root, label: "verify conflict-free merge tree" });
 
-  const checks = ghJson(run, ["pr", "checks", String(options.pr), "--repo", options.repo, "--json", "bucket,name,state,workflow"], root, "read current checks");
-  const checkResult = validateMilestoneChecks(checks);
-  if (!checkResult.ok) throw new Error(`pull request checks are not green: ${checkResult.failures.join("; ")}`);
+  const checks = ghJson(run, [
+    "pr", "checks", String(options.pr), "--repo", options.repo, "--required", "--watch", "--interval", "10",
+    "--json", "bucket,name,state,workflow",
+  ], root, "wait for effective required checks");
+  const checkResult = validateRequiredMilestoneChecks(checks);
+  if (!checkResult.ok) throw new Error(`required checks are not green: ${checkResult.failures.join("; ")}`);
 
   const comments = ghJson(run, ["api", `repos/${options.repo}/issues/${options.pr}/comments`, "--paginate", "--slurp"], root, "read review triage comments").flat();
   const triage = currentTriageReceipt(comments, pr.headRefOid);
@@ -186,7 +198,7 @@ export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaul
     headSha: pr.headRefOid,
     baseSha: localBase,
     worktree: root,
-    checks: CRITICAL_CHECKS.length,
+    checks: checks.length,
     observedChecks: checks.length,
     followUps: triage.followUpIssues,
   };

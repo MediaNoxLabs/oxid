@@ -256,9 +256,13 @@ test("follow-up debt audit accepts closed items only with delivery evidence", ()
   assert.match(unproven.problems.join("; "), /closed without linked delivery evidence/u);
 });
 
-function milestoneAuditRun({ reReadHead = "b".repeat(40), issueTarget = "milestone-0.4.0" } = {}) {
+function milestoneAuditRun({
+  reReadHead = "b".repeat(40),
+  issueTarget = "milestone-0.4.0",
+  requiredChecks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
+} = {}) {
   const pr = milestonePr();
-  const checks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" }));
+  const checks = requiredChecks;
   const control = freezeReview(
     authorizeReview(initialReviewControl(pr.headRefOid), { headSha: pr.headRefOid }),
     { headSha: pr.headRefOid, disposition: "clean" },
@@ -286,15 +290,18 @@ function milestoneAuditRun({ reReadHead = "b".repeat(40), issueTarget = "milesto
   };
 }
 
-test("milestone audit binds issue target, base, checks, triage, and final head", () => {
+test("milestone audit binds issue target, base, selected required checks, triage, and final head", () => {
   const options = { repo: "MediaNoxLabs/oxid", pr: 42, execute: false };
   assert.equal(auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun() }).target, "milestone-0.4.0");
   assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ issueTarget: "develop" }) }), /does not match/);
   assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ reReadHead: "c".repeat(40) }) }), /changed during/);
+  assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ requiredChecks: [] }) }), /no effective required checks/);
 });
 
 test("milestone merge implementation pins squash execution to the audited head", async () => {
   const source = await readFile(new URL("../../scripts/github/merge-milestone-pr.mjs", import.meta.url), "utf8");
+  assert.match(source, /--required/);
+  assert.match(source, /no effective required checks/);
   assert.match(source, /--squash/);
   assert.match(source, /--match-head-commit/);
   assert.doesNotMatch(source, /--admin/);
