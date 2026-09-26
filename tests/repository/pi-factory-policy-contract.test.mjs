@@ -78,6 +78,13 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(smoke, /Pi startup modified tracked project agent shadows/u);
   assert.match(smoke, /Failed to load skill/u);
   assert.match(smoke, /Pi did not expose the tracked scenario and use-case commands/u);
+  assert.match(smoke, /timeout -k 5s 60s pi --approve --offline --mode rpc --no-session/u);
+  assert.match(smoke, /<"\$pi_rpc_input"/u);
+  assert.match(smoke, />"\$pi_rpc_output"/u);
+  assert.match(smoke, /jq -s -e[\s\S]+"\$pi_rpc_output" >\/dev\/null/u);
+  assert.doesNotMatch(smoke, /\|\s*pi --approve --offline --mode rpc/u);
+  assert.doesNotMatch(smoke, /<<<"\$pi_rpc_output"/u);
+  assert.match(smoke, /Pi offline RPC startup exceeded the 60-second smoke deadline/u);
   assert.match(bootstrap, /bash scripts\/check-pi-devshell\.sh/u);
   assert.match(bootstrap, /node scripts\/git-hooks\/check-github-web-flow-key\.mjs/u);
   const discoverNix = bootstrap.indexOf('[[ -x "$nix_daemon_profile_bin/nix" ]]');
