@@ -36,9 +36,16 @@ androidWebViewHierarchy: devtools
 - tapOn: "Close standalone demo setup"
 - tapOn: "Home"
 - assertVisible: "Current realm"
+- tapOn: "Switch wallet profile"
+- assertVisible: "Active wallet profile"
+- tapOn: "Close profile chooser"
+- tapOn: "Open global application menu"
+- assertVisible: "Settings"
+- tapOn: "Settings"
+- assertVisible: "Settings"
 # After wallet protection initializes, Android deliberately applies FLAG_SECURE.
-# Maestro retains semantic transition evidence; #813 owns the missing header
-# semantics needed to reach the explicit reveal and Settings controls.
+# Maestro retains semantic transition evidence while the Android CDP flow owns
+# the explicit reveal and screen-privacy re-arm checks.
 - tapOn: "Receive"
 - assertVisible: "Receive assets"
 - tapOn: "Close Receive"

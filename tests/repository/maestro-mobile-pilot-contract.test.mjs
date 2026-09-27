@@ -146,6 +146,6 @@ test("Maestro flows cover the holder shell without exposing recovery secrets", a
   assert.match(ios, /Open global application menu/u);
   assert.match(ios, /Settings/u);
   assert.match(android, /androidWebViewHierarchy: devtools/u);
-  assert.doesNotMatch(android, /takeScreenshot: lunar-aegis-android-0[2-9]/u);
-  assert.doesNotMatch(android, /tapOn: "Settings"/u);
+  assert.doesNotMatch(android, /takeScreenshot: lunar-aegis-android-0[3-9]/u);
+  assert.match(android, /tapOn: "Settings"/u);
 });

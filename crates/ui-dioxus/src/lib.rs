@@ -3668,7 +3668,7 @@ fn WalletApp() -> Element {
                     button {
                         class: if header_menu() == HeaderMenu::ProfileSwitcher { "profile-shortcut active" } else { "profile-shortcut" },
                         r#type: "button",
-                        aria_label: "Switch wallet profile; current profile {active_profile.display_name}",
+                        aria_label: "Switch wallet profile",
                         aria_controls: "profile-switcher-menu",
                         aria_expanded: if header_menu() == HeaderMenu::ProfileSwitcher { "true" } else { "false" },
                         aria_haspopup: "menu",
