@@ -6,7 +6,6 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from xml.etree import ElementTree
 
 
 ROOT = Path(__file__).resolve().parent
@@ -67,10 +66,14 @@ def main() -> None:
         if expected_nodes != set(screen["nodeIds"]):
             raise ValueError(f"Node mapping differs: {screen['designId']}")
 
-    for asset in ("assets/logo-master.svg", *(
+    vector_hashes = read_json(ROOT / "assets/vector-sha256.json")
+    expected_vectors = {"assets/logo-master.svg", *(
         entry["icon"] for entry in profile["navigation"]
-    )):
-        ElementTree.parse(local_path(asset))
+    )}
+    if set(vector_hashes) != expected_vectors:
+        raise ValueError("Vector manifest and profile assets differ")
+    for asset, digest in vector_hashes.items():
+        check_hash(local_path(asset), digest)
     if len(profile["navigation"]) != 5:
         raise ValueError("Expected exactly five navigation entries")
     if [entry["id"] for entry in profile["navigation"]] != [

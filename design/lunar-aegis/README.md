@@ -26,7 +26,7 @@ profiles.
 | Component contracts and state examples | [components.md](components.md) |
 | Existing-code mapping and implementation order | [implementation.md](implementation.md) |
 | Open design-quality findings | [qa.md](qa.md) |
-| Logo references and five navigation SVGs | [assets/](assets/) |
+| Logo references, five navigation SVGs, and their hashes | [assets/](assets/) |
 | Bundled typefaces and license files | [fonts/](fonts/) |
 | Offline export integrity check | [verify.py](verify.py) |
 
@@ -40,7 +40,8 @@ Flows](https://uxpilot.ai/a/ui-design?page=r30d8UxUa7xuLus8ZH2j), using
 verified diagram `ybCLMfv8Y7LWO3Rfra3J`. The [published V1 UX Pilot design
 system](https://uxpilot.ai/a/design-system/Oxid%20Mobile%20%C2%B7%20Lunar%20Aegis)
 contains 20 conceptual components. The local export is the reviewable source
-for teammates without UX Pilot access. Issue [#800](https://github.com/MediaNoxLabs/oxid/issues/800)
+for teammates without UX Pilot access. Issue [#802](https://github.com/MediaNoxLabs/oxid/issues/802)
+tracks this export; [#800](https://github.com/MediaNoxLabs/oxid/issues/800)
 tracks implementation of the shared foundation; issues #789–#799 cover the
 screen and flow backlog.
 
