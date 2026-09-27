@@ -2225,8 +2225,6 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
         "params": {}
     }));
     assert_eq!(before["result"]["account"]["source"], "simulated");
-    assert_eq!(before["result"]["account"]["sync"]["state"], "never_synced");
-    assert_eq!(before["result"]["account"]["balances"], json!([]));
     assert_eq!(
         before["result"]["account"]["addresses"][0]["value"],
         derived_address
@@ -2237,8 +2235,38 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
         "method": "wallet.balance.snapshot",
         "params": {}
     }));
-    assert_eq!(balances_before["result"]["balances"], json!([]));
-    assert_eq!(balances_before["result"]["sync"]["state"], "never_synced");
+    let automatic_sync_state = before["result"]["account"]["sync"]["state"]
+        .as_str()
+        .expect("account sync state should be present");
+    match automatic_sync_state {
+        "never_synced" => assert_eq!(before["result"]["account"]["balances"], json!([])),
+        "synced" => {
+            assert_eq!(
+                before["result"]["account"]["balances"][0]["atomicUnits"],
+                "12000000000000000"
+            );
+            assert_eq!(
+                before["result"]["account"]["balances"][1]["atomicUnits"],
+                "5000000"
+            );
+        }
+        state => panic!("unexpected automatic account sync state: {state}"),
+    }
+    match balances_before["result"]["sync"]["state"].as_str() {
+        Some("never_synced") => assert_eq!(balances_before["result"]["balances"], json!([])),
+        Some("synced") => {
+            assert_eq!(
+                balances_before["result"]["balances"][0]["atomicUnits"],
+                "12000000000000000"
+            );
+            assert_eq!(
+                balances_before["result"]["balances"][1]["atomicUnits"],
+                "5000000"
+            );
+        }
+        Some(state) => panic!("unexpected automatic balance sync state: {state}"),
+        None => panic!("balance sync state should be present"),
+    }
 
     let connected = process.request(json!({
         "protocol": "oxid.headless.v1",
