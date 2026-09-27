@@ -1,0 +1,42 @@
+# Local-only Maestro pilot. Run through scripts/run-maestro-android.sh.
+appId: io.medianox.oxid
+name: Lunar Aegis Android simulated holder journey
+androidWebViewHierarchy: devtools
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Create private wallet"
+- takeScreenshot: lunar-aegis-android-01-first-run
+- tapOn: "Create private wallet"
+- tapOn: "Create and continue"
+- tapOn: "Generate recovery phrase"
+# The recovery phrase remains native-custody controlled; this pilot asserts only
+# its accessibility label and never records its content.
+- assertVisible:
+    id: "New wallet recovery phrase"
+- tapOn: "I have securely saved or verified this recovery phrase."
+- tapOn: "Finish and open wallet"
+- tapOn: "Home"
+- assertVisible: "Current realm"
+- takeScreenshot: lunar-aegis-android-02-home-empty
+- tapOn:
+    id: "Receive"
+- assertVisible: "Receive"
+- takeScreenshot: lunar-aegis-android-03-receive
+- tapOn: "Close"
+- assertVisible: "Current realm"
+- tapOn: "Send"
+- assertVisible: "Send"
+- takeScreenshot: lunar-aegis-android-04-send-prerequisite
+- tapOn: "Documents"
+- assertVisible: "Documents"
+- takeScreenshot: lunar-aegis-android-05-documents-empty
+- tapOn: "Activity"
+- assertVisible: "Activity"
+- takeScreenshot: lunar-aegis-android-06-activity-empty
+- tapOn:
+    id: "Open global application menu"
+- tapOn: "Settings"
+- assertVisible: "Settings"
+- assertVisible: "Backup"
+- takeScreenshot: lunar-aegis-android-07-settings-backup
