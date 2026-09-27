@@ -146,8 +146,8 @@ test("Maestro flows cover the holder shell without exposing recovery secrets", a
   assert.match(ios, /Open global application menu/u);
   assert.match(ios, /Settings/u);
   assert.match(android, /androidWebViewHierarchy: devtools/u);
-  assert.match(android, /tapOn: "Session privacy"[\s\S]*takeScreenshot: lunar-aegis-android-03-home-public-revealed/u);
-  assert.match(android, /Private values revealed[\s\S]*tapOn: "Session privacy"[\s\S]*Private values hidden/u);
+  assert.match(android, /tapOn: "Session privacy\.\*"[\s\S]*takeScreenshot: lunar-aegis-android-03-home-public-revealed/u);
+  assert.match(android, /Private values revealed[\s\S]*tapOn: "Session privacy\.\*"[\s\S]*Private values hidden/u);
   assert.doesNotMatch(android, /takeScreenshot: lunar-aegis-android-0[4-9]/u);
   assert.match(android, /tapOn: "Settings"/u);
 });

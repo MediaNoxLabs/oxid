@@ -3674,7 +3674,8 @@ fn WalletApp() -> Element {
                         aria_haspopup: "menu",
                         title: "Switch wallet profile",
                         onclick: move |_| header_menu.set(header_menu().toggle_profile_switcher()),
-                        "{profile_monogram}"
+                        span { class: "visually-hidden", "Switch wallet profile" }
+                        span { aria_hidden: "true", "{profile_monogram}" }
                     }
                     GlobalMenuTrigger {
                         open: header_menu() == HeaderMenu::Global,
