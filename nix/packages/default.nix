@@ -157,6 +157,9 @@
         passport-vault-call-composer = passportVaultCallComposer;
 
         dioxus-cli = pkgs.dioxus-cli;
+
+        # Pinned through flake.lock; local Maestro pilots never fetch a global CLI.
+        maestro = pkgs.maestro;
       }
       // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
         xcodegen = pkgs.xcodegen;

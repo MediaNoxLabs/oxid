@@ -1,0 +1,37 @@
+# Local-only Maestro pilot. Run through scripts/run-maestro-ios.sh.
+appId: io.medianox.oxid
+name: Lunar Aegis iOS simulated holder journey
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Create private wallet"
+- takeScreenshot: lunar-aegis-ios-01-first-run
+# Native-custody recovery phrase content is deliberately never captured.
+- tapOn: "Create private wallet"
+- tapOn: "Create and continue"
+- tapOn: "Generate recovery phrase"
+- assertVisible: "New wallet recovery phrase"
+- tapOn: "I have securely saved or verified this recovery phrase."
+- tapOn: "Finish and open wallet"
+- tapOn: "Home"
+- assertVisible: "Current realm"
+- takeScreenshot: lunar-aegis-ios-02-home-empty
+- tapOn: "Receive"
+- assertVisible: "Receive NIGHT"
+- takeScreenshot: lunar-aegis-ios-03-receive
+- tapOn: "Close Receive"
+- tapOn: "Send"
+- assertVisible: "Send"
+- takeScreenshot: lunar-aegis-ios-04-send-prerequisite
+- tapOn: "Documents"
+- assertVisible: "Documents"
+- takeScreenshot: lunar-aegis-ios-05-documents-empty
+- tapOn: "Activity"
+- assertVisible: "Activity"
+- takeScreenshot: lunar-aegis-ios-06-activity-empty
+- tapOn:
+    id: "Open global application menu"
+- tapOn: "Settings"
+- assertVisible: "Settings"
+- assertVisible: "Backup"
+- takeScreenshot: lunar-aegis-ios-07-settings-backup
