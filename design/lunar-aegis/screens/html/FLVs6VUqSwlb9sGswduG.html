@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Consent — Oxid</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'oxid-bg': '#07090E',
+                        'oxid-surface': '#0F172A',
+                        'oxid-border': '#1E293B',
+                        'oxid-primary': '#06B6D4',
+                        'oxid-highlight': '#38BDF8',
+                        'oxid-identity': '#8B5CF6',
+                        'oxid-text': '#F8FAFC',
+                        'oxid-muted': '#94A3B8',
+                    },
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                        heading: ['Space Grotesk', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+<style>html,body{background:#07090E;color:#F8FAFC}body{margin:0}</style>
+</head>
+<body class="bg-oxid-bg text-oxid-text font-sans overflow-hidden flex justify-center">
+    <div class="w-full max-w-[430px] h-[840px] relative flex flex-col">
+
+        <!-- Header -->
+        <header class="px-6 pt-12 pb-4 flex items-center justify-between">
+            <button class="w-11 h-11 rounded-xl bg-oxid-surface border border-oxid-border flex items-center justify-center text-oxid-muted hover:text-white transition-colors">
+                <i class="fa-solid fa-chevron-left text-sm"></i>
+            </button>
+            <h1 class="text-[11px] font-bold text-white uppercase tracking-[0.3em]">Presentation Consent</h1>
+            <div class="w-11"></div>
+        </header>
+
+        <main class="flex-1 px-6 pb-40 overflow-y-auto">
+            <!-- Verifier Identity -->
+            <section class="mt-4 mb-10 flex flex-col items-center">
+                <div class="w-24 h-24 rounded-full bg-oxid-surface border border-oxid-border flex items-center justify-center mb-6 relative group">
+                    <div class="absolute inset-0 bg-oxid-primary/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-full"></div>
+                    <i class="fa-solid fa-shield-halved text-4xl text-oxid-primary"></i>
+                    <div class="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-oxid-primary flex items-center justify-center border-4 border-oxid-bg">
+                        <i class="fa-solid fa-share-nodes text-[10px] text-oxid-bg"></i>
+                    </div>
+                </div>
+                <div class="text-center px-4">
+                    <h2 class="text-xl font-heading font-bold text-white mb-2">Example Verifier</h2>
+                    <div class="flex items-center justify-center gap-1.5 text-[11px] font-bold text-oxid-muted uppercase tracking-tighter">
+                        <i class="fa-solid fa-circle-check text-oxid-primary"></i>
+                        <span>Illustrative Request · Connection Unverified</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Request Details -->
+            <div class="bg-oxid-surface rounded-[32px] border border-oxid-border overflow-hidden shadow-2xl">
+                <!-- Purpose -->
+                <div class="p-6 bg-white/5 border-b border-oxid-border/50">
+                    <p class="text-[10px] text-oxid-muted font-bold uppercase tracking-widest mb-2">Purpose</p>
+                    <p class="text-[13px] font-medium leading-relaxed text-white">Example Purpose: Confirm eligibility without sharing more than necessary.</p>
+                </div>
+
+                <!-- Data Disclosure -->
+                <div class="p-6">
+                    <p class="text-[10px] text-oxid-muted font-bold uppercase tracking-widest mb-5">Sharing from "Example Credential"</p>
+                    <div class="space-y-5">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-3">
+                                <div class="w-2 h-2 rounded-full bg-oxid-primary"></div>
+                                <span class="text-[14px] font-bold text-white tracking-tight">Requested Claim</span>
+                            </div>
+                            <i class="fa-solid fa-check text-oxid-primary text-xs"></i>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-3">
+                                <div class="w-2 h-2 rounded-full bg-oxid-primary"></div>
+                                <span class="text-[14px] font-bold text-white tracking-tight">Example Eligibility Claim</span>
+                            </div>
+                            <i class="fa-solid fa-check text-oxid-primary text-xs"></i>
+                        </div>
+                        <div class="flex items-center justify-between opacity-40">
+                            <div class="flex items-center gap-3">
+                                <div class="w-2 h-2 rounded-full bg-oxid-muted"></div>
+                                <span class="text-[14px] font-bold italic text-oxid-muted tracking-tight">Account Number</span>
+                            </div>
+                            <span class="text-[9px] font-bold uppercase tracking-widest bg-oxid-bg px-2 py-0.5 rounded border border-oxid-border">Private</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Security Note -->
+            <div class="mt-8 flex gap-4 px-2">
+                <i class="fa-solid fa-circle-info text-oxid-primary text-lg mt-0.5"></i>
+                <p class="text-[12px] text-oxid-muted leading-relaxed font-medium">
+                    Review exactly what the verifier will receive. Proof support depends on the selected credential and request.
+                </p>
+            </div>
+        </main>
+
+        <!-- Bottom Actions -->
+        <div class="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-oxid-bg via-oxid-bg to-transparent">
+            <div class="max-w-[430px] mx-auto grid grid-cols-2 gap-4">
+                <button class="h-16 rounded-[20px] bg-oxid-surface border border-oxid-border font-bold text-[13px] uppercase tracking-widest text-white hover:bg-oxid-border transition-all active:scale-[0.98]">
+                    Decline
+                </button>
+                <button class="h-16 rounded-[20px] bg-white text-oxid-bg font-bold text-[13px] uppercase tracking-widest shadow-2xl hover:bg-oxid-muted transition-all active:scale-[0.98]">
+                    Share Data
+                </button>
+            </div>
+        </div>
+
+    </div>
+</body>

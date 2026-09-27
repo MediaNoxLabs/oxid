@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Oxid - Scan Entry</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'oxid-bg': '#07090E',
+                        'oxid-surface': '#0F172A',
+                        'oxid-border': '#1E293B',
+                        'oxid-primary': '#06B6D4',
+                        'oxid-highlight': '#38BDF8',
+                        'oxid-identity': '#8B5CF6',
+                        'oxid-text': '#F8FAFC',
+                        'oxid-muted': '#94A3B8',
+                    },
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                        heading: ['Space Grotesk', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .scan-frame {
+            box-shadow: 0 0 0 4000px rgba(7, 9, 14, 0.7);
+        }
+        @keyframes scanline {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(100%); }
+        }
+        .scan-line {
+            animation: scanline 2s linear infinite;
+        }
+    </style>
+<style>html,body{background:#07090E;color:#F8FAFC}body{margin:0}</style>
+</head>
+<body class="bg-oxid-bg text-oxid-text font-sans overflow-hidden flex justify-center">
+    <div class="w-full max-w-[430px] h-[840px] relative flex flex-col">
+
+        <!-- Top Bar -->
+        <header class="absolute top-0 left-0 right-0 z-50 px-6 pt-16 pb-4 flex items-center justify-between pointer-events-none">
+            <button class="w-10 h-10 rounded-xl bg-oxid-surface/50 backdrop-blur-xl border border-oxid-border flex items-center justify-center text-white pointer-events-auto">
+                <i class="fa-solid fa-chevron-left text-sm"></i>
+            </button>
+            <h1 class="text-[11px] font-bold text-white uppercase tracking-[0.3em]">Identity Scanner</h1>
+            <button class="w-10 h-10 rounded-xl bg-oxid-surface/50 backdrop-blur-xl border border-oxid-border flex items-center justify-center text-white pointer-events-auto">
+                <i class="fa-solid fa-bolt text-sm"></i>
+            </button>
+        </header>
+
+        <!-- Viewfinder -->
+        <main class="relative flex-grow flex items-center justify-center overflow-hidden bg-slate-900">
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div class="w-[280px] h-[280px] relative z-10">
+                    <!-- Branded Corners -->
+                    <div class="absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 border-oxid-primary rounded-tl-2xl"></div>
+                    <div class="absolute top-0 right-0 w-10 h-10 border-t-4 border-r-4 border-oxid-primary rounded-tr-2xl"></div>
+                    <div class="absolute bottom-0 left-0 w-10 h-10 border-b-4 border-l-4 border-oxid-primary rounded-bl-2xl"></div>
+                    <div class="absolute bottom-0 right-0 w-10 h-10 border-b-4 border-r-4 border-oxid-primary rounded-br-2xl"></div>
+
+                    <!-- Scan Line -->
+                    <div class="scan-line absolute top-0 left-0 right-0 h-0.5 bg-oxid-primary shadow-[0_0_20px_rgba(6,182,212,1)]"></div>
+                </div>
+                <div class="scan-frame absolute inset-0"></div>
+            </div>
+
+            <!-- Permission / Prompt -->
+            <div class="absolute bottom-32 left-0 right-0 px-6 z-20 space-y-4">
+                <div class="bg-oxid-surface/80 backdrop-blur-2xl rounded-[32px] p-7 border border-oxid-border text-center space-y-6 shadow-2xl">
+                    <div class="space-y-2">
+                        <p class="text-[11px] font-bold text-oxid-primary uppercase tracking-[0.2em]">Security Check</p>
+                        <p class="text-sm font-bold text-white tracking-tight leading-tight">Enable camera to scan securely.</p>
+                        <p class="text-[12px] text-oxid-muted leading-relaxed px-4 font-medium">
+                            Review every recognized request before taking action. Scanning alone never sends or shares.
+                        </p>
+                    </div>
+
+                    <div class="space-y-4">
+                        <button class="w-full py-4 bg-oxid-primary hover:bg-oxid-highlight text-oxid-bg font-bold rounded-[20px] uppercase tracking-widest text-[13px] shadow-lg shadow-oxid-primary/10 transition-all">
+                            Enable Camera
+                        </button>
+
+                        <div class="flex items-center gap-4">
+                            <div class="h-px flex-grow bg-oxid-border"></div>
+                            <span class="text-[10px] font-bold text-oxid-muted uppercase tracking-widest">or</span>
+                            <div class="h-px flex-grow bg-oxid-border"></div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <button class="py-3.5 bg-oxid-bg border border-oxid-border rounded-xl text-[11px] font-bold text-white uppercase tracking-widest flex items-center justify-center gap-2">
+                                <i class="fa-solid fa-image text-oxid-primary"></i> Import
+                            </button>
+                            <button class="py-3.5 bg-oxid-bg border border-oxid-border rounded-xl text-[11px] font-bold text-white uppercase tracking-widest flex items-center justify-center gap-2">
+                                <i class="fa-solid fa-paste text-oxid-primary"></i> Paste
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Navigation Bar -->
+        <nav id="nav" aria-label="Primary navigation" style="position:fixed;bottom:0;left:0;right:0;z-index:50;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:2px;background:#07090E;border-top:1px solid #1E293B;padding:7px 6px calc(7px + env(safe-area-inset-bottom));box-shadow:0 -8px 28px rgba(0,0,0,.25)">
+        <button type="button" aria-label="Home" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#94A3B8;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer">
+            <span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;color:inherit">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            </span>
+            <span>Home</span>
+        </button>
+        <button type="button" aria-label="Wallet" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#94A3B8;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer">
+            <span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;color:inherit">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg>
+            </span>
+            <span>Wallet</span>
+        </button>
+        <button type="button" aria-label="Scan" aria-current="page" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#06B6D4;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer">
+            <span style="width:42px;height:42px;display:flex;align-items:center;justify-content:center;border-radius:14px;background:linear-gradient(135deg,#38BDF8,#06B6D4);color:#07131d">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>
+            </span>
+            <span>Scan</span>
+            <span aria-hidden="true" style="width:16px;height:2px;border-radius:2px;background:#06B6D4"></span>
+        </button>
+        <button type="button" aria-label="Documents" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#94A3B8;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer">
+            <span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;color:inherit">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></svg>
+            </span>
+            <span>Documents</span>
+        </button>
+        <button type="button" aria-label="Activity" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#94A3B8;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer">
+            <span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;color:inherit">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.5.5 0 0 1-.96 0L9.24 2.18a.5.5 0 0 0-.96 0l-2.35 8.36A2 2 0 0 1 4 12H2"/></svg>
+            </span>
+            <span>Activity</span>
+        </button>
+    </nav>
+
+    </div>
+</body>

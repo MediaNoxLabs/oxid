@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Privacy — Oxid</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'oxid-bg': '#07090E',
+                        'oxid-surface': '#0F172A',
+                        'oxid-border': '#1E293B',
+                        'oxid-primary': '#06B6D4',
+                        'oxid-highlight': '#38BDF8',
+                        'oxid-identity': '#8B5CF6',
+                        'oxid-text': '#F8FAFC',
+                        'oxid-muted': '#94A3B8',
+                    },
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                        heading: ['Space Grotesk', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-oxid-bg text-oxid-text font-sans overflow-hidden flex justify-center">
+    <div class="w-full max-w-[430px] h-[840px] relative flex flex-col">
+
+        <!-- Header -->
+        <header class="px-6 pt-12 pb-4 flex items-center gap-4 sticky top-0 bg-oxid-bg/80 backdrop-blur-md z-10">
+            <button class="w-11 h-11 rounded-xl bg-oxid-surface border border-oxid-border flex items-center justify-center text-oxid-muted hover:text-white transition-colors">
+                <i class="fa-solid fa-chevron-left text-sm"></i>
+            </button>
+            <h1 class="text-xl font-heading font-bold text-white tracking-tight">Privacy Controls</h1>
+        </header>
+
+        <main class="flex-1 px-6 pb-32 overflow-y-auto space-y-9 pt-4">
+            
+            <!-- Proposal Note -->
+            <section id="masking-controls" class="space-y-4">
+                <div class="p-6 bg-oxid-identity/5 border border-oxid-identity/20 rounded-[32px] space-y-6 shadow-2xl">
+                    <div class="flex items-start gap-4">
+                        <div class="w-11 h-11 rounded-xl bg-oxid-identity/20 flex items-center justify-center text-oxid-identity shrink-0">
+                            <i class="fa-solid fa-user-shield text-lg"></i>
+                        </div>
+                        <div class="space-y-1">
+                            <h2 class="text-[15px] font-bold text-white tracking-tight leading-tight">Identity Privacy Proposal</h2>
+                            <p class="text-[11px] text-oxid-muted leading-relaxed font-medium">Control device-level visibility. Sandbox builds may override these for testing.</p>
+                        </div>
+                    </div>
+
+                    <!-- Primary Toggle -->
+                    <div class="flex items-center justify-between p-4 bg-oxid-bg/60 rounded-[20px] border border-oxid-border">
+                        <div class="space-y-0.5">
+                            <p class="text-[13px] font-bold text-white">Mask Sensitive Values</p>
+                            <p class="text-[10px] text-oxid-muted font-bold uppercase tracking-widest">Global Dot-Masking</p>
+                        </div>
+                        <!-- Custom Styled Toggle -->
+                        <div class="w-12 h-7 bg-oxid-primary rounded-full p-1 flex items-center justify-end shadow-inner cursor-pointer">
+                            <div class="w-5 h-5 bg-oxid-bg rounded-full shadow-lg"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Preview Area -->
+            <section id="privacy-preview" class="space-y-4">
+                <div class="flex items-center justify-between px-1">
+                    <h3 class="text-[10px] font-bold uppercase tracking-[0.2em] text-oxid-muted">Masking Preview</h3>
+                    <span class="text-[9px] font-bold text-oxid-primary uppercase tracking-tighter">Live Demo</span>
+                </div>
+                
+                <div class="bg-oxid-surface rounded-[32px] p-8 border border-oxid-border space-y-8 shadow-2xl relative overflow-hidden">
+                    <div class="absolute top-0 right-0 p-8 opacity-5"><i class="fa-solid fa-eye-slash text-8xl text-white"></i></div>
+                    
+                    <!-- Example Balance -->
+                    <div class="space-y-2 relative z-10">
+                        <p class="text-[10px] font-bold text-oxid-muted uppercase tracking-widest">Example Balance</p>
+                        <div class="flex items-baseline gap-3">
+                            <span class="text-3xl font-heading font-bold text-white tracking-tight">••••••</span>
+                            <span class="text-[13px] text-oxid-primary font-bold uppercase tracking-widest">NIGHT</span>
+                        </div>
+                    </div>
+
+                    <!-- Example Activity -->
+                    <div class="space-y-4 relative z-10">
+                        <p class="text-[10px] font-bold text-oxid-muted uppercase tracking-widest">Recent Activity</p>
+                        <div class="flex items-center justify-between py-4 border-t border-oxid-border/50">
+                            <div class="flex items-center gap-4">
+                                <div class="w-10 h-10 rounded-xl bg-oxid-bg border border-oxid-border flex items-center justify-center text-oxid-muted">
+                                    <i class="fa-solid fa-arrow-up text-sm"></i>
+                                </div>
+                                <div class="space-y-0.5">
+                                    <p class="text-[13px] font-bold text-white tracking-tight">Sent Payment</p>
+                                    <p class="text-[11px] text-oxid-muted font-mono tracking-widest opacity-60">••••••••••••</p>
+                                </div>
+                            </div>
+                            <span class="text-[13px] font-bold text-oxid-muted tracking-tight">•••• NIGHT</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Development Overrides -->
+            <section id="dev-status" class="space-y-4">
+                <h3 class="text-[10px] font-bold uppercase tracking-[0.2em] text-oxid-muted px-1">System Overrides</h3>
+                
+                <div class="space-y-3 opacity-60 grayscale">
+                    <div class="flex items-center justify-between p-5 bg-oxid-surface border border-oxid-border rounded-[24px]">
+                        <div class="space-y-0.5">
+                            <p class="text-[14px] font-bold text-white">External Captures</p>
+                            <p class="text-[10px] text-oxid-muted font-medium">Screenshots & recording</p>
+                        </div>
+                        <span class="text-[9px] font-bold text-oxid-primary bg-oxid-primary/10 px-2 py-1 rounded border border-oxid-primary/20 uppercase tracking-widest">Force Enabled</span>
+                    </div>
+                    <div class="flex items-center justify-between p-5 bg-oxid-surface border border-oxid-border rounded-[24px]">
+                        <div class="space-y-0.5">
+                            <p class="text-[14px] font-bold text-white">Diagnostics</p>
+                            <p class="text-[10px] text-oxid-muted font-medium">Remote error reporting</p>
+                        </div>
+                        <span class="text-[9px] font-bold text-amber-500 bg-amber-500/10 px-2 py-1 rounded border border-amber-500/20 uppercase tracking-widest">Pending Consent</span>
+                    </div>
+                </div>
+                
+                <p class="text-center text-[10px] text-oxid-muted/60 leading-relaxed px-4 font-medium italic mt-6">
+                    Controls are illustrative design proposals. Actual capture behavior is governed by system-level OS permissions.
+                </p>
+            </section>
+
+        </main>
+
+        <!-- Fixed Footer Action -->
+        <div class="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-oxid-bg via-oxid-bg to-transparent">
+            <button class="w-full h-16 rounded-[20px] bg-oxid-surface border border-oxid-border text-white font-bold text-[13px] uppercase tracking-widest hover:bg-oxid-border transition-all active:scale-[0.98]">
+                Save Local Preferences
+            </button>
+        </div>
+
+    </div>
+</body>
+</html>

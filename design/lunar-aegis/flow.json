@@ -1,0 +1,706 @@
+{
+  "schemaVersion": 1,
+  "profile": "lunar-aegis",
+  "source": {
+    "provider": "UX Pilot",
+    "pageId": "r30d8UxUa7xuLus8ZH2j",
+    "diagramId": "ybCLMfv8Y7LWO3Rfra3J",
+    "exportedAt": "2026-09-27"
+  },
+  "nodes": [
+    {
+      "id": "welcome",
+      "title": "1-Welcome",
+      "state": "proposed",
+      "designId": "XSwTg6CjwXruX8QP3tXy",
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": "protect",
+      "title": "2-ProtectionSetup",
+      "state": "proposed",
+      "designId": "FFMmLvVQlc5xIun63FYX",
+      "x": 310,
+      "y": 0
+    },
+    {
+      "id": "restore",
+      "title": "3-RestoreBackup",
+      "state": "proposed",
+      "designId": "BU2AW1g3jib1PpX2ylsx",
+      "x": 310,
+      "y": 180
+    },
+    {
+      "id": "recovery",
+      "title": "Restore Recovery Review",
+      "state": "proposed",
+      "designId": "xYA9BiozNUetlxPJYHPT",
+      "x": 620,
+      "y": 180
+    },
+    {
+      "id": "ready",
+      "title": "4-ReadyHandoff",
+      "state": "proposed",
+      "designId": "7u81lbjNIKcn8dS79axb",
+      "x": 930,
+      "y": 0
+    },
+    {
+      "id": "nav",
+      "title": "Shared five-slot bottom navigation",
+      "state": "structure",
+      "designId": null,
+      "x": 620,
+      "y": 460
+    },
+    {
+      "id": "home",
+      "title": "Home — simulated state",
+      "state": "observed",
+      "designId": "kI1o6I63AKA1Z0AIAwHI",
+      "x": 0,
+      "y": 700
+    },
+    {
+      "id": "wallet",
+      "title": "Wallet — no live source",
+      "state": "observed",
+      "designId": "dnug5nrBQ8Edsf30jegU",
+      "x": 310,
+      "y": 700
+    },
+    {
+      "id": "scan",
+      "title": "Scan-1-Entry",
+      "state": "proposed",
+      "designId": "Yv3m128eEWimsftexS7J",
+      "x": 620,
+      "y": 700
+    },
+    {
+      "id": "documents",
+      "title": "Credentials — empty state",
+      "state": "observed",
+      "designId": "IakMIDPU6kDTYsHcoDYQ",
+      "x": 930,
+      "y": 700
+    },
+    {
+      "id": "activity",
+      "title": "History — no synced events",
+      "state": "observed",
+      "designId": "IxCp7AR4fTWsC8Q28qdc",
+      "x": 1240,
+      "y": 700
+    },
+    {
+      "id": "settings",
+      "title": "Settings Hub",
+      "state": "proposed",
+      "designId": "THvwwHWmKVEB9tYpUvR6",
+      "x": 1550,
+      "y": 700
+    },
+    {
+      "id": "home-alt",
+      "title": "Home — concept variant",
+      "state": "proposed",
+      "designId": "fDgGhxdV4FYp8zzKdkHW",
+      "x": 0,
+      "y": 910
+    },
+    {
+      "id": "wallet-alt",
+      "title": "Assets — concept variant",
+      "state": "proposed",
+      "designId": "O1OlAJSr0eX88su9NDGw",
+      "x": 310,
+      "y": 910
+    },
+    {
+      "id": "receive",
+      "title": "1-Receive",
+      "state": "proposed",
+      "designId": "WuqRtdvZAmT09UJtiVO0",
+      "x": 0,
+      "y": 1230
+    },
+    {
+      "id": "send",
+      "title": "2-Send · blocked without source",
+      "state": "proposed",
+      "designId": "F5Q39rukHWzFn7cDhzvK",
+      "x": 310,
+      "y": 1230
+    },
+    {
+      "id": "send-review",
+      "title": "3-SendReview",
+      "state": "proposed",
+      "designId": "1BVzLKBz9gbMrTtlQuhH",
+      "x": 620,
+      "y": 1230
+    },
+    {
+      "id": "outcome",
+      "title": "4-TransferOutcome",
+      "state": "proposed",
+      "designId": "SiOy00hJwu4fnCq6lriL",
+      "x": 930,
+      "y": 1230
+    },
+    {
+      "id": "docs-inventory",
+      "title": "1-DocsInventory",
+      "state": "proposed",
+      "designId": "chRTX9Vh53MXqxQx1bpJ",
+      "x": 0,
+      "y": 1740
+    },
+    {
+      "id": "offer",
+      "title": "2-CredentialOffer",
+      "state": "proposed",
+      "designId": "GWK1zyDIodcUbr9Bm68v",
+      "x": 310,
+      "y": 1740
+    },
+    {
+      "id": "credential-detail",
+      "title": "3-CredentialDetail",
+      "state": "proposed",
+      "designId": "Ukiejr7yd9Y1HLwo6ZvY",
+      "x": 620,
+      "y": 1740
+    },
+    {
+      "id": "consent",
+      "title": "4-PresentationConsent",
+      "state": "proposed",
+      "designId": "FLVs6VUqSwlb9sGswduG",
+      "x": 930,
+      "y": 1740
+    },
+    {
+      "id": "docs-alt",
+      "title": "Credentials — populated concept",
+      "state": "proposed",
+      "designId": "aZXxHQSwodvrnxqlGScM",
+      "x": 1240,
+      "y": 1740
+    },
+    {
+      "id": "dispatch",
+      "title": "Scan-2-Dispatch · screen exists",
+      "state": "proposed",
+      "designId": "xU0NzamqXdVbnh9P3PuJ",
+      "x": 310,
+      "y": 2220
+    },
+    {
+      "id": "scan-error",
+      "title": "Scan-3-Error",
+      "state": "proposed",
+      "designId": "DMRPPnjVsTdpLPfHa7PI",
+      "x": 620,
+      "y": 2220
+    },
+    {
+      "id": "login-gap",
+      "title": "Login request review · missing",
+      "state": "gap",
+      "designId": null,
+      "x": 930,
+      "y": 2220
+    },
+    {
+      "id": "backup",
+      "title": "Backup Readiness",
+      "state": "proposed",
+      "designId": "piqCy2mTkAGEbjHbBB2g",
+      "x": 0,
+      "y": 2700
+    },
+    {
+      "id": "restore-review",
+      "title": "Restore Recovery Review",
+      "state": "proposed",
+      "designId": "xYA9BiozNUetlxPJYHPT",
+      "x": 310,
+      "y": 2700
+    },
+    {
+      "id": "privacy",
+      "title": "Privacy Controls",
+      "state": "proposed",
+      "designId": "rZnYMwlpfKT8tDOBvrCY",
+      "x": 620,
+      "y": 2700
+    },
+    {
+      "id": "vault-ready",
+      "title": "Vault-1-Readiness",
+      "state": "vault",
+      "designId": "5W0qFzdZIECOuCQQCk47",
+      "x": 0,
+      "y": 3160
+    },
+    {
+      "id": "vault-select",
+      "title": "Vault-2-Selection",
+      "state": "vault",
+      "designId": "l7qHJf2Dni0mCPf6coGS",
+      "x": 310,
+      "y": 3160
+    },
+    {
+      "id": "vault-auth",
+      "title": "Vault-3-Auth",
+      "state": "vault",
+      "designId": "tHPxano2w2LWjSQnBgpk",
+      "x": 620,
+      "y": 3160
+    },
+    {
+      "id": "vault-status",
+      "title": "Vault-4-Status",
+      "state": "vault",
+      "designId": "yVeln2BQrznEMS1gtswz",
+      "x": 930,
+      "y": 3160
+    },
+    {
+      "id": "activity-empty",
+      "title": "Activity_Empty",
+      "state": "proposed",
+      "designId": "F59GjIeGSqGO7P3cMQYv",
+      "x": 0,
+      "y": 3620
+    },
+    {
+      "id": "activity-detail",
+      "title": "Activity_Detail",
+      "state": "proposed",
+      "designId": "fXj9iFvksvIHq7QMiJcC",
+      "x": 310,
+      "y": 3620
+    },
+    {
+      "id": "activity-proposal",
+      "title": "Activity_Proposal",
+      "state": "proposed",
+      "designId": "kAQsaTZOn4GhaF7keYyC",
+      "x": 620,
+      "y": 3620
+    },
+    {
+      "id": "history-alt",
+      "title": "History — populated concept",
+      "state": "proposed",
+      "designId": "fpYYxAdBDueP0YJL1Pkh",
+      "x": 930,
+      "y": 3620
+    }
+  ],
+  "edges": [
+    {
+      "id": "flow-1",
+      "from": "welcome",
+      "to": "protect",
+      "action": "Create profile"
+    },
+    {
+      "id": "flow-2",
+      "from": "welcome",
+      "to": "restore",
+      "action": "Restore backup"
+    },
+    {
+      "id": "flow-3",
+      "from": "protect",
+      "to": "ready",
+      "action": "Finish setup"
+    },
+    {
+      "id": "flow-4",
+      "from": "restore",
+      "to": "recovery",
+      "action": "Choose file / review"
+    },
+    {
+      "id": "flow-5",
+      "from": "recovery",
+      "to": "ready",
+      "action": "Valid restore"
+    },
+    {
+      "id": "flow-6",
+      "from": "recovery",
+      "to": "restore",
+      "action": "Invalid / retry"
+    },
+    {
+      "id": "flow-7",
+      "from": "ready",
+      "to": "home",
+      "action": "Enter app"
+    },
+    {
+      "id": "flow-8",
+      "from": "nav",
+      "to": "home",
+      "action": "Home tab"
+    },
+    {
+      "id": "flow-9",
+      "from": "nav",
+      "to": "wallet",
+      "action": "Wallet tab"
+    },
+    {
+      "id": "flow-10",
+      "from": "nav",
+      "to": "scan",
+      "action": "Center Scan"
+    },
+    {
+      "id": "flow-11",
+      "from": "nav",
+      "to": "documents",
+      "action": "Documents tab"
+    },
+    {
+      "id": "flow-12",
+      "from": "nav",
+      "to": "activity",
+      "action": "Activity tab"
+    },
+    {
+      "id": "flow-13",
+      "from": "home",
+      "to": "nav",
+      "action": "Switch tab"
+    },
+    {
+      "id": "flow-14",
+      "from": "wallet",
+      "to": "nav",
+      "action": "Switch tab"
+    },
+    {
+      "id": "flow-15",
+      "from": "documents",
+      "to": "nav",
+      "action": "Switch tab"
+    },
+    {
+      "id": "flow-16",
+      "from": "activity",
+      "to": "nav",
+      "action": "Switch tab"
+    },
+    {
+      "id": "flow-17",
+      "from": "home",
+      "to": "receive",
+      "action": "Receive"
+    },
+    {
+      "id": "flow-18",
+      "from": "home",
+      "to": "send",
+      "action": "Send"
+    },
+    {
+      "id": "flow-19",
+      "from": "home",
+      "to": "consent",
+      "action": "Present · if credential"
+    },
+    {
+      "id": "flow-20",
+      "from": "home",
+      "to": "scan",
+      "action": "Scan"
+    },
+    {
+      "id": "flow-21",
+      "from": "home",
+      "to": "settings",
+      "action": "Avatar / settings"
+    },
+    {
+      "id": "flow-22",
+      "from": "home",
+      "to": "vault-ready",
+      "action": "Vault card · concept"
+    },
+    {
+      "id": "flow-23",
+      "from": "home",
+      "to": "home-alt",
+      "action": "Concept variant"
+    },
+    {
+      "id": "flow-24",
+      "from": "wallet",
+      "to": "wallet-alt",
+      "action": "Concept variant"
+    },
+    {
+      "id": "flow-25",
+      "from": "documents",
+      "to": "docs-alt",
+      "action": "Populated concept"
+    },
+    {
+      "id": "flow-26",
+      "from": "activity",
+      "to": "history-alt",
+      "action": "Populated concept"
+    },
+    {
+      "id": "flow-27",
+      "from": "wallet",
+      "to": "receive",
+      "action": "Receive"
+    },
+    {
+      "id": "flow-28",
+      "from": "wallet",
+      "to": "send",
+      "action": "Send · blocked until funded"
+    },
+    {
+      "id": "flow-29",
+      "from": "receive",
+      "to": "wallet",
+      "action": "Copy / share / back"
+    },
+    {
+      "id": "flow-30",
+      "from": "send",
+      "to": "send-review",
+      "action": "Review · only if ready"
+    },
+    {
+      "id": "flow-31",
+      "from": "send",
+      "to": "wallet",
+      "action": "Blocked / cancel"
+    },
+    {
+      "id": "flow-32",
+      "from": "send-review",
+      "to": "send",
+      "action": "Edit / back"
+    },
+    {
+      "id": "flow-33",
+      "from": "send-review",
+      "to": "outcome",
+      "action": "Authorize & submit"
+    },
+    {
+      "id": "flow-34",
+      "from": "outcome",
+      "to": "activity-detail",
+      "action": "View recorded event"
+    },
+    {
+      "id": "flow-35",
+      "from": "outcome",
+      "to": "send",
+      "action": "Retry only when safe"
+    },
+    {
+      "id": "flow-36",
+      "from": "documents",
+      "to": "docs-inventory",
+      "action": "Inventory / add"
+    },
+    {
+      "id": "flow-37",
+      "from": "docs-inventory",
+      "to": "offer",
+      "action": "Add offer"
+    },
+    {
+      "id": "flow-38",
+      "from": "offer",
+      "to": "credential-detail",
+      "action": "Accept · after review"
+    },
+    {
+      "id": "flow-39",
+      "from": "offer",
+      "to": "documents",
+      "action": "Decline / cancel"
+    },
+    {
+      "id": "flow-40",
+      "from": "credential-detail",
+      "to": "consent",
+      "action": "Present"
+    },
+    {
+      "id": "flow-41",
+      "from": "consent",
+      "to": "credential-detail",
+      "action": "Decline / back"
+    },
+    {
+      "id": "flow-42",
+      "from": "consent",
+      "to": "activity-proposal",
+      "action": "Share · concept only"
+    },
+    {
+      "id": "flow-43",
+      "from": "scan",
+      "to": "dispatch",
+      "action": "Read / paste payload"
+    },
+    {
+      "id": "flow-44",
+      "from": "scan",
+      "to": "scan-error",
+      "action": "Permission denied / unsafe"
+    },
+    {
+      "id": "flow-45",
+      "from": "dispatch",
+      "to": "send-review",
+      "action": "Payment → exact review"
+    },
+    {
+      "id": "flow-46",
+      "from": "dispatch",
+      "to": "offer",
+      "action": "Credential offer → issuer review"
+    },
+    {
+      "id": "flow-47",
+      "from": "dispatch",
+      "to": "consent",
+      "action": "Presentation → consent"
+    },
+    {
+      "id": "flow-48",
+      "from": "dispatch",
+      "to": "login-gap",
+      "action": "Login → missing review"
+    },
+    {
+      "id": "flow-49",
+      "from": "dispatch",
+      "to": "scan-error",
+      "action": "Unsupported / unsafe"
+    },
+    {
+      "id": "flow-50",
+      "from": "scan-error",
+      "to": "scan",
+      "action": "Retry / manual entry"
+    },
+    {
+      "id": "flow-51",
+      "from": "settings",
+      "to": "backup",
+      "action": "Backup"
+    },
+    {
+      "id": "flow-52",
+      "from": "settings",
+      "to": "privacy",
+      "action": "Privacy"
+    },
+    {
+      "id": "flow-53",
+      "from": "settings",
+      "to": "restore-review",
+      "action": "Recovery"
+    },
+    {
+      "id": "flow-54",
+      "from": "settings",
+      "to": "home",
+      "action": "Back"
+    },
+    {
+      "id": "flow-55",
+      "from": "backup",
+      "to": "settings",
+      "action": "Back"
+    },
+    {
+      "id": "flow-56",
+      "from": "privacy",
+      "to": "settings",
+      "action": "Save / back"
+    },
+    {
+      "id": "flow-57",
+      "from": "restore-review",
+      "to": "settings",
+      "action": "Cancel"
+    },
+    {
+      "id": "flow-58",
+      "from": "vault-ready",
+      "to": "vault-select",
+      "action": "Review requirements"
+    },
+    {
+      "id": "flow-59",
+      "from": "vault-select",
+      "to": "vault-auth",
+      "action": "Review selection"
+    },
+    {
+      "id": "flow-60",
+      "from": "vault-auth",
+      "to": "vault-select",
+      "action": "Back / cancel"
+    },
+    {
+      "id": "flow-61",
+      "from": "vault-auth",
+      "to": "vault-status",
+      "action": "Authorize · proposed"
+    },
+    {
+      "id": "flow-62",
+      "from": "vault-status",
+      "to": "home",
+      "action": "Done"
+    },
+    {
+      "id": "flow-63",
+      "from": "activity",
+      "to": "activity-empty",
+      "action": "Empty detail state"
+    },
+    {
+      "id": "flow-64",
+      "from": "activity",
+      "to": "activity-detail",
+      "action": "Select wallet event"
+    },
+    {
+      "id": "flow-65",
+      "from": "activity-detail",
+      "to": "activity",
+      "action": "Back"
+    },
+    {
+      "id": "flow-66",
+      "from": "activity-proposal",
+      "to": "activity",
+      "action": "Return"
+    }
+  ]
+}

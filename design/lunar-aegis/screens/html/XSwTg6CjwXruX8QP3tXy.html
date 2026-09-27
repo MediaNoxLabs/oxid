@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Oxid - Welcome</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=Space+Grotesk:wght@700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'oxid-bg': '#07090E',
+                        'oxid-surface': '#0F172A',
+                        'oxid-border': '#1E293B',
+                        'oxid-primary': '#06B6D4',
+                        'oxid-highlight': '#38BDF8',
+                        'oxid-identity': '#8B5CF6',
+                        'oxid-text': '#F8FAFC',
+                        'oxid-muted': '#94A3B8',
+                    },
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                        heading: ['Space Grotesk', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-oxid-bg text-oxid-text font-sans overflow-hidden">
+    <div class="relative h-[800px] w-full flex flex-col px-6 pb-12 pt-24" id="welcome-screen">
+        <!-- Brand/Logo Section -->
+        <div class="flex flex-col items-center justify-center flex-1 space-y-10">
+            <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/mcp-canvas-assets/sbo9HjaII9WGCx7j4TzA5Z7aWnH2/r30d8UxUa7xuLus8ZH2j/1790500071694-eccfe7a6-4733-425a-817f-a47b5ab3bb98-New-brand-reference-OXID-Lunar-Aegis-master-vector.svg" alt="OXID Lunar Aegis" class="w-32 h-32 rounded-[24px] shadow-2xl shadow-cyan-500/10 object-cover" />
+            <div class="text-center space-y-4">
+                <h1 class="font-heading text-6xl font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-b from-white to-oxid-muted">OXID</h1>
+                <p class="text-oxid-muted text-lg max-w-[280px] mx-auto leading-relaxed">
+                    Your money and identity, securely combined.
+                </p>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="space-y-4">
+            <div class="space-y-3">
+                <button class="w-full bg-oxid-primary hover:bg-oxid-highlight text-oxid-bg font-bold py-5 rounded-[20px] transition-all active:scale-[0.98] flex items-center justify-center gap-3 text-lg shadow-lg shadow-oxid-primary/10">
+                    <span>Create new profile</span>
+                    <i class="fa-solid fa-arrow-right text-sm opacity-60"></i>
+                </button>
+                
+                <button class="w-full bg-oxid-surface hover:bg-oxid-border text-oxid-text font-semibold py-5 rounded-[20px] border border-oxid-border transition-all active:scale-[0.98] text-lg">
+                    Restore from backup
+                </button>
+            </div>
+            
+            <div class="pt-6 text-center">
+                <p class="text-xs text-oxid-muted leading-relaxed px-1">
+                    By continuing, you agree to our <a href="#" class="text-oxid-primary hover:text-oxid-highlight underline underline-offset-4">Terms of Service</a> and <a href="#" class="text-oxid-primary hover:text-oxid-highlight underline underline-offset-4">Privacy Policy</a>
+                </p>
+            </div>
+        </div>
+
+        <!-- Decorative background glow -->
+        <div class="absolute -top-20 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-oxid-primary/5 blur-[120px] pointer-events-none -z-10"></div>
+    </div>
+</body>
+</html>

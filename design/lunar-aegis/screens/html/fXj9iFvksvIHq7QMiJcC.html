@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Event Detail — Oxid</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'oxid-bg': '#07090E',
+                        'oxid-surface': '#0F172A',
+                        'oxid-border': '#1E293B',
+                        'oxid-primary': '#06B6D4',
+                        'oxid-highlight': '#38BDF8',
+                        'oxid-identity': '#8B5CF6',
+                        'oxid-text': '#F8FAFC',
+                        'oxid-muted': '#94A3B8',
+                    },
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                        heading: ['Space Grotesk', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+<style>html,body{background:#07090E;color:#F8FAFC}body{margin:0}</style>
+</head>
+<body class="bg-oxid-bg text-oxid-text font-sans overflow-hidden flex justify-center">
+    <div class="w-full max-w-[430px] h-[840px] relative flex flex-col">
+
+        <!-- Header -->
+        <header class="px-6 pt-12 pb-4 flex items-center justify-between sticky top-0 bg-oxid-bg/80 backdrop-blur-md z-10">
+            <button class="w-11 h-11 rounded-xl bg-oxid-surface border border-oxid-border flex items-center justify-center text-oxid-muted hover:text-white transition-colors">
+                <i class="fa-solid fa-chevron-left text-sm"></i>
+            </button>
+            <h1 class="text-[11px] font-bold text-white uppercase tracking-[0.3em]">Event Details</h1>
+            <button class="w-11 h-11 rounded-xl bg-oxid-surface border border-oxid-border flex items-center justify-center text-oxid-muted hover:text-white transition-colors">
+                <i class="fa-solid fa-share-nodes text-sm"></i>
+            </button>
+        </header>
+
+        <main class="flex-1 px-6 pb-28 overflow-y-auto">
+
+            <!-- Status Card -->
+            <section class="mt-4 mb-10 text-center">
+                <div class="w-20 h-20 rounded-full bg-amber-500/10 border-2 border-amber-500/20 flex items-center justify-center mx-auto mb-6 shadow-2xl relative">
+                    <div class="absolute inset-0 bg-amber-500/5 blur-xl animate-pulse"></div>
+                    <i class="fa-solid fa-spinner text-3xl text-amber-400 animate-spin"></i>
+                </div>
+                <h2 class="text-3xl font-heading font-bold text-white tracking-tight mb-2">Amount Unavailable</h2>
+                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20">
+                    <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                    <span class="text-[11px] font-bold text-amber-400 uppercase tracking-widest">Transfer Pending</span>
+                </div>
+            </section>
+
+            <!-- Details -->
+            <div class="space-y-8">
+                <div class="bg-oxid-surface rounded-[32px] border border-oxid-border overflow-hidden shadow-2xl">
+                    <div class="p-6 space-y-6">
+                        <div class="flex justify-between items-start">
+                            <span class="text-[11px] font-bold text-oxid-muted uppercase tracking-widest">Network</span>
+                            <span class="text-[13px] font-bold text-white flex items-center gap-2">No Live Source <i class="fa-solid fa-circle text-[6px] text-oxid-primary"></i></span>
+                        </div>
+                        <div class="flex justify-between items-start">
+                            <span class="text-[11px] font-bold text-oxid-muted uppercase tracking-widest">Recipient</span>
+                            <div class="text-right">
+                                <p class="text-[13px] font-bold text-white tracking-tight">Example Recipient</p>
+                                <p class="text-[10px] font-bold text-oxid-muted uppercase tracking-tighter italic">Illustrative only</p>
+                            </div>
+                        </div>
+                        <div class="flex justify-between items-start">
+                            <span class="text-[11px] font-bold text-oxid-muted uppercase tracking-widest">Estimated Fee</span>
+                            <span class="text-[13px] font-bold text-white tracking-tight">Fee Unavailable</span>
+                        </div>
+                    </div>
+                    <div class="p-6 bg-oxid-bg/60 border-t border-oxid-border/50">
+                        <div class="flex gap-4 text-amber-400/90">
+                            <i class="fa-solid fa-circle-info text-lg mt-0.5 shrink-0"></i>
+                            <p class="text-[11px] font-medium leading-relaxed italic">
+                                Finality status is unknown. No network status is available. Check the source before deciding what to do.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recovery Actions -->
+                <section class="space-y-4">
+                    <h3 class="text-[10px] font-bold text-oxid-muted uppercase tracking-[0.2em] px-2">Safety & Recovery</h3>
+                    <button class="w-full p-5 rounded-[24px] bg-oxid-surface border border-oxid-border flex items-center justify-between group hover:border-oxid-primary/30 transition-all active:scale-[0.98]">
+                        <div class="flex items-center gap-4 text-left">
+                            <div class="w-11 h-11 rounded-xl bg-oxid-primary/10 border border-oxid-primary/20 flex items-center justify-center text-oxid-primary group-hover:scale-110 transition-transform">
+                                <i class="fa-solid fa-rotate text-lg"></i>
+                            </div>
+                            <div>
+                                <p class="text-[14px] font-bold text-white tracking-tight">Refresh Status</p>
+                                <p class="text-[11px] text-oxid-muted font-medium">Check for an updated result</p>
+                            </div>
+                        </div>
+                        <i class="fa-solid fa-chevron-right text-oxid-border"></i>
+                    </button>
+                    <button class="w-full p-5 rounded-[24px] bg-rose-500/5 border border-rose-500/10 flex items-center justify-center gap-2 group hover:bg-rose-500/10 transition-all active:scale-[0.98]">
+                        <span class="text-[13px] font-bold text-rose-400 uppercase tracking-widest">Back to Activity</span>
+                    </button>
+                </section>
+            </div>
+        </main>
+
+        <!-- Nav Placeholder -->
+        <div class="h-28"></div>
+
+    </div>
+</body>
