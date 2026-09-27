@@ -1587,7 +1587,8 @@ enum HomeQuickAction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HomeQuickActionTarget {
     ReceiveSheet,
-    Primary(PrimaryDestination),
+    Send,
+    Present,
     Scan,
 }
 
@@ -1613,8 +1614,8 @@ impl HomeQuickAction {
     const fn target(self) -> HomeQuickActionTarget {
         match self {
             Self::Receive => HomeQuickActionTarget::ReceiveSheet,
-            Self::Send => HomeQuickActionTarget::Primary(PrimaryDestination::Wallet),
-            Self::Present => HomeQuickActionTarget::Primary(PrimaryDestination::Documents),
+            Self::Send => HomeQuickActionTarget::Send,
+            Self::Present => HomeQuickActionTarget::Present,
             Self::Scan => HomeQuickActionTarget::Scan,
         }
     }
@@ -1676,6 +1677,8 @@ const PRIMARY_DESTINATIONS: [PrimaryDestination; 4] = [
 enum Route {
     Home,
     Receive,
+    Send,
+    Present,
     Wallet,
     Documents,
     Activity,
@@ -1702,6 +1705,8 @@ impl Route {
         match self {
             Self::Home => "Home",
             Self::Receive => "Receive",
+            Self::Send => "Send",
+            Self::Present => "Present",
             Self::Wallet => "Wallet",
             Self::Documents => "Documents",
             Self::Activity => "Activity",
@@ -1731,6 +1736,8 @@ impl Route {
             Self::Documents => Some(PrimaryDestination::Documents),
             Self::Activity => Some(PrimaryDestination::Activity),
             Self::Receive
+            | Self::Send
+            | Self::Present
             | Self::PassportVault
             | Self::ManageIdentities
             | Self::CredentialRequest
@@ -3759,6 +3766,14 @@ fn WalletApp() -> Element {
                                 navigation.write().push(Route::Receive);
                                 header_menu.set(HeaderMenu::Closed);
                             },
+                            on_send: move |_| {
+                                navigation.write().push(Route::Send);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
+                            on_present: move |_| {
+                                navigation.write().push(Route::Present);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
                             on_scan: move |_| {
                                 start_identity_scan(
                                     Arc::clone(&home_scanner),
@@ -3773,13 +3788,15 @@ fn WalletApp() -> Element {
                         }
                     },
                     Route::Receive => rsx! {},
-                    Route::Wallet => rsx! { AssetsPage {
+                    Route::Wallet | Route::Send => rsx! { AssetsPage {
                         active_profile: active_profile.clone(),
                         secret_mode,
+                        send_entry: content_route == Route::Send,
                         on_realm_changed: move |_| {
                             realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
                         },
                     } },
+                    Route::Present => rsx! { PresentationPendingPage {} },
                     Route::Documents => rsx! {
                         DocumentsPage {
                             active_profile: active_profile.clone(),
@@ -4759,6 +4776,8 @@ fn HomePage(
     on_open_vault: EventHandler<MouseEvent>,
     on_open_settings: EventHandler<MouseEvent>,
     on_receive: EventHandler<MouseEvent>,
+    on_send: EventHandler<MouseEvent>,
+    on_present: EventHandler<MouseEvent>,
     on_scan: EventHandler<MouseEvent>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
@@ -4784,7 +4803,7 @@ fn HomePage(
                 h1 { class: "home-hero__realm-title", "Loading network…" }
                 p { class: "home-hero__hint", "Preparing {active_profile.display_name} without carrying values across profiles." }
             }
-            HomeQuickActions { scan_busy, on_select_primary, on_receive, on_scan }
+            HomeQuickActions { scan_busy, on_receive, on_send, on_present, on_scan }
             section { class: "home-card-stack", aria_label: "Loading wallet products", aria_busy: "true",
                 for label in ["Wallet", "Newest document", "Passport Vault"] {
                     article { class: "home-card home-card--loading", key: "{label}",
@@ -4811,7 +4830,7 @@ fn HomePage(
                 h1 { class: "home-hero__realm-title", "{active_profile.display_name}" }
                 p { class: "home-hero__hint", "The selected network context could not be loaded safely." }
             }
-            HomeQuickActions { scan_busy, on_select_primary, on_receive, on_scan }
+            HomeQuickActions { scan_busy, on_receive, on_send, on_present, on_scan }
             article { class: "empty-state surface-card", role: "alert",
                 h2 { "Home is unavailable" }
                 p { "Your complete wallet and documents are still available from their tabs." }
@@ -4844,7 +4863,7 @@ fn HomePage(
             } = *projection;
             rsx! {
                 HomeHero { active_profile: active_profile.clone(), account: (*account).clone() }
-                HomeQuickActions { scan_busy, on_select_primary, on_receive, on_scan }
+                HomeQuickActions { scan_busy, on_receive, on_send, on_present, on_scan }
                 HomeProductStack {
                     account: (*account).clone(),
                     credentials,
@@ -4892,8 +4911,9 @@ fn HomeHero(active_profile: WalletProfileView, account: WalletAccountView) -> El
 #[component]
 fn HomeQuickActions(
     scan_busy: bool,
-    on_select_primary: EventHandler<PrimaryDestination>,
     on_receive: EventHandler<MouseEvent>,
+    on_send: EventHandler<MouseEvent>,
+    on_present: EventHandler<MouseEvent>,
     on_scan: EventHandler<MouseEvent>,
 ) -> Element {
     rsx! {
@@ -4908,9 +4928,8 @@ fn HomeQuickActions(
                     onclick: move |event| {
                         match action.target() {
                             HomeQuickActionTarget::ReceiveSheet => on_receive.call(event),
-                            HomeQuickActionTarget::Primary(destination) => {
-                                on_select_primary.call(destination);
-                            }
+                            HomeQuickActionTarget::Send => on_send.call(event),
+                            HomeQuickActionTarget::Present => on_present.call(event),
                             HomeQuickActionTarget::Scan => on_scan.call(event),
                         }
                     },
@@ -4928,6 +4947,17 @@ fn HomeQuickActions(
 
 const fn home_quick_action_disabled(action: HomeQuickAction, scan_busy: bool) -> bool {
     matches!(action, HomeQuickAction::Scan) && scan_busy
+}
+
+#[component]
+fn PresentationPendingPage() -> Element {
+    rsx! {
+        article { class: "empty-state surface-card", role: "status",
+            p { class: "card-eyebrow", "Presentation" }
+            h1 { "No presentation request is pending" }
+            p { "Scan a verifier's QR code to import a request before selecting credentials or sharing any data." }
+        }
+    }
 }
 
 #[component]
@@ -11181,18 +11211,29 @@ mod tests {
             HomeQuickAction::Receive.target(),
             HomeQuickActionTarget::ReceiveSheet
         );
-        assert_eq!(
-            HomeQuickAction::Send.target(),
-            HomeQuickActionTarget::Primary(PrimaryDestination::Wallet)
-        );
+        assert_eq!(HomeQuickAction::Send.target(), HomeQuickActionTarget::Send);
         assert_eq!(
             HomeQuickAction::Present.target(),
-            HomeQuickActionTarget::Primary(PrimaryDestination::Documents)
+            HomeQuickActionTarget::Present
         );
         assert_eq!(HomeQuickAction::Scan.target(), HomeQuickActionTarget::Scan);
         assert!(home_quick_action_disabled(HomeQuickAction::Scan, true));
         assert!(!home_quick_action_disabled(HomeQuickAction::Scan, false));
         assert!(!home_quick_action_disabled(HomeQuickAction::Receive, true));
+    }
+
+    #[test]
+    fn home_task_entries_keep_the_home_root_for_back_and_tabs() {
+        let mut navigation = RouteStack::default();
+        navigation.push(Route::Send);
+        assert_eq!(navigation.routes, vec![Route::Home, Route::Send]);
+        assert_eq!(navigation.active_primary(), PrimaryDestination::Home);
+        assert!(navigation.pop());
+        assert_eq!(navigation.current(), Route::Home);
+
+        navigation.push(Route::Present);
+        navigation.select_primary(PrimaryDestination::Documents);
+        assert_eq!(navigation.routes, vec![Route::Documents]);
     }
 
     #[test]

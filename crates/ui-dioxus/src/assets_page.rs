@@ -6,6 +6,7 @@ use super::*;
 pub(super) fn AssetsPage(
     active_profile: WalletProfileView,
     secret_mode: SecretModeController,
+    send_entry: bool,
     on_realm_changed: EventHandler<()>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
@@ -159,6 +160,29 @@ pub(super) fn AssetsPage(
                         }
                         if let Some(lifecycle_label) = lifecycle_label.as_deref() {
                             small { class: "dev-lifecycle-marker", "{lifecycle_label}" }
+                        }
+                    }
+                }
+
+                if send_entry {
+                    if wallet_write_actions_available(observation_only) && protected_account && protection_unlocked && account.sync.state == "synced" {
+                        if let (Some(unshielded), Some(shielded)) = (
+                            account.addresses.iter().find(|address| address.kind == "unshielded"),
+                            account.addresses.iter().find(|address| address.kind == "shielded"),
+                        ) {
+                            SendTransferPanel {
+                                profile_id: active_profile.id.clone(),
+                                active_network_id: account.network_id.clone(),
+                                unshielded_receive_address: unshielded.value.clone(),
+                                shielded_receive_address: shielded.value.clone(),
+                                night_balance: balance_for(&account, "NIGHT").cloned(),
+                            }
+                        }
+                    } else {
+                        article { class: "empty-state surface-card", role: "status",
+                            p { class: "card-eyebrow", "Send NIGHT" }
+                            h2 { "Send is not ready yet" }
+                            p { "This wallet needs an unlocked, synchronized protected account before a recipient can be entered. No transfer draft has been created." }
                         }
                     }
                 }
@@ -389,7 +413,7 @@ pub(super) fn AssetsPage(
                     SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
                 }
 
-                if wallet_write_actions_available(observation_only) && protected_account && protection_unlocked && account.sync.state == "synced" {
+                if !send_entry && wallet_write_actions_available(observation_only) && protected_account && protection_unlocked && account.sync.state == "synced" {
                     if let (Some(unshielded), Some(shielded)) = (
                         account.addresses.iter().find(|address| address.kind == "unshielded"),
                         account.addresses.iter().find(|address| address.kind == "shielded"),
