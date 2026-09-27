@@ -140,6 +140,28 @@ test("Android privacy automation uses the current global application menu", asyn
   assert.doesNotMatch(privacy, /Show private values for 30 seconds|Hide private values/);
 });
 
+test("Android header controls retain stable accessibility names", async () => {
+  const [shell, header, maestro] = await Promise.all([
+    readFile(path.join(root, "crates", "ui-dioxus", "src", "lib.rs"), "utf8"),
+    readFile(path.join(root, "crates", "ui-dioxus", "src", "header_menu.rs"), "utf8"),
+    readFile(path.join(root, "tests", "maestro", "android-lunar-aegis.yaml"), "utf8"),
+  ]);
+
+  assert.match(shell, /aria_label: "Switch wallet profile"/);
+  assert.match(shell, /class: "visually-hidden", "Switch wallet profile"/);
+  assert.match(shell, /span \{ aria_hidden: "true", "\{profile_monogram\}" \}/);
+  assert.match(header, /Open global application menu/);
+  assert.match(header, /class: "visually-hidden"/);
+  assert.match(maestro, /tapOn: "Switch wallet profile"/);
+  assert.match(maestro, /tapOn: "Open global application menu"/);
+  assert.match(maestro, /tapOn: "Session privacy\.\*"/);
+  assert.match(maestro, /takeScreenshot: lunar-aegis-android-03-home-public-revealed/);
+  assert.match(maestro, /Private values revealed/);
+  assert.match(maestro, /Private values hidden/);
+  assert.match(maestro, /tapOn: "Settings"/);
+  assert.match(maestro, /assertVisible: "Settings"/);
+});
+
 test("Android settings and developer automation use the separated header controls", async () => {
   const flow = await readFile(
     path.join(root, "tests", "mobile", "android-wallet-flow.mjs"),

@@ -85,6 +85,7 @@ pub(super) fn GlobalMenuTrigger(open: bool, on_toggle: EventHandler<MouseEvent>)
             aria_haspopup: "menu",
             title: "Global application menu",
             onclick: move |event| on_toggle.call(event),
+            span { class: "visually-hidden", if open { "Close global application menu" } else { "Open global application menu" } }
             span { aria_hidden: "true", "•••" }
         }
     }
