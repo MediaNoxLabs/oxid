@@ -4207,7 +4207,7 @@ fn OnboardingFlow(
             section { class: "page-heading onboarding-heading",
                 p { class: "eyebrow", "Welcome to {brand.product_name()}" }
                 h1 { "Your Midnight identity wallet" }
-                p { "Create a private wallet, restore its 24-word phrase, or recover one complete encrypted {brand.product_name()} backup." }
+                p { "Create a private wallet, restore its 24-word recovery phrase, or recover one complete encrypted backup." }
             }
             section { class: "profile-card surface-card onboarding-choice-card",
                 if services.wallet_onboarding.is_some() {
@@ -4221,7 +4221,7 @@ fn OnboardingFlow(
                         class: "secondary-action",
                         r#type: "button",
                         onclick: move |_| step.set(OnboardingStep::RestorePhraseProfile),
-                        "Restore recovery phrase"
+                        "Restore 24-word recovery phrase"
                     }
                 } else {
                     p { class: "form-hint", role: "status",
@@ -4232,7 +4232,7 @@ fn OnboardingFlow(
                     class: "secondary-action",
                     r#type: "button",
                     onclick: move |_| step.set(OnboardingStep::RestoreBackup),
-                    "Restore complete backup"
+                    "Restore encrypted wallet backup"
                 }
                 {root_recovery_choice}
             }
@@ -4290,13 +4290,6 @@ fn OnboardingFlow(
                 on_complete: move |profile| on_selected.call(profile),
             }
         },
-        #[cfg(feature = "public-standalone-genesis")]
-        OnboardingStep::SharedDeveloper(profile) => rsx! {
-            OnboardingProtection {
-                profile,
-                on_continue: move |profile| on_selected.call(profile),
-            }
-        },
         OnboardingStep::RestoreBackup => rsx! {
             section { class: "page-heading onboarding-heading",
                 button {
@@ -4307,11 +4300,18 @@ fn OnboardingFlow(
                     "← Back"
                 }
                 p { class: "eyebrow", "Existing wallet" }
-                h1 { "Restore from backup" }
-                p { "Recovery creates the authenticated wallet from your encrypted document." }
+                h1 { "Restore encrypted backup" }
+                p { "Recover the complete authenticated wallet from an encrypted backup document." }
             }
             FreshInstallRecovery {
                 on_recovered: move |profile| on_selected.call(profile),
+            }
+        },
+        #[cfg(feature = "public-standalone-genesis")]
+        OnboardingStep::SharedDeveloper(profile) => rsx! {
+            OnboardingProtection {
+                profile,
+                on_continue: move |profile| on_selected.call(profile),
             }
         },
         #[cfg(feature = "preprod-observation")]
