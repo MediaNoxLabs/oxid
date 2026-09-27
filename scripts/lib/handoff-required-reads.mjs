@@ -81,7 +81,7 @@ export function applyRepositoryAcceptance(envelope) {
     ...envelope,
     acceptance: {
       ...envelope.acceptance,
-      criteria: envelope.acceptance.criteria.map((criterion) => criterion.id === "verify-green" && /npm run verify/u.test(criterion.must)
+      criteria: envelope.acceptance.criteria.map((criterion) => criterion.id === "verify-green" && /(?:npm|bun) run verify/u.test(criterion.must)
         ? {
           ...criterion,
           must: "The Oxid target plan selected for this change passes through its sanctioned Cargo, Just, Nix, or focused platform commands.",
