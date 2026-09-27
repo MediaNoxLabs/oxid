@@ -1637,6 +1637,15 @@ impl PrimaryDestination {
         }
     }
 
+    const fn accessibility_id(self) -> &'static str {
+        match self {
+            Self::Home => "nav-home",
+            Self::Wallet => "nav-wallet",
+            Self::Documents => "nav-documents",
+            Self::Activity => "nav-activity",
+        }
+    }
+
     const fn icon(self) -> &'static str {
         match self {
             Self::Home => LUCIDE_HOME,
@@ -3899,6 +3908,7 @@ fn WalletApp() -> Element {
                     }
                 }
                 button {
+                    id: "nav-scan",
                     class: "bottom-nav__scan",
                     r#type: "button",
                     aria_label: "Scan identity QR code",
@@ -3970,6 +3980,7 @@ fn PrimaryNavigationButton(
 ) -> Element {
     rsx! {
         button {
+            id: "{destination.accessibility_id()}",
             class: if active { "bottom-nav__item active" } else { "bottom-nav__item" },
             r#type: "button",
             aria_label: "{destination.label()}",
@@ -10370,6 +10381,11 @@ mod tests {
         let labels = PRIMARY_DESTINATIONS.map(PrimaryDestination::label);
 
         assert_eq!(labels, ["Home", "Wallet", "Documents", "Activity"]);
+        assert_eq!(
+            PRIMARY_DESTINATIONS.map(PrimaryDestination::accessibility_id),
+            ["nav-home", "nav-wallet", "nav-documents", "nav-activity"]
+        );
+        assert!(BASE_STYLES.contains("min-height: 3.6rem;"));
     }
 
     #[test]
