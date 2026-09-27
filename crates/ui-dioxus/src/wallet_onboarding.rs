@@ -71,6 +71,31 @@ const fn prepare_requires_native_authorization(intent: WalletOnboardingIntent) -
     matches!(intent, WalletOnboardingIntent::Create)
 }
 
+const fn onboarding_title(intent: WalletOnboardingIntent) -> &'static str {
+    match intent {
+        WalletOnboardingIntent::Create => "Create private wallet",
+        WalletOnboardingIntent::RestorePhrase => "Restore 24-word recovery phrase",
+    }
+}
+
+const fn onboarding_action(intent: WalletOnboardingIntent) -> &'static str {
+    match intent {
+        WalletOnboardingIntent::Create => "Generate recovery phrase",
+        WalletOnboardingIntent::RestorePhrase => "Verify recovery phrase",
+    }
+}
+
+const fn onboarding_explanation(intent: WalletOnboardingIntent) -> &'static str {
+    match intent {
+        WalletOnboardingIntent::Create => {
+            "Device protection is required before a new recovery phrase can appear. The phrase stays in this ceremony and is never written to profile metadata, logs, analytics, or clipboard storage."
+        }
+        WalletOnboardingIntent::RestorePhrase => {
+            "Restore into this empty profile with its 24-word recovery phrase. You can retry or go back without merging wallet state, and the phrase is never written to profile metadata, logs, analytics, or clipboard storage."
+        }
+    }
+}
+
 #[component]
 pub(crate) fn WalletOnboarding(
     profile: WalletProfileView,
@@ -137,14 +162,9 @@ pub(crate) fn WalletOnboarding(
     let cancel_after_failure = onboarding.cancel.clone();
     let cancel_after_stale_prepare = onboarding.cancel.clone();
     let cancel_from_button = onboarding.cancel.clone();
-    let heading = match intent {
-        WalletOnboardingIntent::Create => "Create private wallet",
-        WalletOnboardingIntent::RestorePhrase => "Restore recovery phrase",
-    };
-    let action = match intent {
-        WalletOnboardingIntent::Create => "Generate recovery phrase",
-        WalletOnboardingIntent::RestorePhrase => "Verify recovery phrase",
-    };
+    let heading = onboarding_title(intent);
+    let action = onboarding_action(intent);
+    let explanation = onboarding_explanation(intent);
 
     let feedback = match &*state.read() {
         WalletOnboardingState::Failed(message) => rsx! {
@@ -169,7 +189,7 @@ pub(crate) fn WalletOnboarding(
         section { class: "page-heading onboarding-heading",
             p { class: "eyebrow", "Midnight · {onboarding.network_id}" }
             h1 { "{heading}" }
-            p { "A fresh device authorization is required before a new phrase can appear. The phrase stays in this ceremony and is never written to profile metadata, logs, analytics, or clipboard storage." }
+            p { "{explanation}" }
         }
         section { class: "profile-card surface-card complete-recovery-card",
             strong { "{profile.display_name}" }
@@ -421,6 +441,33 @@ mod tests {
             &WalletOnboardingState::Working,
             false
         ));
+    }
+
+    #[test]
+    fn onboarding_intents_are_explicit_and_distinct() {
+        assert_eq!(
+            onboarding_title(WalletOnboardingIntent::Create),
+            "Create private wallet"
+        );
+        assert_eq!(
+            onboarding_title(WalletOnboardingIntent::RestorePhrase),
+            "Restore 24-word recovery phrase"
+        );
+        assert_ne!(
+            onboarding_action(WalletOnboardingIntent::Create),
+            onboarding_action(WalletOnboardingIntent::RestorePhrase)
+        );
+        assert!(
+            onboarding_explanation(WalletOnboardingIntent::Create)
+                .contains("Device protection is required")
+        );
+        assert!(
+            onboarding_explanation(WalletOnboardingIntent::RestorePhrase).contains("empty profile")
+        );
+        assert!(
+            !onboarding_explanation(WalletOnboardingIntent::RestorePhrase)
+                .contains("new recovery phrase")
+        );
     }
 
     #[test]
