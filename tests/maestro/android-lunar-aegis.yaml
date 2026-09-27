@@ -41,11 +41,22 @@ androidWebViewHierarchy: devtools
 - tapOn: "Close profile chooser"
 - tapOn: "Open global application menu"
 - assertVisible: "Settings"
+- assertVisible: "Session privacy"
+- tapOn: "Session privacy"
+- assertVisible: "Current realm"
+- takeScreenshot: lunar-aegis-android-03-home-public-revealed
+- tapOn: "Open global application menu"
+- assertVisible: "Private values revealed"
+- tapOn: "Session privacy"
+- tapOn: "Open global application menu"
+- assertVisible: "Private values hidden"
 - tapOn: "Settings"
 - assertVisible: "Settings"
 # After wallet protection initializes, Android deliberately applies FLAG_SECURE.
-# Maestro retains semantic transition evidence while the Android CDP flow owns
-# the explicit reveal and screen-privacy re-arm checks.
+# The only post-protection screenshot is the public simulated Home route after
+# the explicit bounded reveal; the flow immediately re-masks before Settings.
+- tapOn: "Home"
+- assertVisible: "Current realm"
 - tapOn: "Receive"
 - assertVisible: "Receive assets"
 - tapOn: "Close Receive"

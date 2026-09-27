@@ -151,6 +151,10 @@ test("Android header controls retain stable accessibility names", async () => {
   assert.match(header, /Open global application menu/);
   assert.match(maestro, /tapOn: "Switch wallet profile"/);
   assert.match(maestro, /tapOn: "Open global application menu"/);
+  assert.match(maestro, /tapOn: "Session privacy"/);
+  assert.match(maestro, /takeScreenshot: lunar-aegis-android-03-home-public-revealed/);
+  assert.match(maestro, /Private values revealed/);
+  assert.match(maestro, /Private values hidden/);
   assert.match(maestro, /tapOn: "Settings"/);
   assert.match(maestro, /assertVisible: "Settings"/);
 });
