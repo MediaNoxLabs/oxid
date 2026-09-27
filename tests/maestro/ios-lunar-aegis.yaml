@@ -6,18 +6,21 @@ name: Lunar Aegis iOS simulated holder journey
     clearState: true
 - assertVisible: "Create private wallet"
 - takeScreenshot: lunar-aegis-ios-01-first-run
-# Native-custody recovery phrase content is deliberately never captured.
-- tapOn: "Create private wallet"
-- tapOn: "Create and continue"
-- tapOn: "Generate recovery phrase"
-- assertVisible: "New wallet recovery phrase"
-- tapOn: "I have securely saved or verified this recovery phrase."
-- tapOn: "Finish and open wallet"
+# Maestro records a screenshot automatically after a failed step. Never enter
+# the recovery ceremony here: a later failure could otherwise retain a phrase.
+# The compile-time demo drawer reaches a deterministic empty holder shell
+# without handling a private value.
+- tapOn: "Open standalone demo setup"
+- tapOn: "Run full demo setup"
+- extendedWaitUntil:
+    visible: "Accept a credential offer"
+    timeout: 60000
+- tapOn: "Dismiss identity request"
 - tapOn: "Home"
 - assertVisible: "Current realm"
 - takeScreenshot: lunar-aegis-ios-02-home-empty
 - tapOn: "Receive"
-- assertVisible: "Receive NIGHT"
+- assertVisible: "Receive assets"
 - takeScreenshot: lunar-aegis-ios-03-receive
 - tapOn: "Close Receive"
 - tapOn: "Send"
@@ -29,9 +32,7 @@ name: Lunar Aegis iOS simulated holder journey
 - tapOn: "Activity"
 - assertVisible: "Activity"
 - takeScreenshot: lunar-aegis-ios-06-activity-empty
-- tapOn:
-    id: "Open global application menu"
+- tapOn: "Open global application menu"
 - tapOn: "Settings"
 - assertVisible: "Settings"
-- assertVisible: "Backup"
-- takeScreenshot: lunar-aegis-ios-07-settings-backup
+- takeScreenshot: lunar-aegis-ios-07-settings

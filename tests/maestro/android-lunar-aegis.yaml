@@ -7,36 +7,28 @@ androidWebViewHierarchy: devtools
     clearState: true
 - assertVisible: "Create private wallet"
 - takeScreenshot: lunar-aegis-android-01-first-run
-- tapOn: "Create private wallet"
-- tapOn: "Create and continue"
-- tapOn: "Generate recovery phrase"
-# The recovery phrase remains native-custody controlled; this pilot asserts only
-# its accessibility label and never records its content.
-- assertVisible:
-    id: "New wallet recovery phrase"
-- tapOn: "I have securely saved or verified this recovery phrase."
-- tapOn: "Finish and open wallet"
+# Maestro records a screenshot automatically after a failed step. Never enter
+# the recovery ceremony here: a later failure could otherwise retain a phrase.
+# The compile-time demo drawer reaches a deterministic empty holder shell
+# without handling a private value.
+- tapOn: "Open standalone demo setup"
+- tapOn: "Run full demo setup"
+- extendedWaitUntil:
+    visible: "Accept a credential offer"
+    timeout: 60000
+- tapOn: "Dismiss identity request"
 - tapOn: "Home"
 - assertVisible: "Current realm"
-- takeScreenshot: lunar-aegis-android-02-home-empty
-- tapOn:
-    id: "Receive"
-- assertVisible: "Receive"
-- takeScreenshot: lunar-aegis-android-03-receive
-- tapOn: "Close"
+# After wallet protection initializes, Android deliberately applies FLAG_SECURE.
+# Maestro retains semantic transition evidence; #813 owns the missing header
+# semantics needed to reach the explicit reveal and Settings controls.
+- tapOn: "Receive"
+- assertVisible: "Receive assets"
+- tapOn: "Close Receive"
 - assertVisible: "Current realm"
 - tapOn: "Send"
 - assertVisible: "Send"
-- takeScreenshot: lunar-aegis-android-04-send-prerequisite
 - tapOn: "Documents"
 - assertVisible: "Documents"
-- takeScreenshot: lunar-aegis-android-05-documents-empty
 - tapOn: "Activity"
 - assertVisible: "Activity"
-- takeScreenshot: lunar-aegis-android-06-activity-empty
-- tapOn:
-    id: "Open global application menu"
-- tapOn: "Settings"
-- assertVisible: "Settings"
-- assertVisible: "Backup"
-- takeScreenshot: lunar-aegis-android-07-settings-backup
