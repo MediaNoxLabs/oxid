@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Oxid - Restore Backup</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=Space+Grotesk:wght@700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'oxid-bg': '#07090E',
+                        'oxid-surface': '#0F172A',
+                        'oxid-border': '#1E293B',
+                        'oxid-primary': '#06B6D4',
+                        'oxid-highlight': '#38BDF8',
+                        'oxid-identity': '#8B5CF6',
+                        'oxid-text': '#F8FAFC',
+                        'oxid-muted': '#94A3B8',
+                    },
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                        heading: ['Space Grotesk', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-oxid-bg text-oxid-text font-sans overflow-hidden">
+    <div class="relative h-[800px] w-full flex flex-col" id="restore-screen">
+        <!-- Header -->
+        <header class="px-6 pt-16 pb-4 flex items-center justify-between">
+            <button class="w-10 h-10 flex items-center justify-center rounded-xl bg-oxid-surface border border-oxid-border text-oxid-muted hover:text-white transition-colors">
+                <i class="fa-solid fa-chevron-left text-sm"></i>
+            </button>
+            <h2 class="font-heading font-bold text-lg text-white">Restore Profile</h2>
+            <div class="w-10"></div>
+        </header>
+
+        <!-- Content -->
+        <div class="px-6 flex-1 pt-6 overflow-y-auto">
+            <div class="space-y-3 mb-10 text-center">
+                <div class="w-20 h-20 bg-oxid-primary/5 border border-oxid-primary/20 rounded-3xl flex items-center justify-center mx-auto mb-4 relative">
+                    <i class="fa-solid fa-cloud-arrow-down text-3xl text-oxid-primary"></i>
+                </div>
+                <h3 class="text-2xl font-heading font-bold tracking-tight text-white">Select your backup source</h3>
+                <p class="text-oxid-muted text-sm leading-relaxed max-w-xs mx-auto">
+                    Choose an exported profile backup. Cloud import options are design proposals.
+                </p>
+            </div>
+
+            <!-- Restore Sources -->
+            <div class="space-y-4">
+                <button class="w-full p-5 rounded-[24px] bg-oxid-surface border border-oxid-border hover:border-oxid-primary/30 transition-all flex items-center gap-4 group">
+                    <div class="w-12 h-12 rounded-xl bg-oxid-bg border border-oxid-border flex items-center justify-center text-oxid-muted shrink-0 group-hover:text-white transition-colors">
+                        <i class="fa-brands fa-apple text-2xl"></i>
+                    </div>
+                    <div class="text-left flex-1">
+                        <h4 class="font-bold text-[15px] uppercase tracking-wide text-white">iCloud Drive</h4>
+                        <p class="text-oxid-muted text-xs font-bold uppercase tracking-tighter">Proposed cloud source</p>
+                    </div>
+                    <i class="fa-solid fa-chevron-right text-oxid-border group-hover:text-oxid-primary transition-colors"></i>
+                </button>
+
+                <button class="w-full p-5 rounded-[24px] bg-oxid-surface border border-oxid-border hover:border-oxid-primary/30 transition-all flex items-center gap-4 group">
+                    <div class="w-12 h-12 rounded-xl bg-oxid-bg border border-oxid-border flex items-center justify-center text-oxid-muted shrink-0 group-hover:text-white transition-colors">
+                        <i class="fa-brands fa-google-drive text-2xl"></i>
+                    </div>
+                    <div class="text-left flex-1">
+                        <h4 class="font-bold text-[15px] uppercase tracking-wide text-white">Google Drive</h4>
+                        <p class="text-oxid-muted text-xs font-bold uppercase tracking-tighter">Proposed cloud source</p>
+                    </div>
+                    <i class="fa-solid fa-chevron-right text-oxid-border group-hover:text-oxid-primary transition-colors"></i>
+                </button>
+
+                <button class="w-full p-5 rounded-[24px] bg-oxid-surface border border-oxid-border hover:border-oxid-primary/30 transition-all flex items-center gap-4 group">
+                    <div class="w-12 h-12 rounded-xl bg-oxid-bg border border-oxid-border flex items-center justify-center text-oxid-muted shrink-0 group-hover:text-white transition-colors">
+                        <i class="fa-solid fa-file-import text-xl"></i>
+                    </div>
+                    <div class="text-left flex-1">
+                        <h4 class="font-bold text-[15px] uppercase tracking-wide text-white">Import Backup File</h4>
+                        <p class="text-oxid-muted text-xs font-bold uppercase tracking-tighter">Select an .oxid backup file</p>
+                    </div>
+                    <i class="fa-solid fa-chevron-right text-oxid-border group-hover:text-oxid-primary transition-colors"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="p-6">
+            <p class="text-center text-[11px] font-bold text-oxid-muted uppercase tracking-widest">
+                Don't have a backup? <a href="#" class="text-oxid-primary hover:text-oxid-highlight underline underline-offset-4">Go back</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html>

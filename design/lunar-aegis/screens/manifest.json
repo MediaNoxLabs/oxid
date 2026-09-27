@@ -1,0 +1,557 @@
+{
+  "schemaVersion": 1,
+  "profile": "lunar-aegis",
+  "source": {
+    "provider": "UX Pilot",
+    "pageId": "r30d8UxUa7xuLus8ZH2j",
+    "diagramId": "ybCLMfv8Y7LWO3Rfra3J",
+    "exportedAt": "2026-09-27"
+  },
+  "screens": [
+    {
+      "designId": "XSwTg6CjwXruX8QP3tXy",
+      "title": "Oxid - 1-Welcome",
+      "nodeIds": [
+        "welcome"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:25:37.536Z",
+      "sourceHtmlSha256": "44760137d4a0e05cfe74287fe0f9103bb0f0a31f3ec6c5adaf5c6b28c0d95495",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/92cf473398-322c4d5edbdbcbd20249.png",
+      "html": "screens/html/XSwTg6CjwXruX8QP3tXy.html",
+      "image": "screens/png/XSwTg6CjwXruX8QP3tXy.png",
+      "imageSha256": "043da93d81cf1ad879a3d0e5ab5d5e196edee8403b06f5e11ea79a153a521a48"
+    },
+    {
+      "designId": "FFMmLvVQlc5xIun63FYX",
+      "title": "Oxid - 2-ProtectionSetup",
+      "nodeIds": [
+        "protect"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:18:36.613Z",
+      "sourceHtmlSha256": "ec111a7f67933770a7fe5ca62dba51d461ed21e6bfdc7fe2d981c54674fcc595",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/fc516805a5-a0f14750caa15e19b24a.png",
+      "html": "screens/html/FFMmLvVQlc5xIun63FYX.html",
+      "image": "screens/png/FFMmLvVQlc5xIun63FYX.png",
+      "imageSha256": "3b02c82756bdab28203537f2ef3460401d7e85c5364671cf2ef19c75643792f8"
+    },
+    {
+      "designId": "BU2AW1g3jib1PpX2ylsx",
+      "title": "Oxid - 3-RestoreBackup",
+      "nodeIds": [
+        "restore"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:22:34.788Z",
+      "sourceHtmlSha256": "c6f33163b06dc9b767f18e5534fd12f777d18c4da3a50a3b051c0114bc0d0afd",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/1a2da44ff7-ed07164f106997408b19.png",
+      "html": "screens/html/BU2AW1g3jib1PpX2ylsx.html",
+      "image": "screens/png/BU2AW1g3jib1PpX2ylsx.png",
+      "imageSha256": "c5804bc885d1cf3506a4ec8e4484c1912699d968b3f7d3fd41a6c9d15f6c0281"
+    },
+    {
+      "designId": "xYA9BiozNUetlxPJYHPT",
+      "title": "Oxid - Restore Recovery Review",
+      "nodeIds": [
+        "recovery",
+        "restore-review"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:37:08.310Z",
+      "sourceHtmlSha256": "b8bd611e20961a19f709aeb3b6c92284e84d758cdbddab029321e72dbebe3450",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/4ac3b7c19c-1fb454757e09acabafb0.png",
+      "html": "screens/html/xYA9BiozNUetlxPJYHPT.html",
+      "image": "screens/png/xYA9BiozNUetlxPJYHPT.png",
+      "imageSha256": "d3f3fff9b86eedfb38ef9107188279867613656ec4e5df8bd6ca4868bb449de0"
+    },
+    {
+      "designId": "7u81lbjNIKcn8dS79axb",
+      "title": "Oxid - 4-ReadyHandoff",
+      "nodeIds": [
+        "ready"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:22:37.099Z",
+      "sourceHtmlSha256": "b468811ac9650e1b8ca3d96c8ed281c9523d908125ddcbd43a17e89ecb34d57b",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/435a712317-5f057a7df022dcabfdd7.png",
+      "html": "screens/html/7u81lbjNIKcn8dS79axb.html",
+      "image": "screens/png/7u81lbjNIKcn8dS79axb.png",
+      "imageSha256": "7dfa400d524af9f81348bfb7e6ecb974e5447304273eec35647518e7ce9c13c8"
+    },
+    {
+      "designId": "kI1o6I63AKA1Z0AIAwHI",
+      "title": "Oxid - Home (truthful simulated state)",
+      "nodeIds": [
+        "home"
+      ],
+      "state": "observed",
+      "width": 375,
+      "height": 1015,
+      "updatedAt": "2026-09-27T09:18:28.478Z",
+      "sourceHtmlSha256": "3e239a1ddefccf87db95cdc7e34c63a0c369d0175360f87626ae1a93e452c7a1",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/d0cf629a90-9c5f63132937c3971049.png",
+      "html": "screens/html/kI1o6I63AKA1Z0AIAwHI.html",
+      "image": "screens/png/kI1o6I63AKA1Z0AIAwHI.png",
+      "imageSha256": "105f224876563a1b53edb239a264c58e06b50c4edd8bf8c4cb1d6f264ca2a465"
+    },
+    {
+      "designId": "dnug5nrBQ8Edsf30jegU",
+      "title": "Oxid - Assets (truthful wallet state)",
+      "nodeIds": [
+        "wallet"
+      ],
+      "state": "observed",
+      "width": 375,
+      "height": 1024,
+      "updatedAt": "2026-09-27T09:25:54.813Z",
+      "sourceHtmlSha256": "c9ad751826a27dd9b5c3883fa770092f489695aeda4c79814a8940cc80dbe50d",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/ed39d1b2e8-4d4d058a4206e864d70a.png",
+      "html": "screens/html/dnug5nrBQ8Edsf30jegU.html",
+      "image": "screens/png/dnug5nrBQ8Edsf30jegU.png",
+      "imageSha256": "5c973ffff7616c71dc3b72746a5de0404d9df9a6c2f7bff2e66dd3aaadd3a633"
+    },
+    {
+      "designId": "Yv3m128eEWimsftexS7J",
+      "title": "Oxid - Scan-1-Entry",
+      "nodeIds": [
+        "scan"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:47:18.085Z",
+      "sourceHtmlSha256": "e3ff6c040d69d2700713d681c4e3a27c475be5bf331b6c8b4b29d7d7db6dceb3",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/9d0b86f15e-c171865936b8269bb732.png",
+      "html": "screens/html/Yv3m128eEWimsftexS7J.html",
+      "image": "screens/png/Yv3m128eEWimsftexS7J.png",
+      "imageSha256": "d7724ff983719f0e59380c5245c60ce1e990078f482701ec2ca9d7e5035181e6"
+    },
+    {
+      "designId": "IakMIDPU6kDTYsHcoDYQ",
+      "title": "Oxid - Credentials (empty state)",
+      "nodeIds": [
+        "documents"
+      ],
+      "state": "observed",
+      "width": 375,
+      "height": 1002,
+      "updatedAt": "2026-09-27T09:18:32.545Z",
+      "sourceHtmlSha256": "a08e5b9329c2c06344b7ef054f4c9a6268abbd1d452bd4a17a70b514220a1fe6",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/c8bc0359f3-bd77e61afabdaf780478.png",
+      "html": "screens/html/IakMIDPU6kDTYsHcoDYQ.html",
+      "image": "screens/png/IakMIDPU6kDTYsHcoDYQ.png",
+      "imageSha256": "457c1316c9bdfb078b8135e44067fd20f651afa470a7b7e15daf5e27266c4218"
+    },
+    {
+      "designId": "IxCp7AR4fTWsC8Q28qdc",
+      "title": "Oxid - History (no synced events)",
+      "nodeIds": [
+        "activity"
+      ],
+      "state": "observed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:18:34.462Z",
+      "sourceHtmlSha256": "7af4b3b850d4499e69cbc1ff88d81cbcc028f937a985bb3ae97309b60c8ca8cd",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/c1a5e0571d-07af0cd5719f3bb30a4b.png",
+      "html": "screens/html/IxCp7AR4fTWsC8Q28qdc.html",
+      "image": "screens/png/IxCp7AR4fTWsC8Q28qdc.png",
+      "imageSha256": "dcbf2dfe6799e615d060b530107267efd54096f883ad22e4beb4e169ecf3a956"
+    },
+    {
+      "designId": "THvwwHWmKVEB9tYpUvR6",
+      "title": "Oxid - Settings Hub",
+      "nodeIds": [
+        "settings"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:47:19.588Z",
+      "sourceHtmlSha256": "653f0faf0e98aba8cc95dc6c31dcf3eecc97b8627d35c44078c0ade65f82fc72",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/fee55a54c9-e28b39b7cf08c9cb0842.png",
+      "html": "screens/html/THvwwHWmKVEB9tYpUvR6.html",
+      "image": "screens/png/THvwwHWmKVEB9tYpUvR6.png",
+      "imageSha256": "98fd9b251ebaca366e910f93d51082292abcda2c06288bd8fb8072bb4cde890f"
+    },
+    {
+      "designId": "fDgGhxdV4FYp8zzKdkHW",
+      "title": "Oxid - Home",
+      "nodeIds": [
+        "home-alt"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 1173,
+      "updatedAt": "2026-09-27T09:42:02.470Z",
+      "sourceHtmlSha256": "fb4377f87335f28a43dd4bfefe75bc66d9bcc0416e7ee353f45952810a515e21",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/3fc0cdb416-383a1442932715aa5ce1.png",
+      "html": "screens/html/fDgGhxdV4FYp8zzKdkHW.html",
+      "image": "screens/png/fDgGhxdV4FYp8zzKdkHW.png",
+      "imageSha256": "7bcde9488ee6d565366e457fa2b861a2bb49d2c3ca91996886c56dbdd9cda0ac"
+    },
+    {
+      "designId": "O1OlAJSr0eX88su9NDGw",
+      "title": "Oxid - Assets",
+      "nodeIds": [
+        "wallet-alt"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 1907,
+      "updatedAt": "2026-09-27T09:42:04.629Z",
+      "sourceHtmlSha256": "436bebab4e1e233ad74c842296b6667e8ec365b4803265b04deea939dbb32289",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/d3c981321a-73525a9287df1098fa59.png",
+      "html": "screens/html/O1OlAJSr0eX88su9NDGw.html",
+      "image": "screens/png/O1OlAJSr0eX88su9NDGw.png",
+      "imageSha256": "f140005111f53684b2b49bff8aa36b37256dab013de624678078bfd32c9367de"
+    },
+    {
+      "designId": "WuqRtdvZAmT09UJtiVO0",
+      "title": "Oxid - 1-Receive",
+      "nodeIds": [
+        "receive"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:47:21.204Z",
+      "sourceHtmlSha256": "9021b43539be725b658f30d3fe9c5f3f3683818c96901cc452868abb5696ee8a",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/b3c9d3dcdc-231c7f45f342aa4b7027.png",
+      "html": "screens/html/WuqRtdvZAmT09UJtiVO0.html",
+      "image": "screens/png/WuqRtdvZAmT09UJtiVO0.png",
+      "imageSha256": "d1a2f2855a59898901b6fa9948f3a647965eb6469921d064a81ffda961d35c7c"
+    },
+    {
+      "designId": "F5Q39rukHWzFn7cDhzvK",
+      "title": "Oxid - 2-Send",
+      "nodeIds": [
+        "send"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:47:22.674Z",
+      "sourceHtmlSha256": "726172d7d1e67105af563f9270eabecef243792c2928083e0e56f3f44c4ffceb",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/cf5d18ba47-aa171654285451bfe24f.png",
+      "html": "screens/html/F5Q39rukHWzFn7cDhzvK.html",
+      "image": "screens/png/F5Q39rukHWzFn7cDhzvK.png",
+      "imageSha256": "1679b206c74f8d239ec109f704b23140a13f763b86a0e9ac546d5adaff8656e4"
+    },
+    {
+      "designId": "1BVzLKBz9gbMrTtlQuhH",
+      "title": "Oxid - 3-SendReview",
+      "nodeIds": [
+        "send-review"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:47:24.117Z",
+      "sourceHtmlSha256": "6df045a0139ebb39219f71a1ef23185ee1e1f97d66f8e3cc88b41eacf7078cc5",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/da1dff3201-3064175b453c7fe103a4.png",
+      "html": "screens/html/1BVzLKBz9gbMrTtlQuhH.html",
+      "image": "screens/png/1BVzLKBz9gbMrTtlQuhH.png",
+      "imageSha256": "f34d7c9f321fbb5b9e12dc2eb6f4cc5c5521c5f666b317b308a2586fc4b7509e"
+    },
+    {
+      "designId": "SiOy00hJwu4fnCq6lriL",
+      "title": "Oxid - 4-TransferOutcome",
+      "nodeIds": [
+        "outcome"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:47:25.949Z",
+      "sourceHtmlSha256": "2e2fdfb90277fed83438e821e3ea07e243a59ace49d20d5af94b3aca944e4abe",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/6a60d8efcc-85a46b99abd4c0be17b6.png",
+      "html": "screens/html/SiOy00hJwu4fnCq6lriL.html",
+      "image": "screens/png/SiOy00hJwu4fnCq6lriL.png",
+      "imageSha256": "8d7caab0a79fbc5b90d8ad945cb46d7bf4a7e109a57696983c0c2f92fe8855e6"
+    },
+    {
+      "designId": "chRTX9Vh53MXqxQx1bpJ",
+      "title": "Oxid - 1-DocsInventory",
+      "nodeIds": [
+        "docs-inventory"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:45:52.150Z",
+      "sourceHtmlSha256": "a9af8d8a9759d7a400d386aa946e2154d7647daac2ef68b4472d5f54bca13f24",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/9cd1d3c60d-bdd73fb8b335db160075.png",
+      "html": "screens/html/chRTX9Vh53MXqxQx1bpJ.html",
+      "image": "screens/png/chRTX9Vh53MXqxQx1bpJ.png",
+      "imageSha256": "2070fd4b4d94ba347939f93cf219f685e78597d08e22a45c3909579d43d83607"
+    },
+    {
+      "designId": "GWK1zyDIodcUbr9Bm68v",
+      "title": "Oxid - 2-CredentialOffer",
+      "nodeIds": [
+        "offer"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:47:27.459Z",
+      "sourceHtmlSha256": "cde6f5245cc35813f676704c046acd4a3e2fa910494c6ec4f0a89377622b3319",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/5be1b8fbce-932024779f6c9246d6bf.png",
+      "html": "screens/html/GWK1zyDIodcUbr9Bm68v.html",
+      "image": "screens/png/GWK1zyDIodcUbr9Bm68v.png",
+      "imageSha256": "45796d8f6449394308fbaa6cb72ceb2330a86f4e6671c107671a9dc40d899ebe"
+    },
+    {
+      "designId": "Ukiejr7yd9Y1HLwo6ZvY",
+      "title": "Oxid - 3-CredentialDetail",
+      "nodeIds": [
+        "credential-detail"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:47:28.898Z",
+      "sourceHtmlSha256": "04b13ad2cb9fee3d3666033a9fe8f8abae17c0966035e800b9e2b0bc86555e16",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/52a278473b-abec794065bf21a44c6b.png",
+      "html": "screens/html/Ukiejr7yd9Y1HLwo6ZvY.html",
+      "image": "screens/png/Ukiejr7yd9Y1HLwo6ZvY.png",
+      "imageSha256": "ec6d02d445848ba84270400259ef980ed858f87e509759e413049ddcd0b9bed3"
+    },
+    {
+      "designId": "FLVs6VUqSwlb9sGswduG",
+      "title": "Oxid - 4-PresentationConsent",
+      "nodeIds": [
+        "consent"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:47:30.384Z",
+      "sourceHtmlSha256": "03c6663e5f78d7035045250e49718b9e9841144167fab55cdb17237b3689723e",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/7c9d66be40-b04cf2b7a75d64ccdee9.png",
+      "html": "screens/html/FLVs6VUqSwlb9sGswduG.html",
+      "image": "screens/png/FLVs6VUqSwlb9sGswduG.png",
+      "imageSha256": "28ac96a2f3d9a4e449ae14817d2cd5d3cd0d0ab32b0e21c1ce148b3511047061"
+    },
+    {
+      "designId": "aZXxHQSwodvrnxqlGScM",
+      "title": "Oxid - Credentials",
+      "nodeIds": [
+        "docs-alt"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 1482,
+      "updatedAt": "2026-09-27T09:42:06.916Z",
+      "sourceHtmlSha256": "28bedb05e5f7a8a1eae2569fcebed750d0ecb7b6c7ef95ad26506699a1127f9e",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/6050b15e48-04669b6bdf620a1724eb.png",
+      "html": "screens/html/aZXxHQSwodvrnxqlGScM.html",
+      "image": "screens/png/aZXxHQSwodvrnxqlGScM.png",
+      "imageSha256": "ca5965cbdf4ce0502896e9757f6cb468c2b8bfa8d7c3f1dcf60a94298df650cd"
+    },
+    {
+      "designId": "xU0NzamqXdVbnh9P3PuJ",
+      "title": "Oxid - Scan-2-Dispatch",
+      "nodeIds": [
+        "dispatch"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:47:31.841Z",
+      "sourceHtmlSha256": "ede9234073a1456fda783cc19aa71515cc124533e0f0dca0d675c5a4e3898284",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/b2e04bf2b6-bdbde5edf370ce0e1bab.png",
+      "html": "screens/html/xU0NzamqXdVbnh9P3PuJ.html",
+      "image": "screens/png/xU0NzamqXdVbnh9P3PuJ.png",
+      "imageSha256": "d78ab525381d543e4b19ce018233178eb9ec3d8a28ec68b14b7e9a7155bf6917"
+    },
+    {
+      "designId": "DMRPPnjVsTdpLPfHa7PI",
+      "title": "Oxid - Scan-3-Error",
+      "nodeIds": [
+        "scan-error"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:47:33.345Z",
+      "sourceHtmlSha256": "d33fc463302c6143e41891b41966c5f46eb842444083d4b0d6815ac9de830045",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/651864edf1-040ede6e4d7651f2763e.png",
+      "html": "screens/html/DMRPPnjVsTdpLPfHa7PI.html",
+      "image": "screens/png/DMRPPnjVsTdpLPfHa7PI.png",
+      "imageSha256": "db5e7109892878d77436bbc2e67f1c1685733bfb1a4e0bf5b48f1838a1eb83bf"
+    },
+    {
+      "designId": "piqCy2mTkAGEbjHbBB2g",
+      "title": "Oxid - Backup Readiness",
+      "nodeIds": [
+        "backup"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:47:34.854Z",
+      "sourceHtmlSha256": "f3dddea8ca759ae6cfd7783adba49ded0ea0a18da70e8c9b9a90869149152ed4",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/05d1392bc6-e0b04aa787c70200588a.png",
+      "html": "screens/html/piqCy2mTkAGEbjHbBB2g.html",
+      "image": "screens/png/piqCy2mTkAGEbjHbBB2g.png",
+      "imageSha256": "d109f4414ff3052596c5b75df9f3669903bb40b63bf9ba669bc751797ddb2abd"
+    },
+    {
+      "designId": "rZnYMwlpfKT8tDOBvrCY",
+      "title": "Oxid - Privacy Controls",
+      "nodeIds": [
+        "privacy"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:37:10.548Z",
+      "sourceHtmlSha256": "0c89c89ea54e2f9bb514a4321a089b9a5b6ca6069e4d8a24643e39c2ed6e743e",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/29899150f2-81afc75ca614b4390684.png",
+      "html": "screens/html/rZnYMwlpfKT8tDOBvrCY.html",
+      "image": "screens/png/rZnYMwlpfKT8tDOBvrCY.png",
+      "imageSha256": "ea1fd07bf6058d7b323f76b0c4c9f2eef3cfe186476ca3807aa8cde01619c1eb"
+    },
+    {
+      "designId": "5W0qFzdZIECOuCQQCk47",
+      "title": "Oxid - Vault-1-Readiness",
+      "nodeIds": [
+        "vault-ready"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:47:36.803Z",
+      "sourceHtmlSha256": "e8538b6af4c7f61e388a00a50842b1770fb67e1b0f970e79d1b2e0c2db20c8bb",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/f74e651ede-a9d4fdc8610e0defa2e1.png",
+      "html": "screens/html/5W0qFzdZIECOuCQQCk47.html",
+      "image": "screens/png/5W0qFzdZIECOuCQQCk47.png",
+      "imageSha256": "355007ccf01ed811b6594540acbf46fa784e65a01f4c42cf285b5c4e9824b675"
+    },
+    {
+      "designId": "l7qHJf2Dni0mCPf6coGS",
+      "title": "Oxid - Vault-2-Selection",
+      "nodeIds": [
+        "vault-select"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:47:38.270Z",
+      "sourceHtmlSha256": "9a82138b663537859f77f1ffc5d842ad9c9ffa0a2e0633027090a907be6396d4",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/ee3ef0f3a9-36c7302f62e78b3189f2.png",
+      "html": "screens/html/l7qHJf2Dni0mCPf6coGS.html",
+      "image": "screens/png/l7qHJf2Dni0mCPf6coGS.png",
+      "imageSha256": "89e462b19657f9f9eb394d25508f15c765e2a820fd9097b3174497eb2a83d9f0"
+    },
+    {
+      "designId": "tHPxano2w2LWjSQnBgpk",
+      "title": "Oxid - Vault-3-Auth",
+      "nodeIds": [
+        "vault-auth"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:37:19.581Z",
+      "sourceHtmlSha256": "26567d57521865423a5168a355938dda1869255ba84121a7c1e15b8c229cd412",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/0f1a2e8730-da0f59a4a8233f21f974.png",
+      "html": "screens/html/tHPxano2w2LWjSQnBgpk.html",
+      "image": "screens/png/tHPxano2w2LWjSQnBgpk.png",
+      "imageSha256": "e9e13a8494f9d9aa148a3747c0ee7a790bd7b9125b2851e326fdf3c3cf2cc057"
+    },
+    {
+      "designId": "yVeln2BQrznEMS1gtswz",
+      "title": "Oxid - Vault-4-Status",
+      "nodeIds": [
+        "vault-status"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 1059,
+      "updatedAt": "2026-09-27T09:47:40.157Z",
+      "sourceHtmlSha256": "9b30fa2f9015bc08f14b7ed91be913bead3d06af32e9b232a58e9aba8d8d98f3",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/0417d246e3-ad8c046dccc25e786c63.png",
+      "html": "screens/html/yVeln2BQrznEMS1gtswz.html",
+      "image": "screens/png/yVeln2BQrznEMS1gtswz.png",
+      "imageSha256": "12c4bb6d2731cb0f7dbc4707e03a4818ab0bea1ef41177c0160de4341e3be29a"
+    },
+    {
+      "designId": "F59GjIeGSqGO7P3cMQYv",
+      "title": "Oxid - Activity_Empty",
+      "nodeIds": [
+        "activity-empty"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:47:41.746Z",
+      "sourceHtmlSha256": "ccc5c1f8d9d19a6ba0af9c9d496918c38d97cadf5354fff869659fcbe5c0b718",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/8508d31b5f-db9baa1a48461ac99abd.png",
+      "html": "screens/html/F59GjIeGSqGO7P3cMQYv.html",
+      "image": "screens/png/F59GjIeGSqGO7P3cMQYv.png",
+      "imageSha256": "bd4c7b876b1bab109203ac7722821c41b9db5a97d79db1b8e9d9e5714f2acd68"
+    },
+    {
+      "designId": "fXj9iFvksvIHq7QMiJcC",
+      "title": "Oxid - Activity_Detail",
+      "nodeIds": [
+        "activity-detail"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:47:43.263Z",
+      "sourceHtmlSha256": "0121b243b76851df9abd0c9323a29b715b603e0bf8f7022e85b6f00166bd6e33",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/4f3415bc4c-924cc863a05461a04e5c.png",
+      "html": "screens/html/fXj9iFvksvIHq7QMiJcC.html",
+      "image": "screens/png/fXj9iFvksvIHq7QMiJcC.png",
+      "imageSha256": "fb25157ca63bfe162e0e78553703bbfc6ae540fcdc49115595dd7976ce659e4c"
+    },
+    {
+      "designId": "kAQsaTZOn4GhaF7keYyC",
+      "title": "Oxid - Activity_Proposal",
+      "nodeIds": [
+        "activity-proposal"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 840,
+      "updatedAt": "2026-09-27T09:46:00.839Z",
+      "sourceHtmlSha256": "9ed6fe96c14df5a1bd51f90dc3ff80e47b9622075f34ae2706f90a824d425fb2",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/cb2f58f54b-9a0c19ee7e687182185c.png",
+      "html": "screens/html/kAQsaTZOn4GhaF7keYyC.html",
+      "image": "screens/png/kAQsaTZOn4GhaF7keYyC.png",
+      "imageSha256": "352888aca8a2aba16bc94182b88a26009bbcd5a5f86051dcbbab3caf303f020b"
+    },
+    {
+      "designId": "fpYYxAdBDueP0YJL1Pkh",
+      "title": "Oxid - History",
+      "nodeIds": [
+        "history-alt"
+      ],
+      "state": "proposed",
+      "width": 375,
+      "height": 1430,
+      "updatedAt": "2026-09-27T09:42:09.093Z",
+      "sourceHtmlSha256": "538f43dd6cd7950587e5acbc973a99cc0fb5f09b7137758c592ebd258381239e",
+      "previewUrl": "https://storage.googleapis.com/uxpilot-auth.appspot.com/screenshots/b67a3dc367-17a138fec4607166f08e.png",
+      "html": "screens/html/fpYYxAdBDueP0YJL1Pkh.html",
+      "image": "screens/png/fpYYxAdBDueP0YJL1Pkh.png",
+      "imageSha256": "059b8e8633819b768fa6d8767beb0a11046ddbea55f0456531ba3461fbc367cb"
+    }
+  ]
+}

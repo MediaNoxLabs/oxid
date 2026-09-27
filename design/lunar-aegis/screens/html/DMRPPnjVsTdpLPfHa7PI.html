@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Oxid - Scan Error</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'oxid-bg': '#07090E',
+                        'oxid-surface': '#0F172A',
+                        'oxid-border': '#1E293B',
+                        'oxid-primary': '#06B6D4',
+                        'oxid-highlight': '#38BDF8',
+                        'oxid-identity': '#8B5CF6',
+                        'oxid-text': '#F8FAFC',
+                        'oxid-muted': '#94A3B8',
+                    },
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                        heading: ['Space Grotesk', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+<style>html,body{background:#07090E;color:#F8FAFC}body{margin:0}</style>
+</head>
+<body class="bg-oxid-bg text-oxid-text font-sans overflow-hidden flex justify-center">
+    <div class="w-full max-w-[430px] h-[840px] relative flex flex-col">
+
+        <!-- Header -->
+        <header class="px-6 pt-12 pb-4 flex items-center justify-between">
+            <button class="w-11 h-11 rounded-xl bg-oxid-surface border border-oxid-border flex items-center justify-center text-oxid-muted hover:text-white transition-colors">
+                <i class="fa-solid fa-xmark text-sm"></i>
+            </button>
+            <h1 class="text-[11px] font-bold text-white uppercase tracking-[0.3em]">Scan Error</h1>
+            <div class="w-11"></div>
+        </header>
+
+        <main class="flex-grow px-8 py-12 flex flex-col items-center justify-center text-center space-y-10 pb-28 overflow-y-auto">
+
+            <!-- Error Visual -->
+            <div class="relative group">
+                <div class="w-24 h-24 rounded-[32px] bg-rose-500/10 flex items-center justify-center text-rose-500 text-4xl border border-rose-500/20 relative z-10 shadow-2xl">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                </div>
+                <div class="absolute -top-1 -right-1 w-10 h-10 rounded-full bg-oxid-surface border border-oxid-border flex items-center justify-center text-rose-400 shadow-xl group-hover:scale-110 transition-transform">
+                    <i class="fa-solid fa-shield-slash text-xs"></i>
+                </div>
+                <!-- Decorative pulse -->
+                <div class="absolute inset-0 bg-rose-500/5 rounded-full blur-3xl animate-pulse"></div>
+            </div>
+
+            <!-- Error Content -->
+            <div class="space-y-4 max-w-[300px]">
+                <h2 class="text-2xl font-heading font-bold text-white tracking-tight">Unsupported Payload</h2>
+                <p class="text-oxid-muted text-[14px] leading-relaxed">
+                    The scanned code does not match any recognized Oxid protocols or may contain unsafe instructions.
+                </p>
+            </div>
+
+            <!-- Debug Box -->
+            <div class="w-full bg-oxid-surface/50 rounded-[28px] p-6 text-left space-y-4 border border-oxid-border shadow-2xl">
+                <div class="flex items-center justify-between">
+                    <span class="text-[9px] font-bold text-oxid-muted uppercase tracking-[0.2em]">Raw Data Preview</span>
+                    <span class="text-[9px] font-bold text-rose-400 uppercase tracking-widest px-2.5 py-1 rounded-md bg-rose-400/10 border border-rose-400/20">Unknown Schema</span>
+                </div>
+                <div class="bg-oxid-bg/60 rounded-xl p-4 border border-oxid-border">
+                    <code class="text-[10px] font-mono text-oxid-muted break-all leading-relaxed">
+                        [redacted unrecognized payload]
+                    </code>
+                </div>
+                <p class="text-[10px] text-oxid-muted/60 font-bold uppercase tracking-tighter leading-snug">No automated actions performed. Review activity if you are concerned.</p>
+            </div>
+
+            <!-- Actions -->
+            <div class="w-full space-y-4">
+                <button class="w-full bg-oxid-primary text-oxid-bg py-5 rounded-[20px] text-[13px] font-bold uppercase tracking-widest shadow-lg shadow-oxid-primary/10 transition-all active:scale-[0.98]">
+                    Try Again
+                </button>
+                <button class="w-full py-5 rounded-[20px] bg-oxid-surface border border-oxid-border text-white font-bold text-[13px] uppercase tracking-widest transition-all active:scale-[0.98]">
+                    Enter Manually
+                </button>
+            </div>
+
+        </main>
+
+        <!-- Navigation Bar -->
+        <nav id="nav" aria-label="Primary navigation" style="position:fixed;bottom:0;left:0;right:0;z-index:50;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:2px;background:#07090E;border-top:1px solid #1E293B;padding:7px 6px calc(7px + env(safe-area-inset-bottom));box-shadow:0 -8px 28px rgba(0,0,0,.25)">
+        <button type="button" aria-label="Home" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#94A3B8;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer">
+            <span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;color:inherit">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            </span>
+            <span>Home</span>
+        </button>
+        <button type="button" aria-label="Wallet" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#94A3B8;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer">
+            <span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;color:inherit">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg>
+            </span>
+            <span>Wallet</span>
+        </button>
+        <button type="button" aria-label="Scan" aria-current="page" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#06B6D4;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer">
+            <span style="width:42px;height:42px;display:flex;align-items:center;justify-content:center;border-radius:14px;background:linear-gradient(135deg,#38BDF8,#06B6D4);color:#07131d">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>
+            </span>
+            <span>Scan</span>
+            <span aria-hidden="true" style="width:16px;height:2px;border-radius:2px;background:#06B6D4"></span>
+        </button>
+        <button type="button" aria-label="Documents" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#94A3B8;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer">
+            <span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;color:inherit">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></svg>
+            </span>
+            <span>Documents</span>
+        </button>
+        <button type="button" aria-label="Activity" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#94A3B8;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer">
+            <span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;color:inherit">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.5.5 0 0 1-.96 0L9.24 2.18a.5.5 0 0 0-.96 0l-2.35 8.36A2 2 0 0 1 4 12H2"/></svg>
+            </span>
+            <span>Activity</span>
+        </button>
+    </nav>
+
+    </div>
+</body>

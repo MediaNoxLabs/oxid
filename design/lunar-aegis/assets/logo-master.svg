@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="512" height="512">
+  <defs>
+    <linearGradient id="aegisGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06B6D4" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#38BDF8" stop-opacity="0.85"/>
+    </linearGradient>
+    <linearGradient id="shieldDarkGrad" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#162032"/>
+      <stop offset="100%" stop-color="#0a0f1d"/>
+    </linearGradient>
+    <filter id="aegisGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  
+  <!-- Background Glow & Base -->
+  <rect width="200" height="200" fill="#07090E" rx="44"/>
+  <circle cx="100" cy="100" r="54" fill="#06B6D4" opacity="0.14" filter="blur(22px)" />
+  
+  <!-- Outer Defensive Shield Hull -->
+  <path d="M 100 22 C 140 22 172 40 172 78 C 172 130 100 178 100 178 C 100 178 28 130 28 78 C 28 40 60 22 100 22 Z" 
+        fill="url(#shieldDarkGrad)" stroke="#06B6D4" stroke-width="2.5" stroke-opacity="0.35" />
+  
+  <!-- Subtle Geometry Guideline -->
+  <path d="M 100 22 L 100 178" stroke="#06B6D4" stroke-width="1.2" stroke-opacity="0.2" stroke-dasharray="4 4"/>
+  
+  <!-- Lunar Crescent Arc (The 'O') -->
+  <path d="M 124 42 C 154 62 158 114 130 144 C 104 170 66 162 50 148 C 88 154 124 132 128 94 C 130 70 118 50 124 42 Z" 
+        fill="url(#aegisGrad)" filter="url(#aegisGlow)"/>
+
+  <!-- Cryptographic ZK Cross Motif (The 'X') -->
+  <line x1="72" y1="74" x2="114" y2="116" stroke="#06B6D4" stroke-width="3" stroke-linecap="round" stroke-opacity="0.9"/>
+  <line x1="114" y1="74" x2="72" y2="116" stroke="#38BDF8" stroke-width="2.2" stroke-linecap="round" stroke-opacity="0.75"/>
+
+  <!-- Sovereign Core Identity Aperture ('ID' Pillar & Key) -->
+  <circle cx="93" cy="95" r="13" fill="#07090e" stroke="#06B6D4" stroke-width="3" />
+  <path d="M 88 101 L 86 128 C 86 130 88 132 91 132 L 99 132 C 102 132 104 130 104 128 L 102 101 Z" 
+        fill="#07090e" stroke="#06B6D4" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="93" cy="95" r="5" fill="#06B6D4" />
+  
+  <!-- Micro Identity Proof Points -->
+  <circle cx="140" cy="95" r="3" fill="#06B6D4" opacity="0.9" />
+  <circle cx="56" cy="95" r="3" fill="#38BDF8" opacity="0.8" />
+</svg>

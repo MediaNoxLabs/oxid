@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Review — Oxid</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'oxid-bg': '#07090E',
+                        'oxid-surface': '#0F172A',
+                        'oxid-border': '#1E293B',
+                        'oxid-primary': '#06B6D4',
+                        'oxid-highlight': '#38BDF8',
+                        'oxid-identity': '#8B5CF6',
+                        'oxid-text': '#F8FAFC',
+                        'oxid-muted': '#94A3B8',
+                    },
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                        heading: ['Space Grotesk', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+<style>html,body{background:#07090E;color:#F8FAFC}body{margin:0}</style>
+</head>
+<body class="bg-oxid-bg text-oxid-text font-sans overflow-hidden flex justify-center">
+    <div class="w-full max-w-[430px] h-[840px] relative flex flex-col">
+
+        <!-- Proposed Flow Banner -->
+        <div class="bg-amber-500/10 border-b border-amber-500/20 py-2.5 flex items-center justify-center gap-2 sticky top-0 z-[60] backdrop-blur-md">
+            <i class="fa-solid fa-flask text-amber-500 text-[10px]"></i>
+            <span class="text-[9px] font-bold uppercase tracking-[0.2em] text-amber-500">Proposed Disclosure Flow</span>
+        </div>
+
+        <!-- Header -->
+        <header class="px-6 pt-8 pb-4 flex items-center gap-4">
+            <button class="w-11 h-11 rounded-xl bg-oxid-surface border border-oxid-border flex items-center justify-center text-oxid-muted hover:text-white transition-colors">
+                <i class="fa-solid fa-xmark text-sm"></i>
+            </button>
+            <div class="flex-1">
+                <h1 class="text-xl font-heading font-bold leading-tight text-white tracking-tight">Request Review</h1>
+                <p class="text-[11px] font-bold text-oxid-muted uppercase tracking-widest mt-0.5">Disclosure Selection</p>
+            </div>
+        </header>
+
+        <main class="flex-1 px-6 pb-44 space-y-8 overflow-y-auto pt-2">
+
+            <!-- Recipient & Purpose -->
+            <section class="space-y-4">
+                <div class="bg-oxid-surface rounded-[32px] border border-oxid-border p-6 space-y-6 shadow-2xl relative overflow-hidden">
+                    <div class="absolute -top-10 -right-10 w-32 h-32 bg-oxid-highlight/5 blur-3xl rounded-full"></div>
+                    <div class="flex items-center gap-5 relative z-10">
+                        <div class="w-12 h-12 rounded-2xl bg-oxid-highlight/10 flex items-center justify-center text-oxid-highlight border border-oxid-highlight/20">
+                            <i class="fa-solid fa-building-shield text-xl"></i>
+                        </div>
+                        <div class="space-y-1">
+                            <p class="text-[10px] font-bold text-oxid-muted uppercase tracking-widest">Recipient</p>
+                            <p class="text-[15px] font-bold text-white tracking-tight">Example Verifier</p>
+                        </div>
+                    </div>
+                    <div class="pt-6 border-t border-oxid-border/50 relative z-10">
+                        <p class="text-[10px] font-bold text-oxid-muted uppercase tracking-widest mb-3">Purpose</p>
+                        <p class="text-[13px] leading-relaxed text-white/90 font-medium">
+                            Verify age eligibility (21+). Proposed selective disclosure would show exactly what the recipient requests.
+                        </p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Data Selection -->
+            <section class="space-y-4">
+                <div class="flex items-center justify-between px-1">
+                    <h3 class="text-[10px] font-bold uppercase tracking-[0.2em] text-oxid-muted">Disclosure Summary</h3>
+                    <span class="text-[9px] font-bold text-oxid-primary uppercase tracking-tighter italic">Illustrative Data</span>
+                </div>
+
+                <div class="space-y-3">
+                    <!-- Attribute 1: Age Over 21 -->
+                    <div class="bg-oxid-surface rounded-[24px] p-5 flex items-center gap-4 border border-oxid-primary/30 shadow-xl shadow-oxid-primary/5">
+                        <div class="w-7 h-7 rounded-full bg-oxid-primary flex items-center justify-center text-oxid-bg">
+                            <i class="fa-solid fa-check text-xs font-bold"></i>
+                        </div>
+                        <div class="flex-1 space-y-0.5">
+                            <p class="text-[14px] font-bold text-white tracking-tight">Age Proof (Over 21)</p>
+                            <p class="text-[11px] text-oxid-muted font-medium">Zero-knowledge proof from passport</p>
+                        </div>
+                        <i class="fa-solid fa-eye-slash text-oxid-primary text-[10px]"></i>
+                    </div>
+
+                    <!-- Attribute 2: Name -->
+                    <div class="bg-oxid-surface rounded-[24px] p-5 flex items-center gap-4 border border-oxid-border shadow-xl">
+                        <div class="w-7 h-7 rounded-full bg-oxid-primary flex items-center justify-center text-oxid-bg shadow-lg shadow-oxid-primary/20">
+                            <i class="fa-solid fa-check text-xs font-bold"></i>
+                        </div>
+                        <div class="flex-1 space-y-1">
+                            <p class="text-[14px] font-bold text-white tracking-tight">Legal Name</p>
+                            <p class="text-[11px] font-mono text-oxid-highlight font-bold tracking-widest uppercase">ALEXANDER J. SAMPLE</p>
+                        </div>
+                    </div>
+
+                    <!-- Attribute 3: Nationality (Deselected) -->
+                    <div class="bg-oxid-surface/50 rounded-[24px] p-5 flex items-center gap-4 border border-oxid-border opacity-40 grayscale">
+                        <div class="w-7 h-7 rounded-full border-2 border-oxid-muted"></div>
+                        <div class="flex-1">
+                            <p class="text-[14px] font-bold text-white tracking-tight">Nationality</p>
+                            <p class="text-[11px] text-oxid-muted font-medium italic">Not required for this purpose</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Retention -->
+            <section class="space-y-3">
+                <div class="p-5 rounded-[24px] bg-oxid-highlight/5 border border-oxid-highlight/20 flex gap-4">
+                    <i class="fa-solid fa-clock-rotate-left text-lg text-oxid-highlight shrink-0 mt-0.5"></i>
+                    <div class="space-y-1">
+                        <p class="text-[13px] font-bold text-oxid-highlight tracking-tight">Retention Status Unknown</p>
+                        <p class="text-[11px] text-oxid-muted leading-relaxed font-medium">Recipient retention policy not verified. Disclose only if you trust the source.</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Sticky Footer Action -->
+        <footer class="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-oxid-bg via-oxid-bg to-transparent">
+            <div class="max-w-[430px] mx-auto space-y-4">
+                <button class="w-full h-16 rounded-[20px] bg-oxid-primary text-oxid-bg font-bold text-[14px] uppercase tracking-[0.2em] flex items-center justify-center gap-3 shadow-lg shadow-oxid-primary/10 active:scale-[0.98] transition-all">
+                    Authorize Presentation
+                    <i class="fa-solid fa-chevron-right text-sm"></i>
+                </button>
+                <button class="w-full py-2 text-[11px] font-bold text-oxid-muted hover:text-white transition-colors uppercase tracking-widest">
+                    Cancel Request
+                </button>
+            </div>
+        </footer>
+
+    </div>
+</body>

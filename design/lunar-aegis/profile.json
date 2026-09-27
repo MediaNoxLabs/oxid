@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "id": "lunar-aegis",
+  "name": "Oxid Lunar Aegis",
+  "status": "approved-design-target",
+  "targetMilestone": "0.2.0",
+  "sources": {
+    "uxPilotPage": "https://uxpilot.ai/a/ui-design?page=r30d8UxUa7xuLus8ZH2j",
+    "uxPilotDesignSystem": "https://uxpilot.ai/a/design-system/Oxid%20Mobile%20%C2%B7%20Lunar%20Aegis",
+    "uxPilotDiagramId": "ybCLMfv8Y7LWO3Rfra3J",
+    "userSuppliedLogoSuite": "midnight-wallet-—-crypto-&-identity-logo-suite.zip"
+  },
+  "colors": {
+    "dark": {
+      "background": "#07090E",
+      "elevated": "#0F172A",
+      "border": "#1E293B",
+      "primary": "#06B6D4",
+      "highlight": "#38BDF8",
+      "identity": "#8B5CF6",
+      "textStrong": "#F8FAFC",
+      "textMuted": "#94A3B8"
+    },
+    "semanticMapping": {
+      "surface_0": "background",
+      "surface_2": "elevated",
+      "accent": "primary",
+      "accent_alt": "identity",
+      "family_identity": "identity",
+      "text_strong": "textStrong",
+      "text_muted": "textMuted",
+      "line": "border"
+    },
+    "unresolvedBrandPackFields": [
+      "surface_1",
+      "surface_3",
+      "surface_4",
+      "text",
+      "text_soft",
+      "family_vault",
+      "on_accent",
+      "light"
+    ],
+    "fixedStatusColors": "Preserve code-owned positive, warning, critical, and info semantics."
+  },
+  "typography": {
+    "heading": {
+      "family": "Space Grotesk",
+      "fallbackForUkrainian": "Noto Sans",
+      "weights": [
+        600,
+        700
+      ]
+    },
+    "body": {
+      "family": "Plus Jakarta Sans",
+      "fallbackForUkrainian": "Noto Sans",
+      "weights": [
+        400,
+        500,
+        600,
+        700
+      ]
+    },
+    "technical": {
+      "family": "JetBrains Mono",
+      "weights": [
+        400,
+        500
+      ]
+    },
+    "files": "fonts/"
+  },
+  "geometry": {
+    "spacingPx": [
+      4,
+      8,
+      12,
+      16,
+      20,
+      24,
+      32,
+      48
+    ],
+    "cardRadiusPx": 24,
+    "controlRadiusPx": 12,
+    "minTouchTargetPx": 44,
+    "safeAreaInsets": true
+  },
+  "navigation": [
+    {
+      "id": "home",
+      "label": "Home",
+      "icon": "assets/icons/home.svg"
+    },
+    {
+      "id": "wallet",
+      "label": "Wallet",
+      "icon": "assets/icons/wallet.svg"
+    },
+    {
+      "id": "scan",
+      "label": "Scan",
+      "icon": "assets/icons/scan.svg",
+      "emphasized": true
+    },
+    {
+      "id": "documents",
+      "label": "Documents",
+      "icon": "assets/icons/documents.svg"
+    },
+    {
+      "id": "activity",
+      "label": "Activity",
+      "icon": "assets/icons/activity.svg"
+    }
+  ],
+  "screens": {
+    "manifest": "screens/manifest.json",
+    "flow": "flow.json"
+  },
+  "statePolicy": "Observed standalone states and proposed journeys are explicitly distinguished in the manifest and graph; screenshots are design references, not proof of live capability."
+}

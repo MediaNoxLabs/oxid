@@ -1,0 +1,4 @@
+# Preserve original generated-source and license whitespace in the export.
+screens/html/*.html whitespace=-blank-at-eol
+assets/logo-master.svg whitespace=-blank-at-eol
+fonts/*-OFL.txt whitespace=-blank-at-eol

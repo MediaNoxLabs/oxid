@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Review Offer — Oxid</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'oxid-bg': '#07090E',
+                        'oxid-surface': '#0F172A',
+                        'oxid-border': '#1E293B',
+                        'oxid-primary': '#06B6D4',
+                        'oxid-highlight': '#38BDF8',
+                        'oxid-identity': '#8B5CF6',
+                        'oxid-text': '#F8FAFC',
+                        'oxid-muted': '#94A3B8',
+                    },
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                        heading: ['Space Grotesk', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+<style>html,body{background:#07090E;color:#F8FAFC}body{margin:0}</style>
+</head>
+<body class="bg-oxid-bg text-oxid-text font-sans overflow-hidden flex justify-center">
+    <div class="w-full max-w-[430px] h-[840px] relative flex flex-col">
+
+        <!-- Header -->
+        <header class="px-6 pt-12 pb-4 flex items-center justify-between">
+            <button class="w-11 h-11 rounded-xl bg-oxid-surface border border-oxid-border flex items-center justify-center text-oxid-muted hover:text-white transition-colors">
+                <i class="fa-solid fa-chevron-left text-sm"></i>
+            </button>
+            <h1 class="text-[11px] font-bold text-white uppercase tracking-[0.3em]">Review Offer</h1>
+            <div class="w-11"></div>
+        </header>
+
+        <main class="flex-1 px-6 pb-32 overflow-y-auto">
+            <!-- Issuer Identity -->
+            <section class="mt-4 mb-10 flex flex-col items-center">
+                <div class="w-20 h-20 rounded-[24px] bg-oxid-surface border border-oxid-border flex items-center justify-center mb-5 overflow-hidden shadow-2xl relative group">
+                    <div class="absolute inset-0 bg-oxid-primary/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    <i class="fa-solid fa-building-columns text-3xl text-oxid-muted"></i>
+                </div>
+                <div class="text-center">
+                    <div class="flex items-center justify-center gap-2 mb-1">
+                        <h2 class="text-xl font-heading font-bold text-white">Example Issuer</h2>
+                        <i class="fa-solid fa-circle-check text-oxid-primary text-sm"></i>
+                    </div>
+                    <p class="text-oxid-muted text-[11px] font-bold uppercase tracking-widest">Issuer verification pending</p>
+                </div>
+            </section>
+
+            <!-- Credential Preview Card -->
+            <div class="bg-gradient-to-br from-oxid-primary/20 to-oxid-identity/20 rounded-[32px] p-7 border border-oxid-border mb-10 relative overflow-hidden shadow-2xl">
+                <div class="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-16 -mt-16 blur-3xl"></div>
+                <div class="flex justify-between items-start mb-8 relative z-10">
+                    <div>
+                        <p class="text-[10px] uppercase tracking-widest text-oxid-highlight font-bold mb-1">Proposed Document</p>
+                        <h3 class="text-2xl font-heading font-bold text-white">Example Credential</h3>
+                    </div>
+                    <i class="fa-solid fa-address-card text-3xl text-oxid-primary/40"></i>
+                </div>
+                <div class="space-y-4 relative z-10">
+                    <div class="grid grid-cols-2 gap-6">
+                        <div><p class="text-[9px] uppercase text-oxid-muted font-bold tracking-widest mb-1">Holder Name</p><p class="text-sm font-bold text-white">Example Holder</p></div>
+                        <div><p class="text-[9px] uppercase text-oxid-muted font-bold tracking-widest mb-1">Account Type</p><p class="text-sm font-bold text-white">Example Account</p></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Details/Request Review -->
+            <section class="space-y-8">
+                <div>
+                    <h3 class="text-[10px] font-bold text-oxid-muted uppercase tracking-[0.2em] mb-4 px-1">Included Claims</h3>
+                    <div class="bg-oxid-surface rounded-[24px] border border-oxid-border overflow-hidden">
+                        <div class="p-5 border-b border-oxid-border/50 flex items-center justify-between">
+                            <span class="text-[13px] font-medium text-oxid-muted">Legal Name</span>
+                            <span class="text-[13px] font-bold text-white">Example Holder</span>
+                        </div>
+                        <div class="p-5 border-b border-oxid-border/50 flex items-center justify-between">
+                            <span class="text-[13px] font-medium text-oxid-muted">Account Status</span>
+                            <span class="text-[13px] font-bold text-oxid-primary uppercase tracking-tighter">Active</span>
+                        </div>
+                        <div class="p-5 flex items-center justify-between">
+                            <span class="text-[13px] font-medium text-oxid-muted">Residency Claim</span>
+                            <i class="fa-solid fa-check text-oxid-primary text-xs"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Storage Notice -->
+                <div class="flex gap-4 p-5 rounded-[24px] bg-oxid-surface border border-oxid-border">
+                    <div class="w-11 h-11 rounded-xl bg-oxid-bg border border-oxid-border flex items-center justify-center text-oxid-muted shrink-0">
+                        <i class="fa-solid fa-box-archive text-lg"></i>
+                    </div>
+                    <div class="space-y-1">
+                        <p class="text-[13px] font-bold text-white tracking-tight leading-tight">Storage Request</p>
+                        <p class="text-[11px] text-oxid-muted leading-relaxed">Review the issuer and claims before accepting. Storage behavior and verification must be confirmed by the app.</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Bottom Actions -->
+        <div class="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-oxid-bg via-oxid-bg to-transparent">
+            <div class="max-w-[430px] mx-auto grid grid-cols-2 gap-4">
+                <button class="h-16 rounded-[20px] bg-oxid-surface border border-oxid-border font-bold text-[13px] uppercase tracking-widest text-white hover:bg-oxid-border transition-all active:scale-[0.98]">
+                    Decline
+                </button>
+                <button class="h-16 rounded-[20px] bg-oxid-primary text-oxid-bg font-bold text-[13px] uppercase tracking-widest shadow-lg shadow-oxid-primary/10 hover:bg-oxid-highlight transition-all active:scale-[0.98]">
+                    Accept When Verified
+                </button>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>
