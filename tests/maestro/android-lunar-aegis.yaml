@@ -7,16 +7,33 @@ androidWebViewHierarchy: devtools
     clearState: true
 - assertVisible: "Create private wallet"
 - takeScreenshot: lunar-aegis-android-01-first-run
+- tapOn: "Create private wallet"
+- scrollUntilVisible:
+    element:
+      text: "Create and continue"
+    direction: DOWN
+- tapOn: "Create and continue"
+- assertVisible: "Device protection is required.*"
+# Stop at the safe explanation boundary. Relaunch cleanly rather than entering
+# native authorization or the recovery ceremony.
+- launchApp:
+    clearState: true
+- assertVisible: "Create private wallet"
 # Maestro records a screenshot automatically after a failed step. Never enter
 # the recovery ceremony here: a later failure could otherwise retain a phrase.
-# The compile-time demo drawer reaches a deterministic empty holder shell
-# without handling a private value.
+# The demo drawer creates only a profile and process-local protection. The
+# simulated profile is already synchronized, so stop at Send entry and never
+# enter a recipient, amount, or transfer action.
 - tapOn: "Open standalone demo setup"
-- tapOn: "Run full demo setup"
+- tapOn: "Run demo action: Create or select demo profile"
 - extendedWaitUntil:
-    visible: "Accept a credential offer"
+    visible: "Standalone public profile selected."
     timeout: 60000
-- tapOn: "Dismiss identity request"
+- tapOn: "Run demo action: Initialize or unlock wallet"
+- extendedWaitUntil:
+    visible: "(Initialized process-local standalone custody.|Wallet session was already unlocked; no key was regenerated.)"
+    timeout: 60000
+- tapOn: "Close standalone demo setup"
 - tapOn: "Home"
 - assertVisible: "Current realm"
 # After wallet protection initializes, Android deliberately applies FLAG_SECURE.
@@ -27,8 +44,19 @@ androidWebViewHierarchy: devtools
 - tapOn: "Close Receive"
 - assertVisible: "Current realm"
 - tapOn: "Send"
-- assertVisible: "Send"
+- assertVisible: "SEND NIGHT"
+- tapOn: "Go back"
+- assertVisible: "Current realm"
 - tapOn: "Documents"
-- assertVisible: "Documents"
+- scrollUntilVisible:
+    element:
+      text: "No credentials yet"
+    direction: DOWN
+- extendedWaitUntil:
+    visible: "No credentials yet"
+    timeout: 60000
 - tapOn: "Activity"
-- assertVisible: "Activity"
+- extendedWaitUntil:
+    visible: "Sent"
+    timeout: 60000
+- assertVisible: "Received"

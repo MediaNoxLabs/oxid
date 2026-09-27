@@ -10,6 +10,8 @@ OXID_ANDROID_DEVICE="$OXID_ANDROID_DEVICE" OXID_ANDROID_REQUIRE_EMULATOR=1 \
   OXID_STANDALONE_NETWORK_PROFILE=simulated OXID_MOBILE_CUSTODY=development \
   OXID_UI_PROFILE=demo ./scripts/run-android-emulator.sh deploy
 artifact_root="$root/target/mobile-visual-accessibility/android/$OXID_ANDROID_DEVICE"
-mkdir -p "$artifact_root"
+debug_root="$artifact_root/debug"
+mkdir -p "$debug_root"
 exec nix run .#maestro -- test tests/maestro/android-lunar-aegis.yaml \
-  --device "$OXID_ANDROID_DEVICE" --test-output-dir "$artifact_root"
+  --device "$OXID_ANDROID_DEVICE" --test-output-dir "$artifact_root" \
+  --debug-output "$debug_root"
