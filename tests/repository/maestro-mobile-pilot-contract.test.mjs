@@ -64,6 +64,37 @@ test("Maestro wrappers own only explicit simulator and emulator targets", async 
   );
 });
 
+test("mobile visual accessibility evidence keeps the scoped matrix and privacy boundary", async () => {
+  const matrix = await read("docs/factory/mobile-visual-accessibility-evidence.md");
+
+  for (const state of [
+    "Welcome and create-vs-restore fork",
+    "Mandatory device-protection explanation",
+    "Recovery review and Ready/Home",
+    "Receive and blocked Send",
+    "Empty Documents and Activity",
+    "Settings/Backup",
+  ]) {
+    assert.match(matrix, new RegExp(state, "u"));
+  }
+  for (const screenId of ["XSwTg6CjwXruX8QP3tXy", "FFMmLvVQlc5xIun63FYX", "xYA9BiozNUetlxPJYHPT", "7u81lbjNIKcn8dS79axb"]) {
+    assert.match(matrix, new RegExp(screenId, "u"));
+  }
+  assert.match(matrix, /375 pt\/dp/u);
+  assert.match(matrix, /larger width/u);
+  assert.match(matrix, /safe-area\/navigation non-overlap/u);
+  assert.match(matrix, /44 px touch targets/u);
+  assert.match(matrix, /large-text truncation/u);
+  assert.match(matrix, /non-color status meaning/u);
+  assert.match(matrix, /deterministic Back/u);
+  assert.match(matrix, /modal focus return/u);
+  assert.match(matrix, /reduced motion/u);
+  assert.match(matrix, /screen-reader labels\/order/u);
+  assert.match(matrix, /target\/mobile-visual-accessibility\/<platform>/u);
+  assert.match(matrix, /never capture a recovery phrase/iu);
+  assert.match(matrix, /iOS Simulator.*Android Emulator/us);
+});
+
 test("Maestro flows cover the holder shell without exposing recovery secrets", async () => {
   const [ios, android] = await Promise.all([
     read("tests/maestro/ios-lunar-aegis.yaml"),
