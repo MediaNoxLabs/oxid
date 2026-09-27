@@ -1,7 +1,13 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Oxid mark">
-  <circle cx="32" cy="32" r="28" fill="none" stroke="currentColor" stroke-width="3"/>
-  <circle cx="32" cy="21" r="3.5" fill="currentColor"/>
-  <circle cx="32" cy="32" r="3.5" fill="currentColor"/>
-  <circle cx="32" cy="43" r="3.5" fill="currentColor"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="Oxid Lunar Aegis mark">
+  <rect width="200" height="200" rx="44" fill="#07090E"/>
+  <path d="M100 22C140 22 172 40 172 78C172 130 100 178 100 178C100 178 28 130 28 78C28 40 60 22 100 22Z" fill="#0F172A" stroke="#06B6D4" stroke-width="3"/>
+  <path d="M124 42C154 62 158 114 130 144C104 170 66 162 50 148C88 154 124 132 128 94C130 70 118 50 124 42Z" fill="#06B6D4"/>
+  <line x1="72" y1="74" x2="114" y2="116" stroke="#06B6D4" stroke-width="3" stroke-linecap="round"/>
+  <line x1="114" y1="74" x2="72" y2="116" stroke="#38BDF8" stroke-width="2.2" stroke-linecap="round"/>
+  <circle cx="93" cy="95" r="13" fill="#07090E" stroke="#06B6D4" stroke-width="3"/>
+  <path d="M88 101L86 128C86 130 88 132 91 132H99C102 132 104 130 104 128L102 101Z" fill="#07090E" stroke="#06B6D4" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="93" cy="95" r="5" fill="#06B6D4"/>
+  <circle cx="140" cy="95" r="3" fill="#06B6D4"/>
+  <circle cx="56" cy="95" r="3" fill="#38BDF8"/>
 </svg>
