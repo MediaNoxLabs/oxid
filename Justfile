@@ -225,6 +225,10 @@ android-portal-exact-sequence-avd:
 ios-portal-exact-sequence-simulator:
     @timeout -k 30s 9000s ./scripts/test-ios-portal-exact-sequence-simulator.sh
 
+# Run one allow-listed iOS Portal phase with exact-input artifact reuse; never emits acceptance evidence.
+ios-portal-diagnostic phase:
+    @timeout -k 30s 9000s ./scripts/test-ios-portal-exact-sequence-simulator.sh --diagnostic-phase "{{phase}}"
+
 # Preflight both virtual targets, prequalify shared macOS behavior, then run iOS before Android.
 portal-mobile-simulators-e2e:
     @mkdir -p tmp/issue-213

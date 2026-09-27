@@ -83,6 +83,39 @@ just ios-portal-exact-sequence-simulator
 just android-portal-exact-sequence-avd
 ```
 
+While repairing one iOS selector or transition, run one reviewed phase instead
+of repeating the complete lane:
+
+```bash
+OXID_XCODE_DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+OXID_IOS_RUNTIME_ID='<explicit-reviewed-runtime-id>' \
+OXID_IOS_DEVICE_TYPE_ID='<explicit-reviewed-iphone-device-type-id>' \
+just ios-portal-diagnostic protocol-error
+```
+
+The allow-list is `cold-route`, `prepare-holder`, `route-refuse`, `malformed`,
+`protocol-error`, `protocol-timeout`, `issue-error`, `issue`, and `restored`.
+Unknown, missing, or ambiguous selectors fail before the iOS admission
+supervisor can mutate host state. Each focused run creates a fresh
+receipt-owned simulator and executes the minimum earlier UI state needed by
+the selected phase; it never assumes state from a previous run.
+
+The first focused run builds the packaged app. Later attempts may reuse it only
+when private receipts verify the exact Oxid `HEAD` and tree, Portal deployment
+manifest digest, configuration, target, and artifact digest. Every focused run
+still builds a fresh XCTest bundle, owns and removes its simulator, Portal
+processes, listeners, build/test state, and private log. A successful attempt
+writes only a mode-`0600` diagnostic metric at
+`target/ios-portal-diagnostic/<phase>/diagnostic.json`. That record explicitly
+sets `acceptanceEvidence` and `canonicalReceiptTouched` to `false`; it cannot
+create or overwrite
+`target/ios-portal-exact-sequence-simulator/evidence.json`.
+
+Use the focused loop to diagnose one phase, batch one repair, and then run
+`just ios-portal-exact-sequence-simulator` once. Only that complete clean lane
+is authoritative acceptance evidence. Do not promote a focused result, and do
+not start iOS while Android or another owned mobile runtime is active.
+
 Do not retry a platform automatically after an offer is armed. Resolve the
 failure, prove cleanup, remove no ambiguous owner state, and start a fresh
 complete run with fresh app data and offers.
