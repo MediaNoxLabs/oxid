@@ -422,7 +422,7 @@ impl<C> LiveMidnightAccountSource<C> {
                     derived.addresses().to_vec(),
                 )
             })
-            .map_or_else(|| Err(WalletAccountPortError::Unavailable), Ok)
+            .map_or_else(|| Err(WalletAccountPortError::NotFound), Ok)
     }
 
     fn replace_sync_status(
@@ -2283,7 +2283,7 @@ mod tests {
     }
 
     #[test]
-    fn live_source_rejects_an_unbound_configuration_address() {
+    fn live_source_reports_an_unbound_profile_as_not_found() {
         let source = LiveMidnightAccountSource::with_transport(
             network().id().clone(),
             address(),
@@ -2297,11 +2297,11 @@ mod tests {
 
         assert_eq!(
             source.account(&profile(), &network()),
-            Err(WalletAccountPortError::Unavailable)
+            Err(WalletAccountPortError::NotFound)
         );
         assert_eq!(
             resolve(source.sync(&profile(), &network())),
-            Err(WalletAccountPortError::Unavailable)
+            Err(WalletAccountPortError::NotFound)
         );
     }
 
