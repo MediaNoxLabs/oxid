@@ -418,6 +418,10 @@ control_curl() {
 
 cleanup() {
   local incoming=$? cleanup_status=0
+  if [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
   if [ "$cleanup_running" -eq 1 ]; then
     trap - EXIT INT TERM HUP
     exit "$incoming"

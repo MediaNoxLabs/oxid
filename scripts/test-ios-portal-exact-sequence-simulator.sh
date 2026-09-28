@@ -347,6 +347,10 @@ write_diagnostic_result() {
 
 cleanup() {
   local incoming=$? after_portal project_ids build_receipt_path build_receipt_identity
+  if [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
   if [ "$cleanup_running" -eq 1 ]; then
     trap - EXIT INT TERM HUP
     exit "$incoming"
