@@ -170,15 +170,15 @@ use oxid_wallet_application::{
     SubmitWalletTransferUseCase, SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase,
     UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
     WalletAccountReadPort, WalletAccountService, WalletBackupReceiptRepository,
-    WalletBackupReceiptService, WalletDustRegistrationService, WalletDustSyncPort,
-    WalletDustSyncService, WalletJubjubChallengeSigningPort, WalletKeyOperationPort,
-    WalletKeyService, WalletNetworkPort, WalletNetworkSelectionObserver, WalletNetworkService,
-    WalletOnboardingService, WalletPortableBackupPort, WalletPortableBackupService,
-    WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
-    WalletProtectionService, WalletRealmFacetState, WalletRealmLifecycleService,
-    WalletRealmReconciliationState, WalletRootRecoveryPort, WalletRootRecoveryService,
-    WalletShieldedSyncPort, WalletShieldedSyncService, WalletTransactionPort,
-    WalletTransactionService,
+    WalletBackupReceiptService, WalletDustRegistrationRecoveryStoreProvider,
+    WalletDustRegistrationService, WalletDustSyncPort, WalletDustSyncService,
+    WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
+    WalletNetworkSelectionObserver, WalletNetworkService, WalletOnboardingService,
+    WalletPortableBackupPort, WalletPortableBackupService, WalletProfileAssociationRepository,
+    WalletProfileRepository, WalletProtectionPort, WalletProtectionService, WalletRealmFacetState,
+    WalletRealmLifecycleService, WalletRealmReconciliationState, WalletRootRecoveryPort,
+    WalletRootRecoveryService, WalletShieldedSyncPort, WalletShieldedSyncService,
+    WalletTransactionPort, WalletTransactionService,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -280,6 +280,7 @@ where
     R: WalletProfileRepository
         + WalletProfileAssociationRepository
         + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
@@ -312,6 +313,7 @@ where
     R: WalletProfileRepository
         + WalletProfileAssociationRepository
         + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
@@ -352,6 +354,7 @@ where
     R: WalletProfileRepository
         + WalletProfileAssociationRepository
         + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
@@ -393,6 +396,7 @@ where
     R: WalletProfileRepository
         + WalletProfileAssociationRepository
         + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
@@ -497,6 +501,7 @@ where
     R: WalletProfileRepository
         + WalletProfileAssociationRepository
         + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
@@ -632,7 +637,7 @@ where
     let get_active_wallet_profile =
         Arc::new(GetActiveWalletProfileService::new(Arc::clone(&repository)));
     let backup_receipts = Arc::new(WalletBackupReceiptService::new(
-        repository,
+        Arc::clone(&repository),
         Arc::clone(&clock),
     ));
     let protection_port = protection_for_security(Arc::clone(&security));
@@ -988,15 +993,20 @@ where
     let reconcile_wallet_dust_registration_submission: Arc<
         dyn ReconcileWalletDustRegistrationSubmissionUseCase,
     > = dust_registrations.clone();
-    let wallet_dust_settlement = Arc::new(WalletDustSettlementCapability::new(
-        selected_realm_sync.clone(),
-        selected_realm_sync,
-        dust_registrations.clone(),
-        dust_registrations.clone(),
-        dust_registrations.clone(),
-        dust_registrations.clone(),
-        dust_registrations,
-    ));
+    let dust_registration_recovery = repository.wallet_dust_registration_recovery_store();
+    let wallet_dust_settlement = Arc::new(
+        WalletDustSettlementCapability::with_recovery_store(
+            Arc::clone(&get_selected_wallet_realm_sync),
+            Arc::clone(&sync_selected_wallet_realm),
+            Arc::clone(&prepare_wallet_dust_registration),
+            Arc::clone(&authorize_wallet_dust_registration),
+            Arc::clone(&submit_wallet_dust_registration),
+            Arc::clone(&get_wallet_dust_registration_status),
+            Arc::clone(&reconcile_wallet_dust_registration_submission),
+            dust_registration_recovery,
+        )
+        .expect("DUST settlement capability construction is infallible"),
+    );
     let prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase> =
         transactions.clone();
     let prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase> = transactions.clone();

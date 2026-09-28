@@ -134,13 +134,6 @@ pub(crate) fn recovered_dust_registration_projection(
 }
 
 impl WalletDustRegistrationSettlementProjection {
-    /// Recovery v1 intentionally excludes transient retry and parked replacement state.
-    pub(crate) fn is_exact_recovery_state(&self) -> bool {
-        self.abandoned_registration.is_none()
-            && self.resume_state.is_none()
-            && self.pending_retry_revision.is_none()
-    }
-
     /// A replacement registration parked while an older transaction is reconciled.
     ///
     /// This stays crate-private so presentation adapters cannot couple to the

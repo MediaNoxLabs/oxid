@@ -327,7 +327,7 @@ fn rejected_authorization_never_submits() {
 }
 
 #[test]
-fn executor_failure_releases_admission_for_a_bounded_retry() {
+fn executor_failure_enters_recoverable_projection_and_retry_drains_once() {
     let executor = Arc::new(ScriptedExecutor::new([
         Err(WalletDustRegistrationExecutorFailure::Offline),
         Ok(completion::prepared(identity(1), draft(), 1)),
@@ -340,9 +340,18 @@ fn executor_failure_releases_admission_for_a_bounded_retry() {
             WalletDustRegistrationExecutorFailure::Offline
         ))
     );
-    assert_eq!(driver.projection().unwrap().state, State::ActionRequired);
+    let failed = driver.projection().unwrap();
+    assert_eq!(failed.state, State::Offline);
+    assert_eq!(failed.checkpoint.unwrap().revision, 1);
     assert_eq!(
-        resolve(driver.advance(eligibility(1, 2))).unwrap().state,
+        resolve(
+            driver.advance(WalletDustRegistrationSettlementEvent::Retry {
+                identity: identity(1),
+                revision: failed.recovery_revision + 1,
+            })
+        )
+        .unwrap()
+        .state,
         State::AwaitingAuthorization
     );
     assert_eq!(executor.operation_count(), 2);

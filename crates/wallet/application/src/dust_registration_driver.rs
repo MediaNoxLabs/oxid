@@ -280,6 +280,15 @@ impl WalletDustRegistrationDriver {
         Self::with_runtime_and_observer(executor, runtime, None)
     }
 
+    #[must_use]
+    pub fn with_recovered_runtime_and_projection_observer(
+        executor: Arc<dyn ExecuteWalletDustRegistrationOperation>,
+        runtime: WalletDustRegistrationRuntime,
+        observer: WalletDustRegistrationProjectionObserver,
+    ) -> Self {
+        Self::with_runtime_and_observer(executor, runtime, Some(observer))
+    }
+
     fn with_runtime_and_observer(
         executor: Arc<dyn ExecuteWalletDustRegistrationOperation>,
         runtime: WalletDustRegistrationRuntime,
@@ -451,6 +460,48 @@ impl WalletDustRegistrationDriver {
                 Err(error) => {
                     let _ = runtime.release(token);
                     runtime_admission.disarm();
+                    let previous = runtime.coordinator().projection().clone();
+                    if let Some(identity) = previous.identity.clone() {
+                        let revision = previous
+                            .recovery_revision
+                            .max(
+                                previous
+                                    .checkpoint
+                                    .as_ref()
+                                    .map_or(0, |checkpoint| checkpoint.revision),
+                            )
+                            .saturating_add(1);
+                        let event = match error {
+                            WalletDustRegistrationExecutorFailure::Offline => {
+                                WalletDustRegistrationSettlementEvent::Offline {
+                                    identity,
+                                    revision,
+                                }
+                            }
+                            WalletDustRegistrationExecutorFailure::TimedOut => {
+                                WalletDustRegistrationSettlementEvent::TimedOut {
+                                    identity,
+                                    revision,
+                                }
+                            }
+                            WalletDustRegistrationExecutorFailure::Cancelled => {
+                                WalletDustRegistrationSettlementEvent::Suspended {
+                                    identity,
+                                    revision,
+                                }
+                            }
+                            _ => WalletDustRegistrationSettlementEvent::Degraded {
+                                identity,
+                                revision,
+                            },
+                        };
+                        runtime.observe(event);
+                        let failed = runtime.coordinator().projection().clone();
+                        drop(runtime);
+                        if failed != previous {
+                            self.publish(&failed);
+                        }
+                    }
                     return Err(WalletDustRegistrationDriverError::Executor(error));
                 }
             }
