@@ -40,6 +40,7 @@ lock_owned=0
 state_owned=0
 restoration_proven=0
 cleanup_running=0
+cleanup_owner_pid="${BASHPID:-$$}"
 
 fail() {
   printf 'portal-virtual-mobile-stack: FAIL phase=%s\n' "$1" >&2
@@ -64,7 +65,7 @@ docker_project_ids() {
 
 cleanup() {
   local incoming=$? cleanup_status=0 project_ids="" query_status=0
-  if [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
+  if [ "${BASHPID:-$$}" != "$cleanup_owner_pid" ] || [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
     trap - EXIT INT TERM HUP
     exit "$incoming"
   fi

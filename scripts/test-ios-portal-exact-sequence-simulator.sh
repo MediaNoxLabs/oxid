@@ -82,6 +82,7 @@ launcher_pid=""
 arm_pid=""
 mediator_pid=""
 cleanup_running=0
+cleanup_owner_pid="${BASHPID:-$$}"
 cleanup_ok=true
 run_root_owned=0
 run_root_identity=""
@@ -347,7 +348,7 @@ write_diagnostic_result() {
 
 cleanup() {
   local incoming=$? after_portal project_ids build_receipt_path build_receipt_identity
-  if [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
+  if [ "${BASHPID:-$$}" != "$cleanup_owner_pid" ] || [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
     trap - EXIT INT TERM HUP
     exit "$incoming"
   fi

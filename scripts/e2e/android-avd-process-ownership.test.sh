@@ -351,7 +351,9 @@ for cleanup_owner in \
   "$ROOT/scripts/e2e/portal-desktop-e2e.sh" \
   "$ROOT/scripts/e2e/portal-tailnet-browser-e2e.sh" \
   "$ROOT/scripts/test-android-portal-tailnet-physical.sh"; do
-  grep -A3 -F 'if [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then' "$cleanup_owner" \
+  grep -qF 'cleanup_owner_pid="${BASHPID:-$$}"' "$cleanup_owner" \
+    || fail cleanup-owner-pid
+  grep -A3 -F 'if [ "${BASHPID:-$$}" != "$cleanup_owner_pid" ] || [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then' "$cleanup_owner" \
     | grep -qF 'trap - EXIT INT TERM HUP' \
     || fail cleanup-subshell-trap
   grep -A3 -F 'if [ "$cleanup_running" -eq 1 ]; then' "$cleanup_owner" \
