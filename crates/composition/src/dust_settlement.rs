@@ -33,10 +33,10 @@ use oxid_wallet_application::{
     WalletDustRegistrationExecutorFailure, WalletDustRegistrationOperationCompletion,
     WalletDustRegistrationOperationFuture, WalletDustRegistrationPreviewView,
     WalletDustRegistrationRecoveryRecord, WalletDustRegistrationRecoveryStore,
-    WalletDustRegistrationRuntimeOperation, WalletDustRegistrationSettlementEvent,
-    WalletDustRegistrationSettlementIdentity, WalletDustRegistrationSettlementProjection,
-    WalletDustRegistrationSettlementReconciliation, WalletRealmFamilyView,
-    WalletTransactionDraftId,
+    WalletDustRegistrationRecoveryStoreError, WalletDustRegistrationRuntimeOperation,
+    WalletDustRegistrationSettlementEvent, WalletDustRegistrationSettlementIdentity,
+    WalletDustRegistrationSettlementProjection, WalletDustRegistrationSettlementReconciliation,
+    WalletRealmFamilyView, WalletTransactionDraftId,
 };
 
 /// Composition-owned capability shared by headless and graphical adapters.
@@ -95,11 +95,35 @@ impl WalletDustSettlementCapability {
         reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
         store: Arc<dyn WalletDustRegistrationRecoveryStore>,
     ) -> Result<Self, WalletDustSettlementError> {
-        let restored = store.load().map_err(|_| WalletDustSettlementError::RetainedStateUnavailable)?
-            .filter(|record| !matches!(record.state,
-                oxid_wallet_application::WalletDustRegistrationSettlementState::AwaitingAuthorization))
-            .map(|record| record.restore_runtime().map_err(|_| WalletDustSettlementError::RetainedStateUnavailable))
-            .transpose()?;
+        let loaded = match store.load() {
+            Ok(record) => record,
+            Err(WalletDustRegistrationRecoveryStoreError::Corrupt) => {
+                store
+                    .clear()
+                    .map_err(|_| WalletDustSettlementError::RetainedStateUnavailable)?;
+                None
+            }
+            Err(WalletDustRegistrationRecoveryStoreError::Unavailable) => {
+                return Err(WalletDustSettlementError::RetainedStateUnavailable);
+            }
+        };
+        let restored = match loaded.filter(|record| {
+            !matches!(
+                record.state,
+                oxid_wallet_application::WalletDustRegistrationSettlementState::AwaitingAuthorization
+            )
+        }) {
+            Some(record) => match record.restore_runtime() {
+                Ok(runtime) => Some(runtime),
+                Err(_) => {
+                    store
+                        .clear()
+                        .map_err(|_| WalletDustSettlementError::RetainedStateUnavailable)?;
+                    None
+                }
+            },
+            None => None,
+        };
         let durable = Arc::new(AtomicBool::new(true));
         let recovered_revision = restored
             .as_ref()
@@ -137,9 +161,7 @@ impl WalletDustSettlementCapability {
                 if let Ok(record) =
                     WalletDustRegistrationRecoveryRecord::from_projection(&projection)
                 {
-                    if store.save(record).is_err() {
-                        durable.store(false, Ordering::Release);
-                    }
+                    durable.store(store.save(record).is_ok(), Ordering::Release);
                 }
                 projection_sink.send_replace(projection);
             });
@@ -197,14 +219,19 @@ impl WalletDustSettlementCapability {
                 .map_err(|_| WalletDustSettlementError::RetainedStateUnavailable)? =
                 (Some(identity.clone()), 0);
         }
-        self.driver
+        let result = self
+            .driver
             .advance(WalletDustRegistrationSettlementEvent::Eligibility {
-                identity,
+                identity: identity.clone(),
                 revision: self.executor.bound_revision()?,
                 eligible,
             })
             .await
-            .map_err(WalletDustSettlementError::Driver)
+            .map_err(WalletDustSettlementError::Driver)?;
+        if !is_recoverable_state(result.state) {
+            self.reset_retry_attempts(identity)?;
+        }
+        Ok(result)
     }
 
     /// Supplies the one explicit user decision for the exact retained preview.
@@ -234,7 +261,13 @@ impl WalletDustSettlementCapability {
         if result.is_err() {
             self.executor.clear_confirmation();
         }
-        result
+        let result = result?;
+        if let Some(identity) = result.identity.clone()
+            && !is_recoverable_state(result.state)
+        {
+            self.reset_retry_attempts(identity)?;
+        }
+        Ok(result)
     }
 
     /// Retries only a retained recoverable operation. It cannot create a
@@ -260,19 +293,38 @@ impl WalletDustSettlementCapability {
             .checked_add(1)
             .ok_or(WalletDustSettlementError::RetainedStateUnavailable)?;
         {
-            let mut attempts = self
+            let attempts = self
                 .retry_attempts
                 .lock()
                 .map_err(|_| WalletDustSettlementError::RetainedStateUnavailable)?;
             if attempts.0.as_ref() != Some(&identity) || attempts.1 >= MAX_SETTLEMENT_RETRIES {
                 return Err(WalletDustSettlementError::RetryNotAdmitted);
             }
-            attempts.1 += 1;
         }
-        self.driver
-            .advance(WalletDustRegistrationSettlementEvent::Retry { identity, revision })
-            .await
-            .map_err(WalletDustSettlementError::Driver)
+        let result = self
+            .driver
+            .advance(WalletDustRegistrationSettlementEvent::Retry {
+                identity: identity.clone(),
+                revision,
+            })
+            .await;
+        match result {
+            Ok(projection) => {
+                if is_recoverable_state(projection.state) {
+                    self.consume_retry_attempt(&identity)?;
+                } else {
+                    self.reset_retry_attempts(identity)?;
+                }
+                Ok(projection)
+            }
+            Err(WalletDustRegistrationDriverError::Busy) => Err(WalletDustSettlementError::Driver(
+                WalletDustRegistrationDriverError::Busy,
+            )),
+            Err(error) => {
+                self.consume_retry_attempt(&identity)?;
+                Err(WalletDustSettlementError::Driver(error))
+            }
+        }
     }
 
     /// Returns the exact public facts currently awaiting the single protected
@@ -296,6 +348,33 @@ impl WalletDustSettlementCapability {
         self.driver
             .projection()
             .map_err(WalletDustSettlementError::Driver)
+    }
+
+    fn consume_retry_attempt(
+        &self,
+        identity: &WalletDustRegistrationSettlementIdentity,
+    ) -> Result<(), WalletDustSettlementError> {
+        let mut attempts = self
+            .retry_attempts
+            .lock()
+            .map_err(|_| WalletDustSettlementError::RetainedStateUnavailable)?;
+        if attempts.0.as_ref() != Some(identity) {
+            return Err(WalletDustSettlementError::RetainedStateUnavailable);
+        }
+        attempts.1 = attempts.1.saturating_add(1);
+        Ok(())
+    }
+
+    fn reset_retry_attempts(
+        &self,
+        identity: WalletDustRegistrationSettlementIdentity,
+    ) -> Result<(), WalletDustSettlementError> {
+        *self
+            .retry_attempts
+            .lock()
+            .map_err(|_| WalletDustSettlementError::RetainedStateUnavailable)? =
+            (Some(identity), 0);
+        Ok(())
     }
 
     /// Observes ordered public projection changes without transferring
@@ -460,6 +539,25 @@ impl ComposedDustRegistrationExecutor {
         Ok(retained.operation_revision)
     }
 
+    fn recovery_record(
+        &self,
+        identity: &WalletDustRegistrationSettlementIdentity,
+    ) -> Result<Option<WalletDustRegistrationRecoveryRecord>, WalletDustRegistrationExecutorFailure>
+    {
+        let record = self
+            .store
+            .load()
+            .map_err(|_| WalletDustRegistrationExecutorFailure::Unavailable)?;
+        if record.as_ref().is_some_and(|record| {
+            record.profile_id != identity.profile.as_str()
+                || record.realm_id != identity.realm.as_str()
+                || record.generation != identity.generation
+        }) {
+            return Err(WalletDustRegistrationExecutorFailure::Degraded);
+        }
+        Ok(record)
+    }
+
     fn execute_prepare(
         &self,
         identity: WalletDustRegistrationSettlementIdentity,
@@ -598,10 +696,16 @@ impl ComposedDustRegistrationExecutor {
             ));
         }
         // Fail closed unless the authorized draft was durably recorded before broadcast.
-        if !self.durable.load(Ordering::Acquire) || !self.store.load()
-            .map_err(|_| WalletDustRegistrationExecutorFailure::Unavailable)?
-            .is_some_and(|record| record.state == oxid_wallet_application::WalletDustRegistrationSettlementState::Submitting
-                && record.registration.as_ref().is_some_and(|registration| registration.draft_id == draft_id.as_str())) {
+        if !self.durable.load(Ordering::Acquire)
+            || !self.recovery_record(&identity)?.is_some_and(|record| {
+                record.state
+                    == oxid_wallet_application::WalletDustRegistrationSettlementState::Submitting
+                    && record
+                        .registration
+                        .as_ref()
+                        .is_some_and(|registration| registration.draft_id == draft_id.as_str())
+            })
+        {
             return Err(WalletDustRegistrationExecutorFailure::Unavailable);
         }
         // A failed or cancelled submit future can have broadcast before returning.
@@ -636,7 +740,24 @@ impl ComposedDustRegistrationExecutor {
                     transaction_id,
                 ));
             }
-            Err(error) => return Err(map_registration_failure(error)),
+            Err(error) => {
+                use oxid_wallet_application::WalletDustRegistrationPortError as PortError;
+                let outcome_is_uncertain = matches!(
+                    &error,
+                    oxid_wallet_application::WalletDustRegistrationError::Operation(
+                        PortError::SubmissionOutcomeUnknown
+                            | PortError::SubmissionInProgress
+                            | PortError::Timeout
+                    )
+                );
+                if !outcome_is_uncertain {
+                    self.retained
+                        .lock()
+                        .map_err(|_| WalletDustRegistrationExecutorFailure::Unavailable)?
+                        .submission_uncertain = false;
+                }
+                return Err(map_registration_failure(error));
+            }
         };
         if submitted.registration.draft_id != draft_id.as_str() {
             return Err(WalletDustRegistrationExecutorFailure::Degraded);
@@ -706,11 +827,14 @@ impl ComposedDustRegistrationExecutor {
         };
         let draft_id = draft_id
             .or_else(|| {
-                self.store.load().ok().flatten().and_then(|record| {
-                    record
-                        .registration
-                        .map(|registration| registration.draft_id)
-                })
+                self.recovery_record(&identity)
+                    .ok()
+                    .flatten()
+                    .and_then(|record| {
+                        record
+                            .registration
+                            .map(|registration| registration.draft_id)
+                    })
             })
             .ok_or(WalletDustRegistrationExecutorFailure::Degraded)?;
         let status = self.status.execute(GetWalletDustRegistrationStatusCommand {
@@ -865,6 +989,18 @@ fn settlement_identity(
         realm: selected.identity.realm.clone(),
         generation: selected.generation,
     }
+}
+
+fn is_recoverable_state(
+    state: oxid_wallet_application::WalletDustRegistrationSettlementState,
+) -> bool {
+    matches!(
+        state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Offline
+            | oxid_wallet_application::WalletDustRegistrationSettlementState::TimedOut
+            | oxid_wallet_application::WalletDustRegistrationSettlementState::Degraded
+            | oxid_wallet_application::WalletDustRegistrationSettlementState::Suspended
+    )
 }
 
 fn continuation_confirmation(

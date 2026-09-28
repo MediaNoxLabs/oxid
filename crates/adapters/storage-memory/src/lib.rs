@@ -2,7 +2,10 @@
 
 #![forbid(unsafe_code)]
 
-use std::{collections::BTreeMap, sync::RwLock};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, RwLock},
+};
 
 use oxid_credential_application::{CredentialRepository, CredentialRepositoryError};
 use oxid_credential_domain::{CredentialId, CredentialProfileId, CredentialRecord};
@@ -10,9 +13,10 @@ use oxid_foundation::UnixTimestampMillis;
 use oxid_identity_application::{DidRecordRepository, DidRecordRepositoryError};
 use oxid_identity_domain::{DidRecord, IdentityProfileId, MidnightDid};
 use oxid_wallet_application::{
-    WalletBackupReceiptRepository, WalletProfileAssociationRepository,
-    WalletProfileAssociationRepositoryError, WalletProfileAssociations, WalletProfileRepository,
-    WalletProfileRepositoryError,
+    InMemoryWalletDustRegistrationRecoveryStore, WalletBackupReceiptRepository,
+    WalletDustRegistrationRecoveryStore, WalletDustRegistrationRecoveryStoreProvider,
+    WalletProfileAssociationRepository, WalletProfileAssociationRepositoryError,
+    WalletProfileAssociations, WalletProfileRepository, WalletProfileRepositoryError,
 };
 use oxid_wallet_domain::{WalletProfile, WalletProfileId};
 
@@ -25,6 +29,15 @@ pub struct InMemoryWalletProfileRepository {
     active_profile_id: RwLock<Option<String>>,
     associations: RwLock<BTreeMap<String, WalletProfileAssociations>>,
     complete_backup_receipts: RwLock<BTreeMap<String, UnixTimestampMillis>>,
+    dust_registration_recovery: Arc<InMemoryWalletDustRegistrationRecoveryStore>,
+}
+
+impl WalletDustRegistrationRecoveryStoreProvider for InMemoryWalletProfileRepository {
+    fn wallet_dust_registration_recovery_store(
+        &self,
+    ) -> Arc<dyn WalletDustRegistrationRecoveryStore> {
+        self.dust_registration_recovery.clone()
+    }
 }
 
 impl InMemoryWalletProfileRepository {
@@ -459,5 +472,21 @@ mod tests {
             repository.set_active(&missing),
             Err(WalletProfileRepositoryError::NotFound)
         );
+    }
+
+    #[test]
+    fn recovery_store_is_shared_within_one_root_and_isolated_between_roots() {
+        let first = InMemoryWalletProfileRepository::new();
+        let second = InMemoryWalletProfileRepository::new();
+        let first_store = first.wallet_dust_registration_recovery_store();
+
+        assert!(Arc::ptr_eq(
+            &first_store,
+            &first.wallet_dust_registration_recovery_store()
+        ));
+        assert!(!Arc::ptr_eq(
+            &first_store,
+            &second.wallet_dust_registration_recovery_store()
+        ));
     }
 }

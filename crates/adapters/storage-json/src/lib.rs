@@ -6,7 +6,7 @@ use std::{
     collections::BTreeSet,
     env, fs,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 #[cfg(not(target_os = "android"))]
@@ -16,8 +16,9 @@ use oxid_foundation::UnixTimestampMillis;
 use oxid_wallet_application::{
     WalletAccountAssociation, WalletBackupReceiptRepository, WalletDustRegistrationRecoveryRecord,
     WalletDustRegistrationRecoveryStore, WalletDustRegistrationRecoveryStoreError,
-    WalletProfileAssociationRepository, WalletProfileAssociationRepositoryError,
-    WalletProfileAssociations, WalletProfileRepository, WalletProfileRepositoryError,
+    WalletDustRegistrationRecoveryStoreProvider, WalletProfileAssociationRepository,
+    WalletProfileAssociationRepositoryError, WalletProfileAssociations, WalletProfileRepository,
+    WalletProfileRepositoryError,
 };
 use oxid_wallet_domain::{ChainNetworkId, ProfileName, WalletProfile, WalletProfileId};
 use serde::{Deserialize, Serialize};
@@ -31,40 +32,13 @@ const STORE_FILE_NAME: &str = "wallet-profiles.json";
 const DUST_REGISTRATION_RECOVERY_FILE_NAME: &str = "wallet-dust-registration-recovery.bin";
 const MAX_DUST_REGISTRATION_RECOVERY_BYTES: usize = 4096;
 
-/// Owner-private persistence for the public DUST-registration recovery record.
-///
-/// The record contains no custody material, authorization challenge,
-/// transaction body, endpoint credential, or unrestricted adapter error.
-pub struct JsonWalletDustRegistrationRecoveryStore {
+/// Owner-private persistence colocated with one JSON profile repository.
+struct JsonWalletDustRegistrationRecoveryStore {
     path: Option<PathBuf>,
     access: Mutex<()>,
 }
 
 impl JsonWalletDustRegistrationRecoveryStore {
-    #[must_use]
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self {
-            path: Some(path.into()),
-            access: Mutex::new(()),
-        }
-    }
-
-    #[must_use]
-    pub fn at_default_location() -> Self {
-        let path = env::var_os("OXID_DUST_REGISTRATION_RECOVERY_PATH")
-            .map(PathBuf::from)
-            .or_else(|| {
-                default_store_path().and_then(|path| {
-                    path.parent()
-                        .map(|directory| directory.join(DUST_REGISTRATION_RECOVERY_FILE_NAME))
-                })
-            });
-        Self {
-            path,
-            access: Mutex::new(()),
-        }
-    }
-
     fn path(&self) -> Result<&Path, WalletDustRegistrationRecoveryStoreError> {
         self.path
             .as_deref()
@@ -182,6 +156,15 @@ impl JsonWalletProfileRepository {
         self.path
             .as_deref()
             .ok_or(WalletProfileRepositoryError::Unavailable)
+    }
+
+    fn recovery_path(&self) -> Result<PathBuf, WalletDustRegistrationRecoveryStoreError> {
+        self.path
+            .as_deref()
+            .and_then(Path::parent)
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map(|parent| parent.join(DUST_REGISTRATION_RECOVERY_FILE_NAME))
+            .ok_or(WalletDustRegistrationRecoveryStoreError::Unavailable)
     }
 
     fn load_document(&self) -> Result<StoreDocument, WalletProfileRepositoryError> {
@@ -326,6 +309,17 @@ fn default_store_path() -> Option<PathBuf> {
             .join("oxid")
             .join(STORE_FILE_NAME),
     )
+}
+
+impl WalletDustRegistrationRecoveryStoreProvider for JsonWalletProfileRepository {
+    fn wallet_dust_registration_recovery_store(
+        &self,
+    ) -> Arc<dyn WalletDustRegistrationRecoveryStore> {
+        Arc::new(JsonWalletDustRegistrationRecoveryStore {
+            path: self.recovery_path().ok(),
+            access: Mutex::new(()),
+        })
+    }
 }
 
 impl WalletProfileRepository for JsonWalletProfileRepository {
@@ -851,13 +845,15 @@ mod tests {
     #[test]
     fn dust_registration_recovery_reopens_and_clears_owner_private_state() {
         let store = TestStore::new();
-        let path = store.root.join(DUST_REGISTRATION_RECOVERY_FILE_NAME);
         let record = dust_registration_recovery_record();
-        JsonWalletDustRegistrationRecoveryStore::new(&path)
+        let repository = JsonWalletProfileRepository::new(&store.path);
+        repository
+            .wallet_dust_registration_recovery_store()
             .save(record.clone())
             .expect("recovery record saves");
 
-        let reopened = JsonWalletDustRegistrationRecoveryStore::new(&path);
+        let reopened =
+            JsonWalletProfileRepository::new(&store.path).wallet_dust_registration_recovery_store();
         assert_eq!(
             reopened.load().expect("recovery record loads"),
             Some(record)

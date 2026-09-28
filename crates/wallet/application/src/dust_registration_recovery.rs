@@ -2,7 +2,7 @@
 
 //! Durable, adapter-neutral recovery boundary for DUST registration.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use oxid_wallet_domain::{
     ChainNetworkId, ChainTransactionId, WalletProfileId, WalletTransactionDraftId,
@@ -77,6 +77,15 @@ pub trait WalletDustRegistrationRecoveryStore: Send + Sync {
     fn clear(&self) -> Result<(), WalletDustRegistrationRecoveryStoreError>;
 }
 
+/// Supplies one recovery store scoped to the same composition root as a
+/// wallet-profile repository without adding recovery methods to that
+/// repository's public CRUD surface.
+pub trait WalletDustRegistrationRecoveryStoreProvider: Send + Sync {
+    fn wallet_dust_registration_recovery_store(
+        &self,
+    ) -> Arc<dyn WalletDustRegistrationRecoveryStore>;
+}
+
 #[derive(Default)]
 pub struct InMemoryWalletDustRegistrationRecoveryStore(
     Mutex<Option<WalletDustRegistrationRecoveryRecord>>,
@@ -143,19 +152,20 @@ impl WalletDustRegistrationRecoveryRecord {
     pub fn from_projection(
         projection: &Projection,
     ) -> Result<Self, WalletDustRegistrationRecoveryError> {
-        // Parked/recoverable lifecycle bookkeeping is deliberately not durable in v1.
-        if !projection.is_exact_recovery_state()
-            || !matches!(
-                projection.state,
-                State::ActionRequired
-                    | State::NotEligible
-                    | State::AwaitingAuthorization
-                    | State::Submitting
-                    | State::Confirming
-                    | State::Reconciling
-                    | State::Ready
-            )
-        {
+        // V1 deliberately stores only the primary public workflow. A parked
+        // replacement or retry-resume hint can be re-derived after restart;
+        // refusing to persist the primary submitting draft would be unsafe
+        // because a broadcast must never outrun its recovery record.
+        if !matches!(
+            projection.state,
+            State::ActionRequired
+                | State::NotEligible
+                | State::AwaitingAuthorization
+                | State::Submitting
+                | State::Confirming
+                | State::Reconciling
+                | State::Ready
+        ) {
             return Err(WalletDustRegistrationRecoveryError::ImpossibleState);
         }
         let identity = projection

@@ -25,6 +25,7 @@ struct FakeServices {
     sync_ready: Mutex<Result<bool, ()>>,
     submit_unknown: Mutex<bool>,
     submit_timeout: Mutex<bool>,
+    submit_rejected: Mutex<bool>,
     registration_already_current: Mutex<bool>,
     registration_prepare_failure: Mutex<Option<WalletDustRegistrationPortError>>,
     calls: Mutex<Vec<&'static str>>,
@@ -38,6 +39,7 @@ impl FakeServices {
             sync_ready: Mutex::new(Ok(true)),
             submit_unknown: Mutex::new(false),
             submit_timeout: Mutex::new(false),
+            submit_rejected: Mutex::new(false),
             registration_already_current: Mutex::new(false),
             registration_prepare_failure: Mutex::new(None),
             calls: Mutex::new(Vec::new()),
@@ -147,6 +149,11 @@ impl SubmitWalletDustRegistrationUseCase for FakeServices {
             if *self.submit_unknown.lock().unwrap() {
                 return Err(WalletDustRegistrationError::Operation(
                     WalletDustRegistrationPortError::SubmissionOutcomeUnknown,
+                ));
+            }
+            if *self.submit_rejected.lock().unwrap() {
+                return Err(WalletDustRegistrationError::Operation(
+                    WalletDustRegistrationPortError::SubmissionRejected,
                 ));
             }
             Ok(WalletDustRegistrationSubmissionView {
@@ -512,6 +519,30 @@ fn timed_out_submit_retry_reconciles_public_status_without_a_second_submit() {
             .filter(|call| **call == "submit")
             .count(),
         1
+    );
+}
+
+#[test]
+fn definitive_submit_failure_retries_submission_instead_of_false_reconciliation() {
+    let fake = Arc::new(FakeServices::new());
+    *fake.submit_rejected.lock().unwrap() = true;
+    let capability = capability(&fake);
+    block_on(capability.refresh("profile_test".to_owned())).unwrap();
+    assert!(block_on(capability.authorize(confirmation(true))).is_err());
+
+    *fake.submit_rejected.lock().unwrap() = false;
+    assert_eq!(
+        block_on(capability.retry()).unwrap().state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Ready
+    );
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "submit")
+            .count(),
+        2
     );
 }
 

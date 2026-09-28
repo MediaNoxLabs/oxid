@@ -38,8 +38,8 @@ use oxid_adapter_storage_dev::DevelopmentWalletSecurity;
 use oxid_adapter_storage_json::JsonWalletProfileRepository;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_wallet_application::{
-    WalletBackupReceiptRepository, WalletProfileAssociationRepository, WalletProfileRepository,
-    WalletProtectionPort,
+    WalletBackupReceiptRepository, WalletDustRegistrationRecoveryStoreProvider,
+    WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
 };
 
 type DevelopmentStorage = (
@@ -332,6 +332,7 @@ where
     R: WalletProfileRepository
         + WalletProfileAssociationRepository
         + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
         + 'static,
     F: FnOnce(Arc<DevelopmentWalletSecurity<SystemClock, N>>) -> Arc<dyn WalletProtectionPort>,
 {
