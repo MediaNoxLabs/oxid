@@ -35,7 +35,7 @@ const MAX_DUST_REGISTRATION_RECOVERY_BYTES: usize = 4096;
 /// Owner-private persistence colocated with one JSON profile repository.
 struct JsonWalletDustRegistrationRecoveryStore {
     path: Option<PathBuf>,
-    access: Mutex<()>,
+    access: Arc<Mutex<()>>,
 }
 
 impl JsonWalletDustRegistrationRecoveryStore {
@@ -119,6 +119,7 @@ const fn map_recovery_store_error(
 pub struct JsonWalletProfileRepository {
     path: Option<PathBuf>,
     access: Mutex<()>,
+    recovery_access: Arc<Mutex<()>>,
 }
 
 impl JsonWalletProfileRepository {
@@ -127,6 +128,7 @@ impl JsonWalletProfileRepository {
         Self {
             path: Some(path.into()),
             access: Mutex::new(()),
+            recovery_access: Arc::new(Mutex::new(())),
         }
     }
 
@@ -142,6 +144,7 @@ impl JsonWalletProfileRepository {
         Self {
             path,
             access: Mutex::new(()),
+            recovery_access: Arc::new(Mutex::new(())),
         }
     }
 
@@ -317,7 +320,7 @@ impl WalletDustRegistrationRecoveryStoreProvider for JsonWalletProfileRepository
     ) -> Arc<dyn WalletDustRegistrationRecoveryStore> {
         Arc::new(JsonWalletDustRegistrationRecoveryStore {
             path: self.recovery_path().ok(),
-            access: Mutex::new(()),
+            access: Arc::clone(&self.recovery_access),
         })
     }
 }

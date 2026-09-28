@@ -5,12 +5,13 @@ use std::sync::{Arc, Mutex};
 use futures::executor::block_on;
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationCommand, ChainNetworkId, GetSelectedWalletRealmSyncUseCase,
-    GetWalletDustRegistrationStatusCommand, PrepareWalletDustRegistrationCommand,
-    ReconcileWalletDustRegistrationSubmissionCommand, SelectedWalletRealmActionReadiness,
-    SelectedWalletRealmIdentity, SelectedWalletRealmObservation,
-    SelectedWalletRealmProjectionFuture, SelectedWalletRealmSyncError, SelectedWalletRealmSyncView,
-    SubmitWalletDustRegistrationCommand, WalletAccountView, WalletAssetBalanceView,
-    WalletDustRegistrationAssetView, WalletDustRegistrationError, WalletDustRegistrationPortError,
+    GetWalletDustRegistrationStatusCommand, InMemoryWalletDustRegistrationRecoveryStore,
+    PrepareWalletDustRegistrationCommand, ReconcileWalletDustRegistrationSubmissionCommand,
+    SelectedWalletRealmActionReadiness, SelectedWalletRealmIdentity,
+    SelectedWalletRealmObservation, SelectedWalletRealmProjectionFuture,
+    SelectedWalletRealmSyncError, SelectedWalletRealmSyncView, SubmitWalletDustRegistrationCommand,
+    WalletAccountView, WalletAssetBalanceView, WalletDustRegistrationAssetView,
+    WalletDustRegistrationError, WalletDustRegistrationPortError,
     WalletDustRegistrationPreviewView, WalletDustRegistrationStatusViewFuture,
     WalletDustRegistrationSubmissionStatusView, WalletDustRegistrationSubmissionView,
     WalletDustRegistrationSubmissionViewFuture, WalletDustSyncView, WalletProfileId,
@@ -220,6 +221,30 @@ fn confirmation(confirmed: bool) -> SensitiveOperationConfirmation {
         title: "Authorize DUST registration".to_owned(),
         summary: "Authorize the exact retained registration preview.".to_owned(),
         confirmed,
+    }
+}
+
+struct UnavailableRecoveryStore;
+
+impl WalletDustRegistrationRecoveryStore for UnavailableRecoveryStore {
+    fn save(
+        &self,
+        _: WalletDustRegistrationRecoveryRecord,
+    ) -> Result<(), WalletDustRegistrationRecoveryStoreError> {
+        Err(WalletDustRegistrationRecoveryStoreError::Unavailable)
+    }
+
+    fn load(
+        &self,
+    ) -> Result<
+        Option<WalletDustRegistrationRecoveryRecord>,
+        WalletDustRegistrationRecoveryStoreError,
+    > {
+        Err(WalletDustRegistrationRecoveryStoreError::Unavailable)
+    }
+
+    fn clear(&self) -> Result<(), WalletDustRegistrationRecoveryStoreError> {
+        Err(WalletDustRegistrationRecoveryStoreError::Unavailable)
     }
 }
 
@@ -584,6 +609,36 @@ fn restart_reconciles_public_transaction_without_reauthorization_or_resubmission
             .filter(|call| **call == "authorize")
             .count(),
         1
+    );
+}
+
+#[test]
+fn unavailable_recovery_store_keeps_wallet_available_but_blocks_broadcast() {
+    let fake = Arc::new(FakeServices::new());
+    let capability = capability_with_store(&fake, Arc::new(UnavailableRecoveryStore));
+
+    assert_eq!(
+        block_on(capability.refresh("profile_test".to_owned()))
+            .unwrap()
+            .state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::AwaitingAuthorization
+    );
+    assert_eq!(
+        block_on(capability.authorize(confirmation(true))),
+        Err(WalletDustSettlementError::Driver(
+            WalletDustRegistrationDriverError::Executor(
+                WalletDustRegistrationExecutorFailure::Unavailable
+            )
+        ))
+    );
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "submit")
+            .count(),
+        0
     );
 }
 

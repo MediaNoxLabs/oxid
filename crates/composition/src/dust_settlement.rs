@@ -23,8 +23,8 @@ use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationCommand, AuthorizeWalletDustRegistrationUseCase,
     ChainTransactionId, ExecuteWalletDustRegistrationOperation, GetSelectedWalletRealmSyncUseCase,
     GetWalletDustRegistrationStatusCommand, GetWalletDustRegistrationStatusUseCase,
-    InMemoryWalletDustRegistrationRecoveryStore, PrepareWalletDustRegistrationCommand,
-    PrepareWalletDustRegistrationUseCase, ReconcileWalletDustRegistrationSubmissionCommand,
+    PrepareWalletDustRegistrationCommand, PrepareWalletDustRegistrationUseCase,
+    ReconcileWalletDustRegistrationSubmissionCommand,
     ReconcileWalletDustRegistrationSubmissionUseCase, SelectedWalletRealmProjection,
     SelectedWalletRealmSyncCommand, SensitiveOperationConfirmation,
     SubmitWalletDustRegistrationCommand, SubmitWalletDustRegistrationUseCase,
@@ -62,29 +62,6 @@ pub struct WalletDustAuthorizationReview {
 
 impl WalletDustSettlementCapability {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        selected_realm: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
-        sync_selected_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
-        prepare: Arc<dyn PrepareWalletDustRegistrationUseCase>,
-        authorize: Arc<dyn AuthorizeWalletDustRegistrationUseCase>,
-        submit: Arc<dyn SubmitWalletDustRegistrationUseCase>,
-        status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
-        reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
-    ) -> Self {
-        Self::with_recovery_store(
-            selected_realm,
-            sync_selected_realm,
-            prepare,
-            authorize,
-            submit,
-            status,
-            reconcile,
-            Arc::new(InMemoryWalletDustRegistrationRecoveryStore::default()),
-        )
-        .expect("in-memory recovery store is available")
-    }
-
-    #[allow(clippy::too_many_arguments)]
     pub fn with_recovery_store(
         selected_realm: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
         sync_selected_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
@@ -95,36 +72,39 @@ impl WalletDustSettlementCapability {
         reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
         store: Arc<dyn WalletDustRegistrationRecoveryStore>,
     ) -> Result<Self, WalletDustSettlementError> {
-        let loaded = match store.load() {
-            Ok(record) => record,
+        let (loaded, mut initially_durable) = match store.load() {
+            Ok(record) => (record, true),
             Err(WalletDustRegistrationRecoveryStoreError::Corrupt) => {
-                store
-                    .clear()
-                    .map_err(|_| WalletDustSettlementError::RetainedStateUnavailable)?;
+                let cleared = store.clear().is_ok();
+                (None, cleared)
+            }
+            Err(WalletDustRegistrationRecoveryStoreError::Unavailable) => (None, false),
+        };
+        let restored = match loaded {
+            Some(record)
+                if matches!(
+                    record.state,
+                    oxid_wallet_application::WalletDustRegistrationSettlementState::AwaitingAuthorization
+                ) =>
+            {
+                // Protected authorization cannot be resumed after restart. Remove
+                // the stale public recovery record and let refresh rebuild the
+                // authorization boundary from the selected realm.
+                initially_durable = store.clear().is_ok();
                 None
             }
-            Err(WalletDustRegistrationRecoveryStoreError::Unavailable) => {
-                return Err(WalletDustSettlementError::RetainedStateUnavailable);
-            }
-        };
-        let restored = match loaded.filter(|record| {
-            !matches!(
-                record.state,
-                oxid_wallet_application::WalletDustRegistrationSettlementState::AwaitingAuthorization
-            )
-        }) {
             Some(record) => match record.restore_runtime() {
                 Ok(runtime) => Some(runtime),
                 Err(_) => {
-                    store
-                        .clear()
-                        .map_err(|_| WalletDustSettlementError::RetainedStateUnavailable)?;
+                    // An internally inconsistent public record is recoverable:
+                    // discard it and start from the authoritative selected realm.
+                    initially_durable = store.clear().is_ok();
                     None
                 }
             },
             None => None,
         };
-        let durable = Arc::new(AtomicBool::new(true));
+        let durable = Arc::new(AtomicBool::new(initially_durable));
         let recovered_revision = restored
             .as_ref()
             .and_then(|runtime| runtime.coordinator().projection().registration.as_ref())
@@ -158,11 +138,9 @@ impl WalletDustSettlementCapability {
         let projection_sink = projections.clone();
         let observer: oxid_wallet_application::WalletDustRegistrationProjectionObserver =
             Arc::new(move |projection| {
-                if let Ok(record) =
-                    WalletDustRegistrationRecoveryRecord::from_projection(&projection)
-                {
-                    durable.store(store.save(record).is_ok(), Ordering::Release);
-                }
+                let persisted = WalletDustRegistrationRecoveryRecord::from_projection(&projection)
+                    .is_ok_and(|record| store.save(record).is_ok());
+                durable.store(persisted, Ordering::Release);
                 projection_sink.send_replace(projection);
             });
         let driver = match restored {

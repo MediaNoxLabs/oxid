@@ -1005,17 +1005,7 @@ where
             Arc::clone(&reconcile_wallet_dust_registration_submission),
             dust_registration_recovery,
         )
-        .unwrap_or_else(|_| {
-            WalletDustSettlementCapability::new(
-                Arc::clone(&get_selected_wallet_realm_sync),
-                Arc::clone(&sync_selected_wallet_realm),
-                Arc::clone(&prepare_wallet_dust_registration),
-                Arc::clone(&authorize_wallet_dust_registration),
-                Arc::clone(&submit_wallet_dust_registration),
-                Arc::clone(&get_wallet_dust_registration_status),
-                Arc::clone(&reconcile_wallet_dust_registration_submission),
-            )
-        }),
+        .expect("DUST settlement capability construction is infallible"),
     );
     let prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase> =
         transactions.clone();
