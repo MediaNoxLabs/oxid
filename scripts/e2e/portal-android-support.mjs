@@ -508,8 +508,11 @@ const controlServer = http.createServer(async (request, response) => {
       sendJson(response, 200, { mode: proxyMode });
     } else if (request.method === "POST" && request.url === "/complete") {
       complete = true;
+      // Resolve the owner lifecycle only after the authenticated completion
+      // response has left Node. Cleanup can then close every remaining idle or
+      // persistent connection without racing the caller that owns this receipt.
+      response.once("finish", completionResolve);
       sendJson(response, 200, { ok: true });
-      completionResolve();
     } else {
       sendJson(response, 404, { error: "not_found" });
     }
@@ -563,7 +566,14 @@ async function cleanup() {
   }
   delayedResponses.clear();
   await Promise.all([issuerProxy, issuerResolverProxy, holderResolver, offerServer, controlServer].map(
-    (server) => new Promise((resolve) => server.close(resolve)),
+    (server) => new Promise((resolve) => {
+      server.close(resolve);
+      // Node's close callback waits for persistent HTTP connections. The
+      // harness owns every listener and has already destroyed proxied work, so
+      // explicitly close the remaining connections to keep teardown bounded.
+      server.closeIdleConnections?.();
+      server.closeAllConnections?.();
+    }),
   ));
   try {
     runLifecycle("down");

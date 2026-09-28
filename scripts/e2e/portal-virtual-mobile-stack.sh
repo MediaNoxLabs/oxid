@@ -301,6 +301,11 @@ printf 'portal-virtual-mobile-stack: build_env=%s\n' "${BUILD_ENV#"$REPOSITORY_R
 printf 'portal-virtual-mobile-stack: capability_file=%s\n' "${CAPABILITY_FILE#"$REPOSITORY_ROOT/"}"
 printf 'portal-virtual-mobile-stack: keep this command running; press Ctrl-C for exact cleanup\n'
 while oxid_job_is_running "$support_pid"; do run_deadline 2 sleep 1; done
-wait "$support_pid" || fail support
-support_pid=""
-fail unexpected-stop
+if wait "$support_pid"; then
+  # The support process exits successfully only after the capability-protected
+  # /complete request. Treat that owner-requested shutdown as the normal end of
+  # the serve lifecycle; signals and spontaneous exits remain non-zero.
+  support_pid=""
+  exit 0
+fi
+fail support

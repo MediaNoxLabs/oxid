@@ -336,6 +336,14 @@ for runner in \
     fail nested-build-source
   fi
 done
+virtual_stack="$ROOT/scripts/e2e/portal-virtual-mobile-stack.sh"
+grep -qF 'if wait "$support_pid"; then' "$virtual_stack" \
+  || fail portal-owner-completion-wait
+grep -qF 'support_pid=""' "$virtual_stack" \
+  || fail portal-owner-completion-cleared
+if grep -qF 'fail unexpected-stop' "$virtual_stack"; then
+  fail portal-owner-completion-misclassified
+fi
 android_runner="$ROOT/scripts/test-android-portal-exact-sequence-avd.sh"
 grep -qF 'if [ "$build_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then' "$android_runner" \
   || fail android-failed-build-preservation

@@ -45,6 +45,23 @@ test("unavailable issuer proxy uses one deterministic HTTP failure response", ()
   assert.doesNotMatch(branch, /response\.destroy\(\);/u);
 });
 
+test("authenticated completion flushes its receipt before bounded connection cleanup", () => {
+  const completionStart = supportSource.indexOf(
+    'request.method === "POST" && request.url === "/complete"',
+  );
+  const completionEnd = supportSource.indexOf("} else {", completionStart);
+  const completionBranch = supportSource.slice(completionStart, completionEnd);
+
+  assert.ok(completionStart >= 0 && completionEnd > completionStart);
+  assert.match(completionBranch, /response\.once\("finish", completionResolve\);/u);
+  assert.ok(
+    completionBranch.indexOf('sendJson(response, 200, { ok: true });')
+      > completionBranch.indexOf('response.once("finish", completionResolve);'),
+  );
+  assert.match(supportSource, /server\.closeIdleConnections\?\.\(\);/u);
+  assert.match(supportSource, /server\.closeAllConnections\?\.\(\);/u);
+});
+
 test("issue accepts either the completion notice or the protected valid-record state", () => {
   const issueStart = source.indexOf('} else if (mode === "issue")');
   const result = source.indexOf('    const result = await evaluate', issueStart);
