@@ -14,6 +14,7 @@ use crate::{
     WalletDustRegistrationSettlementAuthorizationPhase as AuthorizationPhase,
     WalletDustRegistrationSettlementCheckpoint as Checkpoint,
     WalletDustRegistrationSettlementIdentity as Identity,
+    WalletDustRegistrationSettlementProjection as Projection,
     WalletDustRegistrationSettlementRegistration as Registration,
     WalletDustRegistrationSettlementState as State, recovered_dust_registration_coordinator,
     recovered_dust_registration_projection,
@@ -135,7 +136,13 @@ impl WalletDustRegistrationRecoveryRecord {
                 found: checkpoint.version,
             });
         }
-        let projection = checkpoint.coordinator.projection();
+        Self::from_projection(checkpoint.coordinator.projection())
+    }
+
+    /// Captures a stable public projection without retaining custody or adapter data.
+    pub fn from_projection(
+        projection: &Projection,
+    ) -> Result<Self, WalletDustRegistrationRecoveryError> {
         // Parked/recoverable lifecycle bookkeeping is deliberately not durable in v1.
         if !projection.is_exact_recovery_state()
             || !matches!(
@@ -331,14 +338,13 @@ impl WalletDustRegistrationRecoveryRecord {
             {
                 return Err(WalletDustRegistrationRecoveryError::ImpossibleState);
             }
-            if value.authorization_phase == AuthorizationPhase::Submitted {
-                if value.observation_revision
+            if value.authorization_phase == AuthorizationPhase::Submitted
+                && (value.observation_revision
                     != value.finality_revision.max(value.reconciliation_revision)
                     || value.dust_ready && value.dust_revision == 0
-                    || value.included && value.reconciliation_revision == 0
-                {
-                    return Err(WalletDustRegistrationRecoveryError::ImpossibleState);
-                }
+                    || value.included && value.reconciliation_revision == 0)
+            {
+                return Err(WalletDustRegistrationRecoveryError::ImpossibleState);
             }
         }
         match self.state {

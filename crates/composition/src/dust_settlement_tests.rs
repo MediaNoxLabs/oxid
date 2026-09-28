@@ -24,6 +24,7 @@ struct FakeServices {
     reconcile_state: Mutex<String>,
     sync_ready: Mutex<Result<bool, ()>>,
     submit_unknown: Mutex<bool>,
+    submit_timeout: Mutex<bool>,
     registration_already_current: Mutex<bool>,
     registration_prepare_failure: Mutex<Option<WalletDustRegistrationPortError>>,
     calls: Mutex<Vec<&'static str>>,
@@ -36,6 +37,7 @@ impl FakeServices {
             reconcile_state: Mutex::new("included".to_owned()),
             sync_ready: Mutex::new(Ok(true)),
             submit_unknown: Mutex::new(false),
+            submit_timeout: Mutex::new(false),
             registration_already_current: Mutex::new(false),
             registration_prepare_failure: Mutex::new(None),
             calls: Mutex::new(Vec::new()),
@@ -137,6 +139,11 @@ impl SubmitWalletDustRegistrationUseCase for FakeServices {
     ) -> WalletDustRegistrationSubmissionViewFuture<'a> {
         Box::pin(async move {
             self.record("submit");
+            if *self.submit_timeout.lock().unwrap() {
+                return Err(WalletDustRegistrationError::Operation(
+                    WalletDustRegistrationPortError::Timeout,
+                ));
+            }
             if *self.submit_unknown.lock().unwrap() {
                 return Err(WalletDustRegistrationError::Operation(
                     WalletDustRegistrationPortError::SubmissionOutcomeUnknown,
@@ -178,15 +185,27 @@ impl ReconcileWalletDustRegistrationSubmissionUseCase for FakeServices {
 }
 
 fn capability(fake: &Arc<FakeServices>) -> WalletDustSettlementCapability {
-    WalletDustSettlementCapability::new(
-        fake.clone(),
-        fake.clone(),
-        fake.clone(),
-        fake.clone(),
-        fake.clone(),
-        fake.clone(),
-        fake.clone(),
+    capability_with_store(
+        fake,
+        Arc::new(InMemoryWalletDustRegistrationRecoveryStore::default()),
     )
+}
+
+fn capability_with_store(
+    fake: &Arc<FakeServices>,
+    store: Arc<dyn WalletDustRegistrationRecoveryStore>,
+) -> WalletDustSettlementCapability {
+    WalletDustSettlementCapability::with_recovery_store(
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        store,
+    )
+    .unwrap()
 }
 
 fn confirmation(confirmed: bool) -> SensitiveOperationConfirmation {
@@ -471,6 +490,73 @@ fn uncertain_submission_recovers_the_retained_transaction_without_a_second_submi
 }
 
 #[test]
+fn timed_out_submit_retry_reconciles_public_status_without_a_second_submit() {
+    let fake = Arc::new(FakeServices::new());
+    *fake.submit_timeout.lock().unwrap() = true;
+    let capability = capability(&fake);
+    block_on(capability.refresh("profile_test".to_owned())).unwrap();
+    assert!(block_on(capability.authorize(confirmation(true))).is_err());
+    assert_eq!(
+        capability.projection().unwrap().state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::TimedOut
+    );
+    assert_eq!(
+        block_on(capability.retry()).unwrap().state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Ready
+    );
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "submit")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn restart_reconciles_public_transaction_without_reauthorization_or_resubmission() {
+    let fake = Arc::new(FakeServices::new());
+    let store: Arc<dyn WalletDustRegistrationRecoveryStore> =
+        Arc::new(InMemoryWalletDustRegistrationRecoveryStore::default());
+    *fake.reconcile_state.lock().unwrap() = "broadcasting".to_owned();
+    let first = capability_with_store(&fake, Arc::clone(&store));
+    block_on(first.refresh("profile_test".to_owned())).unwrap();
+    assert_eq!(
+        block_on(first.authorize(confirmation(true))).unwrap().state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Confirming
+    );
+    drop(first);
+    *fake.reconcile_state.lock().unwrap() = "included".to_owned();
+    let restarted = capability_with_store(&fake, store);
+    assert_eq!(
+        block_on(restarted.refresh("profile_test".to_owned()))
+            .unwrap()
+            .state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Ready
+    );
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "submit")
+            .count(),
+        1
+    );
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "authorize")
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn pending_reconciliation_returns_a_stable_projection_without_hot_looping() {
     let fake = Arc::new(FakeServices::new());
     *fake.reconcile_state.lock().unwrap() = "broadcasting".to_owned();
@@ -508,8 +594,77 @@ fn refresh_failure_retains_the_included_registration_for_retry() {
             )
         ))
     );
+    let failed = capability.projection().unwrap();
+    assert_eq!(
+        failed.state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Degraded
+    );
+    assert_eq!(failed.checkpoint.unwrap().revision, 7);
+    *fake.sync_ready.lock().unwrap() = Ok(true);
+    assert_eq!(
+        block_on(capability.retry()).unwrap().state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Ready
+    );
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "submit")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn retries_are_capped_without_repeating_preparation_or_submission() {
+    let fake = Arc::new(FakeServices::new());
+    *fake.registration_prepare_failure.lock().unwrap() =
+        Some(WalletDustRegistrationPortError::Timeout);
+    let capability = capability(&fake);
+    assert!(block_on(capability.refresh("profile_test".to_owned())).is_err());
+    for _ in 0..MAX_SETTLEMENT_RETRIES {
+        assert!(block_on(capability.retry()).is_err());
+    }
+    assert_eq!(
+        block_on(capability.retry()),
+        Err(WalletDustSettlementError::RetryNotAdmitted)
+    );
+    assert_eq!(
+        fake.calls.lock().unwrap().len(),
+        usize::from(MAX_SETTLEMENT_RETRIES) + 1
+    );
     assert_eq!(
         capability.projection().unwrap().state,
-        oxid_wallet_application::WalletDustRegistrationSettlementState::Reconciling
+        oxid_wallet_application::WalletDustRegistrationSettlementState::TimedOut
+    );
+}
+
+#[test]
+fn preparation_failure_retry_keeps_the_selected_checkpoint() {
+    let fake = Arc::new(FakeServices::new());
+    *fake.registration_prepare_failure.lock().unwrap() =
+        Some(WalletDustRegistrationPortError::Timeout);
+    let capability = capability(&fake);
+    assert!(block_on(capability.refresh("profile_test".to_owned())).is_err());
+    let failed = capability.projection().unwrap();
+    assert_eq!(
+        failed.state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::TimedOut
+    );
+    assert_eq!(failed.checkpoint.unwrap().revision, 7);
+    *fake.registration_prepare_failure.lock().unwrap() = None;
+    assert_eq!(
+        block_on(capability.retry()).unwrap().state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::AwaitingAuthorization
+    );
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "submit")
+            .count(),
+        0
     );
 }

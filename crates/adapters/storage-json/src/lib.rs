@@ -4,7 +4,7 @@
 
 use std::{
     collections::BTreeSet,
-    env,
+    env, fs,
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -14,9 +14,10 @@ use directories::ProjectDirs;
 use oxid_adapter_store_atomic as store_atomic;
 use oxid_foundation::UnixTimestampMillis;
 use oxid_wallet_application::{
-    WalletAccountAssociation, WalletBackupReceiptRepository, WalletProfileAssociationRepository,
-    WalletProfileAssociationRepositoryError, WalletProfileAssociations, WalletProfileRepository,
-    WalletProfileRepositoryError,
+    WalletAccountAssociation, WalletBackupReceiptRepository, WalletDustRegistrationRecoveryRecord,
+    WalletDustRegistrationRecoveryStore, WalletDustRegistrationRecoveryStoreError,
+    WalletProfileAssociationRepository, WalletProfileAssociationRepositoryError,
+    WalletProfileAssociations, WalletProfileRepository, WalletProfileRepositoryError,
 };
 use oxid_wallet_domain::{ChainNetworkId, ProfileName, WalletProfile, WalletProfileId};
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,115 @@ const ASSOCIATION_SCHEMA_VERSION: u32 = 2;
 const MAX_PROFILE_COUNT: usize = 128;
 const MAX_STORE_BYTES: u64 = 1024 * 1024;
 const STORE_FILE_NAME: &str = "wallet-profiles.json";
+const DUST_REGISTRATION_RECOVERY_FILE_NAME: &str = "wallet-dust-registration-recovery.bin";
+const MAX_DUST_REGISTRATION_RECOVERY_BYTES: usize = 4096;
+
+/// Owner-private persistence for the public DUST-registration recovery record.
+///
+/// The record contains no custody material, authorization challenge,
+/// transaction body, endpoint credential, or unrestricted adapter error.
+pub struct JsonWalletDustRegistrationRecoveryStore {
+    path: Option<PathBuf>,
+    access: Mutex<()>,
+}
+
+impl JsonWalletDustRegistrationRecoveryStore {
+    #[must_use]
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: Some(path.into()),
+            access: Mutex::new(()),
+        }
+    }
+
+    #[must_use]
+    pub fn at_default_location() -> Self {
+        let path = env::var_os("OXID_DUST_REGISTRATION_RECOVERY_PATH")
+            .map(PathBuf::from)
+            .or_else(|| {
+                default_store_path().and_then(|path| {
+                    path.parent()
+                        .map(|directory| directory.join(DUST_REGISTRATION_RECOVERY_FILE_NAME))
+                })
+            });
+        Self {
+            path,
+            access: Mutex::new(()),
+        }
+    }
+
+    fn path(&self) -> Result<&Path, WalletDustRegistrationRecoveryStoreError> {
+        self.path
+            .as_deref()
+            .ok_or(WalletDustRegistrationRecoveryStoreError::Unavailable)
+    }
+}
+
+impl WalletDustRegistrationRecoveryStore for JsonWalletDustRegistrationRecoveryStore {
+    fn save(
+        &self,
+        record: WalletDustRegistrationRecoveryRecord,
+    ) -> Result<(), WalletDustRegistrationRecoveryStoreError> {
+        let _access = self
+            .access
+            .lock()
+            .map_err(|_| WalletDustRegistrationRecoveryStoreError::Unavailable)?;
+        let bytes = record
+            .encode()
+            .map_err(|_| WalletDustRegistrationRecoveryStoreError::Corrupt)?;
+        if bytes.len() > MAX_DUST_REGISTRATION_RECOVERY_BYTES {
+            return Err(WalletDustRegistrationRecoveryStoreError::Corrupt);
+        }
+        store_atomic::write_owner_private(self.path()?, &bytes).map_err(map_recovery_store_error)
+    }
+
+    fn load(
+        &self,
+    ) -> Result<
+        Option<WalletDustRegistrationRecoveryRecord>,
+        WalletDustRegistrationRecoveryStoreError,
+    > {
+        let _access = self
+            .access
+            .lock()
+            .map_err(|_| WalletDustRegistrationRecoveryStoreError::Unavailable)?;
+        store_atomic::read_owner_private_bounded(self.path()?, MAX_DUST_REGISTRATION_RECOVERY_BYTES)
+            .map_err(map_recovery_store_error)?
+            .map(|bytes| {
+                WalletDustRegistrationRecoveryRecord::decode(&bytes)
+                    .map_err(|_| WalletDustRegistrationRecoveryStoreError::Corrupt)
+            })
+            .transpose()
+    }
+
+    fn clear(&self) -> Result<(), WalletDustRegistrationRecoveryStoreError> {
+        let _access = self
+            .access
+            .lock()
+            .map_err(|_| WalletDustRegistrationRecoveryStoreError::Unavailable)?;
+        let path = self.path()?;
+        if store_atomic::read_owner_private_bounded(path, MAX_DUST_REGISTRATION_RECOVERY_BYTES)
+            .map_err(map_recovery_store_error)?
+            .is_none()
+        {
+            return Ok(());
+        }
+        fs::remove_file(path).map_err(|_| WalletDustRegistrationRecoveryStoreError::Unavailable)
+    }
+}
+
+const fn map_recovery_store_error(
+    error: store_atomic::AtomicStoreError,
+) -> WalletDustRegistrationRecoveryStoreError {
+    match error {
+        store_atomic::AtomicStoreError::Integrity => {
+            WalletDustRegistrationRecoveryStoreError::Corrupt
+        }
+        store_atomic::AtomicStoreError::Unavailable => {
+            WalletDustRegistrationRecoveryStoreError::Unavailable
+        }
+    }
+}
 
 /// JSON persistence for public profile labels and active selection.
 ///
@@ -703,6 +813,57 @@ mod tests {
             ProfileName::parse(name).expect("name should be valid"),
             UnixTimestampMillis::new(created_at_millis),
         )
+    }
+
+    fn dust_registration_recovery_record() -> WalletDustRegistrationRecoveryRecord {
+        use oxid_wallet_application::{
+            WalletDustRegistrationRecoveryRegistration,
+            WalletDustRegistrationSettlementAuthorizationPhase,
+            WalletDustRegistrationSettlementState,
+        };
+
+        WalletDustRegistrationRecoveryRecord {
+            version: 1,
+            profile_id: "profile_test".to_owned(),
+            realm_id: "undeployed".to_owned(),
+            generation: 7,
+            eligibility_revision: 11,
+            eligible: true,
+            preparation_revision: 13,
+            recovery_revision: 17,
+            state: WalletDustRegistrationSettlementState::Ready,
+            registration: Some(WalletDustRegistrationRecoveryRegistration {
+                draft_id: "dustreg_test".to_owned(),
+                authorization_phase: WalletDustRegistrationSettlementAuthorizationPhase::Submitted,
+                transaction_id: Some("tx_test".to_owned()),
+                observation_revision: 29,
+                finality_revision: 29,
+                reconciliation_revision: 23,
+                dust_revision: 31,
+                dust_observation_revision: 29,
+                dust_ready: true,
+                included: true,
+                abandonment_revision: 0,
+            }),
+        }
+    }
+
+    #[test]
+    fn dust_registration_recovery_reopens_and_clears_owner_private_state() {
+        let store = TestStore::new();
+        let path = store.root.join(DUST_REGISTRATION_RECOVERY_FILE_NAME);
+        let record = dust_registration_recovery_record();
+        JsonWalletDustRegistrationRecoveryStore::new(&path)
+            .save(record.clone())
+            .expect("recovery record saves");
+
+        let reopened = JsonWalletDustRegistrationRecoveryStore::new(&path);
+        assert_eq!(
+            reopened.load().expect("recovery record loads"),
+            Some(record)
+        );
+        reopened.clear().expect("recovery record clears");
+        assert_eq!(reopened.load().expect("cleared store loads"), None);
     }
 
     #[test]

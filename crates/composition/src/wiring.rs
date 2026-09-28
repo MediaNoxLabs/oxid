@@ -58,6 +58,8 @@ use oxid_adapter_platform_system::NativePublicTextExporter;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_platform_system::NativeScreenPrivacy;
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
+#[cfg(not(test))]
+use oxid_adapter_storage_json::JsonWalletDustRegistrationRecoveryStore;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_storage_json::JsonWalletProfileRepository;
 #[cfg(all(
@@ -170,15 +172,15 @@ use oxid_wallet_application::{
     SubmitWalletTransferUseCase, SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase,
     UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
     WalletAccountReadPort, WalletAccountService, WalletBackupReceiptRepository,
-    WalletBackupReceiptService, WalletDustRegistrationService, WalletDustSyncPort,
-    WalletDustSyncService, WalletJubjubChallengeSigningPort, WalletKeyOperationPort,
-    WalletKeyService, WalletNetworkPort, WalletNetworkSelectionObserver, WalletNetworkService,
-    WalletOnboardingService, WalletPortableBackupPort, WalletPortableBackupService,
-    WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
-    WalletProtectionService, WalletRealmFacetState, WalletRealmLifecycleService,
-    WalletRealmReconciliationState, WalletRootRecoveryPort, WalletRootRecoveryService,
-    WalletShieldedSyncPort, WalletShieldedSyncService, WalletTransactionPort,
-    WalletTransactionService,
+    WalletBackupReceiptService, WalletDustRegistrationRecoveryStore, WalletDustRegistrationService,
+    WalletDustSyncPort, WalletDustSyncService, WalletJubjubChallengeSigningPort,
+    WalletKeyOperationPort, WalletKeyService, WalletNetworkPort, WalletNetworkSelectionObserver,
+    WalletNetworkService, WalletOnboardingService, WalletPortableBackupPort,
+    WalletPortableBackupService, WalletProfileAssociationRepository, WalletProfileRepository,
+    WalletProtectionPort, WalletProtectionService, WalletRealmFacetState,
+    WalletRealmLifecycleService, WalletRealmReconciliationState, WalletRootRecoveryPort,
+    WalletRootRecoveryService, WalletShieldedSyncPort, WalletShieldedSyncService,
+    WalletTransactionPort, WalletTransactionService,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -988,15 +990,35 @@ where
     let reconcile_wallet_dust_registration_submission: Arc<
         dyn ReconcileWalletDustRegistrationSubmissionUseCase,
     > = dust_registrations.clone();
-    let wallet_dust_settlement = Arc::new(WalletDustSettlementCapability::new(
-        selected_realm_sync.clone(),
-        selected_realm_sync,
-        dust_registrations.clone(),
-        dust_registrations.clone(),
-        dust_registrations.clone(),
-        dust_registrations.clone(),
-        dust_registrations,
-    ));
+    #[cfg(test)]
+    let dust_registration_recovery: Arc<dyn WalletDustRegistrationRecoveryStore> =
+        Arc::new(oxid_wallet_application::InMemoryWalletDustRegistrationRecoveryStore::default());
+    #[cfg(not(test))]
+    let dust_registration_recovery: Arc<dyn WalletDustRegistrationRecoveryStore> =
+        Arc::new(JsonWalletDustRegistrationRecoveryStore::at_default_location());
+    let wallet_dust_settlement = Arc::new(
+        WalletDustSettlementCapability::with_recovery_store(
+            Arc::clone(&get_selected_wallet_realm_sync),
+            Arc::clone(&sync_selected_wallet_realm),
+            Arc::clone(&prepare_wallet_dust_registration),
+            Arc::clone(&authorize_wallet_dust_registration),
+            Arc::clone(&submit_wallet_dust_registration),
+            Arc::clone(&get_wallet_dust_registration_status),
+            Arc::clone(&reconcile_wallet_dust_registration_submission),
+            dust_registration_recovery,
+        )
+        .unwrap_or_else(|_| {
+            WalletDustSettlementCapability::new(
+                Arc::clone(&get_selected_wallet_realm_sync),
+                Arc::clone(&sync_selected_wallet_realm),
+                Arc::clone(&prepare_wallet_dust_registration),
+                Arc::clone(&authorize_wallet_dust_registration),
+                Arc::clone(&submit_wallet_dust_registration),
+                Arc::clone(&get_wallet_dust_registration_status),
+                Arc::clone(&reconcile_wallet_dust_registration_submission),
+            )
+        }),
+    );
     let prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase> =
         transactions.clone();
     let prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase> = transactions.clone();
