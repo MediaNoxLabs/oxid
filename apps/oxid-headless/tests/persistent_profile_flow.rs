@@ -2503,13 +2503,13 @@ fn executable_derives_and_syncs_a_live_account_without_secret_input() {
         true
     );
 
-    let watch_only = process.request(json!({
+    let unbound = process.request(json!({
         "protocol": "oxid.headless.v1",
-        "id": "live-watch-only",
+        "id": "live-unbound",
         "method": "wallet.account.get",
         "params": {}
     }));
-    assert_eq!(watch_only["error"]["code"], "capability_unavailable");
+    assert_eq!(unbound["error"]["code"], "not_found");
     assert_eq!(
         process.request(json!({
             "protocol": "oxid.headless.v1",
