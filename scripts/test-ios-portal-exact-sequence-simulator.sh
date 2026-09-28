@@ -790,3 +790,6 @@ case "$(uname -m)" in arm64) architecture=arm64 ;; x86_64) architecture=x86_64 ;
 [ "$SECONDS" -lt "$journey_deadline" ] || fail journey-timeout
 journey_deadline=0
 journey_status=passed
+# Successful evidence rendering uses command substitutions. Finalize from normal
+# control flow so those children cannot inherit an actively executing EXIT trap.
+cleanup

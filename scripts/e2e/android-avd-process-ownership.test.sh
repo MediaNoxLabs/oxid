@@ -373,6 +373,8 @@ ios_cleanup_body="$(sed -n '/^cleanup() {$/,/^}$/p' "$ios_runner")"
 if printf '%s\n' "$ios_cleanup_body" | grep -qF '$('; then
   fail ios-cleanup-command-substitution
 fi
+grep -A3 '^journey_status=passed$' "$ios_runner" | grep -q '^cleanup$' \
+  || fail ios-success-explicit-cleanup
 grep -qF 'readonly PROTOCOL_ERROR_DIAGNOSTIC="$RUN_ROOT/protocol-error-diagnostic.json"' "$ios_runner" \
   || fail ios-closed-diagnostic-path
 grep -qF 'validate_protocol_error_diagnostic() {' "$ios_runner" \
