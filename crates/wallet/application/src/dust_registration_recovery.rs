@@ -154,7 +154,7 @@ impl WalletDustRegistrationRecoveryRecord {
     ) -> Result<Self, WalletDustRegistrationRecoveryError> {
         // V1 deliberately stores only the primary public workflow. A parked
         // replacement or retry-resume hint can be re-derived after restart;
-        // refusing to persist the primary submitting draft would be unsafe
+        // refusing to persist the primary submitting draft would be incorrect
         // because a broadcast must never outrun its recovery record.
         if !matches!(
             projection.state,
