@@ -10,7 +10,7 @@ use std::{
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
-        mpsc::{self, Receiver},
+        mpsc::{self, Receiver, SyncSender},
     },
     thread,
     time::Duration,
@@ -331,7 +331,12 @@ fn spawn_indexer_fixture(
 // The upstream handshake callback fixes a large HTTP response as its error
 // type; this test must use that signature to negotiate the GraphQL subprotocol.
 #[allow(clippy::result_large_err)]
-fn spawn_shielded_indexer_fixture() -> (String, Receiver<i64>, thread::JoinHandle<()>) {
+struct ShieldedFixtureControl {
+    refresh_starts: Receiver<i64>,
+    release_rebuild: SyncSender<()>,
+}
+
+fn spawn_shielded_indexer_fixture() -> (String, ShieldedFixtureControl, thread::JoinHandle<()>) {
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .expect("shielded fixture listener should bind");
     listener
@@ -343,6 +348,7 @@ fn spawn_shielded_indexer_fixture() -> (String, Receiver<i64>, thread::JoinHandl
         .port();
     let endpoint = format!("ws://127.0.0.1:{port}/api/v4/graphql/ws");
     let (refresh_started, refresh_starts) = mpsc::channel();
+    let (release_rebuild, rebuild_release) = mpsc::sync_channel(0);
     let handle = thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
@@ -407,6 +413,9 @@ fn spawn_shielded_indexer_fixture() -> (String, Receiver<i64>, thread::JoinHandl
                     .send(expected_start)
                     .expect("test should still observe the shielded refresh");
                 if expected_start == 0 {
+                    rebuild_release
+                        .recv_timeout(Duration::from_secs(2))
+                        .expect("test should release the initial rebuild event");
                     socket
                         .send(Message::Text(
                             json!({
@@ -442,7 +451,14 @@ fn spawn_shielded_indexer_fixture() -> (String, Receiver<i64>, thread::JoinHandl
             }
         });
     });
-    (endpoint, refresh_starts, handle)
+    (
+        endpoint,
+        ShieldedFixtureControl {
+            refresh_starts,
+            release_rebuild,
+        },
+        handle,
+    )
 }
 
 async fn send_fixture_event<S>(socket: &mut tokio_tungstenite::WebSocketStream<S>, data: Value)
@@ -1693,7 +1709,7 @@ fn executable_rebuilds_resumes_and_refreshes_a_live_shielded_checkpoint() {
     let shielded_path_text = shielded_path
         .to_str()
         .expect("fixture checkpoint path is Unicode");
-    let (endpoint, refresh_starts, server) = spawn_shielded_indexer_fixture();
+    let (endpoint, fixture, server) = spawn_shielded_indexer_fixture();
     let mut process = ProcessHarness::spawn_with_environment(
         &store.path,
         &[
@@ -1741,11 +1757,16 @@ fn executable_rebuilds_resumes_and_refreshes_a_live_shielded_checkpoint() {
         "syncing"
     );
     assert_eq!(
-        refresh_starts
+        fixture
+            .refresh_starts
             .recv_timeout(Duration::from_secs(2))
             .expect("rebuild subscription should reach the fixture"),
         0
     );
+    fixture
+        .release_rebuild
+        .send(())
+        .expect("fixture should still be waiting to deliver the rebuild event");
     let rebuilt = wait_for_shielded_sync(&mut process, "shielded-live-rebuild");
     let rebuilt = &rebuilt["result"]["shieldedSync"];
     assert_eq!(rebuilt["state"], "synced");
@@ -1772,7 +1793,8 @@ fn executable_rebuilds_resumes_and_refreshes_a_live_shielded_checkpoint() {
         "syncing"
     );
     assert_eq!(
-        refresh_starts
+        fixture
+            .refresh_starts
             .recv_timeout(Duration::from_secs(2))
             .expect("refresh subscription should reach the fixture before status is observed"),
         3
