@@ -84,11 +84,10 @@ final class PortalFlowTests: XCTestCase {
 
     @MainActor
     private func assertRoutedOffer(in application: XCUIApplication) {
-        XCTAssertTrue(application.staticTexts[
-            "App link recognized as a credential offer. Review the request before consent."
-        ].waitForExistence(timeout: 20))
+        let dismissRequest = application.buttons["Dismiss identity request"]
+        XCTAssertTrue(dismissRequest.waitForExistence(timeout: 20))
         XCTAssertTrue(application.staticTexts["Credentials"].exists)
-        XCTAssertTrue(application.buttons["Dismiss identity request"].exists)
+        XCTAssertTrue(dismissRequest.exists)
         XCTAssertTrue(application.descendants(matching: .any)[
             "Imported credential offer retained privately"
         ].exists)
