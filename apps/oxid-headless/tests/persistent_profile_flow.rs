@@ -10,7 +10,7 @@ use std::{
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
-        mpsc::{self, Receiver, SyncSender},
+        mpsc::{self, Receiver},
     },
     thread,
     time::Duration,
@@ -19,6 +19,7 @@ use std::{
 use futures::{SinkExt as _, StreamExt as _};
 use oxid_adapter_openid4vci::standalone_credential_offer;
 use serde_json::{Value, json};
+use tokio::sync::oneshot;
 use tokio_tungstenite::{
     accept_hdr_async,
     tungstenite::{
@@ -330,7 +331,7 @@ fn spawn_indexer_fixture(
 
 struct ShieldedFixtureControl {
     refresh_starts: Receiver<i64>,
-    release_rebuild: SyncSender<()>,
+    release_rebuild: oneshot::Sender<()>,
 }
 
 // The upstream handshake callback fixes a large HTTP response as its error
@@ -348,7 +349,7 @@ fn spawn_shielded_indexer_fixture() -> (String, ShieldedFixtureControl, thread::
         .port();
     let endpoint = format!("ws://127.0.0.1:{port}/api/v4/graphql/ws");
     let (refresh_started, refresh_starts) = mpsc::channel();
-    let (release_rebuild, rebuild_release) = mpsc::sync_channel(0);
+    let (release_rebuild, rebuild_release) = oneshot::channel();
     let handle = thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
@@ -358,6 +359,7 @@ fn spawn_shielded_indexer_fixture() -> (String, ShieldedFixtureControl, thread::
         runtime.block_on(async move {
             let listener =
                 tokio::net::TcpListener::from_std(listener).expect("listener should convert");
+            let mut rebuild_release = Some(rebuild_release);
             for expected_start in [0, 3] {
                 let (stream, _) = listener
                     .accept()
@@ -403,19 +405,27 @@ fn spawn_shielded_indexer_fixture() -> (String, ShieldedFixtureControl, thread::
                         .as_str(),
                 )
                 .expect("subscribe should be JSON");
-                assert_eq!(subscribe["payload"]["variables"]["id"], expected_start);
+                let observed_start = subscribe["payload"]["variables"]["id"]
+                    .as_i64()
+                    .expect("shielded subscription cursor should be an integer");
                 assert!(
                     subscribe["payload"]["query"]
                         .as_str()
                         .is_some_and(|query| query.contains("zswapLedgerEvents"))
                 );
                 refresh_started
-                    .send(expected_start)
+                    .send(observed_start)
                     .expect("test should still observe the shielded refresh");
                 if expected_start == 0 {
-                    rebuild_release
-                        .recv_timeout(Duration::from_secs(15))
-                        .expect("test should release the initial rebuild event");
+                    tokio::time::timeout(
+                        Duration::from_secs(2),
+                        rebuild_release
+                            .take()
+                            .expect("rebuild release should be consumed exactly once"),
+                    )
+                    .await
+                    .expect("test should release the initial rebuild event before idle timeout")
+                    .expect("test should release the initial rebuild event");
                     socket
                         .send(Message::Text(
                             json!({
