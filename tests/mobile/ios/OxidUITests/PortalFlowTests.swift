@@ -19,6 +19,7 @@ final class PortalFlowTests: XCTestCase {
         let valid = application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid"))
         XCTAssertTrue(valid.element(boundBy: 0).waitForExistence(timeout: 15))
         XCTAssertTrue(valid.element(boundBy: 1).waitForNonExistence(timeout: 5))
+        XCTAssertEqual(valid.count, 1)
     }
 
     @MainActor
@@ -389,8 +390,8 @@ final class PortalFlowTests: XCTestCase {
 
     @MainActor
     func testRestored() {
-        restoredStatePhase("foreground")
         let application = application()
+        restoredStatePhase("foreground")
         application.buttons["Wallet"].tap()
         restoredStatePhase("wallet-selected")
         let reactivate = application.buttons["Activate protected Midnight account"]
