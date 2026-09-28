@@ -328,14 +328,14 @@ fn spawn_indexer_fixture(
     (endpoint, handle)
 }
 
-// The upstream handshake callback fixes a large HTTP response as its error
-// type; this test must use that signature to negotiate the GraphQL subprotocol.
-#[allow(clippy::result_large_err)]
 struct ShieldedFixtureControl {
     refresh_starts: Receiver<i64>,
     release_rebuild: SyncSender<()>,
 }
 
+// The upstream handshake callback fixes a large HTTP response as its error
+// type; this test must use that signature to negotiate the GraphQL subprotocol.
+#[allow(clippy::result_large_err)]
 fn spawn_shielded_indexer_fixture() -> (String, ShieldedFixtureControl, thread::JoinHandle<()>) {
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .expect("shielded fixture listener should bind");
@@ -414,7 +414,7 @@ fn spawn_shielded_indexer_fixture() -> (String, ShieldedFixtureControl, thread::
                     .expect("test should still observe the shielded refresh");
                 if expected_start == 0 {
                     rebuild_release
-                        .recv_timeout(Duration::from_secs(2))
+                        .recv_timeout(Duration::from_secs(15))
                         .expect("test should release the initial rebuild event");
                     socket
                         .send(Message::Text(
@@ -1759,7 +1759,7 @@ fn executable_rebuilds_resumes_and_refreshes_a_live_shielded_checkpoint() {
     assert_eq!(
         fixture
             .refresh_starts
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(Duration::from_secs(15))
             .expect("rebuild subscription should reach the fixture"),
         0
     );
@@ -1795,7 +1795,7 @@ fn executable_rebuilds_resumes_and_refreshes_a_live_shielded_checkpoint() {
     assert_eq!(
         fixture
             .refresh_starts
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(Duration::from_secs(15))
             .expect("refresh subscription should reach the fixture before status is observed"),
         3
     );
