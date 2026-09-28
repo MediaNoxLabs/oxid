@@ -347,7 +347,7 @@ write_diagnostic_result() {
 }
 
 cleanup() {
-  local incoming=$? after_portal project_ids build_receipt_path build_receipt_identity
+  local incoming=$? build_receipt_path build_receipt_identity current_head head_check
   if [ "${BASHPID:-$$}" != "$cleanup_owner_pid" ] || [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
     trap - EXIT INT TERM HUP
     exit "$incoming"
@@ -393,10 +393,14 @@ cleanup() {
   fi
 
   if [ "$portal_ready" -eq 1 ]; then
-    after_portal="$(listener_fingerprint "${PORTAL_PORTS[@]}")"
-    if ! run_deadline 5 rg -q '[[:digit:]]+:p[0-9]+' <<<"$after_portal"; then listener_cleanup=true; else cleanup_ok=false; fi
-    if project_ids="$(run_deadline 15 docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet 2>/dev/null)" \
-      && [ -z "$project_ids" ] && [ ! -e "$PORTAL_STATE" ] && [ ! -e "$PORTAL_LOCK" ]; then
+    if ! listener_fingerprint "${PORTAL_PORTS[@]}" | run_deadline 5 rg -q '[[:digit:]]+:p[0-9]+'; then
+      listener_cleanup=true
+    else
+      cleanup_ok=false
+    fi
+    if run_deadline 15 docker info >/dev/null 2>&1 \
+      && ! run_deadline 15 docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet 2>/dev/null | run_deadline 5 rg -q . \
+      && [ ! -e "$PORTAL_STATE" ] && [ ! -e "$PORTAL_LOCK" ]; then
       stack_cleanup=true
     else
       cleanup_ok=false
@@ -432,9 +436,19 @@ cleanup() {
   elif [ "$private_state_owned" -eq 1 ]; then
     printf 'ios-portal-exact-sequence-simulator: private failure diagnostics retained mode=0600\n' >&2
   fi
-  if [ "$(run_deadline 10 git -C "$ROOT" rev-parse HEAD 2>/dev/null)" = "$head" ] \
-    && [ "$(run_deadline 10 git -C "$ROOT" rev-parse 'HEAD^{tree}' 2>/dev/null)" = "$tree" ] \
-    && [ -z "$(run_deadline 10 git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then head_clean=true; else cleanup_ok=false; fi
+  head_check="$RUN_ROOT/.cleanup-head"
+  if [ ! -e "$head_check" ] && [ ! -L "$head_check" ] \
+    && run_deadline 10 git -C "$ROOT" rev-parse HEAD >"$head_check" 2>/dev/null \
+    && IFS= read -r current_head <"$head_check" \
+    && run_deadline 5 rm -f -- "$head_check" \
+    && [ "$current_head" = "$head" ] \
+    && run_deadline 10 git -C "$ROOT" diff --quiet "$tree" HEAD -- \
+    && run_deadline 10 git -C "$ROOT" diff-index --quiet HEAD --; then
+    head_clean=true
+  else
+    run_deadline 5 rm -f -- "$head_check" >/dev/null 2>&1 || true
+    cleanup_ok=false
+  fi
 
   if [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ] && [ "$journey_status" = passed ] && [ "$OPERATION" = run ]; then write_evidence || cleanup_ok=false; fi
   if [ "$run_root_owned" -eq 1 ] && [ "$evidence_published" -eq 0 ] && [ "$diagnostic_result_published" -eq 0 ]; then

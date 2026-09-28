@@ -360,12 +360,19 @@ for cleanup_owner in \
     | grep -qF 'trap - EXIT INT TERM HUP' \
     || fail cleanup-reentry-trap
 done
+
 android_runner="$ROOT/scripts/test-android-portal-exact-sequence-avd.sh"
 grep -qF 'if [ "$build_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then' "$android_runner" \
   || fail android-failed-build-preservation
 grep -qF 'if [ "$private_state_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then' "$android_runner" \
   || fail android-failed-log-preservation
 ios_runner="$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh"
+# EXIT cleanup must not use command substitutions. Bash can inherit the EXIT
+# trap into those subprocesses and recurse while the owner waits on their pipe.
+ios_cleanup_body="$(sed -n '/^cleanup() {$/,/^}$/p' "$ios_runner")"
+if printf '%s\n' "$ios_cleanup_body" | grep -qF '$('; then
+  fail ios-cleanup-command-substitution
+fi
 grep -qF 'readonly PROTOCOL_ERROR_DIAGNOSTIC="$RUN_ROOT/protocol-error-diagnostic.json"' "$ios_runner" \
   || fail ios-closed-diagnostic-path
 grep -qF 'validate_protocol_error_diagnostic() {' "$ios_runner" \
