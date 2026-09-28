@@ -40,6 +40,7 @@ lock_owned=0
 state_owned=0
 restoration_proven=0
 cleanup_running=0
+cleanup_owner_pid="${BASHPID:-$$}"
 
 fail() {
   printf 'portal-virtual-mobile-stack: FAIL phase=%s\n' "$1" >&2
@@ -64,7 +65,14 @@ docker_project_ids() {
 
 cleanup() {
   local incoming=$? cleanup_status=0 project_ids="" query_status=0
-  if [ "$cleanup_running" -eq 1 ]; then exit "$incoming"; fi
+  if [ "${BASHPID:-$$}" != "$cleanup_owner_pid" ] || [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
+  if [ "$cleanup_running" -eq 1 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
   cleanup_running=1
   trap - EXIT INT TERM HUP
   set +e
@@ -301,6 +309,11 @@ printf 'portal-virtual-mobile-stack: build_env=%s\n' "${BUILD_ENV#"$REPOSITORY_R
 printf 'portal-virtual-mobile-stack: capability_file=%s\n' "${CAPABILITY_FILE#"$REPOSITORY_ROOT/"}"
 printf 'portal-virtual-mobile-stack: keep this command running; press Ctrl-C for exact cleanup\n'
 while oxid_job_is_running "$support_pid"; do run_deadline 2 sleep 1; done
-wait "$support_pid" || fail support
-support_pid=""
-fail unexpected-stop
+if wait "$support_pid"; then
+  # The support process exits successfully only after the capability-protected
+  # /complete request. Treat that owner-requested shutdown as the normal end of
+  # the serve lifecycle; signals and spontaneous exits remain non-zero.
+  support_pid=""
+  exit 0
+fi
+fail support

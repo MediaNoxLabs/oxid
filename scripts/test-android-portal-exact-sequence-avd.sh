@@ -39,6 +39,7 @@ arm_pid=""
 forward_active=0
 emulator_online=0
 cleanup_running=0
+cleanup_owner_pid="${BASHPID:-$$}"
 cleanup_ok=true
 run_root_owned=0
 run_root_identity=""
@@ -357,7 +358,14 @@ write_evidence() {
 cleanup() {
   local incoming=$? current package_path after_portal project_ids emulator_status=0
   local build_receipt_path build_receipt_identity
-  if [ "$cleanup_running" -eq 1 ]; then exit "$incoming"; fi
+  if [ "${BASHPID:-$$}" != "$cleanup_owner_pid" ] || [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
+  if [ "$cleanup_running" -eq 1 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
   cleanup_running=1
   journey_deadline=0
   trap - EXIT INT TERM HUP

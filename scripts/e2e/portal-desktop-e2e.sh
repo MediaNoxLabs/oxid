@@ -35,6 +35,7 @@ post_build_deadline=0
 stack_pid=""
 app_pid=""
 cleanup_running=0
+cleanup_owner_pid="${BASHPID:-$$}"
 
 fail() {
   local driver_failure=""
@@ -48,7 +49,14 @@ fail() {
 
 cleanup() {
   local incoming=$? cleanup_status=0
-  if [ "$cleanup_running" -eq 1 ]; then exit "$incoming"; fi
+  if [ "${BASHPID:-$$}" != "$cleanup_owner_pid" ] || [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
+  if [ "$cleanup_running" -eq 1 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
   cleanup_running=1
   trap - EXIT INT TERM HUP
   set +e

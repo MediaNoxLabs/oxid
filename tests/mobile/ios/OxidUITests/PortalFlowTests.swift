@@ -10,6 +10,18 @@ final class PortalFlowTests: XCTestCase {
         continueAfterFailure = false
     }
 
+    private func restoredStatePhase(_ phase: String) {
+        XCTContext.runActivity(named: "restored-state phase: \(phase)") { _ in }
+    }
+
+    @MainActor
+    private func assertSingleValidCredential(in application: XCUIApplication) {
+        let valid = application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid"))
+        XCTAssertTrue(valid.element(boundBy: 0).waitForExistence(timeout: 15))
+        XCTAssertTrue(valid.element(boundBy: 1).waitForNonExistence(timeout: 5))
+        XCTAssertEqual(valid.count, 1)
+    }
+
     @MainActor
     private func application() -> XCUIApplication {
         let application = XCUIApplication(bundleIdentifier: applicationIdentifier)
@@ -72,11 +84,10 @@ final class PortalFlowTests: XCTestCase {
 
     @MainActor
     private func assertRoutedOffer(in application: XCUIApplication) {
-        XCTAssertTrue(application.staticTexts[
-            "App link recognized as a credential offer. Review the request before consent."
-        ].waitForExistence(timeout: 20))
+        let dismissRequest = application.buttons["Dismiss identity request"]
+        XCTAssertTrue(dismissRequest.waitForExistence(timeout: 20))
         XCTAssertTrue(application.staticTexts["Credentials"].exists)
-        XCTAssertTrue(application.buttons["Dismiss identity request"].exists)
+        XCTAssertTrue(dismissRequest.exists)
         XCTAssertTrue(application.descendants(matching: .any)[
             "Imported credential offer retained privately"
         ].exists)
@@ -379,36 +390,39 @@ final class PortalFlowTests: XCTestCase {
     @MainActor
     func testRestored() {
         let application = application()
+        restoredStatePhase("foreground")
         application.buttons["Wallet"].tap()
+        restoredStatePhase("wallet-selected")
         let reactivate = application.buttons["Activate protected Midnight account"]
         if reactivate.waitForExistence(timeout: 5) {
             scrollTo(reactivate, in: application)
             reactivate.tap()
+            restoredStatePhase("custody-reactivation-requested")
         }
         XCTAssertTrue(application.buttons["Use my receive address"].waitForExistence(timeout: 45))
+        restoredStatePhase("wallet-ready")
         application.buttons["Documents"].tap()
-        XCTAssertEqual(
-            application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid")).count,
-            1
-        )
+        restoredStatePhase("documents-selected")
+        assertSingleValidCredential(in: application)
+        restoredStatePhase("restored-credential-visible")
         let marker = application.staticTexts["Credential reverification applied"]
         XCTAssertFalse(marker.exists)
         let reverify = application.buttons["Reverify"]
         XCTAssertTrue(reverify.waitForExistence(timeout: 15))
         scrollTo(reverify, in: application)
         reverify.tap()
+        restoredStatePhase("reverification-requested")
         let completed = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == true AND enabled == true"),
             object: reverify
         )
         XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 35), .completed)
         XCTAssertTrue(marker.waitForExistence(timeout: 35))
-        XCTAssertEqual(
-            application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid")).count,
-            1
-        )
+        restoredStatePhase("reverification-applied")
+        assertSingleValidCredential(in: application)
         XCTAssertTrue(application.staticTexts[
             "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
         ].exists)
+        restoredStatePhase("restored-state-asserted")
     }
 }

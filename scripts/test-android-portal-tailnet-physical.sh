@@ -51,6 +51,7 @@ profile_active=0
 forward_port=""
 websocket_url=""
 cleanup_running=0
+cleanup_owner_pid="${BASHPID:-$$}"
 manual_public_origin=""
 manual_mock_receipt_sha=""
 manual_start_epoch=0
@@ -418,7 +419,14 @@ control_curl() {
 
 cleanup() {
   local incoming=$? cleanup_status=0
-  if [ "$cleanup_running" -eq 1 ]; then exit "$incoming"; fi
+  if [ "${BASHPID:-$$}" != "$cleanup_owner_pid" ] || [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
+  if [ "$cleanup_running" -eq 1 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
   cleanup_running=1
   trap - EXIT INT TERM
   if [ -n "$forward_port" ]; then
