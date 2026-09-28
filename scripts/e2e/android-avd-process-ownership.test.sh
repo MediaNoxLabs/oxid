@@ -344,6 +344,17 @@ grep -qF 'support_pid=""' "$virtual_stack" \
 if grep -qF 'fail unexpected-stop' "$virtual_stack"; then
   fail portal-owner-completion-misclassified
 fi
+for cleanup_owner in \
+  "$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh" \
+  "$ROOT/scripts/test-android-portal-exact-sequence-avd.sh" \
+  "$ROOT/scripts/e2e/portal-virtual-mobile-stack.sh" \
+  "$ROOT/scripts/e2e/portal-desktop-e2e.sh" \
+  "$ROOT/scripts/e2e/portal-tailnet-browser-e2e.sh" \
+  "$ROOT/scripts/test-android-portal-tailnet-physical.sh"; do
+  grep -A3 -F 'if [ "$cleanup_running" -eq 1 ]; then' "$cleanup_owner" \
+    | grep -qF 'trap - EXIT INT TERM HUP' \
+    || fail cleanup-reentry-trap
+done
 android_runner="$ROOT/scripts/test-android-portal-exact-sequence-avd.sh"
 grep -qF 'if [ "$build_owned" -eq 1 ] && [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ]; then' "$android_runner" \
   || fail android-failed-build-preservation

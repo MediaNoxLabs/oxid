@@ -48,7 +48,10 @@ fail() {
 
 cleanup() {
   local incoming=$? cleanup_status=0
-  if [ "$cleanup_running" -eq 1 ]; then exit "$incoming"; fi
+  if [ "$cleanup_running" -eq 1 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
   cleanup_running=1
   trap - EXIT INT TERM HUP
   set +e

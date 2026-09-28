@@ -347,7 +347,10 @@ write_diagnostic_result() {
 
 cleanup() {
   local incoming=$? after_portal project_ids build_receipt_path build_receipt_identity
-  if [ "$cleanup_running" -eq 1 ]; then exit "$incoming"; fi
+  if [ "$cleanup_running" -eq 1 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
   cleanup_running=1
   journey_deadline=0
   trap - EXIT INT TERM HUP
