@@ -12,6 +12,7 @@ of the honesty and safety culture the codebase already enforces.
 | [white-label.md](white-label.md) | Build-time brand packs: architecture, schema, the non-brandable surface, CI gates. |
 | [ui-profiles.md](ui-profiles.md) | The user / dev / secret / demo presentation profiles: rules, matrix, OS snapshot protection. |
 | [rollout.md](rollout.md) | Phased delivery plan sliced for the backlog, success metrics, open product questions. |
+| [dust-registration-recovery.md](dust-registration-recovery.md) | DUST recovery artifact location, integrity policy, lifecycle, and operator cleanup. |
 
 Grounding: everything here is based on a full audit of the current UI
 (`crates/ui-dioxus/src/lib.rs`, ~8,760 lines; `assets/styles.css`, 1,711

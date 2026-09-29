@@ -292,6 +292,33 @@ impl WalletDustRegistrationRecoveryStore for UnavailableRecoveryStore {
     }
 }
 
+struct IntegrityRecoveryStore {
+    clear_calls: Arc<AtomicUsize>,
+}
+
+impl WalletDustRegistrationRecoveryStore for IntegrityRecoveryStore {
+    fn save(
+        &self,
+        _: WalletDustRegistrationRecoveryRecord,
+    ) -> Result<(), WalletDustRegistrationRecoveryStoreError> {
+        Err(WalletDustRegistrationRecoveryStoreError::Integrity)
+    }
+
+    fn load(
+        &self,
+    ) -> Result<
+        Option<WalletDustRegistrationRecoveryRecord>,
+        WalletDustRegistrationRecoveryStoreError,
+    > {
+        Err(WalletDustRegistrationRecoveryStoreError::Integrity)
+    }
+
+    fn clear(&self) -> Result<(), WalletDustRegistrationRecoveryStoreError> {
+        self.clear_calls.fetch_add(1, Ordering::AcqRel);
+        Err(WalletDustRegistrationRecoveryStoreError::Integrity)
+    }
+}
+
 fn asset(id: &str, symbol: &str, decimals: u8, units: &str) -> WalletDustRegistrationAssetView {
     WalletDustRegistrationAssetView {
         asset_id: id.to_owned(),
@@ -708,6 +735,44 @@ fn unavailable_recovery_store_keeps_wallet_available_but_blocks_broadcast() {
             )
         ))
     );
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "submit")
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn integrity_failure_is_preserved_and_blocks_broadcast_without_cleanup() {
+    let fake = Arc::new(FakeServices::new());
+    let clear_calls = Arc::new(AtomicUsize::new(0));
+    let capability = capability_with_store(
+        &fake,
+        Arc::new(IntegrityRecoveryStore {
+            clear_calls: clear_calls.clone(),
+        }),
+    );
+
+    assert_eq!(clear_calls.load(Ordering::Acquire), 0);
+    assert_eq!(
+        block_on(capability.refresh("profile_test".to_owned()))
+            .unwrap()
+            .state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::AwaitingAuthorization
+    );
+    assert_eq!(
+        block_on(capability.authorize(confirmation(true))),
+        Err(WalletDustSettlementError::Driver(
+            WalletDustRegistrationDriverError::Executor(
+                WalletDustRegistrationExecutorFailure::Unavailable
+            )
+        ))
+    );
+    assert_eq!(clear_calls.load(Ordering::Acquire), 0);
     assert_eq!(
         fake.calls
             .lock()

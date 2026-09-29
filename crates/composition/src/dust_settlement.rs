@@ -106,7 +106,10 @@ impl WalletDustSettlementCapability {
                 let cleared = store.clear().is_ok();
                 (None, cleared)
             }
-            Err(WalletDustRegistrationRecoveryStoreError::Unavailable) => (None, false),
+            // A policy/integrity failure may indicate an attacker-controlled path.
+            // Never delete it as a recovery side effect; refuse durable submission.
+            Err(WalletDustRegistrationRecoveryStoreError::Integrity)
+            | Err(WalletDustRegistrationRecoveryStoreError::Unavailable) => (None, false),
         };
         let restored = match loaded {
             Some(record)

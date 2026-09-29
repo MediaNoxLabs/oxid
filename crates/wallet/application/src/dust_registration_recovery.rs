@@ -57,8 +57,13 @@ pub struct WalletDustRegistrationRecoveryRegistration {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WalletDustRegistrationRecoveryStoreError {
-    Unavailable,
+    /// The persisted record cannot be decoded or violates recovery invariants.
     Corrupt,
+    /// The owner-private filesystem policy was violated (for example, a symlink
+    /// or a group/world-readable recovery file). The record is left untouched.
+    Integrity,
+    /// I/O or locking failed without establishing an integrity violation.
+    Unavailable,
 }
 
 pub trait WalletDustRegistrationRecoveryStore: Send + Sync {
