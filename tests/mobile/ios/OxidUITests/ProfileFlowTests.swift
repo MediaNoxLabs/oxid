@@ -680,6 +680,11 @@ final class ProfileFlowTests: XCTestCase {
                 "The holder authorized this exact presentation, but Compact proving is unavailable. No presentation or vp_token was generated."
             ].waitForExistence(timeout: 10)
         )
+        XCTAssertTrue(
+            application.staticTexts[
+                "Presentation failed. No presentation or vp_token was generated. Review the message above, then preview a new request."
+            ].exists
+        )
     }
 
     @MainActor
