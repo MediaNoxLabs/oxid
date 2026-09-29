@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod activity_page;
 #[cfg(any(target_os = "android", test))]
 mod android_platform;
 mod assets_page;
@@ -35,6 +36,7 @@ pub use wallet_realm_sync_services::{WalletAccountUiServices, WalletRealmSyncUiS
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
 
+use activity_page::{PassportVaultActivityCard, VaultActivityPageState};
 #[cfg(target_os = "android")]
 pub use android_platform::{AndroidPlatformInitialization, App};
 use assets_page::AssetsPage;
@@ -101,8 +103,8 @@ use oxid_identity_application::{
 use oxid_identity_domain::VerificationRelationship;
 use oxid_passport_vault_application::{
     ClaimPassportVaultLockUseCase, CreatePassportVaultLockUseCase, DepositPassportVaultLockUseCase,
-    ListPassportVaultActivityUseCase, ListPassportVaultLocksUseCase, PassportVaultActivityStatus,
-    PassportVaultActivityView, PassportVaultView, WithdrawPassportVaultLockUseCase,
+    ListPassportVaultActivityUseCase, ListPassportVaultLocksUseCase, PassportVaultView,
+    WithdrawPassportVaultLockUseCase,
 };
 use oxid_platform_ports::{
     IdentityLinkIngressError, IdentityLinkIngressPort, PublicReceiveAddress, PublicTextExportPort,
@@ -2380,13 +2382,6 @@ enum AccountPageState {
         busy: Option<AccountOperation>,
     },
     Failed(String),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum VaultActivityPageState {
-    Loading,
-    Ready(PassportVaultActivityView),
-    Unavailable(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -5780,94 +5775,6 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
                     SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
                 }
             },
-        }
-    }
-}
-
-#[component]
-fn PassportVaultActivityCard(state: VaultActivityPageState) -> Element {
-    rsx! {
-        article { class: "surface-card",
-            p { class: "card-eyebrow", "Passport Vault activity" }
-            h2 { "Vault operations" }
-            p { class: "activity-source-note", "Source: application-owned Vault operation lifecycle. Sensitive protocol and credential payloads are never retained." }
-            match state {
-                VaultActivityPageState::Loading => rsx! {
-                    p { class: "activity-empty-state", role: "status", "Loading Vault activity…" }
-                },
-                VaultActivityPageState::Unavailable(error) => rsx! {
-                    p { class: "activity-empty-state", role: "status", "Vault activity is unavailable. {error}" }
-                },
-                VaultActivityPageState::Ready(activity) if activity.records.is_empty() => rsx! {
-                    p { class: "activity-empty-state", "No Passport Vault operations are available for this profile yet." }
-                },
-                VaultActivityPageState::Ready(activity) => {
-                    let retention = activity.retention.replace('_', " ");
-                    rsx! {
-                    div { class: "activity-list", aria_label: "Passport Vault activity",
-                        for record in activity.records {
-                            article { class: "activity-row", key: "{record.id.value()}",
-                                span { class: "activity-row__mark", aria_hidden: "true", "◇" }
-                                div {
-                                    strong { "{vault_activity_operation(record.operation)}" }
-                                    small { "{vault_activity_status(record.status)}" }
-                                    small { class: "privacy-value", "{activity_observed_at_line(record.observed_at_millis)}" }
-                                }
-                                code { "#{record.id.value()}" }
-                                details { class: "activity-row__details",
-                                    summary { "Operation details" }
-                                    dl { class: "preview-list",
-                                        div { dt { "Source" } dd { "{vault_activity_source(record.source)}" } }
-                                        div { dt { "Status" } dd { "{vault_activity_status(record.status)}" } }
-                                        div { dt { "Finality" } dd { "{record.finality.name()}" } }
-                                        if let Some(lock_id) = record.lock_id {
-                                            div { dt { "Lock" } dd { "#{lock_id}" } }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    p { class: "field-hint", "Retention: {retention}." }
-                    }
-                },
-            }
-        }
-    }
-}
-
-const fn vault_activity_operation(
-    operation: oxid_passport_vault_application::PassportVaultCallKind,
-) -> &'static str {
-    match operation {
-        oxid_passport_vault_application::PassportVaultCallKind::CreateLock => "Create lock",
-        oxid_passport_vault_application::PassportVaultCallKind::DepositToLock => "Deposit",
-        oxid_passport_vault_application::PassportVaultCallKind::ClaimFromLock => "Claim",
-        oxid_passport_vault_application::PassportVaultCallKind::WithdrawFromLock => "Withdraw",
-    }
-}
-
-const fn vault_activity_status(status: PassportVaultActivityStatus) -> &'static str {
-    match status {
-        PassportVaultActivityStatus::Pending => "Pending",
-        PassportVaultActivityStatus::Confirmed => "Confirmed",
-        PassportVaultActivityStatus::Failed => "Failed",
-        PassportVaultActivityStatus::Refused => "Refused",
-        PassportVaultActivityStatus::Cancelled => "Cancelled",
-        PassportVaultActivityStatus::TimedOut => "Timed out",
-        PassportVaultActivityStatus::OutcomeUnknown => "Outcome unknown",
-    }
-}
-
-const fn vault_activity_source(
-    source: oxid_passport_vault_application::PassportVaultActivitySource,
-) -> &'static str {
-    match source {
-        oxid_passport_vault_application::PassportVaultActivitySource::StandaloneVault => {
-            "Standalone Vault"
-        }
-        oxid_passport_vault_application::PassportVaultActivitySource::MidnightContractCall => {
-            "Midnight contract call"
         }
     }
 }
