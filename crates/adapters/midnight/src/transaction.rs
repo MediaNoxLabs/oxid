@@ -551,11 +551,26 @@ pub(crate) enum MidnightSubmissionReconciliation {
     Unresolved,
 }
 
+pub(crate) type MidnightSubmissionReconciliationFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<MidnightSubmissionReconciliation, WalletTransactionPortError>>
+            + Send
+            + 'a,
+    >,
+>;
+
 pub(crate) trait MidnightSubmissionReconciler: Send + Sync {
     fn reconcile(
         &self,
         entry: &StoredSubmissionJournalEntry,
     ) -> Result<MidnightSubmissionReconciliation, WalletTransactionPortError>;
+
+    fn reconcile_async<'a>(
+        &'a self,
+        entry: &'a StoredSubmissionJournalEntry,
+    ) -> MidnightSubmissionReconciliationFuture<'a> {
+        Box::pin(async move { self.reconcile(entry) })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -2265,22 +2280,13 @@ where
                 return Ok(status);
             }
 
-            let reconciler = Arc::clone(&self.submission_reconciler);
-            let journal = Arc::clone(&self.submission_journal);
-            let drafts = Arc::clone(&self.drafts);
-            let (sender, receiver) = futures::channel::oneshot::channel();
-            thread::Builder::new()
-                .name("oxid-midnight-reconcile".to_owned())
-                .spawn(move || {
-                    let result = reconciler.reconcile(&entry).and_then(|outcome| {
-                        persist_reconciliation(journal.as_ref(), drafts.as_ref(), entry, outcome)
-                    });
-                    let _ = sender.send(result);
-                })
-                .map_err(|_| WalletTransactionPortError::Unavailable)?;
-            receiver
-                .await
-                .unwrap_or(Err(WalletTransactionPortError::Unavailable))
+            let outcome = self.submission_reconciler.reconcile_async(&entry).await?;
+            persist_reconciliation(
+                self.submission_journal.as_ref(),
+                self.drafts.as_ref(),
+                entry,
+                outcome,
+            )
         })
     }
 }

@@ -355,6 +355,13 @@ impl MidnightSubmissionReconciler for LiveMidnightSubmissionReconciler {
             .map_err(|_| WalletTransactionPortError::Unavailable)?;
         runtime.block_on(reconcile_live_submission(&self.config, entry))
     }
+
+    fn reconcile_async<'a>(
+        &'a self,
+        entry: &'a StoredSubmissionJournalEntry,
+    ) -> crate::transaction::MidnightSubmissionReconciliationFuture<'a> {
+        Box::pin(async move { reconcile_live_submission(&self.config, entry).await })
+    }
 }
 
 async fn reconcile_live_submission(

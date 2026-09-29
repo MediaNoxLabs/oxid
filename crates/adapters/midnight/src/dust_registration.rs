@@ -564,30 +564,17 @@ where
             if !status.reconciliation_allowed() {
                 return Ok(status);
             }
-            let reconciler = Arc::clone(&self.submission_reconciler);
-            let journal = Arc::clone(&self.submission_journal);
-            let drafts = Arc::clone(&self.dust_registration_drafts);
-            let (sender, receiver) = futures::channel::oneshot::channel();
-            thread::Builder::new()
-                .name("oxid-midnight-dust-reconcile".to_owned())
-                .spawn(move || {
-                    let result = reconciler
-                        .reconcile(&entry)
-                        .map_err(map_transaction_error)
-                        .and_then(|outcome| {
-                            persist_registration_reconciliation(
-                                journal.as_ref(),
-                                drafts.as_ref(),
-                                entry,
-                                outcome,
-                            )
-                        });
-                    let _ = sender.send(result);
-                })
-                .map_err(|_| WalletDustRegistrationPortError::Unavailable)?;
-            receiver
+            let outcome = self
+                .submission_reconciler
+                .reconcile_async(&entry)
                 .await
-                .unwrap_or(Err(WalletDustRegistrationPortError::Unavailable))
+                .map_err(map_transaction_error)?;
+            persist_registration_reconciliation(
+                self.submission_journal.as_ref(),
+                self.dust_registration_drafts.as_ref(),
+                entry,
+                outcome,
+            )
         })
     }
 }
