@@ -5676,20 +5676,39 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
 fn AccountActivityCard(account: WalletAccountView, unavailable: bool) -> Element {
     rsx! {
         article { class: "surface-card",
-            p { class: "card-eyebrow", "Activity" }
+            p { class: "card-eyebrow", "Wallet activity" }
+            h2 { "On-chain transfers" }
+            p { class: "activity-source-note", "Source: Midnight wallet account. This view does not include document, sharing, sign-in, or Vault events." }
+            div { class: "activity-filters", role: "group", aria_label: "Activity sources",
+                button { class: "secondary-action", r#type: "button", aria_pressed: "true", "Wallet" }
+                button { class: "secondary-action", r#type: "button", disabled: true, "Identity and Vault unavailable" }
+            }
             if account.transactions.is_empty() {
-                h2 { "No synced history" }
-                p { if unavailable { "A live Midnight account source is not connected." } else { "Connect the account to synchronize transaction history." } }
+                p { class: "activity-empty-state",
+                    if unavailable { "Wallet activity is unavailable because a live Midnight account source is not connected." } else { "No synced wallet activity is available for this profile yet." }
+                }
             } else {
-                div { class: "activity-list",
+                div { class: "activity-list", aria_label: "Wallet transaction activity",
                     for transaction in account.transactions.iter() {
-                        div { class: "activity-row", key: "{transaction.transaction_id}",
+                        article { class: "activity-row", key: "{transaction.transaction_id}",
                             span { class: "activity-row__mark", aria_hidden: "true", "{ui::transaction_mark(&transaction.direction)}" }
                             div {
                                 strong { "{ui::transaction_direction(&transaction.direction)}" }
                                 small { class: "privacy-value", "{transaction_status_line(transaction)}" }
+                                small { class: "privacy-value", "{activity_observed_at_line(transaction.observed_at_millis)}" }
                             }
                             code { class: "privacy-value", "{truncate_middle(&transaction.transaction_id, 12, 6)}" }
+                            details { class: "activity-row__details",
+                                summary { "Transaction details" }
+                                dl { class: "preview-list",
+                                    div { dt { "Source" } dd { "Midnight wallet account" } }
+                                    div { dt { "Status" } dd { "{ui::transaction_status(&transaction.status)}" } }
+                                    div { dt { "Observed" } dd { "{activity_observed_at_line(transaction.observed_at_millis)}" } }
+                                    if let Some(block_height) = transaction.block_height {
+                                        div { dt { "Block" } dd { "{block_height}" } }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -7577,6 +7596,13 @@ fn transaction_status_line(transaction: &oxid_wallet_application::WalletTransact
     format!(
         "{} · block {block}",
         ui::transaction_status(&transaction.status)
+    )
+}
+
+fn activity_observed_at_line(observed_at_millis: Option<u64>) -> String {
+    observed_at_millis.map_or_else(
+        || "Observed timestamp unavailable".to_owned(),
+        |timestamp| format!("Observed {}", ui::format_epoch_millis(timestamp)),
     )
 }
 
@@ -11471,6 +11497,18 @@ mod tests {
         assert_eq!(
             home_transaction_amount(&unknown_asset),
             "Amount unavailable"
+        );
+    }
+
+    #[test]
+    fn activity_timestamp_is_explicit_about_missing_authoritative_data() {
+        assert_eq!(
+            activity_observed_at_line(Some(1_700_000_000_000)),
+            "Observed 2023-11-14 22:13 UTC"
+        );
+        assert_eq!(
+            activity_observed_at_line(None),
+            "Observed timestamp unavailable"
         );
     }
 
