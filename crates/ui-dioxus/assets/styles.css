@@ -2695,6 +2695,17 @@ textarea:focus-visible {
   margin-bottom: var(--space-3);
 }
 
+.settings-task-hub {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.settings-task-hub .settings-card {
+  width: 100%;
+  margin-bottom: 0;
+  text-align: left;
+}
+
 .backup-card {
   display: grid;
   gap: var(--space-4);

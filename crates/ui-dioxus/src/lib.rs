@@ -1674,6 +1674,29 @@ const PRIMARY_DESTINATIONS: [PrimaryDestination; 4] = [
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SettingsSection {
+    Hub,
+    Security,
+    Backup,
+    Recovery,
+    Preferences,
+    About,
+}
+
+impl SettingsSection {
+    const fn route(self) -> Route {
+        match self {
+            Self::Hub => Route::Settings,
+            Self::Security => Route::Security,
+            Self::Backup => Route::Backup,
+            Self::Recovery => Route::Recovery,
+            Self::Preferences => Route::Preferences,
+            Self::About => Route::About,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Route {
     Home,
     Receive,
@@ -1687,6 +1710,11 @@ enum Route {
     CredentialRequest,
     DidAuthenticationRequest,
     Settings,
+    Security,
+    Backup,
+    Recovery,
+    Preferences,
+    About,
     BackupRecovery,
     Diagnostics,
     #[cfg(feature = "ui-profile-dev")]
@@ -1715,6 +1743,11 @@ impl Route {
             Self::CredentialRequest => "Review document request",
             Self::DidAuthenticationRequest => "Review login request",
             Self::Settings => "Settings",
+            Self::Security => "Security",
+            Self::Backup => "Backup",
+            Self::Recovery => "Recovery",
+            Self::Preferences => "Preferences",
+            Self::About => "About",
             Self::BackupRecovery => "Backup & recovery",
             Self::Diagnostics => "Diagnostics",
             #[cfg(feature = "ui-profile-dev")]
@@ -1743,6 +1776,11 @@ impl Route {
             | Self::CredentialRequest
             | Self::DidAuthenticationRequest
             | Self::Settings
+            | Self::Security
+            | Self::Backup
+            | Self::Recovery
+            | Self::Preferences
+            | Self::About
             | Self::BackupRecovery
             | Self::Diagnostics
             | Self::Profile => None,
@@ -3887,15 +3925,29 @@ fn WalletApp() -> Element {
                             }
                         }
                     },
-                    Route::Settings | Route::BackupRecovery => rsx! {
+                    Route::Settings
+                    | Route::Security
+                    | Route::Backup
+                    | Route::Recovery
+                    | Route::Preferences
+                    | Route::About
+                    | Route::BackupRecovery => rsx! {
                         SettingsPage {
                             active_profile: active_profile.clone(),
                             lifecycle_wake: identity_link_wake,
                             secret_mode,
-                            backup_only: content_route == Route::BackupRecovery,
+                            section: match content_route {
+                                Route::Security => SettingsSection::Security,
+                                Route::Backup | Route::BackupRecovery => SettingsSection::Backup,
+                                Route::Recovery => SettingsSection::Recovery,
+                                Route::Preferences => SettingsSection::Preferences,
+                                Route::About => SettingsSection::About,
+                                _ => SettingsSection::Hub,
+                            },
                             on_root_recovered: move |_| {
                                 navigation.write().select_primary(PrimaryDestination::Wallet);
                             },
+                            on_open_section: move |section: SettingsSection| navigation.write().push(section.route()),
                             on_open_profile: move |_| navigation.write().push(Route::Profile),
                             on_open_diagnostics: move |_| navigation.write().push(Route::Diagnostics),
                             on_open_developer: move |_| {
@@ -9763,8 +9815,9 @@ fn SettingsPage(
     active_profile: WalletProfileView,
     lifecycle_wake: Signal<u64>,
     secret_mode: SecretModeController,
-    backup_only: bool,
+    section: SettingsSection,
     on_root_recovered: EventHandler<WalletProfileView>,
+    on_open_section: EventHandler<SettingsSection>,
     on_open_profile: EventHandler<MouseEvent>,
     on_open_diagnostics: EventHandler<MouseEvent>,
     on_open_developer: EventHandler<MouseEvent>,
@@ -10320,13 +10373,33 @@ fn SettingsPage(
         rsx! {}
     };
 
+    let section_title = section.route().title();
     rsx! {
         section { class: "page-heading",
-            p { class: "eyebrow", if backup_only { "Wallet continuity" } else { "Local controls" } }
-            h1 { if backup_only { "Backup & recovery" } else { "Settings" } }
+            p { class: "eyebrow", "Local controls" }
+            h1 { "{section_title}" }
             p { "Security-sensitive settings appear only when their application ports and platform adapters are available." }
         }
-        if !backup_only {
+        if section == SettingsSection::Hub {
+            section { class: "settings-task-hub", aria_label: "Settings tasks",
+                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open Security", onclick: move |_| on_open_section.call(SettingsSection::Security),
+                    p { class: "card-eyebrow", "Protect" } h2 { "Security" } p { "Check device protection and its current custody state." }
+                }
+                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open Backup", onclick: move |_| on_open_section.call(SettingsSection::Backup),
+                    p { class: "card-eyebrow", "Keep a copy" } h2 { "Backup" } p { "Create an encrypted document and keep its recovery secret separately." }
+                }
+                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open Recovery", onclick: move |_| on_open_section.call(SettingsSection::Recovery),
+                    p { class: "card-eyebrow", "Restore" } h2 { "Recovery" } p { "Complete-wallet restore and legacy custody-only recovery are different paths." }
+                }
+                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open Preferences", onclick: move |_| on_open_section.call(SettingsSection::Preferences),
+                    p { class: "card-eyebrow", "Control" } h2 { "Preferences" } p { "Manage your profile and how private values are shown." }
+                }
+                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open About and diagnostics", onclick: move |_| on_open_section.call(SettingsSection::About),
+                    p { class: "card-eyebrow", "About" } h2 { "About & diagnostics" } p { "Review app information and bounded local runtime health." }
+                }
+            }
+        }
+        if section == SettingsSection::Preferences {
             article { class: "settings-card surface-card",
                 div {
                     p { class: "card-eyebrow", "Profile" }
@@ -10341,10 +10414,22 @@ fn SettingsPage(
                 }
             }
         }
-        {security_card}
-        {root_recovery_card}
-        {backup_card}
-        if !backup_only {
+        if section == SettingsSection::Security {
+            {security_card}
+        }
+        if section == SettingsSection::Backup {
+            {backup_card}
+        }
+        if section == SettingsSection::Recovery {
+            {root_recovery_card}
+            article { class: "settings-card surface-card",
+                p { class: "card-eyebrow", "Recovery paths" }
+                h2 { "Restore only into an empty wallet" }
+                p { "Complete-wallet restore is available during first-run setup. Legacy recovery restores only older custody keys into this exact empty profile and never overwrites or merges an initialized wallet." }
+                span { class: "status-pill", "Choose the recovery path that matches your backup" }
+            }
+        }
+        if section == SettingsSection::Preferences {
             {deployment_profile_card}
             article { class: "settings-card surface-card",
                 div {
@@ -10361,6 +10446,8 @@ fn SettingsPage(
                     if secret_mode.is_masked() { "Reveal for 30 seconds" } else { "Hide now" }
                 }
             }
+        }
+        if section == SettingsSection::About {
             {developer_tools_card}
             article { class: "settings-card surface-card",
                 div {
@@ -11666,6 +11753,34 @@ mod tests {
         assert_eq!(Route::BackupRecovery.primary(), None);
         assert_eq!(Route::Receive.title(), "Receive");
         assert_eq!(Route::Receive.primary(), None);
+    }
+
+    #[test]
+    fn settings_task_routes_are_distinct_secondary_destinations() {
+        let sections = [
+            SettingsSection::Security,
+            SettingsSection::Backup,
+            SettingsSection::Recovery,
+            SettingsSection::Preferences,
+            SettingsSection::About,
+        ];
+        assert_eq!(
+            sections.map(SettingsSection::route),
+            [
+                Route::Security,
+                Route::Backup,
+                Route::Recovery,
+                Route::Preferences,
+                Route::About,
+            ]
+        );
+        assert!(
+            sections
+                .into_iter()
+                .all(|section| section.route().primary().is_none())
+        );
+        assert_eq!(Route::Backup.title(), "Backup");
+        assert_eq!(Route::Recovery.title(), "Recovery");
     }
 
     #[test]
