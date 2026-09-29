@@ -94,3 +94,105 @@ const fn vault_activity_source(source: PassportVaultActivitySource) -> &'static 
         PassportVaultActivitySource::MidnightContractCall => "Midnight contract call",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dioxus::dioxus_core::Mutation;
+
+    fn rendered_text(state: VaultActivityPageState) -> Vec<String> {
+        #[derive(Clone, PartialEq, Props)]
+        struct HarnessProps {
+            state: VaultActivityPageState,
+        }
+
+        fn harness(props: HarnessProps) -> Element {
+            rsx! { PassportVaultActivityCard { state: props.state } }
+        }
+
+        let mut dom = VirtualDom::new_with_props(harness, HarnessProps { state });
+        dom.rebuild_to_vec()
+            .edits
+            .iter()
+            .filter_map(|edit| match edit {
+                Mutation::CreateTextNode { value, .. } => Some(value.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn empty_and_unavailable_states_remain_explicit() {
+        let empty = rendered_text(VaultActivityPageState::Ready(PassportVaultActivityView {
+            source: "application_event_projection".to_owned(),
+            retention: "process_local_bounded_not_backed_up".to_owned(),
+            records: Vec::new(),
+        }));
+        assert!(
+            empty
+                .iter()
+                .any(|text| text.contains("No Passport Vault operations"))
+        );
+
+        let unavailable = rendered_text(VaultActivityPageState::Unavailable(
+            "Passport Vault activity is unavailable".to_owned(),
+        ));
+        assert!(unavailable.iter().any(|text| text.contains("unavailable")));
+    }
+
+    #[test]
+    fn safe_labels_cover_every_supported_lifecycle_state() {
+        assert_eq!(
+            vault_activity_operation(PassportVaultCallKind::CreateLock),
+            "Create lock"
+        );
+        assert_eq!(
+            vault_activity_operation(PassportVaultCallKind::DepositToLock),
+            "Deposit"
+        );
+        assert_eq!(
+            vault_activity_operation(PassportVaultCallKind::ClaimFromLock),
+            "Claim"
+        );
+        assert_eq!(
+            vault_activity_operation(PassportVaultCallKind::WithdrawFromLock),
+            "Withdraw"
+        );
+        assert_eq!(
+            vault_activity_status(PassportVaultActivityStatus::Pending),
+            "Pending"
+        );
+        assert_eq!(
+            vault_activity_status(PassportVaultActivityStatus::Confirmed),
+            "Confirmed"
+        );
+        assert_eq!(
+            vault_activity_status(PassportVaultActivityStatus::Failed),
+            "Failed"
+        );
+        assert_eq!(
+            vault_activity_status(PassportVaultActivityStatus::Refused),
+            "Refused"
+        );
+        assert_eq!(
+            vault_activity_status(PassportVaultActivityStatus::Cancelled),
+            "Cancelled"
+        );
+        assert_eq!(
+            vault_activity_status(PassportVaultActivityStatus::TimedOut),
+            "Timed out"
+        );
+        assert_eq!(
+            vault_activity_status(PassportVaultActivityStatus::OutcomeUnknown),
+            "Outcome unknown"
+        );
+        assert_eq!(
+            vault_activity_source(PassportVaultActivitySource::StandaloneVault),
+            "Standalone Vault"
+        );
+        assert_eq!(
+            vault_activity_source(PassportVaultActivitySource::MidnightContractCall),
+            "Midnight contract call"
+        );
+    }
+}

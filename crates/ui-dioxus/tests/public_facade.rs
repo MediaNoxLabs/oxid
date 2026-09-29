@@ -111,6 +111,7 @@ fn other_stable_facade_paths_remain_at_the_crate_root() {
 #[test]
 fn passport_vault_service_methods_remain_on_the_wallet_facade() {
     assert_public_path(WalletUiServices::list_passport_vault_locks);
+    assert_public_path(WalletUiServices::list_passport_vault_activity);
     assert_public_path(WalletUiServices::create_passport_vault_lock);
     assert_public_path(WalletUiServices::deposit_passport_vault_lock);
     assert_public_path(WalletUiServices::claim_passport_vault_lock);
