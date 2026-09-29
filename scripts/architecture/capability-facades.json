@@ -179,12 +179,13 @@
             "crates/ui-dioxus/src/labels"
           ]
         },
-      {
-        "name": "passport-vault",
-        "modulePathPrefixes": [
-          "crates/ui-dioxus/src/passport_vault"
-        ]
-      },
+        {
+          "name": "passport-vault",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/activity_page",
+            "crates/ui-dioxus/src/passport_vault"
+          ]
+        },
       {
         "name": "wallet-assets",
         "modulePathPrefixes": [
