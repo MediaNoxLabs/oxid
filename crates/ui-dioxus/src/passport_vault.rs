@@ -19,9 +19,12 @@ use oxid_passport_vault_application::{
     SubmitPassportVaultCallCommand, SubmitPassportVaultCallUseCase, WITHDRAW_INTENT,
     WithdrawPassportVaultLockUseCase,
 };
-use oxid_wallet_application::WalletProfileView;
+use oxid_wallet_application::{
+    SelectedWalletRealmSpendableNightView, SelectedWalletRealmSyncCommand, WalletProfileView,
+};
 
 use super::labels as ui;
+use super::wallet_realm_lifecycle::WalletRealmProjectionWake;
 use super::{BrandProfile, WalletUiServices, run_ui_blocking, run_ui_future, truncate_middle};
 
 /// Product-specific Passport Vault capabilities consumed only by the Vault page.
@@ -172,6 +175,7 @@ enum PassportVaultPageState {
     Ready {
         vault: Box<PassportVaultView>,
         credentials: Vec<CredentialView>,
+        spendable_night: SelectedWalletRealmSpendableNightView,
         busy: bool,
         operation_error: Option<String>,
     },
@@ -261,11 +265,72 @@ fn load_passport_vault_page(
             .collect(),
         Err(error) => return PassportVaultPageState::Failed(error.to_string()),
     };
+    let spendable_night = services
+        .get_selected_wallet_realm_sync()
+        .execute(SelectedWalletRealmSyncCommand {
+            profile_id: profile_id.to_owned(),
+        })
+        .map(|projection| projection.spendable_night)
+        .unwrap_or(SelectedWalletRealmSpendableNightView::Failed);
     PassportVaultPageState::Ready {
         vault: Box::new(vault),
         credentials,
+        spendable_night,
         busy: false,
         operation_error,
+    }
+}
+
+fn spendable_night_summary(value: &SelectedWalletRealmSpendableNightView) -> (String, String) {
+    match value {
+        SelectedWalletRealmSpendableNightView::Loading => (
+            "Spendable NIGHT is loading".to_owned(),
+            "Vault locks and recovery remain available while the selected wallet realm updates."
+                .to_owned(),
+        ),
+        SelectedWalletRealmSpendableNightView::Fresh { atomic_units } => (
+            format!("{} spendable", ui::format_night_amount(atomic_units)),
+            "Spendable NIGHT from the selected wallet realm.".to_owned(),
+        ),
+        SelectedWalletRealmSpendableNightView::Stale { atomic_units } => (
+            format!("{} spendable (stale)", ui::format_night_amount(atomic_units)),
+            "Showing the last consistent selected-wallet balance while it refreshes.".to_owned(),
+        ),
+        SelectedWalletRealmSpendableNightView::Zero => (
+            "0 NIGHT spendable".to_owned(),
+            "The selected wallet realm reports no spendable NIGHT.".to_owned(),
+        ),
+        SelectedWalletRealmSpendableNightView::Failed => (
+            "Spendable NIGHT could not be verified".to_owned(),
+            "Vault locks and recovery remain available; retry wallet synchronization before funding."
+                .to_owned(),
+        ),
+        SelectedWalletRealmSpendableNightView::Unavailable => (
+            "Spendable NIGHT unavailable".to_owned(),
+            "Vault locks and recovery remain available while the selected wallet realm is unavailable."
+                .to_owned(),
+        ),
+    }
+}
+
+const fn spendable_night_is_private_value(value: &SelectedWalletRealmSpendableNightView) -> bool {
+    matches!(
+        value,
+        SelectedWalletRealmSpendableNightView::Fresh { .. }
+            | SelectedWalletRealmSpendableNightView::Stale { .. }
+            | SelectedWalletRealmSpendableNightView::Zero
+    )
+}
+
+fn update_spendable_night(
+    page: &mut PassportVaultPageState,
+    updated: SelectedWalletRealmSpendableNightView,
+) {
+    if let PassportVaultPageState::Ready {
+        spendable_night, ..
+    } = page
+    {
+        *spendable_night = updated;
     }
 }
 
@@ -1106,6 +1171,8 @@ fn poll_passport_vault_cancellation(
 #[component]
 pub(super) fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
+    let WalletRealmProjectionWake(realm_projection_wake) =
+        consume_context::<WalletRealmProjectionWake>();
     let state_persistence = services.passport_vault_state_persistence();
     let mut page = use_signal(|| PassportVaultPageState::Loading);
     let mut operation_amount = use_signal(|| "10".to_owned());
@@ -1127,6 +1194,30 @@ pub(super) fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
                 selected_credential.set(credential.id.clone());
             }
             page.set(loaded);
+        });
+    });
+    let refresh_services = services.clone();
+    let refresh_profile = active_profile.id.clone();
+    use_effect(move || {
+        let _projection_generation = realm_projection_wake();
+        let services = refresh_services.clone();
+        let profile_id = refresh_profile.clone();
+        spawn(async move {
+            let updated = run_ui_blocking(move || {
+                services
+                    .get_selected_wallet_realm_sync()
+                    .execute(SelectedWalletRealmSyncCommand {
+                        profile_id: profile_id.to_owned(),
+                    })
+            })
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .map_or(
+                SelectedWalletRealmSpendableNightView::Failed,
+                |projection| projection.spendable_night,
+            );
+            update_spendable_night(&mut page.write(), updated);
         });
     });
 
@@ -1153,9 +1244,12 @@ pub(super) fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
         PassportVaultPageState::Ready {
             vault,
             credentials,
+            spendable_night,
             busy,
             operation_error,
         } => {
+            let (spendable_label, spendable_note) = spendable_night_summary(&spendable_night);
+            let private_spendable = spendable_night_is_private_value(&spendable_night);
             let persistence_note = ui::vault_persistence_note(&state_persistence);
             let profile_id = active_profile.id.clone();
             rsx! {
@@ -1171,8 +1265,16 @@ pub(super) fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
 
                     article { class: "balance-card vault-holder-summary",
                         p { class: "card-eyebrow", "Your Passport Vault" }
-                        h2 { class: "privacy-value", "{ui::format_night_amount(&vault.total_locked)} locked" }
-                        p { "{vault.locks.len()} active lock(s) · {vault.claim_count} completed claim(s)" }
+                        if private_spendable {
+                            h2 { class: "privacy-value", "{spendable_label}" }
+                        } else {
+                            h2 { "{spendable_label}" }
+                        }
+                        p { class: "trust-line", "{spendable_note}" }
+                        p {
+                            span { class: "privacy-value", "{ui::format_night_amount(&vault.total_locked)}" }
+                            " locked · {vault.locks.len()} active lock(s) · {vault.claim_count} completed claim(s)"
+                        }
                         p { class: "trust-line", "Choose Create lock below to review exact terms before protected authorization. Contract and network details remain available after your locks." }
                     }
 
@@ -1225,6 +1327,7 @@ pub(super) fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
                                     let complete_profile = profile_id.clone();
                                     let complete_vault = vault.clone();
                                     let complete_credentials = credentials.clone();
+                                    let complete_spendable_night = spendable_night.clone();
                                     rsx! {
                                         PassportVaultLockCard {
                                             key: "{lock.lock_id}",
@@ -1238,6 +1341,7 @@ pub(super) fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
                                                     page.set(PassportVaultPageState::Ready {
                                                         vault: complete_vault.clone(),
                                                         credentials: complete_credentials.clone(),
+                                                        spendable_night: complete_spendable_night.clone(),
                                                         busy: false,
                                                         operation_error: Some(message.clone()),
                                                     });
@@ -1248,6 +1352,7 @@ pub(super) fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
                                                 page.set(PassportVaultPageState::Ready {
                                                     vault: complete_vault.clone(),
                                                     credentials: complete_credentials.clone(),
+                                                    spendable_night: complete_spendable_night.clone(),
                                                     busy: true,
                                                     operation_error: None,
                                                 });
@@ -1510,6 +1615,69 @@ mod tests {
         assert!(
             ui::vault_submission_note("outcome_unknown", "Oxid").contains("not submit a duplicate")
         );
+    }
+
+    #[test]
+    fn vault_summary_never_relabels_stale_or_unavailable_night_as_spendable() {
+        let (stale, stale_note) =
+            spendable_night_summary(&SelectedWalletRealmSpendableNightView::Stale {
+                atomic_units: "12000000".to_owned(),
+            });
+        assert!(stale.contains("stale"));
+        assert!(stale_note.contains("last consistent"));
+
+        let (unavailable, unavailable_note) =
+            spendable_night_summary(&SelectedWalletRealmSpendableNightView::Unavailable);
+        assert!(unavailable.contains("unavailable"));
+        assert!(unavailable_note.contains("Vault locks and recovery"));
+        assert!(
+            spendable_night_summary(&SelectedWalletRealmSpendableNightView::Zero)
+                .0
+                .contains("0 NIGHT")
+        );
+        assert!(spendable_night_is_private_value(
+            &SelectedWalletRealmSpendableNightView::Zero
+        ));
+        assert!(!spendable_night_is_private_value(
+            &SelectedWalletRealmSpendableNightView::Unavailable
+        ));
+    }
+
+    #[test]
+    fn projection_wakes_update_only_the_ready_vault_balance() {
+        let mut ready = PassportVaultPageState::Ready {
+            vault: Box::new(PassportVaultView {
+                source: "deterministic_simulation".to_owned(),
+                chain_anchor: None,
+                contract: None,
+                total_locked: "0".to_owned(),
+                total_deposited: "0".to_owned(),
+                total_released: "0".to_owned(),
+                claim_count: 0,
+                locks: vec![],
+            }),
+            credentials: vec![],
+            spendable_night: SelectedWalletRealmSpendableNightView::Loading,
+            busy: false,
+            operation_error: None,
+        };
+        update_spendable_night(
+            &mut ready,
+            SelectedWalletRealmSpendableNightView::Fresh {
+                atomic_units: "12000000".to_owned(),
+            },
+        );
+        assert!(matches!(
+            ready,
+            PassportVaultPageState::Ready {
+                spendable_night: SelectedWalletRealmSpendableNightView::Fresh { ref atomic_units },
+                ..
+            } if atomic_units == "12000000"
+        ));
+
+        let mut loading = PassportVaultPageState::Loading;
+        update_spendable_night(&mut loading, SelectedWalletRealmSpendableNightView::Failed);
+        assert_eq!(loading, PassportVaultPageState::Loading);
     }
 
     #[test]

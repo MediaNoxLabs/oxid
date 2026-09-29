@@ -401,6 +401,8 @@ fn selected_projection(
         consistent: true,
         actionable: SelectedWalletRealmActionReadiness::Ready,
         observation: SelectedWalletRealmObservation::Settled,
+        spendable_night:
+            oxid_wallet_application::SelectedWalletRealmSpendableNightView::Unavailable,
         view: SelectedWalletRealmSyncView {
             account: WalletRealmFamilyView::Ready(WalletAccountView {
                 chain: "midnight".to_owned(),

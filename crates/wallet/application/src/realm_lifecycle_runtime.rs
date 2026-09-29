@@ -1047,6 +1047,7 @@ mod tests {
                 consistent: true,
                 actionable: SelectedWalletRealmActionReadiness::Ready,
                 observation: SelectedWalletRealmObservation::Settled,
+                spendable_night: crate::SelectedWalletRealmSpendableNightView::Unavailable,
                 view: SelectedWalletRealmSyncView {
                     account: WalletRealmFamilyView::NotFound,
                     dust: WalletRealmFamilyView::NotFound,
