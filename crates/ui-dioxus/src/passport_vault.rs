@@ -6,9 +6,8 @@ use dioxus::prelude::*;
 use oxid_credential_application::{CredentialProfileQuery, CredentialView};
 use oxid_passport_vault_application::{
     AUTHORIZE_PASSPORT_VAULT_CALL_INTENT, AuthorizePassportVaultCallCommand,
-    AuthorizePassportVaultCallUseCase, CLAIM_INTENT, CREATE_LOCK_INTENT,
-    CancelPassportVaultCallSubmissionUseCase, ClaimPassportVaultLockCommand,
-    ClaimPassportVaultLockUseCase, CreatePassportVaultLockCommand, CreatePassportVaultLockUseCase,
+    AuthorizePassportVaultCallUseCase, CLAIM_INTENT, CancelPassportVaultCallSubmissionUseCase,
+    ClaimPassportVaultLockCommand, ClaimPassportVaultLockUseCase, CreatePassportVaultLockUseCase,
     DEPOSIT_INTENT, DepositPassportVaultLockUseCase, GetPassportVaultCallSubmissionStatusUseCase,
     GetPassportVaultCallUseCase, ListPassportVaultCallSubmissionsUseCase,
     ListPassportVaultLocksUseCase, PassportVaultAmountCommand, PassportVaultCallPreviewView,
@@ -1109,11 +1108,6 @@ pub(super) fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
     let state_persistence = services.passport_vault_state_persistence();
     let mut page = use_signal(|| PassportVaultPageState::Loading);
-    let mut minimum_age = use_signal(|| "18".to_owned());
-    let mut maximum_claim = use_signal(|| "40".to_owned());
-    let mut initial_amount = use_signal(|| "100".to_owned());
-    let mut required_state = use_signal(String::new);
-    let mut required_document = use_signal(String::new);
     let mut operation_amount = use_signal(|| "10".to_owned());
     let mut selected_credential = use_signal(String::new);
     let services_for_load = services.clone();
@@ -1164,15 +1158,6 @@ pub(super) fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
         } => {
             let persistence_note = ui::vault_persistence_note(&state_persistence);
             let profile_id = active_profile.id.clone();
-            let create_services = services.clone();
-            let create_profile = profile_id.clone();
-            let create_state = required_state.read().clone();
-            let create_document = required_document.read().clone();
-            let create_age = minimum_age.read().clone();
-            let create_maximum = maximum_claim.read().clone();
-            let create_initial = initial_amount.read().clone();
-            let create_vault = vault.clone();
-            let create_credentials = credentials.clone();
             rsx! {
                 section { class: "page-stack",
                     div { class: "page-heading",
@@ -1184,9 +1169,11 @@ pub(super) fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
                         span { class: "status-pill", "Standalone + Midnight" }
                     }
 
-                    PassportVaultContractCallPanel {
-                        profile_id: profile_id.clone(),
-                        credentials: credentials.clone(),
+                    article { class: "balance-card vault-holder-summary",
+                        p { class: "card-eyebrow", "Your Passport Vault" }
+                        h2 { class: "privacy-value", "{ui::format_night_amount(&vault.total_locked)} locked" }
+                        p { "{vault.locks.len()} active lock(s) · {vault.claim_count} completed claim(s)" }
+                        p { class: "trust-line", "Choose Create lock below to review exact terms before protected authorization. Contract and network details remain available after your locks." }
                     }
 
                     article { class: "balance-card",
@@ -1202,91 +1189,6 @@ pub(super) fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
 
                     if let Some(message) = operation_error {
                         p { class: "field-error", role: "alert", "{message}" }
-                    }
-
-                    article { class: "info-card",
-                        div { class: "card-heading",
-                            div { p { class: "card-eyebrow", "Locker flow" } h2 { "Create a lock" } }
-                            span { class: "status-pill", "Explicit consent" }
-                        }
-                        div { class: "field-grid",
-                            label { "Minimum age"
-                                input { r#type: "number", min: "0", max: "120", aria_label: "Vault minimum age", value: "{minimum_age}", oninput: move |event| minimum_age.set(event.value()) }
-                            }
-                            label { "Maximum claim (NIGHT)"
-                                input { inputmode: "decimal", aria_label: "Vault maximum claim", value: "{maximum_claim}", oninput: move |event| maximum_claim.set(event.value()) }
-                            }
-                            label { "Initial deposit (NIGHT)"
-                                input { inputmode: "decimal", aria_label: "Vault initial deposit", value: "{initial_amount}", oninput: move |event| initial_amount.set(event.value()) }
-                            }
-                            label { "Required issuing state (optional)"
-                                input { maxlength: "32", aria_label: "Vault required issuing state", value: "{required_state}", placeholder: "US", oninput: move |event| required_state.set(event.value()) }
-                            }
-                            label { "Required document number (optional)"
-                                input { maxlength: "32", aria_label: "Vault required document number", value: "{required_document}", placeholder: "AB1234567", oninput: move |event| required_document.set(event.value()) }
-                            }
-                        }
-                        button {
-                            class: "primary-button",
-                            r#type: "button",
-                            disabled: busy,
-                            onclick: move |_| {
-                                let parsed = (|| {
-                                    let age = create_age.parse::<u8>().map_err(|_| "Minimum age must be 0–120.".to_owned())?;
-                                    let maximum = parse_vault_amount(&create_maximum)?;
-                                    let initial = if create_initial == "0" { 0 } else { parse_vault_amount(&create_initial)? };
-                                    let state = vault_policy_value(&create_state)?;
-                                    let document = vault_policy_value(&create_document)?;
-                                    Ok::<_, String>((age, maximum, initial, state, document))
-                                })();
-                                match parsed {
-                                    Err(message) => page.set(PassportVaultPageState::Ready {
-                                        vault: create_vault.clone(),
-                                        credentials: create_credentials.clone(),
-                                        busy: false,
-                                        operation_error: Some(message),
-                                    }),
-                                    Ok((age, maximum, initial, state, document)) => {
-                                        let services = create_services.clone();
-                                        let profile_id = create_profile.clone();
-                                        page.set(PassportVaultPageState::Ready {
-                                            vault: create_vault.clone(),
-                                            credentials: create_credentials.clone(),
-                                            busy: true,
-                                            operation_error: None,
-                                        });
-                                        spawn(async move {
-                                            let result = run_ui_blocking(move || {
-                                                let operation_error = services
-                                                    .create_passport_vault_lock()
-                                                    .execute(CreatePassportVaultLockCommand {
-                                                        profile_id: profile_id.clone(),
-                                                        minimum_age_years: age,
-                                                        required_issuing_state: state,
-                                                        required_document_number: document,
-                                                        maximum_claim_amount: maximum,
-                                                        initial_amount: initial,
-                                                        confirmed: true,
-                                                        intent: CREATE_LOCK_INTENT.to_owned(),
-                                                    })
-                                                    .err()
-                                                    .map(|error| error.to_string());
-                                                load_passport_vault_page(
-                                                    &services,
-                                                    &profile_id,
-                                                    operation_error,
-                                                )
-                                            })
-                                            .await;
-                                            page.set(result.unwrap_or_else(|error| {
-                                                PassportVaultPageState::Failed(error.to_string())
-                                            }));
-                                        });
-                                    }
-                                }
-                            },
-                            "Create confirmed lock"
-                        }
                     }
 
                     article { class: "info-card",
@@ -1400,6 +1302,11 @@ pub(super) fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
                                 }
                             }
                         }
+                    }
+
+                    PassportVaultContractCallPanel {
+                        profile_id: profile_id.clone(),
+                        credentials: credentials.clone(),
                     }
                 }
             }
@@ -1603,5 +1510,31 @@ mod tests {
         assert!(
             ui::vault_submission_note("outcome_unknown", "Oxid").contains("not submit a duplicate")
         );
+    }
+
+    #[test]
+    fn holder_summary_and_lock_inventory_precede_contract_plumbing() {
+        let source = include_str!("passport_vault.rs");
+        let production = source
+            .split_once("#[cfg(test)]")
+            .map_or(source, |(production, _)| production);
+        let summary = production
+            .find("vault-holder-summary")
+            .expect("holder summary must remain visible");
+        let inventory = production
+            .find("if vault.locks.is_empty()")
+            .expect("lock inventory must remain visible");
+        let contract = production
+            .rfind("PassportVaultContractCallPanel {")
+            .expect("one reviewed contract-call flow must remain available");
+
+        assert!(summary < inventory && inventory < contract);
+        assert_eq!(
+            production
+                .matches("PassportVaultContractCallPanel {")
+                .count(),
+            1
+        );
+        assert!(!production.contains("Create confirmed lock"));
     }
 }

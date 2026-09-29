@@ -1407,6 +1407,11 @@ textarea:focus-visible {
   border-radius: var(--radius-card);
 }
 
+.vault-holder-summary {
+  display: grid;
+  gap: var(--space-2);
+}
+
 .surface-card h2,
 .info-card h2,
 .balance-card h2,
