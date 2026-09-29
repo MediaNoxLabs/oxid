@@ -4036,11 +4036,6 @@ select:focus-visible {
     display: none;
   }
 
-  .documents-identity-card {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
   .diagnostic-grid {
     grid-template-columns: 1fr;
   }

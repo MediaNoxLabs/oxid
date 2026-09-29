@@ -297,6 +297,9 @@ final class ProfileFlowTests: XCTestCase {
         let credentials = application.buttons["Documents"]
         XCTAssertTrue(credentials.waitForExistence(timeout: 5))
         credentials.tap()
+        let addDocument = application.buttons["Add document"]
+        XCTAssertTrue(addDocument.waitForExistence(timeout: 5))
+        addDocument.tap()
         let demoOffer = application.buttons["Use demo OID4VCI offer"]
         XCTAssertTrue(demoOffer.waitForExistence(timeout: 5))
         scrollTo(demoOffer, in: application)
@@ -377,6 +380,10 @@ final class ProfileFlowTests: XCTestCase {
             application.staticTexts["Credential issued, verified, and stored in the protected inventory."]
                 .waitForExistence(timeout: 10)
         )
+        application.buttons["Documents"].tap()
+        let present = application.buttons["Present"]
+        XCTAssertTrue(present.waitForExistence(timeout: 5))
+        present.tap()
         let verifierRequest = application.buttons["Use standalone verifier request"]
         XCTAssertTrue(verifierRequest.waitForExistence(timeout: 5))
         scrollTo(verifierRequest, in: application)
@@ -581,6 +588,9 @@ final class ProfileFlowTests: XCTestCase {
 
         application.buttons["Documents"].tap()
         let hadCredential = application.staticTexts["Valid"].waitForExistence(timeout: 2)
+        let addDocument = application.buttons["Add document"]
+        XCTAssertTrue(addDocument.waitForExistence(timeout: 5))
+        addDocument.tap()
         let demoOffer = application.buttons["Use demo OID4VCI offer"]
         XCTAssertTrue(demoOffer.waitForExistence(timeout: 5))
         scrollTo(demoOffer, in: application)
@@ -622,6 +632,10 @@ final class ProfileFlowTests: XCTestCase {
             )
         }
 
+        application.buttons["Documents"].tap()
+        let present = application.buttons["Present"]
+        XCTAssertTrue(present.waitForExistence(timeout: 5))
+        present.tap()
         let verifierRequest = application.buttons["Use standalone verifier request"]
         XCTAssertTrue(verifierRequest.waitForExistence(timeout: 5))
         scrollTo(verifierRequest, in: application)

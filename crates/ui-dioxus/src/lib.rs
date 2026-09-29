@@ -2286,7 +2286,7 @@ fn retained_identity_review_route(
     }) {
         return Some(Route::CredentialRequest);
     }
-    manual_credential_review_locked.then_some(Route::Documents)
+    manual_credential_review_locked.then_some(Route::CredentialRequest)
 }
 
 fn credential_review_escape_is_visible(
@@ -3797,7 +3797,12 @@ fn WalletApp() -> Element {
                             realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
                         },
                     } },
-                    Route::Present => rsx! { PresentationPendingPage {} },
+                    Route::Present => rsx! {
+                        PresentationPage {
+                            active_profile: active_profile.clone(),
+                            pending_identity_request,
+                        }
+                    },
                     Route::Documents => rsx! {
                         DocumentsPage {
                             active_profile: active_profile.clone(),
@@ -4957,12 +4962,21 @@ const fn home_quick_action_disabled(action: HomeQuickAction, scan_busy: bool) ->
 }
 
 #[component]
-fn PresentationPendingPage() -> Element {
+fn PresentationPage(
+    active_profile: WalletProfileView,
+    pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+) -> Element {
     rsx! {
-        article { class: "empty-state surface-card", role: "status",
-            p { class: "card-eyebrow", "Presentation" }
-            h1 { "No presentation request is pending" }
-            p { "Scan a verifier's QR code to import a request before selecting credentials or sharing any data." }
+        section { class: "page-heading",
+            p { class: "eyebrow", "Selective disclosure" }
+            h1 { "Present a document" }
+            p {
+                "Review who is asking and choose exactly what to share. Nothing leaves this wallet without consent."
+            }
+        }
+        CredentialPresentationPanel {
+            profile_id: active_profile.id,
+            pending_identity_request,
         }
     }
 }
@@ -10847,7 +10861,7 @@ mod tests {
             Ok(Err(CredentialIssuanceError::InvalidState)),
             Err(UiBlockingTaskError::WorkerFailed),
         ] {
-            assert_retained(cleanup, None, true, Some(Route::Documents));
+            assert_retained(cleanup, None, true, Some(Route::CredentialRequest));
         }
     }
 
@@ -10942,10 +10956,10 @@ mod tests {
     }
 
     #[test]
-    fn manual_preparation_reserves_before_await_and_pins_existing_documents_content() {
+    fn manual_preparation_reserves_before_await_and_pins_credential_review_content() {
         let pending = None;
         let mut manual_review_lock = false;
-        let active_route = Route::Documents;
+        let active_route = Route::CredentialRequest;
         let content_before_reservation =
             retained_identity_review_route(&pending, manual_review_lock).unwrap_or(active_route);
 
@@ -10954,10 +10968,10 @@ mod tests {
 
         assert!(reserved, "manual preparation must reserve synchronously");
         assert!(pending.is_none(), "manual review must not create a marker");
-        assert_eq!(content_before_reservation, Route::Documents);
+        assert_eq!(content_before_reservation, Route::CredentialRequest);
         assert_eq!(
             retained_identity_review_route(&pending, manual_review_lock),
-            Some(Route::Documents),
+            Some(Route::CredentialRequest),
         );
         assert_eq!(
             retained_identity_review_route(&pending, manual_review_lock).unwrap_or(active_route),
@@ -11100,7 +11114,7 @@ mod tests {
         // release and keep ingress closed.
         assert_eq!(
             retained_identity_review_route(&None, manual_review_lock),
-            Some(Route::Documents)
+            Some(Route::CredentialRequest)
         );
         assert!(!identity_request_admits_new_link(false, manual_review_lock));
 
