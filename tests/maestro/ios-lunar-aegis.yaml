@@ -46,7 +46,11 @@ name: Lunar Aegis iOS simulated holder journey
 - takeScreenshot: lunar-aegis-ios-05-send-entry
 - tapOn: "Go back"
 - assertVisible: "Current realm"
+# Canonical 375-point route-transition evidence: navigate from scrolled
+# Documents through Activity to Settings and retain visible destination titles.
 - tapOn: "Documents"
+- assertVisible: "Documents"
+- takeScreenshot: lunar-aegis-ios-06-documents-empty
 - scrollUntilVisible:
     element:
       text: "No documents yet"
@@ -54,17 +58,17 @@ name: Lunar Aegis iOS simulated holder journey
 - extendedWaitUntil:
     visible: "No documents yet"
     timeout: 60000
-- takeScreenshot: lunar-aegis-ios-06-documents-empty
 - tapOn: "Activity"
 - extendedWaitUntil:
     visible: "Sent"
     timeout: 60000
+- assertVisible: "Activity"
+- takeScreenshot: lunar-aegis-ios-07-activity-history
 - scrollUntilVisible:
     element:
       text: "Received"
     direction: DOWN
 - assertVisible: "Received"
-- takeScreenshot: lunar-aegis-ios-07-activity-history
 - scrollUntilVisible:
     element:
       text: "Open global application menu"
@@ -72,4 +76,7 @@ name: Lunar Aegis iOS simulated holder journey
 - tapOn: "Open global application menu"
 - tapOn: "Settings"
 - assertVisible: "Settings"
+# Activity remains a legitimate bottom-navigation label. The Rust semantic
+# contract proves it no longer carries aria-current while Settings is open;
+# the screenshot qualifies the visible state and safe-area placement.
 - takeScreenshot: lunar-aegis-ios-08-settings
