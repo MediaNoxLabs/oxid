@@ -132,8 +132,9 @@ jobs:
     runs-on: ubuntu-24.04
     # Keep the unit command bounded while reserving enough time for cold Nix
     # setup, sccache metrics, and GitHub post-job cleanup. A green command on a
-    # cold runner can otherwise be cancelled at the old 12-minute boundary.
-    timeout-minutes: 14
+    # cold runner can otherwise be cancelled after the test suite passes but
+    # before bounded cache/stat cleanup completes.
+    timeout-minutes: 18
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0

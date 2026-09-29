@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 
 use futures::executor::block_on;
 use oxid_wallet_application::{
@@ -12,10 +15,11 @@ use oxid_wallet_application::{
     SelectedWalletRealmSyncError, SelectedWalletRealmSyncView, SubmitWalletDustRegistrationCommand,
     WalletAccountView, WalletAssetBalanceView, WalletDustRegistrationAssetView,
     WalletDustRegistrationError, WalletDustRegistrationPortError,
-    WalletDustRegistrationPreviewView, WalletDustRegistrationStatusViewFuture,
-    WalletDustRegistrationSubmissionStatusView, WalletDustRegistrationSubmissionView,
-    WalletDustRegistrationSubmissionViewFuture, WalletDustSyncView, WalletProfileId,
-    WalletRealmFamilyView, WalletShieldedSyncView, WalletSyncStatusView,
+    WalletDustRegistrationPreviewView, WalletDustRegistrationPreviewViewFuture,
+    WalletDustRegistrationStatusViewFuture, WalletDustRegistrationSubmissionStatusView,
+    WalletDustRegistrationSubmissionView, WalletDustRegistrationSubmissionViewFuture,
+    WalletDustSyncView, WalletProfileId, WalletRealmFamilyView, WalletShieldedSyncView,
+    WalletSyncStatusView,
 };
 
 use super::*;
@@ -23,12 +27,15 @@ use super::*;
 struct FakeServices {
     selected: Mutex<SelectedWalletRealmProjection>,
     reconcile_state: Mutex<String>,
+    status_state: Mutex<String>,
     sync_ready: Mutex<Result<bool, ()>>,
     submit_unknown: Mutex<bool>,
     submit_timeout: Mutex<bool>,
     submit_rejected: Mutex<bool>,
     registration_already_current: Mutex<bool>,
     registration_prepare_failure: Mutex<Option<WalletDustRegistrationPortError>>,
+    prepare_pending: AtomicBool,
+    prepare_drops: AtomicUsize,
     calls: Mutex<Vec<&'static str>>,
 }
 
@@ -37,12 +44,15 @@ impl FakeServices {
         Self {
             selected: Mutex::new(selected_projection(1, 7, true)),
             reconcile_state: Mutex::new("included".to_owned()),
+            status_state: Mutex::new("broadcasting".to_owned()),
             sync_ready: Mutex::new(Ok(true)),
             submit_unknown: Mutex::new(false),
             submit_timeout: Mutex::new(false),
             submit_rejected: Mutex::new(false),
             registration_already_current: Mutex::new(false),
             registration_prepare_failure: Mutex::new(None),
+            prepare_pending: AtomicBool::new(false),
+            prepare_drops: AtomicUsize::new(0),
             calls: Mutex::new(Vec::new()),
         }
     }
@@ -80,20 +90,32 @@ impl SyncSelectedWalletRealmUseCase for FakeServices {
 }
 
 impl PrepareWalletDustRegistrationUseCase for FakeServices {
-    fn execute(
-        &self,
+    fn execute<'a>(
+        &'a self,
         _: PrepareWalletDustRegistrationCommand,
-    ) -> Result<WalletDustRegistrationPreviewView, WalletDustRegistrationError> {
-        self.record("prepare");
-        if let Some(error) = *self.registration_prepare_failure.lock().unwrap() {
-            return Err(WalletDustRegistrationError::Operation(error));
-        }
-        if *self.registration_already_current.lock().unwrap() {
-            return Err(WalletDustRegistrationError::Operation(
-                WalletDustRegistrationPortError::RegistrationAlreadyCurrent,
-            ));
-        }
-        Ok(preview(false))
+    ) -> WalletDustRegistrationPreviewViewFuture<'a> {
+        Box::pin(async move {
+            self.record("prepare");
+            if self.prepare_pending.load(Ordering::Acquire) {
+                struct CountDrop<'a>(&'a AtomicUsize);
+                impl Drop for CountDrop<'_> {
+                    fn drop(&mut self) {
+                        self.0.fetch_add(1, Ordering::AcqRel);
+                    }
+                }
+                let _count_drop = CountDrop(&self.prepare_drops);
+                futures::future::pending::<()>().await;
+            }
+            if let Some(error) = *self.registration_prepare_failure.lock().unwrap() {
+                return Err(WalletDustRegistrationError::Operation(error));
+            }
+            if *self.registration_already_current.lock().unwrap() {
+                return Err(WalletDustRegistrationError::Operation(
+                    WalletDustRegistrationPortError::RegistrationAlreadyCurrent,
+                ));
+            }
+            Ok(preview(false))
+        })
     }
 }
 
@@ -123,15 +145,17 @@ fn missing_or_locked_custody_is_not_flattened_into_generic_degradation() {
 }
 
 impl AuthorizeWalletDustRegistrationUseCase for FakeServices {
-    fn execute(
-        &self,
+    fn execute<'a>(
+        &'a self,
         command: AuthorizeWalletDustRegistrationCommand,
-    ) -> Result<WalletDustRegistrationPreviewView, WalletDustRegistrationError> {
-        self.record("authorize");
-        assert_eq!(command.draft_id, "dustreg_test");
-        assert_eq!(command.authorization_challenge, "dustauth_test");
-        assert!(command.confirmation.confirmed);
-        Ok(preview(true))
+    ) -> WalletDustRegistrationPreviewViewFuture<'a> {
+        Box::pin(async move {
+            self.record("authorize");
+            assert_eq!(command.draft_id, "dustreg_test");
+            assert_eq!(command.authorization_challenge, "dustauth_test");
+            assert!(command.confirmation.confirmed);
+            Ok(preview(true))
+        })
     }
 }
 
@@ -171,12 +195,14 @@ impl SubmitWalletDustRegistrationUseCase for FakeServices {
 }
 
 impl GetWalletDustRegistrationStatusUseCase for FakeServices {
-    fn execute(
-        &self,
+    fn execute<'a>(
+        &'a self,
         _: GetWalletDustRegistrationStatusCommand,
-    ) -> Result<WalletDustRegistrationSubmissionStatusView, WalletDustRegistrationError> {
-        self.record("status");
-        Ok(status("broadcasting"))
+    ) -> WalletDustRegistrationStatusViewFuture<'a> {
+        Box::pin(async move {
+            self.record("status");
+            Ok(status(&self.status_state.lock().unwrap()))
+        })
     }
 }
 
@@ -212,6 +238,24 @@ fn capability_with_store(
         fake.clone(),
         fake.clone(),
         store,
+    )
+    .unwrap()
+}
+
+fn capability_with_deadline(
+    fake: &Arc<FakeServices>,
+    deadline: Duration,
+) -> WalletDustSettlementCapability {
+    WalletDustSettlementCapability::with_recovery_store_and_deadline(
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        Arc::new(InMemoryWalletDustRegistrationRecoveryStore::default()),
+        deadline,
     )
     .unwrap()
 }
@@ -279,13 +323,17 @@ fn preview(submission_ready: bool) -> WalletDustRegistrationPreviewView {
 }
 
 fn status(state: &str) -> WalletDustRegistrationSubmissionStatusView {
+    let recorded = !matches!(
+        state,
+        "not_started" | "running" | "cancellation_requested" | "cancelled"
+    );
     WalletDustRegistrationSubmissionStatusView {
         draft_id: "dustreg_test".to_owned(),
         state: state.to_owned(),
-        transaction_id: Some("tx_registration".to_owned()),
+        transaction_id: recorded.then(|| "tx_registration".to_owned()),
         block_id: (state == "included").then(|| "block_registration".to_owned()),
         fee: None,
-        mode: Some("live".to_owned()),
+        mode: recorded.then(|| "live".to_owned()),
         registration_observation: if state == "included" {
             "included".to_owned()
         } else {
@@ -548,6 +596,35 @@ fn timed_out_submit_retry_reconciles_public_status_without_a_second_submit() {
 }
 
 #[test]
+fn pre_broadcast_timeout_retries_only_after_cancellation_is_observed() {
+    let fake = Arc::new(FakeServices::new());
+    *fake.submit_timeout.lock().unwrap() = true;
+    *fake.status_state.lock().unwrap() = "cancelled".to_owned();
+    let capability = capability(&fake);
+    block_on(capability.refresh("profile_test".to_owned())).unwrap();
+    assert!(block_on(capability.authorize(confirmation(true))).is_err());
+    assert_eq!(
+        capability.projection().unwrap().state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::TimedOut
+    );
+
+    *fake.submit_timeout.lock().unwrap() = false;
+    assert_eq!(
+        block_on(capability.retry()).unwrap().state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Ready
+    );
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "submit")
+            .count(),
+        2
+    );
+}
+
+#[test]
 fn definitive_submit_failure_retries_submission_instead_of_false_reconciliation() {
     let fake = Arc::new(FakeServices::new());
     *fake.submit_rejected.lock().unwrap() = true;
@@ -752,5 +829,41 @@ fn preparation_failure_retry_keeps_the_selected_checkpoint() {
             .filter(|call| **call == "submit")
             .count(),
         0
+    );
+}
+
+#[test]
+fn application_deadline_drops_pending_prepare_and_releases_admission() {
+    let fake = Arc::new(FakeServices::new());
+    fake.prepare_pending.store(true, Ordering::Release);
+    let capability = capability_with_deadline(&fake, Duration::from_millis(5));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("test runtime builds");
+
+    assert!(
+        runtime
+            .block_on(capability.refresh("profile_test".to_owned()))
+            .is_err()
+    );
+    let timed_out = capability.projection().expect("projection is available");
+    assert_eq!(
+        timed_out.state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::TimedOut
+    );
+    assert_eq!(
+        timed_out.checkpoint.expect("checkpoint retained").revision,
+        7
+    );
+    assert_eq!(fake.prepare_drops.load(Ordering::Acquire), 1);
+
+    fake.prepare_pending.store(false, Ordering::Release);
+    assert_eq!(
+        runtime
+            .block_on(capability.retry())
+            .expect("released admission permits retry")
+            .state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::AwaitingAuthorization
     );
 }

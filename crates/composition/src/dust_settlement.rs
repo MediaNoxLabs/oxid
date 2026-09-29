@@ -72,6 +72,34 @@ impl WalletDustSettlementCapability {
         reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
         store: Arc<dyn WalletDustRegistrationRecoveryStore>,
     ) -> Result<Self, WalletDustSettlementError> {
+        Self::with_recovery_store_and_deadline(
+            selected_realm,
+            sync_selected_realm,
+            prepare,
+            authorize,
+            submit,
+            status,
+            reconcile,
+            store,
+            OPERATION_DEADLINE,
+        )
+    }
+
+    /// Builds the capability with one application-owned deadline shared by
+    /// every admitted settlement operation. Exposed for deterministic host
+    /// tests and composition roots with an explicit runtime budget.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_recovery_store_and_deadline(
+        selected_realm: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+        sync_selected_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
+        prepare: Arc<dyn PrepareWalletDustRegistrationUseCase>,
+        authorize: Arc<dyn AuthorizeWalletDustRegistrationUseCase>,
+        submit: Arc<dyn SubmitWalletDustRegistrationUseCase>,
+        status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
+        reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
+        store: Arc<dyn WalletDustRegistrationRecoveryStore>,
+        operation_deadline: Duration,
+    ) -> Result<Self, WalletDustSettlementError> {
         let (loaded, mut initially_durable) = match store.load() {
             Ok(record) => (record, true),
             Err(WalletDustRegistrationRecoveryStoreError::Corrupt) => {
@@ -128,6 +156,7 @@ impl WalletDustSettlementCapability {
             }),
             store: Arc::clone(&store),
             durable: Arc::clone(&durable),
+            operation_deadline,
         });
         let operation_executor: Arc<dyn ExecuteWalletDustRegistrationOperation> = executor.clone();
         let initial = restored
@@ -398,6 +427,11 @@ struct RetainedSettlement {
     operation_revision: u64,
 }
 
+enum RecoveredSubmission {
+    Observed(ChainTransactionId),
+    PreBroadcastCancelled,
+}
+
 struct ComposedDustRegistrationExecutor {
     selected_realm: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
     sync_selected_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
@@ -409,6 +443,7 @@ struct ComposedDustRegistrationExecutor {
     retained: Mutex<RetainedSettlement>,
     store: Arc<dyn WalletDustRegistrationRecoveryStore>,
     durable: Arc<AtomicBool>,
+    operation_deadline: Duration,
 }
 
 impl ComposedDustRegistrationExecutor {
@@ -536,15 +571,19 @@ impl ComposedDustRegistrationExecutor {
         Ok(record)
     }
 
-    fn execute_prepare(
+    async fn execute_prepare(
         &self,
         identity: WalletDustRegistrationSettlementIdentity,
     ) -> Result<WalletDustRegistrationOperationCompletion, WalletDustRegistrationExecutorFailure>
     {
         let bound = self.validate_bound(&identity)?;
-        let preview = match self.prepare.execute(PrepareWalletDustRegistrationCommand {
-            profile_id: identity.profile.as_str().to_owned(),
-        }) {
+        let preview = match self
+            .prepare
+            .execute(PrepareWalletDustRegistrationCommand {
+                profile_id: identity.profile.as_str().to_owned(),
+            })
+            .await
+        {
             Ok(preview) => preview,
             Err(oxid_wallet_application::WalletDustRegistrationError::Operation(
                 oxid_wallet_application::WalletDustRegistrationPortError::RegistrationAlreadyCurrent,
@@ -572,7 +611,7 @@ impl ComposedDustRegistrationExecutor {
         ))
     }
 
-    fn execute_authorize(
+    async fn execute_authorize(
         &self,
         identity: WalletDustRegistrationSettlementIdentity,
         draft_id: WalletTransactionDraftId,
@@ -612,6 +651,7 @@ impl ComposedDustRegistrationExecutor {
                 authorization_challenge: preview.authorization_challenge,
                 confirmation,
             })
+            .await
             .map_err(map_registration_failure)?;
         if authorized.draft_id != draft_id.as_str() || !authorized.submission_ready {
             return Err(WalletDustRegistrationExecutorFailure::Degraded);
@@ -639,9 +679,11 @@ impl ComposedDustRegistrationExecutor {
             .preview
             .is_none()
         {
-            let transaction_id = self
-                .recover_submitted_transaction(&identity, &draft_id)
-                .await?;
+            let RecoveredSubmission::Observed(transaction_id) =
+                self.recover_submission(&identity, &draft_id).await?
+            else {
+                return Err(WalletDustRegistrationExecutorFailure::Degraded);
+            };
             return Ok(WalletDustRegistrationOperationCompletion::submitted(
                 identity,
                 draft_id,
@@ -664,14 +706,21 @@ impl ComposedDustRegistrationExecutor {
             .map_err(|_| WalletDustRegistrationExecutorFailure::Unavailable)?
             .submission_uncertain
         {
-            let transaction_id = self
-                .recover_submitted_transaction(&identity, &draft_id)
-                .await?;
-            return Ok(WalletDustRegistrationOperationCompletion::submitted(
-                identity,
-                draft_id,
-                transaction_id,
-            ));
+            match self.recover_submission(&identity, &draft_id).await? {
+                RecoveredSubmission::Observed(transaction_id) => {
+                    return Ok(WalletDustRegistrationOperationCompletion::submitted(
+                        identity,
+                        draft_id,
+                        transaction_id,
+                    ));
+                }
+                RecoveredSubmission::PreBroadcastCancelled => {
+                    self.retained
+                        .lock()
+                        .map_err(|_| WalletDustRegistrationExecutorFailure::Unavailable)?
+                        .submission_uncertain = false;
+                }
+            }
         }
         // Fail closed unless the authorized draft was durably recorded before broadcast.
         if !self.durable.load(Ordering::Acquire)
@@ -705,9 +754,11 @@ impl ComposedDustRegistrationExecutor {
                 oxid_wallet_application::WalletDustRegistrationPortError::SubmissionOutcomeUnknown
                 | oxid_wallet_application::WalletDustRegistrationPortError::SubmissionInProgress,
             )) => {
-                let transaction_id = self
-                    .recover_submitted_transaction(&identity, &draft_id)
-                    .await?;
+                let RecoveredSubmission::Observed(transaction_id) =
+                    self.recover_submission(&identity, &draft_id).await?
+                else {
+                    return Err(WalletDustRegistrationExecutorFailure::Degraded);
+                };
                 self.retained
                     .lock()
                     .map_err(|_| WalletDustRegistrationExecutorFailure::Unavailable)?
@@ -756,16 +807,16 @@ impl ComposedDustRegistrationExecutor {
         ))
     }
 
-    async fn recover_submitted_transaction(
+    async fn recover_submission(
         &self,
         identity: &WalletDustRegistrationSettlementIdentity,
         draft_id: &WalletTransactionDraftId,
-    ) -> Result<ChainTransactionId, WalletDustRegistrationExecutorFailure> {
+    ) -> Result<RecoveredSubmission, WalletDustRegistrationExecutorFailure> {
         let command = GetWalletDustRegistrationStatusCommand {
             profile_id: identity.profile.as_str().to_owned(),
             draft_id: draft_id.as_str().to_owned(),
         };
-        let status = match self.status.execute(command.clone()) {
+        let status = match self.status.execute(command.clone()).await {
             Ok(status) => status,
             Err(_) => self
                 .reconcile
@@ -776,10 +827,14 @@ impl ComposedDustRegistrationExecutor {
                 .await
                 .map_err(map_registration_failure)?,
         };
+        if status.state == "cancelled" && status.transaction_id.is_none() {
+            return Ok(RecoveredSubmission::PreBroadcastCancelled);
+        }
         let transaction_id = status
             .transaction_id
             .ok_or(WalletDustRegistrationExecutorFailure::Degraded)?;
         ChainTransactionId::parse(transaction_id)
+            .map(RecoveredSubmission::Observed)
             .map_err(|_| WalletDustRegistrationExecutorFailure::Degraded)
     }
 
@@ -815,10 +870,13 @@ impl ComposedDustRegistrationExecutor {
                     })
             })
             .ok_or(WalletDustRegistrationExecutorFailure::Degraded)?;
-        let status = self.status.execute(GetWalletDustRegistrationStatusCommand {
-            profile_id: identity.profile.as_str().to_owned(),
-            draft_id: draft_id.clone(),
-        });
+        let status = self
+            .status
+            .execute(GetWalletDustRegistrationStatusCommand {
+                profile_id: identity.profile.as_str().to_owned(),
+                draft_id: draft_id.clone(),
+            })
+            .await;
         let status = match status {
             Ok(status) if status.state == "included" && !finality_observed => {
                 let revision = self.next_revision()?;
@@ -910,13 +968,13 @@ impl ExecuteWalletDustRegistrationOperation for ComposedDustRegistrationExecutor
                 match operation {
                     WalletDustRegistrationRuntimeOperation::Prepare(
                         WalletDustRegistrationEffect::Prepare { identity },
-                    ) => self.execute_prepare(identity),
+                    ) => self.execute_prepare(identity).await,
                     WalletDustRegistrationRuntimeOperation::RequestProtectedAuthorization(
                         WalletDustRegistrationEffect::RequestProtectedAuthorization {
                             identity,
                             draft_id,
                         },
-                    ) => self.execute_authorize(identity, draft_id),
+                    ) => self.execute_authorize(identity, draft_id).await,
                     WalletDustRegistrationRuntimeOperation::Submit(
                         WalletDustRegistrationEffect::Submit { identity, draft_id },
                     ) => self.execute_submit(identity, draft_id).await,
@@ -938,7 +996,7 @@ impl ExecuteWalletDustRegistrationOperation for ComposedDustRegistrationExecutor
             // On a Tokio host every admitted operation has a wall-clock deadline.
             // Pure executor tests without a reactor use scripted timeout failures.
             if tokio::runtime::Handle::try_current().is_ok() {
-                tokio::time::timeout(OPERATION_DEADLINE, future)
+                tokio::time::timeout(self.operation_deadline, future)
                     .await
                     .unwrap_or(Err(WalletDustRegistrationExecutorFailure::TimedOut))
             } else {
