@@ -2,8 +2,10 @@
 
 #![forbid(unsafe_code)]
 
+mod activity;
 mod contract_call;
 
+pub use activity::*;
 pub use contract_call::*;
 
 use std::{
@@ -605,6 +607,7 @@ pub struct PassportVaultService {
     repository: Arc<dyn PassportVaultRepository>,
     credential: Arc<dyn PassportVaultCredentialPort>,
     random: Arc<dyn RandomPort>,
+    activity: Option<Arc<PassportVaultActivityStore>>,
     transaction: Mutex<()>,
 }
 
@@ -619,8 +622,49 @@ impl PassportVaultService {
             repository,
             credential,
             random,
+            activity: None,
             transaction: Mutex::new(()),
         }
+    }
+
+    #[must_use]
+    pub fn with_activity(mut self, activity: Arc<PassportVaultActivityStore>) -> Self {
+        self.activity = Some(activity);
+        self
+    }
+
+    fn begin_activity(
+        &self,
+        profile_id: String,
+        operation: PassportVaultCallKind,
+        lock_id: Option<u64>,
+    ) -> Option<PassportVaultActivityId> {
+        self.activity.as_ref().and_then(|activity| {
+            activity.begin(
+                profile_id,
+                PassportVaultActivitySource::StandaloneVault,
+                operation,
+                lock_id,
+            )
+        })
+    }
+
+    fn finish_activity<ResultValue>(
+        &self,
+        id: Option<PassportVaultActivityId>,
+        result: &Result<ResultValue, PassportVaultOperationError>,
+    ) {
+        let (Some(activity), Some(id)) = (&self.activity, id) else {
+            return;
+        };
+        activity.update(
+            id,
+            if result.is_ok() {
+                PassportVaultActivityStatus::Confirmed
+            } else {
+                PassportVaultActivityStatus::Failed
+            },
+        );
     }
 }
 
@@ -698,135 +742,29 @@ impl CreatePassportVaultLockUseCase for PassportVaultService {
         command: CreatePassportVaultLockCommand,
     ) -> Result<PassportVaultLockView, PassportVaultOperationError> {
         confirmation(command.confirmed, &command.intent, CREATE_LOCK_INTENT)?;
-        let actor =
-            VaultActorId::parse(command.profile_id).map_err(PassportVaultOperationError::Domain)?;
-        let mut challenge = [0_u8; 32];
-        self.random
-            .fill_bytes(&mut challenge)
-            .map_err(PassportVaultOperationError::Platform)?;
-        if challenge == [0; 32] {
-            challenge[0] = 1;
-        }
-        let policy = PassportVaultPolicy::new(
-            command.minimum_age_years,
-            command.required_issuing_state,
-            command.required_document_number,
-            command.maximum_claim_amount,
-            challenge,
-        )
-        .map_err(PassportVaultOperationError::Domain)?;
-        let _guard = self.transaction.lock().map_err(|_| {
-            PassportVaultOperationError::Repository(PassportVaultRepositoryError::Unavailable)
-        })?;
-        let mut state = self
-            .repository
-            .load()
-            .map_err(PassportVaultOperationError::Repository)?;
-        let id = state
-            .create_lock(actor, policy, command.initial_amount)
+        let activity = self.begin_activity(
+            command.profile_id.clone(),
+            PassportVaultCallKind::CreateLock,
+            None,
+        );
+        let result = (|| {
+            let actor = VaultActorId::parse(command.profile_id)
+                .map_err(PassportVaultOperationError::Domain)?;
+            let mut challenge = [0_u8; 32];
+            self.random
+                .fill_bytes(&mut challenge)
+                .map_err(PassportVaultOperationError::Platform)?;
+            if challenge == [0; 32] {
+                challenge[0] = 1;
+            }
+            let policy = PassportVaultPolicy::new(
+                command.minimum_age_years,
+                command.required_issuing_state,
+                command.required_document_number,
+                command.maximum_claim_amount,
+                challenge,
+            )
             .map_err(PassportVaultOperationError::Domain)?;
-        let view = state
-            .lock(id)
-            .map(lock_view)
-            .ok_or(PassportVaultOperationError::Repository(
-                PassportVaultRepositoryError::Integrity,
-            ))?;
-        self.repository
-            .save(&state)
-            .map_err(PassportVaultOperationError::Repository)?;
-        Ok(view)
-    }
-}
-
-impl DepositPassportVaultLockUseCase for PassportVaultService {
-    fn execute(
-        &self,
-        command: PassportVaultAmountCommand,
-    ) -> Result<PassportVaultLockView, PassportVaultOperationError> {
-        confirmation(command.confirmed, &command.intent, DEPOSIT_INTENT)?;
-        mutate_amount(self, command, |state, actor, id, amount| {
-            state.deposit(actor, id, amount)
-        })
-    }
-}
-
-impl WithdrawPassportVaultLockUseCase for PassportVaultService {
-    fn execute(
-        &self,
-        command: PassportVaultAmountCommand,
-    ) -> Result<PassportVaultLockView, PassportVaultOperationError> {
-        confirmation(command.confirmed, &command.intent, WITHDRAW_INTENT)?;
-        mutate_amount(self, command, |state, actor, id, amount| {
-            state.withdraw(actor, id, amount).map(|_| ())
-        })
-    }
-}
-
-fn mutate_amount(
-    service: &PassportVaultService,
-    command: PassportVaultAmountCommand,
-    operation: impl FnOnce(
-        &mut PassportVaultState,
-        &VaultActorId,
-        VaultLockId,
-        u128,
-    ) -> Result<(), PassportVaultError>,
-) -> Result<PassportVaultLockView, PassportVaultOperationError> {
-    let actor =
-        VaultActorId::parse(command.profile_id).map_err(PassportVaultOperationError::Domain)?;
-    let id = VaultLockId::new(command.lock_id);
-    let _guard = service.transaction.lock().map_err(|_| {
-        PassportVaultOperationError::Repository(PassportVaultRepositoryError::Unavailable)
-    })?;
-    let mut state = service
-        .repository
-        .load()
-        .map_err(PassportVaultOperationError::Repository)?;
-    operation(&mut state, &actor, id, command.amount)
-        .map_err(PassportVaultOperationError::Domain)?;
-    let view = state
-        .lock(id)
-        .map(lock_view)
-        .ok_or(PassportVaultOperationError::Repository(
-            PassportVaultRepositoryError::Integrity,
-        ))?;
-    service
-        .repository
-        .save(&state)
-        .map_err(PassportVaultOperationError::Repository)?;
-    Ok(view)
-}
-
-impl ClaimPassportVaultLockUseCase for PassportVaultService {
-    fn execute<'a>(
-        &'a self,
-        command: ClaimPassportVaultLockCommand,
-    ) -> PassportVaultClaimFuture<'a> {
-        Box::pin(async move {
-            confirmation(command.confirmed, &command.intent, CLAIM_INTENT)?;
-            VaultActorId::parse(&command.profile_id)
-                .map_err(PassportVaultOperationError::Domain)?;
-            let id = VaultLockId::new(command.lock_id);
-            let policy = self
-                .repository
-                .load()
-                .map_err(PassportVaultOperationError::Repository)?
-                .lock(id)
-                .map(|lock| lock.policy().clone())
-                .ok_or(PassportVaultOperationError::Domain(
-                    PassportVaultError::LockNotFound,
-                ))?;
-            let evidence = self
-                .credential
-                .verify(VerifyPassportVaultCredentialRequest {
-                    profile_id: command.profile_id,
-                    credential_id: command.credential_id,
-                    policy: policy.clone(),
-                })
-                .await
-                .map_err(PassportVaultOperationError::Credential)?;
-            let fingerprint = CredentialFingerprint::new(evidence.credential_fingerprint)
-                .map_err(PassportVaultOperationError::Domain)?;
             let _guard = self.transaction.lock().map_err(|_| {
                 PassportVaultOperationError::Repository(PassportVaultRepositoryError::Unavailable)
             })?;
@@ -834,13 +772,10 @@ impl ClaimPassportVaultLockUseCase for PassportVaultService {
                 .repository
                 .load()
                 .map_err(PassportVaultOperationError::Repository)?;
-            if state.lock(id).map(PassportVaultLock::policy) != Some(&policy) {
-                return Err(PassportVaultOperationError::PolicyChanged);
-            }
-            let receipt = state
-                .claim(id, fingerprint, command.amount, evidence.current_day)
+            let id = state
+                .create_lock(actor, policy, command.initial_amount)
                 .map_err(PassportVaultOperationError::Domain)?;
-            let lock =
+            let view =
                 state
                     .lock(id)
                     .map(lock_view)
@@ -850,11 +785,152 @@ impl ClaimPassportVaultLockUseCase for PassportVaultService {
             self.repository
                 .save(&state)
                 .map_err(PassportVaultOperationError::Repository)?;
-            Ok(PassportVaultClaimView {
-                lock,
-                released_amount: receipt.amount.to_string(),
-                current_day: receipt.current_day,
-            })
+            Ok(view)
+        })();
+        self.finish_activity(activity, &result);
+        result
+    }
+}
+
+impl DepositPassportVaultLockUseCase for PassportVaultService {
+    fn execute(
+        &self,
+        command: PassportVaultAmountCommand,
+    ) -> Result<PassportVaultLockView, PassportVaultOperationError> {
+        confirmation(command.confirmed, &command.intent, DEPOSIT_INTENT)?;
+        mutate_amount(
+            self,
+            PassportVaultCallKind::DepositToLock,
+            command,
+            |state, actor, id, amount| state.deposit(actor, id, amount),
+        )
+    }
+}
+
+impl WithdrawPassportVaultLockUseCase for PassportVaultService {
+    fn execute(
+        &self,
+        command: PassportVaultAmountCommand,
+    ) -> Result<PassportVaultLockView, PassportVaultOperationError> {
+        confirmation(command.confirmed, &command.intent, WITHDRAW_INTENT)?;
+        mutate_amount(
+            self,
+            PassportVaultCallKind::WithdrawFromLock,
+            command,
+            |state, actor, id, amount| state.withdraw(actor, id, amount).map(|_| ()),
+        )
+    }
+}
+
+fn mutate_amount(
+    service: &PassportVaultService,
+    kind: PassportVaultCallKind,
+    command: PassportVaultAmountCommand,
+    operation: impl FnOnce(
+        &mut PassportVaultState,
+        &VaultActorId,
+        VaultLockId,
+        u128,
+    ) -> Result<(), PassportVaultError>,
+) -> Result<PassportVaultLockView, PassportVaultOperationError> {
+    let activity = service.begin_activity(command.profile_id.clone(), kind, Some(command.lock_id));
+    let result = (|| {
+        let actor =
+            VaultActorId::parse(command.profile_id).map_err(PassportVaultOperationError::Domain)?;
+        let id = VaultLockId::new(command.lock_id);
+        let _guard = service.transaction.lock().map_err(|_| {
+            PassportVaultOperationError::Repository(PassportVaultRepositoryError::Unavailable)
+        })?;
+        let mut state = service
+            .repository
+            .load()
+            .map_err(PassportVaultOperationError::Repository)?;
+        operation(&mut state, &actor, id, command.amount)
+            .map_err(PassportVaultOperationError::Domain)?;
+        let view = state
+            .lock(id)
+            .map(lock_view)
+            .ok_or(PassportVaultOperationError::Repository(
+                PassportVaultRepositoryError::Integrity,
+            ))?;
+        service
+            .repository
+            .save(&state)
+            .map_err(PassportVaultOperationError::Repository)?;
+        Ok(view)
+    })();
+    service.finish_activity(activity, &result);
+    result
+}
+
+impl ClaimPassportVaultLockUseCase for PassportVaultService {
+    fn execute<'a>(
+        &'a self,
+        command: ClaimPassportVaultLockCommand,
+    ) -> PassportVaultClaimFuture<'a> {
+        Box::pin(async move {
+            confirmation(command.confirmed, &command.intent, CLAIM_INTENT)?;
+            let activity = self.begin_activity(
+                command.profile_id.clone(),
+                PassportVaultCallKind::ClaimFromLock,
+                Some(command.lock_id),
+            );
+            let result = async {
+                VaultActorId::parse(&command.profile_id)
+                    .map_err(PassportVaultOperationError::Domain)?;
+                let id = VaultLockId::new(command.lock_id);
+                let policy = self
+                    .repository
+                    .load()
+                    .map_err(PassportVaultOperationError::Repository)?
+                    .lock(id)
+                    .map(|lock| lock.policy().clone())
+                    .ok_or(PassportVaultOperationError::Domain(
+                        PassportVaultError::LockNotFound,
+                    ))?;
+                let evidence = self
+                    .credential
+                    .verify(VerifyPassportVaultCredentialRequest {
+                        profile_id: command.profile_id,
+                        credential_id: command.credential_id,
+                        policy: policy.clone(),
+                    })
+                    .await
+                    .map_err(PassportVaultOperationError::Credential)?;
+                let fingerprint = CredentialFingerprint::new(evidence.credential_fingerprint)
+                    .map_err(PassportVaultOperationError::Domain)?;
+                let _guard = self.transaction.lock().map_err(|_| {
+                    PassportVaultOperationError::Repository(
+                        PassportVaultRepositoryError::Unavailable,
+                    )
+                })?;
+                let mut state = self
+                    .repository
+                    .load()
+                    .map_err(PassportVaultOperationError::Repository)?;
+                if state.lock(id).map(PassportVaultLock::policy) != Some(&policy) {
+                    return Err(PassportVaultOperationError::PolicyChanged);
+                }
+                let receipt = state
+                    .claim(id, fingerprint, command.amount, evidence.current_day)
+                    .map_err(PassportVaultOperationError::Domain)?;
+                let lock = state.lock(id).map(lock_view).ok_or(
+                    PassportVaultOperationError::Repository(
+                        PassportVaultRepositoryError::Integrity,
+                    ),
+                )?;
+                self.repository
+                    .save(&state)
+                    .map_err(PassportVaultOperationError::Repository)?;
+                Ok(PassportVaultClaimView {
+                    lock,
+                    released_amount: receipt.amount.to_string(),
+                    current_day: receipt.current_day,
+                })
+            }
+            .await;
+            self.finish_activity(activity, &result);
+            result
         })
     }
 }
@@ -884,7 +960,17 @@ impl PassportVaultCredentialPort for UnavailablePassportVaultCredential {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oxid_foundation::UnixTimestampMillis;
+    use oxid_platform_ports::ClockPort;
     use std::task::{Context, Poll, Waker};
+
+    struct ActivityClock;
+
+    impl ClockPort for ActivityClock {
+        fn now(&self) -> Result<UnixTimestampMillis, PlatformError> {
+            Ok(UnixTimestampMillis::new(1_700_000_000_000))
+        }
+    }
 
     #[derive(Default)]
     struct Repository(Mutex<PassportVaultState>);
@@ -996,6 +1082,7 @@ mod tests {
                 credential_fingerprint: [9; 32],
                 current_day: 20_000,
             })));
+        let activity = Arc::new(PassportVaultActivityStore::new(Arc::new(ActivityClock)));
         let vault = service(
             Arc::clone(&repository),
             credential,
@@ -1003,7 +1090,8 @@ mod tests {
                 byte: 0,
                 unavailable: false,
             }),
-        );
+        )
+        .with_activity(activity.clone());
 
         let created =
             CreatePassportVaultLockUseCase::execute(&vault, create_command()).expect("create");
@@ -1091,6 +1179,44 @@ mod tests {
         assert_eq!(view.total_released, "120");
         assert_eq!(view.total_locked, "0");
         assert_eq!(view.claim_count, 1);
+
+        let creator_activity = activity
+            .execute("profile_creator".to_owned())
+            .expect("creator activity");
+        assert_eq!(creator_activity.records.len(), 3);
+        assert_eq!(
+            creator_activity
+                .records
+                .iter()
+                .map(|record| (record.operation, record.status))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    PassportVaultCallKind::WithdrawFromLock,
+                    PassportVaultActivityStatus::Confirmed,
+                ),
+                (
+                    PassportVaultCallKind::DepositToLock,
+                    PassportVaultActivityStatus::Confirmed,
+                ),
+                (
+                    PassportVaultCallKind::CreateLock,
+                    PassportVaultActivityStatus::Confirmed,
+                ),
+            ]
+        );
+        let holder_activity = activity
+            .execute("profile_holder".to_owned())
+            .expect("holder activity");
+        assert_eq!(holder_activity.records.len(), 2);
+        assert_eq!(
+            holder_activity.records[0].status,
+            PassportVaultActivityStatus::Failed
+        );
+        assert_eq!(
+            holder_activity.records[1].status,
+            PassportVaultActivityStatus::Confirmed
+        );
     }
 
     #[test]

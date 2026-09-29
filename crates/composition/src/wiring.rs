@@ -97,13 +97,13 @@ use oxid_passport_vault_application::{
     DecodePassportVaultContractStateUseCase, DepositPassportVaultLockUseCase,
     GetPassportVaultCallSubmissionStatusUseCase, GetPassportVaultCallUseCase,
     ListPassportVaultCallSubmissionsUseCase, ListPassportVaultLocksUseCase,
-    PassportVaultContractCallService, PassportVaultContractStateDecoderPort,
-    PassportVaultContractStateService, PassportVaultContractStateSourcePort,
-    PassportVaultCredentialPort, PassportVaultService, PreparePassportVaultCallUseCase,
-    ReadPassportVaultContractStateUseCase, ReconcilePassportVaultCallSubmissionUseCase,
-    SubmitPassportVaultCallUseCase, UnavailablePassportVaultContractCall,
-    UnavailablePassportVaultContractStateSource, UnavailablePassportVaultCredential,
-    WithdrawPassportVaultLockUseCase,
+    PassportVaultActivityStore, PassportVaultContractCallService,
+    PassportVaultContractStateDecoderPort, PassportVaultContractStateService,
+    PassportVaultContractStateSourcePort, PassportVaultCredentialPort, PassportVaultService,
+    PreparePassportVaultCallUseCase, ReadPassportVaultContractStateUseCase,
+    ReconcilePassportVaultCallSubmissionUseCase, SubmitPassportVaultCallUseCase,
+    UnavailablePassportVaultContractCall, UnavailablePassportVaultContractStateSource,
+    UnavailablePassportVaultCredential, WithdrawPassportVaultLockUseCase,
 };
 #[cfg(not(any(target_os = "ios", target_os = "android", target_os = "macos")))]
 use oxid_platform_ports::UnavailablePublicTextExporter;
@@ -901,11 +901,15 @@ where
         } else {
             Arc::new(UnavailablePassportVaultCredential)
         };
-    let passport_vault = Arc::new(PassportVaultService::new(
-        passport_vault_repository.repository,
-        passport_vault_credential,
-        random.clone(),
-    ));
+    let passport_vault_activity = Arc::new(PassportVaultActivityStore::new(clock.clone()));
+    let passport_vault = Arc::new(
+        PassportVaultService::new(
+            passport_vault_repository.repository,
+            passport_vault_credential,
+            random.clone(),
+        )
+        .with_activity(passport_vault_activity.clone()),
+    );
     #[cfg(not(target_arch = "wasm32"))]
     let passport_vault_contract_state_decoder: Arc<dyn PassportVaultContractStateDecoderPort> =
         Arc::new(NativePassportVaultContractStateDecoder);
@@ -918,12 +922,15 @@ where
         passport_vault_contract_state_decoder,
         Arc::clone(&passport_vault_contract_state_source),
     ));
-    let passport_vault_contract_calls = Arc::new(PassportVaultContractCallService::new(
-        passport_vault_contract_state_source,
-        Arc::new(UnavailablePassportVaultContractCall),
-        clock.clone(),
-        random,
-    ));
+    let passport_vault_contract_calls = Arc::new(
+        PassportVaultContractCallService::new(
+            passport_vault_contract_state_source,
+            Arc::new(UnavailablePassportVaultContractCall),
+            clock.clone(),
+            random,
+        )
+        .with_activity(passport_vault_activity.clone()),
+    );
 
     let get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase> = protection.clone();
     let initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase> = protection.clone();
@@ -1205,6 +1212,7 @@ where
         get_credential_presentation,
         list_credential_presentations,
         list_passport_vault_locks,
+        passport_vault_activity,
         decode_passport_vault_contract_state,
         read_passport_vault_contract_state,
         create_passport_vault_lock,

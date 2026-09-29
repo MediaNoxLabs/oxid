@@ -97,12 +97,15 @@ pub(super) fn with_passport_vault_state_source(
                 Arc::new(NativePassportVaultContractStateDecoder),
                 Arc::clone(&source),
             ));
-        let calls = Arc::new(PassportVaultContractCallService::new(
-            source,
-            Arc::new(UnavailablePassportVaultContractCall),
-            Arc::new(SystemClock),
-            Arc::new(OsRandom),
-        ));
+        let calls = Arc::new(
+            PassportVaultContractCallService::new(
+                source,
+                Arc::new(UnavailablePassportVaultContractCall),
+                Arc::new(SystemClock),
+                Arc::new(OsRandom),
+            )
+            .with_activity(services.passport_vault_activity.clone()),
+        );
         services.prepare_passport_vault_call = calls.clone();
         services.authorize_passport_vault_call = calls.clone();
         services.submit_passport_vault_call = calls.clone();
@@ -422,12 +425,15 @@ pub(super) fn with_native_passport_vault_calls(
                 composer, contexts, funding, completion,
             )?
         };
-    let calls = Arc::new(PassportVaultContractCallService::new(
-        state_source,
-        Arc::new(native_calls),
-        Arc::new(SystemClock),
-        Arc::new(OsRandom),
-    ));
+    let calls = Arc::new(
+        PassportVaultContractCallService::new(
+            state_source,
+            Arc::new(native_calls),
+            Arc::new(SystemClock),
+            Arc::new(OsRandom),
+        )
+        .with_activity(services.passport_vault_activity.clone()),
+    );
     services.prepare_passport_vault_call = calls.clone();
     services.authorize_passport_vault_call = calls.clone();
     services.submit_passport_vault_call = calls.clone();
@@ -453,12 +459,15 @@ pub(super) fn with_simulated_passport_vault_calls(
             Arc::new(NativePassportVaultContractStateDecoder),
             Arc::clone(&source),
         ));
-    let calls = Arc::new(PassportVaultContractCallService::new_simulated(
-        source,
-        Arc::new(SimulatedPassportVaultContractCall::new()),
-        Arc::new(SystemClock),
-        Arc::new(OsRandom),
-    ));
+    let calls = Arc::new(
+        PassportVaultContractCallService::new_simulated(
+            source,
+            Arc::new(SimulatedPassportVaultContractCall::new()),
+            Arc::new(SystemClock),
+            Arc::new(OsRandom),
+        )
+        .with_activity(services.passport_vault_activity.clone()),
+    );
     services.prepare_passport_vault_call = calls.clone();
     services.authorize_passport_vault_call = calls.clone();
     services.submit_passport_vault_call = calls.clone();

@@ -574,6 +574,7 @@ fn main() {
             ),
             oxid_ui_dioxus::PassportVaultUiServices::new(
                 application.list_passport_vault_locks(),
+                application.list_passport_vault_activity(),
                 application.create_passport_vault_lock(),
                 application.deposit_passport_vault_lock(),
                 application.claim_passport_vault_lock(),

@@ -29,10 +29,10 @@ use oxid_passport_vault_application::{
     ClaimPassportVaultLockUseCase, CreatePassportVaultLockUseCase,
     DecodePassportVaultContractStateUseCase, DepositPassportVaultLockUseCase,
     GetPassportVaultCallSubmissionStatusUseCase, GetPassportVaultCallUseCase,
-    ListPassportVaultCallSubmissionsUseCase, ListPassportVaultLocksUseCase,
-    PreparePassportVaultCallUseCase, ReadPassportVaultContractStateUseCase,
-    ReconcilePassportVaultCallSubmissionUseCase, SubmitPassportVaultCallUseCase,
-    WithdrawPassportVaultLockUseCase,
+    ListPassportVaultActivityUseCase, ListPassportVaultCallSubmissionsUseCase,
+    ListPassportVaultLocksUseCase, PassportVaultActivityStore, PreparePassportVaultCallUseCase,
+    ReadPassportVaultContractStateUseCase, ReconcilePassportVaultCallSubmissionUseCase,
+    SubmitPassportVaultCallUseCase, WithdrawPassportVaultLockUseCase,
 };
 use oxid_platform_ports::{
     IdentityLinkIngressPort, PublicTextExportPort, QrScannerPort, ScreenPrivacyPort,
@@ -193,6 +193,7 @@ pub struct ApplicationServices {
     pub(super) get_credential_presentation: Arc<dyn GetCredentialPresentationUseCase>,
     pub(super) list_credential_presentations: Arc<dyn ListCredentialPresentationsUseCase>,
     pub(super) list_passport_vault_locks: Arc<dyn ListPassportVaultLocksUseCase>,
+    pub(super) passport_vault_activity: Arc<PassportVaultActivityStore>,
     pub(super) decode_passport_vault_contract_state:
         Arc<dyn DecodePassportVaultContractStateUseCase>,
     pub(super) read_passport_vault_contract_state: Arc<dyn ReadPassportVaultContractStateUseCase>,
@@ -857,6 +858,11 @@ impl ApplicationServices {
     #[must_use]
     pub fn list_passport_vault_locks(&self) -> Arc<dyn ListPassportVaultLocksUseCase> {
         Arc::clone(&self.list_passport_vault_locks)
+    }
+
+    #[must_use]
+    pub fn list_passport_vault_activity(&self) -> Arc<dyn ListPassportVaultActivityUseCase> {
+        self.passport_vault_activity.clone()
     }
 
     #[must_use]

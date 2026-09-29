@@ -7,9 +7,9 @@ use oxid_passport_vault_domain::PassportVaultPolicy;
 use oxid_platform_ports::{ClockPort, PlatformError, RandomPort};
 
 use super::{
-    PassportVaultContractStateAuthentication, PassportVaultContractStateSnapshot,
-    PassportVaultContractStateSourceError, PassportVaultContractStateSourcePort, normalize_hex_32,
-    validate_snapshot,
+    PassportVaultActivityStatus, PassportVaultContractStateAuthentication,
+    PassportVaultContractStateSnapshot, PassportVaultContractStateSourceError,
+    PassportVaultContractStateSourcePort, normalize_hex_32, validate_snapshot,
 };
 
 /// Retained vault calls expire before stale state can be authorized indefinitely.
@@ -608,6 +608,7 @@ pub struct PassportVaultContractCallService {
     calls: Arc<dyn PassportVaultContractCallPort>,
     clock: Arc<dyn ClockPort>,
     random: Arc<dyn RandomPort>,
+    activity: Option<Arc<super::PassportVaultActivityStore>>,
     required_authentication: PassportVaultContractStateAuthentication,
 }
 
@@ -624,6 +625,7 @@ impl PassportVaultContractCallService {
             calls,
             clock,
             random,
+            activity: None,
             required_authentication:
                 PassportVaultContractStateAuthentication::CanonicalFinalizedReplay,
         }
@@ -644,9 +646,16 @@ impl PassportVaultContractCallService {
             calls,
             clock,
             random,
+            activity: None,
             required_authentication:
                 PassportVaultContractStateAuthentication::DeterministicSimulation,
         }
+    }
+
+    #[must_use]
+    pub fn with_activity(mut self, activity: Arc<super::PassportVaultActivityStore>) -> Self {
+        self.activity = Some(activity);
+        self
     }
 
     fn now(&self) -> Result<UnixTimestampMillis, PassportVaultCallError> {
@@ -691,7 +700,7 @@ impl PreparePassportVaultCallUseCase for PassportVaultContractCallService {
             let preview = self
                 .calls
                 .prepare(PreparePassportVaultCallRequest {
-                    profile_id,
+                    profile_id: profile_id.clone(),
                     contract_state: snapshot,
                     operation,
                     expires_at,
@@ -706,6 +715,14 @@ impl PreparePassportVaultCallUseCase for PassportVaultContractCallService {
                 &expected_operation,
                 expires_at,
             )?;
+            if let Some(activity) = &self.activity {
+                activity.begin_contract(
+                    preview.draft_id.as_str().to_owned(),
+                    profile_id.as_str().to_owned(),
+                    preview.operation.kind(),
+                    preview.operation.lock_id(),
+                );
+            }
             Ok(PassportVaultCallPreviewView::from(&preview))
         })
     }
@@ -792,14 +809,23 @@ impl SubmitPassportVaultCallUseCase for PassportVaultContractCallService {
             {
                 return Err(invalid_adapter_data());
             }
-            let submitted = self
+            let submission = self
                 .calls
                 .submit(
                     &profile_id,
                     SubmitPassportVaultCallRequest { draft_id, now },
                 )
-                .await
-                .map_err(PassportVaultCallError::Operation)?;
+                .await;
+            if let Some(activity) = &self.activity {
+                activity.update_contract(
+                    before.draft_id.as_str(),
+                    match &submission {
+                        Ok(_) => PassportVaultActivityStatus::Confirmed,
+                        Err(error) => activity_status_from_port_error(*error),
+                    },
+                );
+            }
+            let submitted = submission.map_err(PassportVaultCallError::Operation)?;
             validate_transition(
                 &before,
                 &submitted.preview,
@@ -847,6 +873,12 @@ impl GetPassportVaultCallSubmissionStatusUseCase for PassportVaultContractCallSe
             .submission_status(&profile_id, &draft_id)
             .map_err(PassportVaultCallError::Operation)?;
         validate_status(&status, &draft_id)?;
+        if let Some(activity) = &self.activity {
+            activity.update_contract(
+                draft_id.as_str(),
+                activity_status_from_submission_state(status.state),
+            );
+        }
         Ok(PassportVaultCallSubmissionStatusView::from(&status))
     }
 }
@@ -862,6 +894,12 @@ impl CancelPassportVaultCallSubmissionUseCase for PassportVaultContractCallServi
             .cancel_submission(&profile_id, &draft_id)
             .map_err(PassportVaultCallError::Operation)?;
         validate_status(&status, &draft_id)?;
+        if let Some(activity) = &self.activity {
+            activity.update_contract(
+                draft_id.as_str(),
+                activity_status_from_submission_state(status.state),
+            );
+        }
         Ok(PassportVaultCallSubmissionStatusView::from(&status))
     }
 }
@@ -906,8 +944,64 @@ impl ReconcilePassportVaultCallSubmissionUseCase for PassportVaultContractCallSe
                 .await
                 .map_err(PassportVaultCallError::Operation)?;
             validate_status(&status, &draft_id)?;
+            if let Some(activity) = &self.activity {
+                activity.update_contract(
+                    draft_id.as_str(),
+                    activity_status_from_submission_state(status.state),
+                );
+            }
             Ok(PassportVaultCallSubmissionStatusView::from(&status))
         })
+    }
+}
+
+const fn activity_status_from_submission_state(
+    state: PassportVaultCallSubmissionState,
+) -> PassportVaultActivityStatus {
+    match state {
+        PassportVaultCallSubmissionState::NotStarted
+        | PassportVaultCallSubmissionState::Running
+        | PassportVaultCallSubmissionState::CancellationRequested
+        | PassportVaultCallSubmissionState::Broadcasting => PassportVaultActivityStatus::Pending,
+        PassportVaultCallSubmissionState::Included => PassportVaultActivityStatus::Confirmed,
+        PassportVaultCallSubmissionState::Rejected | PassportVaultCallSubmissionState::Expired => {
+            PassportVaultActivityStatus::Failed
+        }
+        PassportVaultCallSubmissionState::Cancelled => PassportVaultActivityStatus::Cancelled,
+        PassportVaultCallSubmissionState::OutcomeUnknown => {
+            PassportVaultActivityStatus::OutcomeUnknown
+        }
+    }
+}
+
+const fn activity_status_from_port_error(
+    error: PassportVaultCallPortError,
+) -> PassportVaultActivityStatus {
+    match error {
+        PassportVaultCallPortError::SubmissionCancelled => PassportVaultActivityStatus::Cancelled,
+        PassportVaultCallPortError::Timeout => PassportVaultActivityStatus::TimedOut,
+        PassportVaultCallPortError::SubmissionOutcomeUnknown => {
+            PassportVaultActivityStatus::OutcomeUnknown
+        }
+        PassportVaultCallPortError::Unavailable
+        | PassportVaultCallPortError::ProtectionNotInitialized
+        | PassportVaultCallPortError::ProtectionLocked
+        | PassportVaultCallPortError::AccountNotDerived
+        | PassportVaultCallPortError::AccountNotSynchronized
+        | PassportVaultCallPortError::UnsupportedNetwork
+        | PassportVaultCallPortError::DraftNotFound
+        | PassportVaultCallPortError::DraftExpired
+        | PassportVaultCallPortError::DraftConflict
+        | PassportVaultCallPortError::AuthorizationChallengeMismatch
+        | PassportVaultCallPortError::SubmissionInProgress
+        | PassportVaultCallPortError::SubmissionNotInProgress
+        | PassportVaultCallPortError::SubmissionCancellationUnsafe
+        | PassportVaultCallPortError::InsufficientFunds
+        | PassportVaultCallPortError::InsufficientDust
+        | PassportVaultCallPortError::InvalidChainState
+        | PassportVaultCallPortError::ProvingFailed
+        | PassportVaultCallPortError::SubmissionRejected
+        | PassportVaultCallPortError::InvalidData => PassportVaultActivityStatus::Failed,
     }
 }
 
@@ -1674,10 +1768,12 @@ mod tests {
     #[test]
     fn authorizes_submits_and_reconciles_without_exposing_transaction_material() {
         let calls = Arc::new(Calls::default());
+        let activity = Arc::new(super::PassportVaultActivityStore::new(Arc::new(Clock)));
         let service = call_service(
             PassportVaultContractStateAuthentication::CanonicalFinalizedReplay,
             calls,
-        );
+        )
+        .with_activity(activity.clone());
         let prepared = ready(PreparePassportVaultCallUseCase::execute(
             &service,
             command(PreparePassportVaultCallAction::WithdrawFromLock {
@@ -1746,6 +1842,22 @@ mod tests {
             ListPassportVaultCallSubmissionsUseCase::execute(&service, "profile_1".to_owned())
                 .expect("history");
         assert_eq!(history, vec![status]);
+
+        let activity = super::ListPassportVaultActivityUseCase::execute(
+            activity.as_ref(),
+            "profile_1".to_owned(),
+        )
+        .expect("activity");
+        assert_eq!(activity.records.len(), 1);
+        assert_eq!(
+            activity.records[0].operation,
+            PassportVaultCallKind::WithdrawFromLock
+        );
+        assert_eq!(
+            activity.records[0].status,
+            PassportVaultActivityStatus::Confirmed
+        );
+        assert_eq!(activity.records[0].lock_id, Some(8));
     }
 
     #[test]
