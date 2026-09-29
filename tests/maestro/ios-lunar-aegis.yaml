@@ -59,8 +59,16 @@ name: Lunar Aegis iOS simulated holder journey
 - extendedWaitUntil:
     visible: "Sent"
     timeout: 60000
+- scrollUntilVisible:
+    element:
+      text: "Received"
+    direction: DOWN
 - assertVisible: "Received"
 - takeScreenshot: lunar-aegis-ios-07-activity-history
+- scrollUntilVisible:
+    element:
+      text: "Open global application menu"
+    direction: UP
 - tapOn: "Open global application menu"
 - tapOn: "Settings"
 - assertVisible: "Settings"

@@ -22,6 +22,9 @@ test("Maestro stays pinned, local-only, and additive to native coverage", async 
   assert.match(docs, /complements and does not replace the existing Android CDP and iOS XCTest suites/iu);
   assert.match(docs, /It is not GitHub CI/iu);
   assert.match(docs, /Never use a physical phone/iu);
+  assert.match(docs, /test-ios-maestro-holder-evidence\.sh/u);
+  assert.match(docs, /200-line Maestro tail/u);
+  assert.match(docs, /Raw per-device[\s\S]*deleted after collection/u);
   assert.equal(
     runScript.match(/node --test tests\/repository\/maestro-mobile-pilot-contract\.test\.mjs/gu)?.length,
     1,
@@ -68,6 +71,23 @@ test("Maestro wrappers own only explicit simulator and emulator targets", async 
     android,
     /nix run \.#maestro -- test tests\/maestro\/android-lunar-aegis\.yaml[\s\\]*--device "\$OXID_ANDROID_DEVICE" --test-output-dir "\$artifact_root"[\s\\]*--debug-output "\$debug_root"/u,
   );
+});
+
+test("iOS Maestro evidence runner owns a 375-point simulator and records bounded public metrics", async () => {
+  const runner = await read("scripts/test-ios-maestro-holder-evidence.sh");
+
+  assert.match(runner, /iPhone-SE-3rd-generation/u);
+  assert.match(runner, /oxid_ios_create_owned/u);
+  assert.match(runner, /oxid_ios_delete_owned/u);
+  assert.match(runner, /run-ios-simulator\.sh" build/u);
+  assert.match(runner, /run-maestro-ios\.sh"/u);
+  assert.match(runner, /mobile-visual-accessibility\/ios-run-/u);
+  assert.match(runner, /receiptOwnedSimulator:true/u);
+  assert.match(runner, /privateDiagnosticsRemoved:\$cleaned/u);
+  assert.match(runner, /rawArtifactsRemoved:\$rawRemoved/u);
+  assert.match(runner, /tail -n 200/u);
+  assert.match(runner, /lunar-aegis-ios-\*\.png/u);
+  assert.match(runner, /chmod 600/u);
 });
 
 test("mobile visual accessibility evidence keeps the scoped matrix and privacy boundary", async () => {
@@ -142,6 +162,8 @@ test("Maestro flows cover the holder shell without exposing recovery secrets", a
   }
 
   assert.doesNotMatch(ios, /androidWebViewHierarchy/u);
+  assert.match(ios, /scrollUntilVisible:[\s\S]*text: "Received"[\s\S]*direction: DOWN/u);
+  assert.match(ios, /scrollUntilVisible:[\s\S]*text: "Open global application menu"[\s\S]*direction: UP/u);
   assert.match(ios, /takeScreenshot: lunar-aegis-ios-02-device-protection/u);
   assert.match(ios, /Open global application menu/u);
   assert.match(ios, /Settings/u);
