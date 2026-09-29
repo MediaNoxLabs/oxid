@@ -27,6 +27,7 @@ use super::*;
 struct FakeServices {
     selected: Mutex<SelectedWalletRealmProjection>,
     reconcile_state: Mutex<String>,
+    status_state: Mutex<String>,
     sync_ready: Mutex<Result<bool, ()>>,
     submit_unknown: Mutex<bool>,
     submit_timeout: Mutex<bool>,
@@ -43,6 +44,7 @@ impl FakeServices {
         Self {
             selected: Mutex::new(selected_projection(1, 7, true)),
             reconcile_state: Mutex::new("included".to_owned()),
+            status_state: Mutex::new("broadcasting".to_owned()),
             sync_ready: Mutex::new(Ok(true)),
             submit_unknown: Mutex::new(false),
             submit_timeout: Mutex::new(false),
@@ -199,7 +201,7 @@ impl GetWalletDustRegistrationStatusUseCase for FakeServices {
     ) -> WalletDustRegistrationStatusViewFuture<'a> {
         Box::pin(async move {
             self.record("status");
-            Ok(status("broadcasting"))
+            Ok(status(&self.status_state.lock().unwrap()))
         })
     }
 }
@@ -321,13 +323,17 @@ fn preview(submission_ready: bool) -> WalletDustRegistrationPreviewView {
 }
 
 fn status(state: &str) -> WalletDustRegistrationSubmissionStatusView {
+    let recorded = !matches!(
+        state,
+        "not_started" | "running" | "cancellation_requested" | "cancelled"
+    );
     WalletDustRegistrationSubmissionStatusView {
         draft_id: "dustreg_test".to_owned(),
         state: state.to_owned(),
-        transaction_id: Some("tx_registration".to_owned()),
+        transaction_id: recorded.then(|| "tx_registration".to_owned()),
         block_id: (state == "included").then(|| "block_registration".to_owned()),
         fee: None,
-        mode: Some("live".to_owned()),
+        mode: recorded.then(|| "live".to_owned()),
         registration_observation: if state == "included" {
             "included".to_owned()
         } else {
@@ -586,6 +592,35 @@ fn timed_out_submit_retry_reconciles_public_status_without_a_second_submit() {
             .filter(|call| **call == "submit")
             .count(),
         1
+    );
+}
+
+#[test]
+fn pre_broadcast_timeout_retries_only_after_cancellation_is_observed() {
+    let fake = Arc::new(FakeServices::new());
+    *fake.submit_timeout.lock().unwrap() = true;
+    *fake.status_state.lock().unwrap() = "cancelled".to_owned();
+    let capability = capability(&fake);
+    block_on(capability.refresh("profile_test".to_owned())).unwrap();
+    assert!(block_on(capability.authorize(confirmation(true))).is_err());
+    assert_eq!(
+        capability.projection().unwrap().state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::TimedOut
+    );
+
+    *fake.submit_timeout.lock().unwrap() = false;
+    assert_eq!(
+        block_on(capability.retry()).unwrap().state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Ready
+    );
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "submit")
+            .count(),
+        2
     );
 }
 

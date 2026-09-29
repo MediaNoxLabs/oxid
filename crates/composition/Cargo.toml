@@ -99,7 +99,7 @@ midnight-serialize.workspace = true
 midnight-storage.workspace = true
 midnight-zswap.workspace = true
 sha2.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 zeroize.workspace = true
 
 [lints]

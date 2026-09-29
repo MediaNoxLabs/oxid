@@ -333,13 +333,11 @@ impl LiveMidnightSubmissionReconciler {
     pub(crate) const fn new(config: MidnightStandaloneConfig) -> Self {
         Self { config }
     }
-}
 
-impl MidnightSubmissionReconciler for LiveMidnightSubmissionReconciler {
-    fn reconcile(
+    fn validate_entry(
         &self,
         entry: &StoredSubmissionJournalEntry,
-    ) -> Result<MidnightSubmissionReconciliation, WalletTransactionPortError> {
+    ) -> Result<(), WalletTransactionPortError> {
         if entry.mode != WalletTransferSubmissionMode::Live
             || !matches!(
                 entry.state,
@@ -349,6 +347,16 @@ impl MidnightSubmissionReconciler for LiveMidnightSubmissionReconciler {
         {
             return Err(WalletTransactionPortError::InvalidData);
         }
+        Ok(())
+    }
+}
+
+impl MidnightSubmissionReconciler for LiveMidnightSubmissionReconciler {
+    fn reconcile(
+        &self,
+        entry: &StoredSubmissionJournalEntry,
+    ) -> Result<MidnightSubmissionReconciliation, WalletTransactionPortError> {
+        self.validate_entry(entry)?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -360,7 +368,10 @@ impl MidnightSubmissionReconciler for LiveMidnightSubmissionReconciler {
         &'a self,
         entry: &'a StoredSubmissionJournalEntry,
     ) -> crate::transaction::MidnightSubmissionReconciliationFuture<'a> {
-        Box::pin(async move { reconcile_live_submission(&self.config, entry).await })
+        Box::pin(async move {
+            self.validate_entry(entry)?;
+            reconcile_live_submission(&self.config, entry).await
+        })
     }
 }
 

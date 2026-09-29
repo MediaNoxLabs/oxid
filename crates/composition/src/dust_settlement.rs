@@ -427,6 +427,11 @@ struct RetainedSettlement {
     operation_revision: u64,
 }
 
+enum RecoveredSubmission {
+    Observed(ChainTransactionId),
+    PreBroadcastCancelled,
+}
+
 struct ComposedDustRegistrationExecutor {
     selected_realm: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
     sync_selected_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
@@ -674,9 +679,11 @@ impl ComposedDustRegistrationExecutor {
             .preview
             .is_none()
         {
-            let transaction_id = self
-                .recover_submitted_transaction(&identity, &draft_id)
-                .await?;
+            let RecoveredSubmission::Observed(transaction_id) =
+                self.recover_submission(&identity, &draft_id).await?
+            else {
+                return Err(WalletDustRegistrationExecutorFailure::Degraded);
+            };
             return Ok(WalletDustRegistrationOperationCompletion::submitted(
                 identity,
                 draft_id,
@@ -699,14 +706,21 @@ impl ComposedDustRegistrationExecutor {
             .map_err(|_| WalletDustRegistrationExecutorFailure::Unavailable)?
             .submission_uncertain
         {
-            let transaction_id = self
-                .recover_submitted_transaction(&identity, &draft_id)
-                .await?;
-            return Ok(WalletDustRegistrationOperationCompletion::submitted(
-                identity,
-                draft_id,
-                transaction_id,
-            ));
+            match self.recover_submission(&identity, &draft_id).await? {
+                RecoveredSubmission::Observed(transaction_id) => {
+                    return Ok(WalletDustRegistrationOperationCompletion::submitted(
+                        identity,
+                        draft_id,
+                        transaction_id,
+                    ));
+                }
+                RecoveredSubmission::PreBroadcastCancelled => {
+                    self.retained
+                        .lock()
+                        .map_err(|_| WalletDustRegistrationExecutorFailure::Unavailable)?
+                        .submission_uncertain = false;
+                }
+            }
         }
         // Fail closed unless the authorized draft was durably recorded before broadcast.
         if !self.durable.load(Ordering::Acquire)
@@ -740,9 +754,11 @@ impl ComposedDustRegistrationExecutor {
                 oxid_wallet_application::WalletDustRegistrationPortError::SubmissionOutcomeUnknown
                 | oxid_wallet_application::WalletDustRegistrationPortError::SubmissionInProgress,
             )) => {
-                let transaction_id = self
-                    .recover_submitted_transaction(&identity, &draft_id)
-                    .await?;
+                let RecoveredSubmission::Observed(transaction_id) =
+                    self.recover_submission(&identity, &draft_id).await?
+                else {
+                    return Err(WalletDustRegistrationExecutorFailure::Degraded);
+                };
                 self.retained
                     .lock()
                     .map_err(|_| WalletDustRegistrationExecutorFailure::Unavailable)?
@@ -791,11 +807,11 @@ impl ComposedDustRegistrationExecutor {
         ))
     }
 
-    async fn recover_submitted_transaction(
+    async fn recover_submission(
         &self,
         identity: &WalletDustRegistrationSettlementIdentity,
         draft_id: &WalletTransactionDraftId,
-    ) -> Result<ChainTransactionId, WalletDustRegistrationExecutorFailure> {
+    ) -> Result<RecoveredSubmission, WalletDustRegistrationExecutorFailure> {
         let command = GetWalletDustRegistrationStatusCommand {
             profile_id: identity.profile.as_str().to_owned(),
             draft_id: draft_id.as_str().to_owned(),
@@ -811,10 +827,14 @@ impl ComposedDustRegistrationExecutor {
                 .await
                 .map_err(map_registration_failure)?,
         };
+        if status.state == "cancelled" && status.transaction_id.is_none() {
+            return Ok(RecoveredSubmission::PreBroadcastCancelled);
+        }
         let transaction_id = status
             .transaction_id
             .ok_or(WalletDustRegistrationExecutorFailure::Degraded)?;
         ChainTransactionId::parse(transaction_id)
+            .map(RecoveredSubmission::Observed)
             .map_err(|_| WalletDustRegistrationExecutorFailure::Degraded)
     }
 

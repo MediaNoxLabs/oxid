@@ -1324,6 +1324,11 @@ fn preprod_deterministic_funding_manifest_exposes_public_addresses_only() {
 #[test]
 #[ignore = "requires explicit preprod opt-in, an out-of-band master seed, and live indexer reads"]
 fn preprod_funding_observation_is_read_only() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("PreProd observation runtime builds");
+    let _runtime_guard = runtime.enter();
     assert_eq!(
         std::env::var(PREPROD_ENABLE_ENV).ok().as_deref(),
         Some("1"),
@@ -1489,6 +1494,11 @@ fn preprod_funding_observation_is_read_only() {
 #[test]
 #[ignore = "requires funded PreProd A/B accounts, public-prover acknowledgement, and explicit opt-in"]
 fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("PreProd registration runtime builds");
+    let _runtime_guard = runtime.enter();
     assert_eq!(
         std::env::var(PREPROD_ENABLE_ENV).ok().as_deref(),
         Some("1"),
