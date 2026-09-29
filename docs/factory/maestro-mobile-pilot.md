@@ -13,6 +13,22 @@ OXID_ANDROID_DEVICE=emulator-<port> ./scripts/run-maestro-android.sh
 
 The iOS route is the first runtime attempt. The Android wrapper refuses anything except an `emulator-*` serial and only deploys through the repository launcher. Never use a physical phone.
 
+For the canonical 375-point iOS evidence lane, let the repository own the
+simulator lifecycle instead of supplying an ambient device:
+
+```sh
+./bootstrap.sh -- ./scripts/test-ios-maestro-holder-evidence.sh
+```
+
+The runner creates an iPhone SE (3rd generation), builds and deploys the exact
+clean head, runs the pinned flow, and deletes the receipt-owned simulator. It
+retains only the eight named public screenshots, a 200-line Maestro tail, and a
+machine-readable receipt below ignored
+`target/mobile-visual-accessibility/ios-run-<head>-<started-at>/`. Raw per-device
+Maestro/XCTest logs and diagnostics are deleted after collection, including on
+failure. The receipt records duration, retry-independent outcome, public bytes,
+screenshot count, exact head/device, and cleanup status.
+
 ## Flow and evidence contract
 
 `tests/maestro/{ios,android}-lunar-aegis.yaml` capture the simulated first-run fork and the safe device-protection explanation, then relaunch cleanly before native authorization. The compile-time demo drawer creates only a profile and process-local protection; it does not run the account-derivation or funding fixture actions. The simulated profile nevertheless exposes a synchronized protected account by design, so both flows assert Receive/open-close and stop on the `SEND NIGHT` entry form without entering a recipient, amount, or transfer action; they also cover Documents and Activity, while both platforms reach Settings. Android deliberately applies `FLAG_SECURE` after demo protection initializes. Its only post-protection screenshot is the public simulated Home route after the user-visible Session privacy action; the flow immediately re-masks before Settings, while CDP remains authoritative for the 30-second timeout and lifecycle re-arm. Settings, Documents, credential review, backup/recovery, and other secret-bearing routes stay protected. The simulated demo custody adapter intentionally has no Backup capability; existing native-custody XCTest/CDP suites own that screen. Maestro can produce automatic failure screenshots, so recovery-phrase content is neither entered nor asserted by this flow. Both normal and debug output are routed beneath the ignored per-device artifact root.
