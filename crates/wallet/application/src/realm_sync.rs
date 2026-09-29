@@ -76,6 +76,187 @@ pub struct SelectedWalletRealmSyncView {
     pub shielded: WalletRealmFamilyView<WalletShieldedSyncView>,
 }
 
+/// Spendable native NIGHT balance derived from the selected-realm account observation.
+///
+/// This is intentionally not a vault total: missing, refreshing, stale, and
+/// invalid account observations remain distinct from a confirmed zero.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SelectedWalletRealmSpendableNightView {
+    Loading,
+    Fresh { atomic_units: String },
+    Stale { atomic_units: String },
+    Zero,
+    Failed,
+    Unavailable,
+}
+
+impl SelectedWalletRealmSpendableNightView {
+    #[must_use]
+    pub fn from_realm_view(view: &SelectedWalletRealmSyncView) -> Self {
+        let WalletRealmFamilyView::Ready(account) = &view.account else {
+            return match &view.account {
+                WalletRealmFamilyView::Busy => Self::Loading,
+                WalletRealmFamilyView::InvalidData => Self::Failed,
+                WalletRealmFamilyView::NotFound
+                | WalletRealmFamilyView::Unsupported
+                | WalletRealmFamilyView::ProtectionNotInitialized
+                | WalletRealmFamilyView::ProtectionLocked
+                | WalletRealmFamilyView::Unavailable => Self::Unavailable,
+                WalletRealmFamilyView::Ready(_) => unreachable!("matched above"),
+            };
+        };
+        let atomic_units = account
+            .balances
+            .iter()
+            .find(|balance| balance.symbol == "NIGHT")
+            .map_or("0", |balance| balance.atomic_units.as_str());
+        if matches!(account.source.as_str(), "unavailable" | "simulated") {
+            return Self::Unavailable;
+        }
+        match (account.sync.state.as_str(), account.source.as_str()) {
+            ("never_synced" | "syncing", _) => Self::Loading,
+            ("synced", "live") if atomic_units == "0" => Self::Zero,
+            ("synced", "live") => Self::Fresh {
+                atomic_units: atomic_units.to_owned(),
+            },
+            ("synced", "cached") | ("stalled", "live" | "cached") => Self::Stale {
+                atomic_units: atomic_units.to_owned(),
+            },
+            ("unavailable", _) => Self::Unavailable,
+            _ => Self::Failed,
+        }
+    }
+}
+
+#[cfg(test)]
+mod spendable_night_tests {
+    use super::*;
+
+    fn realm(account: WalletRealmFamilyView<WalletAccountView>) -> SelectedWalletRealmSyncView {
+        SelectedWalletRealmSyncView {
+            account,
+            dust: WalletRealmFamilyView::Busy,
+            shielded: WalletRealmFamilyView::Busy,
+        }
+    }
+
+    fn account(
+        source: &str,
+        state: &str,
+        amount: Option<&str>,
+    ) -> WalletRealmFamilyView<WalletAccountView> {
+        WalletRealmFamilyView::Ready(WalletAccountView {
+            chain: "Midnight".to_owned(),
+            network_id: "testnet".to_owned(),
+            network_name: "Testnet".to_owned(),
+            network_environment: "test".to_owned(),
+            account_id: None,
+            source: source.to_owned(),
+            addresses: vec![],
+            balances: amount
+                .map(|amount| {
+                    vec![crate::WalletAssetBalanceView {
+                        asset_id: "night".to_owned(),
+                        symbol: "NIGHT".to_owned(),
+                        decimals: 6,
+                        atomic_units: amount.to_owned(),
+                    }]
+                })
+                .unwrap_or_default(),
+            sync: crate::WalletSyncStatusView {
+                state: state.to_owned(),
+                current_cursor: None,
+                target_cursor: None,
+                chain_tip_height: None,
+                updated_at_millis: None,
+            },
+            transactions: vec![],
+        })
+    }
+
+    #[test]
+    fn spendable_night_keeps_fresh_stale_loading_failed_and_zero_distinct() {
+        assert!(matches!(
+            SelectedWalletRealmSpendableNightView::from_realm_view(&realm(account(
+                "live",
+                "synced",
+                Some("12")
+            ))),
+            SelectedWalletRealmSpendableNightView::Fresh { atomic_units } if atomic_units == "12"
+        ));
+        assert!(matches!(
+            SelectedWalletRealmSpendableNightView::from_realm_view(&realm(account(
+                "cached",
+                "synced",
+                Some("12")
+            ))),
+            SelectedWalletRealmSpendableNightView::Stale { atomic_units } if atomic_units == "12"
+        ));
+        assert_eq!(
+            SelectedWalletRealmSpendableNightView::from_realm_view(&realm(account(
+                "live",
+                "synced",
+                Some("0")
+            ))),
+            SelectedWalletRealmSpendableNightView::Zero
+        );
+        assert_eq!(
+            SelectedWalletRealmSpendableNightView::from_realm_view(&realm(account(
+                "live", "synced", None
+            ))),
+            SelectedWalletRealmSpendableNightView::Zero
+        );
+        assert_eq!(
+            SelectedWalletRealmSpendableNightView::from_realm_view(&realm(account(
+                "live",
+                "syncing",
+                Some("0")
+            ))),
+            SelectedWalletRealmSpendableNightView::Loading
+        );
+        assert!(matches!(
+            SelectedWalletRealmSpendableNightView::from_realm_view(&realm(account(
+                "live",
+                "stalled",
+                Some("0")
+            ))),
+            SelectedWalletRealmSpendableNightView::Stale { atomic_units } if atomic_units == "0"
+        ));
+        for unavailable in [
+            account("unavailable", "unavailable", None),
+            account("simulated", "synced", Some("12")),
+            account("simulated", "never_synced", None),
+            WalletRealmFamilyView::NotFound,
+        ] {
+            assert_eq!(
+                SelectedWalletRealmSpendableNightView::from_realm_view(&realm(unavailable)),
+                SelectedWalletRealmSpendableNightView::Unavailable
+            );
+        }
+        for failed in [
+            account("future_source", "synced", Some("12")),
+            account("live", "future_state", Some("12")),
+        ] {
+            assert_eq!(
+                SelectedWalletRealmSpendableNightView::from_realm_view(&realm(failed)),
+                SelectedWalletRealmSpendableNightView::Failed
+            );
+        }
+        assert_eq!(
+            SelectedWalletRealmSpendableNightView::from_realm_view(&realm(
+                WalletRealmFamilyView::Busy
+            )),
+            SelectedWalletRealmSpendableNightView::Loading
+        );
+        assert_eq!(
+            SelectedWalletRealmSpendableNightView::from_realm_view(&realm(
+                WalletRealmFamilyView::InvalidData
+            )),
+            SelectedWalletRealmSpendableNightView::Failed
+        );
+    }
+}
+
 /// Typed identity and monotonically increasing revision of a selected realm observation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectedWalletRealmIdentity {
@@ -122,6 +303,7 @@ pub struct SelectedWalletRealmProjection {
     pub consistent: bool,
     pub actionable: SelectedWalletRealmActionReadiness,
     pub observation: SelectedWalletRealmObservation,
+    pub spendable_night: SelectedWalletRealmSpendableNightView,
     pub view: SelectedWalletRealmSyncView,
 }
 
@@ -1034,6 +1216,7 @@ impl<W> SelectedWalletRealmSyncService<W> {
         published: SelectedWalletRealmPublishedProjection,
     ) -> SelectedWalletRealmProjection {
         let view = published.view;
+        let spendable_night = SelectedWalletRealmSpendableNightView::from_realm_view(&view);
         let fresh = selected_realm_is_fresh(&view);
         let consistent = selected_realm_is_consistent(&view);
         let refreshing = published.reconciling || selected_realm_is_refreshing(&view);
@@ -1055,6 +1238,7 @@ impl<W> SelectedWalletRealmSyncService<W> {
             } else {
                 SelectedWalletRealmObservation::Settled
             },
+            spendable_night,
             view,
         }
     }
