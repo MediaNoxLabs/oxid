@@ -7602,7 +7602,7 @@ fn transaction_status_line(transaction: &oxid_wallet_application::WalletTransact
 fn activity_observed_at_line(observed_at_millis: Option<u64>) -> String {
     observed_at_millis.map_or_else(
         || "Observed timestamp unavailable".to_owned(),
-        |timestamp| format!("Observed timestamp: {timestamp} ms"),
+        |timestamp| format!("Observed {}", ui::format_epoch_millis(timestamp)),
     )
 }
 
@@ -11503,8 +11503,8 @@ mod tests {
     #[test]
     fn activity_timestamp_is_explicit_about_missing_authoritative_data() {
         assert_eq!(
-            activity_observed_at_line(Some(42)),
-            "Observed timestamp: 42 ms"
+            activity_observed_at_line(Some(1_700_000_000_000)),
+            "Observed 2023-11-14 22:13 UTC"
         );
         assert_eq!(
             activity_observed_at_line(None),
