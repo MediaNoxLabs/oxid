@@ -9,7 +9,6 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    thread,
     time::{Duration, Instant},
 };
 
@@ -57,8 +56,8 @@ use crate::{
     submission_journal::{StoredSubmissionJournalEntry, StoredSubmissionState},
     transaction::{
         MidnightCompletionOutcome, MidnightCompletionRequest, MidnightRegistrationContext,
-        MidnightSubmissionReconciler, MidnightSubmissionReconciliation,
-        MidnightTransactionCompleter,
+        MidnightRegistrationContextFuture, MidnightSubmissionReconciler,
+        MidnightSubmissionReconciliation, MidnightTransactionCompleter,
     },
 };
 
@@ -435,29 +434,13 @@ impl<C> MidnightTransactionCompleter for LiveMidnightTransactionCompleter<C>
 where
     C: ClockPort + 'static,
 {
-    fn registration_context(
-        &self,
-    ) -> Result<MidnightRegistrationContext, WalletTransactionPortError> {
-        // `prepare` is a synchronous application boundary and can be invoked
-        // from either a native UI thread or an existing async executor. Keep
-        // the temporary runtime off both so a headless Tokio caller cannot
-        // trigger nested-runtime panics.
-        let endpoint = self.config.indexer_http_url().to_owned();
-        let chain_tip = thread::Builder::new()
-            .name("oxid-midnight-registration-context".to_owned())
-            .spawn(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|_| WalletTransactionPortError::Unavailable)?;
-                runtime.block_on(fetch_chain_tip(&endpoint))
+    fn registration_context(&self) -> MidnightRegistrationContextFuture<'_> {
+        Box::pin(async move {
+            let chain_tip = fetch_chain_tip(self.config.indexer_http_url()).await?;
+            Ok(MidnightRegistrationContext {
+                timestamp: chain_tip.timestamp,
+                parameters: chain_tip.parameters,
             })
-            .map_err(|_| WalletTransactionPortError::Unavailable)?
-            .join()
-            .map_err(|_| WalletTransactionPortError::Unavailable)??;
-        Ok(MidnightRegistrationContext {
-            timestamp: chain_tip.timestamp,
-            parameters: chain_tip.parameters,
         })
     }
 

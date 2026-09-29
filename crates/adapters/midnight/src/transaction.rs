@@ -2,8 +2,10 @@
 
 use std::{
     collections::HashMap as StdHashMap,
+    future::Future,
     io::Cursor,
     ops::Deref,
+    pin::Pin,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -583,11 +585,17 @@ pub(crate) struct MidnightRegistrationContext {
     pub(crate) parameters: LedgerParameters,
 }
 
+pub(crate) type MidnightRegistrationContextFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<MidnightRegistrationContext, WalletTransactionPortError>>
+            + Send
+            + 'a,
+    >,
+>;
+
 pub(crate) trait MidnightTransactionCompleter: Send + Sync {
-    fn registration_context(
-        &self,
-    ) -> Result<MidnightRegistrationContext, WalletTransactionPortError> {
-        Err(WalletTransactionPortError::Unavailable)
+    fn registration_context(&self) -> MidnightRegistrationContextFuture<'_> {
+        Box::pin(async { Err(WalletTransactionPortError::Unavailable) })
     }
 
     fn complete(
@@ -601,10 +609,8 @@ pub(crate) trait MidnightTransactionCompleter: Send + Sync {
 pub(crate) struct UnavailableMidnightTransactionCompleter;
 
 impl MidnightTransactionCompleter for UnavailableMidnightTransactionCompleter {
-    fn registration_context(
-        &self,
-    ) -> Result<MidnightRegistrationContext, WalletTransactionPortError> {
-        Err(WalletTransactionPortError::Unavailable)
+    fn registration_context(&self) -> MidnightRegistrationContextFuture<'_> {
+        Box::pin(async { Err(WalletTransactionPortError::Unavailable) })
     }
 
     fn complete(
@@ -620,15 +626,15 @@ impl MidnightTransactionCompleter for UnavailableMidnightTransactionCompleter {
 pub(crate) struct SimulatedMidnightTransactionCompleter;
 
 impl MidnightTransactionCompleter for SimulatedMidnightTransactionCompleter {
-    fn registration_context(
-        &self,
-    ) -> Result<MidnightRegistrationContext, WalletTransactionPortError> {
-        Ok(MidnightRegistrationContext {
-            // More than the reviewed one-week generation window after the
-            // simulated NIGHT UTXO ctime, so the deterministic profile can
-            // exercise registration without pretending it starts with DUST.
-            timestamp: Timestamp::from_secs(1_700_700_000),
-            parameters: INITIAL_PARAMETERS,
+    fn registration_context(&self) -> MidnightRegistrationContextFuture<'_> {
+        Box::pin(async {
+            Ok(MidnightRegistrationContext {
+                // More than the reviewed one-week generation window after the
+                // simulated NIGHT UTXO ctime, so the deterministic profile can
+                // exercise registration without pretending it starts with DUST.
+                timestamp: Timestamp::from_secs(1_700_700_000),
+                parameters: INITIAL_PARAMETERS,
+            })
         })
     }
 
@@ -2279,20 +2285,20 @@ where
     }
 }
 
-struct CancelSubmissionOnDrop {
+pub(crate) struct CancelSubmissionOnDrop {
     control: Arc<MidnightSubmissionControl>,
     armed: bool,
 }
 
 impl CancelSubmissionOnDrop {
-    fn new(control: Arc<MidnightSubmissionControl>) -> Self {
+    pub(crate) fn new(control: Arc<MidnightSubmissionControl>) -> Self {
         Self {
             control,
             armed: true,
         }
     }
 
-    fn disarm(&mut self) {
+    pub(crate) fn disarm(&mut self) {
         self.armed = false;
     }
 }
@@ -3751,6 +3757,34 @@ mod tests {
         assert_eq!(entry.state, StoredSubmissionState::OutcomeUnknown);
         assert_eq!(entry.block_hash, None);
         assert_eq!(entry.block_height, None);
+    }
+
+    #[test]
+    fn dropping_submission_waiter_requests_cooperative_pre_broadcast_cancellation() {
+        let journal =
+            Arc::new(crate::submission_journal::MemoryMidnightSubmissionJournalStore::default());
+        let control = Arc::new(MidnightSubmissionControl::new(
+            MidnightSubmissionAttempt {
+                profile_id: profile(),
+                network_id: network_id("undeployed").expect("network is valid"),
+                draft_id: WalletTransactionDraftId::parse("drop_cancellation")
+                    .expect("draft identifier is valid"),
+                planning_fingerprint: [7; 32],
+                expires_at: UnixTimestampMillis::new(2_000),
+                updated_at: UnixTimestampMillis::new(1_000),
+            },
+            journal,
+        ));
+
+        {
+            let _cancel_on_drop = CancelSubmissionOnDrop::new(Arc::clone(&control));
+        }
+
+        assert!(control.cancellation.load(Ordering::Acquire));
+        assert_eq!(
+            *control.phase.lock().expect("phase is available"),
+            MidnightSubmissionPhase::CancellationRequested
+        );
     }
 
     fn request(expires_at: u64) -> PrepareWalletTransferRequest {

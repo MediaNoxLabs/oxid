@@ -339,11 +339,11 @@ impl HeadlessWallet {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
         };
-        match self
-            .application
-            .prepare_wallet_dust_registration()
-            .execute(PrepareWalletDustRegistrationCommand { profile_id })
-        {
+        match futures::executor::block_on(
+            self.application
+                .prepare_wallet_dust_registration()
+                .execute(PrepareWalletDustRegistrationCommand { profile_id }),
+        ) {
             Ok(preview) => Dispatch::continue_with(Response::success(
                 request.id,
                 json!({ "registration": dust_registration_preview_value(&preview) }),
@@ -368,15 +368,16 @@ impl HeadlessWallet {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
         };
-        match self
-            .application
-            .authorize_wallet_dust_registration()
-            .execute(AuthorizeWalletDustRegistrationCommand {
-                profile_id,
-                draft_id: params.draft_id,
-                authorization_challenge: params.authorization_challenge,
-                confirmation: params.confirmation.into(),
-            }) {
+        match futures::executor::block_on(
+            self.application
+                .authorize_wallet_dust_registration()
+                .execute(AuthorizeWalletDustRegistrationCommand {
+                    profile_id,
+                    draft_id: params.draft_id,
+                    authorization_challenge: params.authorization_challenge,
+                    confirmation: params.confirmation.into(),
+                }),
+        ) {
             Ok(preview) => Dispatch::continue_with(Response::success(
                 request.id,
                 json!({ "registration": dust_registration_preview_value(&preview) }),
@@ -432,11 +433,13 @@ impl HeadlessWallet {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
         };
-        let preview = match self.application.get_wallet_dust_registration().execute(
-            GetWalletDustRegistrationCommand {
-                profile_id: profile_id.clone(),
-                draft_id: params.draft_id.clone(),
-            },
+        let preview = match futures::executor::block_on(
+            self.application.get_wallet_dust_registration().execute(
+                GetWalletDustRegistrationCommand {
+                    profile_id: profile_id.clone(),
+                    draft_id: params.draft_id.clone(),
+                },
+            ),
         ) {
             Ok(preview) => preview,
             Err(error) => {
@@ -489,7 +492,7 @@ impl HeadlessWallet {
             draft_id: params.draft_id,
         };
         for _ in 0..100 {
-            match service.execute(command.clone()) {
+            match futures::executor::block_on(service.execute(command.clone())) {
                 Ok(status) if status.state != "not_started" => {
                     return Dispatch::continue_with(Response::success(
                         request.id,
@@ -516,12 +519,12 @@ impl HeadlessWallet {
             request,
             "wallet.dust.registration.draft",
             |application, profile_id, draft_id| {
-                application.get_wallet_dust_registration().execute(
+                futures::executor::block_on(application.get_wallet_dust_registration().execute(
                     GetWalletDustRegistrationCommand {
                         profile_id,
                         draft_id,
                     },
-                )
+                ))
             },
             |preview| json!({ "registration": dust_registration_preview_value(&preview) }),
         )
@@ -532,9 +535,11 @@ impl HeadlessWallet {
             request,
             "wallet.dust.registration.status",
             |application, command| {
-                application
-                    .get_wallet_dust_registration_status()
-                    .execute(command)
+                futures::executor::block_on(
+                    application
+                        .get_wallet_dust_registration_status()
+                        .execute(command),
+                )
             },
         )
     }
@@ -552,13 +557,14 @@ impl HeadlessWallet {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
         };
-        match self
-            .application
-            .cancel_wallet_dust_registration_submission()
-            .execute(CancelWalletDustRegistrationSubmissionCommand {
-                profile_id,
-                draft_id: params.draft_id,
-            }) {
+        match futures::executor::block_on(
+            self.application
+                .cancel_wallet_dust_registration_submission()
+                .execute(CancelWalletDustRegistrationSubmissionCommand {
+                    profile_id,
+                    draft_id: params.draft_id,
+                }),
+        ) {
             Ok(status) => Dispatch::continue_with(Response::success(
                 request.id,
                 json!({ "registrationStatus": dust_registration_status_value(&status) }),
