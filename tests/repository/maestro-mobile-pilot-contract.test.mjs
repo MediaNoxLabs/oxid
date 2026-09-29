@@ -131,10 +131,10 @@ test("Maestro flows cover the holder shell without exposing recovery secrets", a
     assert.match(source, /Activity/u);
     assert.match(source, /SEND NIGHT/u);
     assert.match(source, /tapOn: "Go back"/u);
-    assert.match(source, /No credentials yet/u);
+    assert.match(source, /No documents yet/u);
     assert.match(source, /visible: "Sent"/u);
     assert.match(source, /assertVisible: "Received"/u);
-    assert.match(source, /scrollUntilVisible:[\s\S]*text: "No credentials yet"[\s\S]*direction: DOWN/u);
+    assert.match(source, /scrollUntilVisible:[\s\S]*text: "No documents yet"[\s\S]*direction: DOWN/u);
     assert.match(source, new RegExp(`takeScreenshot: lunar-aegis-${platform}-01-first-run`, "u"));
     assert.doesNotMatch(source, /takeScreenshot:.*recovery/iu);
     assert.doesNotMatch(source, /Generate recovery phrase|New wallet recovery phrase/iu);

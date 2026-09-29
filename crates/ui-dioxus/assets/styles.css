@@ -746,25 +746,15 @@ textarea:focus-visible {
   animation: page-in var(--motion-base) ease-out;
 }
 
-.documents-identity-card {
+.documents-actions {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
 }
 
-.documents-identity-card > div {
-  min-width: 0;
-}
-
-.documents-identity-card h2,
-.documents-identity-card p {
-  margin-top: 0;
-}
-
-.documents-identity-card > .secondary-action {
-  flex: 0 0 auto;
+.documents-actions > .primary-action,
+.documents-actions > .secondary-action {
   margin: 0;
 }
 
@@ -4044,11 +4034,6 @@ select:focus-visible {
 
   .app-header__title small {
     display: none;
-  }
-
-  .documents-identity-card {
-    align-items: stretch;
-    flex-direction: column;
   }
 
   .diagnostic-grid {

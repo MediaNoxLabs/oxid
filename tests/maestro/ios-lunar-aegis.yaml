@@ -49,10 +49,10 @@ name: Lunar Aegis iOS simulated holder journey
 - tapOn: "Documents"
 - scrollUntilVisible:
     element:
-      text: "No credentials yet"
+      text: "No documents yet"
     direction: DOWN
 - extendedWaitUntil:
-    visible: "No credentials yet"
+    visible: "No documents yet"
     timeout: 60000
 - takeScreenshot: lunar-aegis-ios-06-documents-empty
 - tapOn: "Activity"

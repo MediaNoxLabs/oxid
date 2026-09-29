@@ -430,6 +430,7 @@ try {
     );
 
     await openDocuments();
+    await clickButton("Add document");
     await clickButton("Use demo OID4VCI offer");
     await clickButton("Preview credential offer");
     await waitFor(
@@ -749,6 +750,7 @@ try {
       "managed DID update",
     );
     await openDocuments();
+    await clickButton("Add document");
     await waitForButton("Use demo OID4VCI offer");
     await clickButton("Use demo OID4VCI offer");
     await clickButton("Preview credential offer");
@@ -793,6 +795,8 @@ try {
       "document.querySelectorAll('.credential-record').length === 2",
       "second distinct Digital Passport",
     );
+    await openDocuments();
+    await clickButton("Present");
     await clickButton("Use standalone verifier request");
     await clickButton("Preview presentation request");
     await waitFor(
