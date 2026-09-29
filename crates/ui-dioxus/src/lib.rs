@@ -1796,12 +1796,27 @@ impl Route {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RouteStack {
     routes: Vec<Route>,
+    transition: RouteTransition,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum RouteTransition {
+    #[default]
+    ResetPageContentToTopAndFocusDestination,
+    BackRestoresOriginAtTop,
+}
+
+impl RouteTransition {
+    const fn resets_page_content_to_top(self) -> bool {
+        true
+    }
 }
 
 impl Default for RouteStack {
     fn default() -> Self {
         Self {
             routes: vec![Route::Home],
+            transition: RouteTransition::ResetPageContentToTopAndFocusDestination,
         }
     }
 }
@@ -1829,6 +1844,7 @@ impl RouteStack {
     fn select_primary(&mut self, destination: PrimaryDestination) {
         self.routes.clear();
         self.routes.push(destination.route());
+        self.transition = RouteTransition::ResetPageContentToTopAndFocusDestination;
     }
 
     fn push(&mut self, route: Route) {
@@ -1844,6 +1860,7 @@ impl RouteStack {
         } else {
             self.routes.push(route);
         }
+        self.transition = RouteTransition::ResetPageContentToTopAndFocusDestination;
     }
 
     fn push_from(&mut self, destination: PrimaryDestination, route: Route) {
@@ -1866,10 +1883,15 @@ impl RouteStack {
     fn pop(&mut self) -> bool {
         if self.can_go_back() {
             self.routes.pop();
+            self.transition = RouteTransition::BackRestoresOriginAtTop;
             true
         } else {
             false
         }
+    }
+
+    fn transition(&self) -> RouteTransition {
+        self.transition
     }
 
     fn route_identity_request(&mut self, kind: IdentityRequestKind) {
@@ -3610,6 +3632,9 @@ fn WalletApp() -> Element {
     };
 
     let active_route = navigation.read().current();
+    use_effect(move || {
+        apply_route_transition(navigation.read().transition());
+    });
     let receive_sheet_open = active_route == Route::Receive;
     let content_route = retained_identity_review_route(
         &pending_identity_request.read(),
@@ -3695,10 +3720,12 @@ fn WalletApp() -> Element {
                     }
                 }
                 div { class: "app-header__title",
-                    if active_route == Route::Diagnostics {
-                        strong { role: "heading", aria_level: "1", "{active_route.title()}" }
-                    } else {
-                        strong { "{active_route.title()}" }
+                    strong {
+                        id: "destination-heading",
+                        role: "heading",
+                        aria_level: "1",
+                        tabindex: "-1",
+                        "{active_route.title()}"
                     }
                     small { "{brand.product_name()} {brand.tagline()}" }
                 }
@@ -3974,7 +4001,7 @@ fn WalletApp() -> Element {
                 nav { class: "bottom-nav", aria_label: "Primary wallet destinations",
                 for destination in PRIMARY_DESTINATIONS[..2].iter().copied() {
                     {
-                        let is_active = active_primary == destination;
+                        let is_active = primary_destination_is_active(content_route, destination);
                         rsx! {
                             PrimaryNavigationButton {
                                 key: "{destination.label()}",
@@ -4019,7 +4046,7 @@ fn WalletApp() -> Element {
                 }
                 for destination in PRIMARY_DESTINATIONS[2..].iter().copied() {
                     {
-                        let is_active = active_primary == destination;
+                        let is_active = primary_destination_is_active(content_route, destination);
                         rsx! {
                             PrimaryNavigationButton {
                                 key: "{destination.label()}",
@@ -8162,15 +8189,27 @@ const fn is_developer_route(_route: Route) -> bool {
     false
 }
 
+fn apply_route_transition(transition: RouteTransition) {
+    if transition.resets_page_content_to_top() {
+        let _ = dioxus_document::eval(
+            "document.querySelector('.page-content')?.scrollTo({ top: 0, behavior: 'instant' }); document.querySelector('#destination-heading')?.focus({ preventScroll: true });",
+        );
+    }
+}
+
 const fn page_context_primary_label(
     content_route: Route,
     active_primary: PrimaryDestination,
 ) -> Option<&'static str> {
-    if is_developer_route(content_route) {
-        None
-    } else {
+    if content_route.primary().is_some() && !is_developer_route(content_route) {
         Some(active_primary.label())
+    } else {
+        None
     }
+}
+
+fn primary_destination_is_active(content_route: Route, destination: PrimaryDestination) -> bool {
+    matches!(content_route.primary(), Some(primary) if primary == destination)
 }
 
 fn route_pending_identity_link(
@@ -11698,6 +11737,58 @@ mod tests {
             transfer_failure_note(TransferRecovery::ReconcileUnknown, "Oxid")
                 .contains("check before anything is sent again")
         );
+    }
+
+    #[test]
+    fn route_transitions_reset_top_and_focus_the_destination() {
+        let mut navigation = RouteStack::default();
+
+        navigation.select_primary(PrimaryDestination::Documents);
+        assert_eq!(
+            navigation.transition(),
+            RouteTransition::ResetPageContentToTopAndFocusDestination
+        );
+        navigation.push(Route::Activity);
+        assert_eq!(
+            navigation.transition(),
+            RouteTransition::ResetPageContentToTopAndFocusDestination
+        );
+        navigation.push(GlobalMenuAction::Settings.route().expect("Settings route"));
+        assert_eq!(
+            navigation.transition(),
+            RouteTransition::ResetPageContentToTopAndFocusDestination
+        );
+        assert!(navigation.pop());
+        assert_eq!(navigation.current(), Route::Activity);
+        assert_eq!(
+            navigation.transition(),
+            RouteTransition::BackRestoresOriginAtTop
+        );
+        assert!(navigation.transition().resets_page_content_to_top());
+    }
+
+    #[test]
+    fn page_context_label_is_only_shown_for_the_rendered_primary_route() {
+        assert_eq!(
+            page_context_primary_label(Route::Activity, PrimaryDestination::Activity),
+            Some("Activity")
+        );
+        assert_eq!(
+            page_context_primary_label(Route::Settings, PrimaryDestination::Activity),
+            None
+        );
+        assert_eq!(
+            page_context_primary_label(Route::BackupRecovery, PrimaryDestination::Documents),
+            None
+        );
+        assert!(primary_destination_is_active(
+            Route::Activity,
+            PrimaryDestination::Activity
+        ));
+        assert!(!primary_destination_is_active(
+            Route::Settings,
+            PrimaryDestination::Activity
+        ));
     }
 
     #[test]

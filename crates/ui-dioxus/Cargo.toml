@@ -30,14 +30,14 @@ public-standalone-genesis = []
 preprod-observation = []
 # Strictly test-only in-process driver for environments where WKWebView does
 # not expose rendered controls through macOS Accessibility.
-desktop-test-click-driver = ["dep:dioxus-document"]
+desktop-test-click-driver = []
 # Separate, owner-invoked rendered-control driver for the developer pager smoke.
 # It is never selected by normal desktop, mobile, or release builds.
-desktop-developer-pager-driver = ["dep:dioxus-document"]
+desktop-developer-pager-driver = []
 
 [dependencies]
 dioxus = { workspace = true, features = ["minimal"] }
-dioxus-document = { workspace = true, optional = true }
+dioxus-document.workspace = true
 oxid-capabilities-application = { workspace = true, optional = true }
 oxid-wallet-application.workspace = true
 oxid-credential-application.workspace = true
