@@ -104,7 +104,7 @@ const fn map_recovery_store_error(
 ) -> WalletDustRegistrationRecoveryStoreError {
     match error {
         store_atomic::AtomicStoreError::Integrity => {
-            WalletDustRegistrationRecoveryStoreError::Corrupt
+            WalletDustRegistrationRecoveryStoreError::Integrity
         }
         store_atomic::AtomicStoreError::Unavailable => {
             WalletDustRegistrationRecoveryStoreError::Unavailable
@@ -863,6 +863,35 @@ mod tests {
         );
         reopened.clear().expect("recovery record clears");
         assert_eq!(reopened.load().expect("cleared store loads"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dust_registration_recovery_preserves_policy_failure_without_deleting_the_file() {
+        use std::os::unix::fs::symlink;
+
+        let store = TestStore::new();
+        fs::create_dir_all(&store.root).expect("test directory should exist");
+        let target = store.root.join("recovery-target");
+        fs::write(&target, b"not a recovery record").expect("target fixture writes");
+        let recovery_path = store.root.join(DUST_REGISTRATION_RECOVERY_FILE_NAME);
+        symlink(&target, &recovery_path).expect("recovery path is symlinked");
+
+        let recovery =
+            JsonWalletProfileRepository::new(&store.path).wallet_dust_registration_recovery_store();
+        assert_eq!(
+            recovery.load(),
+            Err(WalletDustRegistrationRecoveryStoreError::Integrity)
+        );
+        assert_eq!(
+            recovery.clear(),
+            Err(WalletDustRegistrationRecoveryStoreError::Integrity)
+        );
+        assert!(
+            recovery_path.is_symlink(),
+            "integrity failure must not delete the path"
+        );
+        assert_eq!(fs::read(target).unwrap(), b"not a recovery record");
     }
 
     #[test]
