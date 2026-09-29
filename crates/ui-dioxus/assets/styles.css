@@ -2881,6 +2881,7 @@ textarea:focus-visible {
 .activity-row {
   display: flex;
   min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
@@ -2923,6 +2924,34 @@ textarea:focus-visible {
 
 .activity-list {
   display: grid;
+}
+
+.activity-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.activity-source-note,
+.activity-empty-state {
+  color: var(--text-muted);
+}
+
+.activity-row__details {
+  width: 100%;
+  margin-left: calc(2rem + var(--space-3));
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.activity-row__details summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.activity-row__details .preview-list {
+  margin-top: var(--space-2);
 }
 
 .activity-row__mark {
