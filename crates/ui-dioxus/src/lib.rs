@@ -8202,6 +8202,29 @@ fn initial_credential_presentation_selection(
     (presentation.candidates.len() == 1).then(|| presentation.candidates[0].credential_id.clone())
 }
 
+fn presentation_terminal_copy(presentation: &CredentialPresentationView) -> Option<&'static str> {
+    match presentation.state.as_str() {
+        "succeeded" if presentation.presentation_generated && presentation.verifier_validated => {
+            Some(
+                "Presentation complete. The verifier confirmed the proof. You can safely return to Documents or preview a new request.",
+            )
+        }
+        "failed" => Some(
+            "Presentation failed. No presentation or vp_token was generated. Review the message above, then preview a new request.",
+        ),
+        "cancelled" => Some(
+            "Presentation cancelled. No presentation or vp_token was generated. You can safely preview a new request.",
+        ),
+        "timed_out" => Some(
+            "Presentation timed out. No presentation or vp_token was generated. Preview a new request to retry.",
+        ),
+        "refused" => Some(
+            "Presentation refused. No presentation or vp_token was generated. You can safely preview a new request.",
+        ),
+        _ => None,
+    }
+}
+
 fn presentation_claim_consent_copy(claim: &RequestedPresentationClaimView) -> String {
     match (
         claim.intent.as_str(),
@@ -8584,6 +8607,9 @@ fn CredentialPresentationPanel(
                     }
                     if !presentation.presentation_generated {
                         p { class: "form-hint", "No presentation or vp_token has been generated." }
+                    }
+                    if let Some(terminal_copy) = presentation_terminal_copy(&presentation) {
+                        p { class: "form-hint", role: "status", aria_live: "polite", "{terminal_copy}" }
                     }
                 }
             }
@@ -11978,6 +12004,34 @@ mod tests {
             presentation_claim_consent_copy(&unknown),
             "Reviewed detail is required by this request."
         );
+    }
+
+    #[test]
+    fn presentation_terminal_copy_names_safe_next_actions() {
+        let mut presentation = presentation_with_candidates(Vec::new());
+
+        presentation.state = "succeeded".to_owned();
+        presentation.presentation_generated = true;
+        presentation.verifier_validated = true;
+        assert_eq!(
+            presentation_terminal_copy(&presentation),
+            Some(
+                "Presentation complete. The verifier confirmed the proof. You can safely return to Documents or preview a new request."
+            )
+        );
+
+        presentation.state = "failed".to_owned();
+        presentation.presentation_generated = false;
+        presentation.verifier_validated = false;
+        assert_eq!(
+            presentation_terminal_copy(&presentation),
+            Some(
+                "Presentation failed. No presentation or vp_token was generated. Review the message above, then preview a new request."
+            )
+        );
+
+        presentation.state = "awaiting_consent".to_owned();
+        assert_eq!(presentation_terminal_copy(&presentation), None);
     }
 
     #[test]

@@ -847,7 +847,7 @@ try {
       "fail-closed Compact presentation proof gate",
     );
     const presentationProofGated = await evaluate(
-      "document.body.innerText.includes('No presentation or vp_token was generated.')",
+      "document.body.innerText.includes('No presentation or vp_token was generated.') && document.body.innerText.includes('Presentation failed. No presentation or vp_token was generated. Review the message above, then preview a new request.')",
     );
     const claimsHiddenByDefault = await evaluate(
       "Boolean(document.querySelector('.passport-claims')) && !document.body.innerText.includes('Alice') && !document.body.innerText.includes('Example')",
