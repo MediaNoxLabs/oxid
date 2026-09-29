@@ -361,7 +361,7 @@ mod tests {
     #[test]
     fn unknown_outcome_can_reconcile_to_confirmed_without_exposing_payloads() {
         let store = store();
-        let id = store
+        let unknown = store
             .begin(
                 "profile-1".to_owned(),
                 PassportVaultActivitySource::StandaloneVault,
@@ -369,14 +369,76 @@ mod tests {
                 Some(9),
             )
             .expect("activity id");
-        store.update(id, PassportVaultActivityStatus::OutcomeUnknown);
-        store.update(id, PassportVaultActivityStatus::Confirmed);
+        store.update(unknown, PassportVaultActivityStatus::OutcomeUnknown);
+        store.update(unknown, PassportVaultActivityStatus::Confirmed);
+        let timed_out = store
+            .begin(
+                "profile-1".to_owned(),
+                PassportVaultActivitySource::StandaloneVault,
+                PassportVaultCallKind::WithdrawFromLock,
+                Some(10),
+            )
+            .expect("activity id");
+        store.update(timed_out, PassportVaultActivityStatus::TimedOut);
+        store.update(timed_out, PassportVaultActivityStatus::Confirmed);
 
         let view = store.execute("profile-1".to_owned()).expect("projection");
+        assert_eq!(view.records.len(), 2);
         assert_eq!(
             view.records[0].status,
             PassportVaultActivityStatus::Confirmed
         );
+        assert_eq!(
+            view.records[1].status,
+            PassportVaultActivityStatus::Confirmed
+        );
         assert_eq!(view.retention, "process_local_bounded_not_backed_up");
+    }
+
+    #[test]
+    fn evidence_backed_terminal_outcomes_are_distinct_and_monotonic() {
+        let store = store();
+        for (index, status) in [
+            PassportVaultActivityStatus::Failed,
+            PassportVaultActivityStatus::Refused,
+            PassportVaultActivityStatus::Cancelled,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let id = store
+                .begin(
+                    "profile-1".to_owned(),
+                    PassportVaultActivitySource::StandaloneVault,
+                    PassportVaultCallKind::DepositToLock,
+                    Some(index as u64),
+                )
+                .expect("activity id");
+            store.update(id, status);
+            store.update(id, PassportVaultActivityStatus::Pending);
+        }
+
+        let view = store.execute("profile-1".to_owned()).expect("projection");
+        assert_eq!(view.records.len(), 3);
+        assert_eq!(
+            view.records
+                .iter()
+                .map(|record| (record.status, record.finality))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    PassportVaultActivityStatus::Cancelled,
+                    PassportVaultActivityFinality::Final,
+                ),
+                (
+                    PassportVaultActivityStatus::Refused,
+                    PassportVaultActivityFinality::Final,
+                ),
+                (
+                    PassportVaultActivityStatus::Failed,
+                    PassportVaultActivityFinality::Final,
+                ),
+            ]
+        );
     }
 }

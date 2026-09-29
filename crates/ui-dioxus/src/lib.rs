@@ -5741,12 +5741,12 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
             AccountPageState::Loading => rsx! {
                 article { class: "empty-state surface-card", role: "status", aria_busy: "true",
                     span { class: "loading-mark", aria_hidden: "true" }
-                    h2 { "Loading activity" }
+                    h2 { "Loading wallet activity" }
                 }
             },
             AccountPageState::Failed(error) => rsx! {
                 article { class: "empty-state surface-card", role: "alert",
-                    h2 { "Activity unavailable" }
+                    h2 { "Wallet activity unavailable" }
                     p { "{error}" }
                     button {
                         class: "secondary-action",
@@ -5763,19 +5763,17 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
                                 );
                             });
                         },
-                        "Retry"
+                        "Retry wallet activity"
                     }
                 }
             },
             AccountPageState::Ready { account, .. } => {
                 let unavailable = account.source == "unavailable";
-                rsx! {
-                    AccountActivityCard { account: *account, unavailable }
-                    PassportVaultActivityCard { state: vault_activity.read().clone() }
-                    SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
-                }
+                rsx! { AccountActivityCard { account: *account, unavailable } }
             },
         }
+        PassportVaultActivityCard { state: vault_activity.read().clone() }
+        SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
     }
 }
 

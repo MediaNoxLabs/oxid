@@ -816,30 +816,45 @@ impl SubmitPassportVaultCallUseCase for PassportVaultContractCallService {
                     SubmitPassportVaultCallRequest { draft_id, now },
                 )
                 .await;
+            let submitted = match submission {
+                Ok(submitted) => submitted,
+                Err(error) => {
+                    if let Some(activity) = &self.activity {
+                        activity.update_contract(
+                            before.draft_id.as_str(),
+                            activity_status_from_port_error(error),
+                        );
+                    }
+                    return Err(PassportVaultCallError::Operation(error));
+                }
+            };
+            let result = (|| {
+                validate_transition(
+                    &before,
+                    &submitted.preview,
+                    PassportVaultCallDraftState::Submitted,
+                )?;
+                validate_submitted(&submitted)?;
+                Ok(PassportVaultCallSubmissionView {
+                    call: PassportVaultCallPreviewView::from(&submitted.preview),
+                    transaction_hash_hex: submitted.inclusion.transaction_hash_hex,
+                    block_hash_hex: submitted.inclusion.block_hash_hex,
+                    block_height: submitted.inclusion.block_height,
+                    fee_atomic_units: submitted.inclusion.fee_atomic_units.to_string(),
+                    mode: submitted.inclusion.mode,
+                })
+            })();
             if let Some(activity) = &self.activity {
                 activity.update_contract(
                     before.draft_id.as_str(),
-                    match &submission {
-                        Ok(_) => PassportVaultActivityStatus::Confirmed,
-                        Err(error) => activity_status_from_port_error(*error),
+                    if result.is_ok() {
+                        PassportVaultActivityStatus::Confirmed
+                    } else {
+                        PassportVaultActivityStatus::Failed
                     },
                 );
             }
-            let submitted = submission.map_err(PassportVaultCallError::Operation)?;
-            validate_transition(
-                &before,
-                &submitted.preview,
-                PassportVaultCallDraftState::Submitted,
-            )?;
-            validate_submitted(&submitted)?;
-            Ok(PassportVaultCallSubmissionView {
-                call: PassportVaultCallPreviewView::from(&submitted.preview),
-                transaction_hash_hex: submitted.inclusion.transaction_hash_hex,
-                block_hash_hex: submitted.inclusion.block_hash_hex,
-                block_height: submitted.inclusion.block_height,
-                fee_atomic_units: submitted.inclusion.fee_atomic_units.to_string(),
-                mode: submitted.inclusion.mode,
-            })
+            result
         })
     }
 }
