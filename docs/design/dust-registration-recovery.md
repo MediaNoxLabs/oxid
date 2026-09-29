@@ -24,10 +24,12 @@ subsequent submission fail closed rather than allowing an unrecorded broadcast.
 ## Ownership and failure policy
 
 One wallet process owns a profile-store directory at a time. `save` uses the
-owner-private atomic-store writer; in-process handles from the same repository
-share a mutex, but there is no cross-process lease. Running two wallet
-processes against the same profile-store directory is unsupported: an operator
-must stop one process before starting another or before manual cleanup.
+owner-private atomic-store writer, and the recovery-store handle derived by a
+repository serializes its in-process access. Separately constructed repository
+instances do not share that mutex, and there is no cross-process lease. Running
+two wallet processes or repository instances against the same profile-store
+directory is unsupported: an operator must stop all but one before continuing
+or before manual cleanup.
 
 Malformed recovery bytes are reported as `Corrupt`; the runtime may discard
 those bytes and rebuild state from the selected realm. Filesystem policy

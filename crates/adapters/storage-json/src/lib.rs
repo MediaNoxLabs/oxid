@@ -44,6 +44,15 @@ impl JsonWalletDustRegistrationRecoveryStore {
             .as_deref()
             .ok_or(WalletDustRegistrationRecoveryStoreError::Unavailable)
     }
+
+    fn validate_parent(&self) -> Result<(), WalletDustRegistrationRecoveryStoreError> {
+        let parent = self
+            .path()?
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .ok_or(WalletDustRegistrationRecoveryStoreError::Unavailable)?;
+        store_atomic::reject_non_private_directory(parent).map_err(map_recovery_store_error)
+    }
 }
 
 impl WalletDustRegistrationRecoveryStore for JsonWalletDustRegistrationRecoveryStore {
@@ -74,6 +83,7 @@ impl WalletDustRegistrationRecoveryStore for JsonWalletDustRegistrationRecoveryS
             .access
             .lock()
             .map_err(|_| WalletDustRegistrationRecoveryStoreError::Unavailable)?;
+        self.validate_parent()?;
         store_atomic::read_owner_private_bounded(self.path()?, MAX_DUST_REGISTRATION_RECOVERY_BYTES)
             .map_err(map_recovery_store_error)?
             .map(|bytes| {
@@ -88,6 +98,7 @@ impl WalletDustRegistrationRecoveryStore for JsonWalletDustRegistrationRecoveryS
             .access
             .lock()
             .map_err(|_| WalletDustRegistrationRecoveryStoreError::Unavailable)?;
+        self.validate_parent()?;
         let path = self.path()?;
         if store_atomic::read_owner_private_bounded(path, MAX_DUST_REGISTRATION_RECOVERY_BYTES)
             .map_err(map_recovery_store_error)?
@@ -872,6 +883,9 @@ mod tests {
 
         let store = TestStore::new();
         fs::create_dir_all(&store.root).expect("test directory should exist");
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&store.root, fs::Permissions::from_mode(0o700))
+            .expect("test directory should be private");
         let target = store.root.join("recovery-target");
         fs::write(&target, b"not a recovery record").expect("target fixture writes");
         let recovery_path = store.root.join(DUST_REGISTRATION_RECOVERY_FILE_NAME);
@@ -892,6 +906,37 @@ mod tests {
             "integrity failure must not delete the path"
         );
         assert_eq!(fs::read(target).unwrap(), b"not a recovery record");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dust_registration_recovery_rejects_a_non_private_parent_directory() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let store = TestStore::new();
+        let recovery =
+            JsonWalletProfileRepository::new(&store.path).wallet_dust_registration_recovery_store();
+        recovery
+            .save(dust_registration_recovery_record())
+            .expect("recovery record saves privately");
+        fs::set_permissions(&store.root, fs::Permissions::from_mode(0o755))
+            .expect("test directory becomes non-private");
+
+        assert_eq!(
+            recovery.load(),
+            Err(WalletDustRegistrationRecoveryStoreError::Integrity)
+        );
+        assert_eq!(
+            recovery.clear(),
+            Err(WalletDustRegistrationRecoveryStoreError::Integrity)
+        );
+        assert!(
+            store
+                .root
+                .join(DUST_REGISTRATION_RECOVERY_FILE_NAME)
+                .exists(),
+            "integrity failure must preserve the recovery record"
+        );
     }
 
     #[test]
