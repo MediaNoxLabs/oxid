@@ -3801,8 +3801,14 @@ fn WalletApp() -> Element {
                     Route::Documents => rsx! {
                         DocumentsPage {
                             active_profile: active_profile.clone(),
-                            pending_identity_request,
-                            manual_credential_review_lock,
+                            on_add_document: move |_| {
+                                navigation.write().push(Route::CredentialRequest);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
+                            on_present: move |_| {
+                                navigation.write().push(Route::Present);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
                             on_manage_identities: move |_| {
                                 navigation.write().push(Route::ManageIdentities);
                                 header_menu.set(HeaderMenu::Closed);
@@ -5463,29 +5469,126 @@ fn HomeActivityPreview(
 #[component]
 fn DocumentsPage(
     active_profile: WalletProfileView,
-    pending_identity_request: Signal<Option<PendingIdentityRequest>>,
-    manual_credential_review_lock: Signal<bool>,
+    on_add_document: EventHandler<MouseEvent>,
+    on_present: EventHandler<MouseEvent>,
     on_manage_identities: EventHandler<MouseEvent>,
 ) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut state = use_signal(|| CredentialPageState::Loading);
+    let profile_id = active_profile.id.clone();
+    let load_services = services.clone();
+    let load_profile = profile_id.clone();
+    use_effect(move || {
+        let services = load_services.clone();
+        let profile_id = load_profile.clone();
+        spawn(async move {
+            state.set(
+                run_ui_blocking(move || load_credential_page(&services, &profile_id))
+                    .await
+                    .unwrap_or_else(|error| CredentialPageState::Failed(error.to_string())),
+            );
+        });
+    });
+
     rsx! {
-        article { class: "documents-identity-card surface-card",
-            div {
-                p { class: "card-eyebrow", "Identity controls" }
-                h2 { "Wallet identities" }
-                p { "DIDs stay available one level below your documents." }
+        section { class: "page-heading",
+            p { class: "eyebrow", "Your holder wallet" }
+            h1 { "Documents" }
+            p { "Review what is stored, who issued it, and whether it is ready to use." }
+        }
+        div { class: "documents-actions",
+            button {
+                class: "primary-action", r#type: "button",
+                onclick: move |event| on_add_document.call(event),
+                "Add document"
             }
             button {
-                class: "secondary-action",
-                r#type: "button",
+                class: "secondary-action", r#type: "button",
+                onclick: move |event| on_present.call(event),
+                "Present"
+            }
+            button {
+                class: "secondary-action", r#type: "button",
                 aria_label: "Manage identities",
                 onclick: move |event| on_manage_identities.call(event),
                 "Manage identities"
             }
         }
-        CredentialsPage {
-            active_profile,
-            pending_identity_request,
-            manual_credential_review_lock,
+        match state.read().clone() {
+            CredentialPageState::Loading => rsx! {
+                article { class: "empty-state surface-card", role: "status", aria_busy: "true",
+                    span { class: "loading-mark", aria_hidden: "true" }
+                    h2 { "Loading documents" }
+                    p { "Checking the protected inventory for this wallet profile." }
+                }
+            },
+            CredentialPageState::Failed(message) => rsx! {
+                article { class: "empty-state surface-card", role: "alert",
+                    span { class: "empty-state__mark", aria_hidden: "true", "◇" }
+                    h2 { "Documents unavailable" }
+                    p { "{message}" }
+                    button {
+                        class: "secondary-action", r#type: "button",
+                        onclick: move |_| {
+                            let services = services.clone();
+                            let profile_id = profile_id.clone();
+                            state.set(CredentialPageState::Loading);
+                            spawn(async move {
+                                state.set(
+                                    run_ui_blocking(move || load_credential_page(&services, &profile_id))
+                                        .await
+                                        .unwrap_or_else(|error| CredentialPageState::Failed(error.to_string())),
+                                );
+                            });
+                        },
+                        "Retry"
+                    }
+                }
+            },
+            CredentialPageState::Ready { credentials, operation_error, reverification_applied } => rsx! {
+                if reverification_applied {
+                    p {
+                        class: "form-hint credential-reverification-success",
+                        role: "status",
+                        aria_label: CREDENTIAL_REVERIFICATION_APPLIED_MARKER,
+                        "{CREDENTIAL_REVERIFICATION_APPLIED_MARKER}"
+                    }
+                }
+                if let Some(error) = operation_error.as_deref() {
+                    p { class: "field-error credential-operation-error", role: "alert",
+                        strong { "Document operation error" }
+                        br {}
+                        "{error}"
+                    }
+                }
+                if credentials.is_empty() {
+                    article { class: "empty-state surface-card",
+                        span { class: "empty-state__mark", aria_hidden: "true", "◇" }
+                        h2 { "No documents yet" }
+                        p { "Add a credential offer to review it before anything is stored in your wallet." }
+                        span { class: "status-pill", "Profile scoped" }
+                    }
+                } else {
+                    section { class: "credential-inventory", aria_label: "Saved documents",
+                        for credential in credentials.clone() {
+                            {
+                                let retained = credentials.clone();
+                                let current_id = credential.id.clone();
+                                rsx! {
+                                    CredentialRecordCard {
+                                        key: "{current_id}",
+                                        profile_id: profile_id.clone(),
+                                        credential,
+                                        on_change: move |change| {
+                                            state.set(credential_page_after_change(retained.clone(), change));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
         }
     }
 }
