@@ -2707,6 +2707,10 @@ textarea:focus-visible {
   margin-bottom: var(--space-3);
 }
 
+.settings-page {
+  min-width: 0;
+}
+
 .settings-task-hub {
   display: grid;
   gap: var(--space-3);

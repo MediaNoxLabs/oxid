@@ -188,7 +188,7 @@ use diagnostics::DiagnosticsPage;
 use header_menu::{GlobalApplicationMenu, GlobalMenuAction, GlobalMenuTrigger, HeaderMenu};
 use labels as ui;
 use passport_vault::PassportVaultPage;
-use profile_quick_switcher::{ProfileSwitcherMenu, profile_switch_is_allowed};
+use profile_quick_switcher::{ProfilePage, ProfileSwitcherMenu, profile_switch_is_allowed};
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use screen_privacy::protect_suspended_snapshot;
 use screen_privacy::route_forces_screen_privacy;
@@ -2460,7 +2460,9 @@ enum TransferRecovery {
     ReconcileUnknown,
 }
 
-const SECRET_MODE_REVEAL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const SECRET_MODE_REVEAL_MINUTES: u64 = 10;
+const SECRET_MODE_REVEAL_DURATION_LABEL: &str = "10 minutes";
+const SECRET_MODE_REVEAL_TIMEOUT: Duration = Duration::from_secs(SECRET_MODE_REVEAL_MINUTES * 60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SecretModeState {
@@ -10462,28 +10464,38 @@ fn SettingsPage(
         rsx! {}
     };
 
-    let section_title = section.route().title();
-    rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", "Local controls" }
-            h1 { "{section_title}" }
-            p { "Security-sensitive settings appear only when their application ports and platform adapters are available." }
+    let screen_id = settings_screen_id(section);
+    let view_state = match section {
+        SettingsSection::Security | SettingsSection::Backup | SettingsSection::Recovery => {
+            match &*security.read() {
+                SecurityCapabilityState::Loading => "loading",
+                SecurityCapabilityState::Ready(_) => "ready",
+                SecurityCapabilityState::Failed(_) => "error",
+            }
         }
-        if section == SettingsSection::Hub {
+        SettingsSection::Hub | SettingsSection::Preferences | SettingsSection::About => "ready",
+    };
+    rsx! {
+        div { class: "settings-page", "data-screen": "{screen_id}", "data-view-state": "{view_state}",
+            section { class: "page-heading",
+                p { class: "eyebrow", "Local controls" }
+                p { "Security-sensitive settings appear only when their application ports and platform adapters are available." }
+            }
+            if section == SettingsSection::Hub {
             section { class: "settings-task-hub", aria_label: "Settings tasks",
-                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open Security", onclick: move |_| on_open_section.call(SettingsSection::Security),
+                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open Security", "data-action": "open-security", onclick: move |_| on_open_section.call(SettingsSection::Security),
                     p { class: "card-eyebrow", "Protect" } h2 { "Security" } p { "Check device protection and its current custody state." }
                 }
-                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open Backup", onclick: move |_| on_open_section.call(SettingsSection::Backup),
+                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open Backup", "data-action": "open-backup", onclick: move |_| on_open_section.call(SettingsSection::Backup),
                     p { class: "card-eyebrow", "Keep a copy" } h2 { "Backup" } p { "Create an encrypted document and keep its recovery secret separately." }
                 }
-                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open Recovery", onclick: move |_| on_open_section.call(SettingsSection::Recovery),
+                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open Recovery", "data-action": "open-recovery", onclick: move |_| on_open_section.call(SettingsSection::Recovery),
                     p { class: "card-eyebrow", "Restore" } h2 { "Recovery" } p { "Complete-wallet restore and legacy custody-only recovery are different paths." }
                 }
-                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open Preferences", onclick: move |_| on_open_section.call(SettingsSection::Preferences),
+                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open Preferences", "data-action": "open-preferences", onclick: move |_| on_open_section.call(SettingsSection::Preferences),
                     p { class: "card-eyebrow", "Control" } h2 { "Preferences" } p { "Manage your profile and how private values are shown." }
                 }
-                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open About and diagnostics", onclick: move |_| on_open_section.call(SettingsSection::About),
+                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open About and diagnostics", "data-action": "open-about", onclick: move |_| on_open_section.call(SettingsSection::About),
                     p { class: "card-eyebrow", "About" } h2 { "About & diagnostics" } p { "Review app information and bounded local runtime health." }
                 }
             }
@@ -10524,15 +10536,16 @@ fn SettingsPage(
                 div {
                     p { class: "card-eyebrow", "Privacy" }
                     h2 { "Private values" }
-                    p { "Sensitive values for {active_profile.display_name} are hidden by default. A reveal lasts 30 seconds and ends immediately when you switch profiles or leave and resume the app." }
+                    p { "Sensitive values for {active_profile.display_name} are hidden by default. A reveal lasts {SECRET_MODE_REVEAL_DURATION_LABEL} and ends immediately when you switch profiles or leave and resume the app." }
                 }
                 button {
                     class: "secondary-action",
                     r#type: "button",
-                    aria_label: if secret_mode.is_masked() { "Reveal private values for 30 seconds" } else { "Hide private values now" },
+                    aria_label: if secret_mode.is_masked() { format!("Reveal private values for {SECRET_MODE_REVEAL_DURATION_LABEL}") } else { "Hide private values now".to_owned() },
+                    "data-action": if secret_mode.is_masked() { "reveal-private-values" } else { "hide-private-values" },
                     aria_pressed: if secret_mode.is_masked() { "false" } else { "true" },
                     onclick: move |_| secret_mode.toggle(),
-                    if secret_mode.is_masked() { "Reveal for 30 seconds" } else { "Hide now" }
+                    if secret_mode.is_masked() { "Reveal for {SECRET_MODE_REVEAL_DURATION_LABEL}" } else { "Hide now" }
                 }
             }
         }
@@ -10560,7 +10573,19 @@ fn SettingsPage(
                     "Open diagnostics"
                 }
             }
+            }
         }
+    }
+}
+
+const fn settings_screen_id(section: SettingsSection) -> &'static str {
+    match section {
+        SettingsSection::Hub => "settings-hub",
+        SettingsSection::Security => "settings-security",
+        SettingsSection::Backup => "settings-backup",
+        SettingsSection::Recovery => "settings-recovery",
+        SettingsSection::Preferences => "settings-preferences",
+        SettingsSection::About => "settings-about",
     }
 }
 
@@ -10570,59 +10595,6 @@ fn security_action_label(status: WalletSecurityStatusView) -> &'static str {
         "Locked" => "Unlock wallet",
         "Unlocked" => "Lock wallet",
         _ => "Unavailable",
-    }
-}
-
-#[component]
-fn ProfilePage(
-    active_profile: WalletProfileView,
-    on_selected: EventHandler<WalletProfileView>,
-) -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let mut profiles = use_signal(|| ProfileListState::Loading);
-    use_effect(move || {
-        let service = services.list_wallet_profiles();
-        spawn(async move {
-            let result = run_ui_blocking(move || service.execute()).await;
-            profiles.set(match result {
-                Ok(Ok(profiles)) => ProfileListState::Ready(profiles),
-                Ok(Err(error)) => ProfileListState::Failed(error.to_string()),
-                Err(error) => ProfileListState::Failed(error.to_string()),
-            });
-        });
-    });
-
-    let content = match profiles.read().clone() {
-        ProfileListState::Loading => rsx! {
-            section { class: "gateway-state surface-card", role: "status", aria_busy: "true", "data-ui-primitive": "Skeleton",
-                span { class: "loading-mark", aria_hidden: "true" }
-                strong { "Loading profiles" }
-            }
-        },
-        ProfileListState::Ready(loaded) => rsx! {
-            ProfileManager {
-                profiles: loaded,
-                active_profile_id: Some(active_profile.id),
-                onboarding: false,
-                allow_public_fixture: true,
-                on_selected,
-            }
-        },
-        ProfileListState::Failed(message) => rsx! {
-            section { class: "result error", role: "alert", "data-ui-primitive": "ErrorState",
-                strong { "Profiles could not be loaded" }
-                p { "{message}" }
-            }
-        },
-    };
-
-    rsx! {
-        section { class: "page-heading profile-heading",
-            p { class: "eyebrow", "Wallet profile" }
-            h1 { "Manage profiles" }
-            p { "Choose the active public wallet context or add another. Account keys, DIDs, and credentials remain behind separate protected capabilities." }
-        }
-        {content}
     }
 }
 
@@ -11925,6 +11897,28 @@ mod tests {
     }
 
     #[test]
+    fn settings_surfaces_have_closed_privacy_safe_screen_ids() {
+        assert_eq!(settings_screen_id(SettingsSection::Hub), "settings-hub");
+        assert_eq!(
+            settings_screen_id(SettingsSection::Security),
+            "settings-security"
+        );
+        assert_eq!(
+            settings_screen_id(SettingsSection::Backup),
+            "settings-backup"
+        );
+        assert_eq!(
+            settings_screen_id(SettingsSection::Recovery),
+            "settings-recovery"
+        );
+        assert_eq!(
+            settings_screen_id(SettingsSection::Preferences),
+            "settings-preferences"
+        );
+        assert_eq!(settings_screen_id(SettingsSection::About), "settings-about");
+    }
+
+    #[test]
     fn profile_route_gates_first_launch_and_restores_active_selection() {
         let profile = WalletProfileView {
             id: "profile_test".to_owned(),
@@ -12635,6 +12629,8 @@ mod tests {
 
     #[test]
     fn secret_mode_defaults_masked_and_ignores_stale_timeouts() {
+        assert_eq!(SECRET_MODE_REVEAL_MINUTES, 10);
+        assert_eq!(SECRET_MODE_REVEAL_DURATION_LABEL, "10 minutes");
         assert_eq!(SECRET_MODE_REVEAL_TIMEOUT, Duration::from_secs(10 * 60));
         let mut state = SecretModeState::default();
         assert!(state.masked);

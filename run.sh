@@ -143,6 +143,7 @@ run_coverage_excluded_tests() {
 }
 
 run_ui() {
+  node --test tests/repository/ui-source-scan-contract.test.mjs
   ./scripts/check-brand-packs.sh
   ./scripts/check-ui-css-classes.sh
   ./scripts/check-ui-design-tokens.sh
