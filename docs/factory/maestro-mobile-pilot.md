@@ -23,13 +23,25 @@ simulator lifecycle instead of supplying an ambient device:
 ```
 
 The runner creates an iPhone SE (3rd generation), builds or reuses and deploys the exact
-clean-head receipt, runs `canonical-holder-evidence`, and deletes the receipt-owned simulator. It
-retains only the eight named public screenshots, a 200-line Maestro tail, and a
+clean-head receipt, runs every safe inventory-owned iOS scenario with
+`canonical-holder-evidence` last, and deletes the receipt-owned simulator. It retains only the
+eight canonical holder screenshots, two public developer-banner screenshots, the newest
+bounded 200-line Maestro tail, and a
 machine-readable receipt below ignored
 `target/mobile-visual-accessibility/ios-run-<head>-<started-at>/`. Raw per-device
 Maestro/XCTest logs and diagnostics are deleted after collection, including on
 failure. The receipt records duration, retry-independent outcome, public bytes,
 screenshot count, exact head/device, and cleanup status.
+
+After iOS, an operator may run one final semantic-only Android compatibility sweep on an
+explicitly disposable emulator. The sweep records per-scenario outcomes and measured cleanup,
+retains no Android screenshots or raw debug artifacts, and rejects a physical-device serial or
+an empty scenario inventory:
+
+```sh
+OXID_ANDROID_DEVICE=emulator-<port> OXID_ANDROID_DISPOSABLE=1 \
+  ./bootstrap.sh -- ./scripts/test-android-maestro-semantic-evidence.sh
+```
 
 ## Flow and evidence contract
 

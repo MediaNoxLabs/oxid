@@ -14,6 +14,7 @@ readonly METRICS="$RUN_ROOT/receipt.json"
 readonly OUTCOMES="$PRIVATE_ROOT/scenario-outcomes.jsonl"
 readonly DEVICE_TYPE="com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation"
 
+# shellcheck source=e2e/ios-simulator-ownership.sh
 source "$ROOT/scripts/e2e/ios-simulator-ownership.sh"
 
 DEVICE=""
@@ -88,8 +89,8 @@ runtime_version="$(
 mkdir -p "$RUN_ROOT" || fail evidence-root
 mkdir -m 700 "$PRIVATE_ROOT" || fail private-root
 DEVICE="$(oxid_ios_create_owned "$DEVELOPER_DIR" "$RUNTIME_ID" "$DEVICE_TYPE" "oxid-maestro-${HEAD:0:12}" "$RECEIPT")" || fail simulator-create
-chmod 600 "$RECEIPT"
 owned=1
+chmod 600 "$RECEIPT" || fail receipt-mode
 oxid_ios_owned_simctl "$DEVELOPER_DIR" "$RECEIPT" boot >/dev/null || fail simulator-boot
 oxid_ios_owned_simctl "$DEVELOPER_DIR" "$RECEIPT" bootstatus -b >/dev/null || fail simulator-ready
 

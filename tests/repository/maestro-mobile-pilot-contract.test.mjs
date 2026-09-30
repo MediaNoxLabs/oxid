@@ -172,10 +172,12 @@ test("mobile visual accessibility evidence preserves the scoped matrix and priva
   assert.match(iosRunner, /scenarios\+=\(canonical-holder-evidence\)/u);
   assert.match(iosRunner, /scenario_outcomes/u);
   assert.match(androidRunner, /oxid-android-maestro-semantic-evidence-v1/u);
-  assert.match(androidRunner, /emulator-\\*/u);
+  assert.match(androidRunner, /emulator-\*/u);
   assert.match(androidRunner, /OXID_ANDROID_DISPOSABLE/u);
   assert.doesNotMatch(androidRunner, /\bmapfile\b/u);
   assert.match(androidRunner, /rm -rf -- "\$artifact_root"/u);
+  assert.match(androidRunner, /privateDiagnosticsRemoved:\$privateRemoved/u);
+  assert.match(androidRunner, /"\$\{#scenarios\[@\]\}" -gt 0/u);
   for (const state of [
     "Welcome and create-vs-restore fork",
     "Mandatory device-protection explanation",

@@ -53,5 +53,7 @@ just developer-pager-desktop-e2e
 - Maestro flows are local-only and additive; existing CDP and XCTest coverage remains authoritative.
 - Maestro never enters the recovery ceremony: never capture a recovery phrase. The demo adapter omits native-custody Backup, and protected/protocol flows stay in their exact Rust/CDP/XCTest layer.
 - Android applies `FLAG_SECURE` after demo protection initializes. It is semantic-only in the final sweep; protected screenshots and failure artifacts are deleted.
+- A global Maestro state directory such as `~/.maestro/tests/` is never an accepted evidence path. Only receipt-owned, repository-scoped artifacts may be inspected or retained.
+- Android must be re-masked before any unrelated operator use after a semantic sweep. CDP/XCTest/Rust evidence remains authoritative for protected and protocol behavior.
 - Capture the canonical iOS public lane at 375 pt/dp-class width. A platform-harness limitation is evidence, not permission to weaken semantic assertions or capture sensitive data.
 - A reproduced navigation, overlap, privacy, focus, or misleading-state defect blocks this evidence slice. Cosmetic deltas require a linked follow-up rather than product-code changes here.
