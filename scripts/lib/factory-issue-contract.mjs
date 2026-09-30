@@ -2,8 +2,7 @@
 
 const REQUIRED_SECTIONS = [
   "Implementation surface",
-  "Acceptance criteria",
-  "Definition of done / evidence mapping",
+  "AC / DoD matrix",
   "Verification",
   "Size",
   "Delivery target",
@@ -26,17 +25,24 @@ export function validateFactoryIssueContract({ title, body }) {
     if (!sections[heading]) errors.push(`missing ${heading}`);
   }
 
-  const acceptanceIds = [...sections["Acceptance criteria"].matchAll(/\bAC-(\d+)\b/gu)].map((match) => `AC-${match[1]}`);
-  const uniqueIds = [...new Set(acceptanceIds)];
-  if (uniqueIds.length === 0) errors.push("acceptance criteria must use stable AC-<n> identifiers");
-  if (uniqueIds.length !== acceptanceIds.length) errors.push("acceptance criteria contain duplicate stable identifiers");
-  const evidenceIds = new Set(sections["Definition of done / evidence mapping"]
-    .split(/\r?\n/u)
-    .map((line) => line.split("|")[1]?.trim())
-    .filter((value) => /^AC-\d+$/u.test(value)));
-  for (const id of uniqueIds) {
-    if (!evidenceIds.has(id)) errors.push(`definition of done lacks evidence mapping for ${id}`);
+  const matrixRows = sections["AC / DoD matrix"].split(/\r?\n/u)
+    .map((line) => line.split("|").slice(1, -1).map((cell) => cell.trim()))
+    .filter(([criterion]) => /^AC-\d+\b/u.test(criterion ?? ""));
+  const acceptanceIds = [];
+  for (const [criterion, evidence] of matrixRows) {
+    const match = criterion.match(/^(AC-\d+)\s*:\s*(.+)$/u);
+    if (!match || !/[A-Za-z]{3,}/u.test(match[2])) {
+      errors.push("AC / DoD matrix criteria must include a stable AC-<n> identifier and a concrete outcome");
+      continue;
+    }
+    acceptanceIds.push(match[1]);
+    if (typeof evidence !== "string" || !/[A-Za-z]{3,}/u.test(evidence)) {
+      errors.push(`AC / DoD matrix lacks concrete completion evidence for ${match[1]}`);
+    }
   }
+  const uniqueIds = [...new Set(acceptanceIds)];
+  if (uniqueIds.length === 0) errors.push("AC / DoD matrix must map stable AC-<n> criteria to concrete completion evidence");
+  if (uniqueIds.length !== acceptanceIds.length) errors.push("AC / DoD matrix contains duplicate stable identifiers");
 
   if (!/^(?:S|M|L|Small|Medium|Large)\b/imu.test(sections.Size)) errors.push("size must be S, M, or L");
   if (!/^(?:develop|milestone-\d+\.\d+\.\d+)\s*$/imu.test(sections["Delivery target"])) {

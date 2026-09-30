@@ -13,7 +13,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../
 const bootstrapSource = await readFile(path.join(repoRoot, "bootstrap.sh"), "utf8");
 const main = "/fixture/oxid";
 const canonical = `${main}/tmp/worktrees/dev-loops/issue-305`;
-const validIssueBody = (deliveryTarget = "develop") => `## Implementation surface\n\n- scripts/example.mjs\n\n## Acceptance criteria\n\n- AC-1: worktree is selected\n\n## Definition of done / evidence mapping\n\n| AC | Evidence |\n| --- | --- |\n| AC-1 | contract test |\n\n## Verification\n\n- node --test tests/repository/bootstrap-dev-loop-contract.test.mjs\n\n## Size\n\nS\n\n## Delivery target\n\n${deliveryTarget}\n\n## Non-goals\n\n- remote mutation\n`;
+const validIssueBody = (deliveryTarget = "develop") => `## Implementation surface\n\n- scripts/example.mjs\n\n## AC / DoD matrix\n\n| Acceptance criterion | Completion evidence |\n| --- | --- |\n| AC-1: canonical worktree is selected | contract test asserts the exact selected path |\n\n## Verification\n\n- node --test tests/repository/bootstrap-dev-loop-contract.test.mjs\n\n## Size\n\nS\n\n## Delivery target\n\n${deliveryTarget}\n\n## Non-goals\n\n- remote mutation\n`;
 const issue = JSON.stringify({
   title: "feat(wallet): enter the canonical worktree",
   body: validIssueBody(),

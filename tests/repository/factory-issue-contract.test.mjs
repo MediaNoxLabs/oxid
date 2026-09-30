@@ -8,17 +8,12 @@ const complete = `## Implementation surface
 
 - scripts/lib/example.mjs
 
-## Acceptance criteria
+## AC / DoD matrix
 
-- AC-1: one admission path is guarded
-- AC-2: one retry path is guarded
-
-## Definition of done / evidence mapping
-
-| AC | Evidence |
+| Acceptance criterion | Completion evidence |
 | --- | --- |
-| AC-1 | contract fixture |
-| AC-2 | retry fixture |
+| AC-1: one admission path is guarded | focused contract fixture proves rejection |
+| AC-2: one retry path is guarded | retry fixture proves no implementation redispatch |
 
 ## Verification
 
@@ -46,9 +41,18 @@ test("factory issue admission requires an explicit stable implementation contrac
 test("incomplete issue #858-shaped contracts fail before execution admission", () => {
   const result = validateFactoryIssueContract({
     title: "fix(harness): incomplete contract",
-    body: complete.replace("## Implementation surface\n\n- scripts/lib/example.mjs\n\n", "").replace("| AC-2 | retry fixture |\n", ""),
+    body: complete.replace("## Implementation surface\n\n- scripts/lib/example.mjs\n\n", "").replace("retry fixture proves no implementation redispatch", "D2"),
   });
   assert.equal(result.ok, false);
   assert.match(result.errors.join("\n"), /missing Implementation surface/u);
-  assert.match(result.errors.join("\n"), /lacks evidence mapping for AC-2/u);
+  assert.match(result.errors.join("\n"), /lacks concrete completion evidence for AC-2/u);
+});
+
+test("identifier-only issue matrices fail before factory admission", () => {
+  const result = validateFactoryIssueContract({
+    title: "fix(harness): reject tautological matrices",
+    body: complete.replace("AC-1: one admission path is guarded", "AC-1").replace("focused contract fixture proves rejection", "D1"),
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join("\n"), /concrete outcome/u);
 });

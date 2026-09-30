@@ -12,24 +12,15 @@ body:
     validations:
       required: true
   - type: textarea
-    id: acceptance
+    id: ac_dod_matrix
     attributes:
-      label: Acceptance criteria
-      description: Enumerated stable IDs (AC-1, AC-2, ...), each objectively checkable by a reviewer who did not write the code.
+      label: AC / DoD matrix
+      description: Map every stable criterion and its concrete outcome to completion evidence. The first cell must include both the ID and criterion, not only `AC-1`.
       placeholder: |
-        - AC-1: ...
-        - AC-2: ...
-    validations:
-      required: true
-  - type: textarea
-    id: definition_of_done
-    attributes:
-      label: Definition of done / evidence mapping
-      description: Map every AC identifier to concrete evidence (for example, `| AC-1 | focused test |`).
-      placeholder: |
-        | AC | Evidence |
+        | Acceptance criterion | Completion evidence |
         | --- | --- |
-        | AC-1 | node --test tests/repository/example.test.mjs |
+        | AC-1: incomplete issues stop before worktree creation | focused negative contract test proves no worktree call |
+        | AC-2: complete issues enter the selected worktree | positive bootstrap fixture and exact path assertion |
     validations:
       required: true
   - type: textarea

@@ -137,7 +137,8 @@ ledger and PR comment without blocking a clean verdict.
 
 1. Record the reversibility-first complexity class. Before worktree creation or
    model dispatch, factory admission requires an implementation surface, stable
-   AC identifiers, a DoD evidence row for every AC, verification commands, size,
+   semantic AC / DoD matrix rows (each containing the stable identifier,
+   concrete criterion, and completion evidence), verification commands, size,
    one delivery target, and non-goals. Product work uses its criteria-backed
    `origin/milestone-<x.y.z>`; factory work may use `origin/develop`. Start
    from that fetched ref in a dedicated worktree. Run
