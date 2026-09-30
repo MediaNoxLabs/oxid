@@ -117,10 +117,10 @@ fn rendered_stage(action: &str, expected: &str, viewport: &str) -> String {
         "390x844" => (390, 844),
         _ => return "return \"failed:viewport\";".to_owned(),
     };
-    let page_title = match expected {
-        "Capabilities" => "Capability manifest",
-        "Benchmark" => "Proof benchmark",
-        "Event log" => "Event log",
+    let screen_id = match expected {
+        "Capabilities" => "capability-manifest",
+        "Benchmark" => "proof-benchmark",
+        "Event log" => "event-log",
         _ => expected,
     };
     let page_index = match expected {
@@ -165,7 +165,7 @@ return await (async () => {{
     if (!active) return "pending:no-active-chip";
     if (text(active) !== {expected:?}) return "pending:active-chip-mismatch";
     if (!page) return "pending:no-current-page";
-    if (!text(page).includes({page_title:?})) return "pending:page-mismatch";
+    if (!page.querySelector(`[data-screen="{screen_id}"]`)) return "pending:screen-mismatch";
     return Math.abs(pager.scrollLeft - (pager.clientWidth * {page_index})) <= 2
       ? "ok" : "pending:scroll-mismatch";
   }};
@@ -294,6 +294,7 @@ mod tests {
         assert!(script.contains("button.back-action"));
         assert!(script.contains("global-application-menu"));
         assert!(script.contains("[role=\"heading\"][aria-level=\"1\"]"));
+        assert!(script.contains("[data-screen=\"event-log\"]"));
         assert!(PROFILE_CREATION_STAGE.contains("Create private wallet"));
         assert!(PROFILE_CREATION_STAGE.contains("Use public demo wallet"));
         assert!(PROFILE_PROTECTION_STAGE.contains("Enable device protection"));
