@@ -128,7 +128,8 @@ test("platform wrappers admit only inventory-owned flows and reuse build receipt
   for (const wrapper of [ios, android]) {
     assert.match(wrapper, /if \[ "\$status" -ne 0 \]; then[\s\S]*rm -rf -- "\$artifact_root"/u);
   }
-  assert.match(runner, /--composition demo --flow canonical-holder-evidence/u);
+  assert.match(runner, /id != "canonical-holder-evidence"/u);
+  assert.match(runner, /scenarios\+=\(canonical-holder-evidence\)/u);
   assert.equal(runScript.match(/node --test tests\/repository\/maestro-mobile-pilot-contract\.test\.mjs/gu)?.length, 1);
 });
 
@@ -151,7 +152,30 @@ test("Maestro remains local, non-blocking, and additive to authoritative layers"
 });
 
 test("mobile visual accessibility evidence preserves the scoped matrix and privacy boundary", async () => {
-  const matrix = await read("docs/factory/mobile-visual-accessibility-evidence.md");
+  const [matrix, inventory, iosRunner, androidRunner] = await Promise.all([
+    read("docs/factory/mobile-visual-accessibility-evidence.md"),
+    read("tests/maestro/inventory.json").then(JSON.parse),
+    read("scripts/test-ios-maestro-holder-evidence.sh"),
+    read("scripts/test-android-maestro-semantic-evidence.sh"),
+  ]);
+  for (const scenario of inventory.scenarios) {
+    assert.match(matrix, new RegExp(`\\| ${scenario.id} \\| ${scenario.authority} \\|`, "u"));
+  }
+  for (const heading of ["Scenario ID", "Authority", "Platform", "Design reference/no-match", "Artifact", "Evidence layer", "Known gap"]) {
+    assert.match(matrix, new RegExp(heading, "u"));
+  }
+  assert.match(iosRunner, /oxid-ios-maestro-evidence-v2/u);
+  assert.match(iosRunner, /simctl list runtimes -j/u);
+  assert.match(iosRunner, /select\(\.identifier == \$runtime and \.isAvailable == true\)/u);
+  assert.doesNotMatch(iosRunner, /\bmapfile\b/u);
+  assert.match(iosRunner, /id != "canonical-holder-evidence"/u);
+  assert.match(iosRunner, /scenarios\+=\(canonical-holder-evidence\)/u);
+  assert.match(iosRunner, /scenario_outcomes/u);
+  assert.match(androidRunner, /oxid-android-maestro-semantic-evidence-v1/u);
+  assert.match(androidRunner, /emulator-\\*/u);
+  assert.match(androidRunner, /OXID_ANDROID_DISPOSABLE/u);
+  assert.doesNotMatch(androidRunner, /\bmapfile\b/u);
+  assert.match(androidRunner, /rm -rf -- "\$artifact_root"/u);
   for (const state of [
     "Welcome and create-vs-restore fork",
     "Mandatory device-protection explanation",

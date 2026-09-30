@@ -4,6 +4,13 @@ name: DID inventory empty state
 - runFlow: ../subflows/launch-clean.yaml
 - runFlow: ../subflows/demo-profile.yaml
 - tapOn: "Documents"
+- scrollUntilVisible:
+    element:
+      text: "Manage identities"
+    direction: DOWN
+    speed: 40
+    timeout: 20000
+    centerElement: true
 - tapOn: "Manage identities"
-- assertVisible: "Manage identities"
+- assertVisible: "My identities"
 - assertVisible: "No identities yet"
