@@ -4024,8 +4024,8 @@ fn WalletApp() -> Element {
                     id: "nav-scan",
                     class: "bottom-nav__scan",
                     r#type: "button",
-                    aria_label: "Scan identity QR code",
-                    title: "Scan identity QR code",
+                    aria_label: "Scan QR code",
+                    title: "Scan QR code",
                     disabled: identity_scan_busy(),
                     onclick: {
                         let scanner = Arc::clone(&navigation_scanner);
@@ -10571,7 +10571,7 @@ fn ProfilePage(
 
     let content = match profiles.read().clone() {
         ProfileListState::Loading => rsx! {
-            section { class: "gateway-state surface-card", role: "status", aria_busy: "true",
+            section { class: "gateway-state surface-card", role: "status", aria_busy: "true", "data-ui-primitive": "Skeleton",
                 span { class: "loading-mark", aria_hidden: "true" }
                 strong { "Loading profiles" }
             }
@@ -10586,7 +10586,7 @@ fn ProfilePage(
             }
         },
         ProfileListState::Failed(message) => rsx! {
-            section { class: "result error", role: "alert",
+            section { class: "result error", role: "alert", "data-ui-primitive": "ErrorState",
                 strong { "Profiles could not be loaded" }
                 p { "{message}" }
             }

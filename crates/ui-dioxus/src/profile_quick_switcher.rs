@@ -18,6 +18,7 @@ pub(super) fn ProfileSwitcherMenu(
         nav {
             id: "profile-switcher-menu",
             class: "profile-sheet",
+            "data-ui-primitive": "Sheet",
             aria_label: "Switch wallet profile",
             div { class: "profile-sheet__identity",
                 span { class: "profile-avatar", aria_hidden: "true", "{profile_monogram}" }
@@ -73,13 +74,13 @@ pub(super) fn ProfileQuickSwitcher(
 
     match profiles.read().clone() {
         ProfileListState::Loading => rsx! {
-            div { class: "profile-sheet__state", role: "status", aria_busy: "true",
+            div { class: "profile-sheet__state", role: "status", aria_busy: "true", "data-ui-primitive": "Skeleton",
                 span { class: "loading-mark", aria_hidden: "true" }
                 span { "Loading profiles…" }
             }
         },
         ProfileListState::Failed(message) => rsx! {
-            div { class: "profile-sheet__state profile-sheet__state--critical", role: "alert",
+            div { class: "profile-sheet__state profile-sheet__state--critical", role: "alert", "data-ui-primitive": "ErrorState",
                 span { "Profiles unavailable: {message}" }
             }
         },
@@ -87,7 +88,7 @@ pub(super) fn ProfileQuickSwitcher(
             let alternatives = switchable_profiles(&active_profile.id, loaded);
             rsx! {
                 if alternatives.is_empty() {
-                    p { class: "profile-sheet__hint", "No other profiles on this device." }
+                    p { class: "profile-sheet__hint", "data-ui-primitive": "EmptyState", "No other profiles on this device." }
                 } else {
                     p { class: "profile-sheet__hint", "Switch wallet context" }
                     for profile in alternatives {
@@ -99,6 +100,7 @@ pub(super) fn ProfileQuickSwitcher(
                             rsx! {
                                 button {
                                     class: "profile-sheet__profile",
+                                    "data-ui-primitive": "ListRow",
                                     key: "{profile_id}",
                                     r#type: "button",
                                     aria_label: "Switch to {profile_name}",
