@@ -25,7 +25,10 @@ collect_public_artifacts() {
   local raw_root latest log_file screenshot source
   [ -n "$DEVICE" ] || return 0
   raw_root="$ROOT/target/mobile-visual-accessibility/ios/$DEVICE"
-  [ -d "$raw_root" ] || return 0
+  if [ ! -d "$raw_root" ]; then
+    raw_artifacts_removed=true
+    return 0
+  fi
   latest="$(find "$raw_root" -name manifest.json -type f -print 2>/dev/null | sort | tail -1)"
   if [ -n "$latest" ]; then
     latest="$(dirname "$latest")"
@@ -100,7 +103,8 @@ oxid_ios_owned_simctl "$DEVELOPER_DIR" "$RECEIPT" bootstatus -b >/dev/null || fa
 
 OXID_IOS_DEVICE="$DEVICE" OXID_IOS_RESET_DATA=1 OXID_STANDALONE_NETWORK_PROFILE=simulated OXID_UI_PROFILE=demo \
   OXID_XCODE_DEVELOPER_DIR="$DEVELOPER_DIR" "$ROOT/scripts/run-ios-simulator.sh" build || fail app-build
-OXID_IOS_DEVICE="$DEVICE" OXID_XCODE_DEVELOPER_DIR="$DEVELOPER_DIR" "$ROOT/scripts/run-maestro-ios.sh" || fail maestro
+OXID_IOS_DEVICE="$DEVICE" OXID_XCODE_DEVELOPER_DIR="$DEVELOPER_DIR" \
+  "$ROOT/scripts/run-maestro-ios.sh" --composition demo --flow canonical-holder-evidence || fail maestro
 
 oxid_ios_delete_owned "$DEVELOPER_DIR" "$RECEIPT" >/dev/null || fail simulator-cleanup
 owned=0

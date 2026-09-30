@@ -1,0 +1,14 @@
+appId: io.medianox.oxid
+name: Passport Vault entry
+---
+- runFlow: ../subflows/launch-clean.yaml
+- runFlow: ../subflows/demo-profile.yaml
+- tapOn: "Home"
+- scrollUntilVisible:
+    element:
+      text: "Open Passport Vault"
+    direction: DOWN
+- tapOn: "Open Passport Vault"
+- assertVisible: "Passport Vault"
+- assertVisible: "Credential-gated NIGHT locks."
+# Contract-call outcomes remain owned by Rust and native integration layers.

@@ -1,0 +1,12 @@
+appId: io.medianox.oxid
+name: home receive send entry
+---
+- runFlow: ../subflows/launch-clean.yaml
+- runFlow: ../subflows/demo-profile.yaml
+- tapOn: "Receive"
+- assertVisible: "Receive assets"
+- tapOn: "Close Receive"
+- tapOn: "Send"
+- assertVisible: "SEND NIGHT"
+- tapOn: "Go back"
+- assertVisible: "Current realm"

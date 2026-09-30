@@ -1,0 +1,16 @@
+appId: io.medianox.oxid
+name: activity fixture history
+---
+- runFlow: ../subflows/launch-clean.yaml
+- runFlow: ../subflows/demo-profile.yaml
+- tapOn: "Activity"
+- assertVisible: "Activity"
+- extendedWaitUntil:
+    visible: "Sent"
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      text: "Received"
+    direction: DOWN
+- assertVisible: "Received"
+# Fixture history proves reachability only; transaction lifecycle tests own finality.

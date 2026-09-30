@@ -109,7 +109,8 @@ test("Maestro wrappers ensure exact artifacts before deploy and expose phase met
     }
   }
   assert.match(iosWrapper, /OXID_IOS_DEVICE:\?set OXID_IOS_DEVICE/);
-  assert.match(androidWrapper, /case "\$OXID_ANDROID_DEVICE" in emulator-\*/);
+  assert.match(androidWrapper, /case "\$OXID_ANDROID_DEVICE" in emulator-\[0-9\]\*/);
+  assert.match(androidWrapper, /\^emulator-\[0-9\]\+\$/);
   for (const launcher of [android, ios]) {
     assert.match(launcher, /build\|deploy\|ensure\|run/);
     assert.match(launcher, /if \[ "\$operation" = "ensure" \]; then/);

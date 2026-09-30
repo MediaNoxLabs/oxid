@@ -1,0 +1,12 @@
+appId: io.medianox.oxid
+name: onboarding safe boundary
+---
+- runFlow: ../subflows/launch-clean.yaml
+- assertVisible: "Create private wallet"
+- tapOn: "Create private wallet"
+- scrollUntilVisible:
+    element: { text: "Create and continue" }
+    direction: DOWN
+- tapOn: "Create and continue"
+- assertVisible: "Device protection is required.*"
+# Stop before native authorization or any recovery ceremony.

@@ -1,0 +1,9 @@
+appId: io.medianox.oxid
+name: open global menu
+---
+# Static accessibility label; never select dynamic profile, DID, credential, or request values.
+- scrollUntilVisible:
+    element:
+      text: "Open global application menu"
+    direction: UP
+- tapOn: "Open global application menu"

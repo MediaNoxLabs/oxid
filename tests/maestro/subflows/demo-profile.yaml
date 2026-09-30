@@ -1,0 +1,16 @@
+appId: io.medianox.oxid
+name: safe demo profile
+---
+# Shared simulated, undeployed profile setup. No account derivation, funding, or recovery.
+- tapOn: "Open standalone demo setup"
+- tapOn: "Run demo action: Create or select demo profile"
+- extendedWaitUntil:
+    visible: "Standalone public profile selected."
+    timeout: 60000
+- tapOn: "Run demo action: Initialize or unlock wallet"
+- extendedWaitUntil:
+    visible: "(Initialized process-local standalone custody.|Wallet session was already unlocked; no key was regenerated.)"
+    timeout: 60000
+- tapOn: "Close standalone demo setup"
+- tapOn: "Home"
+- assertVisible: "Current realm"

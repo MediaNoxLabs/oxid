@@ -1,0 +1,12 @@
+appId: io.medianox.oxid
+name: documents empty state
+---
+- runFlow: ../subflows/launch-clean.yaml
+- runFlow: ../subflows/demo-profile.yaml
+- tapOn: "Documents"
+- assertVisible: "Documents"
+- scrollUntilVisible:
+    element:
+      text: "No documents yet"
+    direction: DOWN
+- assertVisible: "No documents yet"

@@ -1,0 +1,9 @@
+appId: io.medianox.oxid
+name: DID inventory empty state
+---
+- runFlow: ../subflows/launch-clean.yaml
+- runFlow: ../subflows/demo-profile.yaml
+- tapOn: "Documents"
+- tapOn: "Manage identities"
+- assertVisible: "Manage identities"
+- assertVisible: "No identities yet"
