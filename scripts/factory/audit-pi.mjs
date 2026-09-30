@@ -292,14 +292,14 @@ function inspectOperationalState(repoRoot) {
   }
 }
 
-async function inspectResourceAdmission(repoRoot) {
+async function inspectResourceAdmission(repoRoot, activeHeavyLanes = 0) {
   if (!existsSync(path.join(repoRoot, "scripts", "factory", "resource-admission.mjs"))) {
     return check("resource-admission", "pass", "resource admission is unavailable outside an Oxid checkout", undefined, "operational");
   }
   if (process.platform !== "darwin") {
     return check("resource-admission", "pass", "macOS resource admission is not applicable on this host", undefined, "operational");
   }
-  const result = evaluateResourceAdmission(collectMacOSSample());
+  const result = evaluateResourceAdmission(collectMacOSSample({ activeHeavyLanes }));
   try {
     await writeResourceAdmissionReceipt(result, { outputDir: await defaultResourceAdmissionDirectory(repoRoot) });
   } catch (error) {
@@ -484,7 +484,9 @@ async function inspectDeliveryProfiles(repoRoot) {
  * isolated worker.
  */
 export async function auditWorktreeAdmission({ repoRoot = DEFAULT_REPO_ROOT } = {}) {
-  const checks = [...inspectOperationalState(repoRoot), await inspectResourceAdmission(repoRoot)];
+  const checks = inspectOperationalState(repoRoot);
+  const activeHeavyLanes = checks.find((item) => item.id === "worktree-admission")?.details?.active ?? 0;
+  checks.push(await inspectResourceAdmission(repoRoot, activeHeavyLanes));
   const capacityEvidenceAvailable = !checks.some((item) => item.id === "worktree-admission" && item.status === "warn");
   return {
     schemaVersion: 1,
@@ -656,8 +658,10 @@ export async function auditPi({
   checks.push(await inspectDeliveryProfiles(repoRoot));
 
   if (includeOperational) {
-    checks.push(...inspectOperationalState(repoRoot));
-    checks.push(await inspectResourceAdmission(repoRoot));
+    const operationalChecks = inspectOperationalState(repoRoot);
+    checks.push(...operationalChecks);
+    const activeHeavyLanes = operationalChecks.find((item) => item.id === "worktree-admission")?.details?.active ?? 0;
+    checks.push(await inspectResourceAdmission(repoRoot, activeHeavyLanes));
     checks.push(await inspectPackageClosureState(repoRoot));
     checks.push(await inspectMetrics(repoRoot));
   }

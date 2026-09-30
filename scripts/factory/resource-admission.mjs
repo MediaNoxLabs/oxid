@@ -10,14 +10,18 @@ import path from "node:path";
 export const GIB = 1024 ** 3;
 export const SWAP_LIMIT_BYTES = 20 * GIB;
 export const AVAILABLE_MEMORY_FLOOR_BYTES = 2 * GIB;
-const MAX_TREND_WINDOW_MS = 120_000;
+const TARGET_TREND_WINDOW_MS = 120_000;
+const MIN_TREND_WINDOW_MS = 30_000;
+const MAX_TREND_WINDOW_MS = 180_000;
+const MAX_SAMPLE_AGE_MS = 180_000;
+const MAX_ALERT_AGE_MS = 10 * 60_000;
 
 function blocked(reasonCode, summary) { return { decision: "block", reasonCode, summary }; }
 
 /** Pure decision function: collection and process inventory stay at the CLI boundary. */
 export function evaluateResourceAdmission(sample) {
   const summary = {
-    swapUsedBytes: null, swapTrendBytes: null, availableBytes: sample?.availableBytes ?? null,
+    swapUsedBytes: null, swapTrendBytes: null, sampleWindowMs: null, availableBytes: sample?.availableBytes ?? null,
     memoryPressure: sample?.memoryPressure ?? null, diskAvailableBytes: sample?.diskAvailableBytes ?? null,
     recentUnresolvedAlert: sample?.recentUnresolvedAlert ?? null,
     workloads: Array.isArray(sample?.workloads) ? sample.workloads.slice(0, 32).map(({ ownership, label }) => ({ ownership, label })) : [],
@@ -28,13 +32,18 @@ export function evaluateResourceAdmission(sample) {
   }
   const [first, last] = sample.samples;
   const windowMs = last.atMs - first.atMs;
-  if (sample.contradictory || windowMs < 0 || windowMs > MAX_TREND_WINDOW_MS
+  if (sample.contradictory || windowMs < MIN_TREND_WINDOW_MS || windowMs > MAX_TREND_WINDOW_MS
     || !Number.isFinite(sample.availableBytes) || !Number.isFinite(sample.diskAvailableBytes)
     || !Number.isFinite(sample.diskFloorBytes) || !["healthy", "unhealthy"].includes(sample.memoryPressure)
     || typeof sample.recentUnresolvedAlert !== "boolean") return blocked("telemetry-contradictory", summary);
-  const trend = last.swapUsedBytes - first.swapUsedBytes;
+  // The host monitor normally samples every ~120 seconds, but scheduler delay
+  // can make the observed interval slightly longer. Normalize the measured
+  // delta to the policy's exact 120-second rate instead of accepting a larger
+  // absolute delta from a delayed sample.
+  const trend = Math.round((last.swapUsedBytes - first.swapUsedBytes) * TARGET_TREND_WINDOW_MS / windowMs);
   summary.swapUsedBytes = last.swapUsedBytes;
   summary.swapTrendBytes = trend;
+  summary.sampleWindowMs = windowMs;
   if (sample.recentUnresolvedAlert) return blocked("monitor-alert-unresolved", summary);
   if (sample.availableBytes <= AVAILABLE_MEMORY_FLOOR_BYTES) return blocked("available-memory-low", summary);
   if (sample.memoryPressure !== "healthy") return blocked("memory-pressure-unhealthy", summary);
@@ -58,37 +67,75 @@ function parseSwap(value) {
   return Number(match[1]) * (match[2] === "G" ? GIB : 1024 ** 2);
 }
 
-function parseAvailable(value) {
-  const pages = value.match(/Pages free:\s+(\d+)\./u);
-  if (!pages) throw new Error("could not parse vm_stat free pages");
-  return Number(pages[1]) * 4096;
-}
-
 function parseDisk(value) {
-  const fields = value.trim().split(/\s+/u);
-  const availableKib = Number(fields.at(-3));
+  const lines = value.trim().split(/\r?\n/u);
+  const fields = lines.at(-1)?.trim().split(/\s+/u) ?? [];
+  const availableKib = Number(fields[3]);
   if (!Number.isFinite(availableKib)) throw new Error("could not parse df availability");
   return availableKib * 1024;
 }
 
-function alertIsRecentUnresolved(log, nowMs) {
-  const lines = log.trim().split(/\r?\n/u).filter(Boolean).slice(-64);
-  return lines.some((line) => /(?:unresolved|alert)/iu.test(line) && !/resolved/iu.test(line)
-    && (!line.match(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/u) || nowMs - Date.parse(line.match(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z?/u)[0]) <= MAX_TREND_WINDOW_MS));
+function parseLocalTimestamp(value) {
+  const milliseconds = Date.parse(value.replace(" ", "T"));
+  return Number.isFinite(milliseconds) ? milliseconds : null;
+}
+
+export function parseResourceMonitorLog(log, nowMs) {
+  const parsed = String(log).trim().split(/\r?\n/u).filter(Boolean).flatMap((line) => {
+    const match = line.match(/^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) \| swap=(\d+)MB docker_krun=(\d+)MB qemu=(\d+)MB \|.*?([0-9.]+)([KMG]) unused\./u);
+    if (!match) return [];
+    const atMs = parseLocalTimestamp(match[1]);
+    if (atMs === null) return [];
+    const unit = { K: 1024, M: 1024 ** 2, G: GIB }[match[6]];
+    return [{
+      atMs,
+      swapUsedBytes: Number(match[2]) * 1024 ** 2,
+      availableBytes: Number(match[5]) * unit,
+      dockerBytes: Number(match[3]) * 1024 ** 2,
+      qemuBytes: Number(match[4]) * 1024 ** 2,
+    }];
+  });
+  const samples = parsed.slice(-2);
+  if (samples.length !== 2 || nowMs - samples[1].atMs < 0 || nowMs - samples[1].atMs > MAX_SAMPLE_AGE_MS) return null;
+  return {
+    samples: samples.map(({ atMs, swapUsedBytes }) => ({ atMs, swapUsedBytes })),
+    availableBytes: samples[1].availableBytes,
+    workloads: [
+      ...(samples[1].dockerBytes > 0 ? [{ ownership: "unowned", label: "docker" }] : []),
+      ...(samples[1].qemuBytes > 0 ? [{ ownership: "unowned", label: "android-emulator" }] : []),
+    ],
+  };
+}
+
+export function alertIsRecentUnresolved(log, nowMs) {
+  let unresolvedAt = null;
+  for (const line of String(log).trim().split(/\r?\n/u).filter(Boolean).slice(-64)) {
+    const timestamp = line.match(/^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)/u);
+    const atMs = timestamp ? parseLocalTimestamp(timestamp[1]) : null;
+    if (atMs === null || nowMs - atMs < 0 || nowMs - atMs > MAX_ALERT_AGE_MS) continue;
+    if (/\bRESOLVED\b/iu.test(line)) unresolvedAt = null;
+    else if (/\bALERT\b/iu.test(line)) unresolvedAt = atMs;
+  }
+  return unresolvedAt !== null;
 }
 
 export function collectMacOSSample({ run = command, now = () => Date.now(), requestedLane = "factory", activeHeavyLanes = 0 } = {}) {
   if (process.platform !== "darwin") return null;
   try {
     const atMs = now();
-    const swap = parseSwap(run("sysctl", ["vm.swapusage"]));
-    const memoryPressure = /System-wide memory free percentage:\s+(?:[5-9]\d|100)%/u.test(run("memory_pressure", ["-Q"])) ? "healthy" : "unhealthy";
-    const availableBytes = parseAvailable(run("vm_stat", []));
+    const currentSwap = parseSwap(run("sysctl", ["vm.swapusage"]));
+    const pressure = run("memory_pressure", ["-Q"]);
+    const freePercentage = Number(pressure.match(/System-wide memory free percentage:\s+(\d+)%/u)?.[1]);
+    const memoryPressure = Number.isFinite(freePercentage) && freePercentage >= 20 ? "healthy" : "unhealthy";
     const diskAvailableBytes = parseDisk(run("df", ["-k", "/"]));
-    let alerts = "";
-    try { alerts = run("tail", ["-n", "64", path.join(process.env.HOME ?? "", ".claude-resmon", "alerts.log")]); } catch {}
-    return { samples: [{ atMs, swapUsedBytes: swap }, { atMs, swapUsedBytes: swap }], availableBytes, memoryPressure,
-      diskAvailableBytes, diskFloorBytes: 20 * GIB, recentUnresolvedAlert: alertIsRecentUnresolved(alerts, atMs), requestedLane, activeHeavyLanes, workloads: [] };
+    const resourceLog = run("tail", ["-n", "64", path.join(process.env.HOME ?? "", ".claude-resmon", "resources.log")]);
+    const alerts = run("tail", ["-n", "64", path.join(process.env.HOME ?? "", ".claude-resmon", "alerts.log")]);
+    const monitor = parseResourceMonitorLog(resourceLog, atMs);
+    if (!monitor) return null;
+    const latest = monitor.samples.at(-1);
+    const contradictory = Math.abs(latest.swapUsedBytes - currentSwap) > 256 * 1024 ** 2;
+    return { ...monitor, memoryPressure, diskAvailableBytes, diskFloorBytes: 20 * GIB,
+      recentUnresolvedAlert: alertIsRecentUnresolved(alerts, atMs), requestedLane, activeHeavyLanes, contradictory };
   } catch { return null; }
 }
 
@@ -120,10 +167,13 @@ export async function writeResourceAdmissionReceipt(result, { outputDir, issue =
 }
 
 async function main(argv = process.argv.slice(2)) {
-  if (argv.includes("--help")) { process.stdout.write("Usage: node scripts/factory/resource-admission.mjs [--lane headless|factory] [--issue N] [--head SHA] [--run ID]\n"); return 0; }
+  if (argv.includes("--help")) { process.stdout.write("Usage: node scripts/factory/resource-admission.mjs [--lane headless|factory] [--active-heavy-lanes N] [--issue N] [--head SHA] [--run ID]\n"); return 0; }
   const value = (name, fallback = undefined) => { const index = argv.indexOf(name); return index < 0 ? fallback : argv[index + 1]; };
   const lane = value("--lane", "factory");
-  const sample = collectMacOSSample({ requestedLane: lane });
+  if (!["headless", "factory"].includes(lane)) throw new Error("--lane must be headless or factory");
+  const activeHeavyLanes = Number(value("--active-heavy-lanes", "0"));
+  if (!Number.isInteger(activeHeavyLanes) || activeHeavyLanes < 0) throw new Error("--active-heavy-lanes must be a non-negative integer");
+  const sample = collectMacOSSample({ requestedLane: lane, activeHeavyLanes });
   const result = evaluateResourceAdmission(sample);
   const outputDir = await defaultResourceAdmissionDirectory();
   const receipt = await writeResourceAdmissionReceipt(result, { outputDir, issue: Number(value("--issue")) || null, headSha: value("--head", null), run: value("--run", null) });
