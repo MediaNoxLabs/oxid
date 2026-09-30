@@ -45,7 +45,7 @@ the startup audit rejects formats outside that tracked contract.
 | --- | --- | --- |
 | Devshell Pi | Nix-pinned; `./bootstrap.sh --check` passed | healthy |
 | Direct host Pi | outside Nix | unsupported path; use `./bootstrap.sh --pi` |
-| Project packages | `dev-loops@1.0.2` plus its separately pinned `@dev-loops/core@1.0.2` runtime (CLI/skills/agents; mutating extension filtered), `pi-subagents@0.67.0`, `agent-review-pi@0.6.0` plus exact peers | exact pins installed |
+| Project packages | `dev-loops@1.0.2` plus its separately pinned `@dev-loops/core@1.0.2` runtime (CLI/skills/agents; mutating extension filtered), `pi-subagents@0.70.0`, `agent-review-pi@0.6.0` plus exact peers | exact pins installed |
 | npm production audit | 0 reported vulnerabilities | healthy at audit time |
 | Common Pi package store | one shared store per Git common checkout | healthy |
 | Registered worktrees | above the active green limit | red; exact counts remain private operational telemetry |
@@ -65,10 +65,10 @@ The owner-aware reconciliation of remaining dirty/unmerged state is tracked by
 
 | Package | Pin | Available at audit | Decision |
 | --- | --- | --- | --- |
-| `pi-coding-agent` | `0.85.1` via locked Nix | `0.85.1` | required compatible runtime for `pi-subagents@0.67.0` native detached children |
+| `pi-coding-agent` | `0.85.1` via locked Nix | `0.85.1` | required compatible runtime for `pi-subagents@0.70.0` native detached children |
 | `dev-loops` | `1.0.2` | `1.0.2` | major update in [#303](https://github.com/MediaNoxLabs/oxid/issues/303) |
 | `@dev-loops/core` | `1.0.2` | `1.0.3` | pin the wrapper's runtime companion explicitly; do not let the declared caret range make one closure identity resolve to different bytes over time |
-| `pi-subagents` | `0.67.0` | `0.67.0` | upgraded in [#455](https://github.com/MediaNoxLabs/oxid/issues/455); originally adopted in [#195](https://github.com/MediaNoxLabs/oxid/issues/195) |
+| `pi-subagents` | `0.70.0` | `0.73.1` | latest verified Pi-0.85-compatible detached/headless release; 0.70.1 fails its detached runner on Pi 0.85.1 and 0.71+ requires `pi-ai >=0.86.1` |
 | `agent-review-pi` | `0.6.0` | `0.6.0` | adopted with exact peers by [#301](https://github.com/MediaNoxLabs/oxid/issues/301) |
 | `pi-taskflow` | `0.2.10` | `0.3.0-beta.1.2` | peer only; runtime resources disabled |
 | `typebox` | `1.3.9` | `1.3.28` | minimum compatible exact peer; retain |
@@ -82,7 +82,7 @@ rules immediately before model dispatch. A real offline Pi RPC startup must
 leave every tracked agent hash unchanged.
 
 `pi-coding-agent@0.85.1` is locked through the Nix input and is the supported
-entrypoint for `pi-subagents@0.67.0`: its native child launcher receives the
+entrypoint for `pi-subagents@0.70.0`: its native child launcher receives the
 package context that the former standalone Nix `0.84.0` executable lacked.
 The devshell leaves `PI_CODING_AGENT_DIR` user-scoped so the existing Codex
 authentication and bounded user policy remain available. It roots
