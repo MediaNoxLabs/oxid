@@ -756,16 +756,11 @@ impl AuthorizePassportVaultCallUseCase for PassportVaultContractCallService {
         let profile_id = parse_identifier(command.profile_id)?;
         let draft_id = PassportVaultCallDraftId::parse(command.draft_id)
             .map_err(PassportVaultCallError::InvalidIdentifier)?;
-        if let Err(error) = require_confirmation(
+        require_confirmation(
             command.confirmed,
             &command.intent,
             AUTHORIZE_PASSPORT_VAULT_CALL_INTENT,
-        ) {
-            if matches!(error, PassportVaultCallError::ConfirmationRequired) {
-                self.update_activity(&profile_id, &draft_id, PassportVaultActivityStatus::Refused);
-            }
-            return Err(error);
-        }
+        )?;
         let authorization_challenge =
             PassportVaultCallAuthorizationChallenge::parse(command.authorization_challenge)
                 .map_err(PassportVaultCallError::InvalidIdentifier)?;
@@ -828,20 +823,11 @@ impl SubmitPassportVaultCallUseCase for PassportVaultContractCallService {
             let profile_id = parse_identifier(command.profile_id)?;
             let draft_id = PassportVaultCallDraftId::parse(command.draft_id)
                 .map_err(PassportVaultCallError::InvalidIdentifier)?;
-            if let Err(error) = require_confirmation(
+            require_confirmation(
                 command.confirmed,
                 &command.intent,
                 SUBMIT_PASSPORT_VAULT_CALL_INTENT,
-            ) {
-                if matches!(error, PassportVaultCallError::ConfirmationRequired) {
-                    self.update_activity(
-                        &profile_id,
-                        &draft_id,
-                        PassportVaultActivityStatus::Refused,
-                    );
-                }
-                return Err(error);
-            }
+            )?;
             let now = self.now()?;
             let before = match self.calls.get(&profile_id, &draft_id, now) {
                 Ok(before) => before,
@@ -866,7 +852,10 @@ impl SubmitPassportVaultCallUseCase for PassportVaultContractCallService {
                 .calls
                 .submit(
                     &profile_id,
-                    SubmitPassportVaultCallRequest { draft_id, now },
+                    SubmitPassportVaultCallRequest {
+                        draft_id: draft_id.clone(),
+                        now,
+                    },
                 )
                 .await;
             let submitted = match submission {
@@ -1410,6 +1399,7 @@ mod tests {
 
     use super::*;
     use crate::PassportVaultContractStateReadFuture;
+    use crate::{ListPassportVaultActivityUseCase, PassportVaultActivityStore};
 
     const ADDRESS: &str = "1111111111111111111111111111111111111111111111111111111111111111";
     const ANCHOR_TX: &str = "2222222222222222222222222222222222222222222222222222222222222222";
@@ -1863,7 +1853,7 @@ mod tests {
     #[test]
     fn authorizes_submits_and_reconciles_without_exposing_transaction_material() {
         let calls = Arc::new(Calls::default());
-        let activity = Arc::new(super::PassportVaultActivityStore::new(Arc::new(Clock)));
+        let activity = Arc::new(PassportVaultActivityStore::new(Arc::new(Clock)));
         let service = call_service(
             PassportVaultContractStateAuthentication::CanonicalFinalizedReplay,
             calls,
@@ -1926,11 +1916,9 @@ mod tests {
                 .expect("history");
         assert_eq!(history, vec![status]);
 
-        let activity = super::ListPassportVaultActivityUseCase::execute(
-            activity.as_ref(),
-            "profile_1".to_owned(),
-        )
-        .expect("activity");
+        let activity =
+            ListPassportVaultActivityUseCase::execute(activity.as_ref(), "profile_1".to_owned())
+                .expect("activity");
         assert_eq!(activity.records.len(), 1);
         assert_eq!(
             activity.records[0].operation,
@@ -1946,7 +1934,7 @@ mod tests {
     #[test]
     fn producer_isolates_profiles_even_when_adapters_reuse_a_draft_identifier() {
         let calls = Arc::new(Calls::default());
-        let activity = Arc::new(super::PassportVaultActivityStore::new(Arc::new(Clock)));
+        let activity = Arc::new(PassportVaultActivityStore::new(Arc::new(Clock)));
         let service = call_service(
             PassportVaultContractStateAuthentication::CanonicalFinalizedReplay,
             calls,
@@ -1969,20 +1957,18 @@ mod tests {
         }
 
         for profile_id in ["profile_1", "profile_2"] {
-            let view = super::ListPassportVaultActivityUseCase::execute(
-                activity.as_ref(),
-                profile_id.to_owned(),
-            )
-            .expect("profile activity");
+            let view =
+                ListPassportVaultActivityUseCase::execute(activity.as_ref(), profile_id.to_owned())
+                    .expect("profile activity");
             assert_eq!(view.records.len(), 1);
             assert_eq!(view.records[0].profile_id, profile_id);
         }
     }
 
     #[test]
-    fn explicit_refusal_and_expiry_are_final_activity_outcomes() {
+    fn missing_confirmation_can_retry_to_confirmed_and_expiry_is_final() {
         let calls = Arc::new(Calls::default());
-        let activity = Arc::new(super::PassportVaultActivityStore::new(Arc::new(Clock)));
+        let activity = Arc::new(PassportVaultActivityStore::new(Arc::new(Clock)));
         let service = call_service(
             PassportVaultContractStateAuthentication::CanonicalFinalizedReplay,
             Arc::clone(&calls),
@@ -2002,21 +1988,48 @@ mod tests {
                 AuthorizePassportVaultCallCommand {
                     profile_id: "profile_1".to_owned(),
                     draft_id: prepared.draft_id.clone(),
-                    authorization_challenge: prepared.authorization_challenge,
+                    authorization_challenge: prepared.authorization_challenge.clone(),
                     confirmed: false,
                     intent: AUTHORIZE_PASSPORT_VAULT_CALL_INTENT.to_owned(),
                 },
             ),
             Err(PassportVaultCallError::ConfirmationRequired)
         );
-        let view = super::ListPassportVaultActivityUseCase::execute(
-            activity.as_ref(),
-            "profile_1".to_owned(),
-        )
-        .expect("activity");
-        assert_eq!(view.records[0].status, PassportVaultActivityStatus::Refused);
+        let view =
+            ListPassportVaultActivityUseCase::execute(activity.as_ref(), "profile_1".to_owned())
+                .expect("activity");
+        assert_eq!(view.records[0].status, PassportVaultActivityStatus::Pending);
 
-        let activity = Arc::new(super::PassportVaultActivityStore::new(Arc::new(Clock)));
+        AuthorizePassportVaultCallUseCase::execute(
+            &service,
+            AuthorizePassportVaultCallCommand {
+                profile_id: "profile_1".to_owned(),
+                draft_id: prepared.draft_id.clone(),
+                authorization_challenge: prepared.authorization_challenge,
+                confirmed: true,
+                intent: AUTHORIZE_PASSPORT_VAULT_CALL_INTENT.to_owned(),
+            },
+        )
+        .expect("authorize after confirmation");
+        ready(SubmitPassportVaultCallUseCase::execute(
+            &service,
+            SubmitPassportVaultCallCommand {
+                profile_id: "profile_1".to_owned(),
+                draft_id: prepared.draft_id,
+                confirmed: true,
+                intent: SUBMIT_PASSPORT_VAULT_CALL_INTENT.to_owned(),
+            },
+        ))
+        .expect("submit after confirmation");
+        let view =
+            ListPassportVaultActivityUseCase::execute(activity.as_ref(), "profile_1".to_owned())
+                .expect("activity");
+        assert_eq!(
+            view.records[0].status,
+            PassportVaultActivityStatus::Confirmed
+        );
+
+        let activity = Arc::new(PassportVaultActivityStore::new(Arc::new(Clock)));
         let service = call_service(
             PassportVaultContractStateAuthentication::CanonicalFinalizedReplay,
             Arc::clone(&calls),
@@ -2048,11 +2061,9 @@ mod tests {
                 intent: AUTHORIZE_PASSPORT_VAULT_CALL_INTENT.to_owned(),
             },
         );
-        let view = super::ListPassportVaultActivityUseCase::execute(
-            activity.as_ref(),
-            "profile_1".to_owned(),
-        )
-        .expect("activity");
+        let view =
+            ListPassportVaultActivityUseCase::execute(activity.as_ref(), "profile_1".to_owned())
+                .expect("activity");
         assert_eq!(view.records[0].status, PassportVaultActivityStatus::Failed);
     }
 
@@ -2069,7 +2080,7 @@ mod tests {
             ),
         ] {
             let calls = Arc::new(Calls::default());
-            let activity = Arc::new(super::PassportVaultActivityStore::new(Arc::new(Clock)));
+            let activity = Arc::new(PassportVaultActivityStore::new(Arc::new(Clock)));
             let service = call_service(
                 PassportVaultContractStateAuthentication::CanonicalFinalizedReplay,
                 Arc::clone(&calls),
@@ -2107,7 +2118,7 @@ mod tests {
                 )),
                 Err(PassportVaultCallError::Operation(error))
             );
-            let view = super::ListPassportVaultActivityUseCase::execute(
+            let view = ListPassportVaultActivityUseCase::execute(
                 activity.as_ref(),
                 "profile_1".to_owned(),
             )
@@ -2139,7 +2150,7 @@ mod tests {
             ))
             .expect("reconcile");
             assert_eq!(reconciled.state, "included");
-            let view = super::ListPassportVaultActivityUseCase::execute(
+            let view = ListPassportVaultActivityUseCase::execute(
                 activity.as_ref(),
                 "profile_1".to_owned(),
             )
