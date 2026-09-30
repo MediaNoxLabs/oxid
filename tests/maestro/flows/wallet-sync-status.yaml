@@ -4,6 +4,6 @@ name: wallet synchronization status
 - runFlow: ../subflows/launch-clean.yaml
 - runFlow: ../subflows/demo-profile.yaml
 - tapOn: "Wallet"
-- assertVisible: "Current realm"
-- assertVisible: "Selected realm.*"
+- assertVisible: "Wallet status"
+- assertVisible: "Selected realm"
 # Do not claim terminal synchronization; lifecycle tests own that state.
