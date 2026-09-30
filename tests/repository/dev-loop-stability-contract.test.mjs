@@ -193,16 +193,16 @@ async function makeFixture() {
 test("Pi closure identities cover ordered exact package configuration", () => {
   const base = { packages: [
     { source: "npm:dev-loops@1.0.2", extensions: [] },
-    "npm:pi-subagents@0.67.0",
+    "npm:pi-subagents@0.70.0",
   ] };
   const reordered = { packages: [...base.packages].reverse() };
   const changedResourcePolicy = { packages: [
     { extensions: ["./extension.mjs"], source: "npm:dev-loops@1.0.2" },
-    "npm:pi-subagents@0.67.0",
+    "npm:pi-subagents@0.70.0",
   ] };
   assert.equal(piPackageClosureIdentity(base).identity, piPackageClosureIdentity({ packages: [
     { extensions: [], source: "npm:dev-loops@1.0.2" },
-    "npm:pi-subagents@0.67.0",
+    "npm:pi-subagents@0.70.0",
   ] }).identity, "object key order is not closure configuration order");
   assert.notEqual(piPackageClosureIdentity(base).identity, piPackageClosureIdentity(reordered).identity);
   assert.notEqual(piPackageClosureIdentity(base).identity, piPackageClosureIdentity(changedResourcePolicy).identity);
@@ -432,7 +432,7 @@ test("Pi smoke resolution reuses every exact common-checkout package from a link
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
 
   const pins = [
-    ["pi-subagents", "0.67.0"],
+    ["pi-subagents", "0.70.0"],
     ["@input-output-hk/agent-review-pi", "0.5.0"],
   ];
   const settings = {

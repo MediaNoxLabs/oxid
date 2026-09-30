@@ -105,48 +105,7 @@ if (!subagents) throw new Error(`project Pi settings do not pin ${expectedName}`
 process.stdout.write(subagents.packageRoot);
 ')"
 
-node --input-type=module -e '
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-
-const root = process.argv[1];
-const [manifestSource, types, agents, toolBudget, waitTool, waitRuntime, foregroundSettlement] = await Promise.all([
-  readFile(path.join(root, "package.json"), "utf8"),
-  readFile(path.join(root, "src", "shared", "types.ts"), "utf8"),
-  readFile(path.join(root, "src", "agents", "agents.ts"), "utf8"),
-  readFile(path.join(root, "src", "runs", "shared", "tool-budget.ts"), "utf8"),
-  readFile(path.join(root, "src", "runs", "background", "wait-tool.ts"), "utf8"),
-  readFile(path.join(root, "src", "runs", "background", "subagent-wait.ts"), "utf8"),
-  readFile(path.join(root, "src", "runs", "foreground", "workflow-detach-reconcile.ts"), "utf8"),
-]);
-const manifest = JSON.parse(manifestSource);
-if (manifest.name !== "pi-subagents" || manifest.version !== "0.67.0") {
-  throw new Error(`unexpected pi-subagents package ${manifest.name}@${manifest.version}`);
-}
-for (const [source, capability] of [
-  [waitTool, "remembered detached foreground descendant"],
-  [waitRuntime, "attentionRunsForSession"],
-  [waitRuntime, "stopOnAttention"],
-  [foregroundSettlement, "reconcileDetachedWorkflowChildCompletion"],
-  [foregroundSettlement, "planWorkflowSettlement"],
-]) {
-  if (!source.includes(capability)) throw new Error(`pi-subagents lacks ${capability}`);
-}
-for (const field of [
-  "asyncByDefault", "forceTopLevelAsync", "maxSubagentDepth",
-  "maxSubagentSpawnsPerSession", "maxSubagentSpawnsPerRun",
-  "glo" + "balConcurrencyLimit", "toolBudget", "usageBudget", "parallel",
-  "chain", "dynamicFanout", "maxItems", "artifactDir",
-]) {
-  if (!types.includes(`${field}?`)) throw new Error(`pi-subagents schema does not declare ${field}`);
-}
-for (const field of ["frontmatter.timeoutMs", "frontmatter.toolBudget", "frontmatter.maxSubagentDepth"]) {
-  if (!agents.includes(field)) throw new Error(`pi-subagents agent parser does not consume ${field}`);
-}
-for (const field of ["soft", "hard", "block"]) {
-  if (!toolBudget.includes(field)) throw new Error(`pi-subagents tool budget does not consume ${field}`);
-}
-' "$subagent_package_root"
+node scripts/factory/verify-pi-subagents-package.mjs "$subagent_package_root"
 
 review_package_json="$review_package_root/package.json"
 if [[ ! -f "$review_package_json" ]]; then
