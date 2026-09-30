@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { createDeliveryBranchRewriteSink } from "../../scripts/loop/pre-flight-gate.mjs";
 import { auditPi, auditWorktreeAdmission, lifecycleCapacityChecks } from "../../scripts/factory/audit-pi.mjs";
 import { applyUserPolicy, mergePolicy, policyMismatches } from "../../scripts/factory/pi-policy.mjs";
+import { verifyPiSubagentsPackage } from "../../scripts/factory/verify-pi-subagents-package.mjs";
 import {
   PI_RPC_MAX_BYTES,
   readBoundedPiRpcInput,
@@ -58,7 +59,7 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
     "npm:@dev-loops/core@1.0.2",
     "npm:@playwright/test@1.60.0",
     "npm:@axe-core/playwright@4.10.0",
-    "npm:pi-subagents@0.67.0",
+    "npm:pi-subagents@0.70.0",
     "npm:typebox@1.3.9",
     {
       source: "npm:pi-taskflow@0.2.10",
@@ -79,7 +80,8 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   const smoke = await readFile(path.join(repoRoot, "scripts", "check-pi-devshell.sh"), "utf8");
   const smokeHelper = await readFile(path.join(repoRoot, "scripts", "factory", "check-pi-devshell-config.mjs"), "utf8");
   const smokeRpcHelper = await readFile(path.join(repoRoot, "scripts", "factory", "check-pi-rpc-commands.mjs"), "utf8");
-  const smokeContract = `${smoke}\n${smokeHelper}\n${smokeRpcHelper}`;
+  const subagentVerifier = await readFile(path.join(repoRoot, "scripts", "factory", "verify-pi-subagents-package.mjs"), "utf8");
+  const smokeContract = `${smoke}\n${smokeHelper}\n${smokeRpcHelper}\n${subagentVerifier}`;
   const bootstrap = await readFile(path.join(repoRoot, "bootstrap.sh"), "utf8");
   const devshell = await readFile(path.join(repoRoot, "nix", "devshells", "default.nix"), "utf8");
   assert.match(smoke, /pi --list-models/u);
@@ -96,6 +98,7 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(smokeContract, /remembered detached foreground descendant/u);
   assert.match(smokeContract, /reconcileDetachedWorkflowChildCompletion/u);
   assert.match(smokeContract, /planWorkflowSettlement/u);
+  assert.match(smokeContract, /hasPendingSupervisorRequest/u);
   assert.match(smokeContract, /skill:taskflow/u);
   assert.match(smokeContract, /unsafe inherited taskflow resources are active/u);
   assert.match(smoke, /Pi startup modified tracked project agent shadows/u);
@@ -136,6 +139,56 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(devshell, /export PI_CODING_AGENT_SESSION_DIR/u);
   assert.match(devshell, /export PI_SUBAGENTS_TEMP_ROOT/u);
   assert.doesNotMatch(devshell, /export PI_CODING_AGENT_DIR/u);
+});
+
+async function writePiSubagentsFixture(root, { version = "0.70.0", omit = null, removeCapability = null } = {}) {
+  const files = {
+    "package.json": JSON.stringify({ name: "pi-subagents", version }),
+    "src/shared/types.d.ts": [
+      "asyncByDefault?", "forceTopLevelAsync?", "maxSubagentDepth?",
+      "maxSubagentSpawnsPerSession?", "maxSubagentSpawnsPerRun?",
+      "globalConcurrencyLimit?", "toolBudget?", "usageBudget?", "parallel?",
+      "chain?", "dynamicFanout?", "maxItems?", "artifactDir?",
+    ].join("\n"),
+    "src/agents/agents.js": "frontmatter.timeoutMs frontmatter.toolBudget frontmatter.maxSubagentDepth",
+    "src/runs/shared/tool-budget.js": "soft hard block",
+    "src/runs/background/wait-tool.js": "remembered detached foreground descendant",
+    "src/runs/background/subagent-wait.js": "attentionRunsForSession stopOnAttention",
+    "src/runs/background/auto-drain.js": "hasPendingSupervisorRequest",
+    "src/runs/foreground/workflow-detach-reconcile.js": "reconcileDetachedWorkflowChildCompletion planWorkflowSettlement",
+  };
+  for (const [relativePath, original] of Object.entries(files)) {
+    if (relativePath === omit) continue;
+    const source = removeCapability ? original.replace(removeCapability, "") : original;
+    await mkdir(path.dirname(path.join(root, relativePath)), { recursive: true });
+    await writeFile(path.join(root, relativePath), source);
+  }
+}
+
+test("pi-subagents compiled capability verifier accepts the reviewed package surface", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-subagents-valid-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writePiSubagentsFixture(root);
+  assert.deepEqual(await verifyPiSubagentsPackage(root), { name: "pi-subagents", version: "0.70.0" });
+});
+
+test("pi-subagents compiled capability verifier reports missing artifacts and capabilities", async (t) => {
+  const missingArtifact = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-subagents-missing-"));
+  const missingCapability = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-subagents-capability-"));
+  t.after(() => Promise.all([
+    rm(missingArtifact, { recursive: true, force: true }),
+    rm(missingCapability, { recursive: true, force: true }),
+  ]));
+  await writePiSubagentsFixture(missingArtifact, { omit: "src/runs/background/auto-drain.js" });
+  await assert.rejects(
+    verifyPiSubagentsPackage(missingArtifact),
+    /missing required compiled artifact src\/runs\/background\/auto-drain\.js/u,
+  );
+  await writePiSubagentsFixture(missingCapability, { removeCapability: "attentionRunsForSession" });
+  await assert.rejects(
+    verifyPiSubagentsPackage(missingCapability),
+    /subagent-wait\.js lacks required capability attentionRunsForSession/u,
+  );
 });
 
 test("Pi command discovery streams beyond pipe capacity and stays explicitly bounded", async () => {
