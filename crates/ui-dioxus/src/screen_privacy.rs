@@ -11,6 +11,11 @@ pub(crate) const fn route_forces_screen_privacy(route: Route) -> bool {
     matches!(
         route,
         Route::Settings
+            | Route::Security
+            | Route::Backup
+            | Route::Recovery
+            | Route::Preferences
+            | Route::About
             | Route::BackupRecovery
             | Route::Documents
             | Route::CredentialRequest
@@ -42,8 +47,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn identity_and_credential_routes_force_native_snapshot_protection() {
-        assert!(route_forces_screen_privacy(Route::Settings));
+    fn sensitive_settings_identity_and_credential_routes_force_native_snapshot_protection() {
+        for route in [
+            Route::Settings,
+            Route::Security,
+            Route::Backup,
+            Route::Recovery,
+            Route::Preferences,
+            Route::About,
+        ] {
+            assert!(route_forces_screen_privacy(route), "{route:?}");
+        }
         assert!(route_forces_screen_privacy(Route::Documents));
         assert!(route_forces_screen_privacy(Route::CredentialRequest));
         assert!(route_forces_screen_privacy(Route::Present));

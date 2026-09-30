@@ -280,6 +280,18 @@ fn project_event_log(
         .collect()
 }
 
+const fn diagnostic_view_state(
+    state: &LocalDiagnosticsPageState,
+    visible_events: usize,
+) -> &'static str {
+    match state {
+        LocalDiagnosticsPageState::Loading => "loading",
+        LocalDiagnosticsPageState::Failed => "error",
+        LocalDiagnosticsPageState::Ready(_) if visible_events == 0 => "empty",
+        LocalDiagnosticsPageState::Ready(_) => "ready",
+    }
+}
+
 fn project_diagnostics(state: &LocalDiagnosticsPageState) -> DiagnosticsProjection {
     match state {
         LocalDiagnosticsPageState::Loading => DiagnosticsProjection {
@@ -370,10 +382,10 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
     );
     let mut account_state = use_signal(|| AccountPageState::Loading);
     let mut diagnostic_state = use_signal(|| LocalDiagnosticsPageState::Loading);
-    let mut show_info = use_signal(|| true);
-    let mut show_warnings = use_signal(|| true);
-    let mut show_errors = use_signal(|| true);
-    let mut event_query = use_signal(String::new);
+    let show_info = use_signal(|| true);
+    let show_warnings = use_signal(|| true);
+    let show_errors = use_signal(|| true);
+    let event_query = use_signal(String::new);
     let mut clear_confirmation = use_signal(|| false);
     let profile_id = active_profile.id.clone();
     let effect_services = services.clone();
@@ -448,12 +460,14 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
     let clear_services = services.clone();
     let mut refresh_state = diagnostic_state;
     let mut clear_state = diagnostic_state;
+    let view_state = diagnostic_view_state(&diagnostic_state.read(), diagnostic_events.len());
     rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", "Capability status" }
-            p { "This view reports only capabilities that are actually composed into the current application." }
-        }
-        div { class: "diagnostic-grid",
+        div { "data-screen": "diagnostics-overview", "data-view-state": "{view_state}",
+            section { class: "page-heading",
+                p { class: "eyebrow", "Capability status" }
+                p { "This view reports only capabilities that are actually composed into the current application." }
+            }
+            div { class: "diagnostic-grid",
             CapabilityStatus { name: "Profile lifecycle", state: "Create · list · select · restore".to_owned(), ready: true }
             CapabilityStatus { name: "Profile metadata store", state: "Persistent · public metadata only".to_owned(), ready: true }
             CapabilityStatus { name: "Protected secret store", state: protection_state, ready: protection_ready }
@@ -467,7 +481,7 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
                 ready: credential_protocol_ready,
             }
         }
-        section { class: "surface-card",
+            section { class: "surface-card", "data-ui-primitive": "StateSurface",
             p { class: "card-eyebrow", "Secret-safe runtime health" }
             p { "Telemetry is off. Events use fixed codes, retain no payloads, and disappear when this process exits." }
             section { class: "diagnostic-event-log", aria_label: "Local event log",
@@ -518,55 +532,16 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
                         }
                     }
                 }
-                div { class: "diagnostic-event-filters",
-                    label { class: "confirmation-check",
-                        input {
-                            r#type: "checkbox",
-                            checked: show_info(),
-                            onchange: move |event| show_info.set(event.checked()),
-                        }
-                        span { "Info" }
-                    }
-                    label { class: "confirmation-check",
-                        input {
-                            r#type: "checkbox",
-                            checked: show_warnings(),
-                            onchange: move |event| show_warnings.set(event.checked()),
-                        }
-                        span { "Warnings" }
-                    }
-                    label { class: "confirmation-check",
-                        input {
-                            r#type: "checkbox",
-                            checked: show_errors(),
-                            onchange: move |event| show_errors.set(event.checked()),
-                        }
-                        span { "Errors" }
-                    }
+                DiagnosticEventFeed {
+                    events: diagnostic_events,
+                    ready: diagnostics_ready,
+                    show_info,
+                    show_warnings,
+                    show_errors,
+                    event_query,
+                    key_prefix: "diagnostic-event",
                 }
-                label { class: "network-field",
-                    span { "Search fixed event codes" }
-                    input {
-                        r#type: "search",
-                        value: "{event_query}",
-                        placeholder: "midnight.dust",
-                        oninput: move |event| event_query.set(event.value()),
-                    }
-                }
-                if diagnostic_events.is_empty() && diagnostics_ready {
-                    p { class: "field-hint", "No retained events match these filters." }
-                }
-                div { class: "diagnostic-grid",
-                    for event in diagnostic_events {
-                        article { class: "capability-row", key: "diagnostic-event-{event.sequence}",
-                            span { class: "capability-dot queued" }
-                            div {
-                                strong { "{event.code}" }
-                                p { "#{event.sequence} · {event.severity}" }
-                            }
-                        }
-                    }
-                }
+            }
             }
         }
     }
@@ -578,10 +553,10 @@ pub(super) fn DeveloperDiagnosticsPage() -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut diagnostic_state = use_signal(|| LocalDiagnosticsPageState::Loading);
     let mut operation_state = use_signal(|| OperationTimelinePageState::Loading);
-    let mut show_info = use_signal(|| true);
-    let mut show_warnings = use_signal(|| true);
-    let mut show_errors = use_signal(|| true);
-    let mut event_query = use_signal(String::new);
+    let show_info = use_signal(|| true);
+    let show_warnings = use_signal(|| true);
+    let show_errors = use_signal(|| true);
+    let event_query = use_signal(String::new);
     let mut clear_confirmation = use_signal(|| false);
     let load_services = services.clone();
     use_effect(move || {
@@ -618,13 +593,14 @@ pub(super) fn DeveloperDiagnosticsPage() -> Element {
     let clear_services = services.clone();
     let mut refresh_state = diagnostic_state;
     let mut clear_state = diagnostic_state;
+    let view_state = diagnostic_view_state(&diagnostic_state.read(), events.len());
     rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", "Development tool" }
-            h1 { "Event log" }
-            p { "Bounded, payload-free events for this process only. Telemetry is off." }
-        }
-        section { class: "surface-card diagnostic-event-log", aria_label: "Recent diagnostic events",
+        div { "data-screen": "event-log", "data-view-state": "{view_state}",
+            section { class: "page-heading",
+                p { class: "eyebrow", "Development tool" }
+                p { "Bounded, payload-free events for this process only. Telemetry is off." }
+            }
+            section { class: "surface-card diagnostic-event-log", aria_label: "Recent diagnostic events", "data-ui-primitive": "StateSurface",
             DiagnosticEventControls {
                 loading: matches!(*diagnostic_state.read(), LocalDiagnosticsPageState::Loading),
                 on_refresh: move |_| {
@@ -650,34 +626,14 @@ pub(super) fn DeveloperDiagnosticsPage() -> Element {
                 }
             }
             CapabilityStatus { name: "Bounded event ring", state: projection.summary, ready: projection.ready }
-            div { class: "diagnostic-event-filters",
-                label { class: "confirmation-check",
-                    input { r#type: "checkbox", checked: show_info(), onchange: move |event| show_info.set(event.checked()) }
-                    span { "Info" }
-                }
-                label { class: "confirmation-check",
-                    input { r#type: "checkbox", checked: show_warnings(), onchange: move |event| show_warnings.set(event.checked()) }
-                    span { "Warnings" }
-                }
-                label { class: "confirmation-check",
-                    input { r#type: "checkbox", checked: show_errors(), onchange: move |event| show_errors.set(event.checked()) }
-                    span { "Errors" }
-                }
-            }
-            label { class: "network-field",
-                span { "Search fixed event codes" }
-                input { r#type: "search", value: "{event_query}", placeholder: "midnight.dust", oninput: move |event| event_query.set(event.value()) }
-            }
-            if events.is_empty() && projection.ready {
-                p { class: "field-hint", "No retained events match these filters." }
-            }
-            div { class: "diagnostic-grid",
-                for event in events {
-                    article { class: "capability-row", key: "developer-diagnostic-event-{event.sequence}",
-                        span { class: "capability-dot queued" }
-                        div { strong { "{event.code}" } p { "#{event.sequence} · {event.severity}" } }
-                    }
-                }
+            DiagnosticEventFeed {
+                events,
+                ready: projection.ready,
+                show_info,
+                show_warnings,
+                show_errors,
+                event_query,
+                key_prefix: "developer-diagnostic-event",
             }
             details { class: "diagnostic-operation-log",
                 summary {
@@ -698,6 +654,50 @@ pub(super) fn DeveloperDiagnosticsPage() -> Element {
                             }
                         }
                     }
+                }
+            }
+            }
+        }
+    }
+}
+
+#[component]
+fn DiagnosticEventFeed(
+    events: Vec<DiagnosticEventRow>,
+    ready: bool,
+    mut show_info: Signal<bool>,
+    mut show_warnings: Signal<bool>,
+    mut show_errors: Signal<bool>,
+    mut event_query: Signal<String>,
+    key_prefix: &'static str,
+) -> Element {
+    rsx! {
+        div { class: "diagnostic-event-filters", "data-ui-primitive": "TaskRow",
+            label { class: "confirmation-check",
+                input { r#type: "checkbox", checked: show_info(), "data-action": "filter-info-events", onchange: move |event| show_info.set(event.checked()) }
+                span { "Info" }
+            }
+            label { class: "confirmation-check",
+                input { r#type: "checkbox", checked: show_warnings(), "data-action": "filter-warning-events", onchange: move |event| show_warnings.set(event.checked()) }
+                span { "Warnings" }
+            }
+            label { class: "confirmation-check",
+                input { r#type: "checkbox", checked: show_errors(), "data-action": "filter-error-events", onchange: move |event| show_errors.set(event.checked()) }
+                span { "Errors" }
+            }
+        }
+        label { class: "network-field",
+            span { "Search fixed event codes" }
+            input { r#type: "search", value: "{event_query}", "data-action": "search-event-codes", placeholder: "midnight.dust", oninput: move |event| event_query.set(event.value()) }
+        }
+        if events.is_empty() && ready {
+            p { class: "field-hint", "No retained events match these filters." }
+        }
+        div { class: "diagnostic-grid",
+            for event in events {
+                article { class: "capability-row", key: "{key_prefix}-{event.sequence}", "data-ui-primitive": "StateSurface",
+                    span { class: "capability-dot queued" }
+                    div { strong { "{event.code}" } p { "#{event.sequence} · {event.severity}" } }
                 }
             }
         }
@@ -766,6 +766,8 @@ fn UtilityIconButton(
     rsx! {
         button {
             class: "{kind.class_name()}",
+            "data-ui-primitive": "IconButton",
+            "data-action": match kind { UtilityIconButtonKind::Refresh => "refresh-diagnostics", UtilityIconButtonKind::Clear => "clear-diagnostics" },
             r#type: "button",
             aria_label: "{label}",
             title: "{label}",
@@ -796,7 +798,7 @@ fn ClearDiagnosticsConfirmation(
 #[component]
 fn CapabilityStatus(name: &'static str, state: String, ready: bool) -> Element {
     rsx! {
-        article { class: "capability-row",
+        article { class: "capability-row", "data-ui-primitive": "StateSurface",
             span { class: if ready { "capability-dot ready" } else { "capability-dot queued" } }
             div {
                 strong { "{name}" }
@@ -1066,6 +1068,35 @@ mod tests {
                 DiagnosticEventToolbarState { loading: false }
             );
         }
+    }
+
+    #[test]
+    fn event_log_view_state_is_closed_and_payload_free() {
+        assert_eq!(
+            diagnostic_view_state(&LocalDiagnosticsPageState::Loading, 0),
+            "loading"
+        );
+        assert_eq!(
+            diagnostic_view_state(&LocalDiagnosticsPageState::Failed, 0),
+            "error"
+        );
+        assert_eq!(
+            diagnostic_view_state(
+                &LocalDiagnosticsPageState::Ready(DiagnosticSnapshotView::new(
+                    8,
+                    0,
+                    0,
+                    Vec::new(),
+                    Vec::new(),
+                )),
+                0,
+            ),
+            "empty"
+        );
+        assert_eq!(
+            diagnostic_view_state(&LocalDiagnosticsPageState::Ready(populated_snapshot()), 1),
+            "ready"
+        );
     }
 
     #[test]

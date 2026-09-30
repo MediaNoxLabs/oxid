@@ -282,13 +282,20 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
     let help_expanded = help_disclosure().is_expanded();
     let benchmark_for_sweep = Arc::clone(&benchmark);
 
+    let view_state = if worker_busy || sweeping() {
+        "running"
+    } else if result_snapshot.is_empty() {
+        "empty"
+    } else {
+        "ready"
+    };
     rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", "Development tool" }
-            h1 { "Proof benchmark" }
-            p { "Run synthetic Midnight proving measurements in this development process." }
-        }
-        section { class: "surface-card", aria_label: "Development proof benchmark",
+        div { "data-screen": "proof-benchmark", "data-view-state": "{view_state}",
+            section { class: "page-heading",
+                p { class: "eyebrow", "Development tool" }
+                p { "Run synthetic Midnight proving measurements in this development process." }
+            }
+            section { class: "surface-card", aria_label: "Development proof benchmark", "data-ui-primitive": "StateSurface",
             dl { class: "proof-resource-monitor", aria_label: "Current process resource monitor",
                 if let Some(sample) = resource_sample() {
                     div {
@@ -331,6 +338,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                 }
                 button {
                     class: "proof-benchmark-run-button proof-benchmark-sweep-button",
+                    "data-action": "run-proof-sweep",
                     r#type: "button",
                     disabled: worker_busy || sweeping(),
                     onclick: move |_| {
@@ -384,6 +392,8 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
             p { class: "status-pill", role: "status", "{stage}" }
             button {
                 class: "proof-benchmark-help-button",
+                "data-ui-primitive": "DetailDisclosure",
+                "data-action": "toggle-benchmark-help",
                 r#type: "button",
                 aria_expanded: if help_expanded { "true" } else { "false" },
                 aria_controls: "proof-benchmark-help",
@@ -438,6 +448,8 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                                 }
                                 button {
                                     class: "proof-benchmark-disclosure",
+                                    "data-ui-primitive": "DetailDisclosure",
+                                    "data-action": "toggle-proof-row-details",
                                     r#type: "button",
                                     aria_expanded: if expanded { "true" } else { "false" },
                                     aria_controls: "proof-benchmark-details-{k}",
@@ -447,6 +459,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                                 }
                                 button {
                                     class: "proof-benchmark-run-button",
+                                    "data-action": "run-proof-row",
                                     r#type: "button",
                                     disabled: worker_busy || sweeping(),
                                     onclick: move |_| {
@@ -511,6 +524,7 @@ pub(super) fn ProofBenchmarkPanel() -> Element {
                         }
                     }
                 }
+            }
             }
         }
     }

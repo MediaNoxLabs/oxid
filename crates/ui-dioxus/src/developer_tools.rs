@@ -116,18 +116,19 @@ pub(super) fn DeveloperToolsHub(
         .filter(|capability| capability.status() == "ready")
         .count();
     rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", "Standalone developer profile" }
-            h1 { "Developer tools" }
-            p { "Focused, process-local tools for inspecting this development composition." }
-        }
-        section { class: "developer-tool-list", aria_label: "Developer tools",
+        div { "data-screen": "developer-tools-hub", "data-view-state": "ready",
+            section { class: "page-heading",
+                p { class: "eyebrow", "Standalone developer profile" }
+                p { "Focused, process-local tools for inspecting this development composition." }
+            }
+            section { class: "developer-tool-list", aria_label: "Developer tools",
             DeveloperToolLink {
                 title: "Capability manifest",
                 purpose: "See what this build can do and which operations are available.",
                 help: Some("An inventory of the operations included in this build and whether each one is ready. It helps developers understand how the app was composed; it does not grant permission, reveal wallet data, or confirm that a remote service is healthy right now."),
                 availability: format!("{ready} of {} methods ready", capabilities.len()),
                 action: "Open manifest",
+                action_id: "open-capability-manifest",
                 on_open: on_open_manifest,
             }
             DeveloperToolLink {
@@ -136,6 +137,7 @@ pub(super) fn DeveloperToolsHub(
                 help: None,
                 availability: if cfg!(feature = "proof-benchmark") { "Available in this development build".to_owned() } else { "Not compiled into this build".to_owned() },
                 action: "Open benchmark",
+                action_id: "open-proof-benchmark",
                 on_open: on_open_benchmark,
             }
             DeveloperToolLink {
@@ -144,8 +146,10 @@ pub(super) fn DeveloperToolsHub(
                 help: None,
                 availability: "Process-local · telemetry off".to_owned(),
                 action: "Open event log",
+                action_id: "open-event-log",
                 on_open: on_open_diagnostics,
             }
+        }
         }
     }
 }
@@ -157,17 +161,19 @@ fn DeveloperToolLink(
     help: Option<&'static str>,
     availability: String,
     action: &'static str,
+    action_id: &'static str,
     on_open: EventHandler<MouseEvent>,
 ) -> Element {
     let mut help_open = use_signal(|| false);
     rsx! {
-        article { class: "developer-tool surface-card",
+        article { class: "developer-tool surface-card", "data-ui-primitive": "TaskRow",
             div {
                 div { class: "developer-tool__title-row",
                     h2 { "{title}" }
                     if help.is_some() {
                         button {
                             class: "developer-tool__help-button",
+                            "data-ui-primitive": "IconButton",
                             r#type: "button",
                             aria_label: "About {title}",
                             aria_expanded: if *help_open.read() { "true" } else { "false" },
@@ -188,7 +194,7 @@ fn DeveloperToolLink(
                 }
                 span { class: "status-pill", "{availability}" }
             }
-            button { class: "secondary-button", r#type: "button", onclick: move |event| on_open.call(event), "{action}" }
+            button { class: "secondary-button", r#type: "button", "data-action": "{action_id}", onclick: move |event| on_open.call(event), "{action}" }
         }
     }
 }
@@ -203,9 +209,8 @@ pub(super) fn DeveloperProofBenchmarkPage() -> Element {
 #[component]
 pub(super) fn DeveloperProofBenchmarkPage() -> Element {
     rsx! {
-        section { class: "page-heading",
+        section { class: "page-heading", "data-screen": "proof-benchmark", "data-view-state": "unavailable",
             p { class: "eyebrow", "Development tool" }
-            h1 { "Proof benchmark" }
             p { "This development build does not include the proof benchmark capability." }
         }
     }
@@ -221,14 +226,14 @@ pub(super) fn DeveloperCapabilitiesPage() -> Element {
         .count();
     let attention = capabilities.len().saturating_sub(ready);
     rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", "Standalone developer profile" }
-            h1 { "Capability manifest" }
-            p {
-                "A read-only inventory of the operations included in this build and whether each one is available. It is rendered from the same app-owned manifest serialized by system.capabilities; it does not grant permission or expose wallet data."
+        div { "data-screen": "capability-manifest", "data-view-state": if capabilities.is_empty() { "empty" } else { "ready" },
+            section { class: "page-heading",
+                p { class: "eyebrow", "Standalone developer profile" }
+                p {
+                    "A read-only inventory of the operations included in this build and whether each one is available. It is rendered from the same app-owned manifest serialized by system.capabilities; it does not grant permission or expose wallet data."
+                }
             }
-        }
-        section { class: "developer-capability-summary surface-card",
+            section { class: "developer-capability-summary surface-card", "data-ui-primitive": "StateSurface",
             div {
                 p { class: "card-eyebrow", "Manifest snapshot" }
                 h2 { "{capabilities.len()} declared methods" }
@@ -236,7 +241,7 @@ pub(super) fn DeveloperCapabilitiesPage() -> Element {
             }
             code { "source=oxid_capabilities_application freshness=composition_time cursor=not_applicable timing=not_collected" }
         }
-        div { class: "developer-capability-list",
+            div { class: "developer-capability-list",
             for capability in capabilities {
                 article {
                     class: "developer-capability-row capability-row",
@@ -261,6 +266,7 @@ pub(super) fn DeveloperCapabilitiesPage() -> Element {
                         }
                     }
                 }
+            }
             }
         }
     }

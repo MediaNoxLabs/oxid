@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -69,4 +69,44 @@ test("copy validation includes extracted sibling modules", async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("settings and developer surfaces expose stable privacy-safe contracts", async () => {
+  const sourceRoot = path.join(repository, "crates", "ui-dioxus", "src");
+  const sourceFiles = [
+    "lib.rs",
+    "profile_quick_switcher.rs",
+    "diagnostics.rs",
+    "developer_tools.rs",
+    "proof_benchmark.rs",
+  ];
+  const productionSources = await Promise.all(sourceFiles.map(async (file) => {
+    const source = await readFile(path.join(sourceRoot, file), "utf8");
+    return source.split("\n#[cfg(test)]\nmod tests {")[0];
+  }));
+  const sources = productionSources.join("\n");
+  for (const required of [
+    "settings-hub",
+    "settings-security",
+    "settings-backup",
+    "settings-recovery",
+    "settings-preferences",
+    "settings-about",
+    "profile-management",
+    "diagnostics-overview",
+    "developer-tools-hub",
+    "capability-manifest",
+    "proof-benchmark",
+    "event-log",
+    "data-view-state",
+    "data-action",
+    '"IconButton"',
+    '"DetailDisclosure"',
+    '"StateSurface"',
+    '"TaskRow"',
+  ]) {
+    assert.ok(sources.includes(required), `missing UI contract: ${required}`);
+  }
+  assert.ok(!productionSources[0].includes("30 seconds"));
+  assert.ok(!productionSources[0].includes("30-second"));
 });
