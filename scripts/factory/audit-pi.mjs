@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolvePinnedCoreModulePath } from "../dev-loops.mjs";
 import { auditPiPackageClosures, resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
 import { checkUserPolicy } from "./pi-policy.mjs";
+import { collectMacOSSample, defaultResourceAdmissionDirectory, evaluateResourceAdmission, writeResourceAdmissionReceipt } from "./resource-admission.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const EXPECTED_PACKAGES = new Map([
@@ -291,6 +292,23 @@ function inspectOperationalState(repoRoot) {
   }
 }
 
+async function inspectResourceAdmission(repoRoot) {
+  if (!existsSync(path.join(repoRoot, "scripts", "factory", "resource-admission.mjs"))) {
+    return check("resource-admission", "pass", "resource admission is unavailable outside an Oxid checkout", undefined, "operational");
+  }
+  if (process.platform !== "darwin") {
+    return check("resource-admission", "pass", "macOS resource admission is not applicable on this host", undefined, "operational");
+  }
+  const result = evaluateResourceAdmission(collectMacOSSample());
+  try {
+    await writeResourceAdmissionReceipt(result, { outputDir: await defaultResourceAdmissionDirectory(repoRoot) });
+  } catch (error) {
+    return check("resource-admission", "fail", `Resource admission receipt could not be persisted: ${error.message}`, undefined, "operational");
+  }
+  return check("resource-admission", result.decision === "block" ? "fail" : "pass",
+    `macOS resource admission ${result.decision}: ${result.reasonCode}`, result.summary, "operational");
+}
+
 export function lifecycleCapacityChecks(lifecycle) {
   if (!Array.isArray(lifecycle) || lifecycle.length === 0) {
     throw new Error("lifecycle audit must contain the primary checkout");
@@ -466,7 +484,7 @@ async function inspectDeliveryProfiles(repoRoot) {
  * isolated worker.
  */
 export async function auditWorktreeAdmission({ repoRoot = DEFAULT_REPO_ROOT } = {}) {
-  const checks = inspectOperationalState(repoRoot);
+  const checks = [...inspectOperationalState(repoRoot), await inspectResourceAdmission(repoRoot)];
   const capacityEvidenceAvailable = !checks.some((item) => item.id === "worktree-admission" && item.status === "warn");
   return {
     schemaVersion: 1,
@@ -639,6 +657,7 @@ export async function auditPi({
 
   if (includeOperational) {
     checks.push(...inspectOperationalState(repoRoot));
+    checks.push(await inspectResourceAdmission(repoRoot));
     checks.push(await inspectPackageClosureState(repoRoot));
     checks.push(await inspectMetrics(repoRoot));
   }

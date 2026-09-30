@@ -401,6 +401,7 @@ test("unavailable lifecycle helper uses conservative fresh-checkout capacity", a
   assert.deepEqual(result.checks.map(({ id, status }) => ({ id, status })), [
     { id: "worktree-admission", status: "pass" },
     { id: "worktree-target-storage", status: "pass" },
+    { id: "resource-admission", status: "pass" },
   ]);
   assert.match(result.checks[0].summary, /conservative fallback/u);
 });
