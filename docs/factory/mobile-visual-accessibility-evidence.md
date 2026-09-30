@@ -1,34 +1,59 @@
 # Mobile visual accessibility evidence (local only)
 
-This maintained matrix defines the bounded, privacy-safe evidence tranche for the simulated first-run journey and holder shell. It is additive to Android CDP and iOS XCTest coverage; it does not replace either suite or authorize product changes. Run the iOS Simulator and Android Emulator serially with receipt-owned runtimes. Generated screenshots and logs belong only under ignored `target/mobile-visual-accessibility/<platform>/`; never capture a recovery phrase or another private value.
+This matrix is the privacy-safe, exact-head evidence map for the simulated first-run journey and holder shell. It is additive to Android CDP and iOS XCTest coverage, never authorizes product changes, and never substitutes a Maestro result for a protected, protocol, or finality outcome. Generated screenshots and logs remain below ignored `target/mobile-visual-accessibility/<platform>/`; recovery phrases and other private values are never captured.
 
-## Capture matrix
+## Evidence matrix
 
-| State | Lunar Aegis screen ID | Platforms | Artifact | Accessibility checks | Known gaps |
-| --- | --- | --- | --- | --- | --- |
-| Welcome and create-vs-restore fork | `XSwTg6CjwXruX8QP3tXy` | iOS Simulator, Android Emulator | `lunar-aegis-<platform>-01-first-run` | 375 pt/dp and one larger width; safe-area/navigation non-overlap; 44 px touch targets; large-text truncation; non-color status meaning; screen-reader labels/order | Native focus-order detail remains platform-harness dependent. |
-| Mandatory device-protection explanation | `FFMmLvVQlc5xIun63FYX` | iOS Simulator visual; Android Emulator semantic | iOS: `lunar-aegis-ios-02-device-protection` | reduced motion; screen-reader labels/order | Stop and relaunch cleanly before native authorization; do not capture the phrase ceremony or its private values. Android already protects this screen, so no Android screenshot is retained. |
-| Recovery boundary and Ready/Home | `xYA9BiozNUetlxPJYHPT`, `7u81lbjNIKcn8dS79axb` | XCTest/CDP for recovery; iOS Simulator for Home; Android public simulated Home after explicit reveal | iOS: `lunar-aegis-ios-03-home-empty`; Android: `lunar-aegis-android-03-home-public-revealed` | modal focus return; safe-area/navigation non-overlap; large-text truncation | Maestro must not enter the recovery ceremony because its automatic failure artifacts could retain a phrase. Android captures Home only through the explicit Session privacy reveal and re-masks immediately afterward. |
-| Receive and Send entry | holder shell | iOS Simulator visual; Android Emulator semantic | iOS: `lunar-aegis-ios-04-receive`, `lunar-aegis-ios-05-send-entry` | 44 px touch targets; deterministic Back via `Go back` to Home; non-color status meaning | The simulated demo profile is already a synchronized protected account, so the safe boundary is the `SEND NIGHT` entry form. The flow never enters a recipient, amount, or transfer action. Android transitions pass semantically, but protected screenshots are intentionally black. |
-| Empty Documents and fixture Activity | holder shell | iOS Simulator visual; Android Emulator semantic | iOS: `lunar-aegis-ios-06-documents-empty`, `lunar-aegis-ios-07-activity-history` | safe-area/navigation non-overlap; screen-reader labels/order | The simulated profile intentionally exposes `Sent` and `Received` fixture history. Android Documents forces `FLAG_SECURE`; Maestro retains semantic assertions only. |
-| Settings and native-custody Backup boundary | holder shell | iOS Simulator; Android Emulator; native XCTest/CDP for Backup | iOS: `lunar-aegis-ios-08-settings` | modal focus return; reduced motion; large-text truncation; Android semantic header and Settings traversal | Android reaches Settings semantically while `FLAG_SECURE` remains active. The simulated demo custody adapter intentionally has no Backup capability. |
+| Scenario ID | Authority | Platform | Design reference/no-match | Artifact | Evidence layer | Known gap |
+| --- | --- | --- | --- | --- | --- | --- |
+| canonical-holder-evidence | maestro | iOS Simulator | Lunar Aegis holder shell; no single design ID | `lunar-aegis-ios-01` through `-08` public screenshots | iOS visual, 375 pt, canonical public evidence | Larger-width and screen-reader traversal remain lane observations. |
+| onboarding-safe-boundary | maestro | iOS Simulator; Android Emulator semantic | `XSwTg6CjwXruX8QP3tXy`, `FFMmLvVQlc5xIun63FYX` | receipt outcome only | Safe onboarding reachability; no recovery ceremony | Native focus-order detail remains harness-dependent. |
+| profile-realm-switching | maestro | iOS Simulator; Android Emulator semantic | no-match | receipt outcome only | Simulated profile and realm traversal | Real-network reconciliation remains lower-layer evidence. |
+| home-receive-send-blocked | maestro | iOS Simulator; Android Emulator semantic | `7u81lbjNIKcn8dS79axb` | canonical Home/Receive/Send screenshots on iOS; Android receipt | Public holder reachability and blocked send entry | No recipient, amount, or transfer action is entered. |
+| wallet-sync-status | maestro | iOS Simulator; Android Emulator semantic | no-match | receipt outcome only | Simulated status reachability | Synchronization finality remains Rust/CDP/XCTest evidence. |
+| documents-empty-state | maestro | iOS Simulator; Android Emulator semantic | no-match | canonical Documents screenshot on iOS; Android receipt | Empty-state reachability | Android protected screenshot is intentionally not retained. |
+| did-inventory-empty-state | maestro | iOS Simulator; Android Emulator semantic | no-match | receipt outcome only | DID inventory reachability | DID creation and detail are lower-authoritative. |
+| activity-fixture-history | maestro | iOS Simulator; Android Emulator semantic | no-match | canonical Activity screenshot on iOS; Android receipt | Fixture-history traversal | Fixture data is not transaction-finality evidence. |
+| passport-vault-entry | maestro | iOS Simulator; Android Emulator semantic | no-match | receipt outcome only | Vault entry reachability | Protected proof and terminal outcomes are lower-authoritative. |
+| settings-security-backup-entry | maestro | iOS Simulator; Android Emulator semantic | no-match | canonical Settings screenshot on iOS; Android receipt | Settings traversal | Backup stays native XCTest/CDP evidence. |
+| credential-detail | lower-authoritative-layer | none | no-match | `tests/mobile/android-wallet-flow.mjs`; `tests/mobile/ios/OxidUITests/ProfileFlowTests.swift`; `crates/ui-dioxus/src/lib.rs` | Credential detail | Maestro must not select holder data. |
+| did-create-resolve-detail | lower-authoritative-layer | none | no-match | `tests/mobile/android-wallet-flow.mjs`; `tests/mobile/ios/OxidUITests/ProfileFlowTests.swift`; `crates/ui-dioxus/src/dids.rs` | DID create, resolve, and detail | Protected state is not a Maestro claim. |
+| issuance-presentation-siopv2 | lower-authoritative-layer | none | no-match | `tests/mobile/android-identity-ingress.mjs`; `tests/mobile/ios/OxidUITests/IdentityIngressTests.swift`; `tests/mobile/ios/OxidUITests/ProfileFlowTests.swift`; `crates/ui-dioxus/src/lib.rs` | Protocol consent and terminal outcomes | Request URIs and dynamic selectors are excluded. |
+| passport-vault-terminal-outcomes | lower-authoritative-layer | none | no-match | `tests/mobile/android-wallet-flow.mjs`; `tests/mobile/ios/OxidUITests/ProfileFlowTests.swift`; `crates/ui-dioxus/src/passport_vault.rs` | Vault terminal outcomes | Proof evidence remains protected. |
+| dev-diagnostics-benchmark | manual-local | iOS Simulator | no-match | owner-local notes | Diagnostics, event log, and benchmark entry | No secret-free development bootstrap exists. |
+| developer-profile-banner | maestro | iOS Simulator; Android Emulator semantic | developer banner, safe-area verified at 375 pt | `developer-profile-banner-open` and `-closed` screenshots on iOS; Android receipt | Developer-profile banner visibility and dismissal | Android remains semantic-only after the final sweep. |
+
+## State boundaries
+
+The matrix retains these observed boundaries: Welcome and create-vs-restore fork; Mandatory device-protection explanation; Recovery boundary and Ready/Home (`xYA9BiozNUetlxPJYHPT`); Receive and Send entry; Empty Documents and fixture Activity; and Settings and native-custody Backup boundary. Where a public visual artifact is permitted, inspect 375 pt/dp and larger width, safe-area/navigation non-overlap, 44 px touch targets, large-text truncation, non-color status meaning, deterministic Back, modal focus return, reduced motion, and screen-reader labels/order.
+
+## Receipt-owned lanes
+
+Run all safe `authority=maestro` iOS scenarios serially through the receipt-owned lane; it records the exact head, simulator device/runtime, duration, public screenshot count/bytes, cleanup, and a per-scenario outcome. The canonical public-evidence scenario runs last.
+
+```sh
+./bootstrap.sh -- ./scripts/test-ios-maestro-holder-evidence.sh
+```
+
+After that lane, run one final sweep only on a disposable `emulator-*` Android Emulator. It retains semantic outcomes only and deletes all Android screenshots and debug output, including failures.
+
+```sh
+OXID_ANDROID_DEVICE=emulator-<port> OXID_ANDROID_DISPOSABLE=1 \
+  ./bootstrap.sh -- ./scripts/test-android-maestro-semantic-evidence.sh
+```
+
+The desktop compatibility check is limited to the existing developer pager at supported mobile-like widths; do not create another desktop harness.
+
+```sh
+just developer-pager-desktop-e2e
+```
 
 ## Operating rules
 
-- Maestro flows stay local-only and additive; preserve existing CDP and XCTest coverage.
-- Maestro must never enter the recovery ceremony. Native XCTest/CDP own that
-  behavior without publishing visual artifacts; Maestro uses the compile-time
-  simulated demo drawer to reach the holder shell.
-- The demo adapter intentionally omits native-custody Backup. Maestro captures
-  Settings and leaves Backup behavior to the existing native XCTest/CDP suites.
-- Both Maestro output and debug logs stay below the ignored per-device artifact
-  root; a global Maestro state directory is never an accepted evidence path.
-- Android applies `FLAG_SECURE` after demo protection initializes. Its only
-  post-protection capture is the public simulated Home route after the explicit
-  Session privacy reveal; the flow re-masks immediately before entering Settings.
-  Settings, Documents, credential review, backup/recovery, and other secret-bearing
-  routes remain protected. CDP remains authoritative for the 30-second timeout and
-  lifecycle re-arm behavior. iOS has no foreground screenshot-blocking API.
-- Capture at 375 pt/dp-class width and one larger width for every matrix state where the platform harness exposes the size control.
-- If a visual or accessibility defect is observed, file a linked owning-screen follow-up instead of changing product code in this evidence slice.
-- A WebView hierarchy or platform-harness limitation is evidence, not permission to weaken semantic assertions or capture sensitive data.
+- Maestro flows are local-only and additive; existing CDP and XCTest coverage remains authoritative.
+- Maestro never enters the recovery ceremony: never capture a recovery phrase. The demo adapter omits native-custody Backup, and protected/protocol flows stay in their exact Rust/CDP/XCTest layer.
+- Android applies `FLAG_SECURE` after demo protection initializes. It is semantic-only in the final sweep; protected screenshots and failure artifacts are deleted.
+- A global Maestro state directory such as `~/.maestro/tests/` is never an accepted evidence path. Only receipt-owned, repository-scoped artifacts may be inspected or retained.
+- Android must be re-masked before any unrelated operator use after a semantic sweep. CDP/XCTest/Rust evidence remains authoritative for protected and protocol behavior.
+- Capture the canonical iOS public lane at 375 pt/dp-class width. A platform-harness limitation is evidence, not permission to weaken semantic assertions or capture sensitive data.
+- A reproduced navigation, overlap, privacy, focus, or misleading-state defect blocks this evidence slice. Cosmetic deltas require a linked follow-up rather than product-code changes here.

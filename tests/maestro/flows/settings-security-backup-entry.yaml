@@ -8,7 +8,24 @@ name: settings security backup entry
 - assertVisible: "Settings"
 - tapOn: "Open Security"
 - assertVisible: "Security"
-- tapOn: "Go back"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - back
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn: "Go back"
+- assertVisible: "Settings"
+- scrollUntilVisible:
+    element:
+      text: "Open Backup"
+    direction: DOWN
+    speed: 40
+    timeout: 20000
+    centerElement: true
 - tapOn: "Open Backup"
-- assertVisible: "Backup"
+- assertVisible: "One encrypted wallet document"
 # Backup actions and recovery content are deliberately not entered.
