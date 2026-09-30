@@ -108,8 +108,12 @@ turns while waking the parent for an actual child request, and they reconcile de
 attention in headless/print-mode sessions. They additionally preserve detached
 workflow visibility and reconcile terminal usage when live events are
 incomplete.
-The tracked smoke requires the headless-attention capabilities before Pi may
-dispatch a child.
+The tracked pre-dispatch smoke executes
+`scripts/factory/verify-pi-subagents-package.mjs` and requires those capabilities
+in the installed compiled package before Pi may dispatch a child. That
+structural check is distinct from the bounded behavioral print-mode smoke
+recorded for issue #863, where a detached child requested supervisor attention
+once, received one response, and completed normally.
 
 Validate shell entry, the exact private package, all native review-tool
 registrations, and runtime skill discovery without an LLM call or GitHub

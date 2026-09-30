@@ -50,6 +50,10 @@ exact `pi-subagents@0.70.0` pin and uses tracked
 owns its tool list. A pinned-runtime smoke test confirms project precedence
 when the local Pi installation is present; public CI tests the repository
 contract without claiming to validate unavailable user-level installations.
+The shell smoke calls a separately tested compiled-package verifier before
+dispatch. A bounded issue-#863 print-mode run, recorded as operational evidence,
+then proved the distinct live behavior: one detached attention request, one
+supervisor response, and normal child completion.
 `subagents.agentOverrides` is deliberately not presented as a tool-list repair.
 
 The project extension keeps its runtime-independent logic in

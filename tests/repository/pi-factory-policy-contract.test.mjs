@@ -29,6 +29,7 @@ import {
   inspectDevLoopDispatch,
   resolveSupervisorModelRoute,
 } from "../../scripts/lib/dev-loop-model-routing.mjs";
+import { verifyPiSubagentsPackage } from "../../scripts/factory/verify-pi-subagents-package.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -84,12 +85,7 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(smoke, /PI_CODING_AGENT_SESSION_DIR/u);
   assert.match(smoke, /PI_SUBAGENTS_TEMP_ROOT/u);
   assert.match(smoke, /owner-private runtime state/u);
-  assert.match(smoke, /unexpected pi-subagents package/u);
-  assert.match(smoke, /attentionRunsForSession/u);
-  assert.match(smoke, /remembered detached foreground descendant/u);
-  assert.match(smoke, /reconcileDetachedWorkflowChildCompletion/u);
-  assert.match(smoke, /planWorkflowSettlement/u);
-  assert.match(smoke, /hasPendingSupervisorRequest/u);
+  assert.match(smoke, /node scripts\/factory\/verify-pi-subagents-package\.mjs "\$subagent_package_root"/u);
   assert.match(smoke, /skill:taskflow/u);
   assert.match(smoke, /unsafe inherited taskflow resources are active/u);
   assert.match(smoke, /Pi startup modified tracked project agent shadows/u);
@@ -121,6 +117,56 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(dockerSandboxLauncher, /unset DOCKER_SANDBOX_ENV_PASSTHROUGH/u);
   assert.match(dockerSandboxLauncher, /unset DOCKER_SANDBOX/u);
   assert.doesNotMatch(dockerSandboxLauncher, /\/sandbox(?:\/|")/u);
+});
+
+async function writePiSubagentsFixture(root, { version = "0.70.0", omit = null, removeCapability = null } = {}) {
+  const files = {
+    "package.json": JSON.stringify({ name: "pi-subagents", version }),
+    "src/shared/types.d.ts": [
+      "asyncByDefault?", "forceTopLevelAsync?", "maxSubagentDepth?",
+      "maxSubagentSpawnsPerSession?", "maxSubagentSpawnsPerRun?",
+      "globalConcurrencyLimit?", "toolBudget?", "usageBudget?", "parallel?",
+      "chain?", "dynamicFanout?", "maxItems?", "artifactDir?",
+    ].join("\n"),
+    "src/agents/agents.js": "frontmatter.timeoutMs frontmatter.toolBudget frontmatter.maxSubagentDepth",
+    "src/runs/shared/tool-budget.js": "soft hard block",
+    "src/runs/background/wait-tool.js": "remembered detached foreground descendant",
+    "src/runs/background/subagent-wait.js": "attentionRunsForSession stopOnAttention",
+    "src/runs/background/auto-drain.js": "hasPendingSupervisorRequest",
+    "src/runs/foreground/workflow-detach-reconcile.js": "reconcileDetachedWorkflowChildCompletion planWorkflowSettlement",
+  };
+  for (const [relativePath, original] of Object.entries(files)) {
+    if (relativePath === omit) continue;
+    const source = removeCapability ? original.replace(removeCapability, "") : original;
+    await mkdir(path.dirname(path.join(root, relativePath)), { recursive: true });
+    await writeFile(path.join(root, relativePath), source);
+  }
+}
+
+test("pi-subagents compiled capability verifier accepts the reviewed package surface", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-subagents-valid-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writePiSubagentsFixture(root);
+  assert.deepEqual(await verifyPiSubagentsPackage(root), { name: "pi-subagents", version: "0.70.0" });
+});
+
+test("pi-subagents compiled capability verifier reports missing artifacts and capabilities", async (t) => {
+  const missingArtifact = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-subagents-missing-"));
+  const missingCapability = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-subagents-capability-"));
+  t.after(() => Promise.all([
+    rm(missingArtifact, { recursive: true, force: true }),
+    rm(missingCapability, { recursive: true, force: true }),
+  ]));
+  await writePiSubagentsFixture(missingArtifact, { omit: "src/runs/background/auto-drain.js" });
+  await assert.rejects(
+    verifyPiSubagentsPackage(missingArtifact),
+    /missing required compiled artifact src\/runs\/background\/auto-drain\.js/u,
+  );
+  await writePiSubagentsFixture(missingCapability, { removeCapability: "attentionRunsForSession" });
+  await assert.rejects(
+    verifyPiSubagentsPackage(missingCapability),
+    /subagent-wait\.js lacks required capability attentionRunsForSession/u,
+  );
 });
 
 test("dev-loop routing binds the exact supervisor model and reasoning before dispatch", () => {

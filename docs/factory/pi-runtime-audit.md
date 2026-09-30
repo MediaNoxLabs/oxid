@@ -68,12 +68,12 @@ The owner-aware reconciliation of remaining dirty/unmerged state is tracked by
 
 | Package | Pin | Available at audit | Decision |
 | --- | --- | --- | --- |
-| `pi-coding-agent` | `0.85.1` via locked Nix | `0.87.1` in nixpkgs unstable | retain until the 0.86/0.87 extension and session API breaks are audited |
-| `dev-loops` | `1.0.2` | `1.0.4` | retain; 1.0.4 adds a pre-PR review and broader default fan-out, so it needs a measured policy review rather than an incidental patch upgrade |
+| `pi-coding-agent` | `0.85.1` via locked Nix | `0.87.1` in nixpkgs unstable | retain until the [0.86/0.87 extension and session API changes](https://github.com/earendil-works/pi/blob/v0.87.1/packages/coding-agent/CHANGELOG.md) are audited |
+| `dev-loops` | `1.0.2` | `1.0.4` | retain; the [1.0.4 changelog](https://github.com/mfittko/dev-loops/blob/v1.0.4/CHANGELOG.md) adds a pre-PR review and broader default fan-out, so it needs a measured policy review rather than an incidental patch upgrade |
 | `@dev-loops/core` | `1.0.2` | `1.0.4` | retain exact parity with the reviewed `dev-loops` pin |
 | `@playwright/test` | `1.60.0` | `1.63.0` | retain until the paired dev-loops/browser contract is upgraded |
 | `@axe-core/playwright` | `4.10.0` | `4.13.0` | retain until the paired dev-loops/browser contract is upgraded |
-| `pi-subagents` | `0.70.0` | `0.73.1` | latest verified Pi-0.85-compatible detached/headless release; 0.70.1 fails its detached runner on Pi 0.85.1 and 0.71+ requires `pi-ai >=0.86.1` |
+| `pi-subagents` | `0.70.0` | `0.73.1` | latest verified Pi-0.85-compatible detached/headless release; the [upstream changelog](https://github.com/nicobailon/pi-subagents/blob/v0.70.0/CHANGELOG.md) records the relevant lifecycle fixes, while an exact local 0.70.1 smoke fails its detached runner on Pi 0.85.1 and 0.71+ requires `pi-ai >=0.86.1` |
 | `agent-review-pi` | `0.6.0` | `0.6.0` | adopted with exact peers by [#301](https://github.com/MediaNoxLabs/oxid/issues/301) |
 | `pi-taskflow` | `0.2.10` | `0.3.0-beta.1.2` | peer only; runtime resources disabled |
 | `typebox` | `1.3.9` | `1.3.34` | minimum compatible exact peer; retain |
@@ -108,7 +108,11 @@ sessions plus detached lifecycle/results survive exiting and re-entering
 `nix develop` and are shared only by that checkout's linked worktrees, never by
 the expiring Nix `TMPDIR`. The smoke rejects missing or misdirected runtime
 state and an incompatible Pi version with actionable diagnostics before native
-dispatch.
+dispatch. Its package check is structural: the independently tested
+`scripts/factory/verify-pi-subagents-package.mjs` checks the exact manifest,
+compiled artifacts, schema fields, and headless-attention symbols. The separate
+bounded issue-#863 print-mode run supplies behavioral evidence; the structural
+smoke does not claim to simulate a live supervisor exchange.
 
 The `pi-subagents` releases through 0.70.0 contain fixes directly related to
 recovered/detached runs, budget/timeout terminal classification, smaller child
