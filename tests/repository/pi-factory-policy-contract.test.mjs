@@ -24,6 +24,7 @@ import {
   selectPreMutationExecution,
 } from "../../scripts/dev-loops.mjs";
 import {
+  DEV_LOOP_ADMISSION_BINDING,
   devLoopRoutingInstruction,
   inspectDevLoopDispatch,
   resolveSupervisorModelRoute,
@@ -122,6 +123,9 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
 });
 
 test("dev-loop routing binds the exact supervisor model and reasoning before dispatch", () => {
+  const implementationBinding = {
+    extensionBindings: { [DEV_LOOP_ADMISSION_BINDING]: { phase: "implementation" } },
+  };
   const trackedDefault = resolveSupervisorModelRoute(
     { provider: "openai-codex", id: "gpt-5.6-terra" },
     "medium",
@@ -134,22 +138,37 @@ test("dev-loop routing binds the exact supervisor model and reasoning before dis
   );
   assert.equal(highRisk.route.routedModel, "openai-codex/gpt-6-astra:high");
   assert.match(highRisk.text, /exact per-run model openai-codex\/gpt-6-astra:high/u);
+  assert.match(highRisk.text, /extensionBindings/u);
+  assert.match(highRisk.text, /oxid\.dev-loop-admission\/1/u);
 
   assert.equal(inspectDevLoopDispatch({
     toolName: "subagent",
-    input: { agent: "dev-loop", model: "openai-codex/gpt-6-astra:high" },
+    input: { agent: "dev-loop", model: "openai-codex/gpt-6-astra:high", ...implementationBinding },
     model: { provider: "openai-codex", id: "gpt-6-astra" },
     thinking: "high",
   }).block, false);
   for (const model of [undefined, "openai-codex/gpt-5.6-terra:medium", "openai-codex/gpt-6-astra:medium"]) {
     const decision = inspectDevLoopDispatch({
       toolName: "subagent",
-      input: { agent: "dev-loop", ...(model ? { model } : {}) },
+      input: { agent: "dev-loop", ...implementationBinding, ...(model ? { model } : {}) },
       model: { provider: "openai-codex", id: "gpt-6-astra" },
       thinking: "high",
     });
     assert.equal(decision.block, true);
     assert.match(decision.reason, /must use the active supervisor route/u);
+  }
+  for (const phase of [undefined, "draft_gate", "preApproval"]) {
+    const phaseBinding = phase
+      ? { extensionBindings: { [DEV_LOOP_ADMISSION_BINDING]: { phase } } }
+      : {};
+    const decision = inspectDevLoopDispatch({
+      toolName: "subagent",
+      input: { agent: "dev-loop", model: "openai-codex/gpt-6-astra:high", ...phaseBinding },
+      model: { provider: "openai-codex", id: "gpt-6-astra" },
+      thinking: "high",
+    });
+    assert.equal(decision.block, true);
+    assert.match(decision.reason, /supervisor-owned/u);
   }
   assert.throws(
     () => resolveSupervisorModelRoute({ provider: "openai-codex", id: "gpt-6-astra" }, "unbounded"),

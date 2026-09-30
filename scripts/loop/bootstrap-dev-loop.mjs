@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { parseConventionalSubject, validateBranchName } from "../ci/contribution-policy.mjs";
 import { deliveryTargetFromIssueBody } from "../lib/delivery-target.mjs";
+import { assertFactoryIssueContract } from "../lib/factory-issue-contract.mjs";
 import { ensureRecordedDeliveryBase, resolveRepositoryWorktreePath, runEnsureWorktree } from "./ensure-worktree.mjs";
 
 const DEV_LOOP_COMMAND = /^\/dev-loop (prototype|production-ready) issue ([1-9]\d*)$/u;
@@ -64,6 +65,7 @@ function issueIdentity(commandRunner, repository, issue) {
   } catch (error) {
     throw new Error(`could not resolve issue #${issue} delivery metadata: ${error.message}`);
   }
+  assertFactoryIssueContract(record);
   const subject = parseConventionalSubject(record?.title);
   if (!subject.ok || !subject.type) throw new Error(`issue #${issue} title is not a valid conventional subject: ${subject.errors.join("; ")}`);
   const target = deliveryTargetFromIssueBody(record?.body);

@@ -2,6 +2,7 @@
 
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const MODEL_PART = /^[a-z0-9][a-z0-9.-]*$/u;
+export const DEV_LOOP_ADMISSION_BINDING = "oxid.dev-loop-admission/1";
 
 export function resolveSupervisorModelRoute(model, thinking) {
   const provider = typeof model?.provider === "string" ? model.provider.trim() : "";
@@ -24,6 +25,14 @@ export function resolveSupervisorModelRoute(model, thinking) {
 
 export function inspectDevLoopDispatch({ toolName, input, model, thinking }) {
   if (toolName !== "subagent" || input?.agent !== "dev-loop") return { applies: false, block: false };
+  const phase = input?.extensionBindings?.[DEV_LOOP_ADMISSION_BINDING]?.phase;
+  if (phase !== "implementation") {
+    return {
+      applies: true,
+      block: true,
+      reason: `Dev-loop implementation children require extensionBindings[${JSON.stringify(DEV_LOOP_ADMISSION_BINDING)}].phase=implementation; draft_gate and preApproval are supervisor-owned.`,
+    };
+  }
   let route;
   try {
     route = resolveSupervisorModelRoute(model, thinking);
@@ -52,6 +61,7 @@ export function devLoopRoutingInstruction(model, thinking) {
     text: [
       "Supervisor model routing is fail-closed for the sole dev-loop implementation child.",
       `Dispatch agent dev-loop with the exact per-run model ${route.routedModel}.`,
+      `Set extensionBindings[${JSON.stringify(DEV_LOOP_ADMISSION_BINDING)}] to {\"phase\":\"implementation\"}; this uses pi-subagents' bounded extension binding rather than an unsupported top-level parameter.`,
       "Do not omit, replace, downgrade, or retry that route; the pre-dispatch guard rejects disagreement.",
     ].join(" "),
   };
