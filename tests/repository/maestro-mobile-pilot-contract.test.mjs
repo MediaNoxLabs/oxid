@@ -20,6 +20,7 @@ const requiredCoverage = [
   "Passport Vault terminal outcomes",
   "Settings, security, and backup entry",
   "development capabilities, diagnostics, event log, and benchmark entry",
+  "developer profile banner open and closed",
 ];
 const privateSelector = /(?:did:[a-z0-9]|openid|https?:\/\/|request_uri|issuer[-_ ]?(?:id|uri)|recovery phrase|seed phrase|\$\{)/iu;
 
@@ -32,7 +33,7 @@ test("Maestro inventory is closed, classified, and references every runnable flo
   assert.equal(inventory.schema, "oxid-maestro-inventory-v1");
   assert.deepEqual(inventory.privacy.composition, ["demo", "dev"]);
   assert.equal(inventory.privacy.network, "simulated-or-undeployed-only");
-  assert.deepEqual(inventory.privacy.publicCaptures, ["canonical-holder-evidence"]);
+  assert.deepEqual(inventory.privacy.publicCaptures, ["canonical-holder-evidence", "developer-profile-banner"]);
   assert.equal(inventory.privacy.failureArtifacts, "private-and-deleted");
 
   const coverage = new Set(inventory.scenarios.map(({ coverage: item }) => item));
@@ -50,7 +51,7 @@ test("Maestro inventory is closed, classified, and references every runnable flo
       const source = await read(`tests/maestro/${scenario.flow}`);
       assert.match(source, /^appId: io\.medianox\.oxid/mu);
       assert.match(source, /runFlow: \.\.\/subflows\/launch-clean\.yaml/u);
-      if (scenario.id !== "onboarding-safe-boundary") {
+      if (!["onboarding-safe-boundary", "developer-profile-banner"].includes(scenario.id)) {
         assert.match(source, /runFlow: \.\.\/subflows\/demo-profile\.yaml/u);
       }
       assert.doesNotMatch(source, privateSelector, `${scenario.id} leaks a private or dynamic selector`);
@@ -71,7 +72,9 @@ test("Maestro subflows centralize clean setup and keep selectors privacy-safe", 
     assert.doesNotMatch(source, /launchApp:/u, `${name} must reuse launch setup`);
     assert.doesNotMatch(source, /Open saved DID details|Forget saved DID/u, `${name} must not select an identity value`);
     assert.doesNotMatch(source, privateSelector, `${name} must not interpolate or embed a private selector`);
-    if (name !== "canonical-holder-evidence.yaml") assert.doesNotMatch(source, /takeScreenshot:/u);
+    if (!["canonical-holder-evidence.yaml", "developer-profile-banner.yaml"].includes(name)) {
+      assert.doesNotMatch(source, /takeScreenshot:/u);
+    }
   }
 
   const [launch, profile, canonical] = await Promise.all([
@@ -89,6 +92,12 @@ test("Maestro subflows centralize clean setup and keep selectors privacy-safe", 
     profile,
     /Run demo action: (?:Derive Midnight account|Load simulated funding|Credential offer)|Generate recovery phrase|Create a DID/iu,
   );
+  const developerBanner = await read("tests/maestro/flows/developer-profile-banner.yaml");
+  assert.match(developerBanner, /assertVisible: "Developer profile"/u);
+  assert.doesNotMatch(developerBanner, /demo-profile\.yaml/u);
+  assert.match(developerBanner, /tapOn: "Dismiss developer profile notice for this session"/u);
+  assert.match(developerBanner, /assertNotVisible: "Developer profile"/u);
+  assert.equal(developerBanner.match(/takeScreenshot: developer-profile-banner-/gu)?.length, 2);
   assert.equal(canonical.match(/takeScreenshot: lunar-aegis-ios-/gu)?.length, 8);
   assert.doesNotMatch(canonical, /takeScreenshot:.*(?:recovery|credential|DID)/iu);
 });

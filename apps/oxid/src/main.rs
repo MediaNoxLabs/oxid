@@ -698,8 +698,9 @@ fn main() {
     {
         let app_links = application.identity_link_ingress();
         let presentation_lifecycle = application.set_credential_presentation_foreground();
-        let config =
-            dioxus::mobile::Config::new().with_custom_event_handler(move |event, _target| {
+        let config = dioxus::mobile::Config::new()
+            .with_custom_index(include_str!("../assets/index.html").to_owned())
+            .with_custom_event_handler(move |event, _target| {
                 match event {
                     dioxus::mobile::tao::event::Event::Opened { urls } => {
                         for url in urls {
@@ -749,6 +750,19 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::generated_brand::BRAND_PROFILE;
+
+    #[test]
+    fn mobile_bootstrap_index_uses_safe_area_viewport_and_dioxus_placeholders() {
+        let index = include_str!("../assets/index.html");
+
+        assert_eq!(index.matches("name=\"viewport\"").count(), 1);
+        assert!(index.contains("width=device-width"));
+        assert!(index.contains("initial-scale=1"));
+        assert!(index.contains("viewport-fit=cover"));
+        assert!(index.contains("<div id=\"main\"></div>"));
+        assert!(index.contains("<!-- CUSTOM HEAD -->"));
+        assert!(index.contains("<!-- MODULE LOADER -->"));
+    }
 
     #[test]
     fn default_brand_pins_identity_and_security_copy() {

@@ -116,5 +116,12 @@ mod tests {
             .expect("development notice dismiss control rule");
         assert!(dismiss_control.contains("width: 2.75rem;"));
         assert!(dismiss_control.contains("height: 2.75rem;"));
+
+        let gateway_rule = BASE_STYLES
+            .split(".profile-gateway-frame > .developer-profile-banner,")
+            .nth(1)
+            .and_then(|styles| styles.split('}').next())
+            .expect("gateway notice safe-area rule");
+        assert!(gateway_rule.contains("margin: 0 0 var(--space-2);"));
     }
 }

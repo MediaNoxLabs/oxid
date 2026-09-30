@@ -4,7 +4,7 @@
     "composition": ["demo", "dev"],
     "network": "simulated-or-undeployed-only",
     "selectorPolicy": "static-privacy-safe-accessibility-labels-only",
-    "publicCaptures": ["canonical-holder-evidence"],
+    "publicCaptures": ["canonical-holder-evidence", "developer-profile-banner"],
     "failureArtifacts": "private-and-deleted"
   },
   "scenarios": [
@@ -22,6 +22,7 @@
     {"id":"did-create-resolve-detail","composition":"dev","authority":"lower-authoritative-layer","platforms":[],"flow":null,"coverage":"DID create, resolve, and detail","reason":"DID operations create protected state; native and headless contracts own outcomes."},
     {"id":"issuance-presentation-siopv2","composition":"dev","authority":"lower-authoritative-layer","platforms":[],"flow":null,"coverage":"issuance, presentation, SIOPv2 accept/refuse/outcome review","reason":"Protocol consent and terminal outcomes remain authoritative in CDP, XCTest, and Rust."},
     {"id":"passport-vault-terminal-outcomes","composition":"dev","authority":"lower-authoritative-layer","platforms":[],"flow":null,"coverage":"Passport Vault terminal outcomes","reason":"Vault calls require protected proof evidence and are not a Maestro finality claim."},
-    {"id":"dev-diagnostics-benchmark","composition":"dev","authority":"manual-local","platforms":["ios"],"flow":null,"coverage":"development capabilities, diagnostics, event log, and benchmark entry","reason":"The development composition has no secret-free clean-state profile bootstrap; #798 owns its final local evidence."}
+    {"id":"dev-diagnostics-benchmark","composition":"dev","authority":"manual-local","platforms":["ios"],"flow":null,"coverage":"development capabilities, diagnostics, event log, and benchmark entry","reason":"The development composition has no secret-free clean-state profile bootstrap; #798 owns its final local evidence."},
+    {"id":"developer-profile-banner","composition":"dev","authority":"maestro","platforms":["ios","android"],"flow":"flows/developer-profile-banner.yaml","coverage":"developer profile banner open and closed"}
   ]
 }

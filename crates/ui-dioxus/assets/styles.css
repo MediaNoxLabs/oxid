@@ -130,6 +130,13 @@ button {
   font-size: var(--font-caption);
 }
 
+/* Gateway notices sit outside `.app-shell`; retain their own safe-area inset
+   instead of applying the shell-bleed negative margin used by route notices. */
+.profile-gateway-frame > .developer-profile-banner,
+.profile-gateway-frame > .demo-profile-banner {
+  margin: 0 0 var(--space-2);
+}
+
 .developer-profile-banner strong,
 .demo-profile-banner strong {
   letter-spacing: 0.04em;

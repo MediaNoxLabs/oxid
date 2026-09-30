@@ -3602,6 +3602,7 @@ fn WalletApp() -> Element {
             style { {BASE_STYLES} }
             {demo_gateway_drawer}
             div {
+                class: "profile-gateway-frame",
                 aria_hidden: if demo_gateway_hidden { "true" } else { "false" },
                 inert: html_boolean_attribute(demo_gateway_inert),
                 DeveloperProfileBanner { state: developer_notice_state }
