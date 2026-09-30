@@ -247,6 +247,13 @@ pub(crate) fn did_source(value: &str) -> &'static str {
     }
 }
 
+pub(crate) fn vault_activity_retention(value: &str) -> &'static str {
+    match value {
+        "process_local_bounded_not_backed_up" => "This session only; bounded and not backed up",
+        _ => "Retention unavailable",
+    }
+}
+
 pub(crate) fn midnight_network(value: &str) -> &'static str {
     match value {
         "mainnet" => "Mainnet",

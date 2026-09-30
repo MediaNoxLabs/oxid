@@ -5731,6 +5731,7 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
         });
     });
 
+    let retry_profile_id = active_profile.id.clone();
     rsx! {
         section { class: "page-heading",
             p { class: "eyebrow", "Wallet history" }
@@ -5753,7 +5754,7 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
                         r#type: "button",
                         onclick: move |_| {
                             let services = services.clone();
-                            let profile_id = active_profile.id.clone();
+                            let profile_id = retry_profile_id.clone();
                             state.set(AccountPageState::Loading);
                             spawn(async move {
                                 state.set(

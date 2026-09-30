@@ -6,7 +6,7 @@ use oxid_passport_vault_application::{
     PassportVaultCallKind,
 };
 
-use super::activity_observed_at_line;
+use super::{activity_observed_at_line, labels};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum VaultActivityPageState {
@@ -29,11 +29,14 @@ pub(super) fn PassportVaultActivityCard(state: VaultActivityPageState) -> Elemen
                 VaultActivityPageState::Unavailable(error) => rsx! {
                     p { class: "activity-empty-state", role: "status", "Vault activity is unavailable. {error}" }
                 },
-                VaultActivityPageState::Ready(activity) if activity.records.is_empty() => rsx! {
-                    p { class: "activity-empty-state", "No Passport Vault operations are available for this profile yet." }
+                VaultActivityPageState::Ready(activity) if activity.records.is_empty() => {
+                    let empty_message = "No Passport Vault operations are available for this profile yet.";
+                    rsx! {
+                        p { class: "activity-empty-state", "{empty_message}" }
+                    }
                 },
                 VaultActivityPageState::Ready(activity) => {
-                    let retention = activity.retention.replace('_', " ");
+                    let retention = labels::vault_activity_retention(&activity.retention);
                     rsx! {
                         div { class: "activity-list", aria_label: "Passport Vault activity",
                             for record in activity.records {
