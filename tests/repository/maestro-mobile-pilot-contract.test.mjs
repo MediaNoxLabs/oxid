@@ -5,94 +5,144 @@ import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 
 const root = new URL("../../", import.meta.url);
+const requiredCoverage = [
+  "onboarding and safe recovery boundary",
+  "profile and realm switching",
+  "Home, Receive, Send entry and blocked states",
+  "wallet synchronization and status",
+  "Documents reachability and empty state",
+  "DID inventory reachability and empty state",
+  "credential detail",
+  "DID create, resolve, and detail",
+  "issuance, presentation, SIOPv2 accept/refuse/outcome review",
+  "Activity and fixture transaction detail",
+  "Passport Vault review entry",
+  "Passport Vault terminal outcomes",
+  "Settings, security, and backup entry",
+  "development capabilities, diagnostics, event log, and benchmark entry",
+];
+const privateSelector = /(?:did:[a-z0-9]|openid|https?:\/\/|request_uri|issuer[-_ ]?(?:id|uri)|recovery phrase|seed phrase|\$\{)/iu;
 
-async function read(path) {
-  return readFile(new URL(path, root), "utf8");
+async function read(file) {
+  return readFile(new URL(file, root), "utf8");
 }
 
-test("Maestro stays pinned, local-only, and additive to native coverage", async () => {
-  const [packages, docs, runScript] = await Promise.all([
-    read("nix/packages/default.nix"),
-    read("docs/factory/maestro-mobile-pilot.md"),
+test("Maestro inventory is closed, classified, and references every runnable flow", async () => {
+  const inventory = JSON.parse(await read("tests/maestro/inventory.json"));
+  assert.equal(inventory.schema, "oxid-maestro-inventory-v1");
+  assert.deepEqual(inventory.privacy.composition, ["demo", "dev"]);
+  assert.equal(inventory.privacy.network, "simulated-or-undeployed-only");
+  assert.deepEqual(inventory.privacy.publicCaptures, ["canonical-holder-evidence"]);
+  assert.equal(inventory.privacy.failureArtifacts, "private-and-deleted");
+
+  const coverage = new Set(inventory.scenarios.map(({ coverage: item }) => item));
+  for (const item of requiredCoverage) assert.ok(coverage.has(item), `missing coverage classification: ${item}`);
+
+  const referencedFlows = new Set();
+  for (const scenario of inventory.scenarios) {
+    assert.match(scenario.id, /^[a-z0-9]+(?:-[a-z0-9]+)*$/u);
+    assert.ok(["demo", "dev"].includes(scenario.composition));
+    assert.ok(["maestro", "lower-authoritative-layer", "manual-local"].includes(scenario.authority));
+    assert.ok(Array.isArray(scenario.platforms));
+    if (scenario.authority === "maestro") {
+      assert.match(scenario.flow, /^flows\/[a-z0-9-]+\.yaml$/u);
+      referencedFlows.add(scenario.flow.slice("flows/".length));
+      const source = await read(`tests/maestro/${scenario.flow}`);
+      assert.match(source, /^appId: io\.medianox\.oxid/mu);
+      assert.match(source, /runFlow: \.\.\/subflows\/launch-clean\.yaml/u);
+      if (scenario.id !== "onboarding-safe-boundary") {
+        assert.match(source, /runFlow: \.\.\/subflows\/demo-profile\.yaml/u);
+      }
+      assert.doesNotMatch(source, privateSelector, `${scenario.id} leaks a private or dynamic selector`);
+    } else {
+      assert.equal(scenario.flow, null);
+      assert.match(scenario.reason, /authoritative|protected|proof|clean-state|evidence/iu);
+    }
+  }
+
+  const flowNames = new Set((await readdir(new URL("tests/maestro/flows/", root))).filter((name) => name.endsWith(".yaml")));
+  assert.deepEqual(flowNames, referencedFlows, "every checked-in modular flow must be inventory-owned");
+});
+
+test("Maestro subflows centralize clean setup and keep selectors privacy-safe", async () => {
+  const flowNames = (await readdir(new URL("tests/maestro/flows/", root))).filter((name) => name.endsWith(".yaml"));
+  const flows = await Promise.all(flowNames.map(async (name) => [name, await read(`tests/maestro/flows/${name}`)]));
+  for (const [name, source] of flows) {
+    assert.doesNotMatch(source, /launchApp:/u, `${name} must reuse launch setup`);
+    assert.doesNotMatch(source, /Open saved DID details|Forget saved DID/u, `${name} must not select an identity value`);
+    assert.doesNotMatch(source, privateSelector, `${name} must not interpolate or embed a private selector`);
+    if (name !== "canonical-holder-evidence.yaml") assert.doesNotMatch(source, /takeScreenshot:/u);
+  }
+
+  const [launch, profile, canonical] = await Promise.all([
+    read("tests/maestro/subflows/launch-clean.yaml"),
+    read("tests/maestro/subflows/demo-profile.yaml"),
+    read("tests/maestro/flows/canonical-holder-evidence.yaml"),
+  ]);
+  for (const subflow of [launch, profile, await read("tests/maestro/subflows/open-menu.yaml")]) {
+    assert.match(subflow, /^appId: io\.medianox\.oxid[\s\S]*\n---\n/mu);
+  }
+  assert.match(launch, /launchApp:[\s\S]*clearState: true/u);
+  assert.match(launch, /extendedWaitUntil:[\s\S]*visible: "Create private wallet"[\s\S]*timeout: 60000/u);
+  assert.match(profile, /Create or select demo profile/u);
+  assert.doesNotMatch(
+    profile,
+    /Run demo action: (?:Derive Midnight account|Load simulated funding|Credential offer)|Generate recovery phrase|Create a DID/iu,
+  );
+  assert.equal(canonical.match(/takeScreenshot: lunar-aegis-ios-/gu)?.length, 8);
+  assert.doesNotMatch(canonical, /takeScreenshot:.*(?:recovery|credential|DID)/iu);
+});
+
+test("platform wrappers admit only inventory-owned flows and reuse build receipts", async () => {
+  const [ios, android, runner, runScript] = await Promise.all([
+    read("scripts/run-maestro-ios.sh"),
+    read("scripts/run-maestro-android.sh"),
+    read("scripts/test-ios-maestro-holder-evidence.sh"),
     read("run.sh"),
   ]);
 
+  for (const wrapper of [ios, android]) {
+    assert.match(wrapper, /--composition demo\|dev --flow <inventory-id>/u);
+    assert.match(wrapper, /tests\/maestro\/inventory\.json/u);
+    assert.match(wrapper, /authority == "maestro"/u);
+    assert.match(wrapper, /run_phase build/u);
+    assert.match(wrapper, /run_phase deploy/u);
+    assert.match(wrapper, /--debug-output "\$debug_root"/u);
+  }
+  assert.match(ios, /run-ios-simulator\.sh ensure/u);
+  assert.match(ios, /\.maestro-lane\.lock/u);
+  assert.match(ios, /OXID_IOS_DEVICE must be an explicit simulator UDID/u);
+  assert.match(ios, /--udid "\$OXID_IOS_DEVICE"/u);
+  assert.match(android, /\^emulator-\[0-9\]\+\$/u);
+  assert.match(android, /refusing non-emulator device/u);
+  assert.match(android, /--device "\$OXID_ANDROID_DEVICE"/u);
+  for (const wrapper of [ios, android]) {
+    assert.match(wrapper, /if \[ "\$status" -ne 0 \]; then[\s\S]*rm -rf -- "\$artifact_root"/u);
+  }
+  assert.match(runner, /--composition demo --flow canonical-holder-evidence/u);
+  assert.equal(runScript.match(/node --test tests\/repository\/maestro-mobile-pilot-contract\.test\.mjs/gu)?.length, 1);
+});
+
+test("Maestro remains local, non-blocking, and additive to authoritative layers", async () => {
+  const [packages, docs] = await Promise.all([
+    read("nix/packages/default.nix"),
+    read("docs/factory/maestro-mobile-pilot.md"),
+  ]);
   assert.match(packages, /maestro = pkgs\.maestro;/u);
   assert.match(docs, /local only/iu);
-  assert.match(docs, /complements and does not replace the existing Android CDP and iOS XCTest suites/iu);
-  assert.match(docs, /It is not GitHub CI/iu);
-  assert.match(docs, /Never use a physical phone/iu);
-  assert.match(docs, /test-ios-maestro-holder-evidence\.sh/u);
-  assert.match(docs, /200-line Maestro tail/u);
-  assert.match(docs, /Raw per-device[\s\S]*deleted after collection/u);
-  assert.equal(
-    runScript.match(/node --test tests\/repository\/maestro-mobile-pilot-contract\.test\.mjs/gu)?.length,
-    1,
-  );
+  assert.match(docs, /CDP and iOS XCTest/u);
+  assert.match(docs, /not GitHub CI/iu);
+  assert.match(docs, /lower-authoritative-layer/u);
+  assert.match(docs, /manual-local/u);
 
-  const workflowDirectory = new URL(".github/workflows/", root);
-  const workflowNames = (await readdir(workflowDirectory)).filter((name) => /\.ya?ml$/u.test(name));
-  const workflowSources = await Promise.all(
-    workflowNames.map(async (name) => [name, await read(`.github/workflows/${name}`)]),
-  );
-  for (const [name, source] of workflowSources) {
-    assert.doesNotMatch(source, /maestro/iu, `${name} must not adopt the local-only pilot`);
+  const workflowNames = (await readdir(new URL(".github/workflows/", root))).filter((name) => /\.ya?ml$/u.test(name));
+  for (const name of workflowNames) {
+    assert.doesNotMatch(await read(`.github/workflows/${name}`), /maestro/iu, `${name} must not run local Maestro`);
   }
 });
 
-test("Maestro wrappers own only explicit simulator and emulator targets", async () => {
-  const [ios, android] = await Promise.all([
-    read("scripts/run-maestro-ios.sh"),
-    read("scripts/run-maestro-android.sh"),
-  ]);
-
-  assert.match(ios, /OXID_IOS_DEVICE/gu);
-  assert.match(ios, /OXID_IOS_RESET_DATA=1/u);
-  assert.match(ios, /OXID_STANDALONE_NETWORK_PROFILE=simulated/u);
-  assert.match(ios, /OXID_UI_PROFILE=demo/u);
-  assert.match(ios, /artifact_root="\$root\/target\/mobile-visual-accessibility\/ios\/\$OXID_IOS_DEVICE"/u);
-  assert.match(ios, /debug_root="\$artifact_root\/debug"/u);
-  assert.match(ios, /\.\/scripts\/run-ios-simulator\.sh deploy/u);
-  assert.match(
-    ios,
-    /nix run \.#maestro -- test tests\/maestro\/ios-lunar-aegis\.yaml[\s\\]*--udid "\$OXID_IOS_DEVICE" --test-output-dir "\$artifact_root"[\s\\]*--debug-output "\$debug_root"/u,
-  );
-
-  assert.match(android, /OXID_ANDROID_DEVICE/gu);
-  assert.match(android, /case "\$OXID_ANDROID_DEVICE" in emulator-\*/u);
-  assert.match(android, /refusing non-emulator device/u);
-  assert.match(android, /OXID_ANDROID_REQUIRE_EMULATOR=1/u);
-  assert.match(android, /OXID_STANDALONE_NETWORK_PROFILE=simulated/u);
-  assert.match(android, /OXID_UI_PROFILE=demo/u);
-  assert.match(android, /artifact_root="\$root\/target\/mobile-visual-accessibility\/android\/\$OXID_ANDROID_DEVICE"/u);
-  assert.match(android, /debug_root="\$artifact_root\/debug"/u);
-  assert.match(android, /\.\/scripts\/run-android-emulator\.sh deploy/u);
-  assert.match(
-    android,
-    /nix run \.#maestro -- test tests\/maestro\/android-lunar-aegis\.yaml[\s\\]*--device "\$OXID_ANDROID_DEVICE" --test-output-dir "\$artifact_root"[\s\\]*--debug-output "\$debug_root"/u,
-  );
-});
-
-test("iOS Maestro evidence runner owns a 375-point simulator and records bounded public metrics", async () => {
-  const runner = await read("scripts/test-ios-maestro-holder-evidence.sh");
-
-  assert.match(runner, /iPhone-SE-3rd-generation/u);
-  assert.match(runner, /oxid_ios_create_owned/u);
-  assert.match(runner, /oxid_ios_delete_owned/u);
-  assert.match(runner, /run-ios-simulator\.sh" build/u);
-  assert.match(runner, /run-maestro-ios\.sh"/u);
-  assert.match(runner, /mobile-visual-accessibility\/ios-run-/u);
-  assert.match(runner, /receiptOwnedSimulator:true/u);
-  assert.match(runner, /privateDiagnosticsRemoved:\$cleaned/u);
-  assert.match(runner, /rawArtifactsRemoved:\$rawRemoved/u);
-  assert.match(runner, /tail -n 200/u);
-  assert.match(runner, /lunar-aegis-ios-\*\.png/u);
-  assert.match(runner, /chmod 600/u);
-});
-
-test("mobile visual accessibility evidence keeps the scoped matrix and privacy boundary", async () => {
+test("mobile visual accessibility evidence preserves the scoped matrix and privacy boundary", async () => {
   const matrix = await read("docs/factory/mobile-visual-accessibility-evidence.md");
-
   for (const state of [
     "Welcome and create-vs-restore fork",
     "Mandatory device-protection explanation",
@@ -103,73 +153,29 @@ test("mobile visual accessibility evidence keeps the scoped matrix and privacy b
   ]) {
     assert.match(matrix, new RegExp(state, "u"));
   }
-  for (const screenId of ["XSwTg6CjwXruX8QP3tXy", "FFMmLvVQlc5xIun63FYX", "xYA9BiozNUetlxPJYHPT", "7u81lbjNIKcn8dS79axb"]) {
+  for (const screenId of [
+    "XSwTg6CjwXruX8QP3tXy",
+    "FFMmLvVQlc5xIun63FYX",
+    "xYA9BiozNUetlxPJYHPT",
+    "7u81lbjNIKcn8dS79axb",
+  ]) {
     assert.match(matrix, new RegExp(screenId, "u"));
   }
-  assert.match(matrix, /375 pt\/dp/u);
-  assert.match(matrix, /larger width/u);
-  assert.match(matrix, /safe-area\/navigation non-overlap/u);
-  assert.match(matrix, /44 px touch targets/u);
-  assert.match(matrix, /large-text truncation/u);
-  assert.match(matrix, /non-color status meaning/u);
-  assert.match(matrix, /deterministic Back/u);
-  assert.match(matrix, /modal focus return/u);
-  assert.match(matrix, /reduced motion/u);
-  assert.match(matrix, /screen-reader labels\/order/u);
+  for (const safeguard of [
+    "375 pt/dp",
+    "larger width",
+    "safe-area/navigation non-overlap",
+    "44 px touch targets",
+    "large-text truncation",
+    "non-color status meaning",
+    "deterministic Back",
+    "modal focus return",
+    "reduced motion",
+    "screen-reader labels/order",
+  ]) {
+    assert.match(matrix, new RegExp(safeguard, "u"));
+  }
   assert.match(matrix, /target\/mobile-visual-accessibility\/<platform>/u);
   assert.match(matrix, /never capture a recovery phrase/iu);
   assert.match(matrix, /iOS Simulator.*Android Emulator/us);
-});
-
-test("Maestro flows cover the holder shell without exposing recovery secrets", async () => {
-  const [ios, android] = await Promise.all([
-    read("tests/maestro/ios-lunar-aegis.yaml"),
-    read("tests/maestro/android-lunar-aegis.yaml"),
-  ]);
-
-  for (const [platform, source] of [
-    ["ios", ios],
-    ["android", android],
-  ]) {
-    assert.match(source, /appId: io\.medianox\.oxid/u);
-    assert.match(source, /Create private wallet/u);
-    assert.match(source, /scrollUntilVisible:[\s\S]*text: "Create and continue"[\s\S]*direction: DOWN/u);
-    assert.match(source, /Create and continue/u);
-    assert.match(source, /Device protection is required\.\*/u);
-    assert.match(source, /Open standalone demo setup/u);
-    assert.match(source, /Run demo action: Create or select demo profile/u);
-    assert.match(source, /Run demo action: Initialize or unlock wallet/u);
-    assert.match(
-      source,
-      /\(Initialized process-local standalone custody\.\|Wallet session was already unlocked; no key was regenerated\.\)/u,
-    );
-    assert.match(source, /Close standalone demo setup/u);
-    assert.match(source, /Current realm/u);
-    assert.match(source, /Receive/u);
-    assert.match(source, /Send/u);
-    assert.match(source, /Documents/u);
-    assert.match(source, /Activity/u);
-    assert.match(source, /SEND NIGHT/u);
-    assert.match(source, /tapOn: "Go back"/u);
-    assert.match(source, /No documents yet/u);
-    assert.match(source, /visible: "Sent"/u);
-    assert.match(source, /assertVisible: "Received"/u);
-    assert.match(source, /scrollUntilVisible:[\s\S]*text: "No documents yet"[\s\S]*direction: DOWN/u);
-    assert.match(source, new RegExp(`takeScreenshot: lunar-aegis-${platform}-01-first-run`, "u"));
-    assert.doesNotMatch(source, /takeScreenshot:.*recovery/iu);
-    assert.doesNotMatch(source, /Generate recovery phrase|New wallet recovery phrase/iu);
-    assert.doesNotMatch(source, /Run full demo setup|Derive Midnight account|Load simulated funding/iu);
-  }
-
-  assert.doesNotMatch(ios, /androidWebViewHierarchy/u);
-  assert.match(ios, /scrollUntilVisible:[\s\S]*text: "Received"[\s\S]*direction: DOWN/u);
-  assert.match(ios, /scrollUntilVisible:[\s\S]*text: "Open global application menu"[\s\S]*direction: UP/u);
-  assert.match(ios, /takeScreenshot: lunar-aegis-ios-02-device-protection/u);
-  assert.match(ios, /Open global application menu/u);
-  assert.match(ios, /Settings/u);
-  assert.match(android, /androidWebViewHierarchy: devtools/u);
-  assert.match(android, /tapOn: "Session privacy\.\*"[\s\S]*takeScreenshot: lunar-aegis-android-03-home-public-revealed/u);
-  assert.match(android, /Private values revealed[\s\S]*tapOn: "Session privacy\.\*"[\s\S]*Private values hidden/u);
-  assert.doesNotMatch(android, /takeScreenshot: lunar-aegis-android-0[4-9]/u);
-  assert.match(android, /tapOn: "Settings"/u);
 });

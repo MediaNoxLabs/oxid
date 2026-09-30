@@ -1,0 +1,14 @@
+appId: io.medianox.oxid
+name: settings security backup entry
+---
+- runFlow: ../subflows/launch-clean.yaml
+- runFlow: ../subflows/demo-profile.yaml
+- runFlow: ../subflows/open-menu.yaml
+- tapOn: "Settings"
+- assertVisible: "Settings"
+- tapOn: "Open Security"
+- assertVisible: "Security"
+- tapOn: "Go back"
+- tapOn: "Open Backup"
+- assertVisible: "Backup"
+# Backup actions and recovery content are deliberately not entered.

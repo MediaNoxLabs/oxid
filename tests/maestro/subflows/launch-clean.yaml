@@ -1,0 +1,9 @@
+appId: io.medianox.oxid
+name: clean launch
+---
+# Shared safe launch. Scenario flows must not duplicate this setup.
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "Create private wallet"
+    timeout: 60000
