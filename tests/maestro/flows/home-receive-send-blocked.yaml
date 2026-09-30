@@ -8,5 +8,14 @@ name: home receive send entry
 - tapOn: "Close Receive"
 - tapOn: "Send"
 - assertVisible: "SEND NIGHT"
-- tapOn: "Go back"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - back
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn: "Go back"
 - assertVisible: "Current realm"
