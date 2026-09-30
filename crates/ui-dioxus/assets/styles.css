@@ -1090,6 +1090,13 @@ textarea:focus-visible {
   line-height: 0.92;
 }
 
+.wallet-skeleton {
+  min-width: 3ch;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--surface-raised) 80%, var(--line));
+  color: transparent;
+}
+
 .wallet-hero__number-row > span {
   color: var(--text-muted);
   font-size: var(--font-body);
@@ -4009,6 +4016,22 @@ select:focus-visible {
 .bottom-nav__scan:disabled {
   cursor: wait;
   opacity: 0.65;
+}
+
+@media (max-width: 390px) {
+  .wallet-hero__heading-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .trust-line,
+  .network-field select {
+    overflow-wrap: anywhere;
+  }
+
+  .profile-sheet__profile {
+    min-height: 2.75rem;
+  }
 }
 
 .bottom-nav__scan-icon,

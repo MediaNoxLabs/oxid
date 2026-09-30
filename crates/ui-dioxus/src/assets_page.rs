@@ -31,17 +31,17 @@ pub(super) fn AssetsPage(
 
     match state.read().clone() {
         AccountPageState::Loading => rsx! {
-            section { class: "wallet-hero",
+            section { class: "wallet-hero", "data-ui-primitive": "Card Skeleton",
                 p { class: "eyebrow", "Wallet overview" }
-                div { class: "wallet-hero__number-row",
-                    h1 { "…" }
+                div { class: "wallet-hero__number-row", aria_busy: "true",
+                    h1 { class: "wallet-skeleton", "…" }
                     span { "NIGHT" }
                 }
                 p { class: "wallet-hero__hint", "Loading the selected Midnight account boundary…" }
             }
         },
         AccountPageState::Failed(error) => rsx! {
-            section { class: "wallet-hero",
+            section { class: "wallet-hero", "data-ui-primitive": "Card ErrorState",
                 p { class: "eyebrow", "Wallet overview" }
                 div { class: "wallet-hero__number-row",
                     h1 { "—" }
@@ -49,7 +49,7 @@ pub(super) fn AssetsPage(
                 }
                 p { class: "wallet-hero__hint", "Account state could not be loaded safely." }
             }
-            article { class: "empty-state surface-card", role: "alert",
+            article { class: "empty-state surface-card", role: "alert", "data-ui-primitive": "ErrorState",
                 h2 { "Midnight account unavailable" }
                 p { "{error}" }
                 button {
@@ -121,7 +121,7 @@ pub(super) fn AssetsPage(
             let mut activate_state = state;
 
             rsx! {
-                section { class: "wallet-hero",
+                section { class: "wallet-hero", "data-ui-primitive": "Card StatusPill",
                     div { class: "wallet-hero__heading-row",
                         p { class: "eyebrow", "Wallet overview" }
                         span { class: if account.source == "simulated" { "status-pill warning" } else { "status-pill" },
@@ -187,7 +187,7 @@ pub(super) fn AssetsPage(
                     }
                 }
 
-                label { class: "network-field",
+                label { class: "network-field", "data-ui-primitive": "SegmentedControl",
                     span { "Midnight network" }
                     select {
                         value: "{selected_network_id}",
