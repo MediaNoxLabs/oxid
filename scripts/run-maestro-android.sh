@@ -6,12 +6,35 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 : "${OXID_ANDROID_DEVICE:?set OXID_ANDROID_DEVICE to an emulator-* serial}"
 case "$OXID_ANDROID_DEVICE" in emulator-*) ;; *) echo "refusing non-emulator device" >&2; exit 2;; esac
-OXID_ANDROID_DEVICE="$OXID_ANDROID_DEVICE" OXID_ANDROID_REQUIRE_EMULATOR=1 \
-  OXID_STANDALONE_NETWORK_PROFILE=simulated OXID_MOBILE_CUSTODY=development \
-  OXID_UI_PROFILE=demo ./scripts/run-android-emulator.sh deploy
 artifact_root="$root/target/mobile-visual-accessibility/android/$OXID_ANDROID_DEVICE"
 debug_root="$artifact_root/debug"
 mkdir -p "$debug_root"
-exec nix run .#maestro -- test tests/maestro/android-lunar-aegis.yaml \
+
+run_phase() {
+  local phase="$1"
+  shift
+  local started="$SECONDS"
+  if "$@"; then
+    printf 'factory-metrics phase=%s result=passed duration_ms=%s\n' \
+      "$phase" "$(( (SECONDS - started) * 1000 ))"
+  else
+    local status=$?
+    printf 'factory-metrics phase=%s result=failed duration_ms=%s\n' \
+      "$phase" "$(( (SECONDS - started) * 1000 ))" >&2
+    return "$status"
+  fi
+}
+
+launcher_environment=(
+  env
+  OXID_ANDROID_DEVICE="$OXID_ANDROID_DEVICE"
+  OXID_ANDROID_REQUIRE_EMULATOR=1
+  OXID_STANDALONE_NETWORK_PROFILE=simulated
+  OXID_MOBILE_CUSTODY=development
+  OXID_UI_PROFILE=demo
+)
+run_phase build "${launcher_environment[@]}" ./scripts/run-android-emulator.sh ensure
+run_phase deploy "${launcher_environment[@]}" ./scripts/run-android-emulator.sh deploy
+run_phase maestro nix run .#maestro -- test tests/maestro/android-lunar-aegis.yaml \
   --device "$OXID_ANDROID_DEVICE" --test-output-dir "$artifact_root" \
   --debug-output "$debug_root"

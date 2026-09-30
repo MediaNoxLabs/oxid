@@ -41,6 +41,9 @@ test("receipt binds a private manifest to the exact source, configuration, and b
     await writeFile(path.join(bundle, "OxidApp"), "binary-one", { mode: 0o755 });
     await writeFile(path.join(bundle, "Frameworks", "library"), "library-one");
 
+    const missingReceipt = invoke("verify", temporaryRoot);
+    assert.notEqual(missingReceipt.status, 0);
+
     const writeResult = invoke("write", temporaryRoot);
     assert.equal(writeResult.status, 0, writeResult.stderr);
     const receipt = JSON.parse(await readFile(path.join(temporaryRoot, "receipt.json"), "utf8"));
@@ -86,6 +89,36 @@ test("directory hashing is deterministic and observes executable mode", async ()
   }
 });
 
+test("Maestro wrappers ensure exact artifacts before deploy and expose phase metrics", async () => {
+  const [iosWrapper, androidWrapper, android, ios] = await Promise.all([
+    readFile(path.join(root, "scripts", "run-maestro-ios.sh"), "utf8"),
+    readFile(path.join(root, "scripts", "run-maestro-android.sh"), "utf8"),
+    readFile(path.join(root, "scripts", "run-android-emulator.sh"), "utf8"),
+    readFile(path.join(root, "scripts", "run-ios-simulator.sh"), "utf8"),
+  ]);
+  for (const [wrapper, launcher] of [
+    [iosWrapper, "run-ios-simulator.sh"],
+    [androidWrapper, "run-android-emulator.sh"],
+  ]) {
+    assert.match(wrapper, new RegExp(`${launcher} ensure`));
+    assert.match(wrapper, new RegExp(`${launcher} deploy`));
+    assert.match(wrapper, /nix run \.#maestro -- test/);
+    assert.match(wrapper, /factory-metrics phase=%s result=passed duration_ms=%s/);
+    for (const phase of ["build", "deploy", "maestro"]) {
+      assert.match(wrapper, new RegExp(`run_phase ${phase}`));
+    }
+  }
+  assert.match(iosWrapper, /OXID_IOS_DEVICE:\?set OXID_IOS_DEVICE/);
+  assert.match(androidWrapper, /case "\$OXID_ANDROID_DEVICE" in emulator-\*/);
+  for (const launcher of [android, ios]) {
+    assert.match(launcher, /build\|deploy\|ensure\|run/);
+    assert.match(launcher, /if \[ "\$operation" = "ensure" \]; then/);
+    assert.match(launcher, /operation="deploy"/);
+    assert.match(launcher, /operation="build"/);
+  }
+  assert.match(ios, /"\$operation" != "build" \] && \[ "\$operation" != "ensure"/);
+});
+
 test("target recipes preserve run and expose receipt-gated build and deploy modes", async () => {
   const [justfile, android, ios, runScript, guide, cargo, androidExports] = await Promise.all([
     readFile(path.join(root, "Justfile"), "utf8"),
@@ -107,11 +140,11 @@ test("target recipes preserve run and expose receipt-gated build and deploy mode
     "ios-run:",
   ]) assert.match(justfile, new RegExp(`^${recipe}`, "m"));
   for (const launcher of [android, ios]) {
-    assert.match(launcher, /build\|deploy\|run/);
+    assert.match(launcher, /build\|deploy\|ensure\|run/);
     assert.match(launcher, /if \[ "\$operation" != "deploy" \]; then/);
     assert.match(launcher, /app-artifact-receipt\.mjs" write/);
     assert.match(launcher, /app-artifact-receipt\.mjs" verify/);
-    assert.match(launcher, /if \[ "\$operation" = "build" \]; then/);
+    assert.match(launcher, /if \[ "\$operation" = "build" \] &&/);
     assert.match(launcher, /if \[ "\$operation" = "deploy" \]; then/);
   }
   const androidBuild = android.indexOf('"$dioxus_cli" build');
