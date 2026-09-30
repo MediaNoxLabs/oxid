@@ -156,7 +156,7 @@ pub trait ListPassportVaultActivityUseCase: Send + Sync {
 struct PassportVaultActivityState {
     next_id: u64,
     records: VecDeque<PassportVaultActivityRecord>,
-    contract_drafts: BTreeMap<String, PassportVaultActivityId>,
+    contract_drafts: BTreeMap<(String, String), PassportVaultActivityId>,
 }
 
 /// Shared producer/read-model boundary used by every Vault application path.
@@ -192,7 +192,7 @@ impl PassportVaultActivityStore {
         lock_id: Option<u64>,
     ) -> Option<PassportVaultActivityId> {
         self.begin_inner(
-            Some(draft_id),
+            Some((profile_id.clone(), draft_id)),
             profile_id,
             PassportVaultActivitySource::MidnightContractCall,
             operation,
@@ -202,7 +202,7 @@ impl PassportVaultActivityStore {
 
     fn begin_inner(
         &self,
-        contract_draft: Option<String>,
+        contract_draft: Option<(String, String)>,
         profile_id: String,
         source: PassportVaultActivitySource,
         operation: PassportVaultCallKind,
@@ -259,12 +259,18 @@ impl PassportVaultActivityStore {
         }
     }
 
-    pub(crate) fn update_contract(&self, draft_id: &str, status: PassportVaultActivityStatus) {
-        let id = self
-            .state
-            .lock()
-            .ok()
-            .and_then(|state| state.contract_drafts.get(draft_id).copied());
+    pub(crate) fn update_contract(
+        &self,
+        profile_id: &str,
+        draft_id: &str,
+        status: PassportVaultActivityStatus,
+    ) {
+        let id = self.state.lock().ok().and_then(|state| {
+            state
+                .contract_drafts
+                .get(&(profile_id.to_owned(), draft_id.to_owned()))
+                .copied()
+        });
         if let Some(id) = id {
             self.update(id, status);
         }
