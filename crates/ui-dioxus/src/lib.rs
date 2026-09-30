@@ -12850,11 +12850,9 @@ mod tests {
             );
         }
 
-        assert!(
-            rendered_source.contains(
-                "aria_label: \"Use {candidate.display_name}, matching document {ordinal}\""
-            )
-        );
+        let accessible_choice =
+            "aria_label: \"Use {candidate.display_name}, matching document {ordinal}\"";
+        assert!(rendered_source.contains(accessible_choice));
         assert!(!rendered_source.contains("aria_label: \"Use {candidate.display_name} issued by"));
         assert!(!rendered_source.contains("issued by {candidate.issuer}, credential"));
     }
