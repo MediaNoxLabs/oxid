@@ -1,0 +1,10 @@
+appId: io.medianox.oxid
+name: developer profile banner open and closed
+---
+- runFlow: ../subflows/launch-clean.yaml
+- assertVisible: "Developer profile"
+- takeScreenshot: developer-profile-banner-open
+- tapOn: "Dismiss developer profile notice for this session"
+- assertNotVisible: "Developer profile"
+- assertVisible: "Create private wallet"
+- takeScreenshot: developer-profile-banner-closed
