@@ -154,7 +154,8 @@ return await (async () => {{
       return button("Developer tools") ? "ok" : "pending:no-developer-tools";
     }}
     if ({expected:?} === "hub") {{
-      return [...document.querySelectorAll("h1, h2")].some((node) => text(node) === "Developer tools")
+      return [...document.querySelectorAll('[role="heading"][aria-level="1"]')]
+        .some((node) => text(node) === "Developer tools")
         ? "ok" : "pending:no-hub";
     }}
     const pager = document.querySelector(".developer-section-pager");
@@ -292,7 +293,7 @@ mod tests {
         assert!(script.contains("button.global-menu-trigger"));
         assert!(script.contains("button.back-action"));
         assert!(script.contains("global-application-menu"));
-        assert!(script.contains("querySelectorAll(\"h1, h2\")"));
+        assert!(script.contains("[role=\"heading\"][aria-level=\"1\"]"));
         assert!(PROFILE_CREATION_STAGE.contains("Create private wallet"));
         assert!(PROFILE_CREATION_STAGE.contains("Use public demo wallet"));
         assert!(PROFILE_PROTECTION_STAGE.contains("Enable device protection"));
