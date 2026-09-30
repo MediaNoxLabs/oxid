@@ -8556,6 +8556,7 @@ fn CredentialPresentationPanel(
                                     aria_label: "Matching credentials",
                                     for (index, candidate) in presentation.candidates.clone().into_iter().enumerate() {
                                         {
+                                            let ordinal = index + 1;
                                             let credential_id = candidate.credential_id.clone();
                                             let card_credential_id = credential_id.clone();
                                             let selected = selected_credential_id.read().as_deref()
@@ -8575,7 +8576,7 @@ fn CredentialPresentationPanel(
                                                     input {
                                                         r#type: "radio",
                                                         name: "presentation-credential",
-                                                        aria_label: "Use matching document, item {index}",
+                                                        aria_label: "Use {candidate.display_name}, matching document {ordinal}",
                                                         checked: selected,
                                                         onchange: move |event| {
                                                             if event.checked() {
@@ -12849,7 +12850,11 @@ mod tests {
             );
         }
 
-        assert!(rendered_source.contains("aria_label: \"Use matching document, item {index}\""));
+        assert!(
+            rendered_source.contains(
+                "aria_label: \"Use {candidate.display_name}, matching document {ordinal}\""
+            )
+        );
         assert!(!rendered_source.contains("aria_label: \"Use {candidate.display_name} issued by"));
         assert!(!rendered_source.contains("issued by {candidate.issuer}, credential"));
     }

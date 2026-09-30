@@ -630,6 +630,7 @@ pub(super) fn DidsPage(
                             "data-testid": "identity-did-inventory",
                             for (index, record) in records.clone().into_iter().enumerate() {
                                 {
+                                    let ordinal = index + 1;
                                     let did = record.document.id.clone();
                                     let source = ui::did_source(&record.source);
                                     let management = did_record_management_label(
@@ -655,7 +656,7 @@ pub(super) fn DidsPage(
                                             "data-testid": "identity-did-item-{index}",
                                             "data-ui-primitive": "IdentityCard",
                                             r#type: "button",
-                                            aria_label: "Open saved DID details, item {index}",
+                                            aria_label: "Open {status} {management} DID {ordinal} details",
                                             onclick: {
                                                 let did = did.clone();
                                                 move |_| journey.set(DidJourney::Detail(did.clone()))
@@ -1015,7 +1016,7 @@ mod tests {
         assert!(source.contains("identity-did-item-{index}"));
         assert!(source.contains("data-review-state"));
         assert!(source.contains("did-inventory-card"));
-        assert!(source.contains("Open saved DID details, item {index}"));
+        assert!(source.contains("Open {status} {management} DID {ordinal} details"));
         assert!(!source.contains("aria_label: \"Open DID details for {did}\""));
         assert!(source.contains("did-detail-hero"));
         assert!(source.contains("DID document details"));
