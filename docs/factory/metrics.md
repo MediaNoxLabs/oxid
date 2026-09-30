@@ -107,6 +107,34 @@ record. Validation
 entries use bounded labels such as `repository-contract`, never raw commands
 or output.
 
+## Private v2 orchestration and cost contract
+
+The [v2 schema](work-item-metrics-v2.schema.json) extends, rather than replaces,
+v1: the audit accepts v1 records for the full 90-day retention period. A v2
+record adds a closed `orchestration` run list. Each run has one local accounting
+boundary (`runId` and optional in-record `parentRunId`), phase
+`implementation`, `review`, `retry`, or `no-op`; duration; outcome and nullable
+reason code; nullable exact session/turn/tool-call counters; nullable
+provider/model/rate-card identity; and either non-overlapping token buckets or
+`null`. Parent and child runs must report only their own counters, so audit
+sums each run once and never reconstructs a parent total from its children.
+
+`rateCards` are owner-private, versioned inputs. Each rate is an integer number
+of microcredits or USD micros per million tokens. The audit derives plan credits
+and an API-equivalent USD estimate from those inputs; the latter is always
+labelled `imputed-api-equivalent-not-an-invoice`. It is not an invoice, actual
+subscription charge, or evidence of a provider bill. An owner may optionally
+supply a monthly subscription fee and observed monthly weighted credits to
+derive an allocated subscription amount; either missing input yields `null`.
+Likewise, purchased-credit cost is `null` unless the owner explicitly supplies
+a purchase price. The factory never infers a tier, fee, purchase price, or
+unavailable counter.
+
+Public projection deliberately remains the v1 allow-list. It does not export
+v2 orchestration records, provider/account or model identity, rate cards,
+billing inputs, estimates, monetary values, prompts, transcripts, paths,
+credentials, or sensitive identifiers.
+
 ## Scrapeable PR and issue delivery receipt
 
 The private v1 record remains authoritative. The supervisor may project a fresh,
