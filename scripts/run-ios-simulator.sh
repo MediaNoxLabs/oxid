@@ -4,10 +4,11 @@
 set -euo pipefail
 
 operation="${1:-${OXID_TARGET_OPERATION:-run}}"
+requested_operation="$operation"
 case "$operation" in
-  build|deploy|run) ;;
+  build|deploy|ensure|run) ;;
   *)
-    echo "Usage: $0 [build|deploy|run]" >&2
+    echo "Usage: $0 [build|deploy|ensure|run]" >&2
     exit 1
     ;;
 esac
@@ -217,7 +218,7 @@ case "$(uname -m)" in
 esac
 
 device=""
-if [ "$operation" != "build" ]; then
+if [ "$operation" != "build" ] && [ "$operation" != "ensure" ]; then
   device="${OXID_IOS_DEVICE:-}"
   if [ -z "$device" ]; then
     device="$(
@@ -265,6 +266,21 @@ app_bundle="$repository_root/target/dx/oxid-app/debug/ios/OxidApp.app"
 artifact_receipt="$repository_root/target/dx/oxid-app/debug/ios/oxid-app-artifact-receipt.json"
 artifact_configuration="$mobile_features|ui=$ui_profile|custody=$mobile_custody|network=$standalone_network_profile|tailnet=$tailnet_artifact_binding|portal=$portal_profile|proving=$mobile_presentation_proving"
 
+artifact_verified=0
+if [ "$operation" = "ensure" ]; then
+  if node "$repository_root/scripts/app-artifact-receipt.mjs" verify \
+    --platform ios-simulator \
+    --artifact "$app_bundle" \
+    --target "$rust_target" \
+    --configuration "$artifact_configuration" \
+    --receipt "$artifact_receipt"; then
+    artifact_verified=1
+    operation="deploy"
+  else
+    operation="build"
+  fi
+fi
+
 if [ "$operation" != "deploy" ]; then
   rustup target add "$rust_target"
   rust_toolchain_bin="$(dirname -- "$(rustup which cargo)")"
@@ -300,7 +316,7 @@ if [ "$operation" != "deploy" ]; then
     --target "$rust_target" \
     --configuration "$artifact_configuration" \
     --receipt "$artifact_receipt"
-else
+elif [ "$artifact_verified" = "0" ]; then
   node "$repository_root/scripts/app-artifact-receipt.mjs" verify \
     --platform ios-simulator \
     --artifact "$app_bundle" \
@@ -309,8 +325,13 @@ else
     --receipt "$artifact_receipt"
 fi
 
-if [ "$operation" = "build" ]; then
+if [ "$operation" = "build" ] && [ "$requested_operation" = "build" ]; then
   echo "Built iOS Simulator bundle: $app_bundle"
+  exit 0
+fi
+
+if [ "$requested_operation" = "ensure" ]; then
+  echo "Ensured iOS Simulator bundle: $app_bundle"
   exit 0
 fi
 

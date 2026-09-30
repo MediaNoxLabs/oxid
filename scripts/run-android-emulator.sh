@@ -4,10 +4,11 @@
 set -euo pipefail
 
 operation="${1:-${OXID_TARGET_OPERATION:-run}}"
+requested_operation="$operation"
 case "$operation" in
-  build|deploy|run) ;;
+  build|deploy|ensure|run) ;;
   *)
-    echo "Usage: $0 [build|deploy|run]" >&2
+    echo "Usage: $0 [build|deploy|ensure|run]" >&2
     exit 1
     ;;
 esac
@@ -443,7 +444,8 @@ if [ "$portal_profile" = "tailnet-android" ] && \
   exit 1
 fi
 
-if [ "$standalone_network_profile" = "local" ] && [ "$operation" != "build" ]; then
+if [ "$standalone_network_profile" = "local" ] && \
+  [ "$operation" != "build" ] && [ "$operation" != "ensure" ]; then
   if [[ "$device" != emulator-* ]] || \
     [ "$(adb_device shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r')" != "1" ]; then
     echo "The local standalone profile requires an Android emulator; use the tailnet profile for a physical phone." >&2
@@ -517,6 +519,21 @@ esac
 artifact_configuration="$mobile_features|ui=$ui_profile|custody=$mobile_custody|network=$standalone_network_profile|tailnet=$tailnet_artifact_binding|portal=$portal_profile|preprod=$preprod_observation|proving=$mobile_presentation_proving"
 apk="$repository_root/target/dx/oxid-app/debug/android/app/app/build/outputs/apk/debug/app-debug.apk"
 artifact_receipt="$repository_root/target/dx/oxid-app/debug/android/oxid-app-artifact-receipt.json"
+
+artifact_verified=0
+if [ "$operation" = "ensure" ]; then
+  if node "$repository_root/scripts/app-artifact-receipt.mjs" verify \
+    --platform android \
+    --artifact "$apk" \
+    --target "$rust_target" \
+    --configuration "$artifact_configuration" \
+    --receipt "$artifact_receipt"; then
+    artifact_verified=1
+    operation="deploy"
+  else
+    operation="build"
+  fi
+fi
 
 if [ -n "$prebuilt_apk" ]; then
   if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
@@ -665,7 +682,7 @@ elif [ "$operation" != "deploy" ]; then
     --target "$rust_target" \
     --configuration "$artifact_configuration" \
     --receipt "$artifact_receipt"
-else
+elif [ "$artifact_verified" = "0" ]; then
   node "$repository_root/scripts/app-artifact-receipt.mjs" verify \
     --platform android \
     --artifact "$apk" \
@@ -674,8 +691,13 @@ else
     --receipt "$artifact_receipt"
 fi
 
-if [ "$operation" = "build" ]; then
+if [ "$operation" = "build" ] && [ "$requested_operation" = "build" ]; then
   echo "Built Android APK: $apk"
+  exit 0
+fi
+
+if [ "$requested_operation" = "ensure" ]; then
+  echo "Ensured Android APK: $apk"
   exit 0
 fi
 
