@@ -619,6 +619,7 @@ pub(super) fn DidsPage(
                 if active_journey == DidJourney::Inventory {
                     if records.is_empty() {
                         article { class: "empty-state surface-card did-empty-state",
+                            "data-ui-primitive": "EmptyState",
                             span { class: "empty-state__mark", aria_hidden: "true", "◇" }
                             h2 { "No identities yet" }
                             p { "Create a DID controlled by this wallet, or resolve an existing public DID." }
@@ -652,8 +653,9 @@ pub(super) fn DidsPage(
                                             class: "did-inventory-card",
                                             key: "{did}",
                                             "data-testid": "identity-did-item-{index}",
+                                            "data-ui-primitive": "IdentityCard",
                                             r#type: "button",
-                                            aria_label: "Open DID details for {did}",
+                                            aria_label: "Open saved DID details, item {index}",
                                             onclick: {
                                                 let did = did.clone();
                                                 move |_| journey.set(DidJourney::Detail(did.clone()))
@@ -729,6 +731,7 @@ pub(super) fn DidsPage(
                                 }
                                 article { class: "surface-card did-detail-hero",
                                     "data-testid": "identity-did-detail",
+                                    "data-ui-primitive": "IdentityDetail",
                                     div { class: "did-detail-hero__status",
                                         span { class: if is_deactivated { "status-pill" } else if is_managed { "status-pill success" } else { "status-pill" },
                                             if is_deactivated { "Deactivated" } else if is_managed { "Managed" } else { "Observed" }
@@ -1012,7 +1015,8 @@ mod tests {
         assert!(source.contains("identity-did-item-{index}"));
         assert!(source.contains("data-review-state"));
         assert!(source.contains("did-inventory-card"));
-        assert!(source.contains("Open DID details for"));
+        assert!(source.contains("Open saved DID details, item {index}"));
+        assert!(!source.contains("aria_label: \"Open DID details for {did}\""));
         assert!(source.contains("did-detail-hero"));
         assert!(source.contains("DID document details"));
         assert!(source.contains("Refresh from Midnight"));
