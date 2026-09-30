@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod activity_page;
 #[cfg(any(target_os = "android", test))]
 mod android_platform;
 mod assets_page;
@@ -35,6 +36,7 @@ pub use wallet_realm_sync_services::{WalletAccountUiServices, WalletRealmSyncUiS
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
 
+use activity_page::{PassportVaultActivityCard, VaultActivityPageState};
 #[cfg(target_os = "android")]
 pub use android_platform::{AndroidPlatformInitialization, App};
 use assets_page::AssetsPage;
@@ -101,7 +103,8 @@ use oxid_identity_application::{
 use oxid_identity_domain::VerificationRelationship;
 use oxid_passport_vault_application::{
     ClaimPassportVaultLockUseCase, CreatePassportVaultLockUseCase, DepositPassportVaultLockUseCase,
-    ListPassportVaultLocksUseCase, PassportVaultView, WithdrawPassportVaultLockUseCase,
+    ListPassportVaultActivityUseCase, ListPassportVaultLocksUseCase, PassportVaultView,
+    WithdrawPassportVaultLockUseCase,
 };
 use oxid_platform_ports::{
     IdentityLinkIngressError, IdentityLinkIngressPort, PublicReceiveAddress, PublicTextExportPort,
@@ -388,6 +391,7 @@ pub struct WalletUiServices {
     refuse_self_issued_authentication: Arc<dyn RefuseSelfIssuedAuthenticationUseCase>,
     standalone_self_issued_request: Option<String>,
     list_passport_vault_locks: Arc<dyn ListPassportVaultLocksUseCase>,
+    list_passport_vault_activity: Arc<dyn ListPassportVaultActivityUseCase>,
     create_passport_vault_lock: Arc<dyn CreatePassportVaultLockUseCase>,
     deposit_passport_vault_lock: Arc<dyn DepositPassportVaultLockUseCase>,
     claim_passport_vault_lock: Arc<dyn ClaimPassportVaultLockUseCase>,
@@ -1139,6 +1143,7 @@ impl WalletUiServices {
             refuse_self_issued_authentication: authentication.refuse,
             standalone_self_issued_request: authentication.standalone_request,
             list_passport_vault_locks: vault.list,
+            list_passport_vault_activity: vault.activity,
             create_passport_vault_lock: vault.create,
             deposit_passport_vault_lock: vault.deposit,
             claim_passport_vault_lock: vault.claim,
@@ -5690,6 +5695,7 @@ fn DocumentsPage(
 fn ActivityPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| AccountPageState::Loading);
+    let mut vault_activity = use_signal(|| VaultActivityPageState::Loading);
     let profile_id = active_profile.id.clone();
     let services_for_load = services.clone();
     use_effect(move || {
@@ -5703,23 +5709,44 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
             );
         });
     });
+    let activity_service = services.list_passport_vault_activity();
+    let activity_profile = active_profile.id.clone();
+    use_effect(move || {
+        let service = activity_service.clone();
+        let profile_id = activity_profile.clone();
+        spawn(async move {
+            vault_activity.set(
+                run_ui_blocking(move || service.execute(profile_id))
+                    .await
+                    .map_or_else(
+                        |error| VaultActivityPageState::Unavailable(error.to_string()),
+                        |result| {
+                            result.map_or_else(
+                                |error| VaultActivityPageState::Unavailable(error.to_string()),
+                                VaultActivityPageState::Ready,
+                            )
+                        },
+                    ),
+            );
+        });
+    });
 
     rsx! {
         section { class: "page-heading",
             p { class: "eyebrow", "Wallet history" }
             h1 { "Activity" }
-            p { "Midnight transfers and recoverable submissions appear here." }
+            p { "Midnight transfers, Passport Vault operations, and recoverable submissions appear here." }
         }
         match state.read().clone() {
             AccountPageState::Loading => rsx! {
                 article { class: "empty-state surface-card", role: "status", aria_busy: "true",
                     span { class: "loading-mark", aria_hidden: "true" }
-                    h2 { "Loading activity" }
+                    h2 { "Loading wallet activity" }
                 }
             },
             AccountPageState::Failed(error) => rsx! {
                 article { class: "empty-state surface-card", role: "alert",
-                    h2 { "Activity unavailable" }
+                    h2 { "Wallet activity unavailable" }
                     p { "{error}" }
                     button {
                         class: "secondary-action",
@@ -5736,18 +5763,17 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
                                 );
                             });
                         },
-                        "Retry"
+                        "Retry wallet activity"
                     }
                 }
             },
             AccountPageState::Ready { account, .. } => {
                 let unavailable = account.source == "unavailable";
-                rsx! {
-                    AccountActivityCard { account: *account, unavailable }
-                    SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
-                }
+                rsx! { AccountActivityCard { account: *account, unavailable } }
             },
         }
+        PassportVaultActivityCard { state: vault_activity.read().clone() }
+        SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
     }
 }
 
@@ -5757,10 +5783,10 @@ fn AccountActivityCard(account: WalletAccountView, unavailable: bool) -> Element
         article { class: "surface-card",
             p { class: "card-eyebrow", "Wallet activity" }
             h2 { "On-chain transfers" }
-            p { class: "activity-source-note", "Source: Midnight wallet account. This view does not include document, sharing, sign-in, or Vault events." }
+            p { class: "activity-source-note", "Source: Midnight wallet account. Passport Vault operations are listed separately below." }
             div { class: "activity-filters", role: "group", aria_label: "Activity sources",
-                button { class: "secondary-action", r#type: "button", aria_pressed: "true", "Wallet" }
-                button { class: "secondary-action", r#type: "button", disabled: true, "Identity and Vault unavailable" }
+                span { class: "status-pill", "Wallet" }
+                span { class: "status-pill", "Passport Vault" }
             }
             if account.transactions.is_empty() {
                 p { class: "activity-empty-state",

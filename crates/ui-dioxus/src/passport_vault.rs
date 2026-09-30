@@ -9,15 +9,15 @@ use oxid_passport_vault_application::{
     AuthorizePassportVaultCallUseCase, CLAIM_INTENT, CancelPassportVaultCallSubmissionUseCase,
     ClaimPassportVaultLockCommand, ClaimPassportVaultLockUseCase, CreatePassportVaultLockUseCase,
     DEPOSIT_INTENT, DepositPassportVaultLockUseCase, GetPassportVaultCallSubmissionStatusUseCase,
-    GetPassportVaultCallUseCase, ListPassportVaultCallSubmissionsUseCase,
-    ListPassportVaultLocksUseCase, PassportVaultAmountCommand, PassportVaultCallPreviewView,
-    PassportVaultCallQuery, PassportVaultCallSubmissionStatusView, PassportVaultCallSubmissionView,
-    PassportVaultLockView, PassportVaultView, PreparePassportVaultCallAction,
-    PreparePassportVaultCallCommand, PreparePassportVaultCallUseCase,
-    ReadPassportVaultContractStateCommand, ReadPassportVaultContractStateUseCase,
-    ReconcilePassportVaultCallSubmissionUseCase, SUBMIT_PASSPORT_VAULT_CALL_INTENT,
-    SubmitPassportVaultCallCommand, SubmitPassportVaultCallUseCase, WITHDRAW_INTENT,
-    WithdrawPassportVaultLockUseCase,
+    GetPassportVaultCallUseCase, ListPassportVaultActivityUseCase,
+    ListPassportVaultCallSubmissionsUseCase, ListPassportVaultLocksUseCase,
+    PassportVaultAmountCommand, PassportVaultCallPreviewView, PassportVaultCallQuery,
+    PassportVaultCallSubmissionStatusView, PassportVaultCallSubmissionView, PassportVaultLockView,
+    PassportVaultView, PreparePassportVaultCallAction, PreparePassportVaultCallCommand,
+    PreparePassportVaultCallUseCase, ReadPassportVaultContractStateCommand,
+    ReadPassportVaultContractStateUseCase, ReconcilePassportVaultCallSubmissionUseCase,
+    SUBMIT_PASSPORT_VAULT_CALL_INTENT, SubmitPassportVaultCallCommand,
+    SubmitPassportVaultCallUseCase, WITHDRAW_INTENT, WithdrawPassportVaultLockUseCase,
 };
 use oxid_wallet_application::{
     SelectedWalletRealmSpendableNightView, SelectedWalletRealmSyncCommand, WalletProfileView,
@@ -30,6 +30,7 @@ use super::{BrandProfile, WalletUiServices, run_ui_blocking, run_ui_future, trun
 /// Product-specific Passport Vault capabilities consumed only by the Vault page.
 pub struct PassportVaultUiServices {
     pub(super) list: Arc<dyn ListPassportVaultLocksUseCase>,
+    pub(super) activity: Arc<dyn ListPassportVaultActivityUseCase>,
     pub(super) create: Arc<dyn CreatePassportVaultLockUseCase>,
     pub(super) deposit: Arc<dyn DepositPassportVaultLockUseCase>,
     pub(super) claim: Arc<dyn ClaimPassportVaultLockUseCase>,
@@ -42,6 +43,7 @@ impl PassportVaultUiServices {
     #[must_use]
     pub fn new(
         list: Arc<dyn ListPassportVaultLocksUseCase>,
+        activity: Arc<dyn ListPassportVaultActivityUseCase>,
         create: Arc<dyn CreatePassportVaultLockUseCase>,
         deposit: Arc<dyn DepositPassportVaultLockUseCase>,
         claim: Arc<dyn ClaimPassportVaultLockUseCase>,
@@ -51,6 +53,7 @@ impl PassportVaultUiServices {
     ) -> Self {
         Self {
             list,
+            activity,
             create,
             deposit,
             claim,
@@ -136,6 +139,11 @@ impl WalletUiServices {
     #[must_use]
     pub fn list_passport_vault_locks(&self) -> Arc<dyn ListPassportVaultLocksUseCase> {
         Arc::clone(&self.list_passport_vault_locks)
+    }
+
+    #[must_use]
+    pub fn list_passport_vault_activity(&self) -> Arc<dyn ListPassportVaultActivityUseCase> {
+        Arc::clone(&self.list_passport_vault_activity)
     }
 
     #[must_use]

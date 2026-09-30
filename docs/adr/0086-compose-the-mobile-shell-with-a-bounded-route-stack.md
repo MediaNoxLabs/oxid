@@ -6,7 +6,7 @@
 - Design source: `docs/design/information-architecture.md`, `docs/design/journeys.md` §9, and `docs/design/rollout.md` Phase 1a
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/dioxus-wallet/src/app.rs`
 - Tracking: issues #2, #65, and #78
-- Implementation state: Dioxus owns a bounded root-plus-secondary route stack, four primary destinations, the elevated Scan action, and explicit Back behavior while every migrated page remains reachable
+- Implementation state: Dioxus owns a bounded root-plus-secondary route stack, four primary destinations, the elevated Scan action, explicit Back behavior, and separate truthful wallet and Passport Vault activity projections while every migrated page remains reachable
 - Amended by: ADR-0109 (Proposed)
 
 ## Context
@@ -68,8 +68,12 @@ Secondary placement is fixed as follows:
 Phase 1a deliberately keeps the complete account view on Home and Wallet so
 the cutover cannot hide receive, sync, send, balance, or transaction-recovery
 behavior. Activity renders the existing synchronized Midnight transaction
-projection and submission recovery. Phase 1b will split the Home summary from
-the Wallet detail view and extend Activity with identity and Vault events.
+projection, submission recovery, and an application-owned Passport Vault
+operation projection. The Vault projection is bounded and process-local: it is
+deleted on process exit, excluded from backup, and stores only operation kind,
+source, status/finality, observation time, and an optional public lock number.
+Claims, proofs, keys, addresses, transaction payloads, and unrestricted errors
+have no projection type. Identity activity remains a later slice.
 
 The top-bar secret-mode eye remains absent until Phase 4 defines masking and
 native screen-privacy policy. A decorative or non-functional eye would imply a

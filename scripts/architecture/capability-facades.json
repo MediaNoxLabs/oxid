@@ -182,6 +182,7 @@
       {
         "name": "passport-vault",
         "modulePathPrefixes": [
+          "crates/ui-dioxus/src/activity_page",
           "crates/ui-dioxus/src/passport_vault"
         ]
       },

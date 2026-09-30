@@ -54,7 +54,8 @@ fn service_facade_type_and_constructor_paths_remain_at_the_crate_root() {
 
     assert_public_path(WalletUiServices::new);
     assert_public_path(DiagnosticsUiServices::new);
-    let _: fn(_, _, _, _, _, String, _) -> PassportVaultUiServices = PassportVaultUiServices::new;
+    let _: fn(_, _, _, _, _, _, String, _) -> PassportVaultUiServices =
+        PassportVaultUiServices::new;
     assert_public_path(PassportVaultContractCallRecoveryUiServices::new);
     let _: fn(_, _, _, _, _, String, _) -> PassportVaultContractCallUiServices =
         PassportVaultContractCallUiServices::new;
@@ -110,6 +111,7 @@ fn other_stable_facade_paths_remain_at_the_crate_root() {
 #[test]
 fn passport_vault_service_methods_remain_on_the_wallet_facade() {
     assert_public_path(WalletUiServices::list_passport_vault_locks);
+    assert_public_path(WalletUiServices::list_passport_vault_activity);
     assert_public_path(WalletUiServices::create_passport_vault_lock);
     assert_public_path(WalletUiServices::deposit_passport_vault_lock);
     assert_public_path(WalletUiServices::claim_passport_vault_lock);
