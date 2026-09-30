@@ -447,7 +447,17 @@ in a diff.
   exact head and working-tree status, and continue from the last durable commit.
   Record the interrupted duration in closeout metrics; changing the ceiling is
   a tracked factory-policy change, not a per-session escape hatch.
-- **Audit before creating another worktree.** `node scripts/worktree-lifecycle.mjs
+- **Audit before creating another worktree.** On macOS, worktree admission also
+  runs `node scripts/factory/resource-admission.mjs`'s pressure-aware decision
+  and writes a private mode-0600 receipt beside (but separate from) `metrics-v1`.
+  `allow` admits healthy telemetry; stable historical swap above 20 GiB is
+  `degraded` and permits only one explicit `headless`/factory lane; missing or
+  contradictory telemetry, unresolved alerts, low memory/disk, or material
+  swap growth block. Never terminate unowned workloads to recover admission;
+  wait or clean only a receipt-owned resource. To restore the earlier posture,
+  treat every swap value above 20 GiB as `block`.
+
+  `node scripts/worktree-lifecycle.mjs
   audit` lists target size, cleanliness, merge state/proof, and age. Direct
   ancestry is preferred; squash-merged heads require one exact merged GitHub PR
   with its recorded delivery base and a merge commit present on that remotely
