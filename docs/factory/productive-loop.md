@@ -135,8 +135,10 @@ ledger and PR comment without blocking a clean verdict.
 
 ## One candidate, two checkpoints
 
-1. Record the reversibility-first complexity class, then resolve exactly one
-   delivery base. Product work uses its criteria-backed
+1. Record the reversibility-first complexity class. Before worktree creation or
+   model dispatch, factory admission requires an implementation surface, stable
+   AC identifiers, a DoD evidence row for every AC, verification commands, size,
+   one delivery target, and non-goals. Product work uses its criteria-backed
    `origin/milestone-<x.y.z>`; factory work may use `origin/develop`. Start
    from that fetched ref in a dedicated worktree. Run
    `node scripts/worktree-lifecycle.mjs audit` before creating another.
@@ -147,8 +149,12 @@ ledger and PR comment without blocking a clean verdict.
    explicit `/scenario prepare` request delegates bounded preparation to the
    active agent under the existing authority and resource-ownership rules.
 3. Keep draft review outside the implementation invocation. The persistent
-   supervisor owns focused review and any resulting explicit retry; no Pi child
-   chains into a reviewer.
+   supervisor owns focused review, canonical fan-in, and any resulting explicit
+   retry; no Pi child chains into a reviewer. Implementation-child dispatches
+   carry an explicit `oxid.dev-loop-admission/1` extension binding whose phase
+   is `implementation`; `draft_gate` and `preApproval` are rejected at admission
+   rather than classified from prompts. The binding uses the supported bounded
+   `pi-subagents` `extensionBindings` channel, not a new top-level tool field.
 4. Run the target planner locally against the intended base and head:
 
    ```bash

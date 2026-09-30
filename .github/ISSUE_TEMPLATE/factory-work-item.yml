@@ -15,10 +15,31 @@ body:
     id: acceptance
     attributes:
       label: Acceptance criteria
-      description: Enumerated, each objectively checkable by a reviewer who did not write the code.
+      description: Enumerated stable IDs (AC-1, AC-2, ...), each objectively checkable by a reviewer who did not write the code.
       placeholder: |
-        1. ...
-        2. ...
+        - AC-1: ...
+        - AC-2: ...
+    validations:
+      required: true
+  - type: textarea
+    id: definition_of_done
+    attributes:
+      label: Definition of done / evidence mapping
+      description: Map every AC identifier to concrete evidence (for example, `| AC-1 | focused test |`).
+      placeholder: |
+        | AC | Evidence |
+        | --- | --- |
+        | AC-1 | node --test tests/repository/example.test.mjs |
+    validations:
+      required: true
+  - type: textarea
+    id: implementation_surface
+    attributes:
+      label: Implementation surface
+      description: Exact files or modules expected to change; this is the admission boundary.
+      placeholder: |
+        - scripts/lib/example.mjs
+        - tests/repository/example.test.mjs
     validations:
       required: true
   - type: textarea
