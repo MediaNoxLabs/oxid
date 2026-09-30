@@ -18,7 +18,7 @@ routes through a coordination server.
 | `pi-coding-agent` | Nix-pinned | immutable nixpkgs input in `flake.lock`; executable supplied by `devShells.default` |
 | `dev-loops` | `1.0.2` | `.pi/settings.json` → project-local `.pi/npm` |
 | `@dev-loops/core` | `1.0.2` | exact reviewed runtime paired with `dev-loops`; pinned directly to prevent transitive range drift |
-| `pi-subagents` | `0.67.0` | same |
+| `pi-subagents` | `0.70.0` | same |
 | `pi-taskflow` | `0.2.10` | installed as an `agent-review-pi` peer; all runtime resources disabled |
 | `typebox` | `1.3.9` | exact `agent-review-pi` peer |
 | `@stixxert/pi-docker-sandbox` | `1.1.6` | exact optional deploy-target package; extension disabled by default |
@@ -94,7 +94,7 @@ default deploy-target mode—not its `sandbox/` execution backend. ADR-0112
 records the routing matrix and the evidence required before full tool execution
 may be enabled.
 
-`pi-subagents@0.67.0` no longer enforces the historical `turnBudget` field.
+`pi-subagents@0.70.0` no longer enforces the historical `turnBudget` field.
 Oxid therefore removes that inert key, uses a fail-closed `toolBudget`, and caps
 each parent session and run at one child. The token budget remains visible and
 prevents additional launches, while the tool and wall-clock limits bound the
@@ -102,6 +102,14 @@ active child itself. A top-level `/dev-loop` invocation uses that one launch
 for the implementation child, whose manifest omits nested delegation. The
 external supervisor—not another child—owns focused review, CI waiting, review
 triage, metrics, merge, cleanup, and any explicit retry.
+
+Releases through `0.70.0` also keep supervisor progress out of parent model
+turns while waking the parent for an actual child request, and they reconcile detached-child
+attention in headless/print-mode sessions. They additionally preserve detached
+workflow visibility and reconcile terminal usage when live events are
+incomplete.
+The tracked smoke requires the headless-attention capabilities before Pi may
+dispatch a child.
 
 Validate shell entry, the exact private package, all native review-tool
 registrations, and runtime skill discovery without an LLM call or GitHub
@@ -279,7 +287,7 @@ an upstream default expansion. Prefer it over a YAML lint.
 
 **`doctor` reports 3/4 and that is expected.** The warning is *"Subagent command
 available"*, because `doctor` looks for a standalone `subagent` executable while
-`pi-subagents@0.67.0` exposes the capability as a Pi extension. **Do not add a
+`pi-subagents@0.70.0` exposes the capability as a Pi extension. **Do not add a
 dummy binary to make the check pass** — it would make a real absence
 undetectable later. The check that matters is `gates` parsing.
 
