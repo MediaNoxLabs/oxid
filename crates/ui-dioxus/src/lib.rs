@@ -5661,6 +5661,7 @@ fn DocumentsPage(
                 }
                 if credentials.is_empty() {
                     article { class: "empty-state surface-card",
+                        "data-ui-primitive": "EmptyState",
                         span { class: "empty-state__mark", aria_hidden: "true", "◇" }
                         h2 { "No documents yet" }
                         p { "Add a credential offer to review it before anything is stored in your wallet." }
@@ -5668,7 +5669,8 @@ fn DocumentsPage(
                     }
                 } else {
                     section { class: "credential-inventory", aria_label: "Saved documents",
-                        for credential in credentials.clone() {
+                        "data-testid": "identity-document-inventory",
+                        for (index, credential) in credentials.clone().into_iter().enumerate() {
                             {
                                 let retained = credentials.clone();
                                 let current_id = credential.id.clone();
@@ -5677,6 +5679,7 @@ fn DocumentsPage(
                                         key: "{current_id}",
                                         profile_id: profile_id.clone(),
                                         credential,
+                                        item_index: index,
                                         on_change: move |change| {
                                             state.set(credential_page_after_change(retained.clone(), change));
                                         }
@@ -8495,6 +8498,9 @@ fn CredentialPresentationPanel(
             }
             if let Some(presentation) = preview.read().clone() {
                 div { class: "credential-offer-preview",
+                    "data-testid": "identity-presentation-review",
+                    "data-review-state": "{ui::review_state(&presentation.state)}",
+                    "data-ui-primitive": "Sheet",
                     div { class: "consent-preview__heading",
                         h3 { "Presentation preview" }
                         span { class: "status-pill", "{ui::protocol_state(&presentation.state)}" }
@@ -8504,11 +8510,13 @@ fn CredentialPresentationPanel(
                     } else if presentation.state == "awaiting_consent" {
                         p { class: "privacy-consent-exemption", "Details shown for authorization." }
                         ol { class: "consent-questions", aria_label: "Credential presentation consent questions",
+                            "data-ui-primitive": "Stepper",
                             li { class: "consent-question",
                                 p { class: "card-eyebrow", "Who" }
                                 h4 { "Who is asking?" }
                                 code { title: "{presentation.verifier}", "{presentation.verifier}" }
                                 div { class: "consent-trust",
+                                    "data-ui-primitive": "IssuerIdentityBlock",
                                     span { class: "status-pill warning", "Unverified endpoint" }
                                     p { "Standalone mode has no production trust-registry or verified-domain signal." }
                                 }
@@ -8518,6 +8526,7 @@ fn CredentialPresentationPanel(
                                 h4 { "What will be shared?" }
                                 p { class: "form-hint", "Every item in this request is required and locked on. No optional claims are authorized by this plan." }
                                 div { class: "consent-required-claims", role: "list", aria_label: "Required presentation claims",
+                                    "data-ui-primitive": "ConsentChecklist",
                                     for claim in presentation.requested_claims.clone() {
                                         label { class: "consent-required-claim", key: "{claim.claim_path}", role: "listitem",
                                             input {
@@ -8545,8 +8554,9 @@ fn CredentialPresentationPanel(
                                 fieldset {
                                     class: "presentation-credential-choice",
                                     aria_label: "Matching credentials",
-                                    for candidate in presentation.candidates.clone() {
+                                    for (index, candidate) in presentation.candidates.clone().into_iter().enumerate() {
                                         {
+                                            let ordinal = index + 1;
                                             let credential_id = candidate.credential_id.clone();
                                             let card_credential_id = credential_id.clone();
                                             let selected = selected_credential_id.read().as_deref()
@@ -8557,6 +8567,8 @@ fn CredentialPresentationPanel(
                                                 label {
                                                     key: "{candidate.credential_id}",
                                                     class: if selected { "presentation-credential-option selected" } else { "presentation-credential-option" },
+                                                    "data-testid": "identity-presentation-document-{index}",
+                                                    "data-ui-primitive": "CredentialCard",
                                                     onclick: move |_| {
                                                         selected_credential_id.set(Some(card_credential_id.clone()));
                                                         consent.set(false);
@@ -8564,7 +8576,7 @@ fn CredentialPresentationPanel(
                                                     input {
                                                         r#type: "radio",
                                                         name: "presentation-credential",
-                                                        aria_label: "Use {candidate.display_name} issued by {candidate.issuer}, credential {reference}",
+                                                        aria_label: "Use {candidate.display_name}, matching document {ordinal}",
                                                         checked: selected,
                                                         onchange: move |event| {
                                                             if event.checked() {
@@ -8938,6 +8950,7 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                     }
                     if let Some(candidate) = date_of_birth {
                         article { class: "passport-claim predicate",
+                            "data-ui-primitive": "PredicateRow",
                             div {
                                 span { class: "passport-claim__tier predicate", "{ui::claim_privacy(&candidate.privacy_tier)}" }
                                 h4 { "Date of birth" }
@@ -9012,6 +9025,7 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
 fn CredentialRecordCard(
     profile_id: String,
     credential: CredentialView,
+    item_index: usize,
     on_change: EventHandler<CredentialChange>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
@@ -9034,6 +9048,8 @@ fn CredentialRecordCard(
     };
     rsx! {
         article { class: "surface-card credential-record", key: "{identifier}",
+            "data-testid": "identity-document-item-{item_index}",
+            "data-ui-primitive": "CredentialCard",
             div { class: "credential-record__heading",
                 div {
                     p { class: "card-eyebrow", "{ui::credential_format(&credential.format)}" }
@@ -9565,6 +9581,9 @@ fn CredentialsPage(
                     }
                     if let Some(preview) = prepared_issuance.read().clone() {
                         div { class: if credential_issuance_review_is_terminal(Some(&preview)) { "credential-issued-receipt" } else { "credential-offer-preview" },
+                            "data-testid": "identity-issuance-review",
+                            "data-review-state": "{ui::review_state(&preview.state)}",
+                            "data-ui-primitive": "Sheet",
                             div { class: "consent-preview__heading",
                                 h3 {
                                     if preview.state == "succeeded" {
@@ -9575,7 +9594,7 @@ fn CredentialsPage(
                                         "Credential offer preview"
                                     }
                                 }
-                                span { class: "status-pill", "{ui::protocol_state(&preview.state)}" }
+                                span { class: "status-pill", "data-ui-primitive": "StatusPill", "{ui::protocol_state(&preview.state)}" }
                             }
                             if preview.state == "succeeded" {
                                 p {
@@ -9587,11 +9606,13 @@ fn CredentialsPage(
                             } else if preview.state == "awaiting_consent" {
                                 p { class: "privacy-consent-exemption", "Details shown for authorization." }
                                 ol { class: "consent-questions", aria_label: "Credential issuance consent questions",
+                                    "data-ui-primitive": "Stepper",
                                     li { class: "consent-question",
                                         p { class: "card-eyebrow", "Who" }
                                         h4 { "Who is issuing it?" }
                                         code { title: "{preview.issuer}", "{preview.issuer}" }
                                         div { class: "consent-trust",
+                                            "data-ui-primitive": "IssuerIdentityBlock",
                                             span { class: "status-pill warning", "Unverified endpoint" }
                                             p { "Standalone mode has no production trust-registry or verified-domain signal." }
                                         }
@@ -9853,7 +9874,8 @@ fn CredentialsPage(
                     }
                 } else {
                     section { class: "credential-inventory", aria_label: "Saved credentials",
-                        for credential in credentials.clone() {
+                        "data-testid": "identity-document-inventory",
+                        for (index, credential) in credentials.clone().into_iter().enumerate() {
                             {
                                 let retained = credentials.clone();
                                 let current_id = credential.id.clone();
@@ -9862,6 +9884,7 @@ fn CredentialsPage(
                                         key: "{current_id}",
                                         profile_id: profile_id.clone(),
                                         credential,
+                                        item_index: index,
                                         on_change: move |change| {
                                             state.set(credential_page_after_change(retained.clone(), change));
                                         }
@@ -12795,6 +12818,43 @@ mod tests {
             .expect("credential issuance consent attributes");
         assert!(issuance_consent.contains("oninput:"));
         assert!(!issuance_consent.contains("onchange:"));
+    }
+
+    #[test]
+    fn identity_surfaces_expose_privacy_safe_automation_and_primitive_contracts() {
+        let source = include_str!("lib.rs");
+        let rendered_source = source
+            .split("\n#[cfg(test)]\nmod tests {")
+            .next()
+            .expect("production source precedes tests");
+
+        for required in [
+            "identity-document-inventory",
+            "identity-document-item-{item_index}",
+            "identity-issuance-review",
+            "identity-presentation-review",
+            "identity-presentation-document-{index}",
+            "data-review-state",
+            "\"CredentialCard\"",
+            "\"IssuerIdentityBlock\"",
+            "\"PredicateRow\"",
+            "\"StatusPill\"",
+            "\"Stepper\"",
+            "\"ConsentChecklist\"",
+            "\"Sheet\"",
+            "\"EmptyState\"",
+        ] {
+            assert!(
+                rendered_source.contains(required),
+                "missing identity presentation contract: {required}",
+            );
+        }
+
+        let accessible_choice =
+            "aria_label: \"Use {candidate.display_name}, matching document {ordinal}\"";
+        assert!(rendered_source.contains(accessible_choice));
+        assert!(!rendered_source.contains("aria_label: \"Use {candidate.display_name} issued by"));
+        assert!(!rendered_source.contains("issued by {candidate.issuer}, credential"));
     }
 
     #[test]
