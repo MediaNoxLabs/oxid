@@ -291,7 +291,7 @@ function validateV1MetricRecord(candidate, { nowMs = Date.now() } = {}) {
 }
 
 const V2_RUN_KEYS = Object.freeze(["runId", "parentRunId", "phase", "durationMs", "outcome", "reasonCode", "sessions", "turns", "toolCalls", "provider", "model", "rateCardId", "tokens"]);
-const V2_RATE_CARD_KEYS = Object.freeze(["id", "version", "inputCreditsPerMillion", "outputCreditsPerMillion", "cacheReadCreditsPerMillion", "cacheWriteCreditsPerMillion", "inputApiUsdMicrosPerMillion", "outputApiUsdMicrosPerMillion", "cacheReadApiUsdMicrosPerMillion", "cacheWriteApiUsdMicrosPerMillion"]);
+const V2_RATE_CARD_KEYS = Object.freeze(["id", "version", "inputCreditMicrosPerMillion", "outputCreditMicrosPerMillion", "cacheReadCreditMicrosPerMillion", "cacheWriteCreditMicrosPerMillion", "inputApiUsdMicrosPerMillion", "outputApiUsdMicrosPerMillion", "cacheReadApiUsdMicrosPerMillion", "cacheWriteApiUsdMicrosPerMillion"]);
 const V2_TOP_KEYS = Object.freeze([...METRIC_KEYS.top, "orchestration", "rateCards"]);
 
 function nullableSafeName(value, pathName, errors) {
@@ -346,6 +346,18 @@ function validateV2MetricRecord(candidate, { nowMs = Date.now() } = {}) {
       for (const key of V2_RATE_CARD_KEYS.slice(2)) nonNegativeInteger(entry[key], `${pathName}.${key}`, errors);
     }
     for (const [index, run] of (record.orchestration ?? []).entries()) if (run?.rateCardId !== null && !ids.has(run.rateCardId)) error(errors, `$.orchestration[${index}].rateCardId`, "reference", "must refer to a declared rate card");
+    const cards = new Map(record.rateCards.map((card) => [card.id, card]));
+    for (const [index, run] of (record.orchestration ?? []).entries()) {
+      if (run?.tokens === null || run?.rateCardId === null || !cards.has(run?.rateCardId)) continue;
+      const card = cards.get(run.rateCardId);
+      for (const [key, tokenCount] of Object.entries(run.tokens)) {
+        for (const rate of [card[`${key}CreditMicrosPerMillion`], card[`${key}ApiUsdMicrosPerMillion`]]) {
+          if (!Number.isSafeInteger(tokenCount * rate)) {
+            error(errors, `$.orchestration[${index}].tokens.${key}`, "precision", "token/rate product must remain an exact safe integer");
+          }
+        }
+      }
+    }
   }
   inspectSecretValues(record, "$", errors);
   return { ok: errors.length === 0, errors, ...(errors.length === 0 ? { record } : {}) };
@@ -367,7 +379,7 @@ export function estimateV2Costs(record, { monthlySubscriptionUsd = null, purchas
     if (run.tokens === null || run.rateCardId === null) continue;
     const card = cards.get(run.rateCardId);
     for (const [key, value] of Object.entries(run.tokens)) {
-      creditsMicros += value * card[`${key}CreditsPerMillion`];
+      creditsMicros += value * card[`${key}CreditMicrosPerMillion`];
       apiUsdMicros += value * card[`${key}ApiUsdMicrosPerMillion`];
     }
   }

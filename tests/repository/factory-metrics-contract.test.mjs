@@ -35,7 +35,7 @@ function v2Record(overrides = {}) {
       { runId: "implementation-1", parentRunId: null, phase: "implementation", durationMs: 600_000, outcome: "completed", reasonCode: null, sessions: 1, turns: 4, toolCalls: 6, provider: "openai", model: "gpt-5", rateCardId: "plan-v1", tokens: { input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0 } },
       { runId: "review-1", parentRunId: "implementation-1", phase: "review", durationMs: 300_000, outcome: "completed", reasonCode: null, sessions: null, turns: null, toolCalls: null, provider: null, model: null, rateCardId: null, tokens: null },
     ],
-    rateCards: [{ id: "plan-v1", version: "2026-09", inputCreditsPerMillion: 1_000_000, outputCreditsPerMillion: 2_000_000, cacheReadCreditsPerMillion: 100_000, cacheWriteCreditsPerMillion: 200_000, inputApiUsdMicrosPerMillion: 300_000, outputApiUsdMicrosPerMillion: 1_000_000, cacheReadApiUsdMicrosPerMillion: 30_000, cacheWriteApiUsdMicrosPerMillion: 60_000 }],
+    rateCards: [{ id: "plan-v1", version: "2026-09", inputCreditMicrosPerMillion: 1_000_000, outputCreditMicrosPerMillion: 2_000_000, cacheReadCreditMicrosPerMillion: 100_000, cacheWriteCreditMicrosPerMillion: 200_000, inputApiUsdMicrosPerMillion: 300_000, outputApiUsdMicrosPerMillion: 1_000_000, cacheReadApiUsdMicrosPerMillion: 30_000, cacheWriteApiUsdMicrosPerMillion: 60_000 }],
     ...overrides,
   };
 }
@@ -76,12 +76,18 @@ test("v2 records phase-level private telemetry and derives labeled estimates wit
   assert.equal(publicRecord.schemaVersion, 1);
   assert.equal(JSON.stringify(publicRecord).includes("rateCard"), false);
   assert.equal(JSON.stringify(publicRecord).includes("apiEquivalent"), false);
+  assert.equal(JSON.stringify(publicRecord).includes("openai"), false);
+  assert.equal(JSON.stringify(publicRecord).includes("gpt-5"), false);
   const missingRateCard = v2Record();
   missingRateCard.orchestration[0].rateCardId = "unknown";
   assert.equal(validateMetricRecord(missingRateCard).ok, false);
   const unknownPhase = v2Record();
   unknownPhase.orchestration[0].phase = "billing";
   assert.equal(validateMetricRecord(unknownPhase).ok, false);
+  const unsafeEstimate = v2Record();
+  unsafeEstimate.orchestration[0].tokens.input = Number.MAX_SAFE_INTEGER;
+  assert.equal(validateMetricRecord(unsafeEstimate).ok, false);
+  assert.match(validateMetricRecord(unsafeEstimate).errors.map(({ code }) => code).join("\n"), /precision/u);
 });
 
 test("v1 rejects unknown, ambiguous, negative, revision, chronology, and secret-bearing data", () => {
