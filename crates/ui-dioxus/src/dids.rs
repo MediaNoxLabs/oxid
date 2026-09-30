@@ -190,6 +190,10 @@ pub(super) fn DidsPage(
             let publication_service = services.publish_did.clone();
             let publication_profile = profile_id.clone();
             let login_request = services.standalone_self_issued_request();
+            let authentication_review_state = prepared_authentication
+                .read()
+                .as_ref()
+                .map_or("idle", |preview| ui::review_state(&preview.state));
             rsx! {
                 if active_journey == DidJourney::Inventory {
                     section { class: "page-heading did-page-heading",
@@ -221,6 +225,7 @@ pub(super) fn DidsPage(
                         }
                     }
                     article { class: "surface-card did-resolver-card did-task-card",
+                        "data-testid": "identity-did-create",
                     p { class: "card-eyebrow", "Managed identity" }
                     h2 { "Create your identity" }
                     p { class: "form-hint", "The wallet creates protected authentication, assertion, and holder-binding methods. Only the public DID document leaves protected custody." }
@@ -333,6 +338,8 @@ pub(super) fn DidsPage(
                 }
                 if is_authentication_request {
                     article { class: "surface-card did-resolver-card",
+                        "data-testid": "identity-siop-review",
+                        "data-review-state": "{authentication_review_state}",
                     p { class: "card-eyebrow", "SIOPv2 draft 13" }
                     h2 { "Authenticate with a DID" }
                     p { class: "form-hint", "Preview the verifier and purpose before consent. This flow proves control of a managed DID; it does not disclose a credential. Nonce, state, and the signed ID token remain inside the protocol adapter." }
@@ -556,6 +563,7 @@ pub(super) fn DidsPage(
                         }
                     }
                     article { class: "surface-card did-resolver-card did-task-card",
+                        "data-testid": "identity-did-resolve",
                     h2 { "Find a Midnight identity" }
                     p { class: "form-hint", "Resolve a public DID document and save it to this profile. This does not give the wallet control of that identity." }
                     label { r#for: "did-identifier", "Midnight DID" }
@@ -618,7 +626,8 @@ pub(super) fn DidsPage(
                         }
                     } else {
                         section { class: "did-inventory", aria_label: "Saved decentralized identifiers",
-                            for record in records.clone() {
+                            "data-testid": "identity-did-inventory",
+                            for (index, record) in records.clone().into_iter().enumerate() {
                                 {
                                     let did = record.document.id.clone();
                                     let source = ui::did_source(&record.source);
@@ -642,6 +651,7 @@ pub(super) fn DidsPage(
                                         button {
                                             class: "did-inventory-card",
                                             key: "{did}",
+                                            "data-testid": "identity-did-item-{index}",
                                             r#type: "button",
                                             aria_label: "Open DID details for {did}",
                                             onclick: {
@@ -718,6 +728,7 @@ pub(super) fn DidsPage(
                                     }
                                 }
                                 article { class: "surface-card did-detail-hero",
+                                    "data-testid": "identity-did-detail",
                                     div { class: "did-detail-hero__status",
                                         span { class: if is_deactivated { "status-pill" } else if is_managed { "status-pill success" } else { "status-pill" },
                                             if is_deactivated { "Deactivated" } else if is_managed { "Managed" } else { "Observed" }
@@ -993,6 +1004,13 @@ mod tests {
             .split("#[cfg(test)]")
             .next()
             .expect("production source");
+        assert!(source.contains("identity-did-inventory"));
+        assert!(source.contains("identity-did-create"));
+        assert!(source.contains("identity-did-resolve"));
+        assert!(source.contains("identity-did-detail"));
+        assert!(source.contains("identity-siop-review"));
+        assert!(source.contains("identity-did-item-{index}"));
+        assert!(source.contains("data-review-state"));
         assert!(source.contains("did-inventory-card"));
         assert!(source.contains("Open DID details for"));
         assert!(source.contains("did-detail-hero"));

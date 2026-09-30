@@ -286,6 +286,17 @@ pub(crate) fn key_curve(value: &str) -> &'static str {
     }
 }
 
+pub(crate) fn review_state(value: &str) -> &'static str {
+    match value {
+        "awaiting_consent" => "awaiting-consent",
+        "authenticating" | "issuing" | "presenting" | "cancellation_requested" => "in-progress",
+        "succeeded" => "succeeded",
+        "cancelled" | "refused" | "timed_out" => "closed",
+        "failed" => "failed",
+        _ => "idle",
+    }
+}
+
 pub(crate) fn protocol_state(value: &str) -> &'static str {
     match value {
         "awaiting_consent" => "Waiting for your consent",
@@ -772,5 +783,8 @@ mod tests {
         assert_eq!(receive_address_tab("dust"), "Fee account");
         assert_eq!(receive_address_tab("future_kind"), "Address");
         assert_eq!(midnight_network("preview"), "Preview");
+        assert_eq!(review_state("awaiting_consent"), "awaiting-consent");
+        assert_eq!(review_state("presenting"), "in-progress");
+        assert_eq!(review_state("unexpected"), "idle");
     }
 }

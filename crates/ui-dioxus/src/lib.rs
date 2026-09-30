@@ -8495,6 +8495,8 @@ fn CredentialPresentationPanel(
             }
             if let Some(presentation) = preview.read().clone() {
                 div { class: "credential-offer-preview",
+                    "data-testid": "identity-presentation-review",
+                    "data-review-state": "{ui::review_state(&presentation.state)}",
                     div { class: "consent-preview__heading",
                         h3 { "Presentation preview" }
                         span { class: "status-pill", "{ui::protocol_state(&presentation.state)}" }
@@ -9565,6 +9567,8 @@ fn CredentialsPage(
                     }
                     if let Some(preview) = prepared_issuance.read().clone() {
                         div { class: if credential_issuance_review_is_terminal(Some(&preview)) { "credential-issued-receipt" } else { "credential-offer-preview" },
+                            "data-testid": "identity-issuance-review",
+                            "data-review-state": "{ui::review_state(&preview.state)}",
                             div { class: "consent-preview__heading",
                                 h3 {
                                     if preview.state == "succeeded" {
