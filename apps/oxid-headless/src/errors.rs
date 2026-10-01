@@ -159,6 +159,15 @@ pub(super) fn self_issued_authentication_error(
             "failed_precondition",
             "self-issued authentication session is not awaiting this operation",
         ),
+        SelfIssuedAuthenticationError::Approval(error) => (
+            match error {
+                oxid_identity_application::SelfIssuedAuthenticationFlowError::Unavailable => {
+                    "approval_unavailable"
+                }
+                _ => "approval_invalid",
+            },
+            "self-issued authentication approval is unavailable or invalid",
+        ),
         SelfIssuedAuthenticationError::Protocol(protocol) => (
             protocol.code(),
             "self-issued authentication protocol rejected or could not complete the request",
@@ -307,6 +316,16 @@ pub(super) fn did_error(id: Option<String>, error: DidOperationError) -> Respons
                 _ => "approval_invalid",
             },
             "Trusted credential issuance approval is unavailable or invalid",
+        ),
+        DidOperationError::SelfIssuedAuthentication(error) => Response::error(
+            id,
+            match error {
+                oxid_identity_application::SelfIssuedAuthenticationFlowError::Unavailable => {
+                    "approval_unavailable"
+                }
+                _ => "approval_invalid",
+            },
+            "Trusted self-issued authentication approval is unavailable or invalid",
         ),
         DidOperationError::RetainedRecordChanged => Response::error(
             id,

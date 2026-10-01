@@ -75,7 +75,20 @@ accepted-stage service and identity signing boundary so the positive standalone
 fixture remains available. Request data and environment values cannot select
 that authority.
 
-SIOPv2 and presentation remain fail closed after removal of the obsolete direct
-signing shortcut. Their accepted-stage authority integration, and a real trusted
-producer tied to protection/profile transitions, remain subsequent work; this
-OID4VCI slice does not change either protocol.
+SIOPv2 uses a separate identity-owned authority type and service; issuance
+authority cannot be substituted for authentication authority. Acceptance mints
+it only after the exact retained authentication session is revalidated as
+`awaiting_consent` for the selected profile. It moves by value through the
+protocol authentication request and proof request. The identity signing
+boundary reconstructs the SIOPv2 context, re-reads the retained DID and exact
+`authentication` relationship under the same DID lock, binds SHA-256 of the
+canonical protected-header/claims JWS signing input, consumes the authority,
+and immediately invokes custody signing.
+
+Ordinary composition still prepares and retains the safe SIOPv2 verifier and
+purpose preview, but acceptance returns `approval_unavailable`, keeps the
+session awaiting consent, and performs no protocol or signing effect. The
+explicit development DID approval fixture shares a distinct process-local
+authentication authority with the identity signer to preserve positive
+standalone coverage. Presentation remains fail closed after removal of the
+obsolete direct signing shortcut; this slice does not change presentation.

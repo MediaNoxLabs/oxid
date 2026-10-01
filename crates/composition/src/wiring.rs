@@ -89,8 +89,8 @@ use oxid_identity_application::{
     CreateDidUseCase, CredentialIssuanceFlowService, DeactivateDidUseCase,
     DidJubjubChallengeSigningPort, DidLifecyclePort, DidPublicationService, DidResolutionPort,
     DidService, ForgetDidUseCase, GetDidRecordUseCase, ListDidRecordsUseCase, PublishDidUseCase,
-    ResolveDidUseCase, SignCredentialIssuancePayloadUseCase, SignDidPayloadUseCase,
-    UpdateDidUseCase,
+    ResolveDidUseCase, SelfIssuedAuthenticationFlowService, SignCredentialIssuancePayloadUseCase,
+    SignDidPayloadUseCase, SignSelfIssuedAuthenticationPayloadUseCase, UpdateDidUseCase,
 };
 use oxid_passport_vault_application::{
     AuthorizePassportVaultCallUseCase, CancelPassportVaultCallSubmissionUseCase,
@@ -807,6 +807,9 @@ where
     let credential_issuance_authority = did_approvals
         .as_ref()
         .map(|_| Arc::new(CredentialIssuanceFlowService::new(clock.clone())));
+    let self_issued_authentication_authority = did_approvals
+        .as_ref()
+        .map(|_| Arc::new(SelfIssuedAuthenticationFlowService::new(clock.clone())));
     let identity = DidService::from_ports(did_repository, did_resolver, did_lifecycle);
     let identity = match did_approvals {
         Some(approvals) => identity.with_approvals(
@@ -817,6 +820,13 @@ where
     };
     let identity = match &credential_issuance_authority {
         Some(authority) => identity.with_credential_issuance_authority(
+            Arc::clone(authority),
+            Arc::new(oxid_adapter_platform_system::SystemSha256),
+        ),
+        None => identity,
+    };
+    let identity = match &self_issued_authentication_authority {
+        Some(authority) => identity.with_self_issued_authentication_authority(
             Arc::clone(authority),
             Arc::new(oxid_adapter_platform_system::SystemSha256),
         ),
@@ -1014,7 +1024,8 @@ where
             }
             SelfIssuedAuthenticationComposition::Standalone => {
                 let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
-                let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
+                let sign_did: Arc<dyn SignSelfIssuedAuthenticationPayloadUseCase> =
+                    identity.clone();
                 let proof = Arc::new(DidSelfIssuedIdentityProof::new(
                     Arc::clone(&get_did),
                     sign_did,
@@ -1022,8 +1033,12 @@ where
                 Arc::new(StandaloneSiopV2Verifier::new(proof, get_did, clock.clone()))
             }
         };
-    let self_issued_authentication =
-        Arc::new(SelfIssuedAuthenticationService::new(self_issued_protocol));
+    let self_issued_authentication = Arc::new(match self_issued_authentication_authority {
+        Some(authority) => {
+            SelfIssuedAuthenticationService::with_authority(self_issued_protocol, authority)
+        }
+        None => SelfIssuedAuthenticationService::new(self_issued_protocol),
+    });
     let passport_vault_state_persistence = passport_vault_repository.persistence;
     let passport_vault_credential: Arc<dyn PassportVaultCredentialPort> =
         if standalone_passport_vault {

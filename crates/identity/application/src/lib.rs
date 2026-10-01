@@ -13,10 +13,12 @@ use oxid_identity_domain::{
 mod approval;
 mod credential_issuance;
 mod lifecycle;
+mod self_issued_authentication;
 
 pub use approval::*;
 pub use credential_issuance::*;
 pub use lifecycle::*;
+pub use self_issued_authentication::*;
 
 pub type DidResolutionPortFuture<'a> =
     Pin<Box<dyn Future<Output = Result<DidResolution, DidResolutionPortError>> + Send + 'a>>;
@@ -204,6 +206,7 @@ pub enum DidOperationError {
     InvalidConfirmation,
     Approval(DidApprovalError),
     CredentialIssuance(CredentialIssuanceFlowError),
+    SelfIssuedAuthentication(SelfIssuedAuthenticationFlowError),
     RetainedRecordChanged,
     SubjectMismatch,
 }
@@ -226,6 +229,7 @@ impl fmt::Display for DidOperationError {
             Self::InvalidConfirmation => formatter.write_str("confirmation intent is invalid"),
             Self::Approval(error) => write!(formatter, "{error}"),
             Self::CredentialIssuance(error) => write!(formatter, "{error}"),
+            Self::SelfIssuedAuthentication(error) => write!(formatter, "{error}"),
             Self::RetainedRecordChanged => formatter.write_str("retained DID record changed"),
             Self::SubjectMismatch => {
                 formatter.write_str("resolved DID document subject does not match the request")
@@ -392,6 +396,10 @@ pub struct DidService {
         Arc<CredentialIssuanceFlowService>,
         Arc<dyn oxid_platform_ports::Sha256Port>,
     )>,
+    self_issued_authentication: Option<(
+        Arc<SelfIssuedAuthenticationFlowService>,
+        Arc<dyn oxid_platform_ports::Sha256Port>,
+    )>,
 }
 
 pub struct DidPublicationService {
@@ -449,6 +457,7 @@ impl DidService {
             lifecycle: Arc::new(UnavailableDidLifecycle),
             approvals: None,
             credential_issuance: None,
+            self_issued_authentication: None,
         }
     }
 
@@ -464,6 +473,7 @@ impl DidService {
             lifecycle,
             approvals: None,
             credential_issuance: None,
+            self_issued_authentication: None,
         }
     }
 
@@ -486,6 +496,17 @@ impl DidService {
         hash: Arc<dyn oxid_platform_ports::Sha256Port>,
     ) -> Self {
         self.credential_issuance = Some((authority, hash));
+        self
+    }
+
+    /// Composition-only injection for accepted SIOPv2 ID-token signing.
+    #[must_use]
+    pub fn with_self_issued_authentication_authority(
+        mut self,
+        authority: Arc<SelfIssuedAuthenticationFlowService>,
+        hash: Arc<dyn oxid_platform_ports::Sha256Port>,
+    ) -> Self {
+        self.self_issued_authentication = Some((authority, hash));
         self
     }
 }

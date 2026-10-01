@@ -15,9 +15,11 @@ mod intent;
 mod serialization;
 use crate::{
     AcceptedCredentialIssuanceContext, AcceptedCredentialIssuanceFlow,
-    CanonicalCredentialIssuancePayloadDigest, CredentialIssuanceFlowError,
-    CredentialIssuanceFlowService, DidApprovalCapability, DidApprovalError, DidApprovalOperation,
-    DidApprovalRequest, DidApprovalService,
+    AcceptedSelfIssuedAuthenticationContext, AcceptedSelfIssuedAuthenticationFlow,
+    CanonicalCredentialIssuancePayloadDigest, CanonicalSelfIssuedAuthenticationPayloadDigest,
+    CredentialIssuanceFlowError, CredentialIssuanceFlowService, DidApprovalCapability,
+    DidApprovalError, DidApprovalOperation, DidApprovalRequest, DidApprovalService,
+    SelfIssuedAuthenticationFlowError, SelfIssuedAuthenticationFlowService,
 };
 use intent::{
     canonical_component_id, deactivate_request, normalize_update, sign_request, update_request,
@@ -189,6 +191,41 @@ pub trait SignCredentialIssuancePayloadUseCase: Send + Sync {
     fn execute(
         &self,
         command: SignCredentialIssuancePayloadCommand<'_>,
+    ) -> Result<DidSignatureView, DidOperationError>;
+}
+
+/// Exact canonical SIOPv2 ID-token JWS signing input plus its moved authority.
+pub struct SignSelfIssuedAuthenticationPayloadCommand<'a> {
+    pub profile_id: String,
+    pub did: String,
+    pub method_id: String,
+    pub algorithm: DidKeyAlgorithm,
+    pub flow_id: String,
+    pub session_id: String,
+    pub payload: &'a [u8],
+    pub authority: AcceptedSelfIssuedAuthenticationFlow,
+}
+
+impl fmt::Debug for SignSelfIssuedAuthenticationPayloadCommand<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SignSelfIssuedAuthenticationPayloadCommand")
+            .field("profile_id", &self.profile_id)
+            .field("did", &self.did)
+            .field("method_id", &self.method_id)
+            .field("algorithm", &self.algorithm)
+            .field("flow_id", &self.flow_id)
+            .field("session_id", &self.session_id)
+            .field("payload", &"[REDACTED]")
+            .field("authority", &"[REDACTED]")
+            .finish()
+    }
+}
+
+pub trait SignSelfIssuedAuthenticationPayloadUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: SignSelfIssuedAuthenticationPayloadCommand<'_>,
     ) -> Result<DidSignatureView, DidOperationError>;
 }
 
@@ -391,6 +428,24 @@ fn credential_issuance(
         .map(|(authority, hash)| (authority.as_ref(), hash.as_ref()))
         .ok_or(DidOperationError::CredentialIssuance(
             CredentialIssuanceFlowError::Unavailable,
+        ))
+}
+
+fn self_issued_authentication(
+    service: &DidService,
+) -> Result<
+    (
+        &SelfIssuedAuthenticationFlowService,
+        &dyn oxid_platform_ports::Sha256Port,
+    ),
+    DidOperationError,
+> {
+    service
+        .self_issued_authentication
+        .as_ref()
+        .map(|(authority, hash)| (authority.as_ref(), hash.as_ref()))
+        .ok_or(DidOperationError::SelfIssuedAuthentication(
+            SelfIssuedAuthenticationFlowError::Unavailable,
         ))
 }
 
@@ -616,6 +671,80 @@ impl SignCredentialIssuancePayloadUseCase for DidService {
                 CanonicalCredentialIssuancePayloadDigest::from_sha256(hash.sha256(command.payload))
             })
             .map_err(DidOperationError::CredentialIssuance)?;
+        self.lifecycle
+            .sign(&profile_id, prior.resolution(), &method_id, command.payload)
+            .map(|signature| DidSignatureView {
+                method_id: signature.method_id,
+                algorithm: signature.algorithm.as_str().to_owned(),
+                signature_bytes: signature.signature_bytes,
+            })
+            .map_err(DidOperationError::Lifecycle)
+    }
+}
+
+impl SignSelfIssuedAuthenticationPayloadUseCase for DidService {
+    fn execute(
+        &self,
+        command: SignSelfIssuedAuthenticationPayloadCommand<'_>,
+    ) -> Result<DidSignatureView, DidOperationError> {
+        if command.payload.is_empty() {
+            return Err(DidOperationError::EmptyPayload);
+        }
+        if command.payload.len() > MAX_DID_SIGNING_PAYLOAD_BYTES {
+            return Err(DidOperationError::PayloadTooLarge);
+        }
+        let profile_id = parse_profile(command.profile_id)?;
+        let did = parse_did(command.did)?;
+        let method_id = canonical_component_id(&did, &command.method_id)?;
+        let (authentication, hash) = self_issued_authentication(self)?;
+        let lock = operation_lock(&profile_id, &did)?;
+        let _guard = lock.lock().map_err(|_| serialization::unavailable())?;
+
+        // The retained DID and exact authentication relationship are authoritative
+        // only when re-read under the lock held through consumption and signing.
+        let prior = current(self, &profile_id, &did)?;
+        let document = prior.resolution().document();
+        let method = document
+            .verification_methods()
+            .iter()
+            .find(|method| method.id() == method_id)
+            .ok_or(DidOperationError::Lifecycle(
+                DidLifecyclePortError::NotFound,
+            ))?;
+        let current_algorithm = match method.public_key_jwk().curve() {
+            JwkCurve::Ed25519 => DidKeyAlgorithm::Ed25519,
+            JwkCurve::P256 => DidKeyAlgorithm::P256,
+            _ => {
+                return Err(DidOperationError::Lifecycle(
+                    DidLifecyclePortError::UnsupportedAlgorithm,
+                ));
+            }
+        };
+        if current_algorithm != command.algorithm
+            || method.controller() != &did
+            || !document.relationships().iter().any(|relationship| {
+                relationship.relationship() == VerificationRelationship::Authentication
+                    && relationship.method_ids().iter().any(|id| id == &method_id)
+            })
+        {
+            return Err(DidOperationError::SelfIssuedAuthentication(
+                SelfIssuedAuthenticationFlowError::FlowMismatch,
+            ));
+        }
+        let context = AcceptedSelfIssuedAuthenticationContext::new(
+            profile_id.clone(),
+            did.clone(),
+            method_id.clone(),
+            command.flow_id,
+            command.session_id,
+        );
+        authentication
+            .bind_and_consume_for_signing(&command.authority, &context, || {
+                CanonicalSelfIssuedAuthenticationPayloadDigest::from_sha256(
+                    hash.sha256(command.payload),
+                )
+            })
+            .map_err(DidOperationError::SelfIssuedAuthentication)?;
         self.lifecycle
             .sign(&profile_id, prior.resolution(), &method_id, command.payload)
             .map(|signature| DidSignatureView {

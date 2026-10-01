@@ -14,8 +14,10 @@ use std::{
 use oxid_foundation::OpaqueIdError;
 use oxid_identity_application::{
     AcceptedCredentialIssuanceContext, AcceptedCredentialIssuanceFlow,
+    AcceptedSelfIssuedAuthenticationContext, AcceptedSelfIssuedAuthenticationFlow,
     CredentialIssuanceAuthorityPort, CredentialIssuanceFlowError,
-    UnavailableCredentialIssuanceAuthority,
+    SelfIssuedAuthenticationAuthorityPort, SelfIssuedAuthenticationFlowError,
+    UnavailableCredentialIssuanceAuthority, UnavailableSelfIssuedAuthenticationAuthority,
 };
 use oxid_identity_domain::{IdentityProfileId, MidnightDid};
 use oxid_protocol_domain::{
@@ -30,6 +32,7 @@ const MAX_DID_CHARACTERS: usize = 8_192;
 const MAX_METHOD_CHARACTERS: usize = 8_192;
 const ISSUANCE_INTERRUPTED_CODE: &str = "issuance_interrupted";
 pub const OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID: &str = "openid4vci";
+pub const SIOPV2_SELF_ISSUED_AUTHENTICATION_FLOW_ID: &str = "siopv2";
 
 /// A safe routing result for an inbound identity protocol link.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -883,12 +886,25 @@ pub struct PreparedSelfIssuedAuthentication {
     pub preview: SelfIssuedAuthenticationPreview,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProtocolSelfIssuedAuthenticationRequest {
     pub profile_id: ProtocolProfileId,
     pub authentication_id: SelfIssuedAuthenticationId,
     pub holder_did: String,
     pub method_id: String,
+    pub authority: AcceptedSelfIssuedAuthenticationFlow,
+}
+
+impl fmt::Debug for ProtocolSelfIssuedAuthenticationRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProtocolSelfIssuedAuthenticationRequest")
+            .field("profile_id", &self.profile_id)
+            .field("authentication_id", &self.authentication_id)
+            .field("holder_did", &self.holder_did)
+            .field("method_id", &self.method_id)
+            .field("authority", &"[REDACTED]")
+            .finish()
+    }
 }
 
 pub trait SelfIssuedAuthenticationProtocolPort: Send + Sync {
@@ -908,7 +924,6 @@ pub trait SelfIssuedAuthenticationProtocolPort: Send + Sync {
     ) -> Result<(), SelfIssuedProtocolError>;
 }
 
-#[derive(Clone, PartialEq, Eq)]
 pub struct SelfIssuedProofRequest<'a> {
     pub profile_id: ProtocolProfileId,
     pub holder_did: String,
@@ -917,6 +932,9 @@ pub struct SelfIssuedProofRequest<'a> {
     pub nonce: &'a str,
     pub issued_at_seconds: u64,
     pub expires_at_seconds: u64,
+    pub flow_id: &'static str,
+    pub session_id: String,
+    pub authority: AcceptedSelfIssuedAuthenticationFlow,
 }
 
 impl fmt::Debug for SelfIssuedProofRequest<'_> {
@@ -930,6 +948,9 @@ impl fmt::Debug for SelfIssuedProofRequest<'_> {
             .field("nonce", &"[REDACTED]")
             .field("issued_at_seconds", &self.issued_at_seconds)
             .field("expires_at_seconds", &self.expires_at_seconds)
+            .field("flow_id", &self.flow_id)
+            .field("session_id", &self.session_id)
+            .field("authority", &"[REDACTED]")
             .finish()
     }
 }
@@ -1069,6 +1090,7 @@ pub enum SelfIssuedAuthenticationError {
     InvalidConfirmation,
     NotFound,
     InvalidState,
+    Approval(SelfIssuedAuthenticationFlowError),
     Protocol(SelfIssuedProtocolError),
     Unavailable,
 }
@@ -1090,6 +1112,7 @@ impl fmt::Display for SelfIssuedAuthenticationError {
             Self::InvalidState => {
                 formatter.write_str("self-issued authentication state is invalid")
             }
+            Self::Approval(error) => error.fmt(formatter),
             Self::Protocol(error) => error.fmt(formatter),
             Self::Unavailable => {
                 formatter.write_str("self-issued authentication state is unavailable")
@@ -1137,6 +1160,7 @@ pub trait ListSelfIssuedAuthenticationsUseCase: Send + Sync {
 
 pub struct SelfIssuedAuthenticationService {
     protocol: Arc<dyn SelfIssuedAuthenticationProtocolPort>,
+    authority: Arc<dyn SelfIssuedAuthenticationAuthorityPort>,
     sessions: Mutex<BTreeMap<SelfIssuedAuthenticationId, SelfIssuedSession>>,
 }
 
@@ -1145,6 +1169,19 @@ impl SelfIssuedAuthenticationService {
     pub fn new(protocol: Arc<dyn SelfIssuedAuthenticationProtocolPort>) -> Self {
         Self {
             protocol,
+            authority: Arc::new(UnavailableSelfIssuedAuthenticationAuthority),
+            sessions: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    #[must_use]
+    pub fn with_authority(
+        protocol: Arc<dyn SelfIssuedAuthenticationProtocolPort>,
+        authority: Arc<dyn SelfIssuedAuthenticationAuthorityPort>,
+    ) -> Self {
+        Self {
+            protocol,
+            authority,
             sessions: Mutex::new(BTreeMap::new()),
         }
     }
@@ -1235,7 +1272,7 @@ impl AcceptSelfIssuedAuthenticationUseCase for SelfIssuedAuthenticationService {
             }
             let profile_id = authentication_profile(command.profile_id)?;
             let authentication_id = authentication_id(command.authentication_id)?;
-            {
+            let authority = {
                 let mut sessions = self.sessions()?;
                 let session = sessions
                     .get_mut(&authentication_id)
@@ -1246,8 +1283,23 @@ impl AcceptSelfIssuedAuthenticationUseCase for SelfIssuedAuthenticationService {
                 if session.state != SelfIssuedAuthenticationState::AwaitingConsent {
                     return Err(SelfIssuedAuthenticationError::InvalidState);
                 }
+                let identity_profile = IdentityProfileId::parse(profile_id.as_str().to_owned())
+                    .map_err(SelfIssuedAuthenticationError::InvalidProfileIdentifier)?;
+                let holder_did = MidnightDid::parse(command.holder_did.clone())
+                    .map_err(|_| SelfIssuedAuthenticationError::InvalidHolder)?;
+                let authority = self
+                    .authority
+                    .mint(AcceptedSelfIssuedAuthenticationContext::new(
+                        identity_profile,
+                        holder_did,
+                        command.method_id.clone(),
+                        SIOPV2_SELF_ISSUED_AUTHENTICATION_FLOW_ID,
+                        authentication_id.as_str(),
+                    ))
+                    .map_err(SelfIssuedAuthenticationError::Approval)?;
                 session.state = SelfIssuedAuthenticationState::Authenticating;
-            }
+                authority
+            };
             if let Err(error) = self
                 .protocol
                 .authenticate(ProtocolSelfIssuedAuthenticationRequest {
@@ -1255,6 +1307,7 @@ impl AcceptSelfIssuedAuthenticationUseCase for SelfIssuedAuthenticationService {
                     authentication_id: authentication_id.clone(),
                     holder_did: command.holder_did,
                     method_id: command.method_id,
+                    authority,
                 })
                 .await
             {
@@ -1380,6 +1433,27 @@ mod tests {
         )
     }
 
+    struct AuthenticationClock;
+    impl oxid_identity_application::SelfIssuedAuthenticationClockPort for AuthenticationClock {
+        fn now(
+            &self,
+        ) -> Result<
+            oxid_foundation::UnixTimestampMillis,
+            oxid_identity_application::SelfIssuedAuthenticationFlowError,
+        > {
+            Ok(oxid_foundation::UnixTimestampMillis::new(1))
+        }
+    }
+
+    fn authentication_authority()
+    -> Arc<oxid_identity_application::SelfIssuedAuthenticationFlowService> {
+        Arc::new(
+            oxid_identity_application::SelfIssuedAuthenticationFlowService::new(Arc::new(
+                AuthenticationClock,
+            )),
+        )
+    }
+
     struct PendingHolderProof;
 
     impl CredentialHolderProofPort for PendingHolderProof {
@@ -1436,14 +1510,27 @@ mod tests {
     #[test]
     fn self_issued_proof_nonce_is_borrowed_and_redacted_when_future_is_dropped() {
         let nonce = "sensitive-nonce";
+        let authority = authentication_authority();
+        let method_id = format!("{HOLDER_DID}#key-1");
         let request = SelfIssuedProofRequest {
             profile_id: ProtocolProfileId::parse("profile_test").expect("profile"),
-            holder_did: "did:example:holder".to_owned(),
-            method_id: "did:example:holder#key-1".to_owned(),
+            holder_did: HOLDER_DID.to_owned(),
+            method_id: method_id.clone(),
             audience: "https://verifier.example".to_owned(),
             nonce,
             issued_at_seconds: 1,
             expires_at_seconds: 2,
+            flow_id: SIOPV2_SELF_ISSUED_AUTHENTICATION_FLOW_ID,
+            session_id: "authentication_test".to_owned(),
+            authority: authority
+                .mint(AcceptedSelfIssuedAuthenticationContext::new(
+                    IdentityProfileId::parse("profile_test").expect("identity profile"),
+                    MidnightDid::parse(HOLDER_DID).expect("holder DID"),
+                    method_id,
+                    SIOPV2_SELF_ISSUED_AUTHENTICATION_FLOW_ID,
+                    "authentication_test",
+                ))
+                .expect("authority"),
         };
         let request_debug = format!("{request:?}");
         assert!(request_debug.contains("[REDACTED]"));
@@ -1924,7 +2011,83 @@ mod tests {
     }
 
     fn authentication_service() -> SelfIssuedAuthenticationService {
-        SelfIssuedAuthenticationService::new(Arc::new(AuthenticationProtocol))
+        SelfIssuedAuthenticationService::with_authority(
+            Arc::new(AuthenticationProtocol),
+            authentication_authority(),
+        )
+    }
+
+    struct CountingAuthenticationProtocol {
+        authenticate_calls: Arc<AtomicUsize>,
+    }
+
+    impl SelfIssuedAuthenticationProtocolPort for CountingAuthenticationProtocol {
+        fn prepare<'a>(
+            &'a self,
+            _: PrepareSelfIssuedAuthenticationRequest,
+        ) -> PrepareSelfIssuedAuthenticationPortFuture<'a> {
+            Box::pin(async {
+                Ok(PreparedSelfIssuedAuthentication {
+                    id: SelfIssuedAuthenticationId::parse("authentication_closed")
+                        .expect("authentication id"),
+                    preview: SelfIssuedAuthenticationPreview::new(
+                        "https://verifier.example",
+                        "Authenticate with the selected DID.",
+                    )
+                    .expect("preview"),
+                })
+            })
+        }
+
+        fn authenticate<'a>(
+            &'a self,
+            _: ProtocolSelfIssuedAuthenticationRequest,
+        ) -> AuthenticateSelfIssuedPortFuture<'a> {
+            self.authenticate_calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(()) })
+        }
+
+        fn discard(&self, _: &SelfIssuedAuthenticationId) -> Result<(), SelfIssuedProtocolError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn default_self_issued_acceptance_fails_closed_before_protocol_effects() {
+        let authenticate_calls = Arc::new(AtomicUsize::new(0));
+        let service =
+            SelfIssuedAuthenticationService::new(Arc::new(CountingAuthenticationProtocol {
+                authenticate_calls: Arc::clone(&authenticate_calls),
+            }));
+        let prepared = prepare_authentication(&service);
+        let result = futures_lite(AcceptSelfIssuedAuthenticationUseCase::execute(
+            &service,
+            AcceptSelfIssuedAuthenticationCommand {
+                profile_id: "profile_1".to_owned(),
+                authentication_id: prepared.id.clone(),
+                holder_did: HOLDER_DID.to_owned(),
+                method_id: format!("{HOLDER_DID}#auth-1"),
+                confirmed: true,
+                intent: "ACCEPT_SELF_ISSUED_AUTHENTICATION".to_owned(),
+            },
+        ));
+        assert_eq!(
+            result,
+            Err(SelfIssuedAuthenticationError::Approval(
+                SelfIssuedAuthenticationFlowError::Unavailable,
+            ))
+        );
+        assert_eq!(authenticate_calls.load(Ordering::SeqCst), 0);
+        let retained = GetSelfIssuedAuthenticationUseCase::execute(
+            &service,
+            SelfIssuedAuthenticationQuery {
+                profile_id: "profile_1".to_owned(),
+                authentication_id: prepared.id,
+            },
+        )
+        .expect("preview remains retained");
+        assert_eq!(retained.state, "awaiting_consent");
+        assert_eq!(retained.failure_code, None);
     }
 
     fn prepare_authentication(
@@ -1950,8 +2113,8 @@ mod tests {
             AcceptSelfIssuedAuthenticationCommand {
                 profile_id: "profile_1".to_owned(),
                 authentication_id: prepared.id.clone(),
-                holder_did: "did:midnight:undeployed:holder".to_owned(),
-                method_id: "did:midnight:undeployed:holder#auth-1".to_owned(),
+                holder_did: HOLDER_DID.to_owned(),
+                method_id: format!("{HOLDER_DID}#auth-1"),
                 confirmed: false,
                 intent: "ACCEPT_SELF_ISSUED_AUTHENTICATION".to_owned(),
             },
@@ -1981,8 +2144,8 @@ mod tests {
             AcceptSelfIssuedAuthenticationCommand {
                 profile_id: "profile_1".to_owned(),
                 authentication_id: prepared.id,
-                holder_did: "did:midnight:undeployed:holder".to_owned(),
-                method_id: "did:midnight:undeployed:holder#auth-1".to_owned(),
+                holder_did: HOLDER_DID.to_owned(),
+                method_id: format!("{HOLDER_DID}#auth-1"),
                 confirmed: true,
                 intent: "ACCEPT_SELF_ISSUED_AUTHENTICATION".to_owned(),
             },
