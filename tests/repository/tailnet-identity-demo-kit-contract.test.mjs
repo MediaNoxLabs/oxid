@@ -155,28 +155,45 @@ esac
       env: { ...environment, FAKE_COMPOSE_SLEEP: "3" },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    let firstStderr = "";
+    first.stdout.resume();
+    first.stderr.on("data", (chunk) => { firstStderr += chunk; });
+    const firstStatus = new Promise((resolve, reject) => {
+      first.once("error", reject);
+      first.once("close", resolve);
+    });
     let leaseObserved = false;
-    for (let attempt = 0; attempt < 100; attempt += 1) {
+    // A copied shell entrypoint can take several seconds to start through the
+    // macOS/Nix toolchain on a cold host. Keep the lease wait bounded, but do
+    // not confuse process-start latency with failed mutual exclusion.
+    const leaseDeadline = Date.now() + 10_000;
+    while (Date.now() < leaseDeadline) {
       try {
         await access(join(sharedState, "startup-lease", "owner.json"));
         leaseObserved = true;
         break;
       } catch {
+        if (first.exitCode !== null || first.signalCode !== null) break;
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
     }
-    assert.equal(leaseObserved, true, "the first worktree must publish its lease before contention is tested");
+    if (!leaseObserved && (first.exitCode !== null || first.signalCode !== null)) {
+      const status = await firstStatus;
+      const outcome = first.signalCode === null ? `status ${status}` : `signal ${first.signalCode}`;
+      assert.fail(`the first worktree exited before publishing its lease (${outcome}): ${firstStderr.slice(-500)}`);
+    }
+    if (!leaseObserved) {
+      first.kill("SIGTERM");
+      await firstStatus;
+      assert.fail("the first worktree did not publish its lease within 10 seconds");
+    }
     const loser = spawnSync("bash", [join(worktreeB, "scripts", "standalone-up.sh"), "local"], {
       env: environment,
       encoding: "utf8",
     });
     assert.equal(loser.status, 2);
     assert.match(loser.stderr, /"state":"contention"/);
-    const firstStatus = await new Promise((resolve, reject) => {
-      first.once("error", reject);
-      first.once("close", resolve);
-    });
-    assert.equal(firstStatus, 0);
+    assert.equal(await firstStatus, 0);
 
     const reuse = spawnSync("bash", [join(worktreeB, "scripts", "standalone-up.sh"), "local"], {
       env: environment,
