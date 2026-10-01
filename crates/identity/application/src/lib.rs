@@ -11,9 +11,11 @@ use oxid_identity_domain::{
 };
 
 mod approval;
+mod credential_issuance;
 mod lifecycle;
 
 pub use approval::*;
+pub use credential_issuance::*;
 pub use lifecycle::*;
 
 pub type DidResolutionPortFuture<'a> =
