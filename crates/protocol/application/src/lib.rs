@@ -12,6 +12,12 @@ use std::{
 };
 
 use oxid_foundation::OpaqueIdError;
+use oxid_identity_application::{
+    AcceptedCredentialIssuanceContext, AcceptedCredentialIssuanceFlow,
+    CredentialIssuanceAuthorityPort, CredentialIssuanceFlowError,
+    UnavailableCredentialIssuanceAuthority,
+};
+use oxid_identity_domain::{IdentityProfileId, MidnightDid};
 use oxid_protocol_domain::{
     CredentialIssuanceId, CredentialIssuanceState, CredentialOfferPreview, ProtocolProfileId,
     SelfIssuedAuthenticationId, SelfIssuedAuthenticationPreview, SelfIssuedAuthenticationState,
@@ -23,6 +29,7 @@ pub const MAX_IDENTITY_REQUEST_URI_BYTES: usize = 32 * 1_024;
 const MAX_DID_CHARACTERS: usize = 8_192;
 const MAX_METHOD_CHARACTERS: usize = 8_192;
 const ISSUANCE_INTERRUPTED_CODE: &str = "issuance_interrupted";
+pub const OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID: &str = "openid4vci";
 
 /// A safe routing result for an inbound identity protocol link.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,13 +170,27 @@ pub struct PreparedCredentialOffer {
     pub preview: CredentialOfferPreview,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProtocolIssueRequest {
     pub profile_id: ProtocolProfileId,
     pub issuance_id: CredentialIssuanceId,
     pub holder_did: String,
     pub method_id: String,
     pub holder_binding_method_id: String,
+    pub authority: AcceptedCredentialIssuanceFlow,
+}
+
+impl fmt::Debug for ProtocolIssueRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProtocolIssueRequest")
+            .field("profile_id", &self.profile_id)
+            .field("issuance_id", &self.issuance_id)
+            .field("holder_did", &self.holder_did)
+            .field("method_id", &self.method_id)
+            .field("holder_binding_method_id", &self.holder_binding_method_id)
+            .field("authority", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(PartialEq, Eq)]
@@ -202,13 +223,15 @@ pub trait CredentialIssuanceProtocolPort: Send + Sync {
     fn discard(&self, issuance_id: &CredentialIssuanceId) -> Result<(), IssuanceProtocolError>;
 }
 
-#[derive(Clone, PartialEq, Eq)]
 pub struct HolderProofRequest<'a> {
     pub profile_id: ProtocolProfileId,
     pub holder_did: String,
     pub method_id: String,
     pub audience: String,
     pub nonce: &'a str,
+    pub flow_id: &'static str,
+    pub session_id: String,
+    pub authority: AcceptedCredentialIssuanceFlow,
 }
 
 impl fmt::Debug for HolderProofRequest<'_> {
@@ -220,6 +243,9 @@ impl fmt::Debug for HolderProofRequest<'_> {
             .field("method_id", &self.method_id)
             .field("audience", &self.audience)
             .field("nonce", &"[REDACTED]")
+            .field("flow_id", &self.flow_id)
+            .field("session_id", &self.session_id)
+            .field("authority", &"[REDACTED]")
             .finish()
     }
 }
@@ -439,6 +465,7 @@ pub enum CredentialIssuanceError {
     InvalidConfirmation,
     NotFound,
     InvalidState,
+    Approval(CredentialIssuanceFlowError),
     Protocol(IssuanceProtocolError),
     Sink(IssuedCredentialSinkError),
     Unavailable,
@@ -460,6 +487,7 @@ impl fmt::Display for CredentialIssuanceError {
             }
             Self::NotFound => formatter.write_str("credential issuance session was not found"),
             Self::InvalidState => formatter.write_str("credential issuance state is invalid"),
+            Self::Approval(error) => error.fmt(formatter),
             Self::Protocol(error) => error.fmt(formatter),
             Self::Sink(error) => error.fmt(formatter),
             Self::Unavailable => formatter.write_str("credential issuance state is unavailable"),
@@ -501,6 +529,7 @@ pub trait ListCredentialIssuancesUseCase: Send + Sync {
 pub struct CredentialIssuanceService {
     protocol: Arc<dyn CredentialIssuanceProtocolPort>,
     sink: Arc<dyn IssuedCredentialSinkPort>,
+    authority: Arc<dyn CredentialIssuanceAuthorityPort>,
     sessions: Mutex<BTreeMap<CredentialIssuanceId, Session>>,
 }
 
@@ -527,6 +556,21 @@ impl CredentialIssuanceService {
         Self {
             protocol,
             sink,
+            authority: Arc::new(UnavailableCredentialIssuanceAuthority),
+            sessions: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    #[must_use]
+    pub fn with_authority(
+        protocol: Arc<dyn CredentialIssuanceProtocolPort>,
+        sink: Arc<dyn IssuedCredentialSinkPort>,
+        authority: Arc<dyn CredentialIssuanceAuthorityPort>,
+    ) -> Self {
+        Self {
+            protocol,
+            sink,
+            authority,
             sessions: Mutex::new(BTreeMap::new()),
         }
     }
@@ -620,7 +664,7 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
             }
             let profile_id = profile(command.profile_id)?;
             let issuance_id = issuance_id(command.issuance_id)?;
-            {
+            let authority = {
                 let mut sessions = self.sessions()?;
                 let session = sessions
                     .get_mut(&issuance_id)
@@ -631,8 +675,23 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
                 if session.state != CredentialIssuanceState::AwaitingConsent {
                     return Err(CredentialIssuanceError::InvalidState);
                 }
+                let identity_profile = IdentityProfileId::parse(profile_id.as_str().to_owned())
+                    .map_err(CredentialIssuanceError::InvalidProfileIdentifier)?;
+                let holder_did = MidnightDid::parse(command.holder_did.clone())
+                    .map_err(|_| CredentialIssuanceError::InvalidHolder)?;
+                let authority = self
+                    .authority
+                    .mint(AcceptedCredentialIssuanceContext::new(
+                        identity_profile,
+                        holder_did,
+                        command.method_id.clone(),
+                        OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
+                        issuance_id.as_str(),
+                    ))
+                    .map_err(CredentialIssuanceError::Approval)?;
                 session.state = CredentialIssuanceState::Issuing;
-            }
+                authority
+            };
             let _interrupted_attempt = IssuanceAttempt {
                 service: self,
                 issuance_id: issuance_id.clone(),
@@ -645,6 +704,7 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
                     holder_did: command.holder_did,
                     method_id: command.method_id,
                     holder_binding_method_id: command.holder_binding_method_id,
+                    authority,
                 })
                 .await
             {
@@ -1300,6 +1360,25 @@ impl SelfIssuedAuthenticationProtocolPort for UnavailableSelfIssuedAuthenticatio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const HOLDER_DID: &str =
+        "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const REJECT_DID: &str =
+        "did:midnight:undeployed:1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    struct IssuanceClock;
+    impl oxid_identity_application::CredentialIssuanceClockPort for IssuanceClock {
+        fn now(&self) -> Result<oxid_foundation::UnixTimestampMillis, CredentialIssuanceFlowError> {
+            Ok(oxid_foundation::UnixTimestampMillis::new(1))
+        }
+    }
+
+    fn issuance_authority() -> Arc<oxid_identity_application::CredentialIssuanceFlowService> {
+        Arc::new(
+            oxid_identity_application::CredentialIssuanceFlowService::new(Arc::new(IssuanceClock)),
+        )
+    }
 
     struct PendingHolderProof;
 
@@ -1315,12 +1394,25 @@ mod tests {
     #[test]
     fn holder_proof_nonce_is_borrowed_and_redacted_when_futures_are_dropped() {
         let nonce = "sensitive-nonce";
+        let authority = issuance_authority();
+        let method_id = format!("{HOLDER_DID}#key-1");
         let request = HolderProofRequest {
             profile_id: ProtocolProfileId::parse("profile_test").expect("profile"),
-            holder_did: "did:example:holder".to_owned(),
-            method_id: "did:example:holder#key-1".to_owned(),
+            holder_did: HOLDER_DID.to_owned(),
+            method_id: method_id.clone(),
             audience: "https://issuer.example".to_owned(),
             nonce,
+            flow_id: OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
+            session_id: "issuance_test".to_owned(),
+            authority: authority
+                .mint(AcceptedCredentialIssuanceContext::new(
+                    IdentityProfileId::parse("profile_test").expect("identity profile"),
+                    MidnightDid::parse(HOLDER_DID).expect("holder DID"),
+                    method_id,
+                    OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
+                    "issuance_test",
+                ))
+                .expect("authority"),
         };
         let request_debug = format!("{request:?}");
         assert!(request_debug.contains("[REDACTED]"));
@@ -1442,7 +1534,7 @@ mod tests {
 
         fn issue<'a>(&'a self, request: ProtocolIssueRequest) -> IssueCredentialPortFuture<'a> {
             Box::pin(async move {
-                if request.holder_did == "did:midnight:undeployed:reject" {
+                if request.holder_did == REJECT_DID {
                     Err(IssuanceProtocolError::InvalidProof)
                 } else {
                     Ok(IssuedCredentialBytes {
@@ -1477,7 +1569,11 @@ mod tests {
     }
 
     fn service() -> CredentialIssuanceService {
-        CredentialIssuanceService::new(Arc::new(Protocol), Arc::new(Sink))
+        CredentialIssuanceService::with_authority(
+            Arc::new(Protocol),
+            Arc::new(Sink),
+            issuance_authority(),
+        )
     }
 
     fn prepare(service: &CredentialIssuanceService) -> CredentialIssuanceView {
@@ -1520,10 +1616,9 @@ mod tests {
             AcceptCredentialIssuanceCommand {
                 profile_id: "profile_1".to_owned(),
                 issuance_id: prepared.id,
-                holder_did: "did:midnight:undeployed:holder".to_owned(),
-                method_id: "did:midnight:undeployed:holder#auth-1".to_owned(),
-                holder_binding_method_id: "did:midnight:undeployed:holder#holder-jubjub-1"
-                    .to_owned(),
+                holder_did: HOLDER_DID.to_owned(),
+                method_id: format!("{HOLDER_DID}#auth-1"),
+                holder_binding_method_id: format!("{HOLDER_DID}#holder-jubjub-1"),
                 confirmed: true,
                 intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
             },
@@ -1531,6 +1626,84 @@ mod tests {
         .expect("issuance should succeed");
         assert_eq!(issued.state, "succeeded");
         assert_eq!(issued.credential_id.as_deref(), Some("vc_1"));
+    }
+
+    struct CountingProtocol(AtomicUsize);
+
+    impl CredentialIssuanceProtocolPort for CountingProtocol {
+        fn prepare<'a>(&'a self, _: PrepareIssuanceRequest) -> PrepareIssuancePortFuture<'a> {
+            Box::pin(async {
+                Ok(PreparedCredentialOffer {
+                    id: CredentialIssuanceId::parse("issuance_no_authority").expect("issuance id"),
+                    preview: CredentialOfferPreview::new(
+                        "https://issuer.example",
+                        vec!["identity".to_owned()],
+                        vec!["Identity credential".to_owned()],
+                    )
+                    .expect("preview"),
+                })
+            })
+        }
+
+        fn issue<'a>(&'a self, _: ProtocolIssueRequest) -> IssueCredentialPortFuture<'a> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async { Err(IssuanceProtocolError::IssuerRejected) })
+        }
+
+        fn discard(&self, _: &CredentialIssuanceId) -> Result<(), IssuanceProtocolError> {
+            Ok(())
+        }
+    }
+
+    struct CountingSink(AtomicUsize);
+    impl IssuedCredentialSinkPort for CountingSink {
+        fn store_verified<'a>(
+            &'a self,
+            _: StoreIssuedCredentialRequest,
+        ) -> StoreIssuedCredentialFuture<'a> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async { Err(IssuedCredentialSinkError::Unavailable) })
+        }
+    }
+
+    #[test]
+    fn unavailable_authority_preserves_awaiting_consent_and_has_zero_effects() {
+        let protocol = Arc::new(CountingProtocol(AtomicUsize::new(0)));
+        let sink = Arc::new(CountingSink(AtomicUsize::new(0)));
+        let service = CredentialIssuanceService::new(protocol.clone(), sink.clone());
+        let prepared = prepare(&service);
+        let result = futures_lite(AcceptCredentialIssuanceUseCase::execute(
+            &service,
+            AcceptCredentialIssuanceCommand {
+                profile_id: "profile_1".to_owned(),
+                issuance_id: prepared.id.clone(),
+                holder_did: HOLDER_DID.to_owned(),
+                method_id: format!("{HOLDER_DID}#auth-1"),
+                holder_binding_method_id: format!("{HOLDER_DID}#holder-jubjub-1"),
+                confirmed: true,
+                intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
+            },
+        ));
+        assert_eq!(
+            result,
+            Err(CredentialIssuanceError::Approval(
+                CredentialIssuanceFlowError::Unavailable
+            ))
+        );
+        assert_eq!(protocol.0.load(Ordering::Relaxed), 0);
+        assert_eq!(sink.0.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            GetCredentialIssuanceUseCase::execute(
+                &service,
+                CredentialIssuanceQuery {
+                    profile_id: "profile_1".to_owned(),
+                    issuance_id: prepared.id,
+                },
+            )
+            .expect("retained session")
+            .state,
+            "awaiting_consent"
+        );
     }
 
     #[test]
@@ -1542,10 +1715,9 @@ mod tests {
             AcceptCredentialIssuanceCommand {
                 profile_id: "profile_1".to_owned(),
                 issuance_id: prepared.id.clone(),
-                holder_did: "did:midnight:undeployed:holder".to_owned(),
-                method_id: "did:midnight:undeployed:holder#auth-1".to_owned(),
-                holder_binding_method_id: "did:midnight:undeployed:holder#holder-jubjub-1"
-                    .to_owned(),
+                holder_did: HOLDER_DID.to_owned(),
+                method_id: format!("{HOLDER_DID}#auth-1"),
+                holder_binding_method_id: format!("{HOLDER_DID}#holder-jubjub-1"),
                 confirmed: false,
                 intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
             },
@@ -1597,10 +1769,9 @@ mod tests {
             AcceptCredentialIssuanceCommand {
                 profile_id: "profile_1".to_owned(),
                 issuance_id: prepared.id.clone(),
-                holder_did: "did:midnight:undeployed:reject".to_owned(),
-                method_id: "did:midnight:undeployed:reject#auth-1".to_owned(),
-                holder_binding_method_id: "did:midnight:undeployed:reject#holder-jubjub-1"
-                    .to_owned(),
+                holder_did: REJECT_DID.to_owned(),
+                method_id: format!("{REJECT_DID}#auth-1"),
+                holder_binding_method_id: format!("{REJECT_DID}#holder-jubjub-1"),
                 confirmed: true,
                 intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
             },
@@ -1664,8 +1835,11 @@ mod tests {
 
     #[test]
     fn interrupted_issuance_becomes_failed_and_can_be_discarded() {
-        let service =
-            CredentialIssuanceService::new(Arc::new(PanickingIssuanceProtocol), Arc::new(Sink));
+        let service = CredentialIssuanceService::with_authority(
+            Arc::new(PanickingIssuanceProtocol),
+            Arc::new(Sink),
+            issuance_authority(),
+        );
         let prepared = prepare(&service);
         let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             futures_lite(AcceptCredentialIssuanceUseCase::execute(
@@ -1673,10 +1847,9 @@ mod tests {
                 AcceptCredentialIssuanceCommand {
                     profile_id: "profile_1".to_owned(),
                     issuance_id: prepared.id.clone(),
-                    holder_did: "did:midnight:undeployed:holder".to_owned(),
-                    method_id: "did:midnight:undeployed:holder#auth-1".to_owned(),
-                    holder_binding_method_id: "did:midnight:undeployed:holder#holder-jubjub-1"
-                        .to_owned(),
+                    holder_did: HOLDER_DID.to_owned(),
+                    method_id: format!("{HOLDER_DID}#auth-1"),
+                    holder_binding_method_id: format!("{HOLDER_DID}#holder-jubjub-1"),
                     confirmed: true,
                     intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
                 },

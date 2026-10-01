@@ -522,3 +522,67 @@ fn issues_and_stores_a_verified_credential_through_the_headless_flow() {
             .contains("vp_token")
     );
 }
+
+#[test]
+fn ordinary_composition_rejects_issuance_without_approval_and_has_zero_effects() {
+    const DID: &str =
+        "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let created = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"unapproved-profile","method":"wallet.profile.create","params":{"displayName":"Unapproved issuance"}}"#,
+    );
+    let profile_id = created[0]["result"]["profile"]["id"]
+        .as_str()
+        .expect("profile");
+    let selected = execute_with_wallet(
+        &wallet,
+        &json!({"protocol": PROTOCOL_VERSION, "id": "unapproved-select", "method": "wallet.profile.select", "params": {"profileId": profile_id}}).to_string(),
+    );
+    assert_eq!(selected[0]["ok"], true);
+    let prepared = execute_with_wallet(
+        &wallet,
+        &json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "unapproved-prepare",
+            "method": "credential.issuance.prepare",
+            "params": {"offer": standalone_credential_offer()},
+        })
+        .to_string(),
+    );
+    let issuance_id = prepared[0]["result"]["issuance"]["id"]
+        .as_str()
+        .expect("issuance id");
+    let rejected = execute_with_wallet(
+        &wallet,
+        &json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "unapproved-accept",
+            "method": "credential.issuance.accept",
+            "params": {
+                "issuanceId": issuance_id,
+                "holderDid": DID,
+                "methodId": format!("{DID}#auth-1"),
+                "holderBindingMethodId": format!("{DID}#holder-jubjub-1"),
+                "confirmed": true,
+                "intent": "ACCEPT_CREDENTIAL_ISSUANCE",
+            },
+        })
+        .to_string(),
+    );
+    assert_eq!(rejected[0]["error"]["code"], "approval_unavailable");
+
+    let state = execute_with_wallet(
+        &wallet,
+        &format!(
+            "{}\n{}",
+            json!({"protocol": PROTOCOL_VERSION, "id": "unapproved-get", "method": "credential.issuance.get", "params": {"issuanceId": issuance_id}}),
+            json!({"protocol": PROTOCOL_VERSION, "id": "unapproved-list", "method": "credential.list", "params": {}}),
+        ),
+    );
+    assert_eq!(state[0]["result"]["issuance"]["state"], "awaiting_consent");
+    assert_eq!(
+        state[1]["result"]["credentials"].as_array().map(Vec::len),
+        Some(0)
+    );
+}

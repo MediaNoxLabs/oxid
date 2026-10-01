@@ -3,9 +3,13 @@ use std::sync::{Arc, Mutex};
 use crate::ZeroizingHolderProofJwt;
 
 use oxid_identity_application::{
-    DidDocumentMetadataView, DidDocumentView, DidOperationError, DidRecordQuery, DidRecordView,
-    DidRefreshAvailability, PublicJwkView, VerificationMethodView, VerificationRelationshipView,
+    AcceptedCredentialIssuanceContext, AcceptedCredentialIssuanceFlow,
+    CredentialIssuanceAuthorityPort, CredentialIssuanceClockPort, CredentialIssuanceFlowError,
+    CredentialIssuanceFlowService, DidDocumentMetadataView, DidDocumentView, DidOperationError,
+    DidRecordQuery, DidRecordView, DidRefreshAvailability, PublicJwkView, VerificationMethodView,
+    VerificationRelationshipView,
 };
+use oxid_identity_domain::{IdentityProfileId, MidnightDid};
 use oxid_protocol_application::{
     CredentialHolderProofPort, HolderProofError, HolderProofFuture, HolderProofJwt,
     PrepareIssuanceRequest,
@@ -34,12 +38,33 @@ fn deployment_resolver_base_accepts_the_exact_tailnet_prefix() {
 const HOLDER_DID: &str = "did:example:synthetic-holder";
 const AUTH_METHOD: &str = "did:example:synthetic-holder#auth";
 const BINDING_METHOD: &str = "did:example:synthetic-holder#assert";
+const AUTHORITY_DID: &str =
+    "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const POSITIVE_ROOT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../fixtures/laceid-portal/76e8edf394a4cb37ca822037272d543c68f25f71/openid4vci-final"
 );
 
 struct Proof;
+
+struct IssuanceClock;
+impl CredentialIssuanceClockPort for IssuanceClock {
+    fn now(&self) -> Result<oxid_foundation::UnixTimestampMillis, CredentialIssuanceFlowError> {
+        Ok(oxid_foundation::UnixTimestampMillis::new(1))
+    }
+}
+
+fn authority(profile: &ProtocolProfileId, session_id: &str) -> AcceptedCredentialIssuanceFlow {
+    CredentialIssuanceFlowService::new(Arc::new(IssuanceClock))
+        .mint(AcceptedCredentialIssuanceContext::new(
+            IdentityProfileId::parse(profile.as_str().to_owned()).expect("identity profile"),
+            MidnightDid::parse(AUTHORITY_DID).expect("authority DID"),
+            format!("{AUTHORITY_DID}#auth"),
+            OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
+            session_id,
+        ))
+        .expect("authority")
+}
 
 impl CredentialHolderProofPort for Proof {
     fn create<'a>(&'a self, request: HolderProofRequest<'a>) -> HolderProofFuture<'a> {
@@ -462,6 +487,7 @@ async fn unmanaged_authentication_is_rejected_before_token_nonce_or_credential_c
         .expect("prepare");
     let error = client
         .issue(ProtocolIssueRequest {
+            authority: authority(&profile, prepared.id.as_str()),
             profile_id: profile,
             issuance_id: prepared.id,
             holder_did: HOLDER_DID.to_owned(),
@@ -489,6 +515,7 @@ async fn exact_http_flow_uses_form_token_post_nonce_managed_proof_and_distinct_j
         .expect("prepare");
     let issued = client
         .issue(ProtocolIssueRequest {
+            authority: authority(&profile, prepared.id.as_str()),
             profile_id: profile,
             issuance_id: prepared.id,
             holder_did: HOLDER_DID.to_owned(),

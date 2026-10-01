@@ -86,9 +86,10 @@ use oxid_diagnostics_application::{
     GetDiagnosticSnapshotUseCase,
 };
 use oxid_identity_application::{
-    CreateDidUseCase, DeactivateDidUseCase, DidJubjubChallengeSigningPort, DidLifecyclePort,
-    DidPublicationService, DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase,
-    ListDidRecordsUseCase, PublishDidUseCase, ResolveDidUseCase, SignDidPayloadUseCase,
+    CreateDidUseCase, CredentialIssuanceFlowService, DeactivateDidUseCase,
+    DidJubjubChallengeSigningPort, DidLifecyclePort, DidPublicationService, DidResolutionPort,
+    DidService, ForgetDidUseCase, GetDidRecordUseCase, ListDidRecordsUseCase, PublishDidUseCase,
+    ResolveDidUseCase, SignCredentialIssuancePayloadUseCase, SignDidPayloadUseCase,
     UpdateDidUseCase,
 };
 use oxid_passport_vault_application::{
@@ -803,14 +804,25 @@ where
             publisher,
         )) as Arc<dyn PublishDidUseCase>
     });
+    let credential_issuance_authority = did_approvals
+        .as_ref()
+        .map(|_| Arc::new(CredentialIssuanceFlowService::new(clock.clone())));
     let identity = DidService::from_ports(did_repository, did_resolver, did_lifecycle);
-    let identity = Arc::new(match did_approvals {
+    let identity = match did_approvals {
         Some(approvals) => identity.with_approvals(
             approvals,
             Arc::new(oxid_adapter_platform_system::SystemSha256),
         ),
         None => identity,
-    });
+    };
+    let identity = match &credential_issuance_authority {
+        Some(authority) => identity.with_credential_issuance_authority(
+            Arc::clone(authority),
+            Arc::new(oxid_adapter_platform_system::SystemSha256),
+        ),
+        None => identity,
+    };
+    let identity = Arc::new(identity);
     #[cfg(not(target_arch = "wasm32"))]
     let protected_passport_vault_presentations = standalone_passport_vault.then(|| {
         let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
@@ -844,7 +856,7 @@ where
         ),
         CredentialIssuanceComposition::Standalone => {
             let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
-            let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
+            let sign_did: Arc<dyn SignCredentialIssuancePayloadUseCase> = identity.clone();
             let proof = Arc::new(DidCredentialHolderProof::new(
                 Arc::clone(&get_did),
                 sign_did,
@@ -873,7 +885,7 @@ where
         ))]
         CredentialIssuanceComposition::Portal(factory) => {
             let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
-            let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
+            let sign_did: Arc<dyn SignCredentialIssuancePayloadUseCase> = identity.clone();
             let proof = Arc::new(DidCredentialHolderProof::new(
                 Arc::clone(&get_did),
                 sign_did,
@@ -886,10 +898,12 @@ where
             )
         }
     };
-    let issuance = Arc::new(CredentialIssuanceService::new(
-        issuance_protocol,
-        issuance_sink,
-    ));
+    let issuance = Arc::new(match credential_issuance_authority {
+        Some(authority) => {
+            CredentialIssuanceService::with_authority(issuance_protocol, issuance_sink, authority)
+        }
+        None => CredentialIssuanceService::new(issuance_protocol, issuance_sink),
+    });
     let presentation_protocol: Arc<dyn CredentialPresentationProtocolPort> =
         match credential_presentation {
             CredentialPresentationComposition::Unavailable => {

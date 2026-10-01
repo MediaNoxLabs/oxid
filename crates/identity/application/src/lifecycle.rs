@@ -4,7 +4,7 @@ use std::{error::Error, fmt};
 
 use oxid_foundation::OpaqueIdError;
 use oxid_identity_domain::{
-    DidPublicationState, DidRecord, DidResolution, IdentityProfileId, MidnightDid,
+    DidPublicationState, DidRecord, DidResolution, IdentityProfileId, JwkCurve, MidnightDid,
     MidnightDidError, MidnightNetwork, VerificationRelationship,
 };
 
@@ -14,8 +14,10 @@ pub const MAX_DID_SIGNING_PAYLOAD_BYTES: usize = 64 * 1024;
 mod intent;
 mod serialization;
 use crate::{
-    DidApprovalCapability, DidApprovalError, DidApprovalOperation, DidApprovalRequest,
-    DidApprovalService,
+    AcceptedCredentialIssuanceContext, AcceptedCredentialIssuanceFlow,
+    CanonicalCredentialIssuancePayloadDigest, CredentialIssuanceFlowError,
+    CredentialIssuanceFlowService, DidApprovalCapability, DidApprovalError, DidApprovalOperation,
+    DidApprovalRequest, DidApprovalService,
 };
 use intent::{
     canonical_component_id, deactivate_request, normalize_update, sign_request, update_request,
@@ -151,6 +153,42 @@ pub trait SignDidPayloadUseCase: Send + Sync {
     fn execute(
         &self,
         command: SignDidPayloadCommand<'_>,
+    ) -> Result<DidSignatureView, DidOperationError>;
+}
+
+/// Exact JWS signing input plus the accepted issuance authority that permits
+/// this one holder-proof signature. The authority is deliberately moved.
+pub struct SignCredentialIssuancePayloadCommand<'a> {
+    pub profile_id: String,
+    pub did: String,
+    pub method_id: String,
+    pub algorithm: DidKeyAlgorithm,
+    pub flow_id: String,
+    pub session_id: String,
+    pub payload: &'a [u8],
+    pub authority: AcceptedCredentialIssuanceFlow,
+}
+
+impl fmt::Debug for SignCredentialIssuancePayloadCommand<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SignCredentialIssuancePayloadCommand")
+            .field("profile_id", &self.profile_id)
+            .field("did", &self.did)
+            .field("method_id", &self.method_id)
+            .field("algorithm", &self.algorithm)
+            .field("flow_id", &self.flow_id)
+            .field("session_id", &self.session_id)
+            .field("payload", &"[REDACTED]")
+            .field("authority", &"[REDACTED]")
+            .finish()
+    }
+}
+
+pub trait SignCredentialIssuancePayloadUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: SignCredentialIssuancePayloadCommand<'_>,
     ) -> Result<DidSignatureView, DidOperationError>;
 }
 
@@ -338,6 +376,24 @@ fn approvals(service: &DidService) -> Result<&DidApprovalService, DidOperationEr
         .ok_or(DidOperationError::Approval(DidApprovalError::Unavailable))
 }
 
+fn credential_issuance(
+    service: &DidService,
+) -> Result<
+    (
+        &CredentialIssuanceFlowService,
+        &dyn oxid_platform_ports::Sha256Port,
+    ),
+    DidOperationError,
+> {
+    service
+        .credential_issuance
+        .as_ref()
+        .map(|(authority, hash)| (authority.as_ref(), hash.as_ref()))
+        .ok_or(DidOperationError::CredentialIssuance(
+            CredentialIssuanceFlowError::Unavailable,
+        ))
+}
+
 // The caller holds the profile/DID operation lock from this re-read through
 // the lifecycle effect and persistence. Approval callbacks run outside the lock.
 // Re-read after approval, then atomically spend the exact reconstructed intent.
@@ -487,6 +543,79 @@ impl SignDidPayloadUseCase for DidService {
             &capability,
             &sign_request(hash(self)?, &profile_id, &did, &method_id, command.payload),
         )?;
+        self.lifecycle
+            .sign(&profile_id, prior.resolution(), &method_id, command.payload)
+            .map(|signature| DidSignatureView {
+                method_id: signature.method_id,
+                algorithm: signature.algorithm.as_str().to_owned(),
+                signature_bytes: signature.signature_bytes,
+            })
+            .map_err(DidOperationError::Lifecycle)
+    }
+}
+
+impl SignCredentialIssuancePayloadUseCase for DidService {
+    fn execute(
+        &self,
+        command: SignCredentialIssuancePayloadCommand<'_>,
+    ) -> Result<DidSignatureView, DidOperationError> {
+        if command.payload.is_empty() {
+            return Err(DidOperationError::EmptyPayload);
+        }
+        if command.payload.len() > MAX_DID_SIGNING_PAYLOAD_BYTES {
+            return Err(DidOperationError::PayloadTooLarge);
+        }
+        let profile_id = parse_profile(command.profile_id)?;
+        let did = parse_did(command.did)?;
+        let method_id = canonical_component_id(&did, &command.method_id)?;
+        let (issuance, hash) = credential_issuance(self)?;
+        let lock = operation_lock(&profile_id, &did)?;
+        let _guard = lock.lock().map_err(|_| serialization::unavailable())?;
+
+        // This is the authoritative read: the current retained DID and exact
+        // authentication method are checked under the same lock held through
+        // capability consumption and the custody signing effect.
+        let prior = current(self, &profile_id, &did)?;
+        let document = prior.resolution().document();
+        let method = document
+            .verification_methods()
+            .iter()
+            .find(|method| method.id() == method_id)
+            .ok_or(DidOperationError::Lifecycle(
+                DidLifecyclePortError::NotFound,
+            ))?;
+        let current_algorithm = match method.public_key_jwk().curve() {
+            JwkCurve::Ed25519 => DidKeyAlgorithm::Ed25519,
+            JwkCurve::P256 => DidKeyAlgorithm::P256,
+            _ => {
+                return Err(DidOperationError::Lifecycle(
+                    DidLifecyclePortError::UnsupportedAlgorithm,
+                ));
+            }
+        };
+        if current_algorithm != command.algorithm
+            || method.controller() != &did
+            || !document.relationships().iter().any(|relationship| {
+                relationship.relationship() == VerificationRelationship::Authentication
+                    && relationship.method_ids().iter().any(|id| id == &method_id)
+            })
+        {
+            return Err(DidOperationError::CredentialIssuance(
+                CredentialIssuanceFlowError::FlowMismatch,
+            ));
+        }
+        let context = AcceptedCredentialIssuanceContext::new(
+            profile_id.clone(),
+            did.clone(),
+            method_id.clone(),
+            command.flow_id,
+            command.session_id,
+        );
+        issuance
+            .bind_and_consume_for_signing(&command.authority, &context, || {
+                CanonicalCredentialIssuancePayloadDigest::from_sha256(hash.sha256(command.payload))
+            })
+            .map_err(DidOperationError::CredentialIssuance)?;
         self.lifecycle
             .sign(&profile_id, prior.resolution(), &method_id, command.payload)
             .map(|signature| DidSignatureView {

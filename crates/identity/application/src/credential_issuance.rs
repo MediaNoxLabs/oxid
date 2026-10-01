@@ -19,12 +19,20 @@ pub trait CredentialIssuanceClockPort: Send + Sync {
     fn now(&self) -> Result<UnixTimestampMillis, CredentialIssuanceFlowError>;
 }
 
+impl<T> CredentialIssuanceClockPort for T
+where
+    T: oxid_platform_ports::ClockPort + ?Sized,
+{
+    fn now(&self) -> Result<UnixTimestampMillis, CredentialIssuanceFlowError> {
+        oxid_platform_ports::ClockPort::now(self)
+            .map_err(|_| CredentialIssuanceFlowError::Unavailable)
+    }
+}
+
 /// An exact digest of the canonical final credential payload.
-#[allow(dead_code)]
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct CanonicalCredentialIssuancePayloadDigest([u8; 32]);
 
-#[allow(dead_code)]
 impl CanonicalCredentialIssuancePayloadDigest {
     #[must_use]
     pub const fn from_sha256(value: [u8; 32]) -> Self {
@@ -68,7 +76,12 @@ impl AcceptedCredentialIssuanceContext {
 
 /// Opaque, non-cloneable, non-serializable, single-use issuance authority.
 /// Its constructor is deliberately private to this application module.
-#[allow(dead_code)]
+///
+/// ```compile_fail,E0277
+/// use oxid_identity_application::AcceptedCredentialIssuanceFlow;
+/// fn needs_clone<T: Clone>() {}
+/// needs_clone::<AcceptedCredentialIssuanceFlow>();
+/// ```
 pub struct AcceptedCredentialIssuanceFlow {
     profile: IdentityProfileId,
     did: MidnightDid,
@@ -103,7 +116,7 @@ pub enum CredentialIssuanceFlowError {
 impl fmt::Display for CredentialIssuanceFlowError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::Unavailable => "credential_issuance_unavailable",
+            Self::Unavailable => "approval_unavailable",
             Self::Expired => "credential_issuance_expired",
             Self::ClockWentBackwards => "credential_issuance_clock_went_backwards",
             Self::GenerationMismatch => "credential_issuance_generation_mismatch",
@@ -189,7 +202,6 @@ impl CredentialIssuanceFlowService {
     /// the exact canonical payload digest and spend the authority before the effect.
     ///
     /// This is crate-private so request handlers cannot select the payload authority.
-    #[allow(dead_code)]
     pub(crate) fn bind_and_consume_for_signing(
         &self,
         capability: &AcceptedCredentialIssuanceFlow,

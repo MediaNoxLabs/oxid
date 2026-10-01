@@ -56,12 +56,26 @@ the effect boundary, plus explicit-fixture real-crypto lifecycle coverage.
 Cancellation/replacement of an in-flight approval is represented by generation
 invalidation; recovery cannot deserialize or revive process-local capabilities.
 
-## Deferred protocol authority
+## Protocol authority
 
-OID4VCI, SIOPv2 and presentation adapters only lose the obsolete direct-command
-confirmation construction. Public challenges, payloads and accepted-stage prose
-are not approval authority. Normal compositions therefore cannot use their
-former direct-signing shortcut. Moving authority to accepted protocol stages,
-and integrating a real trusted producer with protection/profile transitions,
-remain #915 and subsequent trusted-composition work. No challenge-signing port
-semantics are changed here.
+OID4VCI acceptance now mints one opaque, non-cloneable issuance authority only
+after the retained session is revalidated as `awaiting_consent` for the exact
+profile and issuance identifier. The authority moves by value through the
+protocol issue request and holder-proof request. The identity-owned signing
+boundary re-reads the current DID and exact authentication method under the DID
+operation lock, checks the current algorithm, binds the authority to SHA-256 of
+the exact canonical JWS signing input, consumes it, and only then reaches
+protected signing.
+
+Ordinary composition installs no issuance authority. Acceptance returns
+`approval_unavailable`, leaves the session awaiting consent, and performs no
+protocol, signing, or persistence effect. The existing explicit development DID
+approval composition shares one process-local issuance authority between the
+accepted-stage service and identity signing boundary so the positive standalone
+fixture remains available. Request data and environment values cannot select
+that authority.
+
+SIOPv2 and presentation remain fail closed after removal of the obsolete direct
+signing shortcut. Their accepted-stage authority integration, and a real trusted
+producer tied to protection/profile transitions, remain subsequent work; this
+OID4VCI slice does not change either protocol.

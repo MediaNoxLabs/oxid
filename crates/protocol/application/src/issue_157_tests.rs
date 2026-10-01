@@ -9,6 +9,15 @@ const AUTHENTICATION_ID: &str = "authentication_issue_157";
 const SIGNED_SECRET: &[u8] = b"issued-signed-credential-secret";
 const PROOF_SECRET: &[u8] = b"issued-detached-proof-secret";
 const PRIVATE_SECRET: &[u8] = b"issued-private-material-secret";
+const HOLDER_DID: &str =
+    "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+struct IssuanceClock;
+impl oxid_identity_application::CredentialIssuanceClockPort for IssuanceClock {
+    fn now(&self) -> Result<oxid_foundation::UnixTimestampMillis, CredentialIssuanceFlowError> {
+        Ok(oxid_foundation::UnixTimestampMillis::new(1))
+    }
+}
 
 struct IssuanceProtocol {
     discard_failures: usize,
@@ -85,9 +94,12 @@ fn issuance_service(
     sink_error: IssuedCredentialSinkError,
     discard_failures: usize,
 ) -> CredentialIssuanceService {
-    CredentialIssuanceService::new(
+    CredentialIssuanceService::with_authority(
         Arc::new(IssuanceProtocol::new(discard_failures)),
         Arc::new(FailingSink(sink_error)),
+        Arc::new(
+            oxid_identity_application::CredentialIssuanceFlowService::new(Arc::new(IssuanceClock)),
+        ),
     )
 }
 
@@ -106,9 +118,9 @@ fn accept_command() -> AcceptCredentialIssuanceCommand {
     AcceptCredentialIssuanceCommand {
         profile_id: PROFILE.to_owned(),
         issuance_id: ISSUANCE_ID.to_owned(),
-        holder_did: "did:midnight:undeployed:holder".to_owned(),
-        method_id: "did:midnight:undeployed:holder#auth-1".to_owned(),
-        holder_binding_method_id: "did:midnight:undeployed:holder#holder-jubjub-1".to_owned(),
+        holder_did: HOLDER_DID.to_owned(),
+        method_id: format!("{HOLDER_DID}#auth-1"),
+        holder_binding_method_id: format!("{HOLDER_DID}#holder-jubjub-1"),
         confirmed: true,
         intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
     }

@@ -72,6 +72,15 @@ pub(super) fn credential_issuance_error(
             "failed_precondition",
             "credential issuance session is not awaiting this operation",
         ),
+        CredentialIssuanceError::Approval(error) => (
+            match error {
+                oxid_identity_application::CredentialIssuanceFlowError::Unavailable => {
+                    "approval_unavailable"
+                }
+                _ => "approval_invalid",
+            },
+            "trusted credential issuance approval is unavailable or invalid",
+        ),
         CredentialIssuanceError::Protocol(protocol) => (
             protocol.code(),
             "credential issuer protocol rejected or could not complete the request",
@@ -288,6 +297,16 @@ pub(super) fn did_error(id: Option<String>, error: DidOperationError) -> Respons
                 _ => "approval_invalid",
             },
             "Trusted DID approval is unavailable or invalid",
+        ),
+        DidOperationError::CredentialIssuance(error) => Response::error(
+            id,
+            match error {
+                oxid_identity_application::CredentialIssuanceFlowError::Unavailable => {
+                    "approval_unavailable"
+                }
+                _ => "approval_invalid",
+            },
+            "Trusted credential issuance approval is unavailable or invalid",
         ),
         DidOperationError::RetainedRecordChanged => Response::error(
             id,

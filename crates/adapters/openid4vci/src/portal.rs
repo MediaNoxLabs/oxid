@@ -18,8 +18,8 @@ use oxid_identity_application::GetDidRecordUseCase;
 use oxid_protocol_application::{
     CredentialHolderProofPort, CredentialIssuanceProtocolPort, HolderProofRequest,
     IssuanceProtocolError, IssueCredentialPortFuture, IssuedCredentialBytes,
-    PrepareIssuancePortFuture, PrepareIssuanceRequest, PreparedCredentialOffer,
-    ProtocolIssueRequest,
+    OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID, PrepareIssuancePortFuture, PrepareIssuanceRequest,
+    PreparedCredentialOffer, ProtocolIssueRequest,
 };
 use oxid_protocol_domain::{CredentialIssuanceId, CredentialOfferPreview};
 use reqwest::{
@@ -752,6 +752,9 @@ impl PortalOid4vciClient {
                 method_id: request.method_id,
                 audience: secret.issuer.clone(),
                 nonce: nonce.as_str(),
+                flow_id: OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
+                session_id: request.issuance_id.as_str().to_owned(),
+                authority: request.authority,
             })
             .await
             .map_err(map_holder_proof_error)?;

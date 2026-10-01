@@ -203,6 +203,7 @@ pub enum DidOperationError {
     ConfirmationRequired,
     InvalidConfirmation,
     Approval(DidApprovalError),
+    CredentialIssuance(CredentialIssuanceFlowError),
     RetainedRecordChanged,
     SubjectMismatch,
 }
@@ -224,6 +225,7 @@ impl fmt::Display for DidOperationError {
             Self::ConfirmationRequired => formatter.write_str("explicit confirmation is required"),
             Self::InvalidConfirmation => formatter.write_str("confirmation intent is invalid"),
             Self::Approval(error) => write!(formatter, "{error}"),
+            Self::CredentialIssuance(error) => write!(formatter, "{error}"),
             Self::RetainedRecordChanged => formatter.write_str("retained DID record changed"),
             Self::SubjectMismatch => {
                 formatter.write_str("resolved DID document subject does not match the request")
@@ -386,6 +388,10 @@ pub struct DidService {
         Arc<DidApprovalService>,
         Arc<dyn oxid_platform_ports::Sha256Port>,
     )>,
+    credential_issuance: Option<(
+        Arc<CredentialIssuanceFlowService>,
+        Arc<dyn oxid_platform_ports::Sha256Port>,
+    )>,
 }
 
 pub struct DidPublicationService {
@@ -442,6 +448,7 @@ impl DidService {
             resolver,
             lifecycle: Arc::new(UnavailableDidLifecycle),
             approvals: None,
+            credential_issuance: None,
         }
     }
 
@@ -456,6 +463,7 @@ impl DidService {
             resolver,
             lifecycle,
             approvals: None,
+            credential_issuance: None,
         }
     }
 
@@ -467,6 +475,17 @@ impl DidService {
         hash: Arc<dyn oxid_platform_ports::Sha256Port>,
     ) -> Self {
         self.approvals = Some((approvals, hash));
+        self
+    }
+
+    /// Composition-only injection for accepted protocol-stage issuance signing.
+    #[must_use]
+    pub fn with_credential_issuance_authority(
+        mut self,
+        authority: Arc<CredentialIssuanceFlowService>,
+        hash: Arc<dyn oxid_platform_ports::Sha256Port>,
+    ) -> Self {
+        self.credential_issuance = Some((authority, hash));
         self
     }
 }
