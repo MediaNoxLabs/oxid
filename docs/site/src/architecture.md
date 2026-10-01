@@ -55,6 +55,14 @@ collaboration goes through ports wired in composition.
   callbacks or return opaque references — a port's type signature makes
   secret exfiltration unrepresentable rather than merely forbidden.
 
+## Approval capability design
+
+The [wallet approval capability design](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/wallet-approval-capabilities.md)
+catalogs the trusted-composition guard, application-clock TTL, one-attempt
+consumption policy, compile-time authority boundaries, and command/event matrix.
+It is a foundation boundary, not a claim that existing sign/delete consumers
+have migrated.
+
 ## Composition is a decision, not plumbing
 
 `compose()` — the normal production path — wires *unavailable* adapters for

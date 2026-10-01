@@ -1,192 +1,198 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::{Barrier, atomic::AtomicU64};
-
-use oxid_platform_ports::PlatformError;
-
 use super::*;
+use oxid_platform_ports::PlatformError;
+use std::sync::{Barrier, atomic::AtomicU64};
 
 #[derive(Default)]
 struct TestClock(AtomicU64);
-
 impl ClockPort for TestClock {
     fn now(&self) -> Result<UnixTimestampMillis, PlatformError> {
         Ok(UnixTimestampMillis::new(self.0.load(Ordering::SeqCst)))
     }
 }
-
 struct TrustedFixture;
-
 impl TrustedWalletApprovalPort for TrustedFixture {
-    fn approve(&self, _: &WalletApprovalIntent) -> Result<(), WalletApprovalError> {
+    fn approve(&self, _: &WalletApprovalIntent) -> Result<(), TrustedWalletApprovalError> {
         Ok(())
     }
 }
-
 fn fixture() -> (WalletApprovalService, Arc<TestClock>) {
     let clock = Arc::new(TestClock::default());
-    let service = WalletApprovalService::with_trusted_port(clock.clone(), Arc::new(TrustedFixture));
-    (service, clock)
+    (
+        WalletApprovalService::with_trusted_port(clock.clone(), Arc::new(TrustedFixture)),
+        clock,
+    )
 }
-
 fn sign(profile: &str, digest: u8) -> WalletApprovalRequest<SignDataApproval> {
     WalletApprovalRequest::sign_data(
         WalletProfileId::parse(profile).expect("profile"),
         CanonicalApprovalDigest::from_sha256([digest; 32]),
     )
 }
-
-fn expiry() -> UnixTimestampMillis {
-    UnixTimestampMillis::new(100)
-}
-
 #[test]
-fn default_composition_cannot_mint_but_explicit_trusted_fixture_can() {
+fn default_composition_cannot_mint_and_trusted_approval_is_single_use() {
     let request = sign("profile_private", 42);
-    let unavailable = WalletApprovalService::new(Arc::new(TestClock::default()));
     assert_eq!(
-        unavailable.request(&request, expiry()).unwrap_err(),
+        WalletApprovalService::new(Arc::new(TestClock::default()))
+            .request(&request)
+            .unwrap_err(),
         WalletApprovalError::Unavailable
     );
     let (service, _) = fixture();
-    let capability = service
-        .request(&request, expiry())
-        .expect("trusted approval");
-    assert_eq!(service.consume(&capability, &request), Ok(()));
+    let cap = service.request(&request).expect("approval");
+    assert_eq!(service.consume(&cap, &request), Ok(()));
     assert_eq!(
-        service.consume(&capability, &request),
+        service.consume(&cap, &request),
         Err(WalletApprovalError::AlreadyConsumed)
     );
 }
-
 #[test]
-fn independent_profile_and_digest_binding_fail_closed_without_burning_matching_authority() {
+fn profile_and_each_digest_byte_mismatch_preserve_matching_authority() {
     let (service, _) = fixture();
     let request = sign("profile_private", 42);
-    let capability = service.request(&request, expiry()).expect("approval");
-    for changed in [sign("profile_other", 42), sign("profile_private", 43)] {
+    let mut mismatches = vec![sign("profile_other", 42)];
+    for index in 0..32 {
+        let mut bytes = [42; 32];
+        bytes[index] ^= 1;
+        mismatches.push(WalletApprovalRequest::sign_data(
+            WalletProfileId::parse("profile_private").unwrap(),
+            CanonicalApprovalDigest::from_sha256(bytes),
+        ));
+    }
+    for changed in mismatches {
+        let cap = service.request(&request).unwrap();
         assert_eq!(
-            service.consume(&capability, &changed),
+            service.consume(&cap, &changed),
             Err(WalletApprovalError::IntentMismatch)
         );
+        assert_eq!(service.consume(&cap, &request), Ok(()));
     }
-    assert_eq!(service.consume(&capability, &request), Ok(()));
+    let fresh = service.request(&request).unwrap();
+    assert_eq!(service.consume(&fresh, &request), Ok(()));
 }
-
 #[test]
 fn duplicate_concurrent_consumers_have_exactly_one_winner() {
     let (service, _) = fixture();
     let request = sign("profile_private", 42);
-    let capability = service.request(&request, expiry()).expect("approval");
+    let cap = service.request(&request).unwrap();
     let barrier = Barrier::new(8);
     std::thread::scope(|scope| {
         let workers: Vec<_> = (0..8)
             .map(|_| {
                 scope.spawn(|| {
                     barrier.wait();
-                    service.consume(&capability, &request)
+                    service.consume(&cap, &request)
                 })
             })
             .collect();
-        let results: Vec<_> = workers
-            .into_iter()
-            .map(|worker| worker.join().expect("worker"))
-            .collect();
-        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        let results: Vec<_> = workers.into_iter().map(|w| w.join().unwrap()).collect();
+        assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
         assert_eq!(
             results
                 .iter()
-                .filter(|result| **result == Err(WalletApprovalError::AlreadyConsumed))
+                .filter(|r| **r == Err(WalletApprovalError::AlreadyConsumed))
                 .count(),
             7
         );
     });
 }
-
 #[test]
-fn expiry_boundary_and_backward_clock_fail_closed() {
+fn ttl_comes_from_application_clock_and_overflow_never_mints() {
     let (service, clock) = fixture();
     let request = sign("profile_private", 42);
     clock.0.store(10, Ordering::SeqCst);
-    let capability = service.request(&request, expiry()).expect("approval");
-    clock.0.store(9, Ordering::SeqCst);
+    let cap = service.request(&request).unwrap();
+    assert_eq!(cap.issued_at.value(), 10);
     assert_eq!(
-        service.consume(&capability, &request),
-        Err(WalletApprovalError::Expired)
+        cap.expires_at.value(),
+        10 + WalletApprovalService::MAX_TTL_MILLIS
     );
-    clock.0.store(100, Ordering::SeqCst);
+    clock.0.store(cap.expires_at.value() - 1, Ordering::SeqCst);
+    assert_eq!(service.consume(&cap, &request), Ok(()));
+    clock.0.store(u64::MAX, Ordering::SeqCst);
     assert_eq!(
-        service.consume(&capability, &request),
-        Err(WalletApprovalError::Expired)
-    );
-    assert_eq!(
-        service.request(&request, expiry()).unwrap_err(),
-        WalletApprovalError::Expired
+        service.request(&request).unwrap_err(),
+        WalletApprovalError::Unavailable
     );
 }
-
 #[test]
-fn generation_change_and_recomposition_reject_old_authority() {
+fn expiry_equality_and_backward_clock_have_distinct_safe_errors() {
+    let (service, clock) = fixture();
+    let request = sign("profile_private", 42);
+    clock.0.store(10, Ordering::SeqCst);
+    let cap = service.request(&request).unwrap();
+    clock.0.store(9, Ordering::SeqCst);
+    assert_eq!(
+        service.consume(&cap, &request),
+        Err(WalletApprovalError::ClockWentBackwards)
+    );
+    clock.0.store(cap.expires_at.value(), Ordering::SeqCst);
+    assert_eq!(
+        service.consume(&cap, &request),
+        Err(WalletApprovalError::Expired)
+    );
+}
+#[test]
+fn invalidation_and_recomposition_reject_old_authority() {
     let (service, _) = fixture();
     let request = sign("profile_private", 42);
-    let old = service.request(&request, expiry()).expect("approval");
-    service.invalidate().expect("invalidate");
+    let old = service.request(&request).unwrap();
+    service.invalidate().unwrap();
     assert_eq!(
         service.consume(&old, &request),
         Err(WalletApprovalError::GenerationMismatch)
     );
-    let fresh = service.request(&request, expiry()).expect("fresh approval");
-    let (replacement, _) = fixture();
+    let cap = service.request(&request).unwrap();
     assert_eq!(
-        replacement.consume(&fresh, &request),
+        fixture().0.consume(&cap, &request),
         Err(WalletApprovalError::ForeignCapability)
     );
-    assert_eq!(service.consume(&fresh, &request), Ok(()));
+    assert_eq!(service.consume(&cap, &request), Ok(()));
 }
-
 #[test]
-fn delete_is_separately_typed_and_operation_binding_is_checked_defensively() {
+fn delete_is_typed_and_operation_binding_checked_defensively() {
     let (service, _) = fixture();
     let request = WalletApprovalRequest::delete_key(
-        WalletProfileId::parse("profile_private").expect("profile"),
+        WalletProfileId::parse("profile_private").unwrap(),
         CanonicalApprovalDigest::from_sha256([42; 32]),
     );
-    let capability = service
-        .request(&request, expiry())
-        .expect("delete approval");
-    assert_eq!(service.consume(&capability, &request), Ok(()));
-    let signing = sign("profile_private", 42);
-    let capability = service.request(&signing, expiry()).expect("sign approval");
-    // Only module-internal tests can violate the sealed operation invariant.
+    let cap = service.request(&request).unwrap();
+    assert_eq!(service.consume(&cap, &request), Ok(()));
+    let cap = service.request(&sign("profile_private", 42)).unwrap();
     let forged = WalletApprovalRequest::<SignDataApproval> {
         intent: request.intent,
         operation: PhantomData,
     };
     assert_eq!(
-        service.consume(&capability, &forged),
+        service.consume(&cap, &forged),
         Err(WalletApprovalError::IntentMismatch)
     );
 }
-
-struct RejectingPort(WalletApprovalError);
+struct RejectingPort(TrustedWalletApprovalError);
 impl TrustedWalletApprovalPort for RejectingPort {
-    fn approve(&self, _: &WalletApprovalIntent) -> Result<(), WalletApprovalError> {
+    fn approve(&self, _: &WalletApprovalIntent) -> Result<(), TrustedWalletApprovalError> {
         Err(self.0)
     }
 }
-
 #[test]
-fn denial_unavailability_and_clock_failure_never_mint() {
+fn narrow_port_errors_and_clock_failure_map_to_service_errors() {
     let request = sign("profile_private", 42);
-    for error in [
-        WalletApprovalError::Denied,
-        WalletApprovalError::Unavailable,
+    for (port, expected) in [
+        (
+            TrustedWalletApprovalError::Denied,
+            WalletApprovalError::Denied,
+        ),
+        (
+            TrustedWalletApprovalError::Unavailable,
+            WalletApprovalError::Unavailable,
+        ),
     ] {
         let service = WalletApprovalService::with_trusted_port(
             Arc::new(TestClock::default()),
-            Arc::new(RejectingPort(error)),
+            Arc::new(RejectingPort(port)),
         );
-        assert_eq!(service.request(&request, expiry()).unwrap_err(), error);
+        assert_eq!(service.request(&request).unwrap_err(), expected);
     }
     struct BrokenClock;
     impl ClockPort for BrokenClock {
@@ -197,29 +203,27 @@ fn denial_unavailability_and_clock_failure_never_mint() {
     let service =
         WalletApprovalService::with_trusted_port(Arc::new(BrokenClock), Arc::new(TrustedFixture));
     assert_eq!(
-        service.request(&request, expiry()).unwrap_err(),
+        service.request(&request).unwrap_err(),
         WalletApprovalError::Unavailable
     );
 }
-
 struct PausedApproval {
     entered: Arc<Barrier>,
     release: Arc<Barrier>,
 }
 impl TrustedWalletApprovalPort for PausedApproval {
-    fn approve(&self, _: &WalletApprovalIntent) -> Result<(), WalletApprovalError> {
+    fn approve(&self, _: &WalletApprovalIntent) -> Result<(), TrustedWalletApprovalError> {
         self.entered.wait();
         self.release.wait();
         Ok(())
     }
 }
-
 #[test]
-fn late_approval_after_invalidation_or_expiry_cannot_mint() {
-    for invalidate in [true, false] {
+fn stale_prompt_results_cannot_mint() {
+    for scenario in 0..3 {
         let entered = Arc::new(Barrier::new(2));
         let release = Arc::new(Barrier::new(2));
-        let clock = Arc::new(TestClock::default());
+        let clock = Arc::new(TestClock(AtomicU64::new(10)));
         let service = WalletApprovalService::with_trusted_port(
             clock.clone(),
             Arc::new(PausedApproval {
@@ -229,60 +233,96 @@ fn late_approval_after_invalidation_or_expiry_cannot_mint() {
         );
         let request = sign("profile_private", 42);
         std::thread::scope(|scope| {
-            let worker = scope.spawn(|| service.request(&request, expiry()));
+            let worker = scope.spawn(|| service.request(&request));
             entered.wait();
-            let expected = if invalidate {
-                service.invalidate().expect("invalidate");
-                WalletApprovalError::GenerationMismatch
-            } else {
-                clock.0.store(100, Ordering::SeqCst);
-                WalletApprovalError::Expired
+            let expected = match scenario {
+                0 => {
+                    service.invalidate().unwrap();
+                    WalletApprovalError::GenerationMismatch
+                }
+                1 => {
+                    clock
+                        .0
+                        .store(10 + WalletApprovalService::MAX_TTL_MILLIS, Ordering::SeqCst);
+                    WalletApprovalError::Expired
+                }
+                _ => {
+                    clock.0.store(9, Ordering::SeqCst);
+                    WalletApprovalError::ClockWentBackwards
+                }
             };
             release.wait();
-            assert_eq!(worker.join().expect("worker").unwrap_err(), expected);
+            assert_eq!(worker.join().unwrap().unwrap_err(), expected);
         });
     }
 }
-
 #[test]
-fn exhausted_generation_never_wraps_or_recovers_old_authority() {
-    let (service, _) = fixture();
-    *service.generation.lock().expect("generation") = Some(u64::MAX);
-    let request = sign("profile_private", 42);
-    let capability = service.request(&request, expiry()).expect("approval");
-    assert_eq!(service.invalidate(), Err(WalletApprovalError::Unavailable));
-    assert_eq!(
-        service.consume(&capability, &request),
-        Err(WalletApprovalError::Unavailable)
-    );
-    assert_eq!(
-        service.request(&request, expiry()).unwrap_err(),
-        WalletApprovalError::Unavailable
-    );
+fn poisoned_and_exhausted_state_never_mints_consumes_or_recovers() {
+    for poison in [false, true] {
+        let (service, _) = fixture();
+        let request = sign("profile_private", 42);
+        if !poison {
+            *service.generation.lock().unwrap() = Some(u64::MAX);
+        }
+        let cap = service.request(&request).unwrap();
+        if poison {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _guard = service.generation.lock().unwrap();
+                panic!("deliberate poison");
+            }));
+        }
+        assert_eq!(service.invalidate(), Err(WalletApprovalError::Unavailable));
+        assert_eq!(
+            service.consume(&cap, &request),
+            Err(WalletApprovalError::Unavailable)
+        );
+        assert_eq!(
+            service.request(&request).unwrap_err(),
+            WalletApprovalError::Unavailable
+        );
+    }
 }
-
 #[test]
-fn diagnostics_are_closed_and_redacted() {
+fn independent_capabilities_and_consume_before_failed_effect() {
     let (service, _) = fixture();
     let request = sign("profile_private", 42);
-    let capability = service.request(&request, expiry()).expect("approval");
+    let first = service.request(&request).unwrap();
+    let second = service.request(&request).unwrap();
+    let mut effects = 0;
+    let mut protected = |cap| -> Result<(), WalletApprovalError> {
+        service.consume(cap, &request)?;
+        effects += 1;
+        Err(WalletApprovalError::Unavailable)
+    };
+    assert_eq!(protected(&first), Err(WalletApprovalError::Unavailable));
+    assert_eq!(protected(&first), Err(WalletApprovalError::AlreadyConsumed));
+    assert_eq!(protected(&second), Err(WalletApprovalError::Unavailable));
+    assert_eq!(effects, 2);
+}
+#[test]
+fn diagnostics_are_redacted() {
+    let (service, _) = fixture();
+    let request = sign("profile_private", 42);
+    let cap = service.request(&request).unwrap();
     assert_eq!(
         format!("{:?}", request.intent),
         "WalletApprovalIntent([REDACTED])"
     );
     assert_eq!(format!("{request:?}"), "WalletApprovalRequest([REDACTED])");
-    assert_eq!(
-        format!("{capability:?}"),
-        "WalletApprovalCapability([REDACTED])"
-    );
+    assert_eq!(format!("{cap:?}"), "WalletApprovalCapability([REDACTED])");
     assert_eq!(
         format!("{:?}", CanonicalApprovalDigest::from_sha256([42; 32])),
         "CanonicalApprovalDigest([REDACTED])"
+    );
+    assert_eq!(
+        WalletApprovalError::ClockWentBackwards.to_string(),
+        "approval_clock_went_backwards"
     );
     for error in [
         WalletApprovalError::Unavailable,
         WalletApprovalError::Denied,
         WalletApprovalError::Expired,
+        WalletApprovalError::ClockWentBackwards,
         WalletApprovalError::GenerationMismatch,
         WalletApprovalError::IntentMismatch,
         WalletApprovalError::ForeignCapability,

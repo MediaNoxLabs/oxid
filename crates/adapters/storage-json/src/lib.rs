@@ -1,5 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 
+//! Approval authority cannot cross the JSON storage boundary. This test host
+//! already owns serde; the application core remains dependency-free.
+//!
+//! ```
+//! use oxid_wallet_application::{WalletApprovalCapability, SignDataApproval};
+//! fn serde_control<T: serde::Serialize + serde::de::DeserializeOwned>() {}
+//! serde_control::<String>();
+//! fn capability_type_is_available(_: Option<WalletApprovalCapability<SignDataApproval>>) {}
+//! capability_type_is_available(None);
+//! ```
+//!
+//! ```compile_fail,E0277
+//! use oxid_wallet_application::{WalletApprovalCapability, SignDataApproval};
+//! fn needs_serialize<T: serde::Serialize>() {}
+//! needs_serialize::<WalletApprovalCapability<SignDataApproval>>();
+//! ```
+//!
+//! ```compile_fail,E0277
+//! use oxid_wallet_application::{WalletApprovalCapability, SignDataApproval};
+//! fn needs_deserialize<T: serde::de::DeserializeOwned>() {}
+//! needs_deserialize::<WalletApprovalCapability<SignDataApproval>>();
+//! ```
+
 #![deny(unsafe_code)]
 
 use std::{
