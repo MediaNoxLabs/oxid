@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    CanonicalDidApprovalDigest, DidApprovalRequest, DidUpdate, SignDidApproval, UpdateDidApproval,
+    CanonicalDidApprovalDigest, DidApprovalRequest, DidLifecyclePortError, DidOperationError,
+    DidUpdate, SignDidApproval, UpdateDidApproval,
 };
 use oxid_identity_domain::{IdentityProfileId, MidnightDid};
 use oxid_platform_ports::Sha256Port;
@@ -20,15 +21,46 @@ fn digest(hash: &dyn Sha256Port, operation: &str, fields: &[&[u8]]) -> Canonical
     CanonicalDidApprovalDigest::from_sha256(hash.sha256(&frame))
 }
 
-pub(super) fn normalize_update(mut operation: DidUpdate) -> DidUpdate {
+// Match the lifecycle component grammar before approval. Full IDs must name
+// this DID; bare and #-prefixed fragments have one canonical full spelling.
+pub(super) fn canonical_component_id(
+    did: &MidnightDid,
+    value: &str,
+) -> Result<String, DidOperationError> {
+    let value = value.trim();
+    let fragment = value
+        .strip_prefix(did.as_str())
+        .and_then(|suffix| suffix.strip_prefix('#'))
+        .or_else(|| value.strip_prefix('#'))
+        .unwrap_or(value);
+    if fragment.is_empty()
+        || !fragment.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b':' | b'%')
+        })
+    {
+        return Err(DidOperationError::Lifecycle(
+            DidLifecyclePortError::InvalidOperation,
+        ));
+    }
+    Ok(format!("{}#{fragment}", did.as_str()))
+}
+
+pub(super) fn normalize_update(
+    did: &MidnightDid,
+    mut operation: DidUpdate,
+) -> Result<DidUpdate, DidOperationError> {
     let trim = |value: &mut String| *value = value.trim().to_owned();
     match &mut operation {
         DidUpdate::AddAlsoKnownAs { value } | DidUpdate::RemoveAlsoKnownAs { value } => trim(value),
-        DidUpdate::AddVerificationMethod { fragment, .. } => trim(fragment),
+        DidUpdate::AddVerificationMethod { fragment, .. } => {
+            *fragment = canonical_component_id(did, fragment)?;
+        }
         DidUpdate::UpdateVerificationMethod { method_id, .. }
         | DidUpdate::RemoveVerificationMethod { method_id }
         | DidUpdate::AddVerificationRelationship { method_id, .. }
-        | DidUpdate::RemoveVerificationRelationship { method_id, .. } => trim(method_id),
+        | DidUpdate::RemoveVerificationRelationship { method_id, .. } => {
+            *method_id = canonical_component_id(did, method_id)?;
+        }
         DidUpdate::AddService {
             id,
             service_type,
@@ -39,13 +71,13 @@ pub(super) fn normalize_update(mut operation: DidUpdate) -> DidUpdate {
             service_type,
             endpoint,
         } => {
-            trim(id);
+            *id = canonical_component_id(did, id)?;
             trim(service_type);
             trim(endpoint);
         }
-        DidUpdate::RemoveService { id } => trim(id),
+        DidUpdate::RemoveService { id } => *id = canonical_component_id(did, id)?,
     }
-    operation
+    Ok(operation)
 }
 
 pub(super) fn update_request(

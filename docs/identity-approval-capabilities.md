@@ -25,7 +25,9 @@ fixture selection. There is no trusted production consent renderer yet.
 ## Exact intent and ordering
 
 Profile and DID are domain-parsed. Update string fields and signing method IDs
-are trimmed once; payload bytes are never trimmed. The same normalized values
+are trimmed once; bare, `#fragment`, and same-DID full component IDs normalize
+to the full `<did>#fragment` before approval (invalid components are rejected).
+Payload bytes are never trimmed. The same normalized values
 are used for approval reconstruction and effect. All three operation frames use
 ordered fields with eight-byte big-endian byte lengths on **every** field:
 `oxid.did.lifecycle`, `1`, operation, profile, DID, then variant and all its
@@ -35,16 +37,21 @@ or cryptographic dependency points into the identity application. Deactivation
 uses the same domain/version framing with operation `deactivate`, profile and DID.
 
 The service reads the retained record, requests approval, reconstructs the intent,
-re-reads and compares the entire retained record (including publication metadata),
-and atomically consumes the matching capability immediately before the lifecycle
-port. Failure never reaches the effect; persistence/effect failures never restore
+then acquires a process-local per-(profile, DID) lock shared across service
+instances. Under that lock it re-reads and compares the entire retained record
+(including publication metadata), atomically consumes the matching capability,
+and invokes the lifecycle port. The lock stays held through persistence (or
+signing completion); unrelated DIDs remain concurrent. Approval callbacks run
+outside the lock so a queued stale command fails the protected re-read. Failure never reaches the effect; persistence/effect failures never restore
 spent authority. Replay, concurrent duplicate, expiry, stale generation, foreign
 issuer and operation substitution remain guarded by the #913 capability service.
 This is synchronous consume-before-effect, not an atomic transaction with an
 external repository or custody system; no new cross-process guarantee is claimed.
 
 Tests cover every update variant/field, signing scope/method/payload, framing,
-normalization, retained drift, unavailable defaults and capability rejection at
+component equivalence/invalid-input rejection, retained drift, a deterministic
+stale-update/deactivation race through both effect and persistence, unrelated-DID
+concurrency, unavailable defaults and capability rejection at
 the effect boundary, plus explicit-fixture real-crypto lifecycle coverage.
 Cancellation/replacement of an in-flight approval is represented by generation
 invalidation; recovery cannot deserialize or revive process-local capabilities.

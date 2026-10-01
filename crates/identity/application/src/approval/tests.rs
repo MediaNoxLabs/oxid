@@ -11,6 +11,22 @@ impl DidApprovalClockPort for TestClock {
     }
 }
 
+pub(crate) fn service_with_observer(
+    observer: impl Fn(&DidApprovalIntent) + Send + Sync + 'static,
+) -> DidApprovalService {
+    struct Observed<F>(F);
+    impl<F: Fn(&DidApprovalIntent) + Send + Sync> TrustedDidApprovalPort for Observed<F> {
+        fn approve(&self, intent: &DidApprovalIntent) -> Result<(), TrustedDidApprovalError> {
+            (self.0)(intent);
+            Ok(())
+        }
+    }
+    DidApprovalService::with_trusted_did_port(
+        Arc::new(TestClock::default()),
+        Arc::new(Observed(observer)),
+    )
+}
+
 struct Trusted;
 impl TrustedDidApprovalPort for Trusted {
     fn approve(&self, _: &DidApprovalIntent) -> Result<(), TrustedDidApprovalError> {

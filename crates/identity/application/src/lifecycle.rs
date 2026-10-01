@@ -12,11 +12,15 @@ use crate::{DidOperationError, DidRecordRepositoryError, DidRecordView, DidServi
 
 pub const MAX_DID_SIGNING_PAYLOAD_BYTES: usize = 64 * 1024;
 mod intent;
+mod serialization;
 use crate::{
     DidApprovalCapability, DidApprovalError, DidApprovalOperation, DidApprovalRequest,
     DidApprovalService,
 };
-use intent::{deactivate_request, normalize_update, sign_request, update_request};
+use intent::{
+    canonical_component_id, deactivate_request, normalize_update, sign_request, update_request,
+};
+use serialization::operation_lock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DidKeyAlgorithm {
@@ -334,6 +338,8 @@ fn approvals(service: &DidService) -> Result<&DidApprovalService, DidOperationEr
         .ok_or(DidOperationError::Approval(DidApprovalError::Unavailable))
 }
 
+// The caller holds the profile/DID operation lock from this re-read through
+// the lifecycle effect and persistence. Approval callbacks run outside the lock.
 // Re-read after approval, then atomically spend the exact reconstructed intent.
 // No callback or other fallible work occurs between consumption and the effect.
 fn consume<O: DidApprovalOperation>(
@@ -402,7 +408,7 @@ impl UpdateDidUseCase for DidService {
     fn execute(&self, command: UpdateDidCommand) -> Result<DidRecordView, DidOperationError> {
         let profile_id = parse_profile(command.profile_id)?;
         let did = parse_did(command.did)?;
-        let operation = normalize_update(command.operation);
+        let operation = normalize_update(&did, command.operation)?;
         approvals(self)?;
         let prior = current(self, &profile_id, &did)?;
         let publication_state = prior.publication_state();
@@ -410,6 +416,8 @@ impl UpdateDidUseCase for DidService {
         let capability = approvals(self)?
             .request(&request)
             .map_err(DidOperationError::Approval)?;
+        let lock = operation_lock(&profile_id, &did)?;
+        let _guard = lock.lock().map_err(|_| serialization::unavailable())?;
         consume(
             self,
             &prior,
@@ -435,6 +443,8 @@ impl DeactivateDidUseCase for DidService {
         let capability = approvals(self)?
             .request(&request)
             .map_err(DidOperationError::Approval)?;
+        let lock = operation_lock(&profile_id, &did)?;
+        let _guard = lock.lock().map_err(|_| serialization::unavailable())?;
         consume(
             self,
             &prior,
@@ -462,21 +472,23 @@ impl SignDidPayloadUseCase for DidService {
         }
         let profile_id = parse_profile(command.profile_id)?;
         let did = parse_did(command.did)?;
-        let method_id = command.method_id.trim();
+        let method_id = canonical_component_id(&did, &command.method_id)?;
         approvals(self)?;
         let prior = current(self, &profile_id, &did)?;
-        let request = sign_request(hash(self)?, &profile_id, &did, method_id, command.payload);
+        let request = sign_request(hash(self)?, &profile_id, &did, &method_id, command.payload);
         let capability = approvals(self)?
             .request(&request)
             .map_err(DidOperationError::Approval)?;
+        let lock = operation_lock(&profile_id, &did)?;
+        let _guard = lock.lock().map_err(|_| serialization::unavailable())?;
         consume(
             self,
             &prior,
             &capability,
-            &sign_request(hash(self)?, &profile_id, &did, method_id, command.payload),
+            &sign_request(hash(self)?, &profile_id, &did, &method_id, command.payload),
         )?;
         self.lifecycle
-            .sign(&profile_id, prior.resolution(), method_id, command.payload)
+            .sign(&profile_id, prior.resolution(), &method_id, command.payload)
             .map(|signature| DidSignatureView {
                 method_id: signature.method_id,
                 algorithm: signature.algorithm.as_str().to_owned(),
@@ -620,6 +632,7 @@ pub(crate) mod tests {
     struct TestLifecycle {
         error: Option<DidLifecyclePortError>,
         update_calls: AtomicUsize,
+        updates: Mutex<Vec<DidUpdate>>,
         deactivate_calls: AtomicUsize,
         sign_calls: Mutex<Vec<SignCall>>,
     }
@@ -629,6 +642,7 @@ pub(crate) mod tests {
             Self {
                 error,
                 update_calls: AtomicUsize::new(0),
+                updates: Mutex::new(Vec::new()),
                 deactivate_calls: AtomicUsize::new(0),
                 sign_calls: Mutex::new(Vec::new()),
             }
@@ -648,8 +662,9 @@ pub(crate) mod tests {
             &self,
             _: &IdentityProfileId,
             current: &DidResolution,
-            _: DidUpdate,
+            operation: DidUpdate,
         ) -> Result<DidResolution, DidLifecyclePortError> {
+            self.updates.lock().unwrap().push(operation);
             self.update_calls.fetch_add(1, Ordering::SeqCst);
             self.error.map_or_else(|| Ok(current.clone()), Err)
         }

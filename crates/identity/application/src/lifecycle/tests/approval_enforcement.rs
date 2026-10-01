@@ -316,19 +316,28 @@ fn normalized_values_are_used_for_both_intent_and_effect() {
     command.method_id = "  #auth-1  ".into();
     SignDidPayloadUseCase::execute(&service, command).unwrap();
     let calls = lifecycle.sign_calls.lock().unwrap();
-    assert_eq!(calls[0].method_id, "#auth-1");
+    assert_eq!(calls[0].method_id, format!("{DID}#auth-1"));
     assert_eq!(calls[0].payload, b" payload ");
+    let did = parse_did(DID.into()).unwrap();
     for operation in operations() {
-        assert_eq!(normalize_update(operation.clone()), operation);
+        let normalized = normalize_update(&did, operation).unwrap();
+        assert_eq!(
+            normalize_update(&did, normalized.clone()).unwrap(),
+            normalized
+        );
     }
     assert_eq!(
-        normalize_update(DidUpdate::AddService {
-            id: " a ".into(),
-            service_type: " b ".into(),
-            endpoint: " c ".into()
-        }),
+        normalize_update(
+            &did,
+            DidUpdate::AddService {
+                id: " a ".into(),
+                service_type: " b ".into(),
+                endpoint: " c ".into()
+            }
+        )
+        .unwrap(),
         DidUpdate::AddService {
-            id: "a".into(),
+            id: format!("{DID}#a"),
             service_type: "b".into(),
             endpoint: "c".into()
         }
@@ -356,4 +365,368 @@ fn failed_effect_does_not_restore_approval() {
         ))
     );
     assert_eq!(lifecycle.deactivate_calls.load(Ordering::SeqCst), 1);
+}
+
+mod normalization {
+    use super::*;
+    use crate::DidApprovalIntent;
+    fn component_operations(id: &str) -> Vec<DidUpdate> {
+        vec![
+            DidUpdate::AddVerificationMethod {
+                fragment: id.into(),
+                algorithm: DidKeyAlgorithm::Ed25519,
+            },
+            DidUpdate::UpdateVerificationMethod {
+                method_id: id.into(),
+                algorithm: DidKeyAlgorithm::P256,
+            },
+            DidUpdate::RemoveVerificationMethod {
+                method_id: id.into(),
+            },
+            DidUpdate::AddVerificationRelationship {
+                method_id: id.into(),
+                relationship: VerificationRelationship::Authentication,
+            },
+            DidUpdate::RemoveVerificationRelationship {
+                method_id: id.into(),
+                relationship: VerificationRelationship::Authentication,
+            },
+            DidUpdate::AddService {
+                id: id.into(),
+                service_type: " type ".into(),
+                endpoint: " endpoint ".into(),
+            },
+            DidUpdate::UpdateService {
+                id: id.into(),
+                service_type: " type ".into(),
+                endpoint: " endpoint ".into(),
+            },
+            DidUpdate::RemoveService { id: id.into() },
+        ]
+    }
+
+    #[test]
+    fn equivalent_component_spellings_have_identical_approval_and_effect() {
+        let (service, lifecycle) = service_with_lifecycle((None, None), None);
+        let recorder = Arc::new(Mutex::new(Vec::new()));
+        let observed = recorder.clone();
+        let approval = crate::approval::tests::service_with_observer(move |intent| {
+            observed.lock().unwrap().push(intent.clone());
+        });
+        let hash = Arc::new(TestHash::default());
+        let service = service.with_approvals(Arc::new(approval), hash.clone());
+        let did = parse_did(DID.into()).unwrap();
+        let profile = parse_profile(PROFILE.into()).unwrap();
+        let canonical = format!("{DID}#auth-1");
+        for spelling in [
+            " auth-1 ".to_owned(),
+            " #auth-1 ".into(),
+            format!(" {canonical} "),
+        ] {
+            for (operation, expected) in component_operations(&spelling)
+                .into_iter()
+                .zip(component_operations(&canonical))
+            {
+                let expected = normalize_update(&did, expected).unwrap();
+                let mut command = update_command();
+                command.operation = operation;
+                UpdateDidUseCase::execute(&service, command).unwrap();
+                assert_eq!(lifecycle.updates.lock().unwrap().last(), Some(&expected));
+                // The trusted producer saw exactly the independently reconstructed
+                // intent for the canonical operation passed to the effect.
+                let request = update_request(hash.as_ref(), &profile, &did, &expected);
+                let capability = approvals(&service).unwrap().request(&request).unwrap();
+                let intents = recorder.lock().unwrap();
+                assert_eq!(intents[intents.len() - 2], intents[intents.len() - 1]);
+                drop(capability);
+            }
+            let mut command = sign_command(b" payload ");
+            command.method_id = spelling;
+            SignDidPayloadUseCase::execute(&service, command).unwrap();
+            assert_eq!(
+                lifecycle
+                    .sign_calls
+                    .lock()
+                    .unwrap()
+                    .last()
+                    .unwrap()
+                    .method_id,
+                canonical
+            );
+        }
+        let intents = recorder.lock().unwrap();
+        let signing: Vec<_> = intents
+            .iter()
+            .filter(|intent| matches!(intent, DidApprovalIntent::Sign { .. }))
+            .collect();
+        assert_eq!(signing.len(), 3);
+        assert!(signing.windows(2).all(|pair| pair[0] == pair[1]));
+        assert!(
+            matches!(signing[0], DidApprovalIntent::Sign { method_id, .. } if method_id == &canonical)
+        );
+    }
+
+    #[test]
+    fn invalid_components_are_rejected_before_approval_or_effect() {
+        let (service, lifecycle) = service_with_lifecycle((None, None), None);
+        let recorder = Arc::new(Mutex::new(Vec::new()));
+        let observed = recorder.clone();
+        let service = service.with_approvals(
+            Arc::new(crate::approval::tests::service_with_observer(
+                move |intent| {
+                    observed.lock().unwrap().push(intent.clone());
+                },
+            )),
+            Arc::new(TestHash::default()),
+        );
+        for id in ["", "#", "a b", "a/b", "a#b", "did:example:other#auth-1"] {
+            for operation in component_operations(id) {
+                let mut command = update_command();
+                command.operation = operation;
+                assert_eq!(
+                    UpdateDidUseCase::execute(&service, command),
+                    Err(DidOperationError::Lifecycle(
+                        DidLifecyclePortError::InvalidOperation
+                    ))
+                );
+            }
+            let mut command = sign_command(b"payload");
+            command.method_id = id.into();
+            assert_eq!(
+                SignDidPayloadUseCase::execute(&service, command),
+                Err(DidOperationError::Lifecycle(
+                    DidLifecyclePortError::InvalidOperation
+                ))
+            );
+        }
+        assert!(recorder.lock().unwrap().is_empty());
+        assert_eq!(lifecycle.update_calls.load(Ordering::SeqCst), 0);
+        assert!(lifecycle.sign_calls.lock().unwrap().is_empty());
+    }
+}
+
+mod serialization {
+    // SPDX-License-Identifier: Apache-2.0
+    use super::*;
+    use crate::DidApprovalIntent;
+    use std::{collections::BTreeMap, sync::mpsc, time::Duration};
+
+    const WAIT: Duration = Duration::from_secs(5);
+
+    struct Repository {
+        records: Mutex<BTreeMap<String, DidRecord>>,
+        persisting: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+    impl DidRecordRepository for Repository {
+        fn get(
+            &self,
+            _: &IdentityProfileId,
+            did: &MidnightDid,
+        ) -> Result<DidRecord, DidRecordRepositoryError> {
+            Ok(self.records.lock().unwrap()[did.as_str()].clone())
+        }
+        fn upsert(&self, record: DidRecord) -> Result<(), DidRecordRepositoryError> {
+            if record.resolution().document_metadata().deactivated == Some(true) {
+                self.persisting.send(()).unwrap();
+                self.release.lock().unwrap().recv_timeout(WAIT).unwrap();
+            }
+            self.records
+                .lock()
+                .unwrap()
+                .insert(record.resolution().document().id().as_str().into(), record);
+            Ok(())
+        }
+        fn list(&self, _: &IdentityProfileId) -> Result<Vec<DidRecord>, DidRecordRepositoryError> {
+            Ok(vec![])
+        }
+        fn remove(
+            &self,
+            _: &IdentityProfileId,
+            _: &MidnightDid,
+        ) -> Result<(), DidRecordRepositoryError> {
+            Ok(())
+        }
+    }
+
+    struct Lifecycle {
+        entered: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+        updates: AtomicUsize,
+    }
+    impl DidLifecyclePort for Lifecycle {
+        fn create(
+            &self,
+            _: &IdentityProfileId,
+            _: MidnightNetwork,
+        ) -> Result<DidResolution, DidLifecyclePortError> {
+            unreachable!()
+        }
+        fn update(
+            &self,
+            _: &IdentityProfileId,
+            current: &DidResolution,
+            _: DidUpdate,
+        ) -> Result<DidResolution, DidLifecyclePortError> {
+            self.updates.fetch_add(1, Ordering::SeqCst);
+            // Deliberately trusts the supplied snapshot, exposing the original race.
+            Ok(current.clone())
+        }
+        fn deactivate(
+            &self,
+            _: &IdentityProfileId,
+            current: &DidResolution,
+        ) -> Result<DidResolution, DidLifecyclePortError> {
+            self.entered.send(()).unwrap();
+            self.release.lock().unwrap().recv_timeout(WAIT).unwrap();
+            Ok(DidResolution::new(
+                current.document().clone(),
+                DidDocumentMetadata {
+                    deactivated: Some(true),
+                    ..DidDocumentMetadata::default()
+                },
+                DidResolutionMetadata::default(),
+                DidResolutionSource::Standalone,
+            ))
+        }
+        fn sign(
+            &self,
+            _: &IdentityProfileId,
+            _: &DidResolution,
+            method_id: &str,
+            _: &[u8],
+        ) -> Result<DidLifecycleSignature, DidLifecyclePortError> {
+            Ok(DidLifecycleSignature {
+                method_id: method_id.into(),
+                algorithm: DidKeyAlgorithm::Ed25519,
+                signature_bytes: vec![],
+            })
+        }
+    }
+
+    #[test]
+    fn stale_update_cannot_overwrite_deactivation_across_service_instances() {
+        // Fixed ordering, no sleeps: pause the effect, approve a second command from
+        // A, then pause persistence. The shared lock must cover both pauses, while
+        // a different DID completes. Only then release B and reject the stale A.
+        let profile = parse_profile("serialization_profile".into()).unwrap();
+        let did = parse_did(format!("did:midnight:undeployed:{:064x}", 914)).unwrap();
+        let other = parse_did(format!("did:midnight:undeployed:{:064x}", 915)).unwrap();
+        let records = [did.clone(), other.clone()]
+            .into_iter()
+            .map(|did| {
+                let resolution = DidResolution::new(
+                    DidDocument::new(DidDocumentParts {
+                        contexts: vec![DID_CONTEXT.into(), JWK_CONTEXT.into()],
+                        id: did.clone(),
+                        controllers: vec![did.clone()],
+                        also_known_as: vec![],
+                        verification_methods: vec![],
+                        relationships: vec![],
+                        services: vec![],
+                    })
+                    .unwrap(),
+                    DidDocumentMetadata::default(),
+                    DidResolutionMetadata::default(),
+                    DidResolutionSource::Standalone,
+                );
+                (
+                    did.as_str().to_owned(),
+                    DidRecord::new(profile.clone(), resolution),
+                )
+            })
+            .collect();
+        let (effect_tx, effect_rx) = mpsc::channel();
+        let (release_effect_tx, release_effect_rx) = mpsc::channel();
+        let (persist_tx, persist_rx) = mpsc::channel();
+        let (release_persist_tx, release_persist_rx) = mpsc::channel();
+        let (approved_tx, approved_rx) = mpsc::channel();
+        let repository = Arc::new(Repository {
+            records: Mutex::new(records),
+            persisting: persist_tx,
+            release: Mutex::new(release_persist_rx),
+        });
+        let lifecycle = Arc::new(Lifecycle {
+            entered: effect_tx,
+            release: Mutex::new(release_effect_rx),
+            updates: AtomicUsize::new(0),
+        });
+        let approval = Arc::new(crate::approval::tests::service_with_observer(
+            move |intent| {
+                if matches!(intent, DidApprovalIntent::Update { .. }) {
+                    approved_tx.send(()).unwrap();
+                }
+            },
+        ));
+        let make_service = || {
+            DidService::from_ports(
+                repository.clone(),
+                Arc::new(UnavailableDidResolver),
+                lifecycle.clone(),
+            )
+            .with_approvals(approval.clone(), Arc::new(TestHash::default()))
+        };
+        let deactivate = make_service();
+        let update = make_service();
+        let unrelated = make_service();
+        std::thread::scope(|scope| {
+            let deactivation = scope.spawn(|| {
+                DeactivateDidUseCase::execute(
+                    &deactivate,
+                    DeactivateDidCommand {
+                        profile_id: profile.as_str().into(),
+                        did: did.as_str().into(),
+                    },
+                )
+            });
+            effect_rx.recv_timeout(WAIT).unwrap();
+            let pending_update = scope.spawn(|| {
+                UpdateDidUseCase::execute(
+                    &update,
+                    UpdateDidCommand {
+                        profile_id: profile.as_str().into(),
+                        did: did.as_str().into(),
+                        operation: DidUpdate::AddAlsoKnownAs {
+                            value: "stale".into(),
+                        },
+                    },
+                )
+            });
+            approved_rx.recv_timeout(WAIT).unwrap();
+            let lock = operation_lock(&profile, &did).unwrap();
+            let effect_locked = matches!(lock.try_lock(), Err(std::sync::TryLockError::WouldBlock));
+            // Must complete while the first DID is paused in its effect.
+            let unrelated_result = SignDidPayloadUseCase::execute(
+                &unrelated,
+                SignDidPayloadCommand {
+                    profile_id: profile.as_str().into(),
+                    did: other.as_str().into(),
+                    method_id: "auth-1".into(),
+                    payload: b"payload",
+                },
+            );
+            release_effect_tx.send(()).unwrap();
+            persist_rx.recv_timeout(WAIT).unwrap();
+            let persistence_locked =
+                matches!(lock.try_lock(), Err(std::sync::TryLockError::WouldBlock));
+            release_persist_tx.send(()).unwrap();
+            assert!(deactivation.join().unwrap().is_ok());
+            assert_eq!(
+                pending_update.join().unwrap(),
+                Err(DidOperationError::RetainedRecordChanged)
+            );
+            assert!(effect_locked && persistence_locked);
+            assert!(unrelated_result.is_ok());
+        });
+        assert_eq!(lifecycle.updates.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            repository
+                .get(&profile, &did)
+                .unwrap()
+                .resolution()
+                .document_metadata()
+                .deactivated,
+            Some(true)
+        );
+    }
 }
