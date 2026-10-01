@@ -5,13 +5,14 @@
 use std::{
     error::Error,
     fmt,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex},
 };
 
-use oxid_foundation::UnixTimestampMillis;
+pub use oxid_foundation::AcceptedCredentialIssuanceFlow;
+use oxid_foundation::{
+    AcceptedFlowIssuer, AcceptedFlowTokenUseError, CREDENTIAL_ISSUANCE_FLOW_KIND,
+    UnixTimestampMillis,
+};
 use oxid_identity_domain::{IdentityProfileId, MidnightDid};
 
 /// Time source for credential issuance authorities.
@@ -47,6 +48,7 @@ impl fmt::Debug for CanonicalCredentialIssuancePayloadDigest {
 }
 
 /// Identity-approved context bound to one issuance flow and session.
+#[derive(PartialEq, Eq)]
 pub struct AcceptedCredentialIssuanceContext {
     profile: IdentityProfileId,
     did: MidnightDid,
@@ -75,32 +77,12 @@ impl AcceptedCredentialIssuanceContext {
 }
 
 /// Opaque, non-cloneable, non-serializable, single-use issuance authority.
-/// Its constructor is deliberately private to this application module.
 ///
 /// ```compile_fail,E0277
 /// use oxid_identity_application::AcceptedCredentialIssuanceFlow;
 /// fn needs_clone<T: Clone>() {}
 /// needs_clone::<AcceptedCredentialIssuanceFlow>();
 /// ```
-pub struct AcceptedCredentialIssuanceFlow {
-    profile: IdentityProfileId,
-    did: MidnightDid,
-    canonical_method: String,
-    flow_id: String,
-    session_id: String,
-    issuer: Arc<()>,
-    issued_at: UnixTimestampMillis,
-    expires_at: UnixTimestampMillis,
-    generation: u64,
-    consumed: AtomicBool,
-}
-
-impl fmt::Debug for AcceptedCredentialIssuanceFlow {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("AcceptedCredentialIssuanceFlow([REDACTED])")
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CredentialIssuanceFlowError {
@@ -139,7 +121,7 @@ pub trait CredentialIssuanceAuthorityPort: Send + Sync {
 /// Identity-owned mint and consume service for accepted credential issuance flows.
 pub struct CredentialIssuanceFlowService {
     clock: Arc<dyn CredentialIssuanceClockPort>,
-    issuer: Arc<()>,
+    issuer: AcceptedFlowIssuer<CREDENTIAL_ISSUANCE_FLOW_KIND>,
     generation: Mutex<Option<u64>>,
 }
 
@@ -150,9 +132,26 @@ impl CredentialIssuanceFlowService {
     pub fn new(clock: Arc<dyn CredentialIssuanceClockPort>) -> Self {
         Self {
             clock,
-            issuer: Arc::new(()),
+            issuer: AcceptedFlowIssuer::new(),
             generation: Mutex::new(Some(0)),
         }
+    }
+
+    pub fn mint_for_accepted_transport(
+        &self,
+        profile_id: String,
+        holder_did: String,
+        method_id: String,
+        flow_id: String,
+        session_id: String,
+    ) -> Result<AcceptedCredentialIssuanceFlow, CredentialIssuanceFlowError> {
+        let profile = IdentityProfileId::parse(profile_id)
+            .map_err(|_| CredentialIssuanceFlowError::FlowMismatch)?;
+        let did = MidnightDid::parse(holder_did)
+            .map_err(|_| CredentialIssuanceFlowError::FlowMismatch)?;
+        self.mint(AcceptedCredentialIssuanceContext::new(
+            profile, did, method_id, flow_id, session_id,
+        ))
     }
 }
 
@@ -169,18 +168,7 @@ impl CredentialIssuanceAuthorityPort for CredentialIssuanceFlowService {
                 .checked_add(Self::MAX_TTL_MILLIS)
                 .ok_or(CredentialIssuanceFlowError::Unavailable)?,
         );
-        Ok(AcceptedCredentialIssuanceFlow {
-            profile: context.profile,
-            did: context.did,
-            canonical_method: context.canonical_method,
-            flow_id: context.flow_id,
-            session_id: context.session_id,
-            issuer: Arc::clone(&self.issuer),
-            issued_at,
-            expires_at,
-            generation,
-            consumed: AtomicBool::new(false),
-        })
+        Ok(self.issuer.mint(context, issued_at, expires_at, generation))
     }
 }
 
@@ -208,34 +196,35 @@ impl CredentialIssuanceFlowService {
         expected: &AcceptedCredentialIssuanceContext,
         canonical_payload_digest: impl FnOnce() -> CanonicalCredentialIssuancePayloadDigest,
     ) -> Result<(), CredentialIssuanceFlowError> {
-        if !Arc::ptr_eq(&self.issuer, &capability.issuer) {
+        if !self.issuer.owns(capability) {
             return Err(CredentialIssuanceFlowError::ForeignIssuer);
         }
-        if self.current_generation()? != capability.generation {
+        if self.current_generation()? != capability.generation() {
             return Err(CredentialIssuanceFlowError::GenerationMismatch);
         }
         let now = self.now()?;
-        if now < capability.issued_at {
+        if now < capability.issued_at() {
             return Err(CredentialIssuanceFlowError::ClockWentBackwards);
         }
-        if now >= capability.expires_at {
+        if now >= capability.expires_at() {
             return Err(CredentialIssuanceFlowError::Expired);
         }
-        if capability.profile != expected.profile
-            || capability.did != expected.did
-            || capability.canonical_method != expected.canonical_method
-            || capability.flow_id != expected.flow_id
-            || capability.session_id != expected.session_id
-        {
+        if !capability.binding_matches(expected) {
             return Err(CredentialIssuanceFlowError::FlowMismatch);
         }
         // Spend before canonicalizing so concurrent duplicate requests cannot
         // evaluate or bind a second final payload. The signing boundary owns
         // canonicalization; this is immediately before its signing effect.
-        capability
-            .consumed
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| CredentialIssuanceFlowError::AlreadyConsumed)?;
+        self.issuer
+            .try_consume(capability)
+            .map_err(|error| match error {
+                AcceptedFlowTokenUseError::ForeignIssuer => {
+                    CredentialIssuanceFlowError::ForeignIssuer
+                }
+                AcceptedFlowTokenUseError::AlreadyConsumed => {
+                    CredentialIssuanceFlowError::AlreadyConsumed
+                }
+            })?;
         let _bound_payload_digest = canonical_payload_digest();
         Ok(())
     }
@@ -265,7 +254,7 @@ impl CredentialIssuanceFlowService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, AtomicUsize};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
     const DID: &str =
         "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";

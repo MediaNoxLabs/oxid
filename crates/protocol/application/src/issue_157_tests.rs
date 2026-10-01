@@ -12,10 +12,21 @@ const PRIVATE_SECRET: &[u8] = b"issued-private-material-secret";
 const HOLDER_DID: &str =
     "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-struct IssuanceClock;
-impl oxid_identity_application::CredentialIssuanceClockPort for IssuanceClock {
-    fn now(&self) -> Result<oxid_foundation::UnixTimestampMillis, CredentialIssuanceFlowError> {
-        Ok(oxid_foundation::UnixTimestampMillis::new(1))
+struct IssuanceAuthority(
+    oxid_foundation::AcceptedFlowIssuer<{ oxid_foundation::CREDENTIAL_ISSUANCE_FLOW_KIND }>,
+);
+
+impl CredentialIssuanceAuthorityPort for IssuanceAuthority {
+    fn mint(
+        &self,
+        request: CredentialIssuanceAuthorityRequest,
+    ) -> Result<AcceptedCredentialIssuanceFlow, AcceptedFlowApprovalError> {
+        Ok(self.0.mint(
+            request,
+            oxid_foundation::UnixTimestampMillis::new(1),
+            oxid_foundation::UnixTimestampMillis::new(2),
+            0,
+        ))
     }
 }
 
@@ -97,9 +108,7 @@ fn issuance_service(
     CredentialIssuanceService::with_authority(
         Arc::new(IssuanceProtocol::new(discard_failures)),
         Arc::new(FailingSink(sink_error)),
-        Arc::new(
-            oxid_identity_application::CredentialIssuanceFlowService::new(Arc::new(IssuanceClock)),
-        ),
+        Arc::new(IssuanceAuthority(oxid_foundation::AcceptedFlowIssuer::new())),
     )
 }
 

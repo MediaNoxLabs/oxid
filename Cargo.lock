@@ -6230,8 +6230,6 @@ name = "oxid-presentation-application"
 version = "0.1.0"
 dependencies = [
  "oxid-foundation",
- "oxid-identity-application",
- "oxid-identity-domain",
  "oxid-presentation-domain",
 ]
 
@@ -6247,8 +6245,6 @@ name = "oxid-protocol-application"
 version = "0.1.0"
 dependencies = [
  "oxid-foundation",
- "oxid-identity-application",
- "oxid-identity-domain",
  "oxid-protocol-domain",
 ]
 

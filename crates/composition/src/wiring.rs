@@ -140,6 +140,79 @@ use oxid_protocol_application::{
     UnavailableCredentialIssuanceProtocol, UnavailableIssuedCredentialSink,
     UnavailableSelfIssuedAuthenticationProtocol,
 };
+
+struct CredentialIssuanceAuthorityBridge(Arc<CredentialIssuanceFlowService>);
+
+impl oxid_protocol_application::CredentialIssuanceAuthorityPort
+    for CredentialIssuanceAuthorityBridge
+{
+    fn mint(
+        &self,
+        request: oxid_protocol_application::CredentialIssuanceAuthorityRequest,
+    ) -> Result<
+        oxid_identity_application::AcceptedCredentialIssuanceFlow,
+        oxid_protocol_application::AcceptedFlowApprovalError,
+    > {
+        self.0
+            .mint_for_accepted_transport(
+                request.profile_id,
+                request.holder_did,
+                request.method_id,
+                request.flow_id.to_owned(),
+                request.session_id,
+            )
+            .map_err(|_| oxid_protocol_application::AcceptedFlowApprovalError::Unavailable)
+    }
+}
+
+struct SelfIssuedAuthenticationAuthorityBridge(Arc<SelfIssuedAuthenticationFlowService>);
+
+impl oxid_protocol_application::SelfIssuedAuthenticationAuthorityPort
+    for SelfIssuedAuthenticationAuthorityBridge
+{
+    fn mint(
+        &self,
+        request: oxid_protocol_application::SelfIssuedAuthenticationAuthorityRequest,
+    ) -> Result<
+        oxid_identity_application::AcceptedSelfIssuedAuthenticationFlow,
+        oxid_protocol_application::AcceptedFlowApprovalError,
+    > {
+        self.0
+            .mint_for_accepted_transport(
+                request.profile_id,
+                request.holder_did,
+                request.method_id,
+                request.flow_id.to_owned(),
+                request.session_id,
+            )
+            .map_err(|_| oxid_protocol_application::AcceptedFlowApprovalError::Unavailable)
+    }
+}
+
+struct CredentialPresentationAuthorityBridge(Arc<CredentialPresentationFlowService>);
+
+impl oxid_presentation_application::CredentialPresentationAuthorityPort
+    for CredentialPresentationAuthorityBridge
+{
+    fn mint(
+        &self,
+        request: oxid_presentation_application::CredentialPresentationAuthorityRequest,
+    ) -> Result<
+        oxid_identity_application::AcceptedCredentialPresentationFlow,
+        oxid_presentation_application::CredentialPresentationApprovalError,
+    > {
+        self.0
+            .mint_for_accepted_transport(
+                request.profile_id,
+                request.flow_id.to_owned(),
+                request.session_id,
+                request.credential_id,
+            )
+            .map_err(|_| {
+                oxid_presentation_application::CredentialPresentationApprovalError::Unavailable
+            })
+    }
+}
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use oxid_wallet_application::UnavailablePortableWalletBackupDocuments;
 #[cfg(target_arch = "wasm32")]
@@ -921,9 +994,11 @@ where
         }
     };
     let issuance = Arc::new(match credential_issuance_authority {
-        Some(authority) => {
-            CredentialIssuanceService::with_authority(issuance_protocol, issuance_sink, authority)
-        }
+        Some(authority) => CredentialIssuanceService::with_authority(
+            issuance_protocol,
+            issuance_sink,
+            Arc::new(CredentialIssuanceAuthorityBridge(authority)),
+        ),
         None => CredentialIssuanceService::new(issuance_protocol, issuance_sink),
     });
     let presentation_protocol: Arc<dyn CredentialPresentationProtocolPort> =
@@ -1029,9 +1104,10 @@ where
             }
         };
     let credential_presentation = Arc::new(match credential_presentation_authority {
-        Some(authority) => {
-            CredentialPresentationService::with_authority(presentation_protocol, authority)
-        }
+        Some(authority) => CredentialPresentationService::with_authority(
+            presentation_protocol,
+            Arc::new(CredentialPresentationAuthorityBridge(authority)),
+        ),
         None => CredentialPresentationService::new(presentation_protocol),
     });
     let self_issued_protocol: Arc<dyn SelfIssuedAuthenticationProtocolPort> =
@@ -1051,9 +1127,10 @@ where
             }
         };
     let self_issued_authentication = Arc::new(match self_issued_authentication_authority {
-        Some(authority) => {
-            SelfIssuedAuthenticationService::with_authority(self_issued_protocol, authority)
-        }
+        Some(authority) => SelfIssuedAuthenticationService::with_authority(
+            self_issued_protocol,
+            Arc::new(SelfIssuedAuthenticationAuthorityBridge(authority)),
+        ),
         None => SelfIssuedAuthenticationService::new(self_issued_protocol),
     });
     let passport_vault_state_persistence = passport_vault_repository.persistence;

@@ -11,13 +11,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use oxid_foundation::OpaqueIdError;
-use oxid_identity_application::{
-    AcceptedCredentialPresentationContext, AcceptedCredentialPresentationFlow,
-    CredentialPresentationAuthorityPort, CredentialPresentationFlowError,
-    UnavailableCredentialPresentationAuthority,
-};
-use oxid_identity_domain::IdentityProfileId;
+use oxid_foundation::{AcceptedCredentialPresentationFlow, OpaqueIdError};
 use oxid_presentation_domain::{
     CredentialPresentationId, CredentialPresentationPreview, CredentialPresentationState,
     PresentationCredentialCandidate, PresentationProfileId, RequestedPresentationClaim,
@@ -26,6 +20,46 @@ use oxid_presentation_domain::{
 pub const MAX_PRESENTATION_REQUEST_BYTES: usize = 64 * 1_024;
 const MAX_CREDENTIAL_IDENTIFIER_CHARACTERS: usize = 256;
 pub const OPENID4VP_CREDENTIAL_PRESENTATION_FLOW_ID: &str = "openid4vp";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialPresentationApprovalError {
+    Unavailable,
+}
+
+impl fmt::Display for CredentialPresentationApprovalError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("approval_unavailable")
+    }
+}
+
+impl Error for CredentialPresentationApprovalError {}
+
+#[derive(PartialEq, Eq)]
+pub struct CredentialPresentationAuthorityRequest {
+    pub profile_id: String,
+    pub flow_id: &'static str,
+    pub session_id: String,
+    pub credential_id: String,
+}
+
+pub trait CredentialPresentationAuthorityPort: Send + Sync {
+    fn mint(
+        &self,
+        request: CredentialPresentationAuthorityRequest,
+    ) -> Result<AcceptedCredentialPresentationFlow, CredentialPresentationApprovalError>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnavailableCredentialPresentationAuthority;
+
+impl CredentialPresentationAuthorityPort for UnavailableCredentialPresentationAuthority {
+    fn mint(
+        &self,
+        _: CredentialPresentationAuthorityRequest,
+    ) -> Result<AcceptedCredentialPresentationFlow, CredentialPresentationApprovalError> {
+        Err(CredentialPresentationApprovalError::Unavailable)
+    }
+}
 
 pub type PreparePresentationPortFuture<'a> = Pin<
     Box<
@@ -571,7 +605,7 @@ pub enum CredentialPresentationError {
     InvalidConfirmation,
     NotFound,
     InvalidState,
-    Approval(CredentialPresentationFlowError),
+    Approval(CredentialPresentationApprovalError),
     Protocol(PresentationProtocolError),
     Unavailable,
 }
@@ -797,16 +831,14 @@ impl AcceptCredentialPresentationUseCase for CredentialPresentationService {
                 {
                     return Err(CredentialPresentationError::InvalidCredential);
                 }
-                let identity_profile = IdentityProfileId::parse(profile_id.as_str().to_owned())
-                    .map_err(CredentialPresentationError::InvalidProfileIdentifier)?;
                 let authority = self
                     .authority
-                    .mint(AcceptedCredentialPresentationContext::new(
-                        identity_profile,
-                        OPENID4VP_CREDENTIAL_PRESENTATION_FLOW_ID,
-                        presentation_id.as_str(),
-                        command.credential_id.clone(),
-                    ))
+                    .mint(CredentialPresentationAuthorityRequest {
+                        profile_id: profile_id.as_str().to_owned(),
+                        flow_id: OPENID4VP_CREDENTIAL_PRESENTATION_FLOW_ID,
+                        session_id: presentation_id.as_str().to_owned(),
+                        credential_id: command.credential_id.clone(),
+                    })
                     .map_err(CredentialPresentationError::Approval)?;
                 session.state = CredentialPresentationState::Presenting;
                 authority
@@ -1030,26 +1062,31 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::task::{Context, Poll, Waker};
 
-    struct PresentationClock;
-    impl oxid_identity_application::CredentialPresentationClockPort for PresentationClock {
-        fn now(
+    struct PresentationAuthority(
+        oxid_foundation::AcceptedFlowIssuer<{ oxid_foundation::CREDENTIAL_PRESENTATION_FLOW_KIND }>,
+    );
+
+    impl CredentialPresentationAuthorityPort for PresentationAuthority {
+        fn mint(
             &self,
-        ) -> Result<
-            oxid_foundation::UnixTimestampMillis,
-            oxid_identity_application::CredentialPresentationFlowError,
-        > {
-            Ok(oxid_foundation::UnixTimestampMillis::new(1))
+            request: CredentialPresentationAuthorityRequest,
+        ) -> Result<AcceptedCredentialPresentationFlow, CredentialPresentationApprovalError>
+        {
+            Ok(self.0.mint(
+                request,
+                oxid_foundation::UnixTimestampMillis::new(1),
+                oxid_foundation::UnixTimestampMillis::new(2),
+                0,
+            ))
         }
     }
 
     fn approved_service(protocol: Arc<Protocol>) -> CredentialPresentationService {
         CredentialPresentationService::with_authority(
             protocol,
-            Arc::new(
-                oxid_identity_application::CredentialPresentationFlowService::new(Arc::new(
-                    PresentationClock,
-                )),
-            ),
+            Arc::new(PresentationAuthority(
+                oxid_foundation::AcceptedFlowIssuer::new(),
+            )),
         )
     }
 
@@ -1269,7 +1306,7 @@ mod tests {
                 },
             )),
             Err(CredentialPresentationError::Approval(
-                CredentialPresentationFlowError::Unavailable,
+                CredentialPresentationApprovalError::Unavailable,
             ))
         );
         assert!(

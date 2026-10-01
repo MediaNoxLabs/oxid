@@ -5,13 +5,14 @@
 use std::{
     error::Error,
     fmt,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex},
 };
 
-use oxid_foundation::UnixTimestampMillis;
+pub use oxid_foundation::AcceptedSelfIssuedAuthenticationFlow;
+use oxid_foundation::{
+    AcceptedFlowIssuer, AcceptedFlowTokenUseError, SELF_ISSUED_AUTHENTICATION_FLOW_KIND,
+    UnixTimestampMillis,
+};
 use oxid_identity_domain::{IdentityProfileId, MidnightDid};
 
 /// Time source for self-issued authentication authorities.
@@ -47,6 +48,7 @@ impl fmt::Debug for CanonicalSelfIssuedAuthenticationPayloadDigest {
 }
 
 /// Identity-approved context bound to one SIOPv2 flow and session.
+#[derive(PartialEq, Eq)]
 pub struct AcceptedSelfIssuedAuthenticationContext {
     profile: IdentityProfileId,
     did: MidnightDid,
@@ -92,25 +94,6 @@ impl AcceptedSelfIssuedAuthenticationContext {
 ///     authenticate(issuance);
 /// }
 /// ```
-pub struct AcceptedSelfIssuedAuthenticationFlow {
-    profile: IdentityProfileId,
-    did: MidnightDid,
-    canonical_method: String,
-    flow_id: String,
-    session_id: String,
-    issuer: Arc<()>,
-    issued_at: UnixTimestampMillis,
-    expires_at: UnixTimestampMillis,
-    generation: u64,
-    consumed: AtomicBool,
-}
-
-impl fmt::Debug for AcceptedSelfIssuedAuthenticationFlow {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("AcceptedSelfIssuedAuthenticationFlow([REDACTED])")
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SelfIssuedAuthenticationFlowError {
@@ -149,7 +132,7 @@ pub trait SelfIssuedAuthenticationAuthorityPort: Send + Sync {
 /// Identity-owned mint and consume service for accepted authentication flows.
 pub struct SelfIssuedAuthenticationFlowService {
     clock: Arc<dyn SelfIssuedAuthenticationClockPort>,
-    issuer: Arc<()>,
+    issuer: AcceptedFlowIssuer<SELF_ISSUED_AUTHENTICATION_FLOW_KIND>,
     generation: Mutex<Option<u64>>,
 }
 
@@ -160,9 +143,26 @@ impl SelfIssuedAuthenticationFlowService {
     pub fn new(clock: Arc<dyn SelfIssuedAuthenticationClockPort>) -> Self {
         Self {
             clock,
-            issuer: Arc::new(()),
+            issuer: AcceptedFlowIssuer::new(),
             generation: Mutex::new(Some(0)),
         }
+    }
+
+    pub fn mint_for_accepted_transport(
+        &self,
+        profile_id: String,
+        holder_did: String,
+        method_id: String,
+        flow_id: String,
+        session_id: String,
+    ) -> Result<AcceptedSelfIssuedAuthenticationFlow, SelfIssuedAuthenticationFlowError> {
+        let profile = IdentityProfileId::parse(profile_id)
+            .map_err(|_| SelfIssuedAuthenticationFlowError::FlowMismatch)?;
+        let did = MidnightDid::parse(holder_did)
+            .map_err(|_| SelfIssuedAuthenticationFlowError::FlowMismatch)?;
+        self.mint(AcceptedSelfIssuedAuthenticationContext::new(
+            profile, did, method_id, flow_id, session_id,
+        ))
     }
 }
 
@@ -179,18 +179,7 @@ impl SelfIssuedAuthenticationAuthorityPort for SelfIssuedAuthenticationFlowServi
                 .checked_add(Self::MAX_TTL_MILLIS)
                 .ok_or(SelfIssuedAuthenticationFlowError::Unavailable)?,
         );
-        Ok(AcceptedSelfIssuedAuthenticationFlow {
-            profile: context.profile,
-            did: context.did,
-            canonical_method: context.canonical_method,
-            flow_id: context.flow_id,
-            session_id: context.session_id,
-            issuer: Arc::clone(&self.issuer),
-            issued_at,
-            expires_at,
-            generation,
-            consumed: AtomicBool::new(false),
-        })
+        Ok(self.issuer.mint(context, issued_at, expires_at, generation))
     }
 }
 
@@ -216,31 +205,32 @@ impl SelfIssuedAuthenticationFlowService {
         expected: &AcceptedSelfIssuedAuthenticationContext,
         canonical_payload_digest: impl FnOnce() -> CanonicalSelfIssuedAuthenticationPayloadDigest,
     ) -> Result<(), SelfIssuedAuthenticationFlowError> {
-        if !Arc::ptr_eq(&self.issuer, &capability.issuer) {
+        if !self.issuer.owns(capability) {
             return Err(SelfIssuedAuthenticationFlowError::ForeignIssuer);
         }
-        if self.current_generation()? != capability.generation {
+        if self.current_generation()? != capability.generation() {
             return Err(SelfIssuedAuthenticationFlowError::GenerationMismatch);
         }
         let now = self.now()?;
-        if now < capability.issued_at {
+        if now < capability.issued_at() {
             return Err(SelfIssuedAuthenticationFlowError::ClockWentBackwards);
         }
-        if now >= capability.expires_at {
+        if now >= capability.expires_at() {
             return Err(SelfIssuedAuthenticationFlowError::Expired);
         }
-        if capability.profile != expected.profile
-            || capability.did != expected.did
-            || capability.canonical_method != expected.canonical_method
-            || capability.flow_id != expected.flow_id
-            || capability.session_id != expected.session_id
-        {
+        if !capability.binding_matches(expected) {
             return Err(SelfIssuedAuthenticationFlowError::FlowMismatch);
         }
-        capability
-            .consumed
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| SelfIssuedAuthenticationFlowError::AlreadyConsumed)?;
+        self.issuer
+            .try_consume(capability)
+            .map_err(|error| match error {
+                AcceptedFlowTokenUseError::ForeignIssuer => {
+                    SelfIssuedAuthenticationFlowError::ForeignIssuer
+                }
+                AcceptedFlowTokenUseError::AlreadyConsumed => {
+                    SelfIssuedAuthenticationFlowError::AlreadyConsumed
+                }
+            })?;
         let _bound_payload_digest = canonical_payload_digest();
         Ok(())
     }
@@ -271,7 +261,7 @@ impl SelfIssuedAuthenticationFlowService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     const DID: &str =
         "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";

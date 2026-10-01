@@ -5,13 +5,14 @@
 use std::{
     error::Error,
     fmt,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex},
 };
 
-use oxid_foundation::UnixTimestampMillis;
+pub use oxid_foundation::AcceptedCredentialPresentationFlow;
+use oxid_foundation::{
+    AcceptedFlowIssuer, AcceptedFlowTokenUseError, CREDENTIAL_PRESENTATION_FLOW_KIND,
+    UnixTimestampMillis,
+};
 use oxid_identity_domain::IdentityProfileId;
 
 pub trait CredentialPresentationClockPort: Send + Sync {
@@ -44,6 +45,7 @@ impl fmt::Debug for CanonicalCredentialPresentationBundleDigest {
     }
 }
 
+#[derive(PartialEq, Eq)]
 pub struct AcceptedCredentialPresentationContext {
     profile: IdentityProfileId,
     flow_id: String,
@@ -84,24 +86,6 @@ impl AcceptedCredentialPresentationContext {
 /// fn present(_: AcceptedCredentialPresentationFlow) {}
 /// fn cannot_substitute(value: AcceptedCredentialIssuanceFlow) { present(value); }
 /// ```
-pub struct AcceptedCredentialPresentationFlow {
-    profile: IdentityProfileId,
-    flow_id: String,
-    session_id: String,
-    credential_id: String,
-    issuer: Arc<()>,
-    issued_at: UnixTimestampMillis,
-    expires_at: UnixTimestampMillis,
-    generation: u64,
-    consumed: AtomicBool,
-}
-
-impl fmt::Debug for AcceptedCredentialPresentationFlow {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("AcceptedCredentialPresentationFlow([REDACTED])")
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CredentialPresentationFlowError {
@@ -138,7 +122,7 @@ pub trait CredentialPresentationAuthorityPort: Send + Sync {
 
 pub struct CredentialPresentationFlowService {
     clock: Arc<dyn CredentialPresentationClockPort>,
-    issuer: Arc<()>,
+    issuer: AcceptedFlowIssuer<CREDENTIAL_PRESENTATION_FLOW_KIND>,
     generation: Mutex<Option<u64>>,
 }
 
@@ -149,16 +133,33 @@ impl CredentialPresentationFlowService {
     pub fn new(clock: Arc<dyn CredentialPresentationClockPort>) -> Self {
         Self {
             clock,
-            issuer: Arc::new(()),
+            issuer: AcceptedFlowIssuer::new(),
             generation: Mutex::new(Some(0)),
         }
+    }
+
+    pub fn mint_for_accepted_transport(
+        &self,
+        profile_id: String,
+        flow_id: String,
+        session_id: String,
+        credential_id: String,
+    ) -> Result<AcceptedCredentialPresentationFlow, CredentialPresentationFlowError> {
+        let profile = IdentityProfileId::parse(profile_id)
+            .map_err(|_| CredentialPresentationFlowError::FlowMismatch)?;
+        self.mint(AcceptedCredentialPresentationContext::new(
+            profile,
+            flow_id,
+            session_id,
+            credential_id,
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     struct Clock(AtomicU64);
     impl CredentialPresentationClockPort for Clock {
@@ -222,17 +223,7 @@ impl CredentialPresentationAuthorityPort for CredentialPresentationFlowService {
                 .checked_add(Self::MAX_TTL_MILLIS)
                 .ok_or(CredentialPresentationFlowError::Unavailable)?,
         );
-        Ok(AcceptedCredentialPresentationFlow {
-            profile: context.profile,
-            flow_id: context.flow_id,
-            session_id: context.session_id,
-            credential_id: context.credential_id,
-            issuer: Arc::clone(&self.issuer),
-            issued_at,
-            expires_at,
-            generation,
-            consumed: AtomicBool::new(false),
-        })
+        Ok(self.issuer.mint(context, issued_at, expires_at, generation))
     }
 }
 
@@ -255,30 +246,32 @@ impl CredentialPresentationFlowService {
         expected: &AcceptedCredentialPresentationContext,
         digest: impl FnOnce() -> CanonicalCredentialPresentationBundleDigest,
     ) -> Result<(), CredentialPresentationFlowError> {
-        if !Arc::ptr_eq(&self.issuer, &capability.issuer) {
+        if !self.issuer.owns(capability) {
             return Err(CredentialPresentationFlowError::ForeignIssuer);
         }
-        if self.current_generation()? != capability.generation {
+        if self.current_generation()? != capability.generation() {
             return Err(CredentialPresentationFlowError::GenerationMismatch);
         }
         let now = self.clock.now()?;
-        if now < capability.issued_at {
+        if now < capability.issued_at() {
             return Err(CredentialPresentationFlowError::ClockWentBackwards);
         }
-        if now >= capability.expires_at {
+        if now >= capability.expires_at() {
             return Err(CredentialPresentationFlowError::Expired);
         }
-        if capability.profile != expected.profile
-            || capability.flow_id != expected.flow_id
-            || capability.session_id != expected.session_id
-            || capability.credential_id != expected.credential_id
-        {
+        if !capability.binding_matches(expected) {
             return Err(CredentialPresentationFlowError::FlowMismatch);
         }
-        capability
-            .consumed
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| CredentialPresentationFlowError::AlreadyConsumed)?;
+        self.issuer
+            .try_consume(capability)
+            .map_err(|error| match error {
+                AcceptedFlowTokenUseError::ForeignIssuer => {
+                    CredentialPresentationFlowError::ForeignIssuer
+                }
+                AcceptedFlowTokenUseError::AlreadyConsumed => {
+                    CredentialPresentationFlowError::AlreadyConsumed
+                }
+            })?;
         let _bound_bundle_digest = digest();
         Ok(())
     }

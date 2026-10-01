@@ -11,15 +11,9 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use oxid_foundation::OpaqueIdError;
-use oxid_identity_application::{
-    AcceptedCredentialIssuanceContext, AcceptedCredentialIssuanceFlow,
-    AcceptedSelfIssuedAuthenticationContext, AcceptedSelfIssuedAuthenticationFlow,
-    CredentialIssuanceAuthorityPort, CredentialIssuanceFlowError,
-    SelfIssuedAuthenticationAuthorityPort, SelfIssuedAuthenticationFlowError,
-    UnavailableCredentialIssuanceAuthority, UnavailableSelfIssuedAuthenticationAuthority,
+use oxid_foundation::{
+    AcceptedCredentialIssuanceFlow, AcceptedSelfIssuedAuthenticationFlow, OpaqueIdError,
 };
-use oxid_identity_domain::{IdentityProfileId, MidnightDid};
 use oxid_protocol_domain::{
     CredentialIssuanceId, CredentialIssuanceState, CredentialOfferPreview, ProtocolProfileId,
     SelfIssuedAuthenticationId, SelfIssuedAuthenticationPreview, SelfIssuedAuthenticationState,
@@ -33,6 +27,75 @@ const MAX_METHOD_CHARACTERS: usize = 8_192;
 const ISSUANCE_INTERRUPTED_CODE: &str = "issuance_interrupted";
 pub const OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID: &str = "openid4vci";
 pub const SIOPV2_SELF_ISSUED_AUTHENTICATION_FLOW_ID: &str = "siopv2";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AcceptedFlowApprovalError {
+    Unavailable,
+}
+
+impl fmt::Display for AcceptedFlowApprovalError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("approval_unavailable")
+    }
+}
+
+impl Error for AcceptedFlowApprovalError {}
+
+#[derive(PartialEq, Eq)]
+pub struct CredentialIssuanceAuthorityRequest {
+    pub profile_id: String,
+    pub holder_did: String,
+    pub method_id: String,
+    pub flow_id: &'static str,
+    pub session_id: String,
+}
+
+pub trait CredentialIssuanceAuthorityPort: Send + Sync {
+    fn mint(
+        &self,
+        request: CredentialIssuanceAuthorityRequest,
+    ) -> Result<AcceptedCredentialIssuanceFlow, AcceptedFlowApprovalError>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnavailableCredentialIssuanceAuthority;
+
+impl CredentialIssuanceAuthorityPort for UnavailableCredentialIssuanceAuthority {
+    fn mint(
+        &self,
+        _: CredentialIssuanceAuthorityRequest,
+    ) -> Result<AcceptedCredentialIssuanceFlow, AcceptedFlowApprovalError> {
+        Err(AcceptedFlowApprovalError::Unavailable)
+    }
+}
+
+#[derive(PartialEq, Eq)]
+pub struct SelfIssuedAuthenticationAuthorityRequest {
+    pub profile_id: String,
+    pub holder_did: String,
+    pub method_id: String,
+    pub flow_id: &'static str,
+    pub session_id: String,
+}
+
+pub trait SelfIssuedAuthenticationAuthorityPort: Send + Sync {
+    fn mint(
+        &self,
+        request: SelfIssuedAuthenticationAuthorityRequest,
+    ) -> Result<AcceptedSelfIssuedAuthenticationFlow, AcceptedFlowApprovalError>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnavailableSelfIssuedAuthenticationAuthority;
+
+impl SelfIssuedAuthenticationAuthorityPort for UnavailableSelfIssuedAuthenticationAuthority {
+    fn mint(
+        &self,
+        _: SelfIssuedAuthenticationAuthorityRequest,
+    ) -> Result<AcceptedSelfIssuedAuthenticationFlow, AcceptedFlowApprovalError> {
+        Err(AcceptedFlowApprovalError::Unavailable)
+    }
+}
 
 /// A safe routing result for an inbound identity protocol link.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -468,7 +531,7 @@ pub enum CredentialIssuanceError {
     InvalidConfirmation,
     NotFound,
     InvalidState,
-    Approval(CredentialIssuanceFlowError),
+    Approval(AcceptedFlowApprovalError),
     Protocol(IssuanceProtocolError),
     Sink(IssuedCredentialSinkError),
     Unavailable,
@@ -678,19 +741,15 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
                 if session.state != CredentialIssuanceState::AwaitingConsent {
                     return Err(CredentialIssuanceError::InvalidState);
                 }
-                let identity_profile = IdentityProfileId::parse(profile_id.as_str().to_owned())
-                    .map_err(CredentialIssuanceError::InvalidProfileIdentifier)?;
-                let holder_did = MidnightDid::parse(command.holder_did.clone())
-                    .map_err(|_| CredentialIssuanceError::InvalidHolder)?;
                 let authority = self
                     .authority
-                    .mint(AcceptedCredentialIssuanceContext::new(
-                        identity_profile,
-                        holder_did,
-                        command.method_id.clone(),
-                        OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
-                        issuance_id.as_str(),
-                    ))
+                    .mint(CredentialIssuanceAuthorityRequest {
+                        profile_id: profile_id.as_str().to_owned(),
+                        holder_did: command.holder_did.clone(),
+                        method_id: command.method_id.clone(),
+                        flow_id: OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
+                        session_id: issuance_id.as_str().to_owned(),
+                    })
                     .map_err(CredentialIssuanceError::Approval)?;
                 session.state = CredentialIssuanceState::Issuing;
                 authority
@@ -1090,7 +1149,7 @@ pub enum SelfIssuedAuthenticationError {
     InvalidConfirmation,
     NotFound,
     InvalidState,
-    Approval(SelfIssuedAuthenticationFlowError),
+    Approval(AcceptedFlowApprovalError),
     Protocol(SelfIssuedProtocolError),
     Unavailable,
 }
@@ -1283,19 +1342,15 @@ impl AcceptSelfIssuedAuthenticationUseCase for SelfIssuedAuthenticationService {
                 if session.state != SelfIssuedAuthenticationState::AwaitingConsent {
                     return Err(SelfIssuedAuthenticationError::InvalidState);
                 }
-                let identity_profile = IdentityProfileId::parse(profile_id.as_str().to_owned())
-                    .map_err(SelfIssuedAuthenticationError::InvalidProfileIdentifier)?;
-                let holder_did = MidnightDid::parse(command.holder_did.clone())
-                    .map_err(|_| SelfIssuedAuthenticationError::InvalidHolder)?;
                 let authority = self
                     .authority
-                    .mint(AcceptedSelfIssuedAuthenticationContext::new(
-                        identity_profile,
-                        holder_did,
-                        command.method_id.clone(),
-                        SIOPV2_SELF_ISSUED_AUTHENTICATION_FLOW_ID,
-                        authentication_id.as_str(),
-                    ))
+                    .mint(SelfIssuedAuthenticationAuthorityRequest {
+                        profile_id: profile_id.as_str().to_owned(),
+                        holder_did: command.holder_did.clone(),
+                        method_id: command.method_id.clone(),
+                        flow_id: SIOPV2_SELF_ISSUED_AUTHENTICATION_FLOW_ID,
+                        session_id: authentication_id.as_str().to_owned(),
+                    })
                     .map_err(SelfIssuedAuthenticationError::Approval)?;
                 session.state = SelfIssuedAuthenticationState::Authenticating;
                 authority
@@ -1420,38 +1475,54 @@ mod tests {
     const REJECT_DID: &str =
         "did:midnight:undeployed:1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-    struct IssuanceClock;
-    impl oxid_identity_application::CredentialIssuanceClockPort for IssuanceClock {
-        fn now(&self) -> Result<oxid_foundation::UnixTimestampMillis, CredentialIssuanceFlowError> {
-            Ok(oxid_foundation::UnixTimestampMillis::new(1))
-        }
-    }
+    struct TestIssuanceAuthority(
+        oxid_foundation::AcceptedFlowIssuer<{ oxid_foundation::CREDENTIAL_ISSUANCE_FLOW_KIND }>,
+    );
 
-    fn issuance_authority() -> Arc<oxid_identity_application::CredentialIssuanceFlowService> {
-        Arc::new(
-            oxid_identity_application::CredentialIssuanceFlowService::new(Arc::new(IssuanceClock)),
-        )
-    }
-
-    struct AuthenticationClock;
-    impl oxid_identity_application::SelfIssuedAuthenticationClockPort for AuthenticationClock {
-        fn now(
+    impl CredentialIssuanceAuthorityPort for TestIssuanceAuthority {
+        fn mint(
             &self,
-        ) -> Result<
-            oxid_foundation::UnixTimestampMillis,
-            oxid_identity_application::SelfIssuedAuthenticationFlowError,
-        > {
-            Ok(oxid_foundation::UnixTimestampMillis::new(1))
+            request: CredentialIssuanceAuthorityRequest,
+        ) -> Result<AcceptedCredentialIssuanceFlow, AcceptedFlowApprovalError> {
+            Ok(self.0.mint(
+                request,
+                oxid_foundation::UnixTimestampMillis::new(1),
+                oxid_foundation::UnixTimestampMillis::new(2),
+                0,
+            ))
         }
     }
 
-    fn authentication_authority()
-    -> Arc<oxid_identity_application::SelfIssuedAuthenticationFlowService> {
-        Arc::new(
-            oxid_identity_application::SelfIssuedAuthenticationFlowService::new(Arc::new(
-                AuthenticationClock,
-            )),
-        )
+    fn issuance_authority() -> Arc<TestIssuanceAuthority> {
+        Arc::new(TestIssuanceAuthority(
+            oxid_foundation::AcceptedFlowIssuer::new(),
+        ))
+    }
+
+    struct TestAuthenticationAuthority(
+        oxid_foundation::AcceptedFlowIssuer<
+            { oxid_foundation::SELF_ISSUED_AUTHENTICATION_FLOW_KIND },
+        >,
+    );
+
+    impl SelfIssuedAuthenticationAuthorityPort for TestAuthenticationAuthority {
+        fn mint(
+            &self,
+            request: SelfIssuedAuthenticationAuthorityRequest,
+        ) -> Result<AcceptedSelfIssuedAuthenticationFlow, AcceptedFlowApprovalError> {
+            Ok(self.0.mint(
+                request,
+                oxid_foundation::UnixTimestampMillis::new(1),
+                oxid_foundation::UnixTimestampMillis::new(2),
+                0,
+            ))
+        }
+    }
+
+    fn authentication_authority() -> Arc<TestAuthenticationAuthority> {
+        Arc::new(TestAuthenticationAuthority(
+            oxid_foundation::AcceptedFlowIssuer::new(),
+        ))
     }
 
     struct PendingHolderProof;
@@ -1479,13 +1550,13 @@ mod tests {
             flow_id: OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
             session_id: "issuance_test".to_owned(),
             authority: authority
-                .mint(AcceptedCredentialIssuanceContext::new(
-                    IdentityProfileId::parse("profile_test").expect("identity profile"),
-                    MidnightDid::parse(HOLDER_DID).expect("holder DID"),
+                .mint(CredentialIssuanceAuthorityRequest {
+                    profile_id: "profile_test".to_owned(),
+                    holder_did: HOLDER_DID.to_owned(),
                     method_id,
-                    OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
-                    "issuance_test",
-                ))
+                    flow_id: OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
+                    session_id: "issuance_test".to_owned(),
+                })
                 .expect("authority"),
         };
         let request_debug = format!("{request:?}");
@@ -1523,13 +1594,13 @@ mod tests {
             flow_id: SIOPV2_SELF_ISSUED_AUTHENTICATION_FLOW_ID,
             session_id: "authentication_test".to_owned(),
             authority: authority
-                .mint(AcceptedSelfIssuedAuthenticationContext::new(
-                    IdentityProfileId::parse("profile_test").expect("identity profile"),
-                    MidnightDid::parse(HOLDER_DID).expect("holder DID"),
+                .mint(SelfIssuedAuthenticationAuthorityRequest {
+                    profile_id: "profile_test".to_owned(),
+                    holder_did: HOLDER_DID.to_owned(),
                     method_id,
-                    SIOPV2_SELF_ISSUED_AUTHENTICATION_FLOW_ID,
-                    "authentication_test",
-                ))
+                    flow_id: SIOPV2_SELF_ISSUED_AUTHENTICATION_FLOW_ID,
+                    session_id: "authentication_test".to_owned(),
+                })
                 .expect("authority"),
         };
         let request_debug = format!("{request:?}");
@@ -1774,7 +1845,7 @@ mod tests {
         assert_eq!(
             result,
             Err(CredentialIssuanceError::Approval(
-                CredentialIssuanceFlowError::Unavailable
+                AcceptedFlowApprovalError::Unavailable
             ))
         );
         assert_eq!(protocol.0.load(Ordering::Relaxed), 0);
@@ -2074,7 +2145,7 @@ mod tests {
         assert_eq!(
             result,
             Err(SelfIssuedAuthenticationError::Approval(
-                SelfIssuedAuthenticationFlowError::Unavailable,
+                AcceptedFlowApprovalError::Unavailable,
             ))
         );
         assert_eq!(authenticate_calls.load(Ordering::SeqCst), 0);

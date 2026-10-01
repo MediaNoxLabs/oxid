@@ -74,10 +74,9 @@ pub(super) fn credential_issuance_error(
         ),
         CredentialIssuanceError::Approval(error) => (
             match error {
-                oxid_identity_application::CredentialIssuanceFlowError::Unavailable => {
+                oxid_protocol_application::AcceptedFlowApprovalError::Unavailable => {
                     "approval_unavailable"
                 }
-                _ => "approval_invalid",
             },
             "trusted credential issuance approval is unavailable or invalid",
         ),
@@ -124,10 +123,9 @@ pub(super) fn credential_presentation_error(
         ),
         CredentialPresentationError::Approval(error) => (
             match error {
-                oxid_identity_application::CredentialPresentationFlowError::Unavailable => {
+                oxid_presentation_application::CredentialPresentationApprovalError::Unavailable => {
                     "approval_unavailable"
                 }
-                _ => "approval_invalid",
             },
             "credential presentation approval is unavailable or invalid",
         ),
@@ -170,10 +168,9 @@ pub(super) fn self_issued_authentication_error(
         ),
         SelfIssuedAuthenticationError::Approval(error) => (
             match error {
-                oxid_identity_application::SelfIssuedAuthenticationFlowError::Unavailable => {
+                oxid_protocol_application::AcceptedFlowApprovalError::Unavailable => {
                     "approval_unavailable"
                 }
-                _ => "approval_invalid",
             },
             "self-issued authentication approval is unavailable or invalid",
         ),
