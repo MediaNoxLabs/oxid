@@ -233,23 +233,6 @@ impl From<ConfirmationParams> for DidOperationConfirmation {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct SignParams {
-    #[serde(rename = "keyRef")]
-    pub(super) key_reference: String,
-    pub(super) payload_hex: String,
-    pub(super) confirmation: ConfirmationParams,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct DeleteKeyParams {
-    #[serde(rename = "keyRef")]
-    pub(super) key_reference: String,
-    pub(super) confirmation: ConfirmationParams,
-}
-
-#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct DidParams {
     pub(super) did: String,

@@ -2,9 +2,11 @@
 
 `oxid-wallet-application` owns `WalletApprovalService`, the closed
 `WalletApprovalIntent` operation set, and opaque operation-typed capabilities.
-This is an additive, process-local authority primitive. Existing sign/delete,
-backup, onboarding, and recovery commands are unchanged; no incoming adapter or
-production composition is migrated by this foundation.
+This is process-local authority. Direct `SignWalletDataCommand` and
+`DeleteWalletKeyCommand` now require the corresponding opaque capability;
+`WalletSensitiveKeyService` consumes it immediately before custody. Backup,
+onboarding, recovery, transfers, DUST and identity/protocol authorization retain
+their existing intent-pinning contracts.
 
 ## Trust and composition
 
@@ -14,11 +16,13 @@ It cannot mint approval. A trusted composition root may explicitly inject a
 explicit approval for the exact structured intent through a trusted surface;
 request receipt, remote confirmation booleans, and caller-defined prose are not
 approval. There is no production approving implementation, environment switch,
-or development auto-approval path. The deterministic approving fixture exists
-only under `cfg(test)` inside the application tests. The repository test
-`tests/repository/wallet-approval-boundary-contract.test.mjs` scans every tracked
-Rust source, rejects injection/port references outside the approval module and
-its test fixture, and pins the sole production implementation to unavailable.
+or development auto-approval path. Deterministic approving fixtures exist only under `cfg(test)` inside the
+application tests and in `crates/composition/tests/direct_key_approval.rs`, a
+Cargo integration-test target exercising the production application boundary
+with real SHA-256 and recording custody. The repository test
+`tests/repository/wallet-approval-boundary-contract.test.mjs` scans tracked Rust
+sources, restricts injection/port references to the approval module and these
+explicit test fixtures, and pins the sole production implementation to unavailable.
 Negative fixtures cover incoming injection, alias imports, auto-approval and
 loss of the test-only fixture gate. Adding a trusted adapter requires deliberately
 updating this guard alongside its security review.
@@ -47,11 +51,27 @@ operation. The command boundary must independently reconstruct that digest and
 profile from its concrete command for consumption, rather than copy expected
 fields from a capability or accept an incoming asserted digest.
 
-Concrete canonical encoding, hash derivation, independent recomputation, trusted
-preview rendering, and wiring lifecycle invalidation into sign/delete consumers
-remain the separate consumer migration in issue #902. The foundation's tests
-prove **digest binding and mutation rejection**, not concrete payload
-canonicalization or protection of the existing commands.
+The direct-command service derives SHA-256 through `Sha256Port` (production
+`SystemSha256`, backed by the pinned sha2 implementation). Its canonical bytes
+are four ordered fields, each prefixed by an eight-byte unsigned big-endian byte
+length: operation domain, parsed profile identifier, parsed key reference, and
+payload. Domains are UTF-8 `oxid.wallet.sign-data.v1` and
+`oxid.wallet.delete-key.v1`; deletion's payload is empty. Signing accepts 1 to
+65,536 bytes. No incoming asserted digest is accepted. Approval requests and
+consumption independently reconstruct the encoding from concrete command fields.
+Commands and capabilities redact Debug; approval errors contain only closed
+reason codes. Real-hash integration tests pin framing and compare the independently
+reconstructed bytes, alongside scope/payload mismatch and custody-call assertions.
+
+Normal, standalone, and headless composition share an unavailable approval
+service. No trusted production renderer or approving surface is introduced.
+Headless `wallet.key.sign` and `wallet.key.delete` return the fixed code/message
+`approval_unavailable` for structurally valid object parameters, including legacy
+confirmation prose/booleans and alleged JSON capabilities. Non-object parameters
+are rejected earlier by the existing protocol validator as `invalid_params`.
+Neither path returns a result or echoes authority. No signature or deletion occurs.
+The capability manifest reports these operations unavailable. Other headless
+methods, including key generation/listing and their custody labels, are unchanged.
 
 ## Lifecycle and consumption
 
@@ -65,7 +85,10 @@ trusted clock. Times before the original issue time fail closed with the distinc
 payload-free `approval_clock_went_backwards` diagnostic (no timestamps or IDs). Lock,
 profile changes, and lifecycle cancellation must call `invalidate()` on the
 shared service; its generation change invalidates both issued and in-flight
-approvals. Generation overflow permanently disables that composition rather
+approvals. Composition wires invalidation before profile selection and before
+protection initialize/unlock/lock, including failed transitions. The consumer
+integration test checks both capabilities fail before custody after each of these
+transitions. Generation overflow permanently disables that composition rather
 than wrapping. Poisoned state and clock failures return unavailable.
 
 Mint/consume generation checks serialize with invalidation. The trusted prompt
@@ -113,6 +136,29 @@ the opaque capability.
 | Duplicate completion callback | Impossible: synchronous port returns once; asynchronous adapters must resolve to one result |
 | Diagnostics | Exact redacted Debug assertions; payload-free extensible error codes |
 
-All state tests are deterministic and use no network, adapter custody, sleeps,
-or real user approval. The full wallet application test suite also retains
-existing backup/onboarding/recovery intent-pinning coverage.
+## Direct-command consumer property matrix
+
+| Command/event | Evidence |
+| --- | --- |
+| Completion | Trusted fixture requests application-derived approval; both commands succeed and increment recording custody once |
+| Duplicate / concurrent command | Replay rejected; eight competing consumers have exactly one custody effect per capability |
+| Effect failure / recovery | Failed custody leaves capability spent; retry requires new approval, never restoration |
+| Replacement | Another service rejects old issuer authority before custody |
+| Profile/key/payload mismatch | Independently reconstructed intent mismatch; no custody call; original matching command remains usable |
+| Operation mismatch | Command compile-fail doctest rejects signing capability as deletion authority; canonical domains differ |
+| Expiry / stale authority | Both consumers reject expiry and generation mismatch before custody |
+| Lock/unlock/initialize/profile supersession | Shared invalidation precedes transition; failed adapter transition still invalidates both capabilities |
+| Cancellation | Dropping an unused capability abandons it; explicit authority invalidation cancels issued/in-flight approval. There is no asynchronous direct-command worker or cancellation callback |
+| Background / late UI completion | No production UI approval producer exists; no UI pending approval can survive background. A future producer must wire lifecycle invalidation before admission |
+| Duplicate completion / restart | Synchronous custody returns once; no completion event queue. Capabilities are nonserializable and replacement issuer rejects retained old authority |
+| Observability | Redacted command/capability Debug; bounded errors and headless rejection responses never echo payload, prose or alleged authority |
+
+Consumption and an external custody effect are ordered, not one atomic external
+transaction. No asynchronous wait or prompt occurs between them. A later lifecycle
+transition cannot retract an already-consumed operation; custody still enforces
+its own lock/state policy. This preserves the foundation's explicit linearization
+contract rather than claiming cross-adapter atomicity.
+
+Tests are deterministic and use no network, sleeps or real user approval. The
+consumer fixture uses recording custody, not a production approving port. The
+wallet application suite retains backup/onboarding/recovery intent-pinning coverage.

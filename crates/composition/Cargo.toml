@@ -90,6 +90,8 @@ oxid-adapter-backup-document-mobile.workspace = true
 oxid-adapter-storage-mobile.workspace = true
 
 [dev-dependencies]
+oxid-foundation.workspace = true
+oxid-wallet-domain.workspace = true
 futures.workspace = true
 hex.workspace = true
 midnight-base-crypto.workspace = true

@@ -837,6 +837,7 @@ const fn map_confirmation_error(
         | SensitiveWalletOperationError::InvalidKeyReference(_)
         | SensitiveWalletOperationError::EmptyPayload
         | SensitiveWalletOperationError::PayloadTooLarge
+        | SensitiveWalletOperationError::Approval(_)
         | SensitiveWalletOperationError::Operation(_) => {
             WalletDustRegistrationError::InvalidConfirmation
         }

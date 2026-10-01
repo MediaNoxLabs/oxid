@@ -910,6 +910,7 @@ const fn map_confirmation_error(error: SensitiveWalletOperationError) -> WalletT
         | SensitiveWalletOperationError::InvalidKeyReference(_)
         | SensitiveWalletOperationError::EmptyPayload
         | SensitiveWalletOperationError::PayloadTooLarge
+        | SensitiveWalletOperationError::Approval(_)
         | SensitiveWalletOperationError::Operation(_) => {
             WalletTransactionError::InvalidConfirmation
         }

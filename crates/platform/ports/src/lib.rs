@@ -6,6 +6,12 @@ use std::{error::Error, fmt, future::Future, pin::Pin};
 
 use oxid_foundation::UnixTimestampMillis;
 
+/// Deterministic SHA-256 hashing. Implementations must hash the exact supplied
+/// bytes, without normalization, persistence, logging, or domain substitution.
+pub trait Sha256Port: Send + Sync {
+    fn sha256(&self, bytes: &[u8]) -> [u8; 32];
+}
+
 /// Safe, adapter-neutral platform failure categories.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlatformError {

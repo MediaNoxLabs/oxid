@@ -1933,7 +1933,7 @@ fn executable_exercises_the_standalone_protected_key_flow() {
         Some(64)
     );
 
-    for (algorithm, key_ref, signature_hex_length) in [
+    for (algorithm, key_ref, _signature_hex_length) in [
         ("ed25519", &ed25519_ref, 128),
         ("p256", &p256_ref, 128),
         ("jubjub", &jubjub_ref, 192),
@@ -1952,12 +1952,7 @@ fn executable_exercises_the_standalone_protected_key_flow() {
                 }
             }
         }));
-        assert_eq!(signed["ok"], true, "unexpected response: {signed}");
-        assert_eq!(signed["result"]["algorithm"], algorithm);
-        assert_eq!(
-            signed["result"]["signatureHex"].as_str().map(str::len),
-            Some(signature_hex_length)
-        );
+        assert_eq!(signed["error"]["code"], "approval_unavailable");
     }
 
     assert_eq!(
@@ -1983,7 +1978,7 @@ fn executable_exercises_the_standalone_protected_key_flow() {
             }
         }
     }));
-    assert_eq!(locked_sign["error"]["code"], "wallet_locked");
+    assert_eq!(locked_sign["error"]["code"], "approval_unavailable");
     assert_eq!(
         process.request(json!({
             "protocol": "oxid.headless.v1",
@@ -2007,7 +2002,7 @@ fn executable_exercises_the_standalone_protected_key_flow() {
             }
         }
     }));
-    assert_eq!(denied_delete["error"]["code"], "confirmation_required");
+    assert_eq!(denied_delete["error"]["code"], "approval_unavailable");
     for key_ref in [&ed25519_ref, &p256_ref, &jubjub_ref] {
         let deleted = process.request(json!({
             "protocol": "oxid.headless.v1",
@@ -2022,7 +2017,7 @@ fn executable_exercises_the_standalone_protected_key_flow() {
                 }
             }
         }));
-        assert_eq!(deleted["result"]["deleted"], true);
+        assert_eq!(deleted["error"]["code"], "approval_unavailable");
     }
     assert_eq!(
         process.request(json!({
@@ -2030,8 +2025,10 @@ fn executable_exercises_the_standalone_protected_key_flow() {
             "id": "list",
             "method": "wallet.key.list",
             "params": {}
-        }))["result"]["keys"],
-        json!([])
+        }))["result"]["keys"]
+            .as_array()
+            .map(Vec::len),
+        Some(3)
     );
     process.quit();
 }
@@ -2141,8 +2138,8 @@ fn executable_restores_two_wallet_profiles_in_one_realm_after_restart() {
                         "confirmed": true
                     }
                 }
-            }))["ok"],
-            true
+            }))["error"]["code"],
+            "approval_unavailable"
         );
     }
     restarted.quit();
@@ -2254,12 +2251,7 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
             }
         }
     }));
-    assert_eq!(signed["result"]["algorithm"], "secp256k1-schnorr");
-    assert!(
-        signed["result"]["signatureHex"]
-            .as_str()
-            .is_some_and(|signature| signature.len() == 128)
-    );
+    assert_eq!(signed["error"]["code"], "approval_unavailable");
     assert_eq!(
         process.request(json!({
             "protocol": "oxid.headless.v1",

@@ -121,6 +121,8 @@
     "diagnostics.snapshot"
   ],
   "manifestStatusOverrides": {
+    "wallet.key.sign": "unavailable",
+    "wallet.key.delete": "unavailable",
     "wallet.bootstrap": "queued",
     "diagnostics.snapshot": "superseded",
     "vault.contract_state.read": "composition_dependent",

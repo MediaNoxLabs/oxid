@@ -816,6 +816,9 @@ pub(super) fn sensitive_error(
             "invalid_argument",
             "confirmation title and summary must be non-empty and bounded",
         ),
+        SensitiveWalletOperationError::Approval(error) => {
+            Response::error(id, "approval_denied", error.to_string())
+        }
         SensitiveWalletOperationError::Operation(error) => security_port_error(id, error),
     }
 }

@@ -612,6 +612,9 @@ where
     #[cfg(target_arch = "wasm32")]
     let compact_presentation_proof_available = false;
     let clock = Arc::new(SystemClock);
+    let approvals = Arc::new(oxid_wallet_application::WalletApprovalService::new(
+        clock.clone(),
+    ));
     let random = Arc::new(OsRandom);
     let complete_custody: Arc<dyn PortableCustodyVaultPort> = security.clone();
     let complete_profiles: Arc<dyn WalletProfileRepository> = repository.clone();
@@ -633,7 +636,10 @@ where
         Arc::clone(&random),
     ));
     let list_wallet_profiles = Arc::new(ListWalletProfilesService::new(Arc::clone(&repository)));
-    let select_wallet_profile = Arc::new(SelectWalletProfileService::new(Arc::clone(&repository)));
+    let select_wallet_profile = Arc::new(SelectWalletProfileService::with_approvals(
+        Arc::clone(&repository),
+        approvals.clone(),
+    ));
     let get_active_wallet_profile =
         Arc::new(GetActiveWalletProfileService::new(Arc::clone(&repository)));
     let backup_receipts = Arc::new(WalletBackupReceiptService::new(
@@ -641,8 +647,16 @@ where
         Arc::clone(&clock),
     ));
     let protection_port = protection_for_security(Arc::clone(&security));
-    let protection = Arc::new(WalletProtectionService::new(protection_port));
+    let protection = Arc::new(WalletProtectionService::with_approvals(
+        protection_port,
+        approvals.clone(),
+    ));
     let portable_backup = Arc::new(WalletPortableBackupService::new(Arc::clone(&security)));
+    let sensitive_keys = Arc::new(oxid_wallet_application::WalletSensitiveKeyService::new(
+        security.clone(),
+        approvals,
+        Arc::new(oxid_adapter_platform_system::SystemSha256),
+    ));
     let keys = Arc::new(WalletKeyService::new(security));
     let midnight_public_call_context: Arc<dyn MidnightPublicCallContextSource> = midnight.clone();
     #[cfg(not(target_arch = "wasm32"))]
@@ -948,8 +962,8 @@ where
     let record_wallet_backup_receipt: Arc<dyn RecordWalletBackupReceiptUseCase> = backup_receipts;
     let generate_wallet_key: Arc<dyn GenerateWalletKeyUseCase> = keys.clone();
     let list_wallet_keys: Arc<dyn ListWalletKeysUseCase> = keys.clone();
-    let sign_wallet_data: Arc<dyn SignWalletDataUseCase> = keys.clone();
-    let delete_wallet_key: Arc<dyn DeleteWalletKeyUseCase> = keys;
+    let sign_wallet_data: Arc<dyn SignWalletDataUseCase> = sensitive_keys.clone();
+    let delete_wallet_key: Arc<dyn DeleteWalletKeyUseCase> = sensitive_keys;
     let list_wallet_networks: Arc<dyn ListWalletNetworksUseCase> = networks.clone();
     let select_wallet_network: Arc<dyn SelectWalletNetworkUseCase> = networks;
     let derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase> = account_derivation;

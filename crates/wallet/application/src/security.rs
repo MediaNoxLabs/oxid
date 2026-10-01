@@ -2,6 +2,10 @@
 
 use std::{error::Error, fmt, sync::Arc};
 
+use crate::{
+    DeleteKeyApproval, SignDataApproval, WalletApprovalCapability, WalletApprovalError,
+    WalletApprovalService,
+};
 use oxid_foundation::OpaqueIdError;
 use oxid_wallet_domain::{
     WalletKeyAlgorithm, WalletKeyDescriptor, WalletKeyLabel, WalletKeyLabelError, WalletKeyPurpose,
@@ -357,19 +361,36 @@ pub struct SensitiveOperationConfirmation {
     pub confirmed: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SignWalletDataCommand {
+/// Direct signing requires authority for this exact command, not caller prose.
+pub struct SignWalletDataCommand<'a> {
     pub profile_id: String,
     pub key_reference: String,
     pub payload: Vec<u8>,
-    pub confirmation: SensitiveOperationConfirmation,
+    pub approval: &'a WalletApprovalCapability<SignDataApproval>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DeleteWalletKeyCommand {
+/// Operation typing rejects a signing approval at the deletion boundary.
+/// ```compile_fail
+/// use oxid_wallet_application::{DeleteWalletKeyCommand, WalletApprovalCapability, SignDataApproval};
+/// fn substitute(cap: &WalletApprovalCapability<SignDataApproval>) {
+///     let _ = DeleteWalletKeyCommand { profile_id: "p".into(), key_reference: "k".into(), approval: cap };
+/// }
+/// ```
+pub struct DeleteWalletKeyCommand<'a> {
     pub profile_id: String,
     pub key_reference: String,
-    pub confirmation: SensitiveOperationConfirmation,
+    pub approval: &'a WalletApprovalCapability<DeleteKeyApproval>,
+}
+
+impl fmt::Debug for SignWalletDataCommand<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SignWalletDataCommand([REDACTED])")
+    }
+}
+impl fmt::Debug for DeleteWalletKeyCommand<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("DeleteWalletKeyCommand([REDACTED])")
+    }
 }
 
 pub trait GetWalletSecurityStatusUseCase: Send + Sync {
@@ -414,13 +435,15 @@ pub trait ListWalletKeysUseCase: Send + Sync {
 pub trait SignWalletDataUseCase: Send + Sync {
     fn execute(
         &self,
-        command: SignWalletDataCommand,
+        command: SignWalletDataCommand<'_>,
     ) -> Result<WalletSignatureView, SensitiveWalletOperationError>;
 }
 
 pub trait DeleteWalletKeyUseCase: Send + Sync {
-    fn execute(&self, command: DeleteWalletKeyCommand)
-    -> Result<(), SensitiveWalletOperationError>;
+    fn execute(
+        &self,
+        command: DeleteWalletKeyCommand<'_>,
+    ) -> Result<(), SensitiveWalletOperationError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -470,6 +493,7 @@ pub enum SensitiveWalletOperationError {
     PayloadTooLarge,
     ConfirmationRequired,
     InvalidConfirmation,
+    Approval(WalletApprovalError),
     Operation(WalletSecurityPortError),
 }
 
@@ -483,6 +507,7 @@ impl fmt::Display for SensitiveWalletOperationError {
             Self::PayloadTooLarge => "signing payload exceeds the application limit",
             Self::ConfirmationRequired => "explicit confirmation is required",
             Self::InvalidConfirmation => "confirmation intent is invalid",
+            Self::Approval(error) => return error.fmt(formatter),
             Self::Operation(error) => return error.fmt(formatter),
         };
         formatter.write_str(message)
@@ -493,12 +518,33 @@ impl Error for SensitiveWalletOperationError {}
 
 pub struct WalletProtectionService<P: ?Sized> {
     protection: Arc<P>,
+    approvals: Option<Arc<WalletApprovalService>>,
 }
 
 impl<P: ?Sized> WalletProtectionService<P> {
     #[must_use]
     pub const fn new(protection: Arc<P>) -> Self {
-        Self { protection }
+        Self {
+            protection,
+            approvals: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_approvals(protection: Arc<P>, approvals: Arc<WalletApprovalService>) -> Self {
+        Self {
+            protection,
+            approvals: Some(approvals),
+        }
+    }
+
+    fn invalidate_approvals(&self) -> Result<(), WalletSecurityError> {
+        if let Some(approvals) = &self.approvals {
+            approvals.invalidate().map_err(|_| {
+                WalletSecurityError::Operation(WalletSecurityPortError::Unavailable)
+            })?;
+        }
+        Ok(())
     }
 }
 
@@ -527,6 +573,7 @@ where
         command: WalletProfileSecurityCommand,
     ) -> Result<WalletSecurityStatusView, WalletSecurityError> {
         let profile_id = parse_profile_id(command.profile_id)?;
+        self.invalidate_approvals()?;
         self.protection
             .initialize(&profile_id)
             .map(Into::into)
@@ -543,6 +590,7 @@ where
         command: WalletProfileSecurityCommand,
     ) -> Result<WalletSecurityStatusView, WalletSecurityError> {
         let profile_id = parse_profile_id(command.profile_id)?;
+        self.invalidate_approvals()?;
         self.protection
             .unlock(&profile_id)
             .map(Into::into)
@@ -559,6 +607,7 @@ where
         command: WalletProfileSecurityCommand,
     ) -> Result<WalletSecurityStatusView, WalletSecurityError> {
         let profile_id = parse_profile_id(command.profile_id)?;
+        self.invalidate_approvals()?;
         self.protection
             .lock(&profile_id)
             .map(Into::into)
@@ -620,51 +669,6 @@ where
                 .then_with(|| left.reference().cmp(right.reference()))
         });
         Ok(descriptors.iter().map(WalletKeyView::from).collect())
-    }
-}
-
-impl<K> SignWalletDataUseCase for WalletKeyService<K>
-where
-    K: WalletKeyOperationPort + 'static,
-{
-    fn execute(
-        &self,
-        command: SignWalletDataCommand,
-    ) -> Result<WalletSignatureView, SensitiveWalletOperationError> {
-        validate_confirmation(&command.confirmation)?;
-        if command.payload.is_empty() {
-            return Err(SensitiveWalletOperationError::EmptyPayload);
-        }
-        if command.payload.len() > MAX_SIGNING_PAYLOAD_BYTES {
-            return Err(SensitiveWalletOperationError::PayloadTooLarge);
-        }
-        let profile_id = WalletProfileId::parse(command.profile_id)
-            .map_err(SensitiveWalletOperationError::InvalidProfileIdentifier)?;
-        let key_reference = WalletKeyReference::parse(command.key_reference)
-            .map_err(SensitiveWalletOperationError::InvalidKeyReference)?;
-        self.key_operations
-            .sign(&profile_id, &key_reference, &command.payload)
-            .map(Into::into)
-            .map_err(SensitiveWalletOperationError::Operation)
-    }
-}
-
-impl<K> DeleteWalletKeyUseCase for WalletKeyService<K>
-where
-    K: WalletKeyOperationPort + 'static,
-{
-    fn execute(
-        &self,
-        command: DeleteWalletKeyCommand,
-    ) -> Result<(), SensitiveWalletOperationError> {
-        validate_confirmation(&command.confirmation)?;
-        let profile_id = WalletProfileId::parse(command.profile_id)
-            .map_err(SensitiveWalletOperationError::InvalidProfileIdentifier)?;
-        let key_reference = WalletKeyReference::parse(command.key_reference)
-            .map_err(SensitiveWalletOperationError::InvalidKeyReference)?;
-        self.key_operations
-            .delete(&profile_id, &key_reference)
-            .map_err(SensitiveWalletOperationError::Operation)
     }
 }
 
@@ -890,60 +894,11 @@ mod tests {
     }
 
     #[test]
-    fn signing_requires_valid_confirmation_before_calling_adapter() {
-        let adapter = Arc::new(RecordingAdapter::default());
-        let service = WalletKeyService::new(Arc::clone(&adapter));
-        let error = SignWalletDataUseCase::execute(
-            &service,
-            SignWalletDataCommand {
-                profile_id: "profile_test".to_owned(),
-                key_reference: "key_test".to_owned(),
-                payload: b"challenge".to_vec(),
-                confirmation: confirmation(false),
-            },
-        )
-        .expect_err("unconfirmed signing must fail");
-
-        assert_eq!(error, SensitiveWalletOperationError::ConfirmationRequired);
-        assert_eq!(*adapter.sign_calls.lock().expect("counter is available"), 0);
-    }
-
-    #[test]
-    fn signing_accepts_a_bounded_confirmed_intent() {
-        let adapter = Arc::new(RecordingAdapter::default());
-        let service = WalletKeyService::new(Arc::clone(&adapter));
-        let signature = SignWalletDataUseCase::execute(
-            &service,
-            SignWalletDataCommand {
-                profile_id: "profile_test".to_owned(),
-                key_reference: "key_test".to_owned(),
-                payload: b"challenge".to_vec(),
-                confirmation: confirmation(true),
-            },
-        )
-        .expect("confirmed signing should succeed");
-
-        assert_eq!(signature.algorithm, WalletKeyAlgorithm::Ed25519);
-        assert_eq!(signature.signature_bytes, vec![9; 64]);
-        assert_eq!(*adapter.sign_calls.lock().expect("counter is available"), 1);
-    }
-
-    #[test]
-    fn oversized_payload_is_rejected_before_adapter_use() {
-        let adapter = Arc::new(RecordingAdapter::default());
-        let service = WalletKeyService::new(Arc::clone(&adapter));
-        let error = SignWalletDataUseCase::execute(
-            &service,
-            SignWalletDataCommand {
-                profile_id: "profile_test".to_owned(),
-                key_reference: "key_test".to_owned(),
-                payload: vec![0; MAX_SIGNING_PAYLOAD_BYTES + 1],
-                confirmation: confirmation(true),
-            },
-        )
-        .expect_err("oversized signing must fail");
-
-        assert_eq!(error, SensitiveWalletOperationError::PayloadTooLarge);
-        assert_eq!(*adapter.sign_calls.lock().expect("counter is available"), 0);
+    fn legacy_confirmation_validation_remains_for_other_intent_pinned_consumers() {
+        assert_eq!(
+            validate_confirmation(&confirmation(false)),
+            Err(SensitiveWalletOperationError::ConfirmationRequired)
+        );
+        assert_eq!(validate_confirmation(&confirmation(true)), Ok(()));
     }
 }

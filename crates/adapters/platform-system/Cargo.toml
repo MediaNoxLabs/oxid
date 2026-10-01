@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 getrandom.workspace = true
+sha2.workspace = true
 oxid-foundation.workspace = true
 oxid-platform-ports.workspace = true
 
