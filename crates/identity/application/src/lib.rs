@@ -11,10 +11,16 @@ use oxid_identity_domain::{
 };
 
 mod approval;
+mod credential_issuance;
+mod credential_presentation;
 mod lifecycle;
+mod self_issued_authentication;
 
 pub use approval::*;
+pub use credential_issuance::*;
+pub use credential_presentation::*;
 pub use lifecycle::*;
+pub use self_issued_authentication::*;
 
 pub type DidResolutionPortFuture<'a> =
     Pin<Box<dyn Future<Output = Result<DidResolution, DidResolutionPortError>> + Send + 'a>>;
@@ -201,6 +207,9 @@ pub enum DidOperationError {
     ConfirmationRequired,
     InvalidConfirmation,
     Approval(DidApprovalError),
+    CredentialIssuance(CredentialIssuanceFlowError),
+    CredentialPresentation(CredentialPresentationFlowError),
+    SelfIssuedAuthentication(SelfIssuedAuthenticationFlowError),
     RetainedRecordChanged,
     SubjectMismatch,
 }
@@ -222,6 +231,9 @@ impl fmt::Display for DidOperationError {
             Self::ConfirmationRequired => formatter.write_str("explicit confirmation is required"),
             Self::InvalidConfirmation => formatter.write_str("confirmation intent is invalid"),
             Self::Approval(error) => write!(formatter, "{error}"),
+            Self::CredentialIssuance(error) => write!(formatter, "{error}"),
+            Self::CredentialPresentation(error) => write!(formatter, "{error}"),
+            Self::SelfIssuedAuthentication(error) => write!(formatter, "{error}"),
             Self::RetainedRecordChanged => formatter.write_str("retained DID record changed"),
             Self::SubjectMismatch => {
                 formatter.write_str("resolved DID document subject does not match the request")
@@ -384,6 +396,19 @@ pub struct DidService {
         Arc<DidApprovalService>,
         Arc<dyn oxid_platform_ports::Sha256Port>,
     )>,
+    credential_issuance: Option<(
+        Arc<CredentialIssuanceFlowService>,
+        Arc<dyn oxid_platform_ports::Sha256Port>,
+    )>,
+    self_issued_authentication: Option<(
+        Arc<SelfIssuedAuthenticationFlowService>,
+        Arc<dyn oxid_platform_ports::Sha256Port>,
+    )>,
+    credential_presentation: Option<(
+        Arc<CredentialPresentationFlowService>,
+        Arc<dyn oxid_platform_ports::Sha256Port>,
+        Arc<dyn DidJubjubChallengeSigningPort>,
+    )>,
 }
 
 pub struct DidPublicationService {
@@ -440,6 +465,9 @@ impl DidService {
             resolver,
             lifecycle: Arc::new(UnavailableDidLifecycle),
             approvals: None,
+            credential_issuance: None,
+            self_issued_authentication: None,
+            credential_presentation: None,
         }
     }
 
@@ -454,6 +482,9 @@ impl DidService {
             resolver,
             lifecycle,
             approvals: None,
+            credential_issuance: None,
+            self_issued_authentication: None,
+            credential_presentation: None,
         }
     }
 
@@ -465,6 +496,40 @@ impl DidService {
         hash: Arc<dyn oxid_platform_ports::Sha256Port>,
     ) -> Self {
         self.approvals = Some((approvals, hash));
+        self
+    }
+
+    /// Composition-only injection for accepted protocol-stage issuance signing.
+    #[must_use]
+    pub fn with_credential_issuance_authority(
+        mut self,
+        authority: Arc<CredentialIssuanceFlowService>,
+        hash: Arc<dyn oxid_platform_ports::Sha256Port>,
+    ) -> Self {
+        self.credential_issuance = Some((authority, hash));
+        self
+    }
+
+    /// Composition-only injection for accepted SIOPv2 ID-token signing.
+    #[must_use]
+    pub fn with_self_issued_authentication_authority(
+        mut self,
+        authority: Arc<SelfIssuedAuthenticationFlowService>,
+        hash: Arc<dyn oxid_platform_ports::Sha256Port>,
+    ) -> Self {
+        self.self_issued_authentication = Some((authority, hash));
+        self
+    }
+
+    /// Composition-only injection for accepted presentation signing bundles.
+    #[must_use]
+    pub fn with_credential_presentation_authority(
+        mut self,
+        authority: Arc<CredentialPresentationFlowService>,
+        hash: Arc<dyn oxid_platform_ports::Sha256Port>,
+        challenge_signing: Arc<dyn DidJubjubChallengeSigningPort>,
+    ) -> Self {
+        self.credential_presentation = Some((authority, hash, challenge_signing));
         self
     }
 }

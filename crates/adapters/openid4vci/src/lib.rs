@@ -17,17 +17,18 @@ use oxid_credential_application::{
     ImportVerifiedCredentialCommand, ImportVerifiedCredentialUseCase,
 };
 use oxid_identity_application::{
-    DidLifecyclePortError, DidOperationError, DidRecordQuery, DidRecordRepositoryError,
-    GetDidRecordUseCase, SignDidPayloadCommand, SignDidPayloadUseCase,
+    DidKeyAlgorithm, DidLifecyclePortError, DidOperationError, DidRecordQuery,
+    DidRecordRepositoryError, GetDidRecordUseCase, SignCredentialIssuancePayloadCommand,
+    SignCredentialIssuancePayloadUseCase,
 };
 use oxid_platform_ports::ClockPort;
 use oxid_protocol_application::{
     CredentialHolderProofPort, CredentialIssuanceProtocolPort, HolderProofError, HolderProofFuture,
     HolderProofJwt, HolderProofRequest, IssuanceProtocolError, IssueCredentialPortFuture,
     IssuedCredentialBytes, IssuedCredentialSinkError, IssuedCredentialSinkPort,
-    PrepareIssuancePortFuture, PrepareIssuanceRequest, PreparedCredentialOffer,
-    ProtocolIssueRequest, StoreIssuedCredentialFuture, StoreIssuedCredentialRequest,
-    StoredCredential,
+    OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID, PrepareIssuancePortFuture, PrepareIssuanceRequest,
+    PreparedCredentialOffer, ProtocolIssueRequest, StoreIssuedCredentialFuture,
+    StoreIssuedCredentialRequest, StoredCredential,
 };
 use oxid_protocol_domain::{CredentialIssuanceId, CredentialOfferPreview};
 use p256::ecdsa::{Signature as P256Signature, VerifyingKey as P256Key};
@@ -453,6 +454,9 @@ impl CredentialIssuanceProtocolPort for StandaloneOid4vciIssuer {
                     method_id: proof_method.clone(),
                     audience: secret.issuer,
                     nonce: nonce.as_str(),
+                    flow_id: OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
+                    session_id: request.issuance_id.as_str().to_owned(),
+                    authority: request.authority,
                 })
                 .await
                 .map_err(map_holder_proof_error)?;
@@ -1255,7 +1259,7 @@ fn json_depth(value: &Value, depth: usize) -> usize {
 /// lifecycle without exposing opaque key handles to the protocol adapter.
 pub struct DidCredentialHolderProof {
     get_did: Arc<dyn GetDidRecordUseCase>,
-    sign: Arc<dyn SignDidPayloadUseCase>,
+    sign: Arc<dyn SignCredentialIssuancePayloadUseCase>,
     clock: Arc<dyn ClockPort>,
 }
 
@@ -1263,7 +1267,7 @@ impl DidCredentialHolderProof {
     #[must_use]
     pub fn new(
         get_did: Arc<dyn GetDidRecordUseCase>,
-        sign: Arc<dyn SignDidPayloadUseCase>,
+        sign: Arc<dyn SignCredentialIssuancePayloadUseCase>,
         clock: Arc<dyn ClockPort>,
     ) -> Self {
         Self {
@@ -1301,9 +1305,9 @@ impl CredentialHolderProofPort for DidCredentialHolderProof {
             {
                 return Err(HolderProofError::MethodNotAuthorized);
             }
-            let algorithm = match method.public_key_jwk.curve.as_str() {
-                "Ed25519" => "EdDSA",
-                "P-256" => "ES256",
+            let (algorithm, did_algorithm) = match method.public_key_jwk.curve.as_str() {
+                "Ed25519" => ("EdDSA", DidKeyAlgorithm::Ed25519),
+                "P-256" => ("ES256", DidKeyAlgorithm::P256),
                 _ => return Err(HolderProofError::UnsupportedAlgorithm),
             };
             let issued_at = self
@@ -1336,11 +1340,15 @@ impl CredentialHolderProofPort for DidCredentialHolderProof {
             signing_payload.extend_from_slice(signing_input.as_bytes());
             let signature = self
                 .sign
-                .execute(SignDidPayloadCommand {
+                .execute(SignCredentialIssuancePayloadCommand {
                     profile_id: request.profile_id.as_str().to_owned(),
                     did: request.holder_did,
                     method_id: request.method_id,
+                    algorithm: did_algorithm,
+                    flow_id: request.flow_id.to_owned(),
+                    session_id: request.session_id,
                     payload: &signing_payload,
+                    authority: request.authority,
                 })
                 .map_err(map_sign_error)?;
             if signature.signature_bytes.len() != 64
@@ -1480,8 +1488,11 @@ mod tests {
         InMemoryDidRecordRepository, InMemoryWalletProfileRepository,
     };
     use oxid_identity_application::{
-        CreateDidCommand, CreateDidUseCase, DidRecordRepository, DidService,
+        AcceptedCredentialIssuanceContext, AcceptedCredentialIssuanceFlow, CreateDidCommand,
+        CreateDidUseCase, CredentialIssuanceAuthorityPort, CredentialIssuanceFlowService,
+        DidRecordRepository, DidService,
     };
+    use oxid_identity_domain::{IdentityProfileId, MidnightDid};
     use oxid_protocol_application::{CredentialIssuanceProtocolPort, PrepareIssuanceRequest};
     use oxid_protocol_domain::ProtocolProfileId;
     use oxid_wallet_application::{
@@ -1508,6 +1519,25 @@ mod tests {
         did: String,
         method: String,
         holder_binding_method: String,
+        authority: Arc<CredentialIssuanceFlowService>,
+    }
+
+    fn mint_authority(
+        authority: &CredentialIssuanceFlowService,
+        profile_id: &str,
+        did: &str,
+        method: &str,
+        session_id: &str,
+    ) -> AcceptedCredentialIssuanceFlow {
+        authority
+            .mint(AcceptedCredentialIssuanceContext::new(
+                IdentityProfileId::parse(profile_id.to_owned()).expect("identity profile"),
+                MidnightDid::parse(did).expect("holder DID"),
+                method,
+                OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
+                session_id,
+            ))
+            .expect("issuance authority")
     }
 
     fn proof_fixture() -> ProofFixture {
@@ -1534,6 +1564,7 @@ mod tests {
         .expect("security should initialize");
         let keys: Arc<dyn WalletKeyOperationPort> = security;
         let repository: Arc<dyn DidRecordRepository> = Arc::new(InMemoryDidRecordRepository::new());
+        let authority = Arc::new(CredentialIssuanceFlowService::new(clock.clone()));
         let identity = Arc::new(
             DidService::from_ports(
                 repository,
@@ -1542,6 +1573,10 @@ mod tests {
             )
             .with_approvals(
                 oxid_identity_application::development_did_approvals(Arc::new(ApprovalClock)),
+                Arc::new(oxid_adapter_platform_system::SystemSha256),
+            )
+            .with_credential_issuance_authority(
+                authority.clone(),
                 Arc::new(oxid_adapter_platform_system::SystemSha256),
             ),
         );
@@ -1569,7 +1604,7 @@ mod tests {
             .map(|method| method.id.clone())
             .expect("Jubjub holder-binding method should exist");
         let get: Arc<dyn GetDidRecordUseCase> = identity.clone();
-        let sign: Arc<dyn SignDidPayloadUseCase> = identity;
+        let sign: Arc<dyn SignCredentialIssuancePayloadUseCase> = identity;
         let proof_clock: Arc<dyn ClockPort> = clock.clone();
         ProofFixture {
             proof: Arc::new(DidCredentialHolderProof::new(Arc::clone(&get), sign, clock)),
@@ -1579,6 +1614,7 @@ mod tests {
             did: did.document.id,
             method,
             holder_binding_method,
+            authority,
         }
     }
 
@@ -1664,14 +1700,25 @@ mod tests {
             did,
             method,
             holder_binding_method,
+            authority,
         } = proof_fixture();
         let profile = ProtocolProfileId::parse(profile_id).expect("fixture profile id is valid");
+        let proof_authority = mint_authority(
+            &authority,
+            profile.as_str(),
+            &did,
+            &method,
+            "issuance-proof-test",
+        );
         let jwt = block_on(proof.create(HolderProofRequest {
             profile_id: profile.clone(),
             holder_did: did.clone(),
             method_id: method.clone(),
             audience: STANDALONE_CREDENTIAL_ISSUER.to_owned(),
             nonce: "nonce-1",
+            flow_id: OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
+            session_id: "issuance-proof-test".to_owned(),
+            authority: proof_authority,
         }));
         let jwt = jwt.expect("active authentication method should produce a proof");
         let now = clock.now().expect("clock").value() / 1_000;
@@ -1720,6 +1767,7 @@ mod tests {
             did,
             method,
             holder_binding_method,
+            authority,
         } = proof_fixture();
         let adapter = StandaloneOid4vciIssuer::new(proof, get_did, clock);
         let profile = ProtocolProfileId::parse(profile_id).expect("fixture profile id is valid");
@@ -1728,12 +1776,16 @@ mod tests {
             offer: standalone_credential_offer(),
         }))
         .expect("offer should prepare");
+        let session_id = prepared.id.as_str().to_owned();
+        let issuance_authority =
+            mint_authority(&authority, profile.as_str(), &did, &method, &session_id);
         let issued = block_on(adapter.issue(ProtocolIssueRequest {
             profile_id: profile,
             issuance_id: prepared.id,
             holder_did: did,
             method_id: method,
             holder_binding_method_id: holder_binding_method,
+            authority: issuance_authority,
         }))
         .expect("valid managed proof should issue");
         let expected = general_purpose::STANDARD
@@ -1758,20 +1810,33 @@ mod tests {
                 })
             }
         }
-        let ProofFixture { get_did, clock, .. } = proof_fixture();
+        let ProofFixture {
+            get_did,
+            clock,
+            profile_id,
+            did,
+            method,
+            holder_binding_method,
+            authority,
+            ..
+        } = proof_fixture();
         let adapter = StandaloneOid4vciIssuer::new(Arc::new(BadProof), get_did, clock);
-        let profile = ProtocolProfileId::parse("profile_1").expect("profile id is valid");
+        let profile = ProtocolProfileId::parse(profile_id).expect("profile id is valid");
         let prepared = block_on(adapter.prepare(PrepareIssuanceRequest {
             profile_id: profile.clone(),
             offer: standalone_credential_offer(),
         }))
         .expect("offer should prepare");
+        let session_id = prepared.id.as_str().to_owned();
+        let issuance_authority =
+            mint_authority(&authority, profile.as_str(), &did, &method, &session_id);
         let error = block_on(adapter.issue(ProtocolIssueRequest {
             profile_id: profile,
             issuance_id: prepared.id,
-            holder_did: "did:midnight:undeployed:holder".to_owned(),
-            method_id: "did:midnight:undeployed:holder#auth-1".to_owned(),
-            holder_binding_method_id: "did:midnight:undeployed:holder#holder-jubjub-1".to_owned(),
+            holder_did: did,
+            method_id: method,
+            holder_binding_method_id: holder_binding_method,
+            authority: issuance_authority,
         }))
         .expect_err("malformed proof must fail");
         assert_eq!(error, IssuanceProtocolError::InvalidProof);

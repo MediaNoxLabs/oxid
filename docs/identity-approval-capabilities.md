@@ -56,12 +56,57 @@ the effect boundary, plus explicit-fixture real-crypto lifecycle coverage.
 Cancellation/replacement of an in-flight approval is represented by generation
 invalidation; recovery cannot deserialize or revive process-local capabilities.
 
-## Deferred protocol authority
+## Protocol authority
 
-OID4VCI, SIOPv2 and presentation adapters only lose the obsolete direct-command
-confirmation construction. Public challenges, payloads and accepted-stage prose
-are not approval authority. Normal compositions therefore cannot use their
-former direct-signing shortcut. Moving authority to accepted protocol stages,
-and integrating a real trusted producer with protection/profile transitions,
-remain #915 and subsequent trusted-composition work. No challenge-signing port
-semantics are changed here.
+OID4VCI acceptance now mints one opaque, non-cloneable issuance authority only
+after the retained session is revalidated as `awaiting_consent` for the exact
+profile and issuance identifier. The authority moves by value through the
+protocol issue request and holder-proof request. The identity-owned signing
+boundary re-reads the current DID and exact authentication method under the DID
+operation lock, checks the current algorithm, binds the authority to SHA-256 of
+the exact canonical JWS signing input, consumes it, and only then reaches
+protected signing.
+
+Ordinary composition installs no issuance authority. Acceptance returns
+`approval_unavailable`, leaves the session awaiting consent, and performs no
+protocol, signing, or persistence effect. The existing explicit development DID
+approval composition shares one process-local issuance authority between the
+accepted-stage service and identity signing boundary so the positive standalone
+fixture remains available. Request data and environment values cannot select
+that authority.
+
+SIOPv2 uses a separate identity-owned authority type and service; issuance
+authority cannot be substituted for authentication authority. Acceptance mints
+it only after the exact retained authentication session is revalidated as
+`awaiting_consent` for the selected profile. It moves by value through the
+protocol authentication request and proof request. The identity signing
+boundary reconstructs the SIOPv2 context, re-reads the retained DID and exact
+`authentication` relationship under the same DID lock, binds SHA-256 of the
+canonical protected-header/claims JWS signing input, consumes the authority,
+and immediately invokes custody signing.
+
+Ordinary composition still prepares and retains the safe SIOPv2 verifier and
+purpose preview, but acceptance returns `approval_unavailable`, keeps the
+session awaiting consent, and performs no protocol or signing effect. The
+explicit development DID approval fixture shares a distinct process-local
+authentication authority with the identity signer to preserve positive
+standalone coverage.
+
+OpenID4VP presentation uses a third, non-substitutable authority. Acceptance
+mints it only after the retained session, profile, candidate credential, and
+`awaiting_consent` state are checked together. The authority moves through the
+protocol and proof requests into a presentation-only holder-authorization
+request; Passport Vault keeps its separate legacy request and is unchanged.
+Under the DID operation lock, identity re-reads the authoritative Jubjub
+assertion method and managed-method state, binds the exact generic
+authorization payload and Compact holder-proof transcript as one digest,
+consumes once, and invokes the generic DID signature followed by the protected
+Jubjub challenge signature as one closed ordered bundle. Neither signature is
+returned independently.
+
+Ordinary presentation composition still prepares the safe verifier, purpose,
+claims, and candidate preview, but acceptance returns `approval_unavailable`
+without entering the protocol or either signing effect. The explicit
+development DID approval fixture shares the presentation authority with the
+identity bundle signer. The protected Passport Vault presentation source and
+its `prepare` flow remain outside this issue and unchanged.

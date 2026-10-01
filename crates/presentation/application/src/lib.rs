@@ -11,7 +11,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use oxid_foundation::OpaqueIdError;
+use oxid_foundation::{AcceptedCredentialPresentationFlow, OpaqueIdError};
 use oxid_presentation_domain::{
     CredentialPresentationId, CredentialPresentationPreview, CredentialPresentationState,
     PresentationCredentialCandidate, PresentationProfileId, RequestedPresentationClaim,
@@ -19,6 +19,47 @@ use oxid_presentation_domain::{
 
 pub const MAX_PRESENTATION_REQUEST_BYTES: usize = 64 * 1_024;
 const MAX_CREDENTIAL_IDENTIFIER_CHARACTERS: usize = 256;
+pub const OPENID4VP_CREDENTIAL_PRESENTATION_FLOW_ID: &str = "openid4vp";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialPresentationApprovalError {
+    Unavailable,
+}
+
+impl fmt::Display for CredentialPresentationApprovalError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("approval_unavailable")
+    }
+}
+
+impl Error for CredentialPresentationApprovalError {}
+
+#[derive(PartialEq, Eq)]
+pub struct CredentialPresentationAuthorityRequest {
+    pub profile_id: String,
+    pub flow_id: &'static str,
+    pub session_id: String,
+    pub credential_id: String,
+}
+
+pub trait CredentialPresentationAuthorityPort: Send + Sync {
+    fn mint(
+        &self,
+        request: CredentialPresentationAuthorityRequest,
+    ) -> Result<AcceptedCredentialPresentationFlow, CredentialPresentationApprovalError>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnavailableCredentialPresentationAuthority;
+
+impl CredentialPresentationAuthorityPort for UnavailableCredentialPresentationAuthority {
+    fn mint(
+        &self,
+        _: CredentialPresentationAuthorityRequest,
+    ) -> Result<AcceptedCredentialPresentationFlow, CredentialPresentationApprovalError> {
+        Err(CredentialPresentationApprovalError::Unavailable)
+    }
+}
 
 pub type PreparePresentationPortFuture<'a> = Pin<
     Box<
@@ -69,11 +110,23 @@ pub struct PreparedCredentialPresentation {
     pub preview: CredentialPresentationPreview,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProtocolPresentCredentialRequest {
     pub profile_id: PresentationProfileId,
     pub presentation_id: CredentialPresentationId,
     pub credential_id: String,
+    pub authority: Option<AcceptedCredentialPresentationFlow>,
+}
+
+impl fmt::Debug for ProtocolPresentCredentialRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProtocolPresentCredentialRequest")
+            .field("profile_id", &self.profile_id)
+            .field("presentation_id", &self.presentation_id)
+            .field("credential_id", &self.credential_id)
+            .field("authority", &self.authority.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,7 +176,6 @@ pub trait PresentationCandidateSourcePort: Send + Sync {
     ) -> FindPresentationCandidatesFuture<'a>;
 }
 
-#[derive(Clone, PartialEq, Eq)]
 pub struct PresentationProofRequest {
     pub profile_id: PresentationProfileId,
     pub presentation_id: CredentialPresentationId,
@@ -132,6 +184,7 @@ pub struct PresentationProofRequest {
     pub challenge_hash: [u8; 32],
     pub verifier_domain_hash: [u8; 32],
     pub requested_claims: Vec<RequestedPresentationClaim>,
+    pub authority: Option<AcceptedCredentialPresentationFlow>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -169,6 +222,7 @@ impl fmt::Debug for PresentationProofRequest {
             .field("credential_id", &self.credential_id)
             .field("verifier", &self.verifier)
             .field("requested_claim_count", &self.requested_claims.len())
+            .field("authority", &self.authority.as_ref().map(|_| "[REDACTED]"))
             .finish_non_exhaustive()
     }
 }
@@ -214,6 +268,43 @@ pub struct PresentationHolderAuthorizationRequest {
     pub holder_method_id: String,
     pub verifier: String,
     pub presentation_statement: [u8; 32],
+}
+
+/// Accepted-flow request for the closed generic-authorization plus Jubjub
+/// holder-proof signature bundle. The legacy request remains unchanged for
+/// Passport Vault's separately tracked authorization path.
+pub struct AcceptedPresentationHolderAuthorizationRequest {
+    pub request: PresentationHolderAuthorizationRequest,
+    pub presentation_id: CredentialPresentationId,
+    pub credential_id: String,
+    pub presentation_root: [u8; 32],
+    pub verifier_challenge_hash: [u8; 32],
+    pub created_at_seconds: u64,
+    pub authority: AcceptedCredentialPresentationFlow,
+}
+
+impl fmt::Debug for AcceptedPresentationHolderAuthorizationRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AcceptedPresentationHolderAuthorizationRequest")
+            .field("request", &self.request)
+            .field("presentation_id", &self.presentation_id)
+            .field("credential_id", &self.credential_id)
+            .field("created_at_seconds", &self.created_at_seconds)
+            .field("authority", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
+}
+
+pub type AuthorizeAcceptedPresentationHolderFuture<'a> = Pin<
+    Box<dyn Future<Output = Result<Vec<u8>, PresentationHolderAuthorizationError>> + Send + 'a>,
+>;
+
+pub trait AcceptedPresentationHolderAuthorizationPort: Send + Sync {
+    fn authorize_accepted<'a>(
+        &'a self,
+        request: AcceptedPresentationHolderAuthorizationRequest,
+    ) -> AuthorizeAcceptedPresentationHolderFuture<'a>;
 }
 
 impl fmt::Debug for PresentationHolderAuthorizationRequest {
@@ -514,6 +605,7 @@ pub enum CredentialPresentationError {
     InvalidConfirmation,
     NotFound,
     InvalidState,
+    Approval(CredentialPresentationApprovalError),
     Protocol(PresentationProtocolError),
     Unavailable,
 }
@@ -538,6 +630,7 @@ impl fmt::Display for CredentialPresentationError {
             }
             Self::NotFound => formatter.write_str("credential presentation was not found"),
             Self::InvalidState => formatter.write_str("credential presentation state is invalid"),
+            Self::Approval(error) => error.fmt(formatter),
             Self::Protocol(error) => error.fmt(formatter),
             Self::Unavailable => {
                 formatter.write_str("credential presentation state is unavailable")
@@ -598,6 +691,7 @@ pub trait ListCredentialPresentationsUseCase: Send + Sync {
 
 pub struct CredentialPresentationService {
     protocol: Arc<dyn CredentialPresentationProtocolPort>,
+    authority: Arc<dyn CredentialPresentationAuthorityPort>,
     sessions: Mutex<BTreeMap<CredentialPresentationId, Session>>,
 }
 
@@ -606,6 +700,19 @@ impl CredentialPresentationService {
     pub fn new(protocol: Arc<dyn CredentialPresentationProtocolPort>) -> Self {
         Self {
             protocol,
+            authority: Arc::new(UnavailableCredentialPresentationAuthority),
+            sessions: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    #[must_use]
+    pub fn with_authority(
+        protocol: Arc<dyn CredentialPresentationProtocolPort>,
+        authority: Arc<dyn CredentialPresentationAuthorityPort>,
+    ) -> Self {
+        Self {
+            protocol,
+            authority,
             sessions: Mutex::new(BTreeMap::new()),
         }
     }
@@ -705,7 +812,7 @@ impl AcceptCredentialPresentationUseCase for CredentialPresentationService {
             }
             let profile_id = profile(command.profile_id)?;
             let presentation_id = presentation_id(command.presentation_id)?;
-            {
+            let authority = {
                 let mut sessions = self.sessions()?;
                 let session = sessions
                     .get_mut(&presentation_id)
@@ -724,14 +831,25 @@ impl AcceptCredentialPresentationUseCase for CredentialPresentationService {
                 {
                     return Err(CredentialPresentationError::InvalidCredential);
                 }
+                let authority = self
+                    .authority
+                    .mint(CredentialPresentationAuthorityRequest {
+                        profile_id: profile_id.as_str().to_owned(),
+                        flow_id: OPENID4VP_CREDENTIAL_PRESENTATION_FLOW_ID,
+                        session_id: presentation_id.as_str().to_owned(),
+                        credential_id: command.credential_id.clone(),
+                    })
+                    .map_err(CredentialPresentationError::Approval)?;
                 session.state = CredentialPresentationState::Presenting;
-            }
+                authority
+            };
             let outcome = match self
                 .protocol
                 .present(ProtocolPresentCredentialRequest {
                     profile_id,
                     presentation_id: presentation_id.clone(),
                     credential_id: command.credential_id,
+                    authority: Some(authority),
                 })
                 .await
             {
@@ -944,6 +1062,34 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::task::{Context, Poll, Waker};
 
+    struct PresentationAuthority(
+        oxid_foundation::AcceptedFlowIssuer<{ oxid_foundation::CREDENTIAL_PRESENTATION_FLOW_KIND }>,
+    );
+
+    impl CredentialPresentationAuthorityPort for PresentationAuthority {
+        fn mint(
+            &self,
+            request: CredentialPresentationAuthorityRequest,
+        ) -> Result<AcceptedCredentialPresentationFlow, CredentialPresentationApprovalError>
+        {
+            Ok(self.0.mint(
+                request,
+                oxid_foundation::UnixTimestampMillis::new(1),
+                oxid_foundation::UnixTimestampMillis::new(2),
+                0,
+            ))
+        }
+    }
+
+    fn approved_service(protocol: Arc<Protocol>) -> CredentialPresentationService {
+        CredentialPresentationService::with_authority(
+            protocol,
+            Arc::new(PresentationAuthority(
+                oxid_foundation::AcceptedFlowIssuer::new(),
+            )),
+        )
+    }
+
     fn ready<F: Future>(future: F) -> F::Output {
         let waker = Waker::noop();
         let mut context = Context::from_waker(waker);
@@ -1059,7 +1205,7 @@ mod tests {
     #[test]
     fn exact_consent_is_profile_scoped_and_proof_failure_is_terminal() {
         let protocol = Arc::new(Protocol::default());
-        let service = CredentialPresentationService::new(protocol.clone());
+        let service = approved_service(protocol.clone());
         let prepared = ready(PrepareCredentialPresentationUseCase::execute(
             &service,
             PrepareCredentialPresentationCommand {
@@ -1137,6 +1283,52 @@ mod tests {
     }
 
     #[test]
+    fn default_acceptance_retains_preview_and_has_zero_protocol_effects() {
+        let protocol = Arc::new(Protocol::default());
+        let service = CredentialPresentationService::new(protocol.clone());
+        let prepared = ready(PrepareCredentialPresentationUseCase::execute(
+            &service,
+            PrepareCredentialPresentationCommand {
+                profile_id: "profile_one".to_owned(),
+                request: "openid4vp://authorize".to_owned(),
+            },
+        ))
+        .expect("preview");
+        assert_eq!(
+            ready(AcceptCredentialPresentationUseCase::execute(
+                &service,
+                AcceptCredentialPresentationCommand {
+                    profile_id: "profile_one".to_owned(),
+                    presentation_id: prepared.id.clone(),
+                    credential_id: "vc_one".to_owned(),
+                    confirmed: true,
+                    intent: "ACCEPT_CREDENTIAL_PRESENTATION".to_owned(),
+                },
+            )),
+            Err(CredentialPresentationError::Approval(
+                CredentialPresentationApprovalError::Unavailable,
+            ))
+        );
+        assert!(
+            protocol
+                .selected_credential_id
+                .lock()
+                .expect("protocol effects")
+                .is_none()
+        );
+        let retained = GetCredentialPresentationUseCase::execute(
+            &service,
+            CredentialPresentationQuery {
+                profile_id: "profile_one".to_owned(),
+                presentation_id: prepared.id,
+            },
+        )
+        .expect("retained preview");
+        assert_eq!(retained.state, "awaiting_consent");
+        assert!(!retained.presentation_generated);
+    }
+
+    #[test]
     fn cancellation_request_is_profile_scoped_and_not_an_acknowledgement() {
         let protocol = Arc::new(Protocol::default());
         let service = CredentialPresentationService::new(protocol.clone());
@@ -1193,7 +1385,7 @@ mod tests {
         let protocol = Arc::new(Protocol::default());
         protocol.present_succeeds.store(true, Ordering::SeqCst);
         protocol.present_yields_once.store(true, Ordering::SeqCst);
-        let service = CredentialPresentationService::new(protocol);
+        let service = approved_service(protocol);
         let prepared = ready(PrepareCredentialPresentationUseCase::execute(
             &service,
             PrepareCredentialPresentationCommand {

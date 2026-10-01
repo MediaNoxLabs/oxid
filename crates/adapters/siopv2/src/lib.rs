@@ -11,16 +11,17 @@ use std::{
 use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::{Signature as Ed25519Signature, Verifier as _, VerifyingKey as Ed25519Key};
 use oxid_identity_application::{
-    DidLifecyclePortError, DidOperationError, DidRecordQuery, DidRecordRepositoryError,
-    GetDidRecordUseCase, SignDidPayloadCommand, SignDidPayloadUseCase,
+    DidKeyAlgorithm, DidLifecyclePortError, DidOperationError, DidRecordQuery,
+    DidRecordRepositoryError, GetDidRecordUseCase, SignSelfIssuedAuthenticationPayloadCommand,
+    SignSelfIssuedAuthenticationPayloadUseCase,
 };
 use oxid_platform_ports::ClockPort;
 use oxid_protocol_application::{
     AuthenticateSelfIssuedPortFuture, PrepareSelfIssuedAuthenticationPortFuture,
     PrepareSelfIssuedAuthenticationRequest, PreparedSelfIssuedAuthentication,
-    ProtocolSelfIssuedAuthenticationRequest, SelfIssuedAuthenticationProtocolPort,
-    SelfIssuedIdentityProofPort, SelfIssuedProofError, SelfIssuedProofFuture, SelfIssuedProofJwt,
-    SelfIssuedProofRequest, SelfIssuedProtocolError,
+    ProtocolSelfIssuedAuthenticationRequest, SIOPV2_SELF_ISSUED_AUTHENTICATION_FLOW_ID,
+    SelfIssuedAuthenticationProtocolPort, SelfIssuedIdentityProofPort, SelfIssuedProofError,
+    SelfIssuedProofFuture, SelfIssuedProofJwt, SelfIssuedProofRequest, SelfIssuedProtocolError,
 };
 use oxid_protocol_domain::{SelfIssuedAuthenticationId, SelfIssuedAuthenticationPreview};
 use p256::ecdsa::{Signature as P256Signature, VerifyingKey as P256Key};
@@ -355,6 +356,9 @@ impl SelfIssuedAuthenticationProtocolPort for StandaloneSiopV2Verifier {
                     nonce: prepared.nonce.as_str(),
                     issued_at_seconds: now,
                     expires_at_seconds: now + TOKEN_LIFETIME_SECONDS,
+                    flow_id: SIOPV2_SELF_ISSUED_AUTHENTICATION_FLOW_ID,
+                    session_id: request.authentication_id.as_str().to_owned(),
+                    authority: request.authority,
                 })
                 .await
                 .map_err(map_proof_error)?;
@@ -916,14 +920,14 @@ fn required_string(
 /// consent, using the existing profile-scoped DID lifecycle and opaque key use.
 pub struct DidSelfIssuedIdentityProof {
     get_did: Arc<dyn GetDidRecordUseCase>,
-    sign: Arc<dyn SignDidPayloadUseCase>,
+    sign: Arc<dyn SignSelfIssuedAuthenticationPayloadUseCase>,
 }
 
 impl DidSelfIssuedIdentityProof {
     #[must_use]
     pub fn new(
         get_did: Arc<dyn GetDidRecordUseCase>,
-        sign: Arc<dyn SignDidPayloadUseCase>,
+        sign: Arc<dyn SignSelfIssuedAuthenticationPayloadUseCase>,
     ) -> Self {
         Self { get_did, sign }
     }
@@ -956,9 +960,9 @@ impl SelfIssuedIdentityProofPort for DidSelfIssuedIdentityProof {
             {
                 return Err(SelfIssuedProofError::MethodNotAuthorized);
             }
-            let algorithm = match method.public_key_jwk.curve.as_str() {
-                "Ed25519" => "EdDSA",
-                "P-256" => "ES256",
+            let (algorithm, identity_algorithm) = match method.public_key_jwk.curve.as_str() {
+                "Ed25519" => ("EdDSA", DidKeyAlgorithm::Ed25519),
+                "P-256" => ("ES256", DidKeyAlgorithm::P256),
                 _ => return Err(SelfIssuedProofError::UnsupportedAlgorithm),
             };
             if request.expires_at_seconds <= request.issued_at_seconds
@@ -1008,11 +1012,15 @@ impl SelfIssuedIdentityProofPort for DidSelfIssuedIdentityProof {
             signing_payload.extend_from_slice(signing_input.as_bytes());
             let signature = self
                 .sign
-                .execute(SignDidPayloadCommand {
+                .execute(SignSelfIssuedAuthenticationPayloadCommand {
                     profile_id: request.profile_id.as_str().to_owned(),
                     did: request.holder_did,
                     method_id: request.method_id,
+                    algorithm: identity_algorithm,
+                    flow_id: request.flow_id.to_owned(),
+                    session_id: request.session_id,
                     payload: &signing_payload,
+                    authority: request.authority,
                 })
                 .map_err(map_sign_error)?;
             if signature.signature_bytes.len() != 64
@@ -1086,7 +1094,9 @@ mod tests {
         InMemoryDidRecordRepository, InMemoryWalletProfileRepository,
     };
     use oxid_identity_application::{
-        CreateDidCommand, CreateDidUseCase, DidRecordRepository, DidService, DidUpdate,
+        AcceptedSelfIssuedAuthenticationContext, CreateDidCommand, CreateDidUseCase,
+        DidRecordRepository, DidService, DidUpdate, SelfIssuedAuthenticationAuthorityPort,
+        SelfIssuedAuthenticationFlowService, SignSelfIssuedAuthenticationPayloadUseCase,
         UpdateDidCommand, UpdateDidUseCase,
     };
     use oxid_identity_domain::VerificationRelationship;
@@ -1102,6 +1112,7 @@ mod tests {
         profile_id: String,
         did: String,
         method: String,
+        authority: Arc<SelfIssuedAuthenticationFlowService>,
     }
 
     struct CountingProof {
@@ -1174,6 +1185,7 @@ mod tests {
         .expect("security should initialize");
         let keys: Arc<dyn WalletKeyOperationPort> = security;
         let repository: Arc<dyn DidRecordRepository> = Arc::new(InMemoryDidRecordRepository::new());
+        let authority = Arc::new(SelfIssuedAuthenticationFlowService::new(clock.clone()));
         let identity = Arc::new(
             DidService::from_ports(
                 repository,
@@ -1182,6 +1194,10 @@ mod tests {
             )
             .with_approvals(
                 oxid_identity_application::development_did_approvals(Arc::new(ApprovalClock)),
+                Arc::new(oxid_adapter_platform_system::SystemSha256),
+            )
+            .with_self_issued_authentication_authority(
+                Arc::clone(&authority),
                 Arc::new(oxid_adapter_platform_system::SystemSha256),
             ),
         );
@@ -1221,7 +1237,7 @@ mod tests {
             .expect("selected method should become an authentication method");
         }
         let get: Arc<dyn GetDidRecordUseCase> = identity.clone();
-        let sign: Arc<dyn SignDidPayloadUseCase> = identity;
+        let sign: Arc<dyn SignSelfIssuedAuthenticationPayloadUseCase> = identity;
         let proof = Arc::new(DidSelfIssuedIdentityProof::new(Arc::clone(&get), sign));
         ProofFixture {
             proof,
@@ -1230,7 +1246,27 @@ mod tests {
             profile_id: created.id,
             did: did.document.id,
             method,
+            authority,
         }
+    }
+
+    fn accepted_authority(
+        authority: &SelfIssuedAuthenticationFlowService,
+        profile_id: &str,
+        did: &str,
+        method: &str,
+        session_id: &str,
+    ) -> oxid_identity_application::AcceptedSelfIssuedAuthenticationFlow {
+        authority
+            .mint(AcceptedSelfIssuedAuthenticationContext::new(
+                oxid_identity_domain::IdentityProfileId::parse(profile_id.to_owned())
+                    .expect("profile"),
+                oxid_identity_domain::MidnightDid::parse(did.to_owned()).expect("DID"),
+                method,
+                SIOPV2_SELF_ISSUED_AUTHENTICATION_FLOW_ID,
+                session_id,
+            ))
+            .expect("accepted authentication authority")
     }
 
     #[test]
@@ -1355,6 +1391,7 @@ mod tests {
             profile_id,
             did,
             method,
+            authority,
         } = proof_fixture();
         let adapter = StandaloneSiopV2Verifier::new(proof, get_did, clock);
         let profile = oxid_protocol_domain::ProtocolProfileId::parse(profile_id)
@@ -1368,18 +1405,32 @@ mod tests {
             adapter.authenticate(ProtocolSelfIssuedAuthenticationRequest {
                 profile_id: profile.clone(),
                 authentication_id: prepared.id.clone(),
-                holder_did: did,
-                method_id: method,
+                holder_did: did.clone(),
+                method_id: method.clone(),
+                authority: accepted_authority(
+                    &authority,
+                    profile.as_str(),
+                    &did,
+                    &method,
+                    prepared.id.as_str(),
+                ),
             }),
         )
         .expect("managed DID should authenticate");
         assert_eq!(
             block_on(
                 adapter.authenticate(ProtocolSelfIssuedAuthenticationRequest {
-                    profile_id: profile,
-                    authentication_id: prepared.id,
+                    profile_id: profile.clone(),
+                    authentication_id: prepared.id.clone(),
                     holder_did: "did:midnight:undeployed:replay".to_owned(),
                     method_id: "did:midnight:undeployed:replay#auth".to_owned(),
+                    authority: accepted_authority(
+                        &authority,
+                        profile.as_str(),
+                        &did,
+                        &method,
+                        prepared.id.as_str(),
+                    ),
                 })
             ),
             Err(SelfIssuedProtocolError::InvalidRequest)
@@ -1395,6 +1446,7 @@ mod tests {
             profile_id,
             did,
             method,
+            authority,
         } = proof_fixture();
         let snapshot_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let proof: Arc<dyn SelfIssuedIdentityProofPort> = Arc::new(CountingProof {
@@ -1412,10 +1464,17 @@ mod tests {
 
         block_on(
             adapter.authenticate(ProtocolSelfIssuedAuthenticationRequest {
-                profile_id: profile,
-                authentication_id: prepared.id,
-                holder_did: did,
-                method_id: method,
+                profile_id: profile.clone(),
+                authentication_id: prepared.id.clone(),
+                holder_did: did.clone(),
+                method_id: method.clone(),
+                authority: accepted_authority(
+                    &authority,
+                    profile.as_str(),
+                    &did,
+                    &method,
+                    prepared.id.as_str(),
+                ),
             }),
         )
         .expect("managed DID should authenticate from one JWT snapshot");
@@ -1436,6 +1495,7 @@ mod tests {
             profile_id,
             did,
             method,
+            authority,
         } = proof_fixture_with_curve("P-256");
         let adapter = StandaloneSiopV2Verifier::new(proof, get_did, clock);
         let profile = oxid_protocol_domain::ProtocolProfileId::parse(profile_id)
@@ -1447,10 +1507,17 @@ mod tests {
         .expect("request should prepare");
         block_on(
             adapter.authenticate(ProtocolSelfIssuedAuthenticationRequest {
-                profile_id: profile,
-                authentication_id: prepared.id,
-                holder_did: did,
-                method_id: method,
+                profile_id: profile.clone(),
+                authentication_id: prepared.id.clone(),
+                holder_did: did.clone(),
+                method_id: method.clone(),
+                authority: accepted_authority(
+                    &authority,
+                    profile.as_str(),
+                    &did,
+                    &method,
+                    prepared.id.as_str(),
+                ),
             }),
         )
         .expect("managed P-256 DID should authenticate");
@@ -1562,19 +1629,29 @@ mod tests {
             profile_id,
             did,
             method,
+            authority,
             ..
         } = proof_fixture();
         let profile = oxid_protocol_domain::ProtocolProfileId::parse(profile_id)
             .expect("fixture profile id is valid");
         let nonce = "sensitive-nonce";
         let future = proof.create(SelfIssuedProofRequest {
-            profile_id: profile,
-            holder_did: did,
-            method_id: method,
+            profile_id: profile.clone(),
+            holder_did: did.clone(),
+            method_id: method.clone(),
             audience: STANDALONE_VERIFIER.to_owned(),
             nonce,
             issued_at_seconds: 1,
             expires_at_seconds: 2,
+            flow_id: SIOPV2_SELF_ISSUED_AUTHENTICATION_FLOW_ID,
+            session_id: "authentication_future".to_owned(),
+            authority: accepted_authority(
+                &authority,
+                profile.as_str(),
+                &did,
+                &method,
+                "authentication_future",
+            ),
         });
         drop(future);
     }
@@ -1588,6 +1665,7 @@ mod tests {
             profile_id,
             did,
             method,
+            authority,
         } = proof_fixture();
         let profile = oxid_protocol_domain::ProtocolProfileId::parse(profile_id)
             .expect("fixture profile id is valid");
@@ -1600,6 +1678,15 @@ mod tests {
             nonce: "nonce",
             issued_at_seconds: now,
             expires_at_seconds: now + TOKEN_LIFETIME_SECONDS,
+            flow_id: SIOPV2_SELF_ISSUED_AUTHENTICATION_FLOW_ID,
+            session_id: "authentication_tamper".to_owned(),
+            authority: accepted_authority(
+                &authority,
+                profile.as_str(),
+                &did,
+                &method,
+                "authentication_tamper",
+            ),
         }))
         .expect("proof should be created");
         validate_id_token(

@@ -5823,6 +5823,8 @@ dependencies = [
  "oxid-credential-application",
  "oxid-credential-domain",
  "oxid-foundation",
+ "oxid-identity-application",
+ "oxid-identity-domain",
  "oxid-platform-ports",
  "oxid-presentation-application",
  "oxid-presentation-domain",
