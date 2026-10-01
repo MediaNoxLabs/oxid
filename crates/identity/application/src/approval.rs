@@ -263,11 +263,11 @@ impl DidApprovalService {
 
     #[must_use]
     pub fn new(clock: Arc<dyn DidApprovalClockPort>) -> Self {
-        Self::with_trusted_port(clock, Arc::new(UnavailableApproval))
+        Self::with_trusted_did_port(clock, Arc::new(UnavailableApproval))
     }
 
     #[must_use]
-    pub fn with_trusted_port(
+    pub fn with_trusted_did_port(
         clock: Arc<dyn DidApprovalClockPort>,
         port: Arc<dyn TrustedDidApprovalPort>,
     ) -> Self {

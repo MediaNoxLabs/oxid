@@ -50,7 +50,7 @@ fn sign(
 fn service() -> (DidApprovalService, Arc<TestClock>) {
     let clock = Arc::new(TestClock::default());
     (
-        DidApprovalService::with_trusted_port(clock.clone(), Arc::new(Trusted)),
+        DidApprovalService::with_trusted_did_port(clock.clone(), Arc::new(Trusted)),
         clock,
     )
 }
@@ -187,9 +187,131 @@ fn expiry_generation_and_foreign_issuer_reject_without_authorizing() {
     );
     let current = service.request(&request).expect("approval");
     assert_eq!(
-        DidApprovalService::with_trusted_port(clock, Arc::new(Trusted)).consume(&current, &request),
+        DidApprovalService::with_trusted_did_port(clock, Arc::new(Trusted))
+            .consume(&current, &request),
         Err(DidApprovalError::ForeignCapability)
     );
+}
+
+struct Denied;
+impl TrustedDidApprovalPort for Denied {
+    fn approve(&self, _: &DidApprovalIntent) -> Result<(), TrustedDidApprovalError> {
+        Err(TrustedDidApprovalError::Denied)
+    }
+}
+
+struct FailingClock;
+impl DidApprovalClockPort for FailingClock {
+    fn now(&self) -> Result<UnixTimestampMillis, DidApprovalClockError> {
+        Err(DidApprovalClockError::Unavailable)
+    }
+}
+
+#[test]
+fn denied_and_unavailable_dependencies_fail_closed() {
+    let request = update("profile_private", 1, 9);
+    assert_eq!(
+        DidApprovalService::with_trusted_did_port(
+            Arc::new(TestClock::default()),
+            Arc::new(Denied),
+        )
+        .request(&request)
+        .unwrap_err(),
+        DidApprovalError::Denied
+    );
+    assert_eq!(
+        DidApprovalService::with_trusted_did_port(Arc::new(FailingClock), Arc::new(Trusted))
+            .request(&request)
+            .unwrap_err(),
+        DidApprovalError::Unavailable
+    );
+}
+
+#[test]
+fn backwards_clock_ttl_overflow_and_generation_overflow_fail_closed() {
+    let request = update("profile_private", 1, 9);
+    let (service, clock) = service();
+    let capability = service.request(&request).expect("approval");
+    clock.0.store(1, Ordering::SeqCst);
+    let future_capability = DidApprovalCapability {
+        issued_at: UnixTimestampMillis::new(2),
+        expires_at: UnixTimestampMillis::new(3),
+        ..capability
+    };
+    assert_eq!(
+        service.consume(&future_capability, &request),
+        Err(DidApprovalError::ClockWentBackwards)
+    );
+
+    clock.0.store(u64::MAX, Ordering::SeqCst);
+    assert_eq!(
+        service.request(&request).unwrap_err(),
+        DidApprovalError::Unavailable
+    );
+
+    *service.generation.lock().expect("generation") = Some(u64::MAX);
+    assert_eq!(service.invalidate(), Err(DidApprovalError::Unavailable));
+    assert_eq!(
+        service.request(&request).unwrap_err(),
+        DidApprovalError::Unavailable
+    );
+}
+
+struct BlockingTrusted {
+    entered: Arc<Barrier>,
+    resume: Arc<Barrier>,
+}
+impl TrustedDidApprovalPort for BlockingTrusted {
+    fn approve(&self, _: &DidApprovalIntent) -> Result<(), TrustedDidApprovalError> {
+        self.entered.wait();
+        self.resume.wait();
+        Ok(())
+    }
+}
+
+#[test]
+fn generation_change_while_trusted_approval_is_pending_rejects_the_request() {
+    let entered = Arc::new(Barrier::new(2));
+    let resume = Arc::new(Barrier::new(2));
+    let service = Arc::new(DidApprovalService::with_trusted_did_port(
+        Arc::new(TestClock::default()),
+        Arc::new(BlockingTrusted {
+            entered: Arc::clone(&entered),
+            resume: Arc::clone(&resume),
+        }),
+    ));
+    let request = update("profile_private", 1, 9);
+    std::thread::scope(|scope| {
+        let worker = {
+            let service = Arc::clone(&service);
+            scope.spawn(move || service.request(&request))
+        };
+        entered.wait();
+        service.invalidate().expect("invalidate");
+        resume.wait();
+        assert_eq!(
+            worker.join().expect("worker").unwrap_err(),
+            DidApprovalError::GenerationMismatch
+        );
+    });
+}
+
+#[test]
+fn debug_output_never_exposes_identity_or_payload_fields() {
+    let request = sign("profile_private", 1, "#auth-1", 9);
+    let (service, _) = service();
+    let capability = service.request(&request).expect("approval");
+    for output in [
+        format!("{:?}", request.intent),
+        format!("{request:?}"),
+        format!("{capability:?}"),
+        format!("{:?}", CanonicalDidApprovalDigest::from_sha256([9; 32])),
+    ] {
+        assert!(output.contains("[REDACTED]"));
+        assert!(!output.contains("profile_private"));
+        assert!(!output.contains("did:midnight"));
+        assert!(!output.contains("auth-1"));
+    }
 }
 
 #[test]
