@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
+import { loopbackJson } from "../lib/loopback-http.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const PACKAGE_NAME = "@grafana/agento11y-pi";
@@ -125,9 +126,9 @@ function jsonFrom(command, args) {
 async function status() {
   let receiver = { running: false, url: RECEIVER_URL };
   try {
-    const response = await fetch(`${RECEIVER_URL}/api/v1/metrics/conversations`, { signal: AbortSignal.timeout(1500) }); // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- local receiver is bound to loopback only
+    const response = await loopbackJson(8765, "/api/v1/metrics/conversations", 1500);
     if (response.ok) {
-      const metrics = await response.json();
+      const metrics = response.json;
       receiver = { running: true, url: RECEIVER_URL, conversations: metrics.matched_conversations ?? 0 };
     }
   } catch {
@@ -137,7 +138,7 @@ async function status() {
   try { doctor = jsonFrom("agento11y", ["doctor", "--json"]); } catch { /* Report absence without leaking configuration. */ }
   let grafana = false;
   try {
-    const response = await fetch("http://127.0.0.1:3000/api/health", { signal: AbortSignal.timeout(1500) }); // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- Homebrew Grafana is a loopback-only local service
+    const response = await loopbackJson(3000, "/api/health", 1500);
     grafana = response.ok;
   } catch { /* Grafana is optional. */ }
   process.stdout.write(`${JSON.stringify({

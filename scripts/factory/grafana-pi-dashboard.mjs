@@ -8,6 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { loopbackJson } from "../lib/loopback-http.mjs";
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const PLUGIN = "yesoreyeram-infinity-datasource";
 const PLUGIN_VERSION = "4.1.0";
@@ -72,7 +74,7 @@ async function install() {
   let healthy = false;
   for (let attempt = 0; attempt < 60 && !healthy; attempt += 1) {
     try {
-      const response = await fetch("http://127.0.0.1:3000/api/health", { signal: AbortSignal.timeout(1000) }); // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- Homebrew Grafana is a loopback-only local service
+      const response = await loopbackJson(3000, "/api/health", 1000);
       healthy = response.ok;
     } catch { /* Grafana is still starting. */ }
     if (!healthy) await new Promise((resolve) => setTimeout(resolve, 500));
@@ -84,7 +86,7 @@ async function install() {
 async function status() {
   let grafanaHealthy = false;
   try {
-    const response = await fetch("http://127.0.0.1:3000/api/health", { signal: AbortSignal.timeout(1500) }); // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- Homebrew Grafana is a loopback-only local service
+    const response = await loopbackJson(3000, "/api/health", 1500);
     grafanaHealthy = response.ok;
   } catch { /* Optional local service. */ }
   process.stdout.write(`${JSON.stringify({
