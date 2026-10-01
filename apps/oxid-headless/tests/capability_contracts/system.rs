@@ -52,8 +52,8 @@ fn reports_ready_and_queued_capabilities() {
     assert_eq!(responses[0]["result"]["custodyMode"], "development_only");
     assert!(methods.iter().any(|capability| {
         capability["method"] == "wallet.key.sign"
-            && capability["status"] == "ready"
-            && capability["mode"] == "development_only"
+            && capability["status"] == "unavailable"
+            && capability["mode"] == "approval_unavailable"
     }));
     assert!(methods.iter().any(|capability| {
         capability["method"] == "wallet.key.generate"

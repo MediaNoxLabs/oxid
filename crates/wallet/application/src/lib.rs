@@ -31,6 +31,7 @@ mod realm_reconciliation;
 mod realm_sync;
 mod root_recovery;
 mod security;
+mod sensitive_keys;
 mod shielded;
 mod transaction;
 
@@ -54,6 +55,7 @@ pub use realm_reconciliation::*;
 pub use realm_sync::*;
 pub use root_recovery::*;
 pub use security::*;
+pub use sensitive_keys::*;
 pub use shielded::*;
 pub use transaction::*;
 
@@ -295,12 +297,24 @@ where
 /// Application service for selecting the active wallet profile.
 pub struct SelectWalletProfileService<R> {
     repository: Arc<R>,
+    approvals: Option<Arc<WalletApprovalService>>,
 }
 
 impl<R> SelectWalletProfileService<R> {
     #[must_use]
     pub const fn new(repository: Arc<R>) -> Self {
-        Self { repository }
+        Self {
+            repository,
+            approvals: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_approvals(repository: Arc<R>, approvals: Arc<WalletApprovalService>) -> Self {
+        Self {
+            repository,
+            approvals: Some(approvals),
+        }
     }
 }
 
@@ -314,6 +328,11 @@ where
     ) -> Result<WalletProfileView, SelectWalletProfileError> {
         let id = WalletProfileId::parse(command.profile_id)
             .map_err(SelectWalletProfileError::InvalidIdentifier)?;
+        if let Some(approvals) = &self.approvals {
+            approvals.invalidate().map_err(|_| {
+                SelectWalletProfileError::Persistence(WalletProfileRepositoryError::Unavailable)
+            })?;
+        }
         self.repository
             .set_active(&id)
             .map(|profile| WalletProfileView::from(&profile))

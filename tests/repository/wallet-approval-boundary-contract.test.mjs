@@ -15,7 +15,7 @@ const unavailableImplementation = `impl TrustedWalletApprovalPort for Unavailabl
 function violations(files) {
   const failures = [];
   for (const [path, source] of files) {
-    if (path === fixturePath) continue;
+    if (path === fixturePath || path === "crates/composition/tests/direct_key_approval.rs") continue;
     if (path !== modulePath) {
       if (/\b(?:TrustedWalletApprovalPort|with_trusted_port)\b/u.test(source)) failures.push(path);
       continue;

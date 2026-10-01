@@ -36,6 +36,34 @@ use oxid_platform_ports::{
 #[cfg(not(target_arch = "wasm32"))]
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, get_current_pid};
 
+/// Portable SHA-256 implementation; no input or digest is retained.
+pub struct SystemSha256;
+
+impl oxid_platform_ports::Sha256Port for SystemSha256 {
+    fn sha256(&self, bytes: &[u8]) -> [u8; 32] {
+        use sha2::{Digest as _, Sha256};
+        Sha256::digest(bytes).into()
+    }
+}
+
+#[cfg(test)]
+mod digest_tests {
+    use super::SystemSha256;
+    use oxid_platform_ports::Sha256Port;
+
+    #[test]
+    fn sha256_known_vector() {
+        assert_eq!(
+            SystemSha256.sha256(b"abc"),
+            [
+                0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae,
+                0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61,
+                0xf2, 0x00, 0x15, 0xad,
+            ]
+        );
+    }
+}
+
 /// Clock backed by the host system.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SystemClock;

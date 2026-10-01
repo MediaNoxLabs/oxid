@@ -146,14 +146,7 @@ fn derives_and_binds_a_midnight_account_without_secret_protocol_fields() {
         flowed[0]["result"]["account"]["accountId"],
         "midnight_account_0_0"
     );
-    assert_eq!(flowed[1]["result"]["algorithm"], "secp256k1-schnorr");
-    assert_eq!(
-        flowed[1]["result"]["signatureHex"]
-            .as_str()
-            .expect("signature is encoded")
-            .len(),
-        128
-    );
+    assert_eq!(flowed[1]["error"]["code"], "approval_unavailable");
     assert_eq!(flowed[3]["error"]["code"], "wallet_locked");
 
     let out_of_bounds = execute_with_wallet(

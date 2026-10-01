@@ -54,15 +54,7 @@ fn exercises_the_protected_key_lifecycle_without_secret_parameters() {
         }
     });
     let signed = execute_with_wallet(&wallet, &sign.to_string());
-    assert_eq!(signed[0]["ok"], true, "unexpected response: {signed:?}");
-    assert_eq!(signed[0]["result"]["algorithm"], "ed25519");
-    assert_eq!(
-        signed[0]["result"]["signatureHex"]
-            .as_str()
-            .expect("signature is encoded")
-            .len(),
-        128
-    );
+    assert_eq!(signed[0]["error"]["code"], "approval_unavailable");
 
     let locked_sign = format!(
         "{}\n{sign}",
@@ -70,7 +62,7 @@ fn exercises_the_protected_key_lifecycle_without_secret_parameters() {
     );
     let locked = execute_with_wallet(&wallet, &locked_sign);
     assert_eq!(locked[0]["result"]["security"]["state"], "locked");
-    assert_eq!(locked[1]["error"]["code"], "wallet_locked");
+    assert_eq!(locked[1]["error"]["code"], "approval_unavailable");
 
     let delete_without_confirmation = json!({
         "protocol": PROTOCOL_VERSION,
@@ -105,9 +97,12 @@ fn exercises_the_protected_key_lifecycle_without_secret_parameters() {
     );
     let cleaned = execute_with_wallet(&wallet, &cleanup);
     assert_eq!(cleaned[0]["result"]["security"]["state"], "unlocked");
-    assert_eq!(cleaned[1]["error"]["code"], "confirmation_required");
-    assert_eq!(cleaned[2]["result"]["deleted"], true);
-    assert_eq!(cleaned[3]["result"]["keys"], json!([]));
+    assert_eq!(cleaned[1]["error"]["code"], "approval_unavailable");
+    assert_eq!(cleaned[2]["error"]["code"], "approval_unavailable");
+    assert_eq!(
+        cleaned[3]["result"]["keys"].as_array().map(Vec::len),
+        Some(1)
+    );
 }
 
 #[test]
@@ -187,20 +182,42 @@ fn exercises_jubjub_custody_through_opaque_headless_references() {
         })
     );
     let flowed = execute_with_wallet(&wallet, &flow);
-    assert_eq!(flowed[0]["result"]["algorithm"], "jubjub");
-    assert_eq!(
-        flowed[0]["result"]["signatureHex"]
-            .as_str()
-            .expect("signature bytes")
-            .len(),
-        192
-    );
+    assert_eq!(flowed[0]["error"]["code"], "approval_unavailable");
     assert_eq!(
         flowed[1]["result"]["keys"].as_array().map(Vec::len),
         Some(1)
     );
     assert!(!flowed[1].to_string().contains("private"));
     assert!(!flowed[1].to_string().contains("seed"));
+}
+
+#[test]
+fn arbitrary_json_cannot_supply_direct_operation_authority() {
+    for method in ["wallet.key.sign", "wallet.key.delete"] {
+        for params in [
+            json!(true),
+            json!("private-authority"),
+            json!({}),
+            json!({"approval":"private-authority"}),
+            json!({"keyRef":"private-key", "payloadHex":"deadbeef", "confirmation":{"title":"private-title", "summary":"private-summary", "confirmed":true}}),
+        ] {
+            let response = execute(
+                &json!({"protocol":PROTOCOL_VERSION,"id":"denied","method":method,"params":params})
+                    .to_string(),
+            );
+            if params.is_object() {
+                assert_eq!(response[0]["error"]["code"], "approval_unavailable");
+                assert_eq!(response[0]["error"]["message"], "approval_unavailable");
+            } else {
+                assert_eq!(response[0]["error"]["code"], "invalid_params");
+            }
+            assert!(response[0].get("result").is_none());
+            let output = Value::Array(response).to_string();
+            assert!(!output.contains("private-"));
+            assert!(!output.contains("deadbeef"));
+            assert!(!output.contains("signatureHex"));
+        }
+    }
 }
 
 #[test]

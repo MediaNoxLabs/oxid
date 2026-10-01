@@ -1,18 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use oxid_wallet_application::{
-    DeleteWalletKeyCommand, GenerateWalletKeyCommand, SignWalletDataCommand,
-    WalletProfileSecurityCommand,
-};
+use oxid_wallet_application::{GenerateWalletKeyCommand, WalletProfileSecurityCommand};
 use serde_json::json;
 
 use crate::{
     HeadlessWallet,
-    errors::{invalid_empty_params, key_error, security_error, sensitive_error},
-    parameters::{
-        DeleteKeyParams, GenerateKeyParams, SignParams, decode_hex, key_algorithm, key_purpose,
-    },
-    projections::{algorithm_name, encode_hex, key_value, security_status_value},
+    errors::{invalid_empty_params, key_error, security_error},
+    parameters::{GenerateKeyParams, key_algorithm, key_purpose},
+    projections::{key_value, security_status_value},
     protocol::{Dispatch, Request, Response, params_are_empty},
 };
 
@@ -175,77 +170,20 @@ impl HeadlessWallet {
     }
 
     pub(super) fn sign(&self, request: Request) -> Dispatch {
-        let params = match serde_json::from_value::<SignParams>(request.params) {
-            Ok(params) => params,
-            Err(_) => {
-                return Dispatch::continue_with(Response::error(
-                    request.id,
-                    "invalid_params",
-                    "wallet.key.sign requires keyRef, payloadHex, and confirmation",
-                ));
-            }
-        };
-        let payload = match decode_hex(&params.payload_hex) {
-            Some(payload) => payload,
-            None => {
-                return Dispatch::continue_with(Response::error(
-                    request.id,
-                    "invalid_params",
-                    "payloadHex must be bounded even-length hexadecimal",
-                ));
-            }
-        };
-        let profile_id = match self.active_profile_id(request.id.clone()) {
-            Ok(profile_id) => profile_id,
-            Err(response) => return Dispatch::continue_with(response),
-        };
-        match self
-            .application
-            .sign_wallet_data()
-            .execute(SignWalletDataCommand {
-                profile_id,
-                key_reference: params.key_reference,
-                payload,
-                confirmation: params.confirmation.into(),
-            }) {
-            Ok(signature) => Dispatch::continue_with(Response::success(
-                request.id,
-                json!({
-                    "algorithm": algorithm_name(signature.algorithm),
-                    "signatureHex": encode_hex(&signature.signature_bytes)
-                }),
-            )),
-            Err(error) => Dispatch::continue_with(sensitive_error(request.id, error)),
-        }
+        // Headless has no trusted approval surface. Neither legacy confirmation
+        // prose nor an asserted JSON capability can cross this boundary.
+        Dispatch::continue_with(Response::error(
+            request.id,
+            "approval_unavailable",
+            "approval_unavailable",
+        ))
     }
 
     pub(super) fn delete_key(&self, request: Request) -> Dispatch {
-        let params = match serde_json::from_value::<DeleteKeyParams>(request.params) {
-            Ok(params) => params,
-            Err(_) => {
-                return Dispatch::continue_with(Response::error(
-                    request.id,
-                    "invalid_params",
-                    "wallet.key.delete requires keyRef and confirmation",
-                ));
-            }
-        };
-        let profile_id = match self.active_profile_id(request.id.clone()) {
-            Ok(profile_id) => profile_id,
-            Err(response) => return Dispatch::continue_with(response),
-        };
-        match self
-            .application
-            .delete_wallet_key()
-            .execute(DeleteWalletKeyCommand {
-                profile_id,
-                key_reference: params.key_reference,
-                confirmation: params.confirmation.into(),
-            }) {
-            Ok(()) => {
-                Dispatch::continue_with(Response::success(request.id, json!({ "deleted": true })))
-            }
-            Err(error) => Dispatch::continue_with(sensitive_error(request.id, error)),
-        }
+        Dispatch::continue_with(Response::error(
+            request.id,
+            "approval_unavailable",
+            "approval_unavailable",
+        ))
     }
 }

@@ -303,11 +303,11 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
                 &["ed25519", "p256", "secp256k1-schnorr", "jubjub"],
             ),
         CapabilityView::new("wallet.key.list", "ready").text("mode", "development_only"),
-        CapabilityView::new("wallet.key.sign", "ready")
-            .text("mode", "development_only")
+        CapabilityView::new("wallet.key.sign", "unavailable")
+            .text("mode", "approval_unavailable")
             .boolean("confirmationRequired", true),
-        CapabilityView::new("wallet.key.delete", "ready")
-            .text("mode", "development_only")
+        CapabilityView::new("wallet.key.delete", "unavailable")
+            .text("mode", "approval_unavailable")
             .boolean("confirmationRequired", true),
         CapabilityView::new("wallet.network.list", "ready").text("mode", "standalone"),
         CapabilityView::new("wallet.network.select", "ready").text("mode", "standalone"),
