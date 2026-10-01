@@ -12,6 +12,7 @@ pub use oxid_wallet_domain::{
 use oxid_wallet_domain::{ProfileName, ProfileNameError, WalletProfile};
 
 mod action_watch;
+mod approval;
 mod backup;
 mod chain;
 mod dust;
@@ -34,6 +35,7 @@ mod shielded;
 mod transaction;
 
 pub use action_watch::*;
+pub use approval::*;
 pub use backup::*;
 pub use chain::*;
 pub use dust::*;
