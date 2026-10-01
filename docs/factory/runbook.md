@@ -22,6 +22,7 @@ routes through a coordination server.
 | `pi-taskflow` | `0.2.10` | installed as an `agent-review-pi` peer; all runtime resources disabled |
 | `typebox` | `1.3.9` | exact `agent-review-pi` peer |
 | `@input-output-hk/agent-review-pi` | `0.6.0` | same, **GitHub Packages — needs a token** |
+| `@grafana/agento11y-pi` | `0.25.0` | installed locally but extension-disabled by default; loaded only by the explicit observed launcher |
 
 Oxid loads the exact `dev-loops` CLI, skills, and packaged agent sources but
 filters out its optional Pi extension. In `1.0.2` that extension refreshes an
@@ -78,6 +79,12 @@ active child itself. A top-level `/dev-loop` invocation uses that one launch
 for the implementation child, whose manifest omits nested delegation. The
 external supervisor—not another child—owns focused review, CI waiting, review
 triage, metrics, merge, cleanup, and any explicit retry.
+
+Local Pi observability is optional and never changes the normal startup path.
+Use `node scripts/factory/pi-observability.mjs on ...` to launch via
+`agento11y pi` with the bounded Oxid tag vocabulary, or `off --` for a verified
+plain-Pi session. See [pi-observability.md](pi-observability.md) for privacy,
+Grafana provisioning, compatibility, and rollback.
 
 Validate shell entry, the exact private package, all native review-tool
 registrations, and runtime skill discovery without an LLM call or GitHub
