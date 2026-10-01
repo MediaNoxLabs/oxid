@@ -823,7 +823,7 @@ test("Nix-pinned Pi lifecycle hooks remain advisory beside the repository gate",
   assert.deepEqual(runner.getActiveTools(), []);
 });
 
-test("tracked project agents shadow every incompatible packaged dev-loops manifest", async () => {
+test("tracked project agents shadow every incompatible packaged dev-loops manifest", async (t) => {
   const upstreamDigests = {
     "dev-loop": "aae5204eb80c772bf9771c8d61e8c7be2532fa1ef3f9f8e19fd0cf32a6b4f1e7",
     developer: "5da2b3c888df2971a64084f1d61ccf61a89abe2eb57a2a1e32fbc3c2e4e9912a",
@@ -863,6 +863,10 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
     assert.match(source, new RegExp(`Derived from dev-loops@${upstreamPins[name].replaceAll(".", "\\.")} agents/${name}\\.agent\\.md`), `${name} binds its source pin`);
     assert.match(source, new RegExp(`Upstream-SHA256: ${upstreamDigests[name]}`), `${name} binds exact upstream source bytes`);
     assert.doesNotMatch(source, /\]\(\.\.\/npm\/node_modules\//, `${name} has no link into an untracked package tree`);
+    if (name !== "dev-loop") {
+      assert.doesNotMatch(source, /scripts\/dev-loops\.mjs github issue-view/u,
+        `${name} does not introduce the unsupported issue reader`);
+    }
     try {
       const upstream = await readFile(path.join(repoRoot, ".pi", "npm", "node_modules", "dev-loops", "agents", `${name}.agent.md`));
       assert.equal(createHash("sha256").update(upstream).digest("hex"), upstreamDigests[name], `${name} source digest matches installed pin`);
@@ -877,6 +881,30 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   assert.match(devLoop, /scripts\/dev-loops\.mjs/);
   assert.match(devLoop, /successful tracked `loop build-envelope` result is already validated/u);
   assert.match(devLoop, /Do not infer or invoke a second\s+`loop validate-envelope` route/u);
+  assert.match(devLoop, /scripts\/github\/view-issue\.mjs --repo <owner\/name> --issue <n>/u);
+  assert.match(devLoop, /scripts\/dev-loops\.mjs` wrapper has no `github` command family/u);
+  assert.match(devLoop, /never invent or\s+invoke `scripts\/dev-loops\.mjs github issue-view`/u);
+  assert.equal(devLoop.match(/scripts\/dev-loops\.mjs github issue-view/gu)?.length, 1,
+    "the unsupported route appears exactly once and only inside its prohibition");
+  assert.match(devLoop, /Stop before envelope construction if the issue reader exits nonzero or the\s+delivery target is missing, malformed, ambiguous, or disagrees/u);
+  assert.match(devLoop, /loop startup --issue <n> --json/u);
+  assert.match(devLoop, /target\/tmp\/dev-loop\/issue-<n>-startup\.json/u);
+  try {
+    const issueReaderHelp = execFileSync(process.execPath, [path.join(repoRoot, "scripts", "github", "view-issue.mjs"), "--help"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    assert.match(issueReaderHelp, /--repo <owner\/name>/u);
+    assert.match(issueReaderHelp, /--issue <number>/u);
+  } catch (error) {
+    const output = `${error?.message ?? ""}\n${error?.stderr ?? ""}`;
+    if (/missing exact dev-loops@/u.test(output)) {
+      t.diagnostic("project-local Pi packages are intentionally absent from public CI; static issue-reader contract remains enforced");
+    } else {
+      throw error;
+    }
+  }
+  execFileSync("git", ["check-ignore", "--quiet", "target/tmp/dev-loop/issue-895-startup.json"], { cwd: repoRoot });
   assert.match(devLoop, /<git-root>` is always the exact output of `git rev-parse --show-toplevel`/u);
   assert.match(devLoop, /Never replace it with the primary\s+checkout derived from `--git-common-dir` or `git worktree list`/u);
   assert.match(devLoop, /common\s+checkout is a topology and shared-private-storage boundary only/u);

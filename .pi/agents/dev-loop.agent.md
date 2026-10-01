@@ -45,6 +45,20 @@ checkout is a topology and shared-private-storage boundary only; it is never
 the source of tracked executable policy for a linked-worktree run.
 
 Do not invoke a package `cli/index.mjs` directly. Do not use user-home, global npm, Node module-search, package-relative, arbitrary-ancestor, or filesystem-search fallbacks. If the tracked wrapper cannot resolve the exact project pin, stop at its diagnostic. Pi 0.84 extension hooks are advisory and cannot cancel provider execution.
+
+Before envelope construction, read the issue body only through
+`node <git-root>/scripts/github/view-issue.mjs --repo <owner/name> --issue <n>`
+and resolve the single `## Delivery target` from that response. The
+`scripts/dev-loops.mjs` wrapper has no `github` command family: never invent or
+invoke `scripts/dev-loops.mjs github issue-view` (including as a help probe).
+Stop before envelope construction if the issue reader exits nonzero or the
+delivery target is missing, malformed, ambiguous, or disagrees with the active
+worktree's recorded target.
+For issue runs, invoke `loop startup --issue <n> --json` once and preserve its
+stdout at `target/tmp/dev-loop/issue-<n>-startup.json`, inside the repository's
+ignored `target/` namespace; pass that exact file as the
+`loop build-envelope --input` value instead of trying to reconstruct resolver
+state from terminal output.
 <!-- /pi-only -->
 
 1. Before startup, routing, or tools that act on routed state, run `node <git-root>/scripts/loop/pre-flight-gate.mjs --check-subagents` from the active canonical linked worktree identified by `<git-root>`. Stop on any nonzero result. Run it again immediately before each later routed action; `DEVLOOPS_PREFLIGHT_BYPASS` is forbidden.
