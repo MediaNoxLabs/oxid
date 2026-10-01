@@ -52,6 +52,7 @@ pub enum DidApprovalIntent {
     Deactivate {
         profile: IdentityProfileId,
         did: MidnightDid,
+        digest: CanonicalDidApprovalDigest,
     },
     Sign {
         profile: IdentityProfileId,
@@ -107,9 +108,17 @@ impl DidApprovalRequest<UpdateDidApproval> {
 
 impl DidApprovalRequest<DeactivateDidApproval> {
     #[must_use]
-    pub const fn deactivate(profile: IdentityProfileId, did: MidnightDid) -> Self {
+    pub const fn deactivate(
+        profile: IdentityProfileId,
+        did: MidnightDid,
+        digest: CanonicalDidApprovalDigest,
+    ) -> Self {
         Self {
-            intent: DidApprovalIntent::Deactivate { profile, did },
+            intent: DidApprovalIntent::Deactivate {
+                profile,
+                did,
+                digest,
+            },
             operation: PhantomData,
         }
     }
@@ -372,4 +381,9 @@ impl DidApprovalService {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
+
+#[cfg(any(test, feature = "development-approval"))]
+mod development;
+#[cfg(any(test, feature = "development-approval"))]
+pub use development::development_did_approvals;

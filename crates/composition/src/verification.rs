@@ -40,7 +40,7 @@ fn composed_application_executes_the_vertical_slice() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn standalone_composition_recovers_a_complete_wallet_into_a_fresh_instance() {
-    let source = compose_in_memory();
+    let source = crate::compose_in_memory_with_development_did_approval();
     let profile = source
         .create_wallet_profile()
         .execute(CreateWalletProfileCommand {

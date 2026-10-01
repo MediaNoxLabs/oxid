@@ -22,6 +22,8 @@ url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+oxid-foundation.workspace = true
+oxid-identity-application = { workspace = true, features = ["development-approval"] }
 oxid-adapter-did-midnight.workspace = true
 oxid-adapter-platform-system.workspace = true
 oxid-adapter-storage-dev.workspace = true

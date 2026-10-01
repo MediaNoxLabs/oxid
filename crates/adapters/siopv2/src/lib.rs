@@ -11,8 +11,8 @@ use std::{
 use base64::{Engine as _, engine::general_purpose};
 use ed25519_dalek::{Signature as Ed25519Signature, Verifier as _, VerifyingKey as Ed25519Key};
 use oxid_identity_application::{
-    DidLifecyclePortError, DidOperationConfirmation, DidOperationError, DidRecordQuery,
-    DidRecordRepositoryError, GetDidRecordUseCase, SignDidPayloadCommand, SignDidPayloadUseCase,
+    DidLifecyclePortError, DidOperationError, DidRecordQuery, DidRecordRepositoryError,
+    GetDidRecordUseCase, SignDidPayloadCommand, SignDidPayloadUseCase,
 };
 use oxid_platform_ports::ClockPort;
 use oxid_protocol_application::{
@@ -1013,12 +1013,6 @@ impl SelfIssuedIdentityProofPort for DidSelfIssuedIdentityProof {
                     did: request.holder_did,
                     method_id: request.method_id,
                     payload: &signing_payload,
-                    confirmation: DidOperationConfirmation {
-                        title: "Authenticate with DID".to_owned(),
-                        summary: "Bind the accepted self-issued authentication to this verifier."
-                            .to_owned(),
-                        confirmed: true,
-                    },
                 })
                 .map_err(map_sign_error)?;
             if signature.signature_bytes.len() != 64
@@ -1072,6 +1066,18 @@ fn map_sign_error(error: DidOperationError) -> SelfIssuedProofError {
 
 #[cfg(test)]
 mod tests {
+    struct ApprovalClock;
+    impl oxid_identity_application::DidApprovalClockPort for ApprovalClock {
+        fn now(
+            &self,
+        ) -> Result<
+            oxid_foundation::UnixTimestampMillis,
+            oxid_identity_application::DidApprovalClockError,
+        > {
+            Ok(oxid_foundation::UnixTimestampMillis::new(0))
+        }
+    }
+
     use super::*;
     use oxid_adapter_did_midnight::{StandaloneDidLifecycle, StandaloneDidResolver};
     use oxid_adapter_platform_system::{OsRandom, SystemClock};
@@ -1080,8 +1086,8 @@ mod tests {
         InMemoryDidRecordRepository, InMemoryWalletProfileRepository,
     };
     use oxid_identity_application::{
-        CreateDidCommand, CreateDidUseCase, DidOperationConfirmation, DidRecordRepository,
-        DidService, DidUpdate, UpdateDidCommand, UpdateDidUseCase,
+        CreateDidCommand, CreateDidUseCase, DidRecordRepository, DidService, DidUpdate,
+        UpdateDidCommand, UpdateDidUseCase,
     };
     use oxid_identity_domain::VerificationRelationship;
     use oxid_wallet_application::{
@@ -1168,11 +1174,17 @@ mod tests {
         .expect("security should initialize");
         let keys: Arc<dyn WalletKeyOperationPort> = security;
         let repository: Arc<dyn DidRecordRepository> = Arc::new(InMemoryDidRecordRepository::new());
-        let identity = Arc::new(DidService::from_ports(
-            repository,
-            Arc::new(StandaloneDidResolver),
-            Arc::new(StandaloneDidLifecycle::new(keys)),
-        ));
+        let identity = Arc::new(
+            DidService::from_ports(
+                repository,
+                Arc::new(StandaloneDidResolver),
+                Arc::new(StandaloneDidLifecycle::new(keys)),
+            )
+            .with_approvals(
+                oxid_identity_application::development_did_approvals(Arc::new(ApprovalClock)),
+                Arc::new(oxid_adapter_platform_system::SystemSha256),
+            ),
+        );
         let mut did = CreateDidUseCase::execute(
             identity.as_ref(),
             CreateDidCommand {
@@ -1203,11 +1215,6 @@ mod tests {
                     operation: DidUpdate::AddVerificationRelationship {
                         relationship: VerificationRelationship::Authentication,
                         method_id: method.clone(),
-                    },
-                    confirmation: DidOperationConfirmation {
-                        title: "Authorize authentication method".to_owned(),
-                        summary: "Test both supported self-issued proof curves.".to_owned(),
-                        confirmed: true,
                     },
                 },
             )

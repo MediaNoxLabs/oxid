@@ -85,7 +85,7 @@ impl HeadlessWallet {
                 ));
             }
         };
-        let (did, operation, confirmation) = match did_update(params) {
+        let (did, operation) = match did_update(params) {
             Some(value) => value,
             None => {
                 return Dispatch::continue_with(Response::error(
@@ -103,7 +103,6 @@ impl HeadlessWallet {
             profile_id,
             did,
             operation,
-            confirmation,
         }) {
             Ok(record) => Dispatch::continue_with(Response::success(
                 request.id,
@@ -120,7 +119,7 @@ impl HeadlessWallet {
                 return Dispatch::continue_with(Response::error(
                     request.id,
                     "invalid_params",
-                    "did.sign requires did, methodId, payloadHex, and confirmation",
+                    "did.sign requires did, methodId, payloadHex",
                 ));
             }
         };
@@ -146,7 +145,6 @@ impl HeadlessWallet {
                 did: params.did,
                 method_id: params.method_id,
                 payload: &payload,
-                confirmation: params.confirmation.into(),
             }) {
             Ok(signature) => Dispatch::continue_with(Response::success(
                 request.id,
@@ -167,7 +165,7 @@ impl HeadlessWallet {
                 return Dispatch::continue_with(Response::error(
                     request.id,
                     "invalid_params",
-                    "did.deactivate requires did and confirmation",
+                    "did.deactivate requires did",
                 ));
             }
         };
@@ -181,7 +179,6 @@ impl HeadlessWallet {
             .execute(DeactivateDidCommand {
                 profile_id,
                 did: params.did,
-                confirmation: params.confirmation.into(),
             }) {
             Ok(record) => Dispatch::continue_with(Response::success(
                 request.id,

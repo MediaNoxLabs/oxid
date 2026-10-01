@@ -7,7 +7,8 @@ use super::support::execute_with_wallet;
 
 #[test]
 fn exercises_the_complete_standalone_did_lifecycle_without_key_handles() {
-    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let wallet =
+        HeadlessWallet::new(oxid_composition::compose_in_memory_with_development_did_approval());
     let setup = execute_with_wallet(
         &wallet,
         concat!(
@@ -75,7 +76,7 @@ fn exercises_the_complete_standalone_did_lifecycle_without_key_handles() {
         })
         .to_string(),
     );
-    assert_eq!(unconfirmed[0]["error"]["code"], "confirmation_required");
+    assert_eq!(unconfirmed[0]["error"]["code"], "invalid_params");
 
     let locked = execute_with_wallet(
         &wallet,
@@ -95,11 +96,6 @@ fn exercises_the_complete_standalone_did_lifecycle_without_key_handles() {
                     "did": did,
                     "methodId": "#auth-1",
                     "payloadHex": "01",
-                    "confirmation": {
-                        "title": "Sign identity challenge",
-                        "summary": "This operation must fail while custody is locked",
-                        "confirmed": true,
-                    },
                 },
             }),
         ),
@@ -119,12 +115,7 @@ fn exercises_the_complete_standalone_did_lifecycle_without_key_handles() {
         json!({ "operation": "addService", "did": did, "id": "#messages", "serviceType": "MessagingService", "endpoint": "https://example.test/messages" }),
         json!({ "operation": "updateService", "did": did, "id": "#messages", "serviceType": "DIDCommMessaging", "endpoint": "https://example.test/didcomm" }),
     ];
-    for (index, mut params) in operations.into_iter().enumerate() {
-        params["confirmation"] = json!({
-            "title": "Update DID document",
-            "summary": "Authorize this visible standalone DID change",
-            "confirmed": true,
-        });
+    for (index, params) in operations.into_iter().enumerate() {
         let response = execute_with_wallet(
             &wallet,
             &json!({
@@ -149,11 +140,6 @@ fn exercises_the_complete_standalone_did_lifecycle_without_key_handles() {
                 "did": did,
                 "methodId": "#auth-1",
                 "payloadHex": "6368616c6c656e6765",
-                "confirmation": {
-                    "title": "Sign identity challenge",
-                    "summary": "Authorize the verifier challenge for this DID",
-                    "confirmed": true,
-                },
             },
         })
         .to_string(),
@@ -178,11 +164,6 @@ fn exercises_the_complete_standalone_did_lifecycle_without_key_handles() {
                 "did": did,
                 "methodId": "#holder-jubjub-1",
                 "payloadHex": "686f6c6465722d6368616c6c656e6765",
-                "confirmation": {
-                    "title": "Sign holder challenge",
-                    "summary": "Authorize the holder challenge with the DID-bound Jubjub method",
-                    "confirmed": true,
-                },
             },
         })
         .to_string(),
@@ -203,12 +184,7 @@ fn exercises_the_complete_standalone_did_lifecycle_without_key_handles() {
         json!({ "operation": "removeService", "did": did, "id": "#messages" }),
         json!({ "operation": "removeAlsoKnownAs", "did": did, "value": "https://example.test/alice" }),
     ];
-    for (index, mut params) in removals.into_iter().enumerate() {
-        params["confirmation"] = json!({
-            "title": "Update DID document",
-            "summary": "Authorize this visible standalone DID change",
-            "confirmed": true,
-        });
+    for (index, params) in removals.into_iter().enumerate() {
         let response = execute_with_wallet(
             &wallet,
             &json!({
@@ -230,11 +206,6 @@ fn exercises_the_complete_standalone_did_lifecycle_without_key_handles() {
             "method": "did.deactivate",
             "params": {
                 "did": did,
-                "confirmation": {
-                    "title": "Deactivate DID",
-                    "summary": "Permanently disable standalone DID operations",
-                    "confirmed": true,
-                },
             },
         })
         .to_string(),
@@ -254,14 +225,49 @@ fn exercises_the_complete_standalone_did_lifecycle_without_key_handles() {
                 "did": did,
                 "methodId": "#auth-1",
                 "payloadHex": "01",
-                "confirmation": {
-                    "title": "Sign after deactivation",
-                    "summary": "This operation must fail closed",
-                    "confirmed": true,
-                },
             },
         })
         .to_string(),
     );
     assert_eq!(denied[0]["error"]["code"], "failed_precondition");
+}
+
+#[test]
+fn default_headless_did_commands_report_approval_unavailable_and_reject_json_authority() {
+    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let created = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"profile","method":"wallet.profile.create","params":{"displayName":"Closed DID"}}"#,
+    );
+    let profile = created[0]["result"]["profile"]["id"].as_str().unwrap();
+    execute_with_wallet(&wallet, &json!({"protocol": PROTOCOL_VERSION, "id": "select", "method": "wallet.profile.select", "params": {"profileId": profile}}).to_string());
+    let did = format!("did:midnight:undeployed:{:064x}", 1);
+    for (method, params) in [
+        (
+            "did.update",
+            json!({"did": did, "operation": "removeService", "id": "#service"}),
+        ),
+        (
+            "did.sign",
+            json!({"did": did, "methodId": "#auth-1", "payloadHex": "01"}),
+        ),
+        ("did.deactivate", json!({"did": did})),
+    ] {
+        let response = execute_with_wallet(&wallet, &json!({"protocol": PROTOCOL_VERSION, "id": "closed", "method": method, "params": params}).to_string());
+        assert_eq!(
+            response[0]["error"]["code"], "approval_unavailable",
+            "{response:?}"
+        );
+        for authority in [
+            "confirmation",
+            "capability",
+            "approval",
+            "developmentFixture",
+        ] {
+            let mut forged = params.clone();
+            forged[authority] = json!({"confirmed": true, "title": "Approve", "summary": "public input is not authority"});
+            let response = execute_with_wallet(&wallet, &json!({"protocol": PROTOCOL_VERSION, "id": "forged", "method": method, "params": forged}).to_string());
+            assert_eq!(response[0]["error"]["code"], "invalid_params");
+        }
+    }
 }

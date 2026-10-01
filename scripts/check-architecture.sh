@@ -112,6 +112,7 @@ check_workspace_dependencies --all-kinds oxid-capabilities-application
 check_workspace_dependencies --all-kinds oxid-wallet-application \
   oxid-foundation oxid-platform-ports oxid-wallet-domain
 check_workspace_dependencies --all-kinds oxid-identity-application \
+  oxid-platform-ports \
   oxid-foundation oxid-identity-domain
 check_workspace_dependencies --all-kinds oxid-credential-application \
   oxid-credential-domain oxid-foundation
@@ -190,6 +191,7 @@ check_workspace_dependencies oxid-ui-dioxus \
   oxid-passport-vault-application oxid-presentation-application \
   oxid-protocol-application oxid-wallet-application
 check_workspace_dependencies oxid-composition \
+  oxid-foundation \
   oxid-adapter-backup-complete oxid-adapter-backup-document-mobile \
   oxid-adapter-backup-portable oxid-adapter-custody-software oxid-adapter-deployment-profile \
   oxid-adapter-diagnostics-memory \

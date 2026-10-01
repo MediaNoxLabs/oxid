@@ -237,7 +237,8 @@ fn contract_call_protocol_runs_all_four_simulated_operations_without_secret_view
 
 #[test]
 fn runs_the_complete_standalone_passport_vault_flow_and_rejects_replay() {
-    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let wallet =
+        HeadlessWallet::new(oxid_composition::compose_in_memory_with_development_did_approval());
     let created = execute_with_wallet(
         &wallet,
         r#"{"protocol":"oxid.headless.v1","id":"vault-profile","method":"wallet.profile.create","params":{"displayName":"Vault holder"}}"#,

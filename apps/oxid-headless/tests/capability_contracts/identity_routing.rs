@@ -42,7 +42,8 @@ fn routes_scanned_identity_links_without_echoing_protocol_secrets() {
 
 #[test]
 fn authenticates_a_managed_did_once_without_exposing_protocol_secrets() {
-    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let wallet =
+        HeadlessWallet::new(oxid_composition::compose_in_memory_with_development_did_approval());
     let created = execute_with_wallet(
         &wallet,
         r#"{"protocol":"oxid.headless.v1","id":"authentication-profile","method":"wallet.profile.create","params":{"displayName":"Authentication flow"}}"#,

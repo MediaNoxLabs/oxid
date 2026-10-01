@@ -530,6 +530,7 @@ where
         passport_vault_repository,
         protection_for_security,
         None,
+        None,
     )
 }
 
@@ -542,6 +543,7 @@ pub(super) fn compose_with_identity_adapters_and_approvals<R, S, M, F>(
     passport_vault_repository: PassportVaultRepositoryComposition,
     protection_for_security: F,
     approvals: Option<Arc<oxid_wallet_application::WalletApprovalService>>,
+    did_approvals: Option<Arc<oxid_identity_application::DidApprovalService>>,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository
@@ -754,11 +756,14 @@ where
             publisher,
         )) as Arc<dyn PublishDidUseCase>
     });
-    let identity = Arc::new(DidService::from_ports(
-        did_repository,
-        did_resolver,
-        did_lifecycle,
-    ));
+    let identity = DidService::from_ports(did_repository, did_resolver, did_lifecycle);
+    let identity = Arc::new(match did_approvals {
+        Some(approvals) => identity.with_approvals(
+            approvals,
+            Arc::new(oxid_adapter_platform_system::SystemSha256),
+        ),
+        None => identity,
+    });
     #[cfg(not(target_arch = "wasm32"))]
     let protected_passport_vault_presentations = standalone_passport_vault.then(|| {
         let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();

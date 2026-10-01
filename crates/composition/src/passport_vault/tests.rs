@@ -216,7 +216,7 @@ fn standalone_managed_claim_composes_and_settles_through_the_native_stack() {
         return;
     };
     let composer = std::fs::canonicalize(composer).expect("packaged composer");
-    let services = compose_in_memory();
+    let services = crate::compose_in_memory_with_development_did_approval();
     let profile = services
         .create_wallet_profile()
         .execute(CreateWalletProfileCommand {

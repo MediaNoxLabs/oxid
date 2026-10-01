@@ -94,11 +94,11 @@ use oxid_diagnostics_application::{ClearDiagnosticsUseCase, GetDiagnosticSnapsho
 use oxid_diagnostics_application::{DiagnosticCode, DiagnosticEventSinkPort, DiagnosticSeverity};
 use oxid_identity_application::{
     CreateDidCommand, CreateDidUseCase, DeactivateDidCommand, DeactivateDidUseCase,
-    DidKeyAlgorithm, DidOperationConfirmation, DidOperationError, DidRecordQuery, DidRecordView,
-    DidRefreshAvailability, DidUpdate, ForgetDidUseCase, ListDidRecordsQuery,
-    ListDidRecordsUseCase, PUBLISH_DID_TO_TEST_ISSUER_INTENT, PublishDidCommand, PublishDidUseCase,
-    ResolveDidCommand, ResolveDidUseCase, SignDidPayloadCommand, SignDidPayloadUseCase,
-    UpdateDidCommand, UpdateDidUseCase,
+    DidKeyAlgorithm, DidOperationError, DidRecordQuery, DidRecordView, DidRefreshAvailability,
+    DidUpdate, ForgetDidUseCase, ListDidRecordsQuery, ListDidRecordsUseCase,
+    PUBLISH_DID_TO_TEST_ISSUER_INTENT, PublishDidCommand, PublishDidUseCase, ResolveDidCommand,
+    ResolveDidUseCase, SignDidPayloadCommand, SignDidPayloadUseCase, UpdateDidCommand,
+    UpdateDidUseCase,
 };
 use oxid_identity_domain::VerificationRelationship;
 use oxid_passport_vault_application::{
@@ -7803,14 +7803,6 @@ fn active_managed_issuance_methods(records: &[DidRecordView]) -> Option<(String,
         })
 }
 
-fn did_confirmation(title: &str, summary: &str, confirmed: bool) -> DidOperationConfirmation {
-    DidOperationConfirmation {
-        title: title.to_owned(),
-        summary: summary.to_owned(),
-        confirmed,
-    }
-}
-
 #[component]
 fn ManagedDidControls(
     profile_id: String,
@@ -7824,7 +7816,6 @@ fn ManagedDidControls(
     let mut endpoint = use_signal(String::new);
     let mut algorithm = use_signal(|| "ed25519".to_owned());
     let mut relationship = use_signal(|| "assertionMethod".to_owned());
-    let mut confirmed = use_signal(|| false);
     let mut working = use_signal(|| false);
     let mut outcome = use_signal(|| None::<String>);
     let did = record.document.id.clone();
@@ -7852,7 +7843,6 @@ fn ManagedDidControls(
         operation_name.as_str(),
         "add_relationship" | "remove_relationship"
     );
-    let needs_confirmation = true;
 
     rsx! {
         details { class: "did-manager",
@@ -7866,7 +7856,6 @@ fn ManagedDidControls(
                 onchange: move |event| {
                     operation.set(event.value());
                     outcome.set(None);
-                    confirmed.set(false);
                 },
                 option { value: "add_alias", "Add also-known-as" }
                 option { value: "remove_alias", "Remove also-known-as" }
@@ -7939,25 +7928,11 @@ fn ManagedDidControls(
                     oninput: move |event| value.set(event.value()),
                 }
             }
-            if needs_confirmation {
-                label { class: "confirmation-row",
-                    input {
-                        r#type: "checkbox", checked: confirmed(),
-                        onchange: move |event| confirmed.set(event.checked()),
-                    }
-                    if operation_name == "deactivate" {
-                        "I understand this DID cannot be used after deactivation"
-                    } else if operation_name == "sign" {
-                        "Authorize signing this visible payload with the selected DID method"
-                    } else {
-                        "Authorize this visible change to the managed DID document"
-                    }
-                }
-            }
+            p { class: "form-hint", "Trusted DID approval is unavailable in this composition. Public records remain available; this form cannot authorize protected operations." }
             button {
                 class: if operation_name == "deactivate" { "danger-action" } else { "secondary-action" },
                 r#type: "button",
-                disabled: working() || is_deactivated || (needs_confirmation && !confirmed()),
+                disabled: working() || is_deactivated,
                 onclick: move |_| {
                     working.set(true);
                     outcome.set(None);
@@ -7972,7 +7947,6 @@ fn ManagedDidControls(
                     };
                     let relationship = VerificationRelationship::parse(relationship.read().as_str())
                         .unwrap_or(VerificationRelationship::AssertionMethod);
-                    let confirmed = confirmed();
                     let services = services.clone();
                     let profile_id = profile_id.clone();
                     let did = did.clone();
@@ -7985,11 +7959,6 @@ fn ManagedDidControls(
                                     did,
                                     method_id: method_or_service,
                                     payload: input_value.as_bytes(),
-                                    confirmation: did_confirmation(
-                                        "Sign identity challenge",
-                                        "Authorize the visible payload with this DID verification method",
-                                        confirmed,
-                                    ),
                                 })
                                 .map(|signature| {
                                     (
@@ -8007,11 +7976,6 @@ fn ManagedDidControls(
                                 .execute(DeactivateDidCommand {
                                     profile_id,
                                     did,
-                                    confirmation: did_confirmation(
-                                        "Deactivate DID",
-                                        "Permanently disable further operations for this DID",
-                                        confirmed,
-                                    ),
                                 })
                                 .map(|record| {
                                     (Some(record), "DID document deactivated.".to_owned())
@@ -8036,11 +8000,6 @@ fn ManagedDidControls(
                                         profile_id,
                                         did,
                                         operation: update,
-                                        confirmation: did_confirmation(
-                                            "Update DID document",
-                                            "Authorize the selected visible change to this managed DID",
-                                            confirmed,
-                                        ),
                                     })
                                     .map(|record| {
                                         (Some(record), "DID document updated.".to_owned())

@@ -11,8 +11,12 @@ use oxid_identity_domain::{
 use crate::{DidOperationError, DidRecordRepositoryError, DidRecordView, DidService};
 
 pub const MAX_DID_SIGNING_PAYLOAD_BYTES: usize = 64 * 1024;
-const MAX_CONFIRMATION_TITLE_CHARACTERS: usize = 96;
-const MAX_CONFIRMATION_SUMMARY_CHARACTERS: usize = 512;
+mod intent;
+use crate::{
+    DidApprovalCapability, DidApprovalError, DidApprovalOperation, DidApprovalRequest,
+    DidApprovalService,
+};
+use intent::{deactivate_request, normalize_update, sign_request, update_request};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DidKeyAlgorithm {
@@ -75,13 +79,6 @@ pub enum DidUpdate {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DidOperationConfirmation {
-    pub title: String,
-    pub summary: String,
-    pub confirmed: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CreateDidCommand {
     pub profile_id: String,
     pub network: String,
@@ -92,14 +89,12 @@ pub struct UpdateDidCommand {
     pub profile_id: String,
     pub did: String,
     pub operation: DidUpdate,
-    pub confirmation: DidOperationConfirmation,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeactivateDidCommand {
     pub profile_id: String,
     pub did: String,
-    pub confirmation: DidOperationConfirmation,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -108,7 +103,6 @@ pub struct SignDidPayloadCommand<'a> {
     pub did: String,
     pub method_id: String,
     pub payload: &'a [u8],
-    pub confirmation: DidOperationConfirmation,
 }
 
 impl fmt::Debug for SignDidPayloadCommand<'_> {
@@ -119,7 +113,6 @@ impl fmt::Debug for SignDidPayloadCommand<'_> {
             .field("did", &self.did)
             .field("method_id", &self.method_id)
             .field("payload", &"[REDACTED]")
-            .field("confirmation", &self.confirmation)
             .finish()
     }
 }
@@ -325,22 +318,41 @@ fn parse_did(value: String) -> Result<MidnightDid, DidOperationError> {
     MidnightDid::parse(value).map_err(DidOperationError::InvalidDid)
 }
 
-fn validate_confirmation(value: &DidOperationConfirmation) -> Result<(), DidOperationError> {
-    if !value.confirmed {
-        return Err(DidOperationError::ConfirmationRequired);
-    }
-    let title = value.title.trim();
-    let summary = value.summary.trim();
-    if title.is_empty()
-        || summary.is_empty()
-        || title.chars().count() > MAX_CONFIRMATION_TITLE_CHARACTERS
-        || summary.chars().count() > MAX_CONFIRMATION_SUMMARY_CHARACTERS
-        || title.chars().any(char::is_control)
-        || summary.chars().any(char::is_control)
+fn hash(service: &DidService) -> Result<&dyn oxid_platform_ports::Sha256Port, DidOperationError> {
+    service
+        .approvals
+        .as_ref()
+        .map(|(_, hash)| hash.as_ref())
+        .ok_or(DidOperationError::Approval(DidApprovalError::Unavailable))
+}
+
+fn approvals(service: &DidService) -> Result<&DidApprovalService, DidOperationError> {
+    service
+        .approvals
+        .as_ref()
+        .map(|(approval, _)| approval.as_ref())
+        .ok_or(DidOperationError::Approval(DidApprovalError::Unavailable))
+}
+
+// Re-read after approval, then atomically spend the exact reconstructed intent.
+// No callback or other fallible work occurs between consumption and the effect.
+fn consume<O: DidApprovalOperation>(
+    service: &DidService,
+    prior: &DidRecord,
+    capability: &DidApprovalCapability<O>,
+    expected: &DidApprovalRequest<O>,
+) -> Result<(), DidOperationError> {
+    if current(
+        service,
+        prior.profile_id(),
+        prior.resolution().document().id(),
+    )? != *prior
     {
-        return Err(DidOperationError::InvalidConfirmation);
+        return Err(DidOperationError::RetainedRecordChanged);
     }
-    Ok(())
+    approvals(service)?
+        .consume(capability, expected)
+        .map_err(DidOperationError::Approval)
 }
 
 fn persist(
@@ -388,14 +400,25 @@ impl CreateDidUseCase for DidService {
 
 impl UpdateDidUseCase for DidService {
     fn execute(&self, command: UpdateDidCommand) -> Result<DidRecordView, DidOperationError> {
-        validate_confirmation(&command.confirmation)?;
         let profile_id = parse_profile(command.profile_id)?;
         let did = parse_did(command.did)?;
+        let operation = normalize_update(command.operation);
+        approvals(self)?;
         let prior = current(self, &profile_id, &did)?;
         let publication_state = prior.publication_state();
+        let request = update_request(hash(self)?, &profile_id, &did, &operation);
+        let capability = approvals(self)?
+            .request(&request)
+            .map_err(DidOperationError::Approval)?;
+        consume(
+            self,
+            &prior,
+            &capability,
+            &update_request(hash(self)?, &profile_id, &did, &operation),
+        )?;
         let resolution = self
             .lifecycle
-            .update(&profile_id, prior.resolution(), command.operation)
+            .update(&profile_id, prior.resolution(), operation)
             .map_err(DidOperationError::Lifecycle)?;
         persist(self, profile_id, resolution, publication_state)
     }
@@ -403,11 +426,21 @@ impl UpdateDidUseCase for DidService {
 
 impl DeactivateDidUseCase for DidService {
     fn execute(&self, command: DeactivateDidCommand) -> Result<DidRecordView, DidOperationError> {
-        validate_confirmation(&command.confirmation)?;
         let profile_id = parse_profile(command.profile_id)?;
         let did = parse_did(command.did)?;
+        approvals(self)?;
         let prior = current(self, &profile_id, &did)?;
         let publication_state = prior.publication_state();
+        let request = deactivate_request(hash(self)?, &profile_id, &did);
+        let capability = approvals(self)?
+            .request(&request)
+            .map_err(DidOperationError::Approval)?;
+        consume(
+            self,
+            &prior,
+            &capability,
+            &deactivate_request(hash(self)?, &profile_id, &did),
+        )?;
         let resolution = self
             .lifecycle
             .deactivate(&profile_id, prior.resolution())
@@ -421,7 +454,6 @@ impl SignDidPayloadUseCase for DidService {
         &self,
         command: SignDidPayloadCommand<'_>,
     ) -> Result<DidSignatureView, DidOperationError> {
-        validate_confirmation(&command.confirmation)?;
         if command.payload.is_empty() {
             return Err(DidOperationError::EmptyPayload);
         }
@@ -430,14 +462,21 @@ impl SignDidPayloadUseCase for DidService {
         }
         let profile_id = parse_profile(command.profile_id)?;
         let did = parse_did(command.did)?;
+        let method_id = command.method_id.trim();
+        approvals(self)?;
         let prior = current(self, &profile_id, &did)?;
+        let request = sign_request(hash(self)?, &profile_id, &did, method_id, command.payload);
+        let capability = approvals(self)?
+            .request(&request)
+            .map_err(DidOperationError::Approval)?;
+        consume(
+            self,
+            &prior,
+            &capability,
+            &sign_request(hash(self)?, &profile_id, &did, method_id, command.payload),
+        )?;
         self.lifecycle
-            .sign(
-                &profile_id,
-                prior.resolution(),
-                command.method_id.trim(),
-                command.payload,
-            )
+            .sign(&profile_id, prior.resolution(), method_id, command.payload)
             .map(|signature| DidSignatureView {
                 method_id: signature.method_id,
                 algorithm: signature.algorithm.as_str().to_owned(),
@@ -466,7 +505,8 @@ impl From<DidRecordRepositoryError> for DidOperationError {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    mod approval_enforcement;
     use std::sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -479,6 +519,26 @@ mod tests {
 
     use super::*;
     use crate::{DidRecordRepository, DidResolutionPort, UnavailableDidResolver};
+
+    // Collision-free recording test double, not a cryptographic implementation.
+    // Production composition injects SystemSha256; framing is asserted separately.
+    #[derive(Default)]
+    pub(crate) struct TestHash(Mutex<Vec<Vec<u8>>>);
+    impl oxid_platform_ports::Sha256Port for TestHash {
+        fn sha256(&self, payload: &[u8]) -> [u8; 32] {
+            let mut frames = self.0.lock().expect("frames");
+            let index = frames
+                .iter()
+                .position(|frame| frame == payload)
+                .unwrap_or_else(|| {
+                    frames.push(payload.to_vec());
+                    frames.len() - 1
+                });
+            let mut digest = [0; 32];
+            digest[..8].copy_from_slice(&(index as u64).to_be_bytes());
+            digest
+        }
+    }
 
     const DID: &str =
         "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -506,6 +566,8 @@ mod tests {
     struct TestRepository {
         get_error: Option<DidRecordRepositoryError>,
         upsert_error: Option<DidRecordRepositoryError>,
+        drift: bool,
+        reads: AtomicUsize,
     }
 
     impl DidRecordRepository for TestRepository {
@@ -522,8 +584,21 @@ mod tests {
             profile_id: &IdentityProfileId,
             _: &MidnightDid,
         ) -> Result<DidRecord, DidRecordRepositoryError> {
-            self.get_error
-                .map_or_else(|| Ok(DidRecord::new(profile_id.clone(), resolution())), Err)
+            self.get_error.map_or_else(
+                || {
+                    let changed = self.reads.fetch_add(1, Ordering::SeqCst) > 0 && self.drift;
+                    Ok(
+                        DidRecord::new(profile_id.clone(), resolution()).with_publication_state(
+                            if changed {
+                                DidPublicationState::Published
+                            } else {
+                                DidPublicationState::Unknown
+                            },
+                        ),
+                    )
+                },
+                Err,
+            )
         }
 
         fn remove(
@@ -544,6 +619,7 @@ mod tests {
 
     struct TestLifecycle {
         error: Option<DidLifecyclePortError>,
+        update_calls: AtomicUsize,
         deactivate_calls: AtomicUsize,
         sign_calls: Mutex<Vec<SignCall>>,
     }
@@ -552,6 +628,7 @@ mod tests {
         fn new(error: Option<DidLifecyclePortError>) -> Self {
             Self {
                 error,
+                update_calls: AtomicUsize::new(0),
                 deactivate_calls: AtomicUsize::new(0),
                 sign_calls: Mutex::new(Vec::new()),
             }
@@ -573,6 +650,7 @@ mod tests {
             current: &DidResolution,
             _: DidUpdate,
         ) -> Result<DidResolution, DidLifecyclePortError> {
+            self.update_calls.fetch_add(1, Ordering::SeqCst);
             self.error.map_or_else(|| Ok(current.clone()), Err)
         }
 
@@ -621,10 +699,16 @@ mod tests {
         let repository: Arc<dyn DidRecordRepository> = Arc::new(TestRepository {
             get_error: repository_error.0,
             upsert_error: repository_error.1,
+            drift: false,
+            reads: AtomicUsize::new(0),
         });
         let resolver: Arc<dyn DidResolutionPort> = Arc::new(UnavailableDidResolver);
         let lifecycle = Arc::new(TestLifecycle::new(lifecycle_error));
-        let service = DidService::from_ports(repository, resolver, lifecycle.clone());
+        let service = DidService::from_ports(repository, resolver, lifecycle.clone())
+            .with_approvals(
+                Arc::new(crate::approval::tests::service().0),
+                Arc::new(TestHash::default()),
+            );
         (service, lifecycle)
     }
 
@@ -638,30 +722,13 @@ mod tests {
         service_with_lifecycle(repository_error, lifecycle_error).0
     }
 
-    fn confirmation(title: String, summary: String, confirmed: bool) -> DidOperationConfirmation {
-        DidOperationConfirmation {
-            title,
-            summary,
-            confirmed,
-        }
-    }
-
-    fn valid_confirmation() -> DidOperationConfirmation {
-        confirmation(
-            "Authorize DID operation".to_owned(),
-            "Review the public DID change".to_owned(),
-            true,
-        )
-    }
-
-    fn update_command(confirmation: DidOperationConfirmation) -> UpdateDidCommand {
+    fn update_command() -> UpdateDidCommand {
         UpdateDidCommand {
             profile_id: PROFILE.to_owned(),
             did: DID.to_owned(),
             operation: DidUpdate::AddAlsoKnownAs {
                 value: "https://example.test/identity".to_owned(),
             },
-            confirmation,
         }
     }
 
@@ -671,104 +738,6 @@ mod tests {
             did: DID.to_owned(),
             method_id: format!("{DID}#auth-1"),
             payload,
-            confirmation: valid_confirmation(),
-        }
-    }
-
-    #[test]
-    fn confirmation_requires_explicit_intent_and_bounded_printable_text() {
-        let cases = [
-            (
-                confirmation("Title".to_owned(), "Summary".to_owned(), false),
-                DidOperationError::ConfirmationRequired,
-            ),
-            (
-                confirmation(" ".to_owned(), "Summary".to_owned(), true),
-                DidOperationError::InvalidConfirmation,
-            ),
-            (
-                confirmation("Title".to_owned(), "\t".to_owned(), true),
-                DidOperationError::InvalidConfirmation,
-            ),
-            (
-                confirmation("x".repeat(97), "Summary".to_owned(), true),
-                DidOperationError::InvalidConfirmation,
-            ),
-            (
-                confirmation("Title".to_owned(), "x".repeat(513), true),
-                DidOperationError::InvalidConfirmation,
-            ),
-            (
-                confirmation("Title\nInjected".to_owned(), "Summary".to_owned(), true),
-                DidOperationError::InvalidConfirmation,
-            ),
-        ];
-        let service = service((None, None), None);
-        for (confirmation, expected) in cases {
-            assert_eq!(
-                UpdateDidUseCase::execute(&service, update_command(confirmation)),
-                Err(expected)
-            );
-        }
-    }
-
-    #[test]
-    fn confirmation_accepts_exact_character_bounds() {
-        let result = UpdateDidUseCase::execute(
-            &service((None, None), None),
-            update_command(confirmation("t".repeat(96), "s".repeat(512), true)),
-        );
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn deactivate_rejects_unconfirmed_and_invalid_confirmation_without_forwarding() {
-        for (confirmation, expected) in [
-            (
-                confirmation("Title".to_owned(), "Summary".to_owned(), false),
-                DidOperationError::ConfirmationRequired,
-            ),
-            (
-                confirmation("Title\nInjected".to_owned(), "Summary".to_owned(), true),
-                DidOperationError::InvalidConfirmation,
-            ),
-        ] {
-            let (service, lifecycle) = service_with_lifecycle((None, None), None);
-            assert_eq!(
-                DeactivateDidUseCase::execute(
-                    &service,
-                    DeactivateDidCommand {
-                        profile_id: PROFILE.to_owned(),
-                        did: DID.to_owned(),
-                        confirmation,
-                    }
-                ),
-                Err(expected)
-            );
-            assert_eq!(lifecycle.deactivate_calls.load(Ordering::Relaxed), 0);
-        }
-    }
-
-    #[test]
-    fn signing_rejects_unconfirmed_and_invalid_confirmation_without_forwarding() {
-        for (confirmation, expected) in [
-            (
-                confirmation("Title".to_owned(), "Summary".to_owned(), false),
-                DidOperationError::ConfirmationRequired,
-            ),
-            (
-                confirmation("Title".to_owned(), "\t".to_owned(), true),
-                DidOperationError::InvalidConfirmation,
-            ),
-        ] {
-            let (service, lifecycle) = service_with_lifecycle((None, None), None);
-            let mut command = sign_command(b"challenge");
-            command.confirmation = confirmation;
-            assert_eq!(
-                SignDidPayloadUseCase::execute(&service, command),
-                Err(expected)
-            );
-            assert!(lifecycle.sign_calls.lock().expect("sign calls").is_empty());
         }
     }
 
@@ -797,7 +766,7 @@ mod tests {
                 Err(DidOperationError::InvalidNetwork)
             );
         }
-        let mut command = update_command(valid_confirmation());
+        let mut command = update_command();
         command.did = "did:example:not-midnight".to_owned();
         assert!(matches!(
             UpdateDidUseCase::execute(&service, command),
@@ -860,7 +829,7 @@ mod tests {
         assert_eq!(
             UpdateDidUseCase::execute(
                 &service((None, None), Some(DidLifecyclePortError::Conflict)),
-                update_command(valid_confirmation())
+                update_command()
             ),
             Err(DidOperationError::Lifecycle(
                 DidLifecyclePortError::Conflict
@@ -883,7 +852,6 @@ mod tests {
                 DeactivateDidCommand {
                     profile_id: PROFILE.to_owned(),
                     did: DID.to_owned(),
-                    confirmation: valid_confirmation(),
                 }
             ),
             Err(DidOperationError::Persistence(
@@ -908,10 +876,9 @@ mod tests {
     }
 
     #[test]
-    fn signing_failures_do_not_echo_payload_or_confirmation_text() {
+    fn signing_failures_do_not_echo_payload() {
         let payload = b"private-signing-payload-sentinel".to_vec();
-        let mut command = sign_command(&payload);
-        command.confirmation.summary = "private-confirmation-sentinel".to_owned();
+        let command = sign_command(&payload);
         let command_debug = format!("{command:?}");
         assert!(command_debug.contains("[REDACTED]"));
         assert!(!command_debug.contains("private-signing-payload-sentinel"));
@@ -922,7 +889,6 @@ mod tests {
         .expect_err("locked signing must fail");
         let diagnostic = format!("{error:?} {error}");
         assert!(!diagnostic.contains(std::str::from_utf8(&payload).expect("UTF-8 sentinel")));
-        assert!(!diagnostic.contains("private-confirmation-sentinel"));
         assert_eq!(
             error,
             DidOperationError::Lifecycle(DidLifecyclePortError::Locked)

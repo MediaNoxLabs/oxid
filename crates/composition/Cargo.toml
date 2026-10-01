@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [features]
+development-did-approval = ["oxid-identity-application/development-approval", "dep:oxid-foundation"]
 default = []
 # Public standalone genesis custody for explicit development app profiles.
 # Normal composition does not compile the fixture authority.
@@ -52,6 +53,7 @@ android-jni-exception-recovery-test = [
 ]
 
 [dependencies]
+oxid-foundation = { workspace = true, optional = true }
 oxid-adapter-backup-complete.workspace = true
 oxid-adapter-backup-portable.workspace = true
 oxid-adapter-custody-software.workspace = true
@@ -90,6 +92,7 @@ oxid-adapter-backup-document-mobile.workspace = true
 oxid-adapter-storage-mobile.workspace = true
 
 [dev-dependencies]
+oxid-identity-application = { workspace = true, features = ["development-approval"] }
 oxid-foundation.workspace = true
 oxid-wallet-domain.workspace = true
 futures.workspace = true

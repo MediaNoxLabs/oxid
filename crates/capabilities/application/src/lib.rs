@@ -712,8 +712,8 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
         CapabilityView::new("did.forget", "ready")
             .text("mode", "standalone")
             .text("scope", "active_profile"),
-        CapabilityView::new("did.update", "ready")
-            .text("mode", "development_only")
+        CapabilityView::new("did.update", "unavailable")
+            .text("mode", "approval_unavailable")
             .texts(
                 "operations",
                 &[
@@ -729,14 +729,14 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
                     "removeService",
                 ],
             )
-            .boolean("confirmationRequired", true),
-        CapabilityView::new("did.sign", "ready")
-            .text("mode", "development_only")
+            .boolean("trustedApprovalRequired", true),
+        CapabilityView::new("did.sign", "unavailable")
+            .text("mode", "approval_unavailable")
             .texts("algorithms", &["ed25519", "p256", "jubjub"])
-            .boolean("confirmationRequired", true),
-        CapabilityView::new("did.deactivate", "ready")
-            .text("mode", "development_only")
-            .boolean("confirmationRequired", true),
+            .boolean("trustedApprovalRequired", true),
+        CapabilityView::new("did.deactivate", "unavailable")
+            .text("mode", "approval_unavailable")
+            .boolean("trustedApprovalRequired", true),
         CapabilityView::new("diagnostics.snapshot", "superseded")
             .text("use", "system.diagnostics.snapshot"),
     ]
@@ -801,14 +801,24 @@ mod tests {
             "credential.delete",
             "credential.issuance.accept",
             "credential.presentation.accept",
-            "did.update",
-            "did.sign",
-            "did.deactivate",
         ] {
             assert!(
                 declared(method),
                 "{method} must declare confirmationRequired"
             );
+        }
+    }
+
+    #[test]
+    fn protected_did_methods_are_truthfully_unavailable_without_caller_confirmation() {
+        let manifest = test_manifest();
+        for method in ["did.update", "did.sign", "did.deactivate"] {
+            let capability = manifest
+                .iter()
+                .find(|entry| entry.method() == method)
+                .unwrap();
+            assert_eq!(capability.status(), "unavailable");
+            assert!(!capability.confirmation_required());
         }
     }
 
