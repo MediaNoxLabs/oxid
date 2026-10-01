@@ -93,13 +93,30 @@ impl WalletApprovalRequest<DeleteKeyApproval> {
 /// receiving a request or an incoming caller's boolean is not approval.
 /// No approving implementation is provided in production by this crate.
 pub trait TrustedWalletApprovalPort: Send + Sync {
-    fn approve(&self, intent: &WalletApprovalIntent) -> Result<(), WalletApprovalError>;
+    fn approve(&self, intent: &WalletApprovalIntent) -> Result<(), TrustedWalletApprovalError>;
+}
+
+/// Payload-free outcomes a trusted approval surface may report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TrustedWalletApprovalError {
+    Denied,
+    Unavailable,
+}
+
+impl From<TrustedWalletApprovalError> for WalletApprovalError {
+    fn from(value: TrustedWalletApprovalError) -> Self {
+        match value {
+            TrustedWalletApprovalError::Denied => Self::Denied,
+            TrustedWalletApprovalError::Unavailable => Self::Unavailable,
+        }
+    }
 }
 
 struct UnavailableApproval;
 impl TrustedWalletApprovalPort for UnavailableApproval {
-    fn approve(&self, _: &WalletApprovalIntent) -> Result<(), WalletApprovalError> {
-        Err(WalletApprovalError::Unavailable)
+    fn approve(&self, _: &WalletApprovalIntent) -> Result<(), TrustedWalletApprovalError> {
+        Err(TrustedWalletApprovalError::Unavailable)
     }
 }
 
@@ -116,6 +133,12 @@ impl TrustedWalletApprovalPort for UnavailableApproval {
 ///     service.consume(cap, request);
 /// }
 /// ```
+///
+/// ```compile_fail,E0277
+/// use oxid_wallet_application::{WalletApprovalCapability, SignDataApproval};
+/// fn needs_clone<T: Clone>() {}
+/// needs_clone::<WalletApprovalCapability<SignDataApproval>>();
+/// ```
 pub struct WalletApprovalCapability<O: WalletApprovalOperation> {
     intent: WalletApprovalIntent,
     issuer: Arc<()>,
@@ -128,10 +151,12 @@ pub struct WalletApprovalCapability<O: WalletApprovalOperation> {
 
 /// Closed reason codes; errors never contain identifiers, payload, or authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum WalletApprovalError {
     Unavailable,
     Denied,
     Expired,
+    ClockWentBackwards,
     GenerationMismatch,
     IntentMismatch,
     ForeignCapability,
@@ -144,6 +169,7 @@ impl fmt::Display for WalletApprovalError {
             Self::Unavailable => "approval_unavailable",
             Self::Denied => "approval_denied",
             Self::Expired => "approval_expired",
+            Self::ClockWentBackwards => "approval_clock_went_backwards",
             Self::GenerationMismatch => "approval_generation_mismatch",
             Self::IntentMismatch => "approval_intent_mismatch",
             Self::ForeignCapability => "approval_foreign_capability",
@@ -186,6 +212,9 @@ pub struct WalletApprovalService {
 }
 
 impl WalletApprovalService {
+    /// Fixed upper bound, including time spent waiting for the trusted prompt.
+    pub const MAX_TTL_MILLIS: u64 = 120_000;
+
     /// Default/untrusted composition cannot approve any operation.
     #[must_use]
     pub fn new(clock: Arc<dyn ClockPort>) -> Self {
@@ -210,13 +239,15 @@ impl WalletApprovalService {
     pub fn request<O: WalletApprovalOperation>(
         &self,
         request: &WalletApprovalRequest<O>,
-        expires_at: UnixTimestampMillis,
     ) -> Result<WalletApprovalCapability<O>, WalletApprovalError> {
         let generation = self.current_generation()?;
         let issued_at = self.now()?;
-        if issued_at >= expires_at {
-            return Err(WalletApprovalError::Expired);
-        }
+        let expires_at = UnixTimestampMillis::new(
+            issued_at
+                .value()
+                .checked_add(Self::MAX_TTL_MILLIS)
+                .ok_or(WalletApprovalError::Unavailable)?,
+        );
         self.port.approve(&request.intent)?;
         let current = self
             .generation
@@ -226,7 +257,10 @@ impl WalletApprovalService {
             return Err(WalletApprovalError::GenerationMismatch);
         }
         let now = self.now()?;
-        if now < issued_at || now >= expires_at {
+        if now < issued_at {
+            return Err(WalletApprovalError::ClockWentBackwards);
+        }
+        if now >= expires_at {
             return Err(WalletApprovalError::Expired);
         }
         Ok(WalletApprovalCapability {
@@ -240,7 +274,8 @@ impl WalletApprovalService {
         })
     }
 
-    /// Compare independently reconstructed expected intent, then consume once.
+    /// Compare independently reconstructed expected intent, then spend once.
+    /// A mismatch conveys no authority and does not consume a valid approval.
     /// A successful consumption is terminal even if the subsequent protected
     /// operation fails; retry requires fresh approval, never restoring authority.
     pub fn consume<O: WalletApprovalOperation>(
@@ -258,18 +293,21 @@ impl WalletApprovalService {
         if current.ok_or(WalletApprovalError::Unavailable)? != capability.generation {
             return Err(WalletApprovalError::GenerationMismatch);
         }
+        let now = self.now()?;
+        if now < capability.issued_at {
+            return Err(WalletApprovalError::ClockWentBackwards);
+        }
+        if now >= capability.expires_at {
+            return Err(WalletApprovalError::Expired);
+        }
         if capability.intent != expected.intent {
             return Err(WalletApprovalError::IntentMismatch);
-        }
-        let now = self.now()?;
-        if now < capability.issued_at || now >= capability.expires_at {
-            return Err(WalletApprovalError::Expired);
         }
         capability
             .consumed
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map(|_| ())
-            .map_err(|_| WalletApprovalError::AlreadyConsumed)
+            .map_err(|_| WalletApprovalError::AlreadyConsumed)?;
+        Ok(())
     }
 
     /// Invalidate all issued and in-flight approvals on lock/profile/lifecycle
