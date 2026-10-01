@@ -10,6 +10,8 @@ publish = false
 
 [dependencies]
 oxid-foundation.workspace = true
+oxid-identity-application.workspace = true
+oxid-identity-domain.workspace = true
 oxid-presentation-domain.workspace = true
 
 [lints]

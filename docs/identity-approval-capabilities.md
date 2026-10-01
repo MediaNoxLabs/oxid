@@ -90,5 +90,23 @@ purpose preview, but acceptance returns `approval_unavailable`, keeps the
 session awaiting consent, and performs no protocol or signing effect. The
 explicit development DID approval fixture shares a distinct process-local
 authentication authority with the identity signer to preserve positive
-standalone coverage. Presentation remains fail closed after removal of the
-obsolete direct signing shortcut; this slice does not change presentation.
+standalone coverage.
+
+OpenID4VP presentation uses a third, non-substitutable authority. Acceptance
+mints it only after the retained session, profile, candidate credential, and
+`awaiting_consent` state are checked together. The authority moves through the
+protocol and proof requests into a presentation-only holder-authorization
+request; Passport Vault keeps its separate legacy request and is unchanged.
+Under the DID operation lock, identity re-reads the authoritative Jubjub
+assertion method and managed-method state, binds the exact generic
+authorization payload and Compact holder-proof transcript as one digest,
+consumes once, and invokes the generic DID signature followed by the protected
+Jubjub challenge signature as one closed ordered bundle. Neither signature is
+returned independently.
+
+Ordinary presentation composition still prepares the safe verifier, purpose,
+claims, and candidate preview, but acceptance returns `approval_unavailable`
+without entering the protocol or either signing effect. The explicit
+development DID approval fixture shares the presentation authority with the
+identity bundle signer. The protected Passport Vault presentation source and
+its `prepare` flow remain outside this issue and unchanged.

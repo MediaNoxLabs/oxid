@@ -25,16 +25,20 @@ use oxid_credential_domain::{
 };
 use oxid_identity_application::{
     DidJubjubChallengeSigningPort, DidLifecyclePortError, DidOperationError, DidRecordQuery,
-    DidRecordRepositoryError, GetDidRecordUseCase, SignDidPayloadCommand, SignDidPayloadUseCase,
+    DidRecordRepositoryError, GetDidRecordUseCase, SignCredentialPresentationBundleCommand,
+    SignCredentialPresentationBundleUseCase, SignDidPayloadCommand, SignDidPayloadUseCase,
 };
 use oxid_identity_domain::{IdentityProfileId, MidnightDid};
 use oxid_platform_ports::ClockPort;
 use oxid_presentation_application::{
-    AuthorizePresentationHolderFuture, CreatePresentationProofFuture,
-    PresentationHolderAuthorizationError, PresentationHolderAuthorizationPort,
-    PresentationHolderAuthorizationRequest, PresentationProofArtifact, PresentationProofError,
-    PresentationProofPort, PresentationProofRequest, PresentationVerificationError,
-    PresentationVerificationRequest, PresentationVerifierPort, VerifyPresentationProofFuture,
+    AcceptedPresentationHolderAuthorizationPort, AcceptedPresentationHolderAuthorizationRequest,
+    AuthorizeAcceptedPresentationHolderFuture, AuthorizePresentationHolderFuture,
+    CreatePresentationProofFuture, PresentationHolderAuthorizationError,
+    PresentationHolderAuthorizationPort, PresentationHolderAuthorizationRequest,
+    PresentationProofArtifact, PresentationProofError, PresentationProofPort,
+    PresentationProofRequest, PresentationVerificationError, PresentationVerificationRequest,
+    PresentationVerifierPort, UnavailablePresentationHolderAuthorization,
+    VerifyPresentationProofFuture,
 };
 use oxid_presentation_domain::{PresentationClaimIntent, RequestedPresentationClaim};
 use sha2::{Digest as _, Sha256};
@@ -724,8 +728,9 @@ const fn padded<const N: usize>(value: &[u8]) -> [u8; N] {
 /// returned as a credential-family `Proof` or included in a `vp_token`.
 pub struct ManagedDidJubjubHolderAuthorization {
     get_did: Arc<dyn GetDidRecordUseCase>,
-    sign_did: Arc<dyn SignDidPayloadUseCase>,
+    sign_did: Option<Arc<dyn SignDidPayloadUseCase>>,
     challenge_signing: Option<Arc<dyn DidJubjubChallengeSigningPort>>,
+    presentation_bundle: Option<Arc<dyn SignCredentialPresentationBundleUseCase>>,
 }
 
 impl ManagedDidJubjubHolderAuthorization {
@@ -736,8 +741,9 @@ impl ManagedDidJubjubHolderAuthorization {
     ) -> Self {
         Self {
             get_did,
-            sign_did,
+            sign_did: Some(sign_did),
             challenge_signing: None,
+            presentation_bundle: None,
         }
     }
 
@@ -749,8 +755,22 @@ impl ManagedDidJubjubHolderAuthorization {
     ) -> Self {
         Self {
             get_did,
-            sign_did,
+            sign_did: Some(sign_did),
             challenge_signing: Some(challenge_signing),
+            presentation_bundle: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_presentation_bundle(
+        get_did: Arc<dyn GetDidRecordUseCase>,
+        presentation_bundle: Arc<dyn SignCredentialPresentationBundleUseCase>,
+    ) -> Self {
+        Self {
+            get_did,
+            sign_did: None,
+            challenge_signing: None,
+            presentation_bundle: Some(presentation_bundle),
         }
     }
 }
@@ -797,7 +817,7 @@ impl PresentationHolderAuthorizationPort for ManagedDidJubjubHolderAuthorization
             {
                 return Err(PresentationHolderAuthorizationError::InvalidBinding);
             }
-            let public_key = jubjub_public_key(
+            let expected_public_key_point = jubjub_public_key(
                 &method.public_key_jwk.x,
                 method
                     .public_key_jwk
@@ -808,6 +828,8 @@ impl PresentationHolderAuthorizationPort for ManagedDidJubjubHolderAuthorization
             let payload = holder_authorization_payload(&request);
             let signature = self
                 .sign_did
+                .as_ref()
+                .ok_or(PresentationHolderAuthorizationError::Unavailable)?
                 .execute(SignDidPayloadCommand {
                     profile_id: request.profile_id.as_str().to_owned(),
                     did: request.holder_did,
@@ -817,12 +839,169 @@ impl PresentationHolderAuthorizationPort for ManagedDidJubjubHolderAuthorization
                 .map_err(map_did_signing_error)?;
             if signature.method_id != request.holder_method_id
                 || signature.algorithm != "jubjub"
-                || verify_did_jubjub_signature(&public_key, &payload, &signature.signature_bytes)
-                    .is_err()
+                || verify_did_jubjub_signature(
+                    &expected_public_key_point,
+                    &payload,
+                    &signature.signature_bytes,
+                )
+                .is_err()
             {
                 return Err(PresentationHolderAuthorizationError::Rejected);
             }
             Ok(())
+        })
+    }
+}
+
+impl AcceptedPresentationHolderAuthorizationPort for ManagedDidJubjubHolderAuthorization {
+    fn authorize_accepted<'a>(
+        &'a self,
+        accepted: AcceptedPresentationHolderAuthorizationRequest,
+    ) -> AuthorizeAcceptedPresentationHolderFuture<'a> {
+        Box::pin(async move {
+            let request = accepted.request;
+            validate_holder_authorization_request(&request)?;
+            if accepted.presentation_root == [0; 32]
+                || accepted.verifier_challenge_hash == [0; 32]
+                || accepted.created_at_seconds == 0
+            {
+                return Err(PresentationHolderAuthorizationError::InvalidBinding);
+            }
+            let profile_id = IdentityProfileId::parse(request.profile_id.as_str().to_owned())
+                .map_err(|_| PresentationHolderAuthorizationError::InvalidBinding)?;
+            let did = MidnightDid::parse(request.holder_did.clone())
+                .map_err(|_| PresentationHolderAuthorizationError::InvalidBinding)?;
+            let record = self
+                .get_did
+                .execute(DidRecordQuery {
+                    profile_id: profile_id.as_str().to_owned(),
+                    did: did.as_str().to_owned(),
+                })
+                .map_err(map_did_lookup_error)?;
+            if record.document.id != request.holder_did
+                || record.document_metadata.deactivated == Some(true)
+                || !record
+                    .managed_method_ids
+                    .iter()
+                    .any(|method| method == &request.holder_method_id)
+            {
+                return Err(PresentationHolderAuthorizationError::NotManaged);
+            }
+            let method = record
+                .document
+                .verification_methods
+                .iter()
+                .find(|method| method.id == request.holder_method_id)
+                .ok_or(PresentationHolderAuthorizationError::InvalidBinding)?;
+            if method.controller != request.holder_did
+                || method.public_key_jwk.key_type != "EC"
+                || method.public_key_jwk.curve != "Jubjub"
+                || !record.document.relationships.iter().any(|relationship| {
+                    relationship.relationship == "assertionMethod"
+                        && relationship
+                            .method_ids
+                            .iter()
+                            .any(|candidate| candidate == &request.holder_method_id)
+                })
+            {
+                return Err(PresentationHolderAuthorizationError::InvalidBinding);
+            }
+            let expected_public_key_point = jubjub_public_key(
+                &method.public_key_jwk.x,
+                method
+                    .public_key_jwk
+                    .y
+                    .as_deref()
+                    .ok_or(PresentationHolderAuthorizationError::InvalidBinding)?,
+            )?;
+            let expected_public_key = {
+                let mut bytes = Vec::with_capacity(32);
+                expected_public_key_point
+                    .serialize(&mut bytes)
+                    .map_err(|_| PresentationHolderAuthorizationError::InvalidBinding)?;
+                bytes
+                    .try_into()
+                    .map_err(|_| PresentationHolderAuthorizationError::InvalidBinding)?
+            };
+            let authorization_payload = holder_authorization_payload(&request);
+            let signer = compact_holder_reference(&request.holder_did, &request.holder_method_id)
+                .map_err(|_| PresentationHolderAuthorizationError::InvalidBinding)?;
+            let mut unsigned = None;
+            let mut derive = |public_key: &[u8; 32], announcement: &[u8; 32]| {
+                let public_key = compressed_jubjub_point(public_key)
+                    .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+                let announcement = compressed_jubjub_point(announcement)
+                    .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+                if public_key != expected_public_key_point || announcement.is_identity() {
+                    return Err(DidLifecyclePortError::InvalidOperation);
+                }
+                let proof = CompactProof {
+                    signer,
+                    created_at: accepted.created_at_seconds,
+                    challenge_hash: accepted.verifier_challenge_hash,
+                    public_key,
+                    announcement,
+                    response: Fr::from(0_u64),
+                };
+                let challenge = presentation_proof_challenge(accepted.presentation_root, &proof);
+                let challenge_bytes = challenge
+                    .as_le_bytes()
+                    .try_into()
+                    .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+                unsigned = Some(proof);
+                Ok(challenge_bytes)
+            };
+            let bundle = self
+                .presentation_bundle
+                .as_ref()
+                .ok_or(PresentationHolderAuthorizationError::Unavailable)?
+                .execute(SignCredentialPresentationBundleCommand {
+                    profile_id: profile_id.as_str().to_owned(),
+                    did: request.holder_did.clone(),
+                    method_id: request.holder_method_id.clone(),
+                    flow_id:
+                        oxid_presentation_application::OPENID4VP_CREDENTIAL_PRESENTATION_FLOW_ID
+                            .to_owned(),
+                    session_id: accepted.presentation_id.as_str().to_owned(),
+                    credential_id: accepted.credential_id,
+                    verifier: request.verifier,
+                    authorization_payload,
+                    presentation_root: accepted.presentation_root,
+                    verifier_challenge_hash: accepted.verifier_challenge_hash,
+                    created_at_seconds: accepted.created_at_seconds,
+                    expected_public_key,
+                    derive_challenge: &mut derive,
+                    authority: accepted.authority,
+                })
+                .map_err(map_did_signing_error)?;
+            if bundle.authorization.method_id != request.holder_method_id
+                || bundle.authorization.algorithm != "jubjub"
+                || verify_did_jubjub_signature(
+                    &expected_public_key_point,
+                    &authorization_payload,
+                    &bundle.authorization.signature_bytes,
+                )
+                .is_err()
+            {
+                return Err(PresentationHolderAuthorizationError::Rejected);
+            }
+            let mut proof = unsigned.ok_or(PresentationHolderAuthorizationError::Rejected)?;
+            if bundle.holder_proof.method_id != request.holder_method_id
+                || compressed_jubjub_point(&bundle.holder_proof.public_key)
+                    .map_err(|_| PresentationHolderAuthorizationError::Rejected)?
+                    != proof.public_key
+                || compressed_jubjub_point(&bundle.holder_proof.announcement)
+                    .map_err(|_| PresentationHolderAuthorizationError::Rejected)?
+                    != proof.announcement
+            {
+                return Err(PresentationHolderAuthorizationError::Rejected);
+            }
+            proof.response = Fr::from_le_bytes(&bundle.holder_proof.response)
+                .ok_or(PresentationHolderAuthorizationError::Rejected)?;
+            if !verify_presentation_proof(accepted.presentation_root, &proof) {
+                return Err(PresentationHolderAuthorizationError::Rejected);
+            }
+            encode_proof(&proof).map_err(|_| PresentationHolderAuthorizationError::Rejected)
         })
     }
 }
@@ -1214,8 +1393,13 @@ fn embedded_field_from_be(
 pub struct PreflightOnlyCompactPresentationProof {
     repository: Arc<dyn CredentialRepository>,
     clock: Arc<dyn ClockPort>,
+    // Retained for the legacy direct-adapter constructors until #920 makes
+    // accepted authority mandatory through the complete request chain.
+    #[allow(dead_code)]
     holder_authorization: Arc<dyn PresentationHolderAuthorizationPort>,
+    #[allow(dead_code)]
     holder_proof: Arc<dyn CompactHolderProofPort>,
+    accepted_holder_authorization: Option<Arc<dyn AcceptedPresentationHolderAuthorizationPort>>,
     #[cfg(not(target_arch = "wasm32"))]
     runtime: Option<Arc<NativeCompactPresentationRuntime>>,
 }
@@ -1232,6 +1416,7 @@ impl PreflightOnlyCompactPresentationProof {
             clock,
             holder_authorization,
             holder_proof: Arc::new(UnavailableCompactHolderProof),
+            accepted_holder_authorization: None,
             #[cfg(not(target_arch = "wasm32"))]
             runtime: None,
         }
@@ -1249,6 +1434,7 @@ impl PreflightOnlyCompactPresentationProof {
             clock,
             holder_authorization,
             holder_proof,
+            accepted_holder_authorization: None,
             #[cfg(not(target_arch = "wasm32"))]
             runtime: None,
         }
@@ -1268,6 +1454,42 @@ impl PreflightOnlyCompactPresentationProof {
             clock,
             holder_authorization,
             holder_proof,
+            accepted_holder_authorization: None,
+            runtime: Some(runtime),
+        }
+    }
+
+    #[must_use]
+    pub fn with_accepted_holder_proof(
+        repository: Arc<dyn CredentialRepository>,
+        clock: Arc<dyn ClockPort>,
+        accepted_holder_authorization: Arc<dyn AcceptedPresentationHolderAuthorizationPort>,
+    ) -> Self {
+        Self {
+            repository,
+            clock,
+            holder_authorization: Arc::new(UnavailablePresentationHolderAuthorization),
+            holder_proof: Arc::new(UnavailableCompactHolderProof),
+            accepted_holder_authorization: Some(accepted_holder_authorization),
+            #[cfg(not(target_arch = "wasm32"))]
+            runtime: None,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[must_use]
+    pub fn with_accepted_runtime(
+        repository: Arc<dyn CredentialRepository>,
+        clock: Arc<dyn ClockPort>,
+        accepted_holder_authorization: Arc<dyn AcceptedPresentationHolderAuthorizationPort>,
+        runtime: Arc<NativeCompactPresentationRuntime>,
+    ) -> Self {
+        Self {
+            repository,
+            clock,
+            holder_authorization: Arc::new(UnavailablePresentationHolderAuthorization),
+            holder_proof: Arc::new(UnavailableCompactHolderProof),
+            accepted_holder_authorization: Some(accepted_holder_authorization),
             runtime: Some(runtime),
         }
     }
@@ -1341,27 +1563,30 @@ impl PresentationProofPort for PreflightOnlyCompactPresentationProof {
                 .map_err(|_| PresentationProofError::InvalidCredential)?;
             let (holder_did, holder_method_id) = holder_reference(&credential)
                 .map_err(|_| PresentationProofError::InvalidCredential)?;
-            self.holder_authorization
-                .authorize(PresentationHolderAuthorizationRequest {
-                    profile_id: request.profile_id.clone(),
-                    holder_did: holder_did.clone(),
-                    holder_method_id: holder_method_id.clone(),
-                    verifier: request.verifier.clone(),
-                    presentation_statement: decoded.statement(),
-                })
-                .await
-                .map_err(map_holder_authorization_error)?;
+            let holder_authorization_request = PresentationHolderAuthorizationRequest {
+                profile_id: request.profile_id.clone(),
+                holder_did: holder_did.clone(),
+                holder_method_id: holder_method_id.clone(),
+                verifier: request.verifier.clone(),
+                presentation_statement: decoded.statement(),
+            };
             let holder_proof_bytes = self
-                .holder_proof
-                .create_holder_proof(CompactHolderProofRequest {
-                    profile_id: request.profile_id.clone(),
-                    holder_did,
-                    holder_method_id,
+                .accepted_holder_authorization
+                .as_ref()
+                .ok_or(PresentationProofError::HolderAuthorizationUnavailable)?
+                .authorize_accepted(AcceptedPresentationHolderAuthorizationRequest {
+                    request: holder_authorization_request,
+                    presentation_id: request.presentation_id.clone(),
+                    credential_id: credential_id.as_str().to_owned(),
                     presentation_root: decoded.presentation_root(),
                     verifier_challenge_hash: request.challenge_hash,
                     created_at_seconds: now / 1_000,
+                    authority: request
+                        .authority
+                        .ok_or(PresentationProofError::HolderAuthorizationUnavailable)?,
                 })
-                .map_err(map_compact_holder_proof_error)?;
+                .await
+                .map_err(map_holder_authorization_error)?;
             let holder_proof =
                 parse_proof(&holder_proof_bytes).map_err(|_| PresentationProofError::Rejected)?;
             if holder_proof.signer != credential.holder
@@ -1586,6 +1811,9 @@ fn map_independent_did_error(error: DidOperationError) -> PresentationVerificati
     }
 }
 
+// Retained with the legacy direct-adapter path until #920 removes its optional
+// accepted-authority compatibility surface.
+#[allow(dead_code)]
 fn map_compact_holder_proof_error(error: CompactHolderProofError) -> PresentationProofError {
     match error {
         CompactHolderProofError::InvalidBinding
@@ -1922,6 +2150,7 @@ mod tests {
             challenge_hash: [0x11; 32],
             verifier_domain_hash: [0x22; 32],
             requested_claims: requested_claims(),
+            authority: None,
         }
     }
 

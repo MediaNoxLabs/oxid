@@ -86,10 +86,11 @@ use oxid_diagnostics_application::{
     GetDiagnosticSnapshotUseCase,
 };
 use oxid_identity_application::{
-    CreateDidUseCase, CredentialIssuanceFlowService, DeactivateDidUseCase,
-    DidJubjubChallengeSigningPort, DidLifecyclePort, DidPublicationService, DidResolutionPort,
-    DidService, ForgetDidUseCase, GetDidRecordUseCase, ListDidRecordsUseCase, PublishDidUseCase,
-    ResolveDidUseCase, SelfIssuedAuthenticationFlowService, SignCredentialIssuancePayloadUseCase,
+    CreateDidUseCase, CredentialIssuanceFlowService, CredentialPresentationFlowService,
+    DeactivateDidUseCase, DidJubjubChallengeSigningPort, DidLifecyclePort, DidPublicationService,
+    DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase, ListDidRecordsUseCase,
+    PublishDidUseCase, ResolveDidUseCase, SelfIssuedAuthenticationFlowService,
+    SignCredentialIssuancePayloadUseCase, SignCredentialPresentationBundleUseCase,
     SignDidPayloadUseCase, SignSelfIssuedAuthenticationPayloadUseCase, UpdateDidUseCase,
 };
 use oxid_passport_vault_application::{
@@ -810,6 +811,9 @@ where
     let self_issued_authentication_authority = did_approvals
         .as_ref()
         .map(|_| Arc::new(SelfIssuedAuthenticationFlowService::new(clock.clone())));
+    let credential_presentation_authority = did_approvals
+        .as_ref()
+        .map(|_| Arc::new(CredentialPresentationFlowService::new(clock.clone())));
     let identity = DidService::from_ports(did_repository, did_resolver, did_lifecycle);
     let identity = match did_approvals {
         Some(approvals) => identity.with_approvals(
@@ -829,6 +833,14 @@ where
         Some(authority) => identity.with_self_issued_authentication_authority(
             Arc::clone(authority),
             Arc::new(oxid_adapter_platform_system::SystemSha256),
+        ),
+        None => identity,
+    };
+    let identity = match &credential_presentation_authority {
+        Some(authority) => identity.with_credential_presentation_authority(
+            Arc::clone(authority),
+            Arc::new(oxid_adapter_platform_system::SystemSha256),
+            Arc::clone(&did_jubjub_challenge_signing),
         ),
         None => identity,
     };
@@ -923,22 +935,23 @@ where
                 let list: Arc<dyn ListCredentialsUseCase> = credentials.clone();
                 let disclosure: Arc<dyn GetCredentialDisclosureUseCase> = credentials.clone();
                 let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
-                let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
-                let holder_authorization =
-                    Arc::new(ManagedDidJubjubHolderAuthorization::with_challenge_signing(
+                let sign_bundle: Arc<dyn SignCredentialPresentationBundleUseCase> =
+                    identity.clone();
+                let holder_authorization = Arc::new(
+                    ManagedDidJubjubHolderAuthorization::with_presentation_bundle(
                         get_did,
-                        sign_did,
-                        did_jubjub_challenge_signing,
-                    ));
-                let holder_proof: Arc<dyn CompactHolderProofPort> = holder_authorization.clone();
+                        sign_bundle,
+                    ),
+                );
                 Arc::new(StandaloneOpenId4VpVerifier::new(
                     Arc::new(CredentialDisclosureCandidateSource::new(list, disclosure)),
-                    Arc::new(PreflightOnlyCompactPresentationProof::with_holder_proof(
-                        presentation_credential_repository,
-                        clock.clone(),
-                        holder_authorization,
-                        holder_proof,
-                    )),
+                    Arc::new(
+                        PreflightOnlyCompactPresentationProof::with_accepted_holder_proof(
+                            presentation_credential_repository,
+                            clock.clone(),
+                            holder_authorization,
+                        ),
+                    ),
                     Arc::new(UnavailablePresentationVerifier),
                     clock.clone(),
                 ))
@@ -949,23 +962,24 @@ where
                 let disclosure: Arc<dyn GetCredentialDisclosureUseCase> = credentials.clone();
                 let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
                 let verifier_get_did = Arc::clone(&get_did);
-                let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
-                let holder_authorization =
-                    Arc::new(ManagedDidJubjubHolderAuthorization::with_challenge_signing(
+                let sign_bundle: Arc<dyn SignCredentialPresentationBundleUseCase> =
+                    identity.clone();
+                let holder_authorization = Arc::new(
+                    ManagedDidJubjubHolderAuthorization::with_presentation_bundle(
                         get_did,
-                        sign_did,
-                        did_jubjub_challenge_signing,
-                    ));
-                let holder_proof: Arc<dyn CompactHolderProofPort> = holder_authorization.clone();
+                        sign_bundle,
+                    ),
+                );
                 Arc::new(StandaloneOpenId4VpVerifier::new(
                     Arc::new(CredentialDisclosureCandidateSource::new(list, disclosure)),
-                    Arc::new(PreflightOnlyCompactPresentationProof::with_runtime(
-                        presentation_credential_repository,
-                        clock.clone(),
-                        holder_authorization,
-                        holder_proof,
-                        Arc::clone(&runtime),
-                    )),
+                    Arc::new(
+                        PreflightOnlyCompactPresentationProof::with_accepted_runtime(
+                            presentation_credential_repository,
+                            clock.clone(),
+                            holder_authorization,
+                            Arc::clone(&runtime),
+                        ),
+                    ),
                     Arc::new(NativeCompactPresentationVerifier::new(
                         runtime,
                         clock.clone(),
@@ -983,20 +997,19 @@ where
                 let disclosure: Arc<dyn GetCredentialDisclosureUseCase> = credentials.clone();
                 let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
                 let verifier_get_did = Arc::clone(&get_did);
-                let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
-                let holder_authorization =
-                    Arc::new(ManagedDidJubjubHolderAuthorization::with_challenge_signing(
+                let sign_bundle: Arc<dyn SignCredentialPresentationBundleUseCase> =
+                    identity.clone();
+                let holder_authorization = Arc::new(
+                    ManagedDidJubjubHolderAuthorization::with_presentation_bundle(
                         get_did,
-                        sign_did,
-                        did_jubjub_challenge_signing,
-                    ));
-                let holder_proof: Arc<dyn CompactHolderProofPort> = holder_authorization.clone();
+                        sign_bundle,
+                    ),
+                );
                 let proof = Arc::new(ForegroundCompactPresentationProofWorker::new(Arc::new(
-                    PreflightOnlyCompactPresentationProof::with_runtime(
+                    PreflightOnlyCompactPresentationProof::with_accepted_runtime(
                         presentation_credential_repository,
                         clock.clone(),
                         holder_authorization,
-                        holder_proof,
                         Arc::clone(&runtime),
                     ),
                 )));
@@ -1015,8 +1028,12 @@ where
                 ))
             }
         };
-    let credential_presentation =
-        Arc::new(CredentialPresentationService::new(presentation_protocol));
+    let credential_presentation = Arc::new(match credential_presentation_authority {
+        Some(authority) => {
+            CredentialPresentationService::with_authority(presentation_protocol, authority)
+        }
+        None => CredentialPresentationService::new(presentation_protocol),
+    });
     let self_issued_protocol: Arc<dyn SelfIssuedAuthenticationProtocolPort> =
         match self_issued_authentication {
             SelfIssuedAuthenticationComposition::Unavailable => {

@@ -122,6 +122,15 @@ pub(super) fn credential_presentation_error(
             "failed_precondition",
             "credential presentation session is not awaiting this operation",
         ),
+        CredentialPresentationError::Approval(error) => (
+            match error {
+                oxid_identity_application::CredentialPresentationFlowError::Unavailable => {
+                    "approval_unavailable"
+                }
+                _ => "approval_invalid",
+            },
+            "credential presentation approval is unavailable or invalid",
+        ),
         CredentialPresentationError::Protocol(protocol) => (
             protocol.code(),
             "credential presentation protocol rejected or could not complete the request",
@@ -316,6 +325,16 @@ pub(super) fn did_error(id: Option<String>, error: DidOperationError) -> Respons
                 _ => "approval_invalid",
             },
             "Trusted credential issuance approval is unavailable or invalid",
+        ),
+        DidOperationError::CredentialPresentation(error) => Response::error(
+            id,
+            match error {
+                oxid_identity_application::CredentialPresentationFlowError::Unavailable => {
+                    "approval_unavailable"
+                }
+                _ => "approval_invalid",
+            },
+            "Trusted credential presentation approval is unavailable or invalid",
         ),
         DidOperationError::SelfIssuedAuthentication(error) => Response::error(
             id,
