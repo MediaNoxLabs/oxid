@@ -20,6 +20,7 @@ current-head review evidence are the delivery gates.
 | [retrospective-2026-09-03.md](retrospective-2026-09-03.md) | Evidence and next-phase decisions from the temporary `integration` stream. |
 | [audit/](audit/README.md) | The audit framework: charter, five audit types and their criteria, the severity/cost/blast-radius rubric, the report template, and both machine-readable contracts. |
 | [pi-runtime-audit.md](pi-runtime-audit.md) | Effective Pi/model/package budgets, measured disk state, package canaries, and operator setup. |
+| [pi-observability.md](pi-observability.md) | Opt-in metadata-only Pi.dev telemetry, bounded tags, local Grafana dashboard, and rollback. |
 | [worker-topology.md](worker-topology.md) | Multiple local sessions, cloud workers, independent engineer setup, and concurrency ownership. |
 | [application-targets.md](application-targets.md) | Build, exact-artifact receipt, deploy, and run commands for desktop, Android, and iOS Simulator. |
 | [demo-inventory.md](demo-inventory.md) | Validated use-case → scenario → product-demo inventory and safe preparation briefs. |

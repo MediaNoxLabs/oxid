@@ -21,6 +21,7 @@ const EXPECTED_PACKAGES = new Map([
   ["typebox", "1.3.9"],
   ["pi-taskflow", "0.2.10"],
   ["@input-output-hk/agent-review-pi", "0.6.0"],
+  ["@grafana/agento11y-pi", "0.25.0"],
 ]);
 const DEV_LOOPS_RESOURCE_POLICY = Object.freeze({
   source: "npm:dev-loops@1.0.2",
@@ -32,6 +33,10 @@ const TASKFLOW_SUPPRESSION = Object.freeze({
   skills: [],
   prompts: [],
   themes: [],
+});
+const OBSERVABILITY_RESOURCE_POLICY = Object.freeze({
+  source: "npm:@grafana/agento11y-pi@0.25.0",
+  extensions: [],
 });
 const EXPECTED_PROJECT_VALUES = Object.freeze({
   "compaction.enabled": true,
@@ -542,6 +547,10 @@ export async function auditPi({
   const taskflowEntry = configuredPackages.get("pi-taskflow")?.entry;
   if (JSON.stringify(taskflowEntry) !== JSON.stringify(TASKFLOW_SUPPRESSION)) {
     packageProblems.push("pi-taskflow: mutating extension and skills must remain suppressed until the ADR-0117 / issue #690 long-process conformance canary passes");
+  }
+  const observabilityEntry = configuredPackages.get("@grafana/agento11y-pi")?.entry;
+  if (JSON.stringify(observabilityEntry) !== JSON.stringify(OBSERVABILITY_RESOURCE_POLICY)) {
+    packageProblems.push("agento11y-pi: extension must remain disabled by default and load only through the explicit observed launcher");
   }
   checks.push(check("package-pins", packageProblems.length ? "fail" : "pass",
     packageProblems.length ? "Package pins are incomplete or floating" : "All Pi packages use exact tracked pins",

@@ -69,6 +69,10 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
       themes: [],
     },
     "npm:@input-output-hk/agent-review-pi@0.6.0",
+    {
+      source: "npm:@grafana/agento11y-pi@0.25.0",
+      extensions: [],
+    },
   ]);
   assert.equal(settings.subagents.defaultModel, `${settings.defaultProvider}/${settings.defaultModel}`);
   assert.equal(settings.subagents.defaultThinking, settings.defaultThinkingLevel);
