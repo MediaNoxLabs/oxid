@@ -145,6 +145,30 @@ impl TrustedDidApprovalPort for UnavailableApproval {
 }
 
 /// Opaque, non-cloneable, non-serializable, single-use authority.
+///
+/// Operation types cannot be substituted by downstream callers:
+///
+/// ```compile_fail
+/// use oxid_identity_application::{
+///     DeactivateDidApproval, DidApprovalCapability, DidApprovalRequest,
+///     DidApprovalService, UpdateDidApproval,
+/// };
+/// fn substitute(
+///     service: &DidApprovalService,
+///     capability: &DidApprovalCapability<UpdateDidApproval>,
+///     request: &DidApprovalRequest<DeactivateDidApproval>,
+/// ) {
+///     service.consume(capability, request);
+/// }
+/// ```
+///
+/// Capabilities cannot be duplicated:
+///
+/// ```compile_fail,E0277
+/// use oxid_identity_application::{DidApprovalCapability, SignDidApproval};
+/// fn needs_clone<T: Clone>() {}
+/// needs_clone::<DidApprovalCapability<SignDidApproval>>();
+/// ```
 pub struct DidApprovalCapability<O: DidApprovalOperation> {
     intent: DidApprovalIntent,
     issuer: Arc<()>,
