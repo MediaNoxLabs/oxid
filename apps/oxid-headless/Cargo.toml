@@ -10,6 +10,7 @@ publish = false
 
 [features]
 default = []
+development-did-approval-fixture = ["oxid-composition/development-did-approval"]
 standalone-faucet = ["oxid-composition/standalone-development"]
 
 [[bin]]
@@ -25,6 +26,13 @@ required-features = ["standalone-faucet"]
 name = "oxid-standalone-faucet-http"
 path = "src/faucet_http_main.rs"
 required-features = ["standalone-faucet"]
+
+[[bin]]
+name = "oxid-headless-development-did-approval-fixture"
+path = "tests/support/development_did_approval_fixture_main.rs"
+required-features = ["development-did-approval-fixture"]
+test = false
+bench = false
 
 [dependencies]
 futures.workspace = true
@@ -46,6 +54,7 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [dev-dependencies]
+oxid-composition = { workspace = true, features = ["development-did-approval"] }
 base64.workspace = true
 ed25519-dalek.workspace = true
 hex.workspace = true

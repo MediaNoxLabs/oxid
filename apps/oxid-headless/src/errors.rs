@@ -280,6 +280,20 @@ pub(super) fn did_error(id: Option<String>, error: DidOperationError) -> Respons
                 "valid explicit confirmation is required",
             )
         }
+        DidOperationError::Approval(error) => Response::error(
+            id,
+            match error {
+                oxid_identity_application::DidApprovalError::Unavailable => "approval_unavailable",
+                oxid_identity_application::DidApprovalError::Denied => "approval_denied",
+                _ => "approval_invalid",
+            },
+            "Trusted DID approval is unavailable or invalid",
+        ),
+        DidOperationError::RetainedRecordChanged => Response::error(
+            id,
+            "did_record_changed",
+            "Retained DID record changed during approval",
+        ),
         DidOperationError::Publication(error) => {
             let code = match error {
                 DidPublicationPortError::Unavailable

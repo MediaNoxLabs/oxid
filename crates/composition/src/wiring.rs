@@ -417,6 +417,51 @@ where
         + 'static,
     F: FnOnce(Arc<S>) -> Arc<dyn WalletProtectionPort>,
 {
+    compose_with_adapters_and_credential_profile_and_did_approvals(
+        repository,
+        security,
+        midnight,
+        credential_presentation,
+        credential_profile,
+        protection_for_security,
+        None,
+    )
+}
+
+pub(super) fn compose_with_adapters_and_credential_profile_and_did_approvals<R, S, M, F>(
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    credential_presentation: CredentialPresentationComposition,
+    credential_profile: HeadlessCredentialProfile,
+    protection_for_security: F,
+    did_approvals: Option<Arc<oxid_identity_application::DidApprovalService>>,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository
+        + WalletProfileAssociationRepository
+        + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
+        + 'static,
+    S: WalletProtectionPort
+        + WalletKeyOperationPort
+        + WalletJubjubChallengeSigningPort
+        + WalletPortableBackupPort
+        + PortableCustodyVaultPort
+        + 'static,
+    M: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletAccountDerivationPort
+        + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
+        + WalletShieldedSyncPort
+        + WalletTransactionPort
+        + MidnightPublicCallContextSource
+        + MidnightDiagnosticAttachPort
+        + NativeMidnightCompositionCapability
+        + 'static,
+    F: FnOnce(Arc<S>) -> Arc<dyn WalletProtectionPort>,
+{
     let key_operations: Arc<dyn WalletKeyOperationPort> = security.clone();
     let challenge_signing: Arc<dyn WalletJubjubChallengeSigningPort> = security.clone();
     let did_lifecycle = Arc::new(StandaloneDidLifecycle::with_jubjub_challenge_signing(
@@ -465,7 +510,7 @@ where
             Arc::new(SystemClock),
             trust_anchor,
         ));
-    compose_with_identity_adapters(
+    compose_with_identity_adapters_and_approvals(
         repository,
         security,
         midnight,
@@ -486,6 +531,8 @@ where
         },
         headless_passport_vault_repository(),
         protection_for_security,
+        None,
+        did_approvals,
     )
 }
 
@@ -530,6 +577,7 @@ where
         passport_vault_repository,
         protection_for_security,
         None,
+        None,
     )
 }
 
@@ -542,6 +590,7 @@ pub(super) fn compose_with_identity_adapters_and_approvals<R, S, M, F>(
     passport_vault_repository: PassportVaultRepositoryComposition,
     protection_for_security: F,
     approvals: Option<Arc<oxid_wallet_application::WalletApprovalService>>,
+    did_approvals: Option<Arc<oxid_identity_application::DidApprovalService>>,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository
@@ -754,11 +803,14 @@ where
             publisher,
         )) as Arc<dyn PublishDidUseCase>
     });
-    let identity = Arc::new(DidService::from_ports(
-        did_repository,
-        did_resolver,
-        did_lifecycle,
-    ));
+    let identity = DidService::from_ports(did_repository, did_resolver, did_lifecycle);
+    let identity = Arc::new(match did_approvals {
+        Some(approvals) => identity.with_approvals(
+            approvals,
+            Arc::new(oxid_adapter_platform_system::SystemSha256),
+        ),
+        None => identity,
+    });
     #[cfg(not(target_arch = "wasm32"))]
     let protected_passport_vault_presentations = standalone_passport_vault.then(|| {
         let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();

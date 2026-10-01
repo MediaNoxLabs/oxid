@@ -186,6 +186,20 @@ run_headless_integration() {
     --test portal_live_flow \
     --test portal_profile_flow \
     --test protocol_contract
+  # Positive persistence journeys require an explicit compile-time approval
+  # fixture. Keep the ordinary executable fail-closed and name every approved
+  # test so this lane cannot silently broaden production authority.
+  local approval_fixture=(
+    cargo test -p oxid-headless --features development-did-approval-fixture
+  )
+  "${approval_fixture[@]}" --test persistent_profile_flow \
+    executable_restores_encrypted_credentials_in_a_new_process -- --exact
+  "${approval_fixture[@]}" --test persistent_profile_flow \
+    executable_restores_standalone_vault_accounting_and_claim_replay_in_a_new_process -- --exact
+  "${approval_fixture[@]}" --test persistent_profile_flow \
+    executable_restores_managed_did_ownership_after_restart -- --exact
+  "${approval_fixture[@]}" --test portal_profile_flow \
+    portal_standalone_profile_issues_encrypts_restores_and_reverifies_in_a_new_process -- --exact
   cargo test -p oxid-headless --features standalone-faucet \
     --test standalone_faucet_live
 }

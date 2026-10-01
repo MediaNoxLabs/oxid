@@ -24,9 +24,8 @@ use oxid_credential_domain::{
     VerificationOutcome,
 };
 use oxid_identity_application::{
-    DidJubjubChallengeSigningPort, DidLifecyclePortError, DidOperationConfirmation,
-    DidOperationError, DidRecordQuery, DidRecordRepositoryError, GetDidRecordUseCase,
-    SignDidPayloadCommand, SignDidPayloadUseCase,
+    DidJubjubChallengeSigningPort, DidLifecyclePortError, DidOperationError, DidRecordQuery,
+    DidRecordRepositoryError, GetDidRecordUseCase, SignDidPayloadCommand, SignDidPayloadUseCase,
 };
 use oxid_identity_domain::{IdentityProfileId, MidnightDid};
 use oxid_platform_ports::ClockPort;
@@ -814,11 +813,6 @@ impl PresentationHolderAuthorizationPort for ManagedDidJubjubHolderAuthorization
                     did: request.holder_did,
                     method_id: request.holder_method_id.clone(),
                     payload: &payload,
-                    confirmation: DidOperationConfirmation {
-                        title: "Authorize credential presentation".to_owned(),
-                        summary: "Authorize the current protected holder method for the consented credential presentation.".to_owned(),
-                        confirmed: true,
-                    },
                 })
                 .map_err(map_did_signing_error)?;
             if signature.method_id != request.holder_method_id

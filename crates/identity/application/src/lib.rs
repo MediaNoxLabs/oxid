@@ -200,6 +200,8 @@ pub enum DidOperationError {
     PayloadTooLarge,
     ConfirmationRequired,
     InvalidConfirmation,
+    Approval(DidApprovalError),
+    RetainedRecordChanged,
     SubjectMismatch,
 }
 
@@ -219,6 +221,8 @@ impl fmt::Display for DidOperationError {
             }
             Self::ConfirmationRequired => formatter.write_str("explicit confirmation is required"),
             Self::InvalidConfirmation => formatter.write_str("confirmation intent is invalid"),
+            Self::Approval(error) => write!(formatter, "{error}"),
+            Self::RetainedRecordChanged => formatter.write_str("retained DID record changed"),
             Self::SubjectMismatch => {
                 formatter.write_str("resolved DID document subject does not match the request")
             }
@@ -376,6 +380,10 @@ pub struct DidService {
     repository: Arc<dyn DidRecordRepository>,
     resolver: Arc<dyn DidResolutionPort>,
     lifecycle: Arc<dyn DidLifecyclePort>,
+    approvals: Option<(
+        Arc<DidApprovalService>,
+        Arc<dyn oxid_platform_ports::Sha256Port>,
+    )>,
 }
 
 pub struct DidPublicationService {
@@ -431,6 +439,7 @@ impl DidService {
             repository,
             resolver,
             lifecycle: Arc::new(UnavailableDidLifecycle),
+            approvals: None,
         }
     }
 
@@ -444,7 +453,19 @@ impl DidService {
             repository,
             resolver,
             lifecycle,
+            approvals: None,
         }
+    }
+
+    /// Composition-only injection. Ordinary services cannot approve protected operations.
+    #[must_use]
+    pub fn with_approvals(
+        mut self,
+        approvals: Arc<DidApprovalService>,
+        hash: Arc<dyn oxid_platform_ports::Sha256Port>,
+    ) -> Self {
+        self.approvals = Some((approvals, hash));
+        self
     }
 }
 
@@ -859,14 +880,6 @@ mod tests {
         }
     }
 
-    fn confirmation(confirmed: bool) -> DidOperationConfirmation {
-        DidOperationConfirmation {
-            title: "Authorize DID operation".to_owned(),
-            summary: "Exercise the application lifecycle boundary".to_owned(),
-            confirmed,
-        }
-    }
-
     #[test]
     fn resolves_persists_lists_gets_and_forgets_by_profile() {
         let service = DidService::new(
@@ -1165,7 +1178,7 @@ mod tests {
     }
 
     #[test]
-    fn creates_updates_signs_and_deactivates_with_confirmation() {
+    fn creates_updates_signs_and_deactivates_with_approval() {
         let service = DidService::from_ports(
             Arc::new(MemoryRepository::default()),
             Arc::new(FixedResolver),
@@ -1193,10 +1206,16 @@ mod tests {
                 operation: DidUpdate::AddAlsoKnownAs {
                     value: "https://example.test/denied".to_owned(),
                 },
-                confirmation: confirmation(false),
             },
         );
-        assert_eq!(denied, Err(DidOperationError::ConfirmationRequired));
+        assert_eq!(
+            denied,
+            Err(DidOperationError::Approval(DidApprovalError::Unavailable))
+        );
+        let service = service.with_approvals(
+            Arc::new(crate::approval::tests::service().0),
+            Arc::new(crate::lifecycle::tests::TestHash::default()),
+        );
 
         UpdateDidUseCase::execute(
             &service,
@@ -1206,7 +1225,6 @@ mod tests {
                 operation: DidUpdate::AddAlsoKnownAs {
                     value: "https://example.test/accepted".to_owned(),
                 },
-                confirmation: confirmation(true),
             },
         )
         .expect("update");
@@ -1219,7 +1237,6 @@ mod tests {
                     did: DID.to_owned(),
                     method_id: "#auth-1".to_owned(),
                     payload: b"challenge",
-                    confirmation: confirmation(true),
                 }
             )
             .expect("sign")
@@ -1235,7 +1252,6 @@ mod tests {
                     did: DID.to_owned(),
                     method_id: "#auth-1".to_owned(),
                     payload: &[],
-                    confirmation: confirmation(true),
                 }
             ),
             Err(DidOperationError::EmptyPayload)
@@ -1246,7 +1262,6 @@ mod tests {
             DeactivateDidCommand {
                 profile_id: "profile_test".to_owned(),
                 did: DID.to_owned(),
-                confirmation: confirmation(true),
             },
         )
         .expect("deactivate");

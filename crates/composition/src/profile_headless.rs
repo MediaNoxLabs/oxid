@@ -29,7 +29,7 @@ use super::services::ApplicationServices;
 #[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
 use super::standalone_genesis::{public_profile_protection, public_standalone_network};
 use super::wiring::{
-    compose_with_adapters, compose_with_adapters_and_credential_profile,
+    compose_with_adapters, compose_with_adapters_and_credential_profile_and_did_approvals,
     compose_with_adapters_and_presentation, compose_with_adapters_and_protection,
     with_wallet_onboarding,
 };
@@ -94,6 +94,18 @@ pub(super) fn compose_headless_with_credential_profile(
     credential_presentation: CredentialPresentationComposition,
     credential_profile: HeadlessCredentialProfile,
 ) -> ApplicationServices {
+    compose_headless_with_credential_profile_and_did_approvals(
+        credential_presentation,
+        credential_profile,
+        None,
+    )
+}
+
+pub(super) fn compose_headless_with_credential_profile_and_did_approvals(
+    credential_presentation: CredentialPresentationComposition,
+    credential_profile: HeadlessCredentialProfile,
+    did_approvals: Option<Arc<oxid_identity_application::DidApprovalService>>,
+) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
     let (security, profiles) = development_security_and_profiles(&clock);
     #[cfg(not(target_arch = "wasm32"))]
@@ -120,13 +132,14 @@ pub(super) fn compose_headless_with_credential_profile(
     );
     #[cfg(not(target_arch = "wasm32"))]
     let midnight = Arc::new(midnight);
-    let services = compose_with_adapters_and_credential_profile(
+    let services = compose_with_adapters_and_credential_profile_and_did_approvals(
         Arc::clone(&profiles),
         Arc::clone(&security),
         Arc::clone(&midnight),
         credential_presentation,
         credential_profile,
         |security| security,
+        did_approvals,
     );
     let services = with_wallet_onboarding(
         services,
@@ -143,6 +156,39 @@ pub(super) fn compose_headless_with_credential_profile(
     {
         services
     }
+}
+
+/// Persistent headless composition for the separately named test fixture.
+///
+/// The fixture is selected by its compile-time feature and executable source;
+/// no environment value or incoming request can enable this authority in the
+/// ordinary headless binary.
+#[cfg(feature = "development-did-approval")]
+#[must_use]
+pub fn compose_headless_with_development_did_approval() -> ApplicationServices {
+    compose_headless_with_credential_profile_and_did_approvals(
+        CredentialPresentationComposition::Standalone,
+        HeadlessCredentialProfile::Standalone,
+        Some(development_did_approval_service()),
+    )
+}
+
+#[cfg(feature = "development-did-approval")]
+pub(super) fn development_did_approval_service()
+-> Arc<oxid_identity_application::DidApprovalService> {
+    use oxid_identity_application::{
+        DidApprovalClockError, DidApprovalClockPort, development_did_approvals,
+    };
+
+    struct ApprovalClock;
+    impl DidApprovalClockPort for ApprovalClock {
+        fn now(&self) -> Result<oxid_foundation::UnixTimestampMillis, DidApprovalClockError> {
+            oxid_platform_ports::ClockPort::now(&SystemClock)
+                .map_err(|_| DidApprovalClockError::Unavailable)
+        }
+    }
+
+    development_did_approvals(Arc::new(ApprovalClock))
 }
 
 /// Wires optional public-account and private shielded checkpoints to a live indexer.

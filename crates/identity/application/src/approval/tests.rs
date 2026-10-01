@@ -4,11 +4,27 @@ use super::*;
 use std::sync::{Barrier, atomic::AtomicU64};
 
 #[derive(Default)]
-struct TestClock(AtomicU64);
+pub(crate) struct TestClock(pub(crate) AtomicU64);
 impl DidApprovalClockPort for TestClock {
     fn now(&self) -> Result<UnixTimestampMillis, DidApprovalClockError> {
         Ok(UnixTimestampMillis::new(self.0.load(Ordering::SeqCst)))
     }
+}
+
+pub(crate) fn service_with_observer(
+    observer: impl Fn(&DidApprovalIntent) + Send + Sync + 'static,
+) -> DidApprovalService {
+    struct Observed<F>(F);
+    impl<F: Fn(&DidApprovalIntent) + Send + Sync> TrustedDidApprovalPort for Observed<F> {
+        fn approve(&self, intent: &DidApprovalIntent) -> Result<(), TrustedDidApprovalError> {
+            (self.0)(intent);
+            Ok(())
+        }
+    }
+    DidApprovalService::with_trusted_did_port(
+        Arc::new(TestClock::default()),
+        Arc::new(Observed(observer)),
+    )
 }
 
 struct Trusted;
@@ -32,7 +48,11 @@ fn update(profile_id: &str, did_byte: u8, digest: u8) -> DidApprovalRequest<Upda
     )
 }
 fn deactivate(profile_id: &str, did_byte: u8) -> DidApprovalRequest<DeactivateDidApproval> {
-    DidApprovalRequest::deactivate(profile(profile_id), did(did_byte))
+    DidApprovalRequest::deactivate(
+        profile(profile_id),
+        did(did_byte),
+        CanonicalDidApprovalDigest::from_sha256([0; 32]),
+    )
 }
 fn sign(
     profile_id: &str,
@@ -47,7 +67,7 @@ fn sign(
         CanonicalDidApprovalDigest::from_sha256([digest; 32]),
     )
 }
-fn service() -> (DidApprovalService, Arc<TestClock>) {
+pub(crate) fn service() -> (DidApprovalService, Arc<TestClock>) {
     let clock = Arc::new(TestClock::default());
     (
         DidApprovalService::with_trusted_did_port(clock.clone(), Arc::new(Trusted)),

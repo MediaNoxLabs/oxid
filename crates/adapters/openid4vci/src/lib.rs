@@ -17,8 +17,8 @@ use oxid_credential_application::{
     ImportVerifiedCredentialCommand, ImportVerifiedCredentialUseCase,
 };
 use oxid_identity_application::{
-    DidLifecyclePortError, DidOperationConfirmation, DidOperationError, DidRecordQuery,
-    DidRecordRepositoryError, GetDidRecordUseCase, SignDidPayloadCommand, SignDidPayloadUseCase,
+    DidLifecyclePortError, DidOperationError, DidRecordQuery, DidRecordRepositoryError,
+    GetDidRecordUseCase, SignDidPayloadCommand, SignDidPayloadUseCase,
 };
 use oxid_platform_ports::ClockPort;
 use oxid_protocol_application::{
@@ -1341,12 +1341,6 @@ impl CredentialHolderProofPort for DidCredentialHolderProof {
                     did: request.holder_did,
                     method_id: request.method_id,
                     payload: &signing_payload,
-                    confirmation: DidOperationConfirmation {
-                        title: "Issue credential".to_owned(),
-                        summary: "Bind the accepted credential issuance to this DID method."
-                            .to_owned(),
-                        confirmed: true,
-                    },
                 })
                 .map_err(map_sign_error)?;
             if signature.signature_bytes.len() != 64
@@ -1466,6 +1460,18 @@ mod laceid_portal_contract_tests;
 
 #[cfg(test)]
 mod tests {
+    struct ApprovalClock;
+    impl oxid_identity_application::DidApprovalClockPort for ApprovalClock {
+        fn now(
+            &self,
+        ) -> Result<
+            oxid_foundation::UnixTimestampMillis,
+            oxid_identity_application::DidApprovalClockError,
+        > {
+            Ok(oxid_foundation::UnixTimestampMillis::new(0))
+        }
+    }
+
     use super::*;
     use oxid_adapter_did_midnight::{StandaloneDidLifecycle, StandaloneDidResolver};
     use oxid_adapter_platform_system::{OsRandom, SystemClock};
@@ -1528,11 +1534,17 @@ mod tests {
         .expect("security should initialize");
         let keys: Arc<dyn WalletKeyOperationPort> = security;
         let repository: Arc<dyn DidRecordRepository> = Arc::new(InMemoryDidRecordRepository::new());
-        let identity = Arc::new(DidService::from_ports(
-            repository,
-            Arc::new(StandaloneDidResolver),
-            Arc::new(StandaloneDidLifecycle::new(keys)),
-        ));
+        let identity = Arc::new(
+            DidService::from_ports(
+                repository,
+                Arc::new(StandaloneDidResolver),
+                Arc::new(StandaloneDidLifecycle::new(keys)),
+            )
+            .with_approvals(
+                oxid_identity_application::development_did_approvals(Arc::new(ApprovalClock)),
+                Arc::new(oxid_adapter_platform_system::SystemSha256),
+            ),
+        );
         let did = CreateDidUseCase::execute(
             identity.as_ref(),
             CreateDidCommand {

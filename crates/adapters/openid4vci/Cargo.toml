@@ -55,6 +55,8 @@ tokio = { workspace = true, features = ["rt-multi-thread"], optional = true }
 oxid-adapter-platform-system = { workspace = true, optional = true }
 
 [dev-dependencies]
+oxid-foundation.workspace = true
+oxid-identity-application = { workspace = true, features = ["development-approval"] }
 hex.workspace = true
 oxid-adapter-did-midnight.workspace = true
 oxid-adapter-storage-dev.workspace = true

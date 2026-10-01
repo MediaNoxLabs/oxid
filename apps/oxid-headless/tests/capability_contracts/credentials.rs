@@ -56,7 +56,8 @@ fn receives_reverifies_and_deletes_a_credential_without_exposing_wire_bytes() {
 
 #[test]
 fn issues_and_stores_a_verified_credential_through_the_headless_flow() {
-    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let wallet =
+        HeadlessWallet::new(oxid_composition::compose_in_memory_with_development_did_approval());
     let created = execute_with_wallet(
         &wallet,
         r#"{"protocol":"oxid.headless.v1","id":"issuance-profile","method":"wallet.profile.create","params":{"displayName":"Issuance flow"}}"#,
@@ -265,25 +266,20 @@ fn issues_and_stores_a_verified_credential_through_the_headless_flow() {
         .expect("original holder x-coordinate")
         .to_owned();
     let rotated_holder = execute_with_wallet(
-            &wallet,
-            &json!({
-                "protocol": PROTOCOL_VERSION,
-                "id": "presentation-holder-rotate",
-                "method": "did.update",
-                "params": {
-                    "operation": "updateVerificationMethod",
-                    "did": did,
-                    "methodId": holder_binding_method_id,
-                    "algorithm": "jubjub",
-                    "confirmation": {
-                        "title": "Rotate presentation key",
-                        "summary": "Authorize the current DID method to replace its protected presentation key.",
-                        "confirmed": true
-                    }
-                }
-            })
-            .to_string(),
-        );
+        &wallet,
+        &json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "presentation-holder-rotate",
+            "method": "did.update",
+            "params": {
+                "operation": "updateVerificationMethod",
+                "did": did,
+                "methodId": holder_binding_method_id,
+                "algorithm": "jubjub",
+            }
+        })
+        .to_string(),
+    );
     let rotated_holder_x =
         rotated_holder[0]["result"]["didRecord"]["document"]["verificationMethods"]
             .as_array()
@@ -481,11 +477,6 @@ fn issues_and_stores_a_verified_credential_through_the_headless_flow() {
                 "did": did,
                 "relationship": "assertionMethod",
                 "methodId": holder_binding_method_id,
-                "confirmation": {
-                    "title": "Remove presentation authority",
-                    "summary": "Remove this DID method from the assertion relationship.",
-                    "confirmed": true
-                }
             }
         })
         .to_string(),

@@ -17,6 +17,7 @@ use std::{
 };
 
 use futures::{SinkExt as _, StreamExt as _};
+#[cfg(feature = "development-did-approval-fixture")]
 use oxid_adapter_openid4vci::standalone_credential_offer;
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
@@ -43,7 +44,28 @@ impl ProcessHarness {
     }
 
     fn spawn_with_environment(store_path: &PathBuf, environment: &[(&str, &str)]) -> Self {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
+        Self::spawn_executable_with_environment(
+            env!("CARGO_BIN_EXE_oxid-headless"),
+            store_path,
+            environment,
+        )
+    }
+
+    #[cfg(feature = "development-did-approval-fixture")]
+    fn spawn_with_development_did_approval(store_path: &PathBuf) -> Self {
+        Self::spawn_executable_with_environment(
+            env!("CARGO_BIN_EXE_oxid-headless-development-did-approval-fixture"),
+            store_path,
+            &[],
+        )
+    }
+
+    fn spawn_executable_with_environment(
+        executable: &str,
+        store_path: &PathBuf,
+        environment: &[(&str, &str)],
+    ) -> Self {
+        let mut command = Command::new(executable);
         command
             .env("OXID_PROFILE_STORE_PATH", store_path)
             .env(
@@ -742,10 +764,11 @@ fn executable_restores_profile_selection_in_a_new_process() {
     second_process.quit();
 }
 
+#[cfg(feature = "development-did-approval-fixture")]
 #[test]
 fn executable_restores_encrypted_credentials_in_a_new_process() {
     let store = TestStore::new();
-    let mut first_process = ProcessHarness::spawn(&store.path);
+    let mut first_process = ProcessHarness::spawn_with_development_did_approval(&store.path);
     let created = first_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "credential-create-profile",
         "method": "wallet.profile.create", "params": { "displayName": "Credential owner" }
@@ -871,7 +894,7 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
         32
     );
 
-    let mut second_process = ProcessHarness::spawn(&store.path);
+    let mut second_process = ProcessHarness::spawn_with_development_did_approval(&store.path);
     let listed = second_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "credential-list-restored",
         "method": "credential.list", "params": {}
@@ -977,7 +1000,7 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
     assert_eq!(removed_disclosure["error"]["code"], "not_found");
     second_process.quit();
 
-    let mut third_process = ProcessHarness::spawn(&store.path);
+    let mut third_process = ProcessHarness::spawn_with_development_did_approval(&store.path);
     let removed_after_restart = third_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "credential-list-after-delete",
         "method": "credential.list", "params": {}
@@ -991,10 +1014,11 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
     third_process.quit();
 }
 
+#[cfg(feature = "development-did-approval-fixture")]
 #[test]
 fn executable_restores_standalone_vault_accounting_and_claim_replay_in_a_new_process() {
     let store = TestStore::new();
-    let mut first_process = ProcessHarness::spawn(&store.path);
+    let mut first_process = ProcessHarness::spawn_with_development_did_approval(&store.path);
     let created = first_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "vault-persist-profile",
         "method": "wallet.profile.create", "params": { "displayName": "Vault owner" }
@@ -1128,7 +1152,7 @@ fn executable_restores_standalone_vault_accounting_and_claim_replay_in_a_new_pro
         assert!(!stored.contains(forbidden));
     }
 
-    let mut second_process = ProcessHarness::spawn(&store.path);
+    let mut second_process = ProcessHarness::spawn_with_development_did_approval(&store.path);
     let restored = second_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "vault-persist-restored",
         "method": "vault.locks.list", "params": {}
@@ -1160,7 +1184,7 @@ fn executable_restores_standalone_vault_accounting_and_claim_replay_in_a_new_pro
     assert_eq!(next_lock["result"]["lock"]["lockId"], 1);
     second_process.quit();
 
-    let mut third_process = ProcessHarness::spawn(&store.path);
+    let mut third_process = ProcessHarness::spawn_with_development_did_approval(&store.path);
     let final_state = third_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "vault-persist-final",
         "method": "vault.locks.list", "params": {}
@@ -1241,10 +1265,11 @@ fn executable_restores_profile_scoped_did_inventory_in_a_new_process() {
     second_process.quit();
 }
 
+#[cfg(feature = "development-did-approval-fixture")]
 #[test]
 fn executable_restores_managed_did_ownership_after_restart() {
     let store = TestStore::new();
-    let mut first_process = ProcessHarness::spawn(&store.path);
+    let mut first_process = ProcessHarness::spawn_with_development_did_approval(&store.path);
     let created = first_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "managed-create-profile",
         "method": "wallet.profile.create", "params": { "displayName": "Managed DID" }
@@ -1284,15 +1309,10 @@ fn executable_restores_managed_did_ownership_after_restart() {
         "method": "did.update", "params": {
             "operation": "addAlsoKnownAs",
             "did": did,
-            "value": "https://example.test/managed",
-            "confirmation": {
-                "title": "Update DID document",
-                "summary": "Authorize the visible alias change",
-                "confirmed": true
-            }
+            "value": "https://example.test/managed"
         }
     }));
-    assert_eq!(updated["ok"], true);
+    assert_eq!(updated["ok"], true, "unexpected response: {updated}");
     assert_eq!(
         updated["result"]["didRecord"]["documentMetadata"]["versionId"],
         "standalone-2"
@@ -1300,7 +1320,7 @@ fn executable_restores_managed_did_ownership_after_restart() {
     assert!(!updated.to_string().contains("key_"));
     first_process.quit();
 
-    let mut second_process = ProcessHarness::spawn(&store.path);
+    let mut second_process = ProcessHarness::spawn_with_development_did_approval(&store.path);
     let restored = second_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "managed-did-get",
         "method": "did.get", "params": { "did": did }
@@ -1315,12 +1335,7 @@ fn executable_restores_managed_did_ownership_after_restart() {
         "method": "did.update", "params": {
             "operation": "removeAlsoKnownAs",
             "did": did,
-            "value": "https://example.test/managed",
-            "confirmation": {
-                "title": "Update DID document",
-                "summary": "Authorize the visible alias change",
-                "confirmed": true
-            }
+            "value": "https://example.test/managed"
         }
     }));
     assert_eq!(

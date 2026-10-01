@@ -58,7 +58,7 @@ pub fn compose_in_memory_with_compact_presentation_artifacts(
 pub(super) fn compose_in_memory_with_presentation(
     credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices {
-    compose_in_memory_with_presentation_and_approvals(credential_presentation, None)
+    compose_in_memory_with_presentation_and_approvals(credential_presentation, None, None)
 }
 
 /// Explicit process-local test/demo composition. This injects an already
@@ -71,12 +71,35 @@ pub fn compose_in_memory_with_approvals(
     compose_in_memory_with_presentation_and_approvals(
         CredentialPresentationComposition::Standalone,
         Some(approvals),
+        None,
+    )
+}
+
+/// Explicit test/development fixture; never selected by environment or input.
+#[cfg(any(test, feature = "development-did-approval"))]
+#[must_use]
+pub fn compose_in_memory_with_development_did_approval() -> ApplicationServices {
+    use oxid_identity_application::{
+        DidApprovalClockError, DidApprovalClockPort, development_did_approvals,
+    };
+    struct ApprovalClock;
+    impl DidApprovalClockPort for ApprovalClock {
+        fn now(&self) -> Result<oxid_foundation::UnixTimestampMillis, DidApprovalClockError> {
+            oxid_platform_ports::ClockPort::now(&SystemClock)
+                .map_err(|_| DidApprovalClockError::Unavailable)
+        }
+    }
+    compose_in_memory_with_presentation_and_approvals(
+        CredentialPresentationComposition::Standalone,
+        None,
+        Some(development_did_approvals(Arc::new(ApprovalClock))),
     )
 }
 
 fn compose_in_memory_with_presentation_and_approvals(
     credential_presentation: CredentialPresentationComposition,
     approvals: Option<Arc<oxid_wallet_application::WalletApprovalService>>,
+    did_approvals: Option<Arc<oxid_identity_application::DidApprovalService>>,
 ) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
@@ -121,6 +144,7 @@ fn compose_in_memory_with_presentation_and_approvals(
         PassportVaultRepositoryComposition::process_local(),
         |security| security,
         approvals,
+        did_approvals,
     );
     let services = with_wallet_onboarding(
         services,
