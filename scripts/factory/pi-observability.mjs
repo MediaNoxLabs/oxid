@@ -125,7 +125,7 @@ function jsonFrom(command, args) {
 async function status() {
   let receiver = { running: false, url: RECEIVER_URL };
   try {
-    const response = await fetch(`${RECEIVER_URL}/api/v1/metrics/conversations`, { signal: AbortSignal.timeout(1500) });
+    const response = await fetch(`${RECEIVER_URL}/api/v1/metrics/conversations`, { signal: AbortSignal.timeout(1500) }); // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- local receiver is bound to loopback only
     if (response.ok) {
       const metrics = await response.json();
       receiver = { running: true, url: RECEIVER_URL, conversations: metrics.matched_conversations ?? 0 };
@@ -137,7 +137,7 @@ async function status() {
   try { doctor = jsonFrom("agento11y", ["doctor", "--json"]); } catch { /* Report absence without leaking configuration. */ }
   let grafana = false;
   try {
-    const response = await fetch("http://127.0.0.1:3000/api/health", { signal: AbortSignal.timeout(1500) });
+    const response = await fetch("http://127.0.0.1:3000/api/health", { signal: AbortSignal.timeout(1500) }); // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- Homebrew Grafana is a loopback-only local service
     grafana = response.ok;
   } catch { /* Grafana is optional. */ }
   process.stdout.write(`${JSON.stringify({

@@ -72,7 +72,7 @@ async function install() {
   let healthy = false;
   for (let attempt = 0; attempt < 60 && !healthy; attempt += 1) {
     try {
-      const response = await fetch("http://127.0.0.1:3000/api/health", { signal: AbortSignal.timeout(1000) });
+      const response = await fetch("http://127.0.0.1:3000/api/health", { signal: AbortSignal.timeout(1000) }); // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- Homebrew Grafana is a loopback-only local service
       healthy = response.ok;
     } catch { /* Grafana is still starting. */ }
     if (!healthy) await new Promise((resolve) => setTimeout(resolve, 500));
@@ -84,7 +84,7 @@ async function install() {
 async function status() {
   let grafanaHealthy = false;
   try {
-    const response = await fetch("http://127.0.0.1:3000/api/health", { signal: AbortSignal.timeout(1500) });
+    const response = await fetch("http://127.0.0.1:3000/api/health", { signal: AbortSignal.timeout(1500) }); // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- Homebrew Grafana is a loopback-only local service
     grafanaHealthy = response.ok;
   } catch { /* Optional local service. */ }
   process.stdout.write(`${JSON.stringify({
