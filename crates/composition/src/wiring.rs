@@ -522,6 +522,52 @@ where
         + 'static,
     F: FnOnce(Arc<S>) -> Arc<dyn WalletProtectionPort>,
 {
+    compose_with_identity_adapters_and_approvals(
+        repository,
+        security,
+        midnight,
+        identity_adapters,
+        passport_vault_repository,
+        protection_for_security,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn compose_with_identity_adapters_and_approvals<R, S, M, F>(
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    identity_adapters: IdentityAdapters,
+    passport_vault_repository: PassportVaultRepositoryComposition,
+    protection_for_security: F,
+    approvals: Option<Arc<oxid_wallet_application::WalletApprovalService>>,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository
+        + WalletProfileAssociationRepository
+        + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
+        + 'static,
+    S: WalletProtectionPort
+        + WalletKeyOperationPort
+        + WalletJubjubChallengeSigningPort
+        + WalletPortableBackupPort
+        + PortableCustodyVaultPort
+        + 'static,
+    M: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletAccountDerivationPort
+        + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
+        + WalletShieldedSyncPort
+        + WalletTransactionPort
+        + MidnightPublicCallContextSource
+        + MidnightDiagnosticAttachPort
+        + NativeMidnightCompositionCapability
+        + 'static,
+    F: FnOnce(Arc<S>) -> Arc<dyn WalletProtectionPort>,
+{
     let diagnostic_repository = Arc::new(InMemoryDiagnosticStore::default());
     let diagnostic_events: Arc<dyn DiagnosticEventSinkPort> = diagnostic_repository.clone();
     midnight.attach_diagnostic_sink(Arc::clone(&diagnostic_events));
@@ -612,9 +658,11 @@ where
     #[cfg(target_arch = "wasm32")]
     let compact_presentation_proof_available = false;
     let clock = Arc::new(SystemClock);
-    let approvals = Arc::new(oxid_wallet_application::WalletApprovalService::new(
-        clock.clone(),
-    ));
+    let approvals = approvals.unwrap_or_else(|| {
+        Arc::new(oxid_wallet_application::WalletApprovalService::new(
+            clock.clone(),
+        ))
+    });
     let random = Arc::new(OsRandom);
     let complete_custody: Arc<dyn PortableCustodyVaultPort> = security.clone();
     let complete_profiles: Arc<dyn WalletProfileRepository> = repository.clone();
@@ -654,7 +702,7 @@ where
     let portable_backup = Arc::new(WalletPortableBackupService::new(Arc::clone(&security)));
     let sensitive_keys = Arc::new(oxid_wallet_application::WalletSensitiveKeyService::new(
         security.clone(),
-        approvals,
+        approvals.clone(),
         Arc::new(oxid_adapter_platform_system::SystemSha256),
     ));
     let keys = Arc::new(WalletKeyService::new(security));
@@ -684,16 +732,22 @@ where
     let dust = Arc::new(WalletDustSyncService::new(Arc::clone(&midnight)));
     let shielded = Arc::new(WalletShieldedSyncService::new(Arc::clone(&midnight)));
     #[cfg(not(target_arch = "wasm32"))]
-    let dust_registrations = Arc::new(WalletDustRegistrationService::new(
+    let dust_registrations = Arc::new(WalletDustRegistrationService::with_approvals(
         Arc::clone(&midnight),
         Arc::clone(&clock),
+        approvals.clone(),
     ));
     #[cfg(target_arch = "wasm32")]
-    let dust_registrations = Arc::new(WalletDustRegistrationService::new(
+    let dust_registrations = Arc::new(WalletDustRegistrationService::with_approvals(
         Arc::new(UnavailableWalletDustRegistrationPort),
         Arc::clone(&clock),
+        approvals.clone(),
     ));
-    let transactions = Arc::new(WalletTransactionService::new(midnight, Arc::clone(&clock)));
+    let transactions = Arc::new(WalletTransactionService::with_approvals(
+        midnight,
+        Arc::clone(&clock),
+        approvals,
+    ));
     let publish_did = did_publisher.map(|publisher| {
         Arc::new(DidPublicationService::new(
             Arc::clone(&did_repository),

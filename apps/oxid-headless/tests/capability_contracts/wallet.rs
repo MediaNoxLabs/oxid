@@ -164,8 +164,81 @@ fn derives_and_binds_a_midnight_account_without_secret_protocol_fields() {
 }
 
 #[test]
-fn completes_an_exact_unshielded_transfer_without_exposing_material() {
+fn legacy_inputs_cannot_mint_transfer_or_registration_approval() {
     let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let created = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"create","method":"wallet.profile.create","params":{"displayName":"Denied movement"}}"#,
+    );
+    let profile = created[0]["result"]["profile"]["id"].as_str().unwrap();
+    let setup = execute_with_wallet(
+        &wallet,
+        &format!(
+            "{}\n{}\n{}\n{}",
+            json!({"protocol":PROTOCOL_VERSION,"id":"select","method":"wallet.profile.select","params":{"profileId":profile}}),
+            r#"{"protocol":"oxid.headless.v1","id":"init","method":"wallet.security.initialize","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"derive","method":"wallet.account.derive","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"sync","method":"wallet.connect","params":{}}"#
+        ),
+    );
+    let recipient = setup[2]["result"]["account"]["receiveAddress"]["value"]
+        .as_str()
+        .unwrap();
+    for (prepare, params, key, authorize, submit) in [
+        (
+            "wallet.transaction.prepare_unshielded",
+            json!({"recipientAddress":recipient,"amountAtomicUnits":"1000000"}),
+            "transfer",
+            "wallet.transaction.authorize_unshielded",
+            "wallet.transaction.submit_unshielded",
+        ),
+        (
+            "wallet.dust.registration.prepare",
+            json!({}),
+            "registration",
+            "wallet.dust.registration.authorize",
+            "wallet.dust.registration.submit",
+        ),
+    ] {
+        let prepared = execute_with_wallet(
+            &wallet,
+            &json!({"protocol":PROTOCOL_VERSION,"id":"prepare","method":prepare,"params":params})
+                .to_string(),
+        );
+        let draft = prepared[0]["result"][key]["draftId"].as_str().unwrap();
+        let challenge = prepared[0]["result"][key]["authorizationChallenge"]
+            .as_str()
+            .unwrap();
+        for confirmed in [false, true] {
+            let confirmation =
+                json!({"title":"private-prose","summary":"private-payload","confirmed":confirmed});
+            for (method, mut params) in [
+                (
+                    authorize,
+                    json!({"draftId":draft,"authorizationChallenge":challenge,"confirmation":confirmation}),
+                ),
+                (submit, json!({"draftId":draft,"confirmation":confirmation})),
+            ] {
+                for forged in [false, true] {
+                    if forged {
+                        params["approval"] = json!("private-token");
+                    }
+                    let response = execute_with_wallet(&wallet, &json!({"protocol":PROTOCOL_VERSION,"id":"denied","method":method,"params":params}).to_string());
+                    assert_eq!(response[0]["ok"], false, "{response:?}");
+                    if method == authorize && confirmed && !forged {
+                        assert_eq!(response[0]["error"]["code"], "approval_unavailable");
+                    }
+                    assert!(response[0].get("result").is_none());
+                    assert!(!response[0].to_string().contains("private-"));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn completes_an_exact_unshielded_transfer_without_exposing_material() {
+    let wallet = super::support::trusted_movement_wallet();
     let created = execute_with_wallet(
         &wallet,
         r#"{"protocol":"oxid.headless.v1","id":"transfer-create","method":"wallet.profile.create","params":{"displayName":"Transfer flow"}}"#,
@@ -522,7 +595,7 @@ fn completes_an_exact_unshielded_transfer_without_exposing_material() {
 
 #[test]
 fn starts_cancels_and_retries_a_submission_through_the_headless_protocol() {
-    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let wallet = super::support::trusted_movement_wallet();
     let created = execute_with_wallet(
         &wallet,
         r#"{"protocol":"oxid.headless.v1","id":"cancel-create","method":"wallet.profile.create","params":{"displayName":"Cancellation flow"}}"#,

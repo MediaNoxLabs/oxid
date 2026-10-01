@@ -29,7 +29,7 @@ fn exposes_the_shared_dust_settlement_projection_without_secret_material() {
 
 #[test]
 fn drives_the_shared_dust_settlement_to_the_selected_realm_without_legacy_calls() {
-    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let wallet = super::support::trusted_movement_wallet();
     let created = execute_with_wallet(
         &wallet,
         r#"{"protocol":"oxid.headless.v1","id":"settlement-create","method":"wallet.profile.create","params":{"displayName":"Settlement flow"}}"#,
@@ -251,7 +251,7 @@ fn exposes_initial_resumed_current_and_cancelled_dust_flows() {
 
 #[test]
 fn registers_protected_dust_through_explicit_secret_free_headless_stages() {
-    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let wallet = super::support::trusted_movement_wallet();
     let created = execute_with_wallet(
         &wallet,
         r#"{"protocol":"oxid.headless.v1","id":"register-create","method":"wallet.profile.create","params":{"displayName":"Registration flow"}}"#,
@@ -425,7 +425,7 @@ fn registers_protected_dust_through_explicit_secret_free_headless_stages() {
 
 #[test]
 fn exposes_exact_resumable_shielded_flow_without_secret_material() {
-    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let wallet = super::support::trusted_movement_wallet();
     let created = execute_with_wallet(
         &wallet,
         r#"{"protocol":"oxid.headless.v1","id":"shielded-create","method":"wallet.profile.create","params":{"displayName":"Shielded flow"}}"#,

@@ -402,6 +402,9 @@ pub(super) fn transaction_error(id: Option<String>, error: WalletTransactionErro
             "invalid_argument",
             "confirmation title and summary must be non-empty and bounded",
         ),
+        WalletTransactionError::Approval(error) => {
+            Response::error(id, "approval_unavailable", error.to_string())
+        }
         WalletTransactionError::Clock(_) => Response::error(
             id,
             "platform_unavailable",
@@ -433,6 +436,9 @@ pub(super) fn dust_registration_error(
             "invalid_argument",
             "confirmation title and summary must be non-empty and bounded",
         ),
+        WalletDustRegistrationError::Approval(error) => {
+            Response::error(id, "approval_unavailable", error.to_string())
+        }
         WalletDustRegistrationError::Clock(_) => Response::error(
             id,
             "platform_unavailable",

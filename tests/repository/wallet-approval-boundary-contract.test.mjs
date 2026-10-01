@@ -15,7 +15,8 @@ const unavailableImplementation = `impl TrustedWalletApprovalPort for Unavailabl
 function violations(files) {
   const failures = [];
   for (const [path, source] of files) {
-    if (path === fixturePath || path === "crates/composition/tests/direct_key_approval.rs") continue;
+    if (path === fixturePath || path === "crates/composition/tests/direct_key_approval.rs"
+      || path === "apps/oxid-headless/tests/capability_contracts/support.rs") continue;
     if (path !== modulePath) {
       if (/\b(?:TrustedWalletApprovalPort|with_trusted_port)\b/u.test(source)) failures.push(path);
       continue;
@@ -24,7 +25,7 @@ function violations(files) {
     const implementations = [...source.matchAll(/impl\s+TrustedWalletApprovalPort\s+for\s+(\w+)/gu)];
     if (implementations.length !== 1 || implementations[0][1] !== "UnavailableApproval"
       || !source.includes(unavailableImplementation)
-      || !/#\[cfg\(test\)\]\s*mod tests;/u.test(source)) failures.push(path);
+      || !/#\[cfg\(test\)\]\s*pub\(crate\) mod tests;/u.test(source)) failures.push(path);
   }
   return failures;
 }
@@ -51,5 +52,5 @@ test("guard rejects incoming injection, alias imports, and production auto appro
     ),
   )]]), [modulePath]);
   assert.deepEqual(violations([[modulePath, source + "\nimpl TrustedWalletApprovalPort for AutoApprove {}"]]), [modulePath]);
-  assert.deepEqual(violations([[modulePath, source.replace("#[cfg(test)]", "")]]), [modulePath]);
+  assert.deepEqual(violations([[modulePath, source.replace("#[cfg(test)]\npub(crate) mod tests;", "pub(crate) mod tests;")]]), [modulePath]);
 });

@@ -46,7 +46,7 @@ fn reports_ready_and_queued_capabilities() {
     }));
     assert!(methods.iter().any(|capability| {
         capability["method"] == "wallet.transaction.send_unshielded"
-            && capability["status"] == "ready"
+            && capability["status"] == "unavailable"
             && capability["aliasFor"] == "wallet.transaction.submit_unshielded"
     }));
     assert_eq!(responses[0]["result"]["custodyMode"], "development_only");
