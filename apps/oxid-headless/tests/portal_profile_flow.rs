@@ -34,6 +34,7 @@ static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const ISSUER_METHOD: &str = "did:midnight:undeployed:a4c9483a0c7cdd808056a93334ab97207b38b4363d1da5cbfb78ad256cd689f0#issuer-key-1";
 const ISSUER_X: &str = "r3S3KuAV2Y2wviagxqTsKNuUFmqHlVjfWwQvZaV_pQA";
 const ISSUER_Y: &str = "b8GewrvMw5hldx4dBHZSAqBhYb_p7bVdcVqC2FU08mM";
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
 const SECRET_CODE: &str = "PORTAL_TEST_PRE_AUTHORIZED_CODE";
 const ACCESS_TOKEN: &str = "PORTAL_TEST_ACCESS_TOKEN";
 const NONCE: &str = "PORTAL_TEST_NONCE";
@@ -105,6 +106,7 @@ impl Drop for TestStore {
     }
 }
 
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
 struct ProcessHarness {
     child: Child,
     input: ChildStdin,
@@ -112,9 +114,13 @@ struct ProcessHarness {
     error: BufReader<ChildStderr>,
 }
 
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
 impl ProcessHarness {
+    #[cfg(feature = "development-did-approval-fixture")]
     fn spawn(store: &TestStore, manifest_digest: &str) -> Self {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
+        let mut command = Command::new(env!(
+            "CARGO_BIN_EXE_oxid-headless-development-did-approval-fixture"
+        ));
         command
             .env("OXID_PROFILE_STORE_PATH", store.profiles())
             .env(
@@ -205,6 +211,7 @@ struct ServerState {
     issued_credentials: usize,
 }
 
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
 struct PortalServer {
     origin: String,
     state: Arc<Mutex<ServerState>>,
@@ -212,6 +219,7 @@ struct PortalServer {
     thread: Option<thread::JoinHandle<()>>,
 }
 
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
 impl PortalServer {
     fn spawn() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("Portal fixture listener");
@@ -550,6 +558,7 @@ fn validate_holder_proof(proof: &str, expected: &HolderProofExpectation, audienc
         .is_ok()
 }
 
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
 fn signed_holder_proof(
     signing_key: &SigningKey,
     method_id: &str,
@@ -576,12 +585,14 @@ fn signed_holder_proof(
     )
 }
 
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
 fn with_holder_proof(request: &Value, proof: &str) -> Value {
     let mut request = request.clone();
     request["proofs"]["jwt"] = json!([proof]);
     request
 }
 
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
 fn assert_holder_proof_rejected(server: &PortalServer, request: &Value, proof: &str) {
     let (status, response) = server.post_credential_request(&with_holder_proof(request, proof));
     assert_eq!(status, 400);
@@ -619,12 +630,14 @@ fn portal_private_parts() -> Value {
     })
 }
 
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
 fn request(process: &mut ProcessHarness, id: &str, method: &str, params: Value) -> Value {
     process.request(json!({
         "protocol":"oxid.headless.v1","id":id,"method":method,"params":params
     }))
 }
 
+#[cfg(feature = "development-did-approval-fixture")]
 #[test]
 fn portal_standalone_profile_issues_encrypts_restores_and_reverifies_in_a_new_process() {
     let store = TestStore::new();

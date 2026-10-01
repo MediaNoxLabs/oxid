@@ -8,8 +8,24 @@ const modulePath = "crates/identity/application/src/approval.rs";
 const fixturePath = "crates/identity/application/src/approval/development.rs";
 const unitTests = "crates/identity/application/src/approval/tests.rs";
 const compositionPath = "crates/composition/src/profile_in_memory.rs";
+const persistentCompositionPath = "crates/composition/src/profile_headless.rs";
+const environmentCompositionPath = "crates/composition/src/profile_environment.rs";
+const portalCompositionPath = "crates/composition/src/profile_mobile.rs";
+const fixtureExecutablePath = "apps/oxid-headless/tests/support/development_did_approval_fixture_main.rs";
+const headlessManifestPath = "apps/oxid-headless/Cargo.toml";
 const fixtureGate = '#[cfg(any(test, feature = "development-approval"))]';
 const compositionGate = '#[cfg(any(test, feature = "development-did-approval"))]';
+const environmentFixtureGate = `#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "headless-portal-local",
+    feature = "development-did-approval",
+    not(any(target_os = "ios", target_os = "android"))
+))]`;
+const portalFixtureGate = `#[cfg(all(
+    feature = "development-did-approval",
+    not(target_arch = "wasm32"),
+    not(any(target_os = "ios", target_os = "android"))
+))]`;
 const testConsumers = new Set([
   "crates/adapters/openid4vci/src/lib.rs",
   "crates/adapters/siopv2/src/lib.rs",
@@ -66,12 +82,33 @@ function violations(files) {
         || source.split("development_did_approvals(").length !== 2) failures.push(path);
       continue;
     }
+    if (path === persistentCompositionPath) {
+      if (!source.includes('#[cfg(feature = "development-did-approval")]\n#[must_use]\npub fn compose_headless_with_development_did_approval()')
+        || /(?:std::env|Deserialize)/u.test(source)
+        || source.split("development_did_approvals(").length !== 2) failures.push(path);
+      continue;
+    }
+    if (path === environmentCompositionPath) {
+      if (!source.includes(`${environmentFixtureGate}\npub fn compose_native_headless_process_with_development_did_approval_from_environment(`)
+        || /(?:std::env|Deserialize)/u.test(source)) failures.push(path);
+      continue;
+    }
+    if (path === portalCompositionPath) {
+      if (!source.includes(`${portalFixtureGate}\npub(super) fn compose_development_portal_from_config_with_did_approvals(`)
+        || source.split("Some(did_approvals)").length !== 2) failures.push(path);
+      continue;
+    }
+    if (path === fixtureExecutablePath) {
+      if (!source.includes("compose_native_headless_process_with_development_did_approval_from_environment()")
+        || /(?:std::env|serde|Deserialize)/u.test(source)) failures.push(path);
+      continue;
+    }
     if (path.startsWith("apps/oxid-headless/tests/") || [
       "crates/composition/src/profile_in_memory/tests.rs",
       "crates/composition/src/passport_vault/tests.rs",
       "crates/composition/src/verification.rs",
     ].includes(path)) continue;
-    if (/\b(?:development_did_approvals|compose_in_memory_with_development_did_approval)\b/u.test(source)) { failures.push(path); continue; }
+    if (/\b(?:development_did_approvals|compose_in_memory_with_development_did_approval|compose_headless_with_development_did_approval)\b/u.test(source)) { failures.push(path); continue; }
     if (/\bDidApprovalService\b/u.test(source) && ![
       "crates/identity/application/src/lib.rs",
       "crates/identity/application/src/lifecycle.rs",
@@ -87,6 +124,13 @@ test("DID authority is unavailable except for the feature-gated explicit fixture
   assert(paths.includes(modulePath));
   assert(paths.includes(fixturePath));
   assert.deepEqual(violations(paths.map(path => [path, readFileSync(path, "utf8")])), []);
+
+  const manifest = readFileSync(headlessManifestPath, "utf8");
+  assert.match(manifest, /development-did-approval-fixture = \["oxid-composition\/development-did-approval"\]/u);
+  assert.match(manifest, /name = "oxid-headless-development-did-approval-fixture"[\s\S]*required-features = \["development-did-approval-fixture"\]/u);
+  assert.doesNotMatch(manifest, /default = \[[^\]]*development-did-approval-fixture/u);
+
+  assert.match(fixtureExecutablePath, /^apps\/oxid-headless\/tests\/support\//u);
 });
 
 test("guard rejects injection, alias imports, new producers and ungated fixtures", () => {
@@ -96,6 +140,7 @@ test("guard rejects injection, alias imports, new producers and ungated fixtures
     "impl TrustedDidApprovalPort for AutoApprove {}",
     "use oxid_identity_application::development_did_approvals as approve;",
     "compose_in_memory_with_development_did_approval()",
+    "compose_headless_with_development_did_approval()",
     "use oxid_identity_application::DidApprovalService as Authority;",
     "service.with_approvals(authority, hash)",
     "DidService::with_approvals(service, authority, hash)",
@@ -115,4 +160,24 @@ test("guard rejects injection, alias imports, new producers and ungated fixtures
   const composition = readFileSync(compositionPath, "utf8");
   assert.deepEqual(violations([[compositionPath, composition.replace(compositionGate, "")]]), [compositionPath]);
   assert.deepEqual(violations([[compositionPath, composition + '\nstd::env::var("APPROVE");']]), [compositionPath]);
+  const persistentComposition = readFileSync(persistentCompositionPath, "utf8");
+  assert.deepEqual(
+    violations([[persistentCompositionPath, persistentComposition.replace('#[cfg(feature = "development-did-approval")]\n', "")]]),
+    [persistentCompositionPath],
+  );
+  const fixtureExecutable = readFileSync(fixtureExecutablePath, "utf8");
+  assert.deepEqual(
+    violations([[fixtureExecutablePath, fixtureExecutable + '\nstd::env::var("APPROVE");']]),
+    [fixtureExecutablePath],
+  );
+  const environmentComposition = readFileSync(environmentCompositionPath, "utf8");
+  assert.deepEqual(
+    violations([[environmentCompositionPath, environmentComposition.replace(environmentFixtureGate, "")]]),
+    [environmentCompositionPath],
+  );
+  const portalComposition = readFileSync(portalCompositionPath, "utf8");
+  assert.deepEqual(
+    violations([[portalCompositionPath, portalComposition.replace(portalFixtureGate, "")]]),
+    [portalCompositionPath],
+  );
 });

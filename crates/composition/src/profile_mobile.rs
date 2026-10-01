@@ -132,7 +132,7 @@ use super::standalone_genesis::{public_profile_protection, public_standalone_net
     )
 ))]
 use super::wiring::{
-    compose_with_adapters_and_credential_profile,
+    compose_with_adapters_and_credential_profile_and_did_approvals,
     with_wallet_onboarding as with_portal_wallet_onboarding,
 };
 #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -633,6 +633,32 @@ pub(super) fn compose_development_portal_from_config(
         security,
         profiles,
         |security| security,
+        None,
+    )
+}
+
+#[cfg(all(
+    feature = "development-did-approval",
+    not(target_arch = "wasm32"),
+    not(any(target_os = "ios", target_os = "android"))
+))]
+pub(super) fn compose_development_portal_from_config_with_did_approvals(
+    config: MidnightStandaloneConfig,
+    portal: PortalIdentityConfiguration,
+    credential_presentation: CredentialPresentationComposition,
+    did_approvals: Arc<oxid_identity_application::DidApprovalService>,
+) -> ApplicationServices {
+    let clock = Arc::new(SystemClock);
+    let (security, profiles) = development_security_and_profiles(&clock);
+    compose_development_portal_with_security(
+        config,
+        portal,
+        credential_presentation,
+        clock,
+        security,
+        profiles,
+        |security| security,
+        Some(did_approvals),
     )
 }
 
@@ -667,6 +693,7 @@ fn compose_mobile_public_genesis_portal_from_config(
                 security,
             )) as Arc<dyn WalletProtectionPort>
         },
+        None,
     ))
 }
 
@@ -688,6 +715,7 @@ fn compose_development_portal_with_security<N, F>(
     security: Arc<DevelopmentWalletSecurity<SystemClock, N>>,
     profiles: Arc<JsonWalletProfileRepository>,
     protection_for_security: F,
+    did_approvals: Option<Arc<oxid_identity_application::DidApprovalService>>,
 ) -> ApplicationServices
 where
     N: oxid_platform_ports::RandomPort + 'static,
@@ -699,13 +727,14 @@ where
         protected_standalone_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))
             .with_profile_association_repository(profiles.clone()),
     );
-    let services = compose_with_adapters_and_credential_profile(
+    let services = compose_with_adapters_and_credential_profile_and_did_approvals(
         Arc::clone(&profiles),
         Arc::clone(&security),
         Arc::clone(&midnight),
         credential_presentation,
         HeadlessCredentialProfile::Portal(Box::new(portal)),
         protection_for_security,
+        did_approvals,
     );
     with_passport_vault_state_source(
         with_portal_wallet_onboarding(services, profiles, security, midnight, network_id),

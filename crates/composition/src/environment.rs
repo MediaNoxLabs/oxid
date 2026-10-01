@@ -133,6 +133,7 @@ pub enum HeadlessCompositionError {
     InvalidPortalConfiguration,
     InvalidStandaloneDeploymentProfile,
     PublicStandaloneGenesisRequiresUndeployed,
+    DevelopmentDidApprovalFixtureUnavailable,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -185,6 +186,9 @@ impl std::fmt::Display for HeadlessCompositionError {
             Self::InvalidStandaloneDeploymentProfile => "invalid standalone deployment profile",
             Self::PublicStandaloneGenesisRequiresUndeployed => {
                 "public standalone genesis custody requires the undeployed network"
+            }
+            Self::DevelopmentDidApprovalFixtureUnavailable => {
+                "development DID approval fixture supports only persistent simulated or Portal standalone profiles"
             }
         };
         formatter.write_str(message)
