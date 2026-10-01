@@ -1,13 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="Oxid Lunar Aegis mark">
-  <rect width="200" height="200" rx="44" fill="#07090E"/>
-  <path d="M100 22C140 22 172 40 172 78C172 130 100 178 100 178C100 178 28 130 28 78C28 40 60 22 100 22Z" fill="#0F172A" stroke="#06B6D4" stroke-width="3"/>
-  <path d="M124 42C154 62 158 114 130 144C104 170 66 162 50 148C88 154 124 132 128 94C130 70 118 50 124 42Z" fill="#06B6D4"/>
-  <line x1="72" y1="74" x2="114" y2="116" stroke="#06B6D4" stroke-width="3" stroke-linecap="round"/>
-  <line x1="114" y1="74" x2="72" y2="116" stroke="#38BDF8" stroke-width="2.2" stroke-linecap="round"/>
-  <circle cx="93" cy="95" r="13" fill="#07090E" stroke="#06B6D4" stroke-width="3"/>
-  <path d="M88 101L86 128C86 130 88 132 91 132H99C102 132 104 130 104 128L102 101Z" fill="#07090E" stroke="#06B6D4" stroke-width="3" stroke-linejoin="round"/>
-  <circle cx="93" cy="95" r="5" fill="#06B6D4"/>
-  <circle cx="140" cy="95" r="3" fill="#06B6D4"/>
-  <circle cx="56" cy="95" r="3" fill="#38BDF8"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="48 80 410 390" role="img" aria-label="Oxid fingerprint crescent">
+  <path d="M316 114 C263 102 205 122 159 164 C111 208 92 264 106 320 C120 383 180 422 248 428 C273 431 297 426 316 418" fill="none" stroke="currentColor" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M349 178 C311 153 268 161 233 190 C197 220 181 260 187 302 C189 317 195 331 204 343" fill="none" stroke="currentColor" stroke-width="31" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M375 263 C357 228 329 214 301 216 C269 218 246 241 239 271 C231 302 244 329 269 348" fill="none" stroke="currentColor" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M353 351 C365 324 356 291 339 274 C325 260 305 258 290 269 C274 281 272 301 285 315" fill="none" stroke="currentColor" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

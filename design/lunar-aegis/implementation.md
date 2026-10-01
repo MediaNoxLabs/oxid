@@ -9,7 +9,7 @@ This export names the target. It does not change the running app.
 | Assets/identity colors | Generated `--family-assets` from accent and `--family-identity` from accent_alt | Map primary cyan and identity violet; keep Vault and fixed status colors independently reviewed. |
 | Typography | `FontFamily` in `crates/brand-build/src/lib.rs` currently offers only `system_sans` and `humanist_sans` | Add the bundled role-based font stack without inserting remote font requests. Test Ukrainian with Noto fallback. |
 | Radius | `RadiusPersonality::Rounded` currently emits a 20 px card and 12 px control | Add an explicit 24 px card mapping or reviewed profile-specific token; do not claim default Tailwind `rounded-2xl` is 24 px. |
-| Logo | `brands/oxid/assets/logo.svg` | Resolve the raster/SVG mismatch and small-size icon treatment, then replace through the brand pack. |
+| Logo | `brands/oxid/assets/logo.svg` | Use the owner-approved fingerprint-crescent mark and platform exports in [brand-icons.md](brand-icons.md); preserve the original UX Pilot logo master as historical evidence. |
 | Bottom navigation | `crates/ui-dioxus/src/lib.rs` and shared CSS | Use one five-icon implementation matching [assets/icons](assets/icons/), full labels, active underline, and ≥44 px targets. |
 | Screen flows | Existing Dioxus routes and typed view state | Follow [flow.json](flow.json) and issue #789's observed/proposed inventory; bind each screen to real prerequisites, review gates, and outcomes. |
 
