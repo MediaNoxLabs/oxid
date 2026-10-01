@@ -10,8 +10,10 @@ use oxid_identity_domain::{
     MidnightDidError,
 };
 
+mod approval;
 mod lifecycle;
 
+pub use approval::*;
 pub use lifecycle::*;
 
 pub type DidResolutionPortFuture<'a> =

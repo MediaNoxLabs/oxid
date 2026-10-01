@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 oxid-foundation.workspace = true
 oxid-identity-domain.workspace = true
+oxid-platform-ports.workspace = true
 
 [lints]
 workspace = true

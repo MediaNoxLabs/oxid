@@ -6181,6 +6181,7 @@ version = "0.1.0"
 dependencies = [
  "oxid-foundation",
  "oxid-identity-domain",
+ "oxid-platform-ports",
 ]
 
 [[package]]
