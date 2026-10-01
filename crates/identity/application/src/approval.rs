@@ -16,7 +16,18 @@ use std::{
 
 use oxid_foundation::UnixTimestampMillis;
 use oxid_identity_domain::{IdentityProfileId, MidnightDid};
-use oxid_platform_ports::ClockPort;
+
+/// Narrow time boundary owned by the identity application. Outer composition
+/// adapts its platform clock without pulling platform concerns into this hexagon.
+pub trait DidApprovalClockPort: Send + Sync {
+    fn now(&self) -> Result<UnixTimestampMillis, DidApprovalClockError>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DidApprovalClockError {
+    Unavailable,
+}
 
 /// SHA-256 of an operation's canonical payload. Construction conveys no authority.
 #[derive(Clone, PartialEq, Eq)]
@@ -242,7 +253,7 @@ impl<O: DidApprovalOperation> fmt::Debug for DidApprovalCapability<O> {
 /// protection changes invalidate every capability by advancing its generation.
 pub struct DidApprovalService {
     port: Arc<dyn TrustedDidApprovalPort>,
-    clock: Arc<dyn ClockPort>,
+    clock: Arc<dyn DidApprovalClockPort>,
     issuer: Arc<()>,
     generation: Mutex<Option<u64>>,
 }
@@ -251,13 +262,13 @@ impl DidApprovalService {
     pub const MAX_TTL_MILLIS: u64 = 120_000;
 
     #[must_use]
-    pub fn new(clock: Arc<dyn ClockPort>) -> Self {
+    pub fn new(clock: Arc<dyn DidApprovalClockPort>) -> Self {
         Self::with_trusted_port(clock, Arc::new(UnavailableApproval))
     }
 
     #[must_use]
     pub fn with_trusted_port(
-        clock: Arc<dyn ClockPort>,
+        clock: Arc<dyn DidApprovalClockPort>,
         port: Arc<dyn TrustedDidApprovalPort>,
     ) -> Self {
         Self {

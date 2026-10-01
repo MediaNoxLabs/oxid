@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use oxid_platform_ports::PlatformError;
 use std::sync::{Barrier, atomic::AtomicU64};
 
 #[derive(Default)]
 struct TestClock(AtomicU64);
-impl ClockPort for TestClock {
-    fn now(&self) -> Result<UnixTimestampMillis, PlatformError> {
+impl DidApprovalClockPort for TestClock {
+    fn now(&self) -> Result<UnixTimestampMillis, DidApprovalClockError> {
         Ok(UnixTimestampMillis::new(self.0.load(Ordering::SeqCst)))
     }
 }
