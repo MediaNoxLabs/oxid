@@ -17,6 +17,35 @@ impl TrustedWalletApprovalPort for TrustedFixture {
         Ok(())
     }
 }
+pub(crate) fn scripted_service<F>(
+    clock: Arc<dyn ClockPort>,
+    approve: F,
+) -> Arc<WalletApprovalService>
+where
+    F: Fn(&WalletApprovalIntent) -> Result<(), TrustedWalletApprovalError> + Send + Sync + 'static,
+{
+    struct Scripted<F>(F);
+    impl<F> TrustedWalletApprovalPort for Scripted<F>
+    where
+        F: Fn(&WalletApprovalIntent) -> Result<(), TrustedWalletApprovalError> + Send + Sync,
+    {
+        fn approve(&self, intent: &WalletApprovalIntent) -> Result<(), TrustedWalletApprovalError> {
+            (self.0)(intent)
+        }
+    }
+    Arc::new(WalletApprovalService::with_trusted_port(
+        clock,
+        Arc::new(Scripted(approve)),
+    ))
+}
+
+pub(crate) fn trusted_service(clock: Arc<dyn ClockPort>) -> Arc<WalletApprovalService> {
+    Arc::new(WalletApprovalService::with_trusted_port(
+        clock,
+        Arc::new(TrustedFixture),
+    ))
+}
+
 fn fixture() -> (WalletApprovalService, Arc<TestClock>) {
     let clock = Arc::new(TestClock::default());
     (

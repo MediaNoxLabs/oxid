@@ -16,7 +16,10 @@ use std::{
 
 use oxid_foundation::UnixTimestampMillis;
 use oxid_platform_ports::ClockPort;
-use oxid_wallet_domain::WalletProfileId;
+use oxid_wallet_domain::{WalletDustRegistrationPreview, WalletProfileId, WalletTransferPreview};
+
+mod movement;
+pub use movement::*;
 
 /// SHA-256 of the operation-specific canonical payload, including its key
 /// reference and every command field affecting the operation. Trusted callers
@@ -43,6 +46,22 @@ pub enum WalletApprovalIntent {
     DeleteKey {
         profile: WalletProfileId,
         digest: CanonicalApprovalDigest,
+    },
+    AuthorizeTransfer {
+        profile: WalletProfileId,
+        preview: Box<WalletTransferPreview>,
+    },
+    SubmitTransfer {
+        profile: WalletProfileId,
+        preview: Box<WalletTransferPreview>,
+    },
+    AuthorizeDustRegistration {
+        profile: WalletProfileId,
+        preview: Box<WalletDustRegistrationPreview>,
+    },
+    SubmitDustRegistration {
+        profile: WalletProfileId,
+        preview: Box<WalletDustRegistrationPreview>,
     },
 }
 
@@ -248,6 +267,22 @@ impl WalletApprovalService {
                 .checked_add(Self::MAX_TTL_MILLIS)
                 .ok_or(WalletApprovalError::Unavailable)?,
         );
+        let expires_at = match &request.intent {
+            WalletApprovalIntent::AuthorizeTransfer { preview, .. }
+            | WalletApprovalIntent::SubmitTransfer { preview, .. } => {
+                expires_at.min(preview.expires_at())
+            }
+            WalletApprovalIntent::AuthorizeDustRegistration { preview, .. }
+            | WalletApprovalIntent::SubmitDustRegistration { preview, .. } => {
+                expires_at.min(preview.expires_at())
+            }
+            WalletApprovalIntent::SignData { .. } | WalletApprovalIntent::DeleteKey { .. } => {
+                expires_at
+            }
+        };
+        if issued_at >= expires_at {
+            return Err(WalletApprovalError::Expired);
+        }
         self.port.approve(&request.intent)?;
         let current = self
             .generation
@@ -336,4 +371,6 @@ impl WalletApprovalService {
 }
 
 #[cfg(test)]
-mod tests;
+mod movement_tests;
+#[cfg(test)]
+pub(crate) mod tests;

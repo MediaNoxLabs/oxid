@@ -13,7 +13,7 @@ use super::passport_vault::PassportVaultRepositoryComposition;
 #[cfg(not(target_arch = "wasm32"))]
 use super::passport_vault::with_simulated_passport_vault_calls;
 use super::services::ApplicationServices;
-use super::wiring::{compose_with_identity_adapters, with_wallet_onboarding};
+use super::wiring::{compose_with_identity_adapters_and_approvals, with_wallet_onboarding};
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
 use oxid_adapter_storage_dev::DevelopmentWalletSecurity;
 use oxid_adapter_storage_memory::{
@@ -58,6 +58,26 @@ pub fn compose_in_memory_with_compact_presentation_artifacts(
 pub(super) fn compose_in_memory_with_presentation(
     credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices {
+    compose_in_memory_with_presentation_and_approvals(credential_presentation, None)
+}
+
+/// Explicit process-local test/demo composition. This injects an already
+/// constructed authority service; it provides no approving implementation and
+/// is never selected by environment variables or incoming adapter input.
+#[must_use]
+pub fn compose_in_memory_with_approvals(
+    approvals: Arc<oxid_wallet_application::WalletApprovalService>,
+) -> ApplicationServices {
+    compose_in_memory_with_presentation_and_approvals(
+        CredentialPresentationComposition::Standalone,
+        Some(approvals),
+    )
+}
+
+fn compose_in_memory_with_presentation_and_approvals(
+    credential_presentation: CredentialPresentationComposition,
+    approvals: Option<Arc<oxid_wallet_application::WalletApprovalService>>,
+) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
     let random = Arc::new(OsRandom);
     let security = Arc::new(DevelopmentWalletSecurity::new(Arc::clone(&clock), random));
@@ -74,7 +94,7 @@ pub(super) fn compose_in_memory_with_presentation(
     ));
     let did_lifecycle_port: Arc<dyn DidLifecyclePort> = did_lifecycle.clone();
     let did_jubjub_challenge_signing: Arc<dyn DidJubjubChallengeSigningPort> = did_lifecycle;
-    let services = compose_with_identity_adapters(
+    let services = compose_with_identity_adapters_and_approvals(
         Arc::clone(&profiles),
         Arc::clone(&security),
         Arc::clone(&midnight),
@@ -100,6 +120,7 @@ pub(super) fn compose_in_memory_with_presentation(
         },
         PassportVaultRepositoryComposition::process_local(),
         |security| security,
+        approvals,
     );
     let services = with_wallet_onboarding(
         services,

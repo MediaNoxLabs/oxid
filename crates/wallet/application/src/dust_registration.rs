@@ -12,7 +12,10 @@ use oxid_wallet_domain::{
     WalletTransactionFeeState, WalletTransactionSubmissionState, WalletTransferSubmissionMode,
 };
 
-use crate::{SensitiveOperationConfirmation, SensitiveWalletOperationError, validate_confirmation};
+use crate::{
+    SensitiveOperationConfirmation, SensitiveWalletOperationError, WalletApprovalError,
+    WalletApprovalOperation, WalletApprovalRequest, WalletApprovalService, validate_confirmation,
+};
 
 /// Lifetime of a prepared DUST registration before its retained material expires.
 pub const WALLET_DUST_REGISTRATION_DRAFT_TTL_MILLIS: u64 = 60 * 60 * 1_000;
@@ -521,6 +524,7 @@ pub enum WalletDustRegistrationError {
     InvalidAuthorizationChallenge(OpaqueIdError),
     ConfirmationRequired,
     InvalidConfirmation,
+    Approval(WalletApprovalError),
     Clock(PlatformError),
     Operation(WalletDustRegistrationPortError),
 }
@@ -533,6 +537,7 @@ impl fmt::Display for WalletDustRegistrationError {
             | Self::InvalidAuthorizationChallenge(error) => error.fmt(formatter),
             Self::ConfirmationRequired => formatter.write_str("explicit confirmation is required"),
             Self::InvalidConfirmation => formatter.write_str("confirmation intent is invalid"),
+            Self::Approval(error) => error.fmt(formatter),
             Self::Clock(error) => error.fmt(formatter),
             Self::Operation(error) => error.fmt(formatter),
         }
@@ -545,14 +550,30 @@ impl Error for WalletDustRegistrationError {}
 pub struct WalletDustRegistrationService<T, C> {
     registrations: Arc<T>,
     clock: Arc<C>,
+    approvals: Arc<WalletApprovalService>,
 }
 
 impl<T, C> WalletDustRegistrationService<T, C> {
     #[must_use]
-    pub const fn new(registrations: Arc<T>, clock: Arc<C>) -> Self {
+    pub fn new(registrations: Arc<T>, clock: Arc<C>) -> Self
+    where
+        C: ClockPort + 'static,
+    {
+        let approvals = Arc::new(WalletApprovalService::new(clock.clone()));
+        Self::with_approvals(registrations, clock, approvals)
+    }
+
+    /// The composition shares this service with profile/protection invalidation.
+    #[must_use]
+    pub const fn with_approvals(
+        registrations: Arc<T>,
+        clock: Arc<C>,
+        approvals: Arc<WalletApprovalService>,
+    ) -> Self {
         Self {
             registrations,
             clock,
+            approvals,
         }
     }
 
@@ -561,6 +582,66 @@ impl<T, C> WalletDustRegistrationService<T, C> {
         C: ClockPort,
     {
         self.clock.now().map_err(WalletDustRegistrationError::Clock)
+    }
+}
+
+impl<T: WalletDustRegistrationPort, C: ClockPort> WalletDustRegistrationService<T, C> {
+    async fn approval_preview(
+        &self,
+        profile: &WalletProfileId,
+        draft: &WalletTransactionDraftId,
+        challenge: Option<&WalletTransactionAuthorizationChallenge>,
+        state: WalletTransactionDraftState,
+    ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationError> {
+        let preview = self
+            .registrations
+            .get(profile, draft, self.now()?)
+            .await
+            .map_err(WalletDustRegistrationError::Operation)?;
+        if preview.draft_id() != draft
+            || challenge.is_some_and(|value| value != preview.authorization_challenge())
+        {
+            return Err(WalletDustRegistrationError::Approval(
+                WalletApprovalError::IntentMismatch,
+            ));
+        }
+        if preview.expires_at() <= self.now()? {
+            return Err(WalletDustRegistrationError::Approval(
+                WalletApprovalError::Expired,
+            ));
+        }
+        if preview.state() != state {
+            return Err(WalletDustRegistrationError::Operation(
+                WalletDustRegistrationPortError::DraftConflict,
+            ));
+        }
+        Ok(preview)
+    }
+
+    async fn approve_transition<O: WalletApprovalOperation>(
+        &self,
+        profile: &WalletProfileId,
+        draft: &WalletTransactionDraftId,
+        challenge: Option<&WalletTransactionAuthorizationChallenge>,
+        state: WalletTransactionDraftState,
+        request: fn(WalletProfileId, WalletDustRegistrationPreview) -> WalletApprovalRequest<O>,
+    ) -> Result<UnixTimestampMillis, WalletDustRegistrationError> {
+        let preview = self
+            .approval_preview(profile, draft, challenge, state)
+            .await?;
+        let capability = self
+            .approvals
+            .request(&request(profile.clone(), preview))
+            .map_err(WalletDustRegistrationError::Approval)?;
+        let current = self
+            .approval_preview(profile, draft, challenge, state)
+            .await?;
+        let expected = request(profile.clone(), current);
+        let now = self.now()?;
+        self.approvals
+            .consume(&capability, &expected)
+            .map_err(WalletDustRegistrationError::Approval)?;
+        Ok(now)
     }
 }
 
@@ -615,6 +696,17 @@ where
             let authorization_challenge =
                 WalletTransactionAuthorizationChallenge::parse(command.authorization_challenge)
                     .map_err(WalletDustRegistrationError::InvalidAuthorizationChallenge)?;
+            let now = self
+                .approve_transition(
+                    &profile_id,
+                    &draft_id,
+                    Some(&authorization_challenge),
+                    WalletTransactionDraftState::Prepared,
+                    WalletApprovalRequest::authorize_dust_registration,
+                )
+                .await?;
+            // The capability is spent before polling the protected future;
+            // adapter admission still fences changes before the actual effect.
             let preview = self
                 .registrations
                 .authorize(
@@ -622,7 +714,7 @@ where
                     AuthorizeWalletDustRegistrationRequest {
                         draft_id,
                         authorization_challenge,
-                        now: self.now()?,
+                        now,
                     },
                 )
                 .await
@@ -647,14 +739,21 @@ where
                 .map_err(WalletDustRegistrationError::InvalidProfileIdentifier)?;
             let draft_id = WalletTransactionDraftId::parse(command.draft_id)
                 .map_err(WalletDustRegistrationError::InvalidDraftIdentifier)?;
+            let now = self
+                .approve_transition(
+                    &profile_id,
+                    &draft_id,
+                    None,
+                    WalletTransactionDraftState::Authorized,
+                    WalletApprovalRequest::submit_dust_registration,
+                )
+                .await?;
+            // Failure or cancellation after consumption never restores approval.
             let submitted = self
                 .registrations
                 .submit(
                     &profile_id,
-                    SubmitWalletDustRegistrationRequest {
-                        draft_id,
-                        now: self.now()?,
-                    },
+                    SubmitWalletDustRegistrationRequest { draft_id, now },
                 )
                 .await
                 .map_err(WalletDustRegistrationError::Operation)?;
@@ -979,7 +1078,12 @@ mod tests {
             _: &'a WalletTransactionDraftId,
             _: UnixTimestampMillis,
         ) -> WalletDustRegistrationPreviewPortFuture<'a> {
-            Box::pin(async { Ok(Self::preview(WalletTransactionDraftState::Prepared)) })
+            let state = if *self.authorize_calls.lock().unwrap() > 0 {
+                WalletTransactionDraftState::Authorized
+            } else {
+                WalletTransactionDraftState::Prepared
+            };
+            Box::pin(async move { Ok(Self::preview(state)) })
         }
 
         fn status<'a>(
@@ -1020,9 +1124,10 @@ mod tests {
     }
 
     fn service() -> WalletDustRegistrationService<RecordingRegistrations, FixedClock> {
-        WalletDustRegistrationService::new(
+        WalletDustRegistrationService::with_approvals(
             Arc::new(RecordingRegistrations::default()),
             Arc::new(FixedClock),
+            crate::approval::tests::trusted_service(Arc::new(FixedClock)),
         )
     }
 
@@ -1032,6 +1137,43 @@ mod tests {
             summary: "Register 5 NIGHT and permit up to 100 atomic DUST for fees".to_owned(),
             confirmed,
         }
+    }
+
+    #[test]
+    fn caller_confirmation_and_challenge_do_not_approve_registration() {
+        let registrations = Arc::new(RecordingRegistrations::default());
+        let service =
+            WalletDustRegistrationService::new(registrations.clone(), Arc::new(FixedClock));
+        assert_eq!(
+            ready(AuthorizeWalletDustRegistrationUseCase::execute(
+                &service,
+                AuthorizeWalletDustRegistrationCommand {
+                    profile_id: "profile_test".into(),
+                    draft_id: "dustreg_test".into(),
+                    authorization_challenge: "dustauth_test".into(),
+                    confirmation: confirmation(true),
+                }
+            )),
+            Err(WalletDustRegistrationError::Approval(
+                WalletApprovalError::Unavailable
+            ))
+        );
+        assert_eq!(*registrations.authorize_calls.lock().unwrap(), 0);
+        *registrations.authorize_calls.lock().unwrap() = 1;
+        assert_eq!(
+            ready(SubmitWalletDustRegistrationUseCase::execute(
+                &service,
+                SubmitWalletDustRegistrationCommand {
+                    profile_id: "profile_test".into(),
+                    draft_id: "dustreg_test".into(),
+                    confirmation: confirmation(true),
+                }
+            )),
+            Err(WalletDustRegistrationError::Approval(
+                WalletApprovalError::Unavailable
+            ))
+        );
+        assert_eq!(*registrations.submit_calls.lock().unwrap(), 0);
     }
 
     #[test]
@@ -1081,9 +1223,9 @@ mod tests {
 
     #[test]
     fn submission_requires_separate_confirmation_and_never_claims_spendability() {
-        let registrations = Arc::new(RecordingRegistrations::default());
-        let service =
-            WalletDustRegistrationService::new(Arc::clone(&registrations), Arc::new(FixedClock));
+        let service = service();
+        let registrations = service.registrations.clone();
+        *registrations.authorize_calls.lock().unwrap() = 1;
         let rejected = ready(SubmitWalletDustRegistrationUseCase::execute(
             &service,
             SubmitWalletDustRegistrationCommand {
@@ -1173,8 +1315,10 @@ mod tests {
             },
         ))
         .expect("prepare succeeds");
+        let service = service();
+        *service.registrations.authorize_calls.lock().unwrap() = 1;
         let submitted = ready(SubmitWalletDustRegistrationUseCase::execute(
-            &service(),
+            &service,
             SubmitWalletDustRegistrationCommand {
                 profile_id: "profile_test".to_owned(),
                 draft_id: "dustreg_test".to_owned(),

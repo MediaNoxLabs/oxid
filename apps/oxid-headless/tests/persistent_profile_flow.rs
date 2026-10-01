@@ -1408,23 +1408,25 @@ fn executable_restores_public_submission_status_in_a_new_process() {
         .as_str()
         .expect("authorization challenge should be public")
         .to_owned();
-    assert_eq!(
-        first_process.request(json!({
-            "protocol": "oxid.headless.v1",
-            "id": "submission-authorize",
-            "method": "wallet.transaction.authorize_unshielded",
-            "params": {
-                "draftId": draft_id,
-                "authorizationChallenge": challenge,
-                "confirmation": {
-                    "title": "Authorize NIGHT transfer",
-                    "summary": "Authorize the persistent submission fixture",
-                    "confirmed": true
-                }
+    let denied_authorization = first_process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "submission-authorize",
+        "method": "wallet.transaction.authorize_unshielded",
+        "params": {
+            "draftId": draft_id,
+            "authorizationChallenge": challenge,
+            "confirmation": {
+                "title": "Authorize NIGHT transfer",
+                "summary": "Public input is not trusted approval",
+                "confirmed": true
             }
-        }))["ok"],
-        true
+        }
+    }));
+    assert_eq!(
+        denied_authorization["error"]["code"],
+        "approval_unavailable"
     );
+    assert!(denied_authorization.get("result").is_none());
     let submitted = first_process.request(json!({
         "protocol": "oxid.headless.v1",
         "id": "submission-submit",
@@ -1438,12 +1440,58 @@ fn executable_restores_public_submission_status_in_a_new_process() {
             }
         }
     }));
-    assert_eq!(submitted["ok"], true);
-    let transaction_id = submitted["result"]["submission"]["transactionId"]
-        .as_str()
-        .expect("transaction identifier should be public")
-        .to_owned();
+    assert_eq!(submitted["ok"], false);
+    assert!(submitted.get("result").is_none());
+    let before_restart = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "denied-history",
+        "method": "wallet.transaction.submission_history", "params": {}
+    }));
+    let before_restart = before_restart["result"]["submissions"]
+        .as_array()
+        .expect("public pending draft status is returned");
+    assert_eq!(before_restart.len(), 1);
+    assert_eq!(before_restart[0]["draftId"], draft_id);
+    assert_eq!(before_restart[0]["state"], "not_started");
+    assert!(before_restart[0]["transactionId"].is_null());
     first_process.quit();
+
+    // A public included-receipt fixture exercises restart reads independently
+    // of authority to originate a transaction. Trusted positive movement is
+    // covered by the explicit in-memory composition in capability_contracts.
+    let transaction_id = "ab".repeat(32);
+    let journal = json!({
+        "version": 2,
+        "records": [{
+            "profile_id": profile_id,
+            "network_id": "undeployed",
+            "draft_id": draft_id,
+            "planning_fingerprint": "12".repeat(32),
+            "expires_at_millis": 1_700_003_600_000_u64,
+            "updated_at_millis": 1_700_000_000_000_u64,
+            "fee_specks": "42",
+            "transaction_hash": transaction_id,
+            "anchor_block_hash": "34".repeat(32),
+            "block_hash": "cd".repeat(32),
+            "block_height": 42,
+            "state": "included",
+            "mode": "simulated"
+        }]
+    });
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut fixture = options
+        .open(journal_path)
+        .expect("private receipt fixture opens");
+    serde_json::to_writer(&mut fixture, &journal).expect("public receipt fixture serializes");
+    fixture
+        .sync_all()
+        .expect("receipt fixture is durable before restart");
+    drop(fixture);
 
     let mut second_process = ProcessHarness::spawn_with_environment(&store.path, &environment);
     let history = second_process.request(json!({
@@ -2405,12 +2453,16 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
             }
         }
     }));
-    assert_eq!(authorized["ok"], true, "unexpected response: {authorized}");
-    assert_eq!(authorized["result"]["transfer"]["state"], "authorized");
-    assert_eq!(authorized["result"]["transfer"]["proofRequired"], true);
-    assert_eq!(authorized["result"]["transfer"]["submissionReady"], true);
+    assert_eq!(authorized["error"]["code"], "approval_unavailable");
+    assert!(authorized.get("result").is_none());
     assert!(!authorized.to_string().contains("signatureHex"));
     assert!(!authorized.to_string().contains("transactionHex"));
+    let retained = process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "denied-transfer-draft",
+        "method": "wallet.transaction.draft", "params": { "draftId": draft_id }
+    }));
+    assert_eq!(retained["result"]["transfer"]["state"], "prepared");
+    assert_eq!(retained["result"]["transfer"]["submissionReady"], false);
 
     let preprod = process.request(json!({
         "protocol": "oxid.headless.v1",

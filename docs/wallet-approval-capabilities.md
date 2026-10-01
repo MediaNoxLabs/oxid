@@ -5,8 +5,7 @@
 This is process-local authority. Direct `SignWalletDataCommand` and
 `DeleteWalletKeyCommand` now require the corresponding opaque capability;
 `WalletSensitiveKeyService` consumes it immediately before custody. Backup,
-onboarding, recovery, transfers, DUST and identity/protocol authorization retain
-their existing intent-pinning contracts.
+onboarding, recovery and identity/protocol authorization retain their existing intent-pinning contracts. Transfer and DUST registration authorization/submission now request and consume four separately typed capabilities inside their application services.
 
 ## Trust and composition
 
@@ -22,7 +21,7 @@ Cargo integration-test target exercising the production application boundary
 with real SHA-256 and recording custody. The repository test
 `tests/repository/wallet-approval-boundary-contract.test.mjs` scans tracked Rust
 sources, restricts injection/port references to the approval module and these
-explicit test fixtures, and pins the sole production implementation to unavailable.
+explicit test fixtures (including the headless integration test support module), and pins the sole production implementation to unavailable.
 Negative fixtures cover incoming injection, alias imports, auto-approval and
 loss of the test-only fixture gate. Adding a trusted adapter requires deliberately
 updating this guard alongside its security review.
@@ -33,7 +32,7 @@ exhaustive so trusted prompt renderers must handle every operation explicitly;
 public error enums are non-exhaustive so callers must fail closed on future
 failures. The sealed operation markers still prevent downstream-defined operations.
 
-The closed operations are direct signing and key deletion. Sealed Rust marker
+The closed operations are direct signing, key deletion, transfer authorization, transfer submission, DUST registration authorization and DUST registration submission. Sealed Rust marker
 types tie each request and capability to one operation. Cross-operation use is
 rejected by the compiler; application consumption also compares the complete
 closed intent defensively. Capabilities have no public constructor, serializer,
@@ -158,6 +157,26 @@ transaction. No asynchronous wait or prompt occurs between them. A later lifecyc
 transition cannot retract an already-consumed operation; custody still enforces
 its own lock/state policy. This preserves the foundation's explicit linearization
 contract rather than claiming cross-adapter atomicity.
+
+## Transfer and DUST command/event matrix
+
+The four value-moving transitions use trusted request → independent retained-preview re-read → consume → protected port invocation. Incoming DTO prose/booleans/challenges remain non-authoritative compatibility inputs. Full canonical domain-preview equality binds profile, draft, challenge, network, account, asset identities/amounts, recipient (transfer), allowance (DUST), fee state, inputs, expiry and lifecycle state. This is structured equality, not a caller-asserted digest. ADR-0107 challenge construction is unchanged. Separate submission intent names the immutable authorized retained draft; native transaction bytes remain adapter-private. Capability expiry is the earlier of draft expiry and the existing fixed TTL.
+
+Normal in-memory, headless, native and production compositions default unavailable. `compose_in_memory_with_approvals` is an explicit process-local test/demo dependency-injection entrypoint; it contains no approving producer and is never selected by incoming input or environment. The approving headless fixture exists only in a Cargo integration-test module and accepts only the four movement intents. Shared profile/protection invalidation also applies to the injected composition.
+
+| Event | Evidence / boundary |
+| --- | --- |
+| Completion | Trusted headless fixture completes transfer/shielded/DUST stages; application tests retain canonical preview and separate DUST spendability semantics |
+| Mutation / profile / cross-stage | Four-operation matrix changes every valid structured semantic field and profile, rejects other operation intents, preserves matching authority |
+| Duplicate / concurrent / replay | Each operation's matrix has exactly one successful concurrent consume; another consume fails; no conversion between sealed operation types |
+| Expiry / supersession / replacement | Draft-expiry equality, service invalidation and issuer replacement reject all four capability types |
+| Async stale result | Both DUST transitions suspend on the second preview read; generation, expiry, mutation or stage replacement rejects before effect polling |
+| Failure / cancellation / recovery | Both DUST transitions spend before polling a failing or pending effect; dropping the pending caller does not reuse authority and retry requires another trusted decision |
+| Duplicate completion | Approval producer is synchronous and returns once; existing adapter lifecycle owns worker-event admission and reconciliation |
+| Already-included transfer | Return existing public receipt through status read, without invoking submit or minting another approval |
+| Untrusted adapter input | Headless legacy prose/boolean/public challenge and forged authority fail; explicit trusted fixture positive flows remain separate |
+
+Consumption is not an atomic transaction with an external effect. A DUST future can suspend inside the adapter: creating it alone is not execution. The adapter must retain its profile/protection, challenge, retained-draft and lifecycle checks at actual effect admission; a consumed decision cannot be reused after failure/cancellation. Tests prove the application ordering without claiming that a later lock can retract an already-admitted effect. Read-only cancellation/status/reconciliation remain unchanged. No production approving surface is supplied.
 
 Tests are deterministic and use no network, sleeps or real user approval. The
 consumer fixture uses recording custody, not a production approving port. The
