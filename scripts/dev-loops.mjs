@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import { readFile, realpath } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
@@ -19,6 +20,37 @@ const PRE_MUTATION_ASSESSMENT_OPTION = "--pre-mutation-assessment";
 const OXID_REPOSITORY = "medianoxlabs/oxid";
 const OXID_SIZE_BUDGET_COMMAND = "scripts/dev-loops.mjs gate size-budget";
 const OXID_PR_CREATE_COMMAND = "scripts/dev-loops.mjs pr create";
+const GITHUB_ORIGIN_PATTERN = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/;
+
+/** Resolve one GitHub identity from the checkout's trusted origin, if available. */
+export function githubRepositoryFromOrigin(origin) {
+  const match = typeof origin === "string" ? origin.trim().match(GITHUB_ORIGIN_PATTERN) : null;
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+
+export function resolveCanonicalGithubRepository(cwd, { run = execFileSync } = {}) {
+  try {
+    return githubRepositoryFromOrigin(run("git", ["-C", cwd, "remote", "get-url", "origin"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+    }));
+  } catch {
+    return null;
+  }
+}
+
+/** Bind a handoff envelope to origin and reject an authoritative identity split. */
+export function bindEnvelopeRepositoryIdentity(envelope, repository) {
+  if (!repository) return envelope;
+  const declared = envelope?.target?.repo;
+  if (typeof declared === "string" && declared.toLowerCase() !== repository.toLowerCase()) {
+    throw new Error(`handoff envelope repository ${declared} disagrees with origin repository ${repository}`);
+  }
+  return {
+    ...envelope,
+    repository,
+    target: { ...envelope.target, repo: repository },
+  };
+}
 
 export function applyOxidSanctionedCommandOverrides(envelope) {
   const sanctionedCommands = envelope?.sanctionedCommands;
@@ -337,9 +369,11 @@ async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
       adapter: { getCwd: () => cwd, getRepoRoot: () => resolved.gitRoot },
     });
     const normalized = await normalizeHandoffEnvelopeCwd(candidate, resolved, core);
+    const originRepository = resolveCanonicalGithubRepository(resolved.gitRoot);
+    const identityBound = bindEnvelopeRepositoryIdentity(normalized, originRepository);
     const { contract, profile } = await loadDeliveryProfile(resolved.gitRoot, deliveryArgs.requested);
     const profiled = applyDeliveryProfile({
-      ...normalized,
+      ...identityBound,
       ...(assessmentArgs.assessment === undefined ? {} : { preMutationAssessment: assessmentArgs.assessment }),
     }, contract, profile, deliveryTarget);
     const repositoryAcceptance = applyOxidSanctionedCommandOverrides(applyRepositoryAcceptance(profiled));

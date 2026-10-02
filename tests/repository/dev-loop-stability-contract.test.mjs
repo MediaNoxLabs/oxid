@@ -20,7 +20,15 @@ import {
   resolveDevLoopsPackageRoot,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
-import { normalizeDevLoopsArgs, resolveOxidCompatibilityRoute, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
+import {
+  bindEnvelopeRepositoryIdentity,
+  githubRepositoryFromOrigin,
+  normalizeDevLoopsArgs,
+  resolveCanonicalGithubRepository,
+  resolveOxidCompatibilityRoute,
+  resolvePinnedCoreModulePath,
+  runDevLoops,
+} from "../../scripts/dev-loops.mjs";
 import { editPrBody, parseEditPrArgs } from "../../scripts/github/edit-pr.mjs";
 import { normalizeSupersededPrStatusRollup, reconcileOptionalSarifProjectionWait, watchOxidPrCiStatus } from "../../scripts/github/watch-oxid-ci.mjs";
 import { CRITICAL_CHECKS } from "../../scripts/github/optional-sarif-policy.mjs";
@@ -993,6 +1001,22 @@ test("pinned core resolution accepts bounded hoisted and nested package layouts"
 
   await writeFile(path.join(nestedRoot, "package.json"), JSON.stringify({ name: "@dev-loops/core", version: "0.9.1" }));
   await assert.rejects(resolvePinnedCoreModulePath(packageRoot), /expected @dev-loops\/core@1\.0\.2/);
+});
+
+test("handoff envelopes bind the checkout GitHub identity and reject disagreement", () => {
+  assert.equal(githubRepositoryFromOrigin("https://github.com/MediaNoxLabs/oxid.git"), "MediaNoxLabs/oxid");
+  assert.equal(githubRepositoryFromOrigin("git@github.com:MediaNoxLabs/oxid.git"), "MediaNoxLabs/oxid");
+  assert.equal(githubRepositoryFromOrigin("https://example.invalid/MediaNoxLabs/oxid.git"), null);
+  assert.equal(resolveCanonicalGithubRepository("/fixture", {
+    run: () => "https://github.com/MediaNoxLabs/oxid.git\n",
+  }), "MediaNoxLabs/oxid");
+  const bound = bindEnvelopeRepositoryIdentity({ target: { kind: "local_phase", repo: "medianoxlabs/oxid" } }, "MediaNoxLabs/oxid");
+  assert.equal(bound.repository, "MediaNoxLabs/oxid");
+  assert.equal(bound.target.repo, "MediaNoxLabs/oxid");
+  assert.throws(
+    () => bindEnvelopeRepositoryIdentity({ target: { repo: "input-output-hk/oxid" } }, "MediaNoxLabs/oxid"),
+    /disagrees with origin repository/,
+  );
 });
 
 test("repository wrappers force only the public PR-creation and managed-worktree routes", () => {
