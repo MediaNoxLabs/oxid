@@ -111,4 +111,6 @@ test("ordinary Pi prompts are unchanged and malformed or ambiguous dev-loop comm
 test("dev-loop conductor disables managed subagent worktree wrapping", async () => {
   const agent = await readFile(path.join(repoRoot, ".pi", "agents", "dev-loop.agent.md"), "utf8");
   assert.match(agent, /^worktree: false$/m);
+  const bootstrap = await readFile(path.join(repoRoot, "bootstrap.sh"), "utf8");
+  assert.match(bootstrap, /node "\$repo_root\/scripts\/loop\/prepare-dev-loop-admission\.mjs" prepare -- "\$@"/u);
 });

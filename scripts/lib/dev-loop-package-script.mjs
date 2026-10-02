@@ -3,11 +3,13 @@
 import { spawnSync } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { resolveCanonicalGithubRepository } from "../dev-loops.mjs";
 import { resolveDevLoopsPackageRoot } from "./dev-loop-runtime.mjs";
 
 const PACKAGE_SCRIPT_PATTERN = /^scripts\/(?:github|loop)\/[a-z0-9-]+\.mjs$/;
+const WRAPPER_CHECKOUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 function isContained(parent, child) {
   const relative = path.relative(parent, child);
@@ -39,7 +41,7 @@ export function bindPackageGithubRepository(argv, originRepository) {
 export async function runDevLoopsPackageScript(
   packageScript,
   argv = process.argv.slice(2),
-  { cwd = process.cwd(), env = process.env, nodeCommand = process.execPath, spawn = spawnSync } = {},
+  { cwd = WRAPPER_CHECKOUT, env = process.env, nodeCommand = process.execPath, spawn = spawnSync } = {},
 ) {
   if (!PACKAGE_SCRIPT_PATTERN.test(packageScript)) {
     throw new Error(`invalid dev-loops package script: ${packageScript}`);

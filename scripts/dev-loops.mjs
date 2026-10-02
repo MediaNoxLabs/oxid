@@ -43,11 +43,38 @@ export function githubRepositoryFromOrigin(origin) {
   return match ? `${match[1]}/${match[2]}` : null;
 }
 
+function githubRepositoryFromSshAlias(origin, run) {
+  const value = origin.trim();
+  const scp = /^(?:git@)?([A-Za-z0-9_.-]+):(.+)$/u.exec(value);
+  let host = scp?.[1];
+  let repositoryPath = scp?.[2];
+  if (!host) {
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "ssh:") return null;
+      host = url.hostname;
+      repositoryPath = url.pathname;
+    } catch {
+      return null;
+    }
+  }
+  const match = repositoryPath?.match(GITHUB_REPOSITORY_PATH);
+  if (!match || host.toLowerCase() === "github.com") return null;
+  const config = run("ssh", ["-G", host], {
+    encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000,
+  });
+  const hostname = /^hostname\s+(\S+)$/miu.exec(config)?.[1];
+  const port = /^port\s+(\S+)$/miu.exec(config)?.[1];
+  return hostname?.toLowerCase() === "github.com" && (!port || port === "22")
+    ? `${match[1]}/${match[2]}` : null;
+}
+
 export function resolveCanonicalGithubRepository(cwd, { run = execFileSync } = {}) {
   try {
-    return githubRepositoryFromOrigin(run("git", ["-C", cwd, "remote", "get-url", "origin"], {
+    const origin = run("git", ["-C", cwd, "remote", "get-url", "origin"], {
       encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
-    }));
+    }).trim();
+    return githubRepositoryFromOrigin(origin) ?? githubRepositoryFromSshAlias(origin, run);
   } catch {
     return null;
   }

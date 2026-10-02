@@ -1014,6 +1014,16 @@ test("handoff envelopes bind the checkout GitHub identity and reject disagreemen
   assert.equal(resolveCanonicalGithubRepository("/fixture", {
     run: () => "https://github.com/MediaNoxLabs/oxid.git\n",
   }), "MediaNoxLabs/oxid");
+  assert.equal(resolveCanonicalGithubRepository("/fixture", {
+    run: (program) => program === "git"
+      ? "git@gh-work:MediaNoxLabs/oxid.git\n"
+      : "hostname github.com\nport 22\n",
+  }), "MediaNoxLabs/oxid");
+  assert.equal(resolveCanonicalGithubRepository("/fixture", {
+    run: (program) => program === "git"
+      ? "git@gh-work:MediaNoxLabs/oxid.git\n"
+      : "hostname example.invalid\nport 22\n",
+  }), null);
   const bound = bindEnvelopeRepositoryIdentity({ target: { kind: "local_phase", repo: "medianoxlabs/oxid" } }, "MediaNoxLabs/oxid");
   assert.equal(bound.repository, "MediaNoxLabs/oxid");
   assert.equal(bound.target.repo, "medianoxlabs/oxid");

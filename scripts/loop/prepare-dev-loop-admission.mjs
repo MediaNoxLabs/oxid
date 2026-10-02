@@ -11,7 +11,7 @@ import { resolveCanonicalGithubRepository } from "../dev-loops.mjs";
 import { parseBootstrapDevLoopInvocation } from "./bootstrap-dev-loop.mjs";
 
 const HEAD = /^[0-9a-f]{40}$/u;
-const MAX_ADMISSION_AGE_MS = 5 * 60 * 1000;
+const MAX_ADMISSION_AGE_MS = 15 * 60 * 1000;
 
 function git(cwd, ...args) {
   return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
@@ -62,23 +62,24 @@ export function prepareAdmission(issue, { cwd = process.cwd(), run = execFileSyn
   const receipt = readJson(file.receipt);
   const { root, headSha } = assertCheckout(receipt, issue, cwd);
   const stdout = run(process.execPath, [path.join(root, "scripts", "dev-loops.mjs"),
-    "loop", "startup", "--issue", String(issue), "--json"], {
+    "loop", "startup", "--issue", String(issue)], {
     cwd: root, encoding: "utf8", timeout: 120_000,
   });
   const startup = JSON.parse(stdout);
-  if (startup?.ok !== true || startup?.canonicalStateSummary?.target?.issue !== issue) {
-    throw new Error(`startup did not authorize issue #${issue}`);
-  }
   mkdirSync(file.directory, { recursive: true });
   const startupBytes = Buffer.from(`${JSON.stringify(startup)}\n`);
+  const temporary = `${file.startup}.${process.pid}.tmp`;
+  writeFileSync(temporary, startupBytes);
+  renameSync(temporary, file.startup);
+  if (startup?.ok !== true || startup?.canonicalStateSummary?.target?.issue !== issue) {
+    const reason = startup?.bundle?.reason ?? startup?.error ?? "unresolved canonical target";
+    throw new Error(`startup cannot dispatch issue #${issue}: ${String(reason).slice(0, 240)}; inspect ${file.startup}`);
+  }
   const prepared = {
     ...receipt, headSha, preparedAt: new Date().toISOString(),
     prePiStartupCalls: 1, implementationChildCalls: 0,
     startupSha256: digest(startupBytes),
   };
-  const temporary = `${file.startup}.${process.pid}.tmp`;
-  writeFileSync(temporary, startupBytes);
-  renameSync(temporary, file.startup);
   writeFileSync(`${file.receipt}.${process.pid}.tmp`, `${JSON.stringify(prepared)}\n`);
   renameSync(`${file.receipt}.${process.pid}.tmp`, file.receipt);
   return { issue, repository: receipt.repository, startupPath: file.startup };

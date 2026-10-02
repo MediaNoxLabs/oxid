@@ -92,7 +92,7 @@ case "${1:-}" in
       }
       # Resolve startup in the supervisor process, before the implementation
       # child receives its own tool budget. The child verifies this snapshot.
-      node scripts/loop/prepare-dev-loop-admission.mjs prepare -- "$@" || {
+      node "$repo_root/scripts/loop/prepare-dev-loop-admission.mjs" prepare -- "$@" || {
         echo "Pi admission failed before child dispatch." >&2
         exit 1
       }
