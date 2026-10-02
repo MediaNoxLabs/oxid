@@ -71,6 +71,31 @@ test("copy validation includes extracted sibling modules", async () => {
   }
 });
 
+function assertDocumentsSurfacePrimitives(source) {
+  for (const [surface, marker] of [
+    ["DID capability unavailable", '"data-ui-primitive": "ErrorState"'],
+    ['"data-testid": "identity-did-item-{index}"', '"data-ui-primitive": "IdentityCard"'],
+    ['"data-testid": "identity-did-detail"', '"data-ui-primitive": "IdentityDetail"'],
+  ]) {
+    const surfaceOffset = source.indexOf(surface);
+    assert.notEqual(surfaceOffset, -1, `missing Documents surface: ${surface}`);
+    const start = source.lastIndexOf("article {", surfaceOffset);
+    const end = source.indexOf("\n                            }", surfaceOffset);
+    assert.ok(source.slice(start, end).includes(marker), `missing primitive marker for ${surface}`);
+  }
+}
+
+test("Documents surfaces retain their own primitive markers", async () => {
+  const dids = await readFile(path.join(repository, "crates", "ui-dioxus", "src", "dids.rs"), "utf8");
+  assertDocumentsSurfacePrimitives(dids);
+
+  assert.throws(() => {
+    assertDocumentsSurfacePrimitives(
+      dids.replace('"data-ui-primitive": "IdentityCard",', ""),
+    );
+  }, /missing primitive marker/);
+});
+
 test("settings and developer surfaces expose stable privacy-safe contracts", async () => {
   const sourceRoot = path.join(repository, "crates", "ui-dioxus", "src");
   const sourceFiles = [
