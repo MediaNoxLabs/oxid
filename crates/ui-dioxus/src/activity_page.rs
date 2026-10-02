@@ -67,7 +67,7 @@ pub(super) fn PassportVaultActivityCard(state: VaultActivityPageState) -> Elemen
                     }
                 },
                 VaultActivityPageState::Ready(activity) => {
-                    let retention = labels::vault_activity_retention(&activity.retention);
+                    let retention = labels::activity_retention(&activity.retention);
                     rsx! {
                         div { class: "activity-list", aria_label: "Passport Vault activity",
                             for record in activity.records {
@@ -180,21 +180,29 @@ pub(super) fn CredentialIssuanceActivityCard(
                 CredentialIssuanceActivityPageState::Loading => rsx! {
                     p { class: "activity-empty-state", role: "status", "Loading credential issuance activity…" }
                 },
-                CredentialIssuanceActivityPageState::Unavailable(error) => rsx! {
-                    p { class: "activity-empty-state", role: "status", "Credential issuance activity is unavailable. {error}" }
+                CredentialIssuanceActivityPageState::Unavailable(error) => {
+                    let status_role = "status";
+                    rsx! {
+                        p { class: "activity-empty-state", role: "{status_role}", "Credential issuance activity is unavailable. {error}" }
+                    }
                 },
-                CredentialIssuanceActivityPageState::Ready(activity) if activity.records.is_empty() => rsx! {
-                    p { class: "activity-empty-state", "No credential issuance activity is available for this profile yet." }
+                CredentialIssuanceActivityPageState::Ready(activity) if activity.records.is_empty() => {
+                    let empty_message = "No credential issuance activity is available for this profile yet.";
+                    let status_role = "status";
+                    rsx! {
+                        p { class: "activity-empty-state", role: "{status_role}", "{empty_message}" }
+                    }
                 },
                 CredentialIssuanceActivityPageState::Ready(activity) => {
-                    let retention = labels::vault_activity_retention(&activity.retention);
+                    let retention = labels::activity_retention(&activity.retention);
                     rsx! {
                         div { class: "activity-list", aria_label: "Credential issuance activity",
                             for record in activity.records {
                                 article { class: "activity-row", key: "{record.id.value()}",
                                     span { class: "activity-row__mark", aria_hidden: "true", "◇" }
                                     div {
-                                        strong { "Credential from {record.issuer}" }
+                                        strong { "Credential issuance" }
+                                        small { "Issuer endpoint: {record.issuer}" }
                                         small { "{credential_issuance_activity_status(record.status)}" }
                                         small { class: "privacy-value", "{activity_observed_at_line(record.observed_at_millis)}" }
                                     }
@@ -275,7 +283,7 @@ mod tests {
             .collect()
     }
 
-    fn credential_rendered_text(state: CredentialIssuanceActivityPageState) -> Vec<String> {
+    fn credential_rendered_dom(state: CredentialIssuanceActivityPageState) -> Vec<Mutation> {
         #[derive(Clone, PartialEq, Props)]
         struct HarnessProps {
             state: CredentialIssuanceActivityPageState,
@@ -286,8 +294,11 @@ mod tests {
         }
 
         let mut dom = VirtualDom::new_with_props(harness, HarnessProps { state });
-        dom.rebuild_to_vec()
-            .edits
+        dom.rebuild_to_vec().edits
+    }
+
+    fn credential_rendered_text(state: CredentialIssuanceActivityPageState) -> Vec<String> {
+        credential_rendered_dom(state)
             .iter()
             .filter_map(|edit| match edit {
                 Mutation::CreateTextNode { value, .. } => Some(value.to_string()),
@@ -322,15 +333,30 @@ mod tests {
             retention: "process_local_bounded_not_backed_up".to_owned(),
             records: Vec::new(),
         });
+        let empty_text = credential_rendered_text(empty.clone());
+        let empty_dom = format!("{:?}", credential_rendered_dom(empty));
         assert!(
-            matches!(empty, CredentialIssuanceActivityPageState::Ready(activity) if activity.records.is_empty())
+            empty_text
+                .iter()
+                .any(|text| text.contains("No credential issuance activity")),
+            "{empty_text:?}"
         );
+        assert!(
+            empty_dom.contains("role") && empty_dom.contains("status"),
+            "{empty_dom}"
+        );
+
         let unavailable = CredentialIssuanceActivityPageState::Unavailable(
             "credential issuance activity is unavailable".to_owned(),
         );
+        let unavailable_text = credential_rendered_text(unavailable.clone());
+        let unavailable_dom = format!("{:?}", credential_rendered_dom(unavailable));
         assert!(
-            matches!(unavailable, CredentialIssuanceActivityPageState::Unavailable(error) if error.contains("unavailable"))
+            unavailable_text
+                .iter()
+                .any(|text| text.contains("activity is unavailable"))
         );
+        assert!(unavailable_dom.contains("role") && unavailable_dom.contains("status"));
         assert_eq!(
             credential_issuance_activity_status(CredentialIssuanceActivityStatus::Stored),
             "Stored"
@@ -367,8 +393,13 @@ mod tests {
             text.iter()
                 .any(|value| value.contains("https://issuer.example"))
         );
+        assert!(text.iter().any(|value| value.contains("Issuer endpoint")));
         assert!(text.iter().any(|value| value.contains("Stored")));
         assert!(text.iter().any(|value| value.contains("identity")));
+        assert!(
+            text.iter()
+                .any(|value| value.contains("This session only; bounded and not backed up"))
+        );
         assert!(!text.iter().any(|value| value.contains("profile_1")));
     }
 

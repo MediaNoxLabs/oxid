@@ -2330,8 +2330,12 @@ fn credential_issuance_review_blocks_replacement(
 }
 
 fn credential_issuance_review_is_terminal(prepared: Option<&CredentialIssuanceView>) -> bool {
-    prepared
-        .is_some_and(|review| matches!(review.state.as_str(), "succeeded" | "refused" | "failed"))
+    prepared.is_some_and(|review| {
+        matches!(
+            review.state.as_str(),
+            "succeeded" | "refused" | "failed" | "outcome_unknown"
+        )
+    })
 }
 
 fn retained_identity_review_route(
@@ -7695,7 +7699,7 @@ fn discard_open_credential_issuance_reviews(
                     Err(error) => return Err(credential_issuance_message(error)),
                 }
             }
-            "failed" | "refused" | "succeeded" => {}
+            "failed" | "refused" | "succeeded" | "outcome_unknown" => {}
             _ => {
                 return Err(
                     "Credential cleanup is still in progress. Retry after it finishes.".to_owned(),
@@ -10801,6 +10805,7 @@ mod tests {
         let succeeded = review("succeeded");
         let refused = review("refused");
         let failed = review("failed");
+        let unknown = review("outcome_unknown");
 
         assert!(credential_issuance_review_blocks_replacement(Some(
             &awaiting
@@ -10817,6 +10822,7 @@ mod tests {
         assert!(credential_issuance_review_is_terminal(Some(&succeeded)));
         assert!(credential_issuance_review_is_terminal(Some(&refused)));
         assert!(credential_issuance_review_is_terminal(Some(&failed)));
+        assert!(credential_issuance_review_is_terminal(Some(&unknown)));
         assert!(!credential_issuance_review_is_terminal(None));
     }
 

@@ -23,6 +23,8 @@ Credential issuance activity is an application-owned, privacy-safe read projecti
 | duplicate or stale terminal update | keep the first final outcome |
 | completion after the session has left `issuing` | reject the stale completion |
 | explicit refusal before acceptance | discard the prepared protocol session, then record `refused` |
+| local discard failure before acceptance | retain `awaiting_consent`; create no issuance activity |
+| local discard after a definitive failure | clear the local protocol session; keep `failed` in both read models |
 | refusal after an uncertain outcome | discard the local session; retain `outcome_unknown` activity |
 | retry after a terminal protocol session | reject with invalid state; a new offer requires a new prepared session and activity ID |
 | replacement offer | prepare a new session; no activity is created until acceptance or explicit refusal |
@@ -30,3 +32,5 @@ Credential issuance activity is an application-owned, privacy-safe read projecti
 | process restart or recovery | start with an empty activity projection; do not reconstruct events from documents or navigation |
 
 Records have a bounded monotonic application activity ID which is unrelated to the protocol `issuance_id`. They are separated by wallet profile, retained only in process memory, deleted on restart, and never backed up. The oldest final record is evicted when the limit of 128 is reached; pending and uncertain records are retained. If there is no room, new issuance is refused before protocol execution. The projection does not retain or expose offers, protocol identifiers, credential bytes, claims, proofs, keys, or raw adapter errors.
+
+The displayed issuer is an endpoint from issuer metadata validated by the production OID4VCI adapter before it returns a prepared preview. It is not a claim that a credential was issued. Activity ordering uses insertion order; wall-clock observation time is display metadata and may move backwards if the device clock changes. A refusal is still sent to the protocol when the Activity buffer is full, but in that case no refusal record is added.

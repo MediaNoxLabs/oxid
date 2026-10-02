@@ -284,6 +284,8 @@ impl fmt::Debug for IssuedCredentialBytes {
     }
 }
 
+/// A prepared preview must bind its issuer endpoint and public configuration
+/// metadata to validated issuer metadata, never merely echo an untrusted offer.
 pub trait CredentialIssuanceProtocolPort: Send + Sync {
     fn prepare<'a>(&'a self, request: PrepareIssuanceRequest) -> PrepareIssuancePortFuture<'a>;
     fn issue<'a>(&'a self, request: ProtocolIssueRequest) -> IssueCredentialPortFuture<'a>;
@@ -775,6 +777,7 @@ struct Session {
     state: CredentialIssuanceState,
     credential_id: Option<String>,
     failure_code: Option<String>,
+    refusal_in_progress: bool,
 }
 
 impl Session {
@@ -884,6 +887,23 @@ impl Drop for IssuanceAttempt<'_> {
     }
 }
 
+/// Releases a per-session refusal reservation even when the adapter panics.
+/// The adapter is deliberately called without holding `sessions`.
+struct RefusalAttempt<'a> {
+    service: &'a CredentialIssuanceService,
+    issuance_id: CredentialIssuanceId,
+}
+
+impl Drop for RefusalAttempt<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut sessions) = self.service.sessions.lock()
+            && let Some(session) = sessions.get_mut(&self.issuance_id)
+        {
+            session.refusal_in_progress = false;
+        }
+    }
+}
+
 impl CredentialIssuanceService {
     #[must_use]
     pub fn new(
@@ -963,7 +983,7 @@ impl CredentialIssuanceService {
             && let Some(session) = sessions.get_mut(id)
             && session.state == CredentialIssuanceState::Issuing
         {
-            session.state = CredentialIssuanceState::Failed;
+            session.state = CredentialIssuanceState::OutcomeUnknown;
             session.failure_code = Some(code.to_owned());
             self.activity
                 .update(id, CredentialIssuanceActivityStatus::OutcomeUnknown);
@@ -1008,6 +1028,7 @@ impl PrepareCredentialIssuanceUseCase for CredentialIssuanceService {
                 state: CredentialIssuanceState::AwaitingConsent,
                 credential_id: None,
                 failure_code: None,
+                refusal_in_progress: false,
             };
             let view = session.view(&prepared.id);
             if self.sessions()?.insert(prepared.id, session).is_some() {
@@ -1043,7 +1064,9 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
                 if session.profile_id != profile_id {
                     return Err(CredentialIssuanceError::NotFound);
                 }
-                if session.state != CredentialIssuanceState::AwaitingConsent {
+                if session.state != CredentialIssuanceState::AwaitingConsent
+                    || session.refusal_in_progress
+                {
                     return Err(CredentialIssuanceError::InvalidState);
                 }
                 let authority = self
@@ -1127,7 +1150,10 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
             let session = sessions
                 .get_mut(&issuance_id)
                 .ok_or(CredentialIssuanceError::NotFound)?;
-            if session.state != CredentialIssuanceState::Issuing {
+            if !matches!(
+                session.state,
+                CredentialIssuanceState::Issuing | CredentialIssuanceState::OutcomeUnknown
+            ) {
                 return Err(CredentialIssuanceError::InvalidState);
             }
             session.state = CredentialIssuanceState::Succeeded;
@@ -1147,34 +1173,52 @@ impl RefuseCredentialIssuanceUseCase for CredentialIssuanceService {
     ) -> Result<CredentialIssuanceView, CredentialIssuanceError> {
         let profile_id = profile(command.profile_id)?;
         let issuance_id = issuance_id(command.issuance_id)?;
+        {
+            let mut sessions = self.sessions()?;
+            let session = sessions
+                .get_mut(&issuance_id)
+                .ok_or(CredentialIssuanceError::NotFound)?;
+            if session.profile_id != profile_id {
+                return Err(CredentialIssuanceError::NotFound);
+            }
+            if !matches!(
+                session.state,
+                CredentialIssuanceState::AwaitingConsent
+                    | CredentialIssuanceState::Failed
+                    | CredentialIssuanceState::OutcomeUnknown
+            ) || session.refusal_in_progress
+            {
+                return Err(CredentialIssuanceError::InvalidState);
+            }
+            session.refusal_in_progress = true;
+        }
+        let refusal_attempt = RefusalAttempt {
+            service: self,
+            issuance_id: issuance_id.clone(),
+        };
+        self.protocol
+            .discard(&issuance_id)
+            .map_err(CredentialIssuanceError::Protocol)?;
+
         let mut sessions = self.sessions()?;
         let session = sessions
             .get_mut(&issuance_id)
             .ok_or(CredentialIssuanceError::NotFound)?;
-        if session.profile_id != profile_id {
-            return Err(CredentialIssuanceError::NotFound);
+        // Discard only changes an unaccepted offer to refused. It cannot
+        // rewrite an earlier failed or uncertain issuance outcome.
+        if session.state == CredentialIssuanceState::AwaitingConsent {
+            session.state = CredentialIssuanceState::Refused;
+            session.failure_code = None;
         }
-        if !matches!(
-            session.state,
-            CredentialIssuanceState::AwaitingConsent | CredentialIssuanceState::Failed
-        ) {
-            return Err(CredentialIssuanceError::InvalidState);
-        }
-        self.activity
-            .begin(&issuance_id, session)
-            .ok_or(CredentialIssuanceError::Unavailable)?;
-        if let Err(error) = self.protocol.discard(&issuance_id) {
-            self.activity.update(
-                &issuance_id,
-                CredentialIssuanceActivityStatus::OutcomeUnknown,
-            );
-            return Err(CredentialIssuanceError::Protocol(error));
-        }
-        session.state = CredentialIssuanceState::Refused;
-        session.failure_code = None;
+        // Activity is observational: lack of an evictable slot must not make
+        // refusal unavailable. It is only admitted after discard succeeds.
+        let _ = self.activity.begin(&issuance_id, session);
         self.activity
             .update(&issuance_id, CredentialIssuanceActivityStatus::Refused);
-        Ok(session.view(&issuance_id))
+        let view = session.view(&issuance_id);
+        drop(sessions);
+        drop(refusal_attempt);
+        Ok(view)
     }
 }
 
@@ -2422,8 +2466,8 @@ mod tests {
             },
         )
         .expect("failed issuance should be discardable");
-        assert_eq!(discarded.state, "refused");
-        assert_eq!(discarded.failure_code, None);
+        assert_eq!(discarded.state, "failed");
+        assert_eq!(discarded.failure_code.as_deref(), Some("invalid_proof"));
     }
 
     struct PanickingIssuanceProtocol;
@@ -2451,6 +2495,70 @@ mod tests {
         fn discard(&self, _: &CredentialIssuanceId) -> Result<(), IssuanceProtocolError> {
             Ok(())
         }
+    }
+
+    struct PanickingDiscardProtocol(AtomicUsize);
+
+    impl CredentialIssuanceProtocolPort for PanickingDiscardProtocol {
+        fn prepare<'a>(&'a self, _: PrepareIssuanceRequest) -> PrepareIssuancePortFuture<'a> {
+            Box::pin(async {
+                Ok(PreparedCredentialOffer {
+                    id: CredentialIssuanceId::parse("issuance_discard_panic")
+                        .expect("valid fixture id"),
+                    preview: CredentialOfferPreview::new(
+                        "https://issuer.example",
+                        vec!["identity".to_owned()],
+                        vec!["Identity credential".to_owned()],
+                    )
+                    .expect("valid preview"),
+                })
+            })
+        }
+
+        fn issue<'a>(&'a self, _: ProtocolIssueRequest) -> IssueCredentialPortFuture<'a> {
+            Box::pin(async { Err(IssuanceProtocolError::IssuerRejected) })
+        }
+
+        fn discard(&self, _: &CredentialIssuanceId) -> Result<(), IssuanceProtocolError> {
+            if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+                panic!("closed test-only discard worker failure");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn panicking_discard_releases_refusal_reservation_for_retry() {
+        let service = CredentialIssuanceService::with_authority(
+            Arc::new(PanickingDiscardProtocol(AtomicUsize::new(0))),
+            Arc::new(Sink),
+            issuance_authority(),
+        );
+        let prepared = prepare(&service);
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                RefuseCredentialIssuanceUseCase::execute(
+                    &service,
+                    RefuseCredentialIssuanceCommand {
+                        profile_id: "profile_1".to_owned(),
+                        issuance_id: prepared.id.clone(),
+                    },
+                )
+            }))
+            .is_err()
+        );
+        assert_eq!(
+            RefuseCredentialIssuanceUseCase::execute(
+                &service,
+                RefuseCredentialIssuanceCommand {
+                    profile_id: "profile_1".to_owned(),
+                    issuance_id: prepared.id,
+                },
+            )
+            .expect("panic cleanup permits retry")
+            .state,
+            "refused"
+        );
     }
 
     #[test]
@@ -2485,7 +2593,7 @@ mod tests {
             },
         )
         .expect("interrupted issuance remains inspectable");
-        assert_eq!(interrupted.state, "failed");
+        assert_eq!(interrupted.state, "outcome_unknown");
         assert_eq!(
             interrupted.failure_code.as_deref(),
             Some(ISSUANCE_INTERRUPTED_CODE),
@@ -2510,7 +2618,7 @@ mod tests {
             },
         )
         .expect("interrupted issuance should be discardable");
-        assert_eq!(discarded.state, "refused");
+        assert_eq!(discarded.state, "outcome_unknown");
         let activity =
             ListCredentialIssuanceActivityUseCase::execute(&service, "profile_1".to_owned())
                 .expect("activity projection");
@@ -2539,6 +2647,7 @@ mod tests {
             state: CredentialIssuanceState::Issuing,
             credential_id: None,
             failure_code: None,
+            refusal_in_progress: false,
         };
         let second_session = Session {
             profile_id: ProtocolProfileId::parse("profile_2").expect("valid profile"),
@@ -2546,6 +2655,7 @@ mod tests {
             state: CredentialIssuanceState::Issuing,
             credential_id: None,
             failure_code: None,
+            refusal_in_progress: false,
         };
         let first = CredentialIssuanceId::parse("protocol_issuance_a").expect("valid id");
         let second = CredentialIssuanceId::parse("protocol_issuance_b").expect("valid id");
@@ -2596,6 +2706,16 @@ mod tests {
             uncertain.records[0].status,
             CredentialIssuanceActivityStatus::OutcomeUnknown
         );
+        // Definitive sink success may reconcile an earlier uncertain outcome.
+        store.update(&second, CredentialIssuanceActivityStatus::Stored);
+        assert_eq!(
+            store
+                .execute("profile_2".to_owned())
+                .expect("projection")
+                .records[0]
+                .status,
+            CredentialIssuanceActivityStatus::Stored
+        );
 
         let after_restart = CredentialIssuanceActivityStore::new()
             .execute("profile_1".to_owned())
@@ -2617,6 +2737,7 @@ mod tests {
             state: CredentialIssuanceState::Issuing,
             credential_id: None,
             failure_code: None,
+            refusal_in_progress: false,
         };
         for index in 0..MAX_CREDENTIAL_ISSUANCE_ACTIVITY_RECORDS {
             let id = CredentialIssuanceId::parse(format!("issuance_{index}")).expect("valid id");
@@ -2641,6 +2762,40 @@ mod tests {
                 .len(),
             MAX_CREDENTIAL_ISSUANCE_ACTIVITY_RECORDS
         );
+    }
+
+    #[test]
+    fn refusal_remains_available_when_activity_capacity_is_unresolved() {
+        let service = service();
+        let prepared = prepare(&service);
+        let session = Session {
+            profile_id: ProtocolProfileId::parse("profile_1").expect("valid profile"),
+            preview: CredentialOfferPreview::new(
+                "https://issuer.example",
+                vec!["identity".to_owned()],
+                vec!["Identity credential".to_owned()],
+            )
+            .expect("valid preview"),
+            state: CredentialIssuanceState::Issuing,
+            credential_id: None,
+            failure_code: None,
+            refusal_in_progress: false,
+        };
+        let activity = service.activity();
+        for index in 0..MAX_CREDENTIAL_ISSUANCE_ACTIVITY_RECORDS {
+            let id = CredentialIssuanceId::parse(format!("pending_{index}")).expect("valid id");
+            assert!(activity.begin(&id, &session).is_some());
+        }
+
+        let refused = RefuseCredentialIssuanceUseCase::execute(
+            &service,
+            RefuseCredentialIssuanceCommand {
+                profile_id: "profile_1".to_owned(),
+                issuance_id: prepared.id,
+            },
+        )
+        .expect("activity capacity must not disable refusal");
+        assert_eq!(refused.state, "refused");
     }
 
     #[test]
