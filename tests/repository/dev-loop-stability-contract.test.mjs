@@ -32,7 +32,7 @@ import {
   runDevLoops,
 } from "../../scripts/dev-loops.mjs";
 import { editPrBody, parseEditPrArgs } from "../../scripts/github/edit-pr.mjs";
-import { normalizeSupersededPrStatusRollup, reconcileOptionalSarifProjectionWait, watchOxidPrCiStatus } from "../../scripts/github/watch-oxid-ci.mjs";
+import { normalizeSupersededPrChecks, normalizeSupersededPrStatusRollup, reconcileOptionalSarifProjectionWait, watchOxidPrCiStatus } from "../../scripts/github/watch-oxid-ci.mjs";
 import { CRITICAL_CHECKS } from "../../scripts/github/optional-sarif-policy.mjs";
 import { runResolveTrackerLocalSpec } from "../../scripts/github/resolve-tracker-local-spec.mjs";
 import { assertNoPreflightBypass, inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
@@ -920,7 +920,7 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   assert.match(devLoop, /common\s+checkout is a topology and shared-private-storage boundary only/u);
   assert.match(devLoop, /pre-flight-gate\.mjs --check-subagents.*before each later routed action/s);
   assert.match(devLoop, /MUST NOT call\n`subagent`, dispatch a reviewer, or create any nested workflow/u);
-  assert.match(devLoop, /exact-head local gate, push, and draft PR/u);
+  assert.match(devLoop, /exact-head local gate, push, and review-ready PR/u);
   assert.match(devLoop, /MUST NOT place it inside `taskflow`/u);
   assert.match(devLoop, /exact `provider\/model:thinking` per-run model value/u);
   assert.match(devLoop, /^worktree:\s*false$/mu, "the conductor reuses the canonical managed worktree");
@@ -1069,7 +1069,7 @@ test("repository wrappers force only the public PR-creation and managed-worktree
   assert.throws(() => normalizeDevLoopsArgs(["--help", "pr", "create"]), /unsupported leading/);
   assert.throws(() => normalizeDevLoopsArgs(["pr", "create", "--head", "topic"]), /--delivery-base is required/);
   assert.deepEqual(normalizeDevLoopsArgs(["pr", "create", "--head", "topic", "--delivery-base", "milestone-0.4.0"]), ["pr", "create", "--head", "topic", "--base", "milestone-0.4.0"]);
-  assert.deepEqual(normalizeDevLoopsArgs(["--silent", "pr", "create-draft", "--head", "topic", "--delivery-base=origin/milestone-0.5.0"]), ["--silent", "pr", "create-draft", "--head", "topic", "--base", "milestone-0.5.0"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["--silent", "pr", "create-draft", "--head", "topic", "--delivery-base=origin/milestone-0.5.0"]), ["--silent", "pr", "create", "--head", "topic", "--base", "milestone-0.5.0"]);
   assert.deepEqual(normalizeDevLoopsArgs(["loop", "ensure-worktree", "--base", "origin/develop", "--delivery-base", "develop"]), ["loop", "ensure-worktree", "--base", "origin/develop"]);
   assert.deepEqual(normalizeDevLoopsArgs(["loop", "ensure-worktree", "--delivery-base=origin/milestone-0.5.0"]), ["loop", "ensure-worktree", "--base", "origin/milestone-0.5.0"]);
   assert.deepEqual(normalizeDevLoopsArgs(["gate", "size-budget", "--base", "origin/develop", "--delivery-base", "develop"]), ["gate", "size-budget", "--base", "origin/develop"]);
@@ -2168,6 +2168,21 @@ test("Oxid PR CI adapter reconciles only superseded same-head Actions failures",
     assert.equal(normalizeSupersededPrStatusRollup(facts, { repo: "owner/repo" }, {
       loadWorkflowAttempts: () => { throw new Error("fixture API failure"); },
     }), facts);
+  });
+
+  await t.test("merge checks remove only a failed older Actions attempt", () => {
+    const checks = [
+      { name: "Repository gate", bucket: "cancel", state: "CANCELLED", link: "https://github.com/o/r/actions/runs/10/job/1" },
+      { name: "Repository gate", bucket: "pass", state: "SUCCESS", link: "https://github.com/o/r/actions/runs/11/job/2" },
+      { name: "scan", bucket: "pass", state: "SUCCESS", link: "https://github.com/o/r/runs/other" },
+    ];
+    const successful = attemptData({ id: 11, workflow_id: 5, run_number: 9, status: "completed", conclusion: "success" });
+    assert.deepEqual(normalizeSupersededPrChecks(checks, { repo: "owner/repo", headSha: "head-a" }, {
+      loadWorkflowAttempts: () => successful,
+    }), checks.slice(1));
+    assert.deepEqual(normalizeSupersededPrChecks(checks, { repo: "owner/repo", headSha: "head-a" }, {
+      loadWorkflowAttempts: () => { throw new Error("fixture API failure"); },
+    }), checks);
   });
 
   await t.test("an active replacement holds the stale failure pending", async () => {

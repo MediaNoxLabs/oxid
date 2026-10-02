@@ -11,6 +11,7 @@ import { assertIssueTarget, parseDeliveryTarget } from "../lib/delivery-target.m
 import { currentTriageReceipt, validateFollowUpIssue } from "./review-triage.mjs";
 import { assertReviewActionAllowed, currentReviewControl } from "./review-control.mjs";
 import { classifyOptionalSarifChecks, CRITICAL_CHECKS, OPTIONAL_SARIF_PROJECTIONS } from "./optional-sarif-policy.mjs";
+import { normalizeSupersededPrChecks } from "./watch-oxid-ci.mjs";
 
 const REPOSITORY = "MediaNoxLabs/oxid";
 const BLOCKING_TITLE_MARKERS = /(?:\[?\bWIP\b\]?|\bDRAFT\b|DO NOT MERGE|🚧)/iu;
@@ -115,7 +116,11 @@ function ghJson(run, args, cwd, label) {
   return parseJson(run("gh", args, { cwd, label }), label);
 }
 
-export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaultRun } = {}) {
+export function auditMilestoneMerge(options, {
+  cwd = process.cwd(),
+  run = defaultRun,
+  normalizeChecks = normalizeSupersededPrChecks,
+} = {}) {
   const root = run("git", ["rev-parse", "--show-toplevel"], { cwd, label: "resolve repository root" }).trim();
   const fields = "state,baseRefName,baseRefOid,headRefName,headRefOid,isDraft,isCrossRepository,mergeable,mergeStateStatus,title,body";
   const pr = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", fields], root, "read pull request facts");
@@ -134,7 +139,8 @@ export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaul
   run("git", ["merge-base", "--is-ancestor", localBase, pr.headRefOid], { cwd: root, label: "verify current-head freshness" });
   run("git", ["merge-tree", "--write-tree", localBase, pr.headRefOid], { cwd: root, label: "verify conflict-free merge tree" });
 
-  const checks = ghJson(run, ["pr", "checks", String(options.pr), "--repo", options.repo, "--json", "bucket,name,state,workflow"], root, "read current checks");
+  const rawChecks = ghJson(run, ["pr", "checks", String(options.pr), "--repo", options.repo, "--json", "bucket,link,name,state,workflow"], root, "read current checks");
+  const checks = normalizeChecks(rawChecks, { repo: options.repo, headSha: pr.headRefOid });
   const checkResult = validateMilestoneChecks(checks);
   if (!checkResult.ok) throw new Error(`pull request checks are not green: ${checkResult.failures.join("; ")}`);
 

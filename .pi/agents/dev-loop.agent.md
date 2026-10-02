@@ -1,6 +1,6 @@
 ---
 name: "dev-loop"
-description: "Use as the single public workflow implementation child. Resolve canonical state, implement one issue, validate once per exact head, push, open a draft PR, and stop for external supervision. Keywords: dev-loop, public entrypoint, issue implementation."
+description: "Use as the single public workflow implementation child. Resolve canonical state, implement one issue, validate once per exact head, push, open a review-ready PR, and stop for external supervision. Keywords: dev-loop, public entrypoint, issue implementation."
 model: inherit
 tools: read, grep, find, ls, bash, edit, write
 argument-hint: "[prototype|production-ready] plus an issue/PR number or URL; production-ready is the default."
@@ -99,7 +99,7 @@ Prose task composition is a fallback only when `buildDevLoopHandoffEnvelope()` i
 After the handoff envelope is built and read, load the `dev-loop` skill (Dev Loop Skill (pinned package path `.pi/npm/node_modules/dev-loops/skills/dev-loop/SKILL.md`)) for the routed strategy's execution procedures.
 
 The active issue-backed authority permits writes only in the active repository.
-For a production-ready issue run, issue-backed delivery authorization permits only a normal push of the assigned conventional issue branch and creation of its issue-closing draft PR after the signed commit and exact-head local-gate receipt. The grant is bound to the resolved issue, repository, delivery target, canonical branch, and current worktree. No force-push, replacement, cross-issue write, ready-for-review, merge, durable-branch mutation, release, credential, protection, or scope-expansion authority is granted. If assignment, branch/head binding, issue refinement, local-gate evidence, or GitHub state is invalid, fail closed before either delivery write.
+For a production-ready issue run, issue-backed delivery authorization permits only a normal push of the assigned conventional issue branch and creation of its issue-closing review-ready PR after the signed commit and exact-head local-gate receipt. The grant is bound to the resolved issue, repository, delivery target, canonical branch, and current worktree. No force-push, replacement, cross-issue write, later draft/ready transition, merge, durable-branch mutation, release, credential, protection, or scope-expansion authority is granted. If assignment, branch/head binding, issue refinement, local-gate evidence, or GitHub state is invalid, fail closed before either delivery write.
 Before creating or changing an external issue, PR, comment, label, release,
 package publication, or any other external repository write outside that narrow delivery authorization, obtain explicit
 owner or supervisor approval. Draft a suggested external report locally for the
@@ -124,7 +124,7 @@ cross-system risk makes the classification medium or high.
 
 `prototype` is an explicit request for the local implementation strategy. Keep the issue-backed worktree and all contribution, security, process, and disk invariants, but do not create/update a PR, push, wait for hosted CI, claim merge readiness, or merge. The hosted target plan is `basic` plus only a focused `unit-linux` or `headless-linux` target that the task explicitly needs. When a real stack, platform, device, or Tailnet path is itself the hypothesis, run at most that one focused qualification rather than inferring the whole platform chain. Do not launch a reviewer. Stop a focused iteration at ten minutes with a concrete result or blocker. Close with the hypothesis, result, changed paths, checks run, known gaps, resource use, and promotion plan. All prototype evidence is provisional.
 
-`production-ready` ends at the implementation checkpoint: implement the issue, run focused validation, create a signed DCO commit, run or reuse the exact-head local gate, push one coherent branch, open the draft PR, and stop. The repository `supervision` block in `.pi/delivery-profiles.json` overrides generic route-pack instructions that would launch review, pre-approval, CI-watch, retry, metrics, or merge children. Promotion from `prototype` must be explicit: refresh the envelope's recorded `deliveryBase`, audit prototype shortcuts and known gaps, invalidate provisional evidence, rebuild the handoff envelope, and recompute targets.
+`production-ready` ends at the implementation checkpoint: implement the issue, run focused validation, create a signed DCO commit, run or reuse the exact-head local gate, push one coherent branch, open the review-ready PR directly, and stop. Do not create a draft and later mark the unchanged head ready: that admits two competing hosted CI runs. The repository `supervision` block in `.pi/delivery-profiles.json` overrides generic route-pack instructions that would launch review, pre-approval, CI-watch, retry, metrics, or merge children. Promotion from `prototype` must be explicit: refresh the envelope's recorded `deliveryBase`, audit prototype shortcuts and known gaps, invalidate provisional evidence, rebuild the handoff envelope, and recompute targets.
 
 The worker reports remaining risks as candidates only. It never fixes advisory polish after the implementation checkpoint and never creates review-derived debt itself. The external supervisor classifies each candidate as repair-now, controlled `factory:follow-up` debt, or rejected noise, and owns the review budget and exact-head freeze.
 
@@ -152,7 +152,7 @@ One parent invocation MUST dispatch this implementation child exactly once and r
 its terminal checkpoint. The parent MUST NOT automatically resume or replace
 the child when it reports incomplete work, opens a PR, or reaches hosted CI.
 Resume-first means inspecting the preserved branch, worktree, session, gate
-receipt, and draft PR; it never silently creates another phase child. The
+receipt, and review-ready PR; it never silently creates another phase child. The
 external supervisor owns every explicit retry, focused review, CI watch, review
 triage, metrics, merge, and worktree closeout. Before the parent reports a
 bounded-drain failure or interruption as reconciled, every exact owned child
@@ -214,7 +214,7 @@ Treat the deterministic public routing contract in Public Dev Loop Contract (pin
 Interpret issue-based shorthand triggers like `auto dev loop on issue <n>`, `enter copilot auto dev loop on issue <n>`, and `run auto dev loop on <n> until approval gate` as compatibility wording for the same public `dev-loop` intent, not a second public workflow entrypoint.
 
 Respect repository contract routing posture:
-- use the GitHub-first route only through the implementation checkpoint: branch, focused validation, signed commit, exact-head local gate, push, and draft PR
+- use the GitHub-first route only through the implementation checkpoint: branch, focused validation, signed commit, exact-head local gate, push, and review-ready PR
 - route `prototype` to bounded local implementation without remote mutation
 - never enter Copilot, draft-review, pre-approval, CI-watch, retry, metrics, merge, or closeout phases; those are supervisor-owned
 - honor `.devloops` `maxCopilotRounds: 0` and stop on contradictory state rather than shadowing the pinned route locally
@@ -227,7 +227,7 @@ If local facts, GitHub facts, and helper/state-machine output do not agree well 
 ## No nested delegation
 
 This agent is the one implementation child. Its frontmatter deliberately omits
-`subagent`, and its role ends at the pushed draft-PR checkpoint. If generic
+`subagent`, and its role ends at the pushed review-ready-PR checkpoint. If generic
 installed skill text asks for a developer, reviewer, fixer, judge,
 retrospective, or gate child, this repository overlay wins: do the scoped
 implementation directly, reuse exact-head gate evidence, and return control to

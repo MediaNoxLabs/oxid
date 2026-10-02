@@ -313,9 +313,10 @@ function milestoneAuditRun({ reReadHead = "b".repeat(40), issueTarget = "milesto
 
 test("milestone audit binds issue target, base, checks, triage, and final head", () => {
   const options = { repo: "MediaNoxLabs/oxid", pr: 42, execute: false };
-  assert.equal(auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun() }).target, "milestone-0.4.0");
-  assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ issueTarget: "develop" }) }), /does not match/);
-  assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ reReadHead: "c".repeat(40) }) }), /changed during/);
+  const normalizeChecks = (checks) => checks;
+  assert.equal(auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun(), normalizeChecks }).target, "milestone-0.4.0");
+  assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ issueTarget: "develop" }), normalizeChecks }), /does not match/);
+  assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ reReadHead: "c".repeat(40) }), normalizeChecks }), /changed during/);
 });
 
 test("milestone merge implementation pins squash execution to the audited head", async () => {

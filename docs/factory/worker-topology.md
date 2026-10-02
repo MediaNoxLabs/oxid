@@ -105,7 +105,7 @@ one milestone recorded by their work item.
 
 A top-level `/dev-loop` invocation launches exactly one tracked implementation
 child. That child owns the issue worktree only through focused validation,
-signed commit, exact-head local gate, push, and draft PR, then stops without
+signed commit, exact-head local gate, push, and review-ready PR, then stops without
 nested dispatch. The external supervisor watches hosted CI and owns focused
 review, triage, merge, metrics, cleanup, and any explicit retry. Resume first
 inspects the preserved branch/session/receipt; these operations never justify an

@@ -149,6 +149,10 @@ export function normalizeDevLoopsArgs(argv) {
     || (route.category === "gate" && route.command === "size-budget");
   const isEnvelope = route.category === "loop" && route.command === "build-envelope";
   if (isEnvelope) return args;
+  if (route.category === "pr" && route.command === "create-draft") {
+    const commandIndex = args.indexOf("create-draft");
+    if (commandIndex !== -1) args[commandIndex] = "create";
+  }
   const hasBase = readLongOptionValues(args, "--base").length > 0;
   const selected = extractDeliveryTargetOption(args, { required: isPrCreate || hasBase });
   if (!selected.target) return selected.args;
@@ -299,6 +303,7 @@ export function applyDeliveryProfile(envelope, contract, profile, deliveryTarget
     return {
       ...routed,
       ...selection,
+      requireDraftFirst: false,
       supervision: structuredClone(contract.profiles[profile].supervision),
       preMutationFastPath: {
         maximumToolCallsBeforeOutcome: fastPath.maximumToolCallsBeforeOutcome,
@@ -308,7 +313,7 @@ export function applyDeliveryProfile(envelope, contract, profile, deliveryTarget
       terminalMetrics: fastPath.terminalMetrics,
       nextAction: selection.executionProfile === fastPath.executionProfile
         ? "Complete the scoped required reads, then make the first source mutation or return an evidence-backed blocker before 20 tool calls; retain every production-ready gate."
-        : routed.nextAction,
+        : routed.nextAction.replace(/\bdraft PR\b/giu, "review-ready PR"),
     };
   }
   if (profile !== "prototype") throw new Error(`unsupported delivery profile: ${profile}`);
