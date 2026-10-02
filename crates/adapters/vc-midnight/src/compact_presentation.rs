@@ -37,8 +37,7 @@ use oxid_presentation_application::{
     PresentationHolderAuthorizationPort, PresentationHolderAuthorizationRequest,
     PresentationProofArtifact, PresentationProofError, PresentationProofPort,
     PresentationProofRequest, PresentationVerificationError, PresentationVerificationRequest,
-    PresentationVerifierPort, UnavailablePresentationHolderAuthorization,
-    VerifyPresentationProofFuture,
+    PresentationVerifierPort, VerifyPresentationProofFuture,
 };
 use oxid_presentation_domain::{PresentationClaimIntent, RequestedPresentationClaim};
 use sha2::{Digest as _, Sha256};
@@ -128,18 +127,6 @@ pub trait CompactHolderProofPort: Send + Sync {
         &self,
         request: CompactHolderProofRequest,
     ) -> Result<Vec<u8>, CompactHolderProofError>;
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct UnavailableCompactHolderProof;
-
-impl CompactHolderProofPort for UnavailableCompactHolderProof {
-    fn create_holder_proof(
-        &self,
-        _: CompactHolderProofRequest,
-    ) -> Result<Vec<u8>, CompactHolderProofError> {
-        Err(CompactHolderProofError::Unavailable)
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1393,45 +1380,23 @@ fn embedded_field_from_be(
 pub struct PreflightOnlyCompactPresentationProof {
     repository: Arc<dyn CredentialRepository>,
     clock: Arc<dyn ClockPort>,
-    #[allow(dead_code)]
-    holder_authorization: Arc<dyn PresentationHolderAuthorizationPort>,
-    #[allow(dead_code)]
-    holder_proof: Arc<dyn CompactHolderProofPort>,
     accepted_holder_authorization: Option<Arc<dyn AcceptedPresentationHolderAuthorizationPort>>,
     #[cfg(not(target_arch = "wasm32"))]
     runtime: Option<Arc<NativeCompactPresentationRuntime>>,
 }
 
 impl PreflightOnlyCompactPresentationProof {
+    /// Legacy preflight fixture; accepted holder effects are unavailable.
+    #[cfg(test)]
     #[must_use]
     pub fn new(
         repository: Arc<dyn CredentialRepository>,
         clock: Arc<dyn ClockPort>,
-        holder_authorization: Arc<dyn PresentationHolderAuthorizationPort>,
+        _holder_authorization: Arc<dyn PresentationHolderAuthorizationPort>,
     ) -> Self {
         Self {
             repository,
             clock,
-            holder_authorization,
-            holder_proof: Arc::new(UnavailableCompactHolderProof),
-            accepted_holder_authorization: None,
-            #[cfg(not(target_arch = "wasm32"))]
-            runtime: None,
-        }
-    }
-
-    #[must_use]
-    pub fn with_holder_proof(
-        repository: Arc<dyn CredentialRepository>,
-        clock: Arc<dyn ClockPort>,
-        holder_authorization: Arc<dyn PresentationHolderAuthorizationPort>,
-        holder_proof: Arc<dyn CompactHolderProofPort>,
-    ) -> Self {
-        Self {
-            repository,
-            clock,
-            holder_authorization,
-            holder_proof,
             accepted_holder_authorization: None,
             #[cfg(not(target_arch = "wasm32"))]
             runtime: None,
@@ -1439,19 +1404,18 @@ impl PreflightOnlyCompactPresentationProof {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(test)]
     #[must_use]
     pub fn with_runtime(
         repository: Arc<dyn CredentialRepository>,
         clock: Arc<dyn ClockPort>,
-        holder_authorization: Arc<dyn PresentationHolderAuthorizationPort>,
-        holder_proof: Arc<dyn CompactHolderProofPort>,
+        _holder_authorization: Arc<dyn PresentationHolderAuthorizationPort>,
+        _holder_proof: Arc<dyn CompactHolderProofPort>,
         runtime: Arc<NativeCompactPresentationRuntime>,
     ) -> Self {
         Self {
             repository,
             clock,
-            holder_authorization,
-            holder_proof,
             accepted_holder_authorization: None,
             runtime: Some(runtime),
         }
@@ -1466,8 +1430,6 @@ impl PreflightOnlyCompactPresentationProof {
         Self {
             repository,
             clock,
-            holder_authorization: Arc::new(UnavailablePresentationHolderAuthorization),
-            holder_proof: Arc::new(UnavailableCompactHolderProof),
             accepted_holder_authorization: Some(accepted_holder_authorization),
             #[cfg(not(target_arch = "wasm32"))]
             runtime: None,
@@ -1485,8 +1447,6 @@ impl PreflightOnlyCompactPresentationProof {
         Self {
             repository,
             clock,
-            holder_authorization: Arc::new(UnavailablePresentationHolderAuthorization),
-            holder_proof: Arc::new(UnavailableCompactHolderProof),
             accepted_holder_authorization: Some(accepted_holder_authorization),
             runtime: Some(runtime),
         }
@@ -1804,18 +1764,6 @@ fn map_independent_did_error(error: DidOperationError) -> PresentationVerificati
             PresentationVerificationError::InvalidProof
         }
         _ => PresentationVerificationError::Unavailable,
-    }
-}
-
-#[allow(dead_code)]
-fn map_compact_holder_proof_error(error: CompactHolderProofError) -> PresentationProofError {
-    match error {
-        CompactHolderProofError::InvalidBinding
-        | CompactHolderProofError::NotManaged
-        | CompactHolderProofError::Rejected => PresentationProofError::HolderNotAuthorized,
-        CompactHolderProofError::Locked | CompactHolderProofError::Unavailable => {
-            PresentationProofError::HolderAuthorizationUnavailable
-        }
     }
 }
 
