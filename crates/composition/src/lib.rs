@@ -28,7 +28,8 @@ mod services;
 mod standalone_genesis;
 mod wiring;
 pub use dust_settlement::{
-    WalletDustAuthorizationReview, WalletDustSettlementCapability, WalletDustSettlementError,
+    AutomaticDustRealmReconciler, WalletDustAuthorizationReview, WalletDustSettlementCapability,
+    WalletDustSettlementError,
 };
 pub use environment::*;
 pub use identity::*;
