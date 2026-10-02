@@ -68,8 +68,20 @@ independent short policy contexts still run. `ready_for_review` and a
 `synchronize` event while `github.event.pull_request.draft` is false recompute
 the ordinary change-relevant plan for that exact head. `workflow_dispatch` is
 not draft-limited, so its profile and `targets` inputs can request any existing
-public hosted target. Pushes to `develop`, `main`, and `milestone-*` remain
-complete-profile backstops.
+public hosted target. For an on-demand run on a branch based on a milestone,
+pass `comparison_base` as the full 40-character SHA of that milestone commit.
+The planner and Coverage use the same base; the planner rejects other input
+formats, and Coverage requires the base to be an ancestor of the run's head.
+For example:
+
+```bash
+MILESTONE_SHA=$(git rev-parse origin/milestone-0.2.0)
+gh workflow run ci.yml --ref test/issue-807 -f profile=feature \
+  -f targets=coverage-linux -f "comparison_base=$MILESTONE_SHA"
+```
+
+Pushes to `develop`, `main`, and `milestone-*` remain complete-profile
+backstops.
 
 A successful draft aggregate is only truthful evidence that its selected L0
 work passed. It is not merge authorization: the existing milestone merge guard
