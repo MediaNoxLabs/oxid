@@ -10,13 +10,40 @@ use oxid_protocol_application::{
     CredentialIssuanceActivityView,
 };
 
-use super::{activity_observed_at_line, labels};
+use super::{WalletUiServices, activity_observed_at_line, labels, run_ui_blocking};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum VaultActivityPageState {
     Loading,
     Ready(PassportVaultActivityView),
     Unavailable(String),
+}
+
+#[component]
+pub(super) fn PassportVaultActivitySection(profile_id: String) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut state = use_signal(|| VaultActivityPageState::Loading);
+    let service = services.list_passport_vault_activity();
+    use_effect(move || {
+        let service = service.clone();
+        let profile_id = profile_id.clone();
+        spawn(async move {
+            state.set(
+                run_ui_blocking(move || service.execute(profile_id))
+                    .await
+                    .map_or_else(
+                        |error| VaultActivityPageState::Unavailable(error.to_string()),
+                        |result| {
+                            result.map_or_else(
+                                |error| VaultActivityPageState::Unavailable(error.to_string()),
+                                VaultActivityPageState::Ready,
+                            )
+                        },
+                    ),
+            );
+        });
+    });
+    rsx! { PassportVaultActivityCard { state: state.read().clone() } }
 }
 
 #[component]
@@ -107,6 +134,37 @@ pub(super) enum CredentialIssuanceActivityPageState {
     Loading,
     Ready(CredentialIssuanceActivityView),
     Unavailable(String),
+}
+
+#[component]
+pub(super) fn CredentialIssuanceActivitySection(profile_id: String) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut state = use_signal(|| CredentialIssuanceActivityPageState::Loading);
+    let service = services.list_credential_issuance_activity();
+    use_effect(move || {
+        let service = service.clone();
+        let profile_id = profile_id.clone();
+        spawn(async move {
+            state.set(
+                run_ui_blocking(move || service.execute(profile_id))
+                    .await
+                    .map_or_else(
+                        |error| CredentialIssuanceActivityPageState::Unavailable(error.to_string()),
+                        |result| {
+                            result.map_or_else(
+                                |error| {
+                                    CredentialIssuanceActivityPageState::Unavailable(
+                                        error.to_string(),
+                                    )
+                                },
+                                CredentialIssuanceActivityPageState::Ready,
+                            )
+                        },
+                    ),
+            );
+        });
+    });
+    rsx! { CredentialIssuanceActivityCard { state: state.read().clone() } }
 }
 
 #[component]

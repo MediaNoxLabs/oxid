@@ -38,10 +38,7 @@ pub use wallet_realm_sync_services::{WalletAccountUiServices, WalletRealmSyncUiS
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
 
-use activity_page::{
-    CredentialIssuanceActivityCard, CredentialIssuanceActivityPageState, PassportVaultActivityCard,
-    VaultActivityPageState,
-};
+use activity_page::{CredentialIssuanceActivitySection, PassportVaultActivitySection};
 #[cfg(target_os = "android")]
 pub use android_platform::{AndroidPlatformInitialization, App};
 use assets_page::AssetsPage;
@@ -5738,9 +5735,6 @@ fn DocumentsPage(
 fn ActivityPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| AccountPageState::Loading);
-    let mut vault_activity = use_signal(|| VaultActivityPageState::Loading);
-    let mut credential_issuance_activity =
-        use_signal(|| CredentialIssuanceActivityPageState::Loading);
     let profile_id = active_profile.id.clone();
     let services_for_load = services.clone();
     use_effect(move || {
@@ -5751,52 +5745,6 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
                 run_ui_blocking(move || load_account_page(&services, &profile_id))
                     .await
                     .unwrap_or_else(|error| AccountPageState::Failed(error.to_string())),
-            );
-        });
-    });
-    let activity_service = services.list_passport_vault_activity();
-    let activity_profile = active_profile.id.clone();
-    use_effect(move || {
-        let service = activity_service.clone();
-        let profile_id = activity_profile.clone();
-        spawn(async move {
-            vault_activity.set(
-                run_ui_blocking(move || service.execute(profile_id))
-                    .await
-                    .map_or_else(
-                        |error| VaultActivityPageState::Unavailable(error.to_string()),
-                        |result| {
-                            result.map_or_else(
-                                |error| VaultActivityPageState::Unavailable(error.to_string()),
-                                VaultActivityPageState::Ready,
-                            )
-                        },
-                    ),
-            );
-        });
-    });
-    let issuance_activity_service = services.list_credential_issuance_activity();
-    let issuance_activity_profile = active_profile.id.clone();
-    use_effect(move || {
-        let service = issuance_activity_service.clone();
-        let profile_id = issuance_activity_profile.clone();
-        spawn(async move {
-            credential_issuance_activity.set(
-                run_ui_blocking(move || service.execute(profile_id))
-                    .await
-                    .map_or_else(
-                        |error| CredentialIssuanceActivityPageState::Unavailable(error.to_string()),
-                        |result| {
-                            result.map_or_else(
-                                |error| {
-                                    CredentialIssuanceActivityPageState::Unavailable(
-                                        error.to_string(),
-                                    )
-                                },
-                                CredentialIssuanceActivityPageState::Ready,
-                            )
-                        },
-                    ),
             );
         });
     });
@@ -5842,8 +5790,8 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
                 rsx! { AccountActivityCard { account: *account, unavailable } }
             },
         }
-        PassportVaultActivityCard { state: vault_activity.read().clone() }
-        CredentialIssuanceActivityCard { state: credential_issuance_activity.read().clone() }
+        PassportVaultActivitySection { profile_id: active_profile.id.clone() }
+        CredentialIssuanceActivitySection { profile_id: active_profile.id.clone() }
         SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
     }
 }
