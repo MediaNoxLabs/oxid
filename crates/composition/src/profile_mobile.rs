@@ -136,9 +136,7 @@ use super::wiring::{
     with_wallet_onboarding as with_portal_wallet_onboarding,
 };
 #[cfg(any(target_os = "ios", target_os = "android"))]
-use super::wiring::{
-    compose_with_adapters_and_presentation, with_wallet_onboarding as with_native_wallet_onboarding,
-};
+use super::wiring::{compose_with_adapters_and_presentation, with_native_wallet_onboarding};
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_platform_system::OsRandom;
 use oxid_adapter_platform_system::SystemClock;

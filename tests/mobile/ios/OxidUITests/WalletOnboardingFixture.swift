@@ -28,14 +28,22 @@ enum WalletOnboardingFixture {
             "development custody must produce a reviewable recovery phrase within the bounded root-preparation budget"
         )
 
-        let acknowledgement = application.descendants(matching: .any)[
+        let acknowledgement = application.switches[
             "I have securely saved or verified this recovery phrase."
         ]
         XCTAssertTrue(acknowledgement.waitForExistence(timeout: 10))
+        for _ in 0..<12 where !acknowledgement.isHittable {
+            application.swipeUp()
+        }
+        XCTAssertTrue(acknowledgement.isHittable)
         acknowledgement.tap()
 
         let finish = application.buttons["Finish and open wallet"]
         XCTAssertTrue(finish.waitForExistence(timeout: 10))
+        for _ in 0..<12 where !finish.isHittable {
+            application.swipeUp()
+        }
+        XCTAssertTrue(finish.isHittable)
         let deadline = Date().addingTimeInterval(10)
         while !finish.isEnabled && Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))

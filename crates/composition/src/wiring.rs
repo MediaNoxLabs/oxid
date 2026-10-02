@@ -38,7 +38,6 @@ use oxid_adapter_openid4vp::{CredentialDisclosureCandidateSource, StandaloneOpen
 use oxid_adapter_passport_vault::NativePassportVaultContractStateDecoder;
 use oxid_adapter_passport_vault::StandalonePassportVaultCredential;
 use oxid_adapter_siopv2::{DidSelfIssuedIdentityProof, StandaloneSiopV2Verifier};
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use oxid_adapter_storage_dev::DevelopmentWalletOnboardingAuthorization;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_storage_mobile::NativeMobileWalletOnboardingAuthorization;
@@ -311,17 +310,19 @@ pub(super) fn complete_wallet_recovery_journal() -> Arc<dyn RecoveryJournalPort>
 
 /// Adds private-wallet onboarding only after the caller has selected the exact
 /// network bound by its profile composition.
-pub(super) fn with_wallet_onboarding<R, S, M>(
+fn with_wallet_onboarding_authorization<R, S, M, A>(
     services: ApplicationServices,
     repository: Arc<R>,
     security: Arc<S>,
     midnight: Arc<M>,
     network_id: String,
+    authorization: Arc<A>,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
     S: WalletProtectionPort + WalletRootRecoveryPort + 'static,
     M: WalletNetworkPort + WalletAccountDerivationPort + 'static,
+    A: oxid_wallet_application::WalletOnboardingAuthorizationPort + 'static,
 {
     let network_selection = services.select_wallet_network();
     let Ok(recovery) = WalletRootRecoveryService::new(
@@ -333,10 +334,6 @@ where
     ) else {
         return services;
     };
-    #[cfg(any(target_os = "ios", target_os = "android"))]
-    let authorization = Arc::new(NativeMobileWalletOnboardingAuthorization);
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    let authorization = Arc::new(DevelopmentWalletOnboardingAuthorization);
     let onboarding = Arc::new(WalletOnboardingService::new(
         Arc::new(OsRandom),
         Arc::new(Bip39WalletMnemonic),
@@ -349,6 +346,58 @@ where
         onboarding.clone(),
         onboarding,
     ))
+}
+
+/// Adds deterministic onboarding to an explicitly selected development
+/// composition, including iOS and Android simulator builds.
+///
+/// Authorization follows the composition's trust boundary rather than the
+/// compilation target. Native and production compositions must call
+/// [`with_native_wallet_onboarding`] instead.
+pub(super) fn with_wallet_onboarding<R, S, M>(
+    services: ApplicationServices,
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    network_id: String,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
+    S: WalletProtectionPort + WalletRootRecoveryPort + 'static,
+    M: WalletNetworkPort + WalletAccountDerivationPort + 'static,
+{
+    with_wallet_onboarding_authorization(
+        services,
+        repository,
+        security,
+        midnight,
+        network_id,
+        Arc::new(DevelopmentWalletOnboardingAuthorization),
+    )
+}
+
+/// Adds platform-authorized onboarding to a native mobile composition.
+#[cfg(any(target_os = "ios", target_os = "android"))]
+pub(super) fn with_native_wallet_onboarding<R, S, M>(
+    services: ApplicationServices,
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    network_id: String,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
+    S: WalletProtectionPort + WalletRootRecoveryPort + 'static,
+    M: WalletNetworkPort + WalletAccountDerivationPort + 'static,
+{
+    with_wallet_onboarding_authorization(
+        services,
+        repository,
+        security,
+        midnight,
+        network_id,
+        Arc::new(NativeMobileWalletOnboardingAuthorization),
+    )
 }
 
 pub(super) fn compose_with_adapters<R, S, M>(
