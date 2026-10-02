@@ -44,3 +44,30 @@ test("profile acceptance serializes the host and bounds each XCTest scenario", a
   assert.match(script, /oxid_ios_supervise_acceptance "\$repository_root" ios-profile-flow 3600/u);
   assert.match(script, /oxid_ios_run_xctest "\$repository_root" "\$scenario_name" 600/u);
 });
+
+test("development XCTest fixtures complete the protected recovery ceremony", async () => {
+  const fixture = await readFile(
+    new URL("tests/mobile/ios/OxidUITests/WalletOnboardingFixture.swift", root),
+    "utf8",
+  );
+  const migrated = await Promise.all([
+    "ProfileFlowTests.swift",
+    "DeveloperProfileTests.swift",
+    "BackupFlowTests.swift",
+    "IdentityIngressTests.swift",
+    "StandaloneLocalAccountTests.swift",
+  ].map((name) => readFile(
+    new URL(`tests/mobile/ios/OxidUITests/${name}`, root),
+    "utf8",
+  )));
+
+  assert.match(fixture, /Generate recovery phrase/u);
+  assert.match(fixture, /New wallet recovery phrase/u);
+  assert.match(fixture, /I have securely saved or verified this recovery phrase\./u);
+  assert.match(fixture, /Finish and open wallet/u);
+  assert.match(fixture, /must not expose the retired protection bypass/u);
+  for (const source of migrated) {
+    assert.match(source, /WalletOnboardingFixture\.completeDevelopmentRecoveryCeremony/u);
+    assert.doesNotMatch(source, /Skip for now/u);
+  }
+});

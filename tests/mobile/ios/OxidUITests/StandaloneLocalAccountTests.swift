@@ -16,8 +16,7 @@ final class StandaloneLocalAccountTests: XCTestCase {
         XCTAssertTrue(createWallet.waitForExistence(timeout: 15))
         createWallet.tap()
         application.buttons["Create and continue"].tap()
-        XCTAssertTrue(application.buttons["Skip for now"].waitForExistence(timeout: 10))
-        application.buttons["Skip for now"].tap()
+        WalletOnboardingFixture.completeDevelopmentRecoveryCeremony(in: application, timeout: 90)
 
         XCTAssertTrue(application.buttons["Wallet"].waitForExistence(timeout: 15))
         application.buttons["Wallet"].tap()

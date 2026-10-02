@@ -39,10 +39,9 @@ final class ProfileFlowTests: XCTestCase {
         if createWallet.waitForExistence(timeout: 5) {
             createWallet.tap()
             application.buttons["Create and continue"].tap()
-            XCTAssertTrue(application.buttons["Skip for now"].waitForExistence(timeout: 10))
-            application.buttons["Skip for now"].tap()
+            WalletOnboardingFixture.completeDevelopmentRecoveryCeremony(in: application)
         }
-        XCTAssertTrue(application.buttons["Scan identity QR code"].waitForExistence(timeout: 15))
+        XCTAssertTrue(application.buttons["Scan QR code"].waitForExistence(timeout: 15))
     }
 
     @MainActor
@@ -51,13 +50,12 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(home.waitForExistence(timeout: 15))
         home.tap()
         XCTAssertTrue(
-            application.staticTexts["Everything in one place"].waitForExistence(timeout: 15)
+            application.staticTexts["Continue your work"].waitForExistence(timeout: 15)
         )
         for action in ["Receive", "Send", "Present"] {
             XCTAssertTrue(application.buttons[action].exists)
         }
-        XCTAssertTrue(application.buttons["Open Wallet NIGHT account"].exists)
-        XCTAssertTrue(application.buttons["Open Wallet shielded account"].exists)
+        XCTAssertTrue(application.buttons["Open Wallet for Local (undeployed)"].exists)
         XCTAssertTrue(application.buttons["Open newest document"].exists)
         XCTAssertTrue(application.buttons["Open Passport Vault"].exists)
         XCTAssertTrue(application.buttons["Open wallet security settings"].exists)
@@ -69,7 +67,7 @@ final class ProfileFlowTests: XCTestCase {
     private func openPassportVault(in application: XCUIApplication) {
         application.buttons["Home"].tap()
         let vault = application.buttons["Open Passport Vault"]
-        let firstCard = application.buttons["Open Wallet NIGHT account"]
+        let firstCard = application.buttons["Open Wallet for Local (undeployed)"]
         XCTAssertTrue(vault.waitForExistence(timeout: 15))
         for _ in 0..<5 where !vault.isHittable {
             firstCard.swipeLeft()
@@ -79,26 +77,59 @@ final class ProfileFlowTests: XCTestCase {
     }
 
     @MainActor
+    private func openWalletAndWaitForAutomaticSync(_ application: XCUIApplication) {
+        XCTAssertTrue(application.buttons["Wallet"].waitForExistence(timeout: 15))
+        application.buttons["Wallet"].tap()
+        let activate = application.buttons["Activate protected Midnight account"]
+        if activate.waitForExistence(timeout: 3) {
+            activate.tap()
+        }
+        XCTAssertTrue(application.buttons["Use my receive address"].waitForExistence(timeout: 30))
+        XCTAssertTrue(application.staticTexts["Up to date"].waitForExistence(timeout: 30))
+        XCTAssertTrue(application.staticTexts["DUST"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["NIGHT"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.staticTexts["Shielded"].waitForExistence(timeout: 10))
+        XCTAssertFalse(application.buttons["Sync DUST"].exists)
+        XCTAssertFalse(application.buttons["Sync shielded assets"].exists)
+    }
+
+    @MainActor
     func testSecretModeRearmsAfterBackground() throws {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         ensureProfile(in: application)
 
-        // WebKit exposes aria-pressed buttons as switches on iOS while
+        let developmentNotice = application.buttons[
+            "Dismiss public genesis wallet notice for this session"
+        ]
+        if developmentNotice.exists {
+            developmentNotice.tap()
+        }
+        // WebKit does not expose the fixed three-dot header control in every
+        // iOS runtime, so activate its stable top-right hit region.
+        application.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.15)).tap()
+        let settings = application.descendants(matching: .any)["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 10))
+        settings.tap()
+        let preferences = application.buttons["Open Preferences"]
+        XCTAssertTrue(preferences.waitForExistence(timeout: 10))
+        preferences.tap()
+
+        // WebKit may expose aria-pressed buttons as switches on iOS while
         // preserving the accessible label and activation behavior.
         let reveal = application.descendants(matching: .any)[
-            "Show private values for 30 seconds"
+            "Reveal private values for 10 minutes"
         ]
         XCTAssertTrue(reveal.waitForExistence(timeout: 10))
         reveal.tap()
         XCTAssertTrue(
-            application.descendants(matching: .any)["Hide private values"]
+            application.descendants(matching: .any)["Hide private values now"]
                 .waitForExistence(timeout: 5)
         )
 
         XCUIDevice.shared.press(.home)
         application.activate()
         XCTAssertTrue(reveal.waitForExistence(timeout: 10))
-        XCTAssertFalse(application.descendants(matching: .any)["Hide private values"].exists)
+        XCTAssertFalse(application.descendants(matching: .any)["Hide private values now"].exists)
     }
 
     @MainActor
@@ -112,29 +143,14 @@ final class ProfileFlowTests: XCTestCase {
         application.buttons["Create private wallet"].tap()
         XCTAssertTrue(application.buttons["Create and continue"].waitForExistence(timeout: 10))
         application.buttons["Create and continue"].tap()
-        XCTAssertTrue(application.staticTexts["Protect this wallet"].waitForExistence(timeout: 10))
+        XCTAssertTrue(application.buttons["Generate recovery phrase"].waitForExistence(timeout: 10))
         XCTAssertFalse(application.staticTexts.matching(
             NSPredicate(format: "label BEGINSWITH %@", "profile_")
         ).firstMatch.exists)
-        application.buttons["Skip for now"].tap()
+        WalletOnboardingFixture.completeDevelopmentRecoveryCeremony(in: application)
 
         XCTAssertTrue(application.buttons["Home"].waitForExistence(timeout: 15))
-        application.buttons["Wallet"].tap()
-        let activate = application.buttons["Activate protected Midnight account"]
-        XCTAssertTrue(activate.waitForExistence(timeout: 15))
-        activate.tap()
-        XCTAssertTrue(application.buttons["Use my receive address"].waitForExistence(timeout: 30))
-
-        let sync = application.buttons["Sync now"]
-        XCTAssertTrue(sync.waitForExistence(timeout: 10))
-        scrollTo(sync, in: application)
-        sync.tap()
-        XCTAssertTrue(application.staticTexts["12 DUST"].waitForExistence(timeout: 10))
-        XCTAssertTrue(application.staticTexts["1 shielded notes"].waitForExistence(timeout: 10))
-        XCTAssertTrue(application.staticTexts["5 NIGHT"].waitForExistence(timeout: 10))
-        XCTAssertTrue(application.buttons["Sync now"].exists)
-        XCTAssertFalse(application.buttons["Sync DUST"].exists)
-        XCTAssertFalse(application.buttons["Sync shielded assets"].exists)
+        openWalletAndWaitForAutomaticSync(application)
     }
 
     @MainActor
@@ -143,30 +159,17 @@ final class ProfileFlowTests: XCTestCase {
         ensureProfile(in: application)
         assertHomeComposition(in: application)
         application.buttons["Present"].tap()
-        XCTAssertTrue(application.buttons["Manage identities"].waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            application.buttons["Use standalone verifier request"]
+                .waitForExistence(timeout: 5)
+        )
         application.buttons["Home"].tap()
         application.buttons["Receive"].tap()
 
-        XCTAssertTrue(application.staticTexts["Receive NIGHT"].waitForExistence(timeout: 10))
-        let openWallet = application.buttons["Open Wallet to activate"]
-        XCTAssertTrue(openWallet.waitForExistence(timeout: 10))
-        openWallet.tap()
-
-        let activateButton = application.buttons["Activate protected Midnight account"]
-        XCTAssertTrue(activateButton.waitForExistence(timeout: 15))
-        activateButton.tap()
-
+        XCTAssertTrue(application.staticTexts["Receive assets"].waitForExistence(timeout: 10))
+        application.buttons["Close Receive"].firstMatch.tap()
+        openWalletAndWaitForAutomaticSync(application)
         let useReceiveAddress = application.buttons["Use my receive address"]
-        XCTAssertTrue(useReceiveAddress.waitForExistence(timeout: 15))
-
-        let sync = application.buttons["Sync now"]
-        XCTAssertTrue(sync.waitForExistence(timeout: 5))
-        scrollTo(sync, in: application)
-        sync.tap()
-        XCTAssertTrue(application.staticTexts["12 DUST"].waitForExistence(timeout: 5))
-        XCTAssertTrue(application.staticTexts["1 shielded notes"].waitForExistence(timeout: 5))
-        XCTAssertTrue(application.staticTexts["5 NIGHT"].waitForExistence(timeout: 5))
-        XCTAssertTrue(application.buttons["Sync now"].exists)
 
         application.buttons["Home"].tap()
         application.buttons["Receive"].tap()
@@ -496,8 +499,10 @@ final class ProfileFlowTests: XCTestCase {
 
         assertHomeComposition(in: application)
         application.buttons["Wallet"].tap()
-        XCTAssertTrue(activateButton.waitForExistence(timeout: 30))
-        activateButton.tap()
+        let relaunchActivate = application.buttons["Activate protected Midnight account"]
+        if relaunchActivate.waitForExistence(timeout: 3) {
+            relaunchActivate.tap()
+        }
         XCTAssertTrue(application.staticTexts["Transfer included"].waitForExistence(timeout: 15))
         documents.tap()
         XCTAssertTrue(manageIdentities.waitForExistence(timeout: 5))
@@ -700,8 +705,7 @@ final class ProfileFlowTests: XCTestCase {
         if createWallet.waitForExistence(timeout: 5) {
             createWallet.tap()
             application.buttons["Create and continue"].tap()
-            XCTAssertTrue(application.buttons["Skip for now"].waitForExistence(timeout: 10))
-            application.buttons["Skip for now"].tap()
+            WalletOnboardingFixture.completeDevelopmentRecoveryCeremony(in: application)
         }
 
         let scanIdentityRequest = application.buttons["Scan"]

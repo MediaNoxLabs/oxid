@@ -25,8 +25,7 @@ final class DeveloperProfileTests: XCTestCase {
         XCTAssertTrue(application.buttons["Create private wallet"].waitForExistence(timeout: 15))
         application.buttons["Create private wallet"].tap()
         application.buttons["Create and continue"].tap()
-        XCTAssertTrue(application.buttons["Skip for now"].waitForExistence(timeout: 10))
-        application.buttons["Skip for now"].tap()
+        WalletOnboardingFixture.completeDevelopmentRecoveryCeremony(in: application)
 
         XCTAssertTrue(application.buttons["Open profile menu"].waitForExistence(timeout: 15))
         application.buttons["Open profile menu"].tap()

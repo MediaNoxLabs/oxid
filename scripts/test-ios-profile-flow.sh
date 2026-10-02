@@ -55,13 +55,17 @@ app_bundle="$repository_root/target/dx/oxid-app/debug/ios/OxidApp.app"
 bundle_identifier="$(/usr/bin/plutil -extract CFBundleIdentifier raw "$app_bundle/Info.plist")"
 test_source="$repository_root/tests/mobile/ios/OxidUITests/ProfileFlowTests.swift"
 test_names=()
-while IFS= read -r test_name; do
-  test_names+=("$test_name")
-done < <(
-  sed -nE \
-    's/^[[:space:]]*func (test[A-Za-z0-9_]+)\(\)( throws)? \{.*/\1/p' \
-    "$test_source"
-)
+if [ -n "${OXID_IOS_PROFILE_TEST:-}" ]; then
+  test_names+=("$OXID_IOS_PROFILE_TEST")
+else
+  while IFS= read -r test_name; do
+    test_names+=("$test_name")
+  done < <(
+    sed -nE \
+      's/^[[:space:]]*func (test[A-Za-z0-9_]+)\(\)( throws)? \{.*/\1/p' \
+      "$test_source"
+  )
+fi
 if [ "${#test_names[@]}" -eq 0 ]; then
   echo "No ProfileFlowTests test methods were discovered in $test_source." >&2
   exit 1
