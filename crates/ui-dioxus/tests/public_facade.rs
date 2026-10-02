@@ -9,11 +9,10 @@ use oxid_ui_dioxus::{
     PassportVaultContractCallRecoveryUiServices, PassportVaultContractCallUiServices,
     PassportVaultUiServices, SecurityCopySnapshot, SelfIssuedAuthenticationUiServices,
     WalletAccountUiServices, WalletBackupUiServices, WalletDustSettlementUiServices,
-    WalletDustSyncUiServices, WalletOperationalUiServices,
-    WalletProfileUiServices, WalletRealmSyncUiServices, WalletSecurityUiServices,
-    WalletShieldedSyncUiServices, WalletTransactionPreparationUiServices,
-    WalletTransactionRecoveryUiServices, WalletTransactionUiServices, WalletUiServices,
-    security_copy_snapshot,
+    WalletDustSyncUiServices, WalletOperationalUiServices, WalletProfileUiServices,
+    WalletRealmSyncUiServices, WalletSecurityUiServices, WalletShieldedSyncUiServices,
+    WalletTransactionPreparationUiServices, WalletTransactionRecoveryUiServices,
+    WalletTransactionUiServices, WalletUiServices, security_copy_snapshot,
 };
 
 fn assert_public_path<Item>(_item: Item) {}
