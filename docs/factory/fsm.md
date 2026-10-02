@@ -10,10 +10,10 @@ label is present at a time.
                                      │ claim (lease posted, assignee set)
                                      ▼
                               factory:claimed
-                                     │ branch pushed + draft PR opened
+                                     │ branch pushed + review-ready PR opened
                                      ▼
                             factory:in-progress
-                                     │ implementer requests draft gate
+                                     │ implementer requests direction gate
                                      ▼
                             factory:gate-draft
                               │               │

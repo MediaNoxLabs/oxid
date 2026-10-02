@@ -24,8 +24,9 @@ node scripts/loop/ensure-worktree.mjs \
   --branch feat/issue-<number> \
   --delivery-base origin/milestone-<x.y.z>
 
-# Public dev-loops PR creation (`create-draft` is the deprecated alias) pins
-# that same target. Factory-policy work uses origin/develop instead.
+# Repository-owned PR creation (`create-draft` is the deprecated alias) pins
+# that same target and calls `gh pr create` without `--draft`. Factory-policy
+# work uses origin/develop instead.
 node scripts/dev-loops.mjs pr create \
   --repo MediaNoxLabs/oxid --head <branch> \
   --delivery-base origin/milestone-<x.y.z> \
@@ -158,12 +159,12 @@ output-option semantics.
 concurrent reviewers, and stops low-signal refinement. The implementation child
 does not run those reviewers; the persistent supervisor owns focused review.
 Independent external review is an explicit high-risk or owner-requested action.
-Contradictory aggregate loop-info is a
-pinned upstream residual. For a draft PR, the pinned gate coordinator remains
-the authority: when it explicitly permits `run_draft_gate` under
-`requireCi: false`, continue bounded review and keep the PR draft. Stop and
-obtain a consistent authoritative state for every other contradiction rather
-than overriding the pinned coordinator locally.
+Contradictory aggregate loop-info is a pinned upstream residual. Production
+delivery opens the PR ready only after its exact-head local gate, so hosted CI
+has one authoritative admission for that head. Existing or manually created
+drafts remain non-deliverable until a supervisor obtains a consistent state;
+never rerun an older workflow while a newer authoritative same-head run is
+active.
 
 There is no gate-evidence repair command. The sanctioned response to incomplete
 inline evidence is stop and preserve findings. After focused pre-commit checks

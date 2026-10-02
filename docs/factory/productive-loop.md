@@ -9,14 +9,14 @@ not.
 
 ## Service levels and hard bounds
 
-- A draft-direction result should take at most 10 minutes.
+- A direction-review result should take at most 10 minutes.
 - A routine PR should be merge-ready in 35–60 minutes of elapsed time.
 - One review agent is the routine default and one automatic review/fix round is
   the limit. A second opinion requires high risk, a disputed finding, or an
   explicit owner request.
 - Only one PR candidate is auto-driven remotely by each parent session. One
   top-level `/dev-loop` invocation dispatches exactly one tracked implementation
-  child and stops after its pushed draft-PR checkpoint. It never auto-resumes
+  child and stops after its pushed review-ready-PR checkpoint. It never auto-resumes
   or launches review, pre-approval, or CI-only children.
 - Keep at most two active managed delivery worktrees per Git common checkout
   on a host. An experiment may use a temporary third worktree only when its
@@ -146,7 +146,7 @@ ledger and PR comment without blocking a clean verdict.
    records a justified no-demo impact. The inventory CLI is read-only; an
    explicit `/scenario prepare` request delegates bounded preparation to the
    active agent under the existing authority and resource-ownership rules.
-3. Keep draft review outside the implementation invocation. The persistent
+3. Keep direction review outside the implementation invocation. The persistent
    supervisor owns focused review and any resulting explicit retry; no Pi child
    chains into a reviewer.
 4. Run the target planner locally against the intended base and head:
@@ -170,7 +170,9 @@ ledger and PR comment without blocking a clean verdict.
    or focused commands are rejected. Do not run a pre-commit full gate plus a
    second full receipt. An unchanged-head review/checkpoint verifies the same
    gate ID without a command. Hosted CI owns wider affected unit, headless, UI,
-   coverage, and Nix fan-out. Push one coherent candidate and open the draft PR.
+   coverage, and Nix fan-out. Push one coherent candidate and open the PR ready
+   for review. Do not create a draft and later mark the unchanged head ready;
+   the transition admits a second competing hosted CI run.
    Do not push after each finding; every push cancels CI and stales exact-head
    evidence.
 6. The implementation child stops. The persistent supervisor runs one focused

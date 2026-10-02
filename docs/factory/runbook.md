@@ -7,7 +7,7 @@ How to actually run the factory on this repository. The charter says *why*
 ([fsm.md](fsm.md)); this says *what to type* and *what will refuse to work*.
 
 Phase 1 is deliberately narrow: **bounded review, impact-routed validation, and
-a guarded delivery.** Routine changes use two draft lenses and two final
+a guarded delivery.** Routine changes use two direction-review lenses and two final
 lenses; independent current-head review is reserved for high-risk work. Nothing
 routes through a coordination server.
 
@@ -131,7 +131,7 @@ For unattended supervised delivery, invoke Pi with one cohesive `/dev-loop
 production-ready issue N` prompt from the absolute managed worktree. Pi
 launches the tracked `dev-loop` implementation child exactly once. That child
 must not dispatch subagents/taskflow and stops after focused checks, signed push,
-draft PR, and the exact-head local-gate receipt. Review, hosted CI, merge,
+review-ready PR, and the exact-head local-gate receipt. Review, hosted CI, merge,
 metrics, and cleanup belong to the external supervisor.
 
 The prompt must also retain writes within `MediaNoxLabs/oxid`: before an issue,
@@ -155,7 +155,7 @@ This is the part most likely to be misread, because all three look like
 
 | | What fans out | Configured in | Who decides |
 | --- | --- | --- | --- |
-| **Gate review** | One routine review angle per checkpoint — draft `correctness`, final `security`; extra angles only on explicit high-risk/dispute paths | `.devloops` → `refinement.fanOut: 1`, `roles` | dev-loops, automatically at a gate |
+| **Gate review** | One routine review angle per checkpoint — direction `correctness`, final `security`; extra angles only on explicit high-risk/dispute paths | `.devloops` → `refinement.fanOut: 1`, `roles` | dev-loops, automatically at a gate |
 | **Sub-agent delegation** | Child **pi sessions** with their own jobs | `.pi/subagent-policy.json`, installed to the package's user-level config | the agent, when asked |
 | **Panel review** | Multiple **requested reviewers** on a PR | GitHub review requests + the `ai-review` label | a human, by requesting review |
 
@@ -242,7 +242,7 @@ upstream-only gap table.
 `gates` is the authoritative dev-loop config validator — it exercises the real loader,
 so a `.devloops` that `gates` parses is a `.devloops` that will run. The
 repository layer disables every inherited angle by name except mandatory
-`correctness` at draft and mandatory `security` at pre-approval; this prevents
+`correctness` at direction review and mandatory `security` at pre-approval; this prevents
 an upstream default expansion. Prefer it over a YAML lint.
 
 **`doctor` reports 3/4 and that is expected.** The warning is *"Subagent command
@@ -299,11 +299,12 @@ undetectable later. The check that matters is `gates` parsing.
   an unavailable panel cannot deadlock an issue-backed, exact-head green PR.
 - **Foreign angles are rejected.** `gates.rejectForeignAngles: true`, so an
   angle name not in the configured set cannot smuggle itself into evidence.
-- **Draft first, without a CI stall.** `workflow.requireDraftFirst: true`, but
-  the draft gate uses `requireCi: false`; hosted CI is required once at
-  pre-approval. When aggregate CI is red on a draft, use gate coordination as
-  the authority for progression: if it permits `run_draft_gate`, continue the
-  draft loop and keep the PR draft. Commit authenticity remains required before
+- **One hosted admission per exact head.** `workflow.requireDraftFirst: false`;
+  the direction gate uses `requireCi: false`, while hosted CI is required once at
+  pre-approval. Production delivery opens the PR ready after the exact-head
+  local gate. If an older manually created draft exists, do not rerun its older
+  workflow while a newer authoritative same-head run is active. Commit
+  authenticity remains required before
   pre-approval or merge; metadata and classification findings are advisory.
   Routine work requires deterministic final-head metrics, finding triage, and
   a closeout comment, not a separate model-driven retrospective.
@@ -405,12 +406,12 @@ in a diff.
   Batch accepted findings locally and push a coherent candidate instead of
   invalidating CI and exact-head evidence after every small edit.
 - **Dispatch one implementation child per top-level `/dev-loop` invocation.**
-  Return after its pushed draft-PR and exact-head local-gate checkpoint; the
+  Return after its pushed review-ready-PR and exact-head local-gate checkpoint; the
   child cannot dispatch another child. Hosted-CI watch, focused review, triage,
   merge, metrics, closeout, and every explicit retry belong to the external
   supervisor.
 - **Recover after the one-hour conductor bound.** A Pi timeout does not delete
-  the issue branch, managed worktree, draft PR, or private metrics. Re-run the
+  the issue branch, managed worktree, review-ready PR, or private metrics. Re-run the
   startup resolver for the same issue, reuse its canonical worktree, verify the
   exact head and working-tree status, and continue from the last durable commit.
   Record the interrupted duration in closeout metrics; changing the ceiling is

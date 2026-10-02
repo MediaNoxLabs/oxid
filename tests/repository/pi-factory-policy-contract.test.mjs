@@ -367,7 +367,7 @@ test("the handoff wrapper makes prototype local and production-ready the default
     requiredReads: ["AGENT.md"],
     stopRules: ["merge"],
     maxCopilotRounds: 5,
-    requireDraftFirst: true,
+    requireDraftFirst: false,
     gateConfig: { requireCi: true },
     acceptance: { criteria: [], evidence: [], maxFinalizationTurns: 6 },
     control: { needsAttentionAfterMs: 300000, activeNoticeAfterMs: 300000 },
@@ -418,6 +418,7 @@ test("the handoff wrapper makes prototype local and production-ready the default
     branch: "develop", remoteRef: "origin/develop", kind: "factory",
   });
   assert.equal(production.deliveryProfile, "production-ready");
+  assert.equal(production.requireDraftFirst, false);
   assert.equal(contract.profiles["production-ready"].maximumReviewers, 1);
   assert.deepEqual(contract.profiles["production-ready"].qualityBudget, {
     targetPercent: 70,
@@ -436,7 +437,7 @@ test("the handoff wrapper makes prototype local and production-ready the default
     staleAfterDays: 30,
     trustedActors: ["yshyn-iohk"],
   });
-  assert.equal(production.nextAction, base.nextAction);
+  assert.equal(production.nextAction, "create a review-ready PR");
   assert.deepEqual(production.supervision, contract.profiles["production-ready"].supervision);
   assert.equal(production.executionProfile, "regular-production-ready");
   assert.equal(production.fallbackReason, "missing-pre-mutation-assessment");
@@ -681,11 +682,11 @@ test("factory claim surface fails closed and exposes no raw GitHub mutations", a
   assert.doesNotMatch(source, /factory\/\$\{issue\}/u);
 });
 
-test("dev-loop grants only issue-bound push and draft-PR delivery writes", async () => {
+test("dev-loop grants only issue-bound push and review-ready-PR delivery writes", async () => {
   const source = await readFile(path.join(repoRoot, ".pi", "agents", "dev-loop.agent.md"), "utf8");
   assert.match(source, /issue-backed delivery authorization permits only a normal push/u);
   assert.match(source, /resolved issue, repository, delivery target, canonical branch, and current worktree/u);
-  assert.match(source, /No force-push, replacement, cross-issue write, ready-for-review, merge, durable-branch mutation, release, credential, protection, or scope-expansion authority is granted/u);
+  assert.match(source, /No force-push, replacement, cross-issue write, later draft\/ready transition, merge, durable-branch mutation, release, credential, protection, or scope-expansion authority is granted/u);
   assert.match(source, /fail closed before either delivery write/u);
 });
 

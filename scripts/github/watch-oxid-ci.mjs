@@ -127,6 +127,32 @@ export function normalizeSupersededPrStatusRollup(
   }
 }
 
+/**
+ * Apply the exact-head workflow-attempt supersession rule to `gh pr checks`
+ * rows. This keeps merge guards fail closed while allowing a newer successful
+ * run of the same workflow on the unchanged head to supersede an older
+ * cancelled or failed attempt.
+ */
+export function normalizeSupersededPrChecks(
+  checks,
+  { repo, headSha },
+  { loadWorkflowAttempts = loadWorkflowAttemptData } = {},
+) {
+  if (!Array.isArray(checks) || typeof headSha !== "string") return checks;
+  const facts = {
+    headRefOid: headSha,
+    statusCheckRollup: checks.map((check, index) => ({
+      status: check?.bucket === "pending" ? "IN_PROGRESS" : "COMPLETED",
+      conclusion: String(check?.state ?? "").toUpperCase(),
+      detailsUrl: check?.link,
+      index,
+    })),
+  };
+  const normalized = normalizeSupersededPrStatusRollup(facts, { repo }, { loadWorkflowAttempts });
+  const retained = new Set(normalized.statusCheckRollup.map((check) => check.index));
+  return checks.filter((_, index) => retained.has(index));
+}
+
 function loadPrLifecycleState({ repo, pr }) {
   const pull = JSON.parse(runGhCommand("gh", [
     "api", `repos/${repo}/pulls/${pr}`, ...GITHUB_REST_HEADERS,

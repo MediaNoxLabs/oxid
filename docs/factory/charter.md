@@ -26,13 +26,13 @@ factory work items. Duties:
   release-blocker downgrade.
 
 ### Implementer
-Claims a `factory:ready` item and delivers a draft PR. Duties:
+Claims a `factory:ready` item and delivers a review-ready PR. Duties:
 
 - Follow the claim/lease protocol (claim-protocol.md) before touching code.
 - Work on a branch named `<type>/issue-<number>`, using the Conventional
   Commit type that leads the pull-request title and no descriptive suffix.
 - Respect AGENT.md architecture rules and every accepted ADR.
-- Deliver through the `.devloops` draft gate, exact-head critical CI, and final
+- Deliver through the `.devloops` direction gate, exact-head critical CI, and final
   finding triage. Blocking findings return to implementation. Non-critical
   findings move forward only through linked follow-up issues.
 - Never push directly to a milestone, `develop`, or `main`. The guarded merge
@@ -41,7 +41,7 @@ Claims a `factory:ready` item and delivers a draft PR. Duties:
   work, an owner request, or a disputed finding.
 
 ### Reviewer
-The bounded `.devloops` route uses one correctness pass at draft and one
+The bounded `.devloops` route uses one correctness pass during direction review and one
 security pass at pre-approval. Additional angles require high risk, a disputed
 finding, or an explicit owner request. Reviewers only ever produce findings
 with file/line references and classify them against the blocking contract;
@@ -95,7 +95,7 @@ publication, or other repository write.
 | --- | --- |
 | Create/refine/order work items and assign one delivery target | Planner, Quality Steward |
 | Maintain validated product use cases, scenarios, and demos | Product Manager through a normal factory work item |
-| Claim work, push a `<type>/issue-<number>` branch, open a draft PR | Implementer holding a valid lease |
+| Claim work, push a `<type>/issue-<number>` branch, open a review-ready PR | Implementer holding a valid lease |
 | Post gate findings | Reviewers |
 | Merge an exact-head green issue PR to its declared `milestone-<x.y.z>` | Authorized factory worker through the guarded milestone wrapper |
 | Merge to `develop` or `main` | Human delivery operator only |

@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 
 export const FACTORY_STATE_LABELS = Object.freeze([
   { name: "factory:ready", color: "0e8a16", description: "Factory item passed ready-check and may be claimed" },
-  { name: "factory:claimed", color: "fbca04", description: "Factory claim lease is held; draft PR not open" },
-  { name: "factory:in-progress", color: "1d76db", description: "Factory item has an active draft PR" },
-  { name: "factory:gate-draft", color: "5319e7", description: "Factory item is in bounded draft review" },
+  { name: "factory:claimed", color: "fbca04", description: "Factory claim lease is held; delivery PR not open" },
+  { name: "factory:in-progress", color: "1d76db", description: "Factory item has an active delivery PR" },
+  { name: "factory:gate-draft", color: "5319e7", description: "Factory item is in bounded direction review" },
   { name: "factory:gate-preapproval", color: "6f42c1", description: "Factory item is in final pre-approval review" },
   { name: "factory:merge-ready", color: "1f883d", description: "Factory item has complete exact-head delivery evidence" },
   { name: "factory:blocked", color: "d73a4a", description: "Factory item is blocked with a recorded reason" },
