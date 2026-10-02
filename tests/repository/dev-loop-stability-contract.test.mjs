@@ -20,6 +20,7 @@ import {
   resolveDevLoopsPackageRoot,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
+import { bindIssueReadRepository } from "../../scripts/github/view-issue.mjs";
 import {
   bindEnvelopeRepositoryIdentity,
   githubRepositoryFromOrigin,
@@ -889,7 +890,7 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   assert.match(devLoop, /scripts\/dev-loops\.mjs/);
   assert.match(devLoop, /successful tracked `loop build-envelope` result is already validated/u);
   assert.match(devLoop, /Do not infer or invoke a second\s+`loop validate-envelope` route/u);
-  assert.match(devLoop, /scripts\/github\/view-issue\.mjs --repo <owner\/name> --issue <n>/u);
+  assert.match(devLoop, /scripts\/github\/view-issue\.mjs --issue <n>/u);
   assert.match(devLoop, /scripts\/dev-loops\.mjs` wrapper has no `github` command family/u);
   assert.match(devLoop, /never invent or\s+invoke `scripts\/dev-loops\.mjs github issue-view`/u);
   assert.equal(devLoop.match(/scripts\/dev-loops\.mjs github issue-view/gu)?.length, 1,
@@ -1017,6 +1018,22 @@ test("handoff envelopes bind the checkout GitHub identity and reject disagreemen
     () => bindEnvelopeRepositoryIdentity({ target: { repo: "input-output-hk/oxid" } }, "MediaNoxLabs/oxid"),
     /disagrees with origin repository/,
   );
+  assert.throws(
+    () => bindEnvelopeRepositoryIdentity({ repository: "input-output-hk/oxid", target: { repo: "MediaNoxLabs/oxid" } }, "MediaNoxLabs/oxid"),
+    /disagrees with origin repository/,
+  );
+});
+
+test("issue-read wrapper derives origin and refuses a stale repository before dispatch", () => {
+  const repository = "MediaNoxLabs/oxid";
+  assert.deepEqual(bindIssueReadRepository(["--issue", "937"], repository),
+    ["--issue", "937", "--repo", repository]);
+  assert.deepEqual(bindIssueReadRepository(["--repo", "medianoxlabs/oxid", "--issue", "937"], repository),
+    ["--repo", "medianoxlabs/oxid", "--issue", "937"]);
+  assert.throws(() => bindIssueReadRepository(["--repo", "input-output-hk/oxid", "--issue", "937"], repository),
+    /disagrees with origin repository MediaNoxLabs\/oxid/u);
+  assert.deepEqual(bindIssueReadRepository(["--repo", "example/foreign", "--issue", "1"], null),
+    ["--repo", "example/foreign", "--issue", "1"]);
 });
 
 test("repository wrappers force only the public PR-creation and managed-worktree routes", () => {

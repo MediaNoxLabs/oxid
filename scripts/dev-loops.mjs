@@ -41,9 +41,10 @@ export function resolveCanonicalGithubRepository(cwd, { run = execFileSync } = {
 /** Bind a handoff envelope to origin and reject an authoritative identity split. */
 export function bindEnvelopeRepositoryIdentity(envelope, repository) {
   if (!repository) return envelope;
-  const declared = envelope?.target?.repo;
-  if (typeof declared === "string" && declared.toLowerCase() !== repository.toLowerCase()) {
-    throw new Error(`handoff envelope repository ${declared} disagrees with origin repository ${repository}`);
+  for (const declared of [envelope?.repository, envelope?.target?.repo]) {
+    if (typeof declared === "string" && declared.toLowerCase() !== repository.toLowerCase()) {
+      throw new Error(`handoff envelope repository ${declared} disagrees with origin repository ${repository}`);
+    }
   }
   return {
     ...envelope,

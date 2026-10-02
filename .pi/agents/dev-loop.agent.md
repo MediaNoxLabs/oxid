@@ -47,8 +47,11 @@ the source of tracked executable policy for a linked-worktree run.
 Do not invoke a package `cli/index.mjs` directly. Do not use user-home, global npm, Node module-search, package-relative, arbitrary-ancestor, or filesystem-search fallbacks. If the tracked wrapper cannot resolve the exact project pin, stop at its diagnostic. Pi 0.84 extension hooks are advisory and cannot cancel provider execution.
 
 Before envelope construction, read the issue body only through
-`node <git-root>/scripts/github/view-issue.mjs --repo <owner/name> --issue <n>`
-and resolve the single `## Delivery target` from that response. The
+`node <git-root>/scripts/github/view-issue.mjs --issue <n>` and resolve the
+single `## Delivery target` from that response.
+The repository-owned wrapper binds the issue read to the checkout's exact
+GitHub origin and rejects a conflicting explicit `--repo` before network access.
+Never infer a repository owner from memory or the issue title. The
 `scripts/dev-loops.mjs` wrapper has no `github` command family: never invent or
 invoke `scripts/dev-loops.mjs github issue-view` (including as a help probe).
 Stop before envelope construction if the issue reader exits nonzero or the

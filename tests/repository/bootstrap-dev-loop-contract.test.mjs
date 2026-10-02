@@ -22,6 +22,7 @@ function gitFixture(current) {
     const repository = args[1];
     const gitArgs = args.slice(2);
     if (gitArgs.join(" ") === "rev-parse --show-toplevel") return `${current}\n`;
+    if (gitArgs.join(" ") === "remote get-url origin") return "https://github.com/MediaNoxLabs/oxid.git\n";
     if (gitArgs.join(" ") === "worktree list --porcelain") return `worktree ${main}\n\nworktree ${canonical}\n\n`;
     if (repository === canonical && gitArgs.join(" ") === "branch --show-current") return "feat/issue-305\n";
     throw new Error(`unexpected command: ${program} ${args.join(" ")}`);
@@ -31,11 +32,13 @@ function gitFixture(current) {
 test("primary exact /dev-loop print enters the canonical issue worktree before Pi", async () => {
   const calls = [];
   const recorded = [];
+  const admissions = [];
   const cwd = await resolveBootstrapDevLoopCwd(["--print", "/dev-loop production-ready issue 305"], {
     repoRoot: main,
     run: gitFixture(main),
     ensureWorktree: async (args, options) => { calls.push({ args, options }); return 0; },
     recordDeliveryBase: (...args) => recorded.push(args),
+    recordAdmission: (record) => admissions.push(record),
   });
   assert.equal(cwd, canonical);
   assert.deepEqual(calls, [{
@@ -43,6 +46,10 @@ test("primary exact /dev-loop print enters the canonical issue worktree before P
     options: { cwd: main },
   }]);
   assert.deepEqual(recorded, [[main, "feat/issue-305", "origin/develop"]]);
+  assert.deepEqual(admissions, [{
+    schema: "oxid-dev-loop-admission-v1", issue: 305, repository: "MediaNoxLabs/oxid",
+    calls: { commands: 7, ensureWorktree: 1, recordDeliveryBase: 1 },
+  }]);
 });
 
 test("linked canonical /dev-loop print stays in that worktree", async () => {
@@ -55,6 +62,22 @@ test("linked canonical /dev-loop print stays in that worktree", async () => {
   });
   assert.equal(cwd, canonical);
   assert.equal(ensured, false);
+});
+
+test("bootstrap reads issue metadata from the exact origin repository", async () => {
+  let issueRepo;
+  await resolveBootstrapDevLoopCwd(["--print", "/dev-loop production-ready issue 305"], {
+    repoRoot: canonical,
+    run: (program, args) => {
+      if (program === "gh") {
+        issueRepo = args[args.indexOf("--repo") + 1];
+        return issue;
+      }
+      return gitFixture(canonical)(program, args);
+    },
+    recordDeliveryBase: () => {},
+  });
+  assert.equal(issueRepo, "MediaNoxLabs/oxid");
 });
 
 test("ordinary Pi prompts are unchanged and malformed or ambiguous dev-loop commands never dispatch", async () => {
