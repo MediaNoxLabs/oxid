@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     error::Error,
     fmt,
     future::Future,
@@ -570,6 +570,10 @@ impl CredentialIssuanceActivityStatus {
             Self::Stored | Self::Failed | Self::Refused | Self::Cancelled
         )
     }
+
+    const fn is_evictable(self) -> bool {
+        self.is_final() || matches!(self, Self::TimedOut | Self::OutcomeUnknown)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -672,6 +676,29 @@ impl CredentialIssuanceActivityStore {
         }
     }
 
+    /// Purge one profile's process-local activity after its issuance sessions
+    /// have been discarded. No record is included in wallet backup.
+    pub fn clear_profile(
+        &self,
+        profile_id: &str,
+    ) -> Result<usize, CredentialIssuanceActivityError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| CredentialIssuanceActivityError::Unavailable)?;
+        let removed: BTreeSet<_> = state
+            .records
+            .iter()
+            .filter(|record| record.profile_id == profile_id)
+            .map(|record| record.id)
+            .collect();
+        state
+            .records
+            .retain(|record| record.profile_id != profile_id);
+        state.issuance_ids.retain(|_, id| !removed.contains(id));
+        Ok(removed.len())
+    }
+
     fn now() -> Option<u64> {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -692,7 +719,7 @@ impl CredentialIssuanceActivityStore {
             let evict_at = state
                 .records
                 .iter()
-                .position(|record| record.status.is_final())?;
+                .position(|record| record.status.is_evictable())?;
             let evicted = state.records.remove(evict_at)?;
             state.issuance_ids.retain(|_, value| *value != evicted.id);
         }
@@ -778,6 +805,7 @@ struct Session {
     credential_id: Option<String>,
     failure_code: Option<String>,
     refusal_in_progress: bool,
+    protocol_discarded: bool,
 }
 
 impl Session {
@@ -1029,6 +1057,7 @@ impl PrepareCredentialIssuanceUseCase for CredentialIssuanceService {
                 credential_id: None,
                 failure_code: None,
                 refusal_in_progress: false,
+                protocol_discarded: false,
             };
             let view = session.view(&prepared.id);
             if self.sessions()?.insert(prepared.id, session).is_some() {
@@ -1181,6 +1210,9 @@ impl RefuseCredentialIssuanceUseCase for CredentialIssuanceService {
             if session.profile_id != profile_id {
                 return Err(CredentialIssuanceError::NotFound);
             }
+            if session.protocol_discarded {
+                return Ok(session.view(&issuance_id));
+            }
             if !matches!(
                 session.state,
                 CredentialIssuanceState::AwaitingConsent
@@ -1204,6 +1236,7 @@ impl RefuseCredentialIssuanceUseCase for CredentialIssuanceService {
         let session = sessions
             .get_mut(&issuance_id)
             .ok_or(CredentialIssuanceError::NotFound)?;
+        session.protocol_discarded = true;
         // Discard only changes an unaccepted offer to refused. It cannot
         // rewrite an earlier failed or uncertain issuance outcome.
         if session.state == CredentialIssuanceState::AwaitingConsent {
@@ -2400,16 +2433,15 @@ mod tests {
         )
         .expect("refusal should succeed");
         assert_eq!(refused.state, "refused");
-        assert_eq!(
-            RefuseCredentialIssuanceUseCase::execute(
-                &service,
-                RefuseCredentialIssuanceCommand {
-                    profile_id: "profile_1".to_owned(),
-                    issuance_id: prepared.id,
-                }
-            ),
-            Err(CredentialIssuanceError::InvalidState)
-        );
+        let repeated = RefuseCredentialIssuanceUseCase::execute(
+            &service,
+            RefuseCredentialIssuanceCommand {
+                profile_id: "profile_1".to_owned(),
+                issuance_id: prepared.id,
+            },
+        )
+        .expect("repeated refusal should be idempotent");
+        assert_eq!(repeated.state, "refused");
     }
 
     #[test]
@@ -2529,8 +2561,9 @@ mod tests {
 
     #[test]
     fn panicking_discard_releases_refusal_reservation_for_retry() {
+        let protocol = Arc::new(PanickingDiscardProtocol(AtomicUsize::new(0)));
         let service = CredentialIssuanceService::with_authority(
-            Arc::new(PanickingDiscardProtocol(AtomicUsize::new(0))),
+            protocol.clone(),
             Arc::new(Sink),
             issuance_authority(),
         );
@@ -2552,13 +2585,26 @@ mod tests {
                 &service,
                 RefuseCredentialIssuanceCommand {
                     profile_id: "profile_1".to_owned(),
-                    issuance_id: prepared.id,
+                    issuance_id: prepared.id.clone(),
                 },
             )
             .expect("panic cleanup permits retry")
             .state,
             "refused"
         );
+        assert_eq!(
+            RefuseCredentialIssuanceUseCase::execute(
+                &service,
+                RefuseCredentialIssuanceCommand {
+                    profile_id: "profile_1".to_owned(),
+                    issuance_id: prepared.id,
+                },
+            )
+            .expect("duplicate refusal is idempotent")
+            .state,
+            "refused"
+        );
+        assert_eq!(protocol.0.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -2648,6 +2694,7 @@ mod tests {
             credential_id: None,
             failure_code: None,
             refusal_in_progress: false,
+            protocol_discarded: false,
         };
         let second_session = Session {
             profile_id: ProtocolProfileId::parse("profile_2").expect("valid profile"),
@@ -2656,6 +2703,7 @@ mod tests {
             credential_id: None,
             failure_code: None,
             refusal_in_progress: false,
+            protocol_discarded: false,
         };
         let first = CredentialIssuanceId::parse("protocol_issuance_a").expect("valid id");
         let second = CredentialIssuanceId::parse("protocol_issuance_b").expect("valid id");
@@ -2716,6 +2764,22 @@ mod tests {
                 .status,
             CredentialIssuanceActivityStatus::Stored
         );
+        assert_eq!(store.clear_profile("profile_2").expect("profile purge"), 1);
+        assert!(
+            store
+                .execute("profile_2".to_owned())
+                .expect("projection after purge")
+                .records
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .execute("profile_1".to_owned())
+                .expect("other profile remains")
+                .records
+                .len(),
+            1
+        );
 
         let after_restart = CredentialIssuanceActivityStore::new()
             .execute("profile_1".to_owned())
@@ -2738,6 +2802,7 @@ mod tests {
             credential_id: None,
             failure_code: None,
             refusal_in_progress: false,
+            protocol_discarded: false,
         };
         for index in 0..MAX_CREDENTIAL_ISSUANCE_ACTIVITY_RECORDS {
             let id = CredentialIssuanceId::parse(format!("issuance_{index}")).expect("valid id");
@@ -2762,6 +2827,21 @@ mod tests {
                 .len(),
             MAX_CREDENTIAL_ISSUANCE_ACTIVITY_RECORDS
         );
+        let second = CredentialIssuanceId::parse("issuance_1").expect("valid id");
+        store.update(&second, CredentialIssuanceActivityStatus::OutcomeUnknown);
+        let replacement = CredentialIssuanceId::parse("issuance_after_unknown").expect("valid id");
+        assert!(
+            store.begin(&replacement, &session).is_some(),
+            "uncertain records must not block future issuance forever"
+        );
+        assert!(
+            store
+                .execute("profile_1".to_owned())
+                .expect("projection")
+                .records
+                .iter()
+                .all(|record| record.id.value() != 2)
+        );
     }
 
     #[test]
@@ -2780,6 +2860,7 @@ mod tests {
             credential_id: None,
             failure_code: None,
             refusal_in_progress: false,
+            protocol_discarded: false,
         };
         let activity = service.activity();
         for index in 0..MAX_CREDENTIAL_ISSUANCE_ACTIVITY_RECORDS {

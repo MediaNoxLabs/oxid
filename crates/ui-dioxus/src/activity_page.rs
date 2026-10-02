@@ -206,7 +206,6 @@ pub(super) fn CredentialIssuanceActivityCard(
                                         small { "{credential_issuance_activity_status(record.status)}" }
                                         small { class: "privacy-value", "{activity_observed_at_line(record.observed_at_millis)}" }
                                     }
-                                    code { "#{record.id.value()}" }
                                     details { class: "activity-row__details",
                                         summary { "Issuance details" }
                                         dl { class: "preview-list",
@@ -396,6 +395,7 @@ mod tests {
         assert!(text.iter().any(|value| value.contains("Issuer endpoint")));
         assert!(text.iter().any(|value| value.contains("Stored")));
         assert!(text.iter().any(|value| value.contains("identity")));
+        assert!(!text.iter().any(|value| value == "#7"));
         assert!(
             text.iter()
                 .any(|value| value.contains("This session only; bounded and not backed up"))

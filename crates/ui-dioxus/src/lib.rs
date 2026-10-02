@@ -5794,8 +5794,8 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
                 rsx! { AccountActivityCard { account: *account, unavailable } }
             },
         }
-        PassportVaultActivitySection { profile_id: active_profile.id.clone() }
-        CredentialIssuanceActivitySection { profile_id: active_profile.id.clone() }
+        PassportVaultActivitySection { key: "vault-{active_profile.id}", profile_id: active_profile.id.clone() }
+        CredentialIssuanceActivitySection { key: "issuance-{active_profile.id}", profile_id: active_profile.id.clone() }
         SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
     }
 }

@@ -255,7 +255,12 @@ fn issuance_discard_failure_preserves_awaiting_session_for_retry() {
 
 #[test]
 fn uncertain_issuance_discard_failure_preserves_unknown_outcome_for_retry() {
-    let service = issuance_service(IssuedCredentialSinkError::PersistenceFailed, 1);
+    let protocol = Arc::new(IssuanceProtocol::new(1));
+    let service = CredentialIssuanceService::with_authority(
+        protocol.clone(),
+        Arc::new(FailingSink(IssuedCredentialSinkError::PersistenceFailed)),
+        Arc::new(IssuanceAuthority(oxid_foundation::AcceptedFlowIssuer::new())),
+    );
     prepare_issuance(&service);
     assert_eq!(
         poll(AcceptCredentialIssuanceUseCase::execute(
@@ -299,6 +304,16 @@ fn uncertain_issuance_discard_failure_preserves_unknown_outcome_for_retry() {
         refused.failure_code.as_deref(),
         Some("credential_persistence_failed")
     );
+    let duplicate = RefuseCredentialIssuanceUseCase::execute(
+        &service,
+        RefuseCredentialIssuanceCommand {
+            profile_id: PROFILE.to_owned(),
+            issuance_id: ISSUANCE_ID.to_owned(),
+        },
+    )
+    .expect("duplicate discard is idempotent");
+    assert_eq!(duplicate.state, "outcome_unknown");
+    assert_eq!(protocol.discard_calls.load(Ordering::SeqCst), 2);
 }
 
 struct AuthenticationProtocol {
