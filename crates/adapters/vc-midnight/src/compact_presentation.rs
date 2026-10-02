@@ -1393,8 +1393,6 @@ fn embedded_field_from_be(
 pub struct PreflightOnlyCompactPresentationProof {
     repository: Arc<dyn CredentialRepository>,
     clock: Arc<dyn ClockPort>,
-    // Retained for the legacy direct-adapter constructors until #920 makes
-    // accepted authority mandatory through the complete request chain.
     #[allow(dead_code)]
     holder_authorization: Arc<dyn PresentationHolderAuthorizationPort>,
     #[allow(dead_code)]
@@ -1581,9 +1579,7 @@ impl PresentationProofPort for PreflightOnlyCompactPresentationProof {
                     presentation_root: decoded.presentation_root(),
                     verifier_challenge_hash: request.challenge_hash,
                     created_at_seconds: now / 1_000,
-                    authority: request
-                        .authority
-                        .ok_or(PresentationProofError::HolderAuthorizationUnavailable)?,
+                    authority: request.authority,
                 })
                 .await
                 .map_err(map_holder_authorization_error)?;
@@ -1811,8 +1807,6 @@ fn map_independent_did_error(error: DidOperationError) -> PresentationVerificati
     }
 }
 
-// Retained with the legacy direct-adapter path until #920 removes its optional
-// accepted-authority compatibility surface.
 #[allow(dead_code)]
 fn map_compact_holder_proof_error(error: CompactHolderProofError) -> PresentationProofError {
     match error {
@@ -1893,11 +1887,16 @@ mod tests {
     use oxid_credential_application::CredentialRepository;
     use oxid_credential_domain::{CredentialPrivateMaterial, CredentialRecord};
     use oxid_foundation::UnixTimestampMillis;
+    use oxid_identity_application::{
+        AcceptedCredentialPresentationContext, CredentialPresentationAuthorityPort,
+        CredentialPresentationFlowService,
+    };
     #[cfg(not(target_arch = "wasm32"))]
     use oxid_identity_application::{
         DidDocumentMetadataView, DidDocumentView, DidRecordView, DidRefreshAvailability,
         PublicJwkView, VerificationMethodView, VerificationRelationshipView,
     };
+    use oxid_identity_domain::IdentityProfileId;
     use oxid_platform_ports::PlatformError;
 
     use crate::{
@@ -2137,7 +2136,21 @@ mod tests {
         (credential_id, record)
     }
 
+    fn presentation_authority(
+        credential_id: &str,
+    ) -> oxid_foundation::AcceptedCredentialPresentationFlow {
+        CredentialPresentationFlowService::new(Arc::new(Clock))
+            .mint(AcceptedCredentialPresentationContext::new(
+                IdentityProfileId::parse("profile_one").expect("identity profile"),
+                oxid_presentation_application::OPENID4VP_CREDENTIAL_PRESENTATION_FLOW_ID,
+                "presentation_one",
+                credential_id,
+            ))
+            .expect("test presentation authority")
+    }
+
     fn proof_request(credential_id: String) -> PresentationProofRequest {
+        let authority = presentation_authority(&credential_id);
         PresentationProofRequest {
             profile_id: oxid_presentation_domain::PresentationProfileId::parse("profile_one")
                 .expect("profile"),
@@ -2150,7 +2163,7 @@ mod tests {
             challenge_hash: [0x11; 32],
             verifier_domain_hash: [0x22; 32],
             requested_claims: requested_claims(),
-            authority: None,
+            authority,
         }
     }
 

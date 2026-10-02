@@ -323,7 +323,22 @@ mod tests {
         task::{Context, Poll},
     };
 
+    use oxid_foundation::UnixTimestampMillis;
+    use oxid_identity_application::{
+        AcceptedCredentialPresentationContext, CredentialPresentationAuthorityPort,
+        CredentialPresentationFlowService,
+    };
+    use oxid_identity_domain::IdentityProfileId;
+    use oxid_platform_ports::{ClockPort, PlatformError};
     use oxid_presentation_application::PresentationProofArtifact;
+
+    struct Clock;
+
+    impl ClockPort for Clock {
+        fn now(&self) -> Result<UnixTimestampMillis, PlatformError> {
+            Ok(UnixTimestampMillis::new(1_700_000_000_000))
+        }
+    }
 
     struct ControlledProof {
         state: Arc<(Mutex<(bool, bool)>, Condvar)>,
@@ -352,6 +367,20 @@ mod tests {
         }
     }
 
+    fn presentation_authority(
+        profile: &str,
+        presentation: &str,
+    ) -> oxid_foundation::AcceptedCredentialPresentationFlow {
+        CredentialPresentationFlowService::new(Arc::new(Clock))
+            .mint(AcceptedCredentialPresentationContext::new(
+                IdentityProfileId::parse(profile).expect("identity profile"),
+                oxid_presentation_application::OPENID4VP_CREDENTIAL_PRESENTATION_FLOW_ID,
+                presentation,
+                "credential_one",
+            ))
+            .expect("test presentation authority")
+    }
+
     fn request(profile: &str, presentation: &str) -> PresentationProofRequest {
         PresentationProofRequest {
             profile_id: oxid_presentation_domain::PresentationProfileId::parse(profile)
@@ -365,7 +394,7 @@ mod tests {
             challenge_hash: [1; 32],
             verifier_domain_hash: [2; 32],
             requested_claims: Vec::new(),
-            authority: None,
+            authority: presentation_authority(profile, presentation),
         }
     }
 
