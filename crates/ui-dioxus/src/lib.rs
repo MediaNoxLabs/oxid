@@ -3657,7 +3657,6 @@ fn WalletApp() -> Element {
             active_route
         }
     });
-    let active_primary = navigation.read().active_primary();
     let can_go_back = navigation.read().can_go_back();
     let profile_monogram = profile_monogram(&active_profile.display_name, brand.wordmark());
     let pending_identity_request_has_raw_uri = pending_identity_request
@@ -3763,9 +3762,6 @@ fn WalletApp() -> Element {
                 span { class: "connection-state",
                     span { class: "status-dot" }
                     "{active_profile.display_name}"
-                }
-                if let Some(primary_label) = page_context_primary_label(content_route, active_primary) {
-                    span { class: "page-context__title", "{primary_label}" }
                 }
             }
 
@@ -4901,7 +4897,7 @@ fn HomePage(
         HomePageState::Loading => rsx! {
             section { class: "home-hero home-hero--loading", role: "status", aria_busy: "true",
                 p { class: "eyebrow", "Current realm" }
-                h1 { class: "home-hero__realm-title", "Loading network…" }
+                h2 { class: "home-hero__realm-title", "Loading network…" }
                 p { class: "home-hero__hint", "Preparing {active_profile.display_name} without carrying values across profiles." }
             }
             HomeQuickActions { scan_busy, on_receive, on_send, on_present, on_scan }
@@ -4928,7 +4924,7 @@ fn HomePage(
                     p { class: "eyebrow", "Current realm" }
                     span { class: "status-pill warning", "Unavailable" }
                 }
-                h1 { class: "home-hero__realm-title", "{active_profile.display_name}" }
+                h2 { class: "home-hero__realm-title", "{active_profile.display_name}" }
                 p { class: "home-hero__hint", "The selected network context could not be loaded safely." }
             }
             HomeQuickActions { scan_busy, on_receive, on_send, on_present, on_scan }
@@ -5002,7 +4998,7 @@ fn HomeHero(active_profile: WalletProfileView, account: WalletAccountView) -> El
                     "{source} · {freshness}"
                 }
             }
-            h1 { class: "home-hero__realm-title", "{account.network_name}" }
+            h2 { class: "home-hero__realm-title", "{account.network_name}" }
             p { class: "home-hero__profile", "{active_profile.display_name} · {account.chain}" }
             p { class: "home-hero__hint", "{ui::account_source_note(&account.source)}" }
         }
@@ -5596,7 +5592,6 @@ fn DocumentsPage(
     rsx! {
         section { class: "page-heading",
             p { class: "eyebrow", "Your holder wallet" }
-            h1 { "Documents" }
             p { "Review what is stored, who issued it, and whether it is ready to use." }
         }
         div { class: "documents-actions",
@@ -5742,7 +5737,6 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
     rsx! {
         section { class: "page-heading",
             p { class: "eyebrow", "Wallet history" }
-            h1 { "Activity" }
             p { "Midnight transfers, Passport Vault operations, and recoverable submissions appear here." }
         }
         match state.read().clone() {
@@ -8187,17 +8181,6 @@ fn apply_route_transition(transition: RouteTransition) {
         let _ = dioxus_document::eval(
             "document.querySelector('.page-content')?.scrollTo({ top: 0, behavior: 'instant' }); document.querySelector('#destination-heading')?.focus({ preventScroll: true });",
         );
-    }
-}
-
-const fn page_context_primary_label(
-    content_route: Route,
-    active_primary: PrimaryDestination,
-) -> Option<&'static str> {
-    if content_route.primary().is_some() && !is_developer_route(content_route) {
-        Some(active_primary.label())
-    } else {
-        None
     }
 }
 
@@ -10732,13 +10715,8 @@ mod tests {
         assert!(developer_routes.into_iter().all(|route| {
             route.primary().is_none()
                 && is_developer_route(route)
-                && page_context_primary_label(route, PrimaryDestination::Home).is_none()
                 && !route_forces_screen_privacy(route)
         }));
-        assert_eq!(
-            page_context_primary_label(Route::Wallet, PrimaryDestination::Wallet),
-            Some("Wallet")
-        );
 
         let mut navigation = RouteStack::default();
         navigation.push(Route::Developer);
@@ -11760,19 +11738,7 @@ mod tests {
     }
 
     #[test]
-    fn page_context_label_is_only_shown_for_the_rendered_primary_route() {
-        assert_eq!(
-            page_context_primary_label(Route::Activity, PrimaryDestination::Activity),
-            Some("Activity")
-        );
-        assert_eq!(
-            page_context_primary_label(Route::Settings, PrimaryDestination::Activity),
-            None
-        );
-        assert_eq!(
-            page_context_primary_label(Route::BackupRecovery, PrimaryDestination::Documents),
-            None
-        );
+    fn primary_navigation_state_follows_only_the_rendered_primary_route() {
         assert!(primary_destination_is_active(
             Route::Activity,
             PrimaryDestination::Activity
