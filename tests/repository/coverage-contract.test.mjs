@@ -409,8 +409,10 @@ test("hosted coverage uses the same fetched comparison base as target planning",
   assert.match(workflow, /comparison_base:\n        description: Ancestor commit for an on-demand branch comparison/u);
   assert.match(planJob, /COMPARISON_BASE_INPUT: \$\{\{ inputs\.comparison_base \|\| '' \}\}/u);
   assert.match(planJob, /\^\[0-9a-f\]\{40\}\$/u);
+  assert.match(planJob, /comparison_base must be a 40-character commit SHA' >&2\n\s+exit 1/u);
   assert.ok(planJob.includes(`BASE_SHA: ${comparisonBase}`));
   assert.match(coverageJob, /fetch-depth: 0/u);
+  assert.match(coverageJob, /needs: plan/u);
   assert.ok(coverageJob.includes(`OXID_COVERAGE_BASE: ${comparisonBase}`));
   assert.match(coverageJob, /\.\/run\.sh coverage --strict/u);
 });
