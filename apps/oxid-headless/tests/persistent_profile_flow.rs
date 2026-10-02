@@ -32,11 +32,13 @@ use tokio_tungstenite::{
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(180);
+const SHIELDED_SYNC_TIMEOUT: Duration = Duration::from_secs(120);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 
 struct ProcessHarness {
     child: Child,
-    input: ChildStdin,
-    responses: Receiver<Result<String, io::ErrorKind>>,
+    input: Option<ChildStdin>,
+    responses: Receiver<Result<String, (io::ErrorKind, Option<i32>)>>,
     reaped: bool,
 }
 
@@ -118,7 +120,7 @@ impl ProcessHarness {
                         }
                     }
                     Err(error) => {
-                        let _ = response_sender.send(Err(error.kind()));
+                        let _ = response_sender.send(Err((error.kind(), error.raw_os_error())));
                         break;
                     }
                 }
@@ -127,32 +129,41 @@ impl ProcessHarness {
 
         Self {
             child,
-            input,
+            input: Some(input),
             responses,
             reaped: false,
         }
     }
 
     fn request(&mut self, request: Value) -> Value {
-        self.request_with_timeout(request, RESPONSE_TIMEOUT)
+        self.request_with_timeout(request, RESPONSE_TIMEOUT, "response timeout")
     }
 
-    fn request_with_timeout(&mut self, request: Value, timeout: Duration) -> Value {
-        serde_json::to_writer(&mut self.input, &request).expect("request should serialize");
-        self.input
+    fn request_with_timeout(
+        &mut self,
+        request: Value,
+        timeout: Duration,
+        timeout_context: &str,
+    ) -> Value {
+        let input = self
+            .input
+            .as_mut()
+            .expect("request input should remain open");
+        serde_json::to_writer(&mut *input, &request).expect("request should serialize");
+        input
             .write_all(b"\n")
-            .and_then(|()| self.input.flush())
+            .and_then(|()| input.flush())
             .expect("request should be written");
 
         let line = match self.responses.recv_timeout(timeout) {
             Ok(Ok(line)) => line,
-            Ok(Err(error)) => {
+            Ok(Err((kind, os_code))) => {
                 self.stop_child();
-                panic!("response should be readable: {error}");
+                panic!("response should be readable: {kind} (OS code {os_code:?})");
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 self.stop_child();
-                panic!("headless wallet did not respond before the response timeout");
+                panic!("headless wallet did not respond before the {timeout_context}");
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 self.stop_child();
@@ -179,7 +190,8 @@ impl ProcessHarness {
             "params": {}
         }));
         assert_eq!(response["ok"], true);
-        let deadline = Instant::now() + RESPONSE_TIMEOUT;
+        drop(self.input.take());
+        let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
         let status = loop {
             if let Some(status) = self.child.try_wait().expect("headless wallet should exit") {
                 break status;
@@ -202,7 +214,7 @@ impl Drop for ProcessHarness {
 }
 
 fn wait_for_shielded_sync(process: &mut ProcessHarness, prefix: &str) -> Value {
-    let deadline = Instant::now() + RESPONSE_TIMEOUT;
+    let deadline = Instant::now() + SHIELDED_SYNC_TIMEOUT;
     for attempt in 0..200 {
         let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(
@@ -217,6 +229,7 @@ fn wait_for_shielded_sync(process: &mut ProcessHarness, prefix: &str) -> Value {
                 "params": {}
             }),
             remaining,
+            "shielded worker deadline",
         );
         let state = response["result"]["shieldedSync"]["state"]
             .as_str()
