@@ -149,6 +149,10 @@ export function normalizeDevLoopsArgs(argv) {
     || (route.category === "gate" && route.command === "size-budget");
   const isEnvelope = route.category === "loop" && route.command === "build-envelope";
   if (isEnvelope) return args;
+  if (route.category === "pr" && route.command === "create-draft") {
+    const commandIndex = args.indexOf("create-draft");
+    if (commandIndex !== -1) args[commandIndex] = "create";
+  }
   const hasBase = readLongOptionValues(args, "--base").length > 0;
   const selected = extractDeliveryTargetOption(args, { required: isPrCreate || hasBase });
   if (!selected.target) return selected.args;
@@ -299,6 +303,7 @@ export function applyDeliveryProfile(envelope, contract, profile, deliveryTarget
     return {
       ...routed,
       ...selection,
+      requireDraftFirst: false,
       supervision: structuredClone(contract.profiles[profile].supervision),
       preMutationFastPath: {
         maximumToolCallsBeforeOutcome: fastPath.maximumToolCallsBeforeOutcome,
@@ -308,7 +313,7 @@ export function applyDeliveryProfile(envelope, contract, profile, deliveryTarget
       terminalMetrics: fastPath.terminalMetrics,
       nextAction: selection.executionProfile === fastPath.executionProfile
         ? "Complete the scoped required reads, then make the first source mutation or return an evidence-backed blocker before 20 tool calls; retain every production-ready gate."
-        : routed.nextAction,
+        : routed.nextAction.replace(/\bdraft PR\b/giu, "review-ready PR"),
     };
   }
   if (profile !== "prototype") throw new Error(`unsupported delivery profile: ${profile}`);
@@ -465,6 +470,17 @@ export function resolveOxidCompatibilityRoute(args) {
       return main(routeArgs, runtime);
     };
   }
+  if (route.category === "pr" && route.command === "create") {
+    const repositories = readLongOptionValues(args, "--repo");
+    const usesOxidRepository = repositories.length === 0
+      || (repositories.length === 1 && repositories[0].toLowerCase() === OXID_REPOSITORY);
+    if (usesOxidRepository) {
+      return async (routeArgs, runtime) => {
+        const { main } = await import("./github/create-ready-pr.mjs");
+        return main(routeArgs, runtime);
+      };
+    }
+  }
   if (route.category === "loop" && route.command === "gate-coordination") {
     return async (routeArgs, runtime) => {
       const { runOxidPrGateCoordination } = await import("./loop/detect-pr-gate-coordination-state.mjs");
@@ -506,9 +522,12 @@ export async function runDevLoops(argv = process.argv.slice(2), {
     return runEnsureWorktree(routedCommandArgs(argv, "loop", "ensure-worktree"), { cwd, stdout, stderr });
   }
   const args = normalizeDevLoopsArgs(argv);
+  const normalizedRoute = pinnedPublicRoute(args);
   const compatibilityRoute = resolveOxidCompatibilityRoute(args);
   if (compatibilityRoute) {
-    const routeArgs = route.category && route.command ? routedCommandArgs(args, route.category, route.command) : null;
+    const routeArgs = normalizedRoute.category && normalizedRoute.command
+      ? routedCommandArgs(args, normalizedRoute.category, normalizedRoute.command)
+      : null;
     if (routeArgs === null) throw new Error("could not isolate repository compatibility route arguments");
     return compatibilityRoute(routeArgs, { cwd, repoRoot: cwd, stdout, stderr });
   }

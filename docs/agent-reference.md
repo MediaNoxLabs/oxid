@@ -1993,8 +1993,9 @@ duplicating versions across manifests.
 6. Run `node scripts/dev-loops.mjs doctor` and
    `node scripts/dev-loops.mjs gates`
    before a PR loop. Configuration failures are blockers.
-7. Create pull requests as drafts. Do not mark them ready until validation and
-   review evidence are recorded.
+7. After the signed exact-head local gate passes, create the pull request ready
+   for review through `scripts/dev-loops.mjs pr create`. Do not create a draft
+   and later promote the unchanged head because that admits duplicate CI runs.
 8. Keep the worktree clean. Never delete unrelated user files or changes.
 9. Commit repository-facing work with DCO and GPG:
 
