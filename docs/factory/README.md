@@ -24,6 +24,7 @@ current-head review evidence are the delivery gates.
 | [worker-topology.md](worker-topology.md) | Multiple local sessions, cloud workers, independent engineer setup, and concurrency ownership. |
 | [application-targets.md](application-targets.md) | Build, exact-artifact receipt, deploy, and run commands for desktop, Android, and iOS Simulator. |
 | [demo-inventory.md](demo-inventory.md) | Validated use-case → scenario → product-demo inventory and safe preparation briefs. |
+| [milestone-0.2.0-ios-demo-evidence.md](milestone-0.2.0-ios-demo-evidence.md) | Exact-head iOS Maestro/native evidence and the milestone demo checklist. |
 | [standalone-headless-faucet.md](standalone-headless-faucet.md) | Fixed localhost NIGHT funding and two-wallet DUST-readiness runbook. |
 | [portal-macos-laptop.md](portal-macos-laptop.md) | Owner-invoked local Portal macOS prequalification. |
 | [portal-mobile-simulators.md](portal-mobile-simulators.md) | Owner-invoked packaged iOS Simulator and Android QEMU Portal evidence. |
