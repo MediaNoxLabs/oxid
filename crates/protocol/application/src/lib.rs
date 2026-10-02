@@ -1812,6 +1812,8 @@ mod tests {
         "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     const REJECT_DID: &str =
         "did:midnight:undeployed:1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const UNAVAILABLE_DID: &str =
+        "did:midnight:undeployed:2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     struct TestIssuanceAuthority(
         oxid_foundation::AcceptedFlowIssuer<{ oxid_foundation::CREDENTIAL_ISSUANCE_FLOW_KIND }>,
@@ -2032,6 +2034,8 @@ mod tests {
             Box::pin(async move {
                 if request.holder_did == REJECT_DID {
                     Err(IssuanceProtocolError::InvalidProof)
+                } else if request.holder_did == UNAVAILABLE_DID {
+                    Err(IssuanceProtocolError::Unavailable)
                 } else {
                     Ok(IssuedCredentialBytes {
                         signed_bytes: vec![1, 2, 3],
@@ -2636,6 +2640,41 @@ mod tests {
                 .records
                 .len(),
             MAX_CREDENTIAL_ISSUANCE_ACTIVITY_RECORDS
+        );
+    }
+
+    #[test]
+    fn unavailable_protocol_keeps_activity_outcome_unknown() {
+        let service = service();
+        let prepared = prepare(&service);
+        let result = futures_lite(AcceptCredentialIssuanceUseCase::execute(
+            &service,
+            AcceptCredentialIssuanceCommand {
+                profile_id: "profile_1".to_owned(),
+                issuance_id: prepared.id,
+                holder_did: UNAVAILABLE_DID.to_owned(),
+                method_id: format!("{UNAVAILABLE_DID}#auth-1"),
+                holder_binding_method_id: format!("{UNAVAILABLE_DID}#holder-jubjub-1"),
+                confirmed: true,
+                intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
+            },
+        ));
+        assert_eq!(
+            result,
+            Err(CredentialIssuanceError::Protocol(
+                IssuanceProtocolError::Unavailable
+            ))
+        );
+        let activity =
+            ListCredentialIssuanceActivityUseCase::execute(&service, "profile_1".to_owned())
+                .expect("activity projection");
+        assert_eq!(
+            activity.records[0].status,
+            CredentialIssuanceActivityStatus::OutcomeUnknown
+        );
+        assert_eq!(
+            activity.records[0].finality,
+            CredentialIssuanceActivityFinality::Unknown
         );
     }
 
