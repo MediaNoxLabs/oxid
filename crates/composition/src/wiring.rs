@@ -135,7 +135,8 @@ use oxid_protocol_application::{
     AcceptCredentialIssuanceUseCase, AcceptSelfIssuedAuthenticationUseCase,
     CredentialIssuanceProtocolPort, CredentialIssuanceService, GetCredentialIssuanceUseCase,
     GetSelfIssuedAuthenticationUseCase, IdentityRequestRouterPort, IdentityRequestRoutingService,
-    IssuedCredentialSinkPort, ListCredentialIssuancesUseCase, ListSelfIssuedAuthenticationsUseCase,
+    IssuedCredentialSinkPort, ListCredentialIssuanceActivityUseCase,
+    ListCredentialIssuancesUseCase, ListSelfIssuedAuthenticationsUseCase,
     PrepareCredentialIssuanceUseCase, PrepareSelfIssuedAuthenticationUseCase,
     RefuseCredentialIssuanceUseCase, RefuseSelfIssuedAuthenticationUseCase,
     SelfIssuedAuthenticationProtocolPort, SelfIssuedAuthenticationService,
@@ -1312,7 +1313,9 @@ where
     let accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase> = issuance.clone();
     let refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase> = issuance.clone();
     let get_credential_issuance: Arc<dyn GetCredentialIssuanceUseCase> = issuance.clone();
-    let list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase> = issuance;
+    let list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase> = issuance.clone();
+    let list_credential_issuance_activity: Arc<dyn ListCredentialIssuanceActivityUseCase> =
+        issuance;
     let prepare_self_issued_authentication: Arc<dyn PrepareSelfIssuedAuthenticationUseCase> =
         self_issued_authentication.clone();
     let accept_self_issued_authentication: Arc<dyn AcceptSelfIssuedAuthenticationUseCase> =
@@ -1462,6 +1465,7 @@ where
         refuse_credential_issuance,
         get_credential_issuance,
         list_credential_issuances,
+        list_credential_issuance_activity,
         prepare_self_issued_authentication,
         accept_self_issued_authentication,
         refuse_self_issued_authentication,

@@ -130,6 +130,7 @@ impl CredentialOfferPreview {
 pub enum CredentialIssuanceState {
     AwaitingConsent,
     Issuing,
+    OutcomeUnknown,
     Succeeded,
     Refused,
     Failed,
@@ -141,6 +142,7 @@ impl CredentialIssuanceState {
         match self {
             Self::AwaitingConsent => "awaiting_consent",
             Self::Issuing => "issuing",
+            Self::OutcomeUnknown => "outcome_unknown",
             Self::Succeeded => "succeeded",
             Self::Refused => "refused",
             Self::Failed => "failed",

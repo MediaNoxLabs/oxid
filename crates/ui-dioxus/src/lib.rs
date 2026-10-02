@@ -38,7 +38,7 @@ pub use wallet_realm_sync_services::{WalletAccountUiServices, WalletRealmSyncUiS
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
 
-use activity_page::{PassportVaultActivityCard, VaultActivityPageState};
+use activity_page::{CredentialIssuanceActivitySection, PassportVaultActivitySection};
 #[cfg(target_os = "android")]
 pub use android_platform::{AndroidPlatformInitialization, App};
 use assets_page::AssetsPage;
@@ -128,13 +128,13 @@ use oxid_protocol_application::{
     AcceptCredentialIssuanceCommand, AcceptCredentialIssuanceUseCase,
     AcceptSelfIssuedAuthenticationCommand, AcceptSelfIssuedAuthenticationUseCase,
     CredentialIssuanceError, CredentialIssuanceProfileQuery, CredentialIssuanceView,
-    IdentityRequestKind, IdentityRequestRoutingError, ListCredentialIssuancesUseCase,
-    PrepareCredentialIssuanceCommand, PrepareCredentialIssuanceUseCase,
-    PrepareSelfIssuedAuthenticationCommand, PrepareSelfIssuedAuthenticationUseCase,
-    RefuseCredentialIssuanceCommand, RefuseCredentialIssuanceUseCase,
-    RefuseSelfIssuedAuthenticationCommand, RefuseSelfIssuedAuthenticationUseCase,
-    RouteIdentityRequestCommand, RouteIdentityRequestUseCase, SelfIssuedAuthenticationError,
-    SelfIssuedAuthenticationView,
+    IdentityRequestKind, IdentityRequestRoutingError, ListCredentialIssuanceActivityUseCase,
+    ListCredentialIssuancesUseCase, PrepareCredentialIssuanceCommand,
+    PrepareCredentialIssuanceUseCase, PrepareSelfIssuedAuthenticationCommand,
+    PrepareSelfIssuedAuthenticationUseCase, RefuseCredentialIssuanceCommand,
+    RefuseCredentialIssuanceUseCase, RefuseSelfIssuedAuthenticationCommand,
+    RefuseSelfIssuedAuthenticationUseCase, RouteIdentityRequestCommand,
+    RouteIdentityRequestUseCase, SelfIssuedAuthenticationError, SelfIssuedAuthenticationView,
 };
 #[cfg(feature = "proof-benchmark")]
 use oxid_wallet_application::RunProofBenchmarkUseCase;
@@ -381,6 +381,7 @@ pub struct WalletUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
+    list_credential_issuance_activity: Arc<dyn ListCredentialIssuanceActivityUseCase>,
     standalone_credential_offer: Option<String>,
     credential_issuance_ready: bool,
     prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
@@ -488,6 +489,7 @@ pub struct CredentialUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
+    list_credential_issuance_activity: Arc<dyn ListCredentialIssuanceActivityUseCase>,
     standalone_credential_offer: Option<String>,
     credential_issuance_ready: bool,
     prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
@@ -531,6 +533,7 @@ pub struct CredentialIssuanceUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
+    list_credential_issuance_activity: Arc<dyn ListCredentialIssuanceActivityUseCase>,
     standalone_credential_offer: Option<String>,
     credential_issuance_ready: bool,
 }
@@ -617,6 +620,7 @@ impl CredentialIssuanceUiServices {
         accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
         refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
         list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
+        list_credential_issuance_activity: Arc<dyn ListCredentialIssuanceActivityUseCase>,
         standalone_credential_offer: Option<String>,
         credential_issuance_ready: bool,
     ) -> Self {
@@ -625,6 +629,7 @@ impl CredentialIssuanceUiServices {
             accept_credential_issuance,
             refuse_credential_issuance,
             list_credential_issuances,
+            list_credential_issuance_activity,
             standalone_credential_offer,
             credential_issuance_ready,
         }
@@ -652,6 +657,7 @@ impl CredentialUiServices {
             accept_credential_issuance: issuance.accept_credential_issuance,
             refuse_credential_issuance: issuance.refuse_credential_issuance,
             list_credential_issuances: issuance.list_credential_issuances,
+            list_credential_issuance_activity: issuance.list_credential_issuance_activity,
             standalone_credential_offer: issuance.standalone_credential_offer,
             credential_issuance_ready: issuance.credential_issuance_ready,
             prepare_credential_presentation: presentation.prepare,
@@ -1109,6 +1115,7 @@ impl WalletUiServices {
             accept_credential_issuance: credentials.accept_credential_issuance,
             refuse_credential_issuance: credentials.refuse_credential_issuance,
             list_credential_issuances: credentials.list_credential_issuances,
+            list_credential_issuance_activity: credentials.list_credential_issuance_activity,
             standalone_credential_offer: credentials.standalone_credential_offer,
             credential_issuance_ready: credentials.credential_issuance_ready,
             prepare_credential_presentation: credentials.prepare_credential_presentation,
@@ -1487,6 +1494,13 @@ impl WalletUiServices {
     #[must_use]
     pub fn list_credential_issuances(&self) -> Arc<dyn ListCredentialIssuancesUseCase> {
         Arc::clone(&self.list_credential_issuances)
+    }
+
+    #[must_use]
+    pub fn list_credential_issuance_activity(
+        &self,
+    ) -> Arc<dyn ListCredentialIssuanceActivityUseCase> {
+        Arc::clone(&self.list_credential_issuance_activity)
     }
 
     #[must_use]
@@ -2316,8 +2330,12 @@ fn credential_issuance_review_blocks_replacement(
 }
 
 fn credential_issuance_review_is_terminal(prepared: Option<&CredentialIssuanceView>) -> bool {
-    prepared
-        .is_some_and(|review| matches!(review.state.as_str(), "succeeded" | "refused" | "failed"))
+    prepared.is_some_and(|review| {
+        matches!(
+            review.state.as_str(),
+            "succeeded" | "refused" | "failed" | "outcome_unknown"
+        )
+    })
 }
 
 fn retained_identity_review_route(
@@ -5721,7 +5739,6 @@ fn DocumentsPage(
 fn ActivityPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| AccountPageState::Loading);
-    let mut vault_activity = use_signal(|| VaultActivityPageState::Loading);
     let profile_id = active_profile.id.clone();
     let services_for_load = services.clone();
     use_effect(move || {
@@ -5735,33 +5752,12 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
             );
         });
     });
-    let activity_service = services.list_passport_vault_activity();
-    let activity_profile = active_profile.id.clone();
-    use_effect(move || {
-        let service = activity_service.clone();
-        let profile_id = activity_profile.clone();
-        spawn(async move {
-            vault_activity.set(
-                run_ui_blocking(move || service.execute(profile_id))
-                    .await
-                    .map_or_else(
-                        |error| VaultActivityPageState::Unavailable(error.to_string()),
-                        |result| {
-                            result.map_or_else(
-                                |error| VaultActivityPageState::Unavailable(error.to_string()),
-                                VaultActivityPageState::Ready,
-                            )
-                        },
-                    ),
-            );
-        });
-    });
 
     let retry_profile_id = active_profile.id.clone();
     rsx! {
         section { class: "page-heading",
             p { class: "eyebrow", "Wallet history" }
-            p { "Midnight transfers, Passport Vault operations, and recoverable submissions appear here." }
+            p { "Midnight transfers, Passport Vault operations, credential issuance, and recoverable submissions appear here." }
         }
         match state.read().clone() {
             AccountPageState::Loading => rsx! {
@@ -5798,7 +5794,8 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
                 rsx! { AccountActivityCard { account: *account, unavailable } }
             },
         }
-        PassportVaultActivityCard { state: vault_activity.read().clone() }
+        PassportVaultActivitySection { key: "vault-{active_profile.id}", profile_id: active_profile.id.clone() }
+        CredentialIssuanceActivitySection { key: "issuance-{active_profile.id}", profile_id: active_profile.id.clone() }
         SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
     }
 }
@@ -5809,10 +5806,11 @@ fn AccountActivityCard(account: WalletAccountView, unavailable: bool) -> Element
         article { class: "surface-card",
             p { class: "card-eyebrow", "Wallet activity" }
             h2 { "On-chain transfers" }
-            p { class: "activity-source-note", "Source: Midnight wallet account. Passport Vault operations are listed separately below." }
+            p { class: "activity-source-note", "Source: Midnight wallet account. Passport Vault and credential issuance activity are listed separately below." }
             div { class: "activity-filters", role: "group", aria_label: "Activity sources",
                 span { class: "status-pill", "Wallet" }
                 span { class: "status-pill", "Passport Vault" }
+                span { class: "status-pill", "Credential issuance" }
             }
             if account.transactions.is_empty() {
                 p { class: "activity-empty-state",
@@ -7691,7 +7689,10 @@ fn discard_open_credential_issuance_reviews(
     };
     for review in reviews {
         match review.state.as_str() {
-            "awaiting_consent" => {
+            "awaiting_consent" | "failed" | "outcome_unknown" => {
+                // The refusal use case performs an idempotent local protocol
+                // discard. For failed and uncertain sessions it preserves the
+                // historical outcome rather than rewriting it as refused.
                 match refuse_service.execute(RefuseCredentialIssuanceCommand {
                     profile_id: profile_id.to_owned(),
                     issuance_id: review.id,
@@ -7701,7 +7702,7 @@ fn discard_open_credential_issuance_reviews(
                     Err(error) => return Err(credential_issuance_message(error)),
                 }
             }
-            "failed" | "refused" | "succeeded" => {}
+            "refused" | "succeeded" => {}
             _ => {
                 return Err(
                     "Credential cleanup is still in progress. Retry after it finishes.".to_owned(),
@@ -10680,6 +10681,91 @@ mod tests {
     }
 
     #[test]
+    fn leave_review_discards_failed_and_unknown_issuances_once_and_reports_errors() {
+        fn review(id: &str, state: &str) -> CredentialIssuanceView {
+            CredentialIssuanceView {
+                id: id.to_owned(),
+                issuer: "https://issuer.example".to_owned(),
+                configuration_ids: vec!["DigitalPassport".to_owned()],
+                display_names: vec!["Digital Passport".to_owned()],
+                state: state.to_owned(),
+                credential_id: None,
+                failure_code: None,
+            }
+        }
+
+        struct TerminalList;
+        impl ListCredentialIssuancesUseCase for TerminalList {
+            fn execute(
+                &self,
+                _: CredentialIssuanceProfileQuery,
+            ) -> Result<Vec<CredentialIssuanceView>, CredentialIssuanceError> {
+                Ok(vec![
+                    review("issuance-failed", "failed"),
+                    review("issuance-unknown", "outcome_unknown"),
+                    review("issuance-refused", "refused"),
+                    review("issuance-succeeded", "succeeded"),
+                ])
+            }
+        }
+
+        struct RecordingRefusal {
+            calls: std::sync::Mutex<Vec<String>>,
+            fail: bool,
+        }
+        impl RefuseCredentialIssuanceUseCase for RecordingRefusal {
+            fn execute(
+                &self,
+                command: RefuseCredentialIssuanceCommand,
+            ) -> Result<CredentialIssuanceView, CredentialIssuanceError> {
+                self.calls
+                    .lock()
+                    .expect("test refusal calls")
+                    .push(command.issuance_id.clone());
+                if self.fail {
+                    return Err(CredentialIssuanceError::InvalidState);
+                }
+                let state = if command.issuance_id == "issuance-failed" {
+                    "failed"
+                } else {
+                    "outcome_unknown"
+                };
+                Ok(review(&command.issuance_id, state))
+            }
+        }
+
+        let refusal = RecordingRefusal {
+            calls: std::sync::Mutex::new(Vec::new()),
+            fail: false,
+        };
+        assert_eq!(
+            discard_open_credential_issuance_reviews(&TerminalList, &refusal, "profile-1"),
+            Ok(())
+        );
+        assert_eq!(
+            *refusal.calls.lock().expect("test refusal calls"),
+            ["issuance-failed", "issuance-unknown"],
+            "terminal historical states use the idempotent refusal path exactly once"
+        );
+
+        let failing_refusal = RecordingRefusal {
+            calls: std::sync::Mutex::new(Vec::new()),
+            fail: true,
+        };
+        assert_eq!(
+            discard_open_credential_issuance_reviews(&TerminalList, &failing_refusal, "profile-1"),
+            Err(credential_issuance_message(
+                CredentialIssuanceError::InvalidState
+            ))
+        );
+        assert_eq!(
+            *failing_refusal.calls.lock().expect("test refusal calls"),
+            ["issuance-failed"],
+            "cleanup stops and surfaces refusal failures"
+        );
+    }
+
+    #[test]
     fn manual_preparation_reserves_before_await_and_pins_credential_review_content() {
         let pending = None;
         let mut manual_review_lock = false;
@@ -10807,6 +10893,7 @@ mod tests {
         let succeeded = review("succeeded");
         let refused = review("refused");
         let failed = review("failed");
+        let unknown = review("outcome_unknown");
 
         assert!(credential_issuance_review_blocks_replacement(Some(
             &awaiting
@@ -10823,6 +10910,7 @@ mod tests {
         assert!(credential_issuance_review_is_terminal(Some(&succeeded)));
         assert!(credential_issuance_review_is_terminal(Some(&refused)));
         assert!(credential_issuance_review_is_terminal(Some(&failed)));
+        assert!(credential_issuance_review_is_terminal(Some(&unknown)));
         assert!(!credential_issuance_review_is_terminal(None));
     }
 

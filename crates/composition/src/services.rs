@@ -46,10 +46,10 @@ use oxid_presentation_application::{
 use oxid_protocol_application::{
     AcceptCredentialIssuanceUseCase, AcceptSelfIssuedAuthenticationUseCase,
     GetCredentialIssuanceUseCase, GetSelfIssuedAuthenticationUseCase,
-    ListCredentialIssuancesUseCase, ListSelfIssuedAuthenticationsUseCase,
-    PrepareCredentialIssuanceUseCase, PrepareSelfIssuedAuthenticationUseCase,
-    RefuseCredentialIssuanceUseCase, RefuseSelfIssuedAuthenticationUseCase,
-    RouteIdentityRequestUseCase,
+    ListCredentialIssuanceActivityUseCase, ListCredentialIssuancesUseCase,
+    ListSelfIssuedAuthenticationsUseCase, PrepareCredentialIssuanceUseCase,
+    PrepareSelfIssuedAuthenticationUseCase, RefuseCredentialIssuanceUseCase,
+    RefuseSelfIssuedAuthenticationUseCase, RouteIdentityRequestUseCase,
 };
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationUseCase, AuthorizeWalletTransferUseCase,
@@ -179,6 +179,7 @@ pub struct ApplicationServices {
     pub(super) refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     pub(super) get_credential_issuance: Arc<dyn GetCredentialIssuanceUseCase>,
     pub(super) list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
+    pub(super) list_credential_issuance_activity: Arc<dyn ListCredentialIssuanceActivityUseCase>,
     pub(super) prepare_self_issued_authentication: Arc<dyn PrepareSelfIssuedAuthenticationUseCase>,
     pub(super) accept_self_issued_authentication: Arc<dyn AcceptSelfIssuedAuthenticationUseCase>,
     pub(super) refuse_self_issued_authentication: Arc<dyn RefuseSelfIssuedAuthenticationUseCase>,
@@ -783,6 +784,13 @@ impl ApplicationServices {
     #[must_use]
     pub fn list_credential_issuances(&self) -> Arc<dyn ListCredentialIssuancesUseCase> {
         Arc::clone(&self.list_credential_issuances)
+    }
+
+    #[must_use]
+    pub fn list_credential_issuance_activity(
+        &self,
+    ) -> Arc<dyn ListCredentialIssuanceActivityUseCase> {
+        Arc::clone(&self.list_credential_issuance_activity)
     }
 
     #[must_use]
