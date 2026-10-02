@@ -128,6 +128,7 @@
             openssl
             pi-coding-agent
             pkg-config
+            (python3.withPackages (pythonPackages: [ pythonPackages.pillow ]))
             ripgrep
             rust-analyzer
             rustc

@@ -116,11 +116,11 @@ def run(*args: str) -> None:
     subprocess.run(args, check=True, stdout=subprocess.DEVNULL)
 
 
-def render(source: Path, target: Path, size: int) -> None:
+def render(source: Path, target: Path, size: int, opaque: bool = False) -> None:
     cairosvg.svg2png(url=str(source), write_to=str(target),
                      output_width=size, output_height=size)
     with Image.open(target) as rendered:
-        rendered.convert("RGBA").save(target)
+        rendered.convert("RGB" if opaque else "RGBA").save(target)
 
 
 def write_platform_icons() -> None:
@@ -132,19 +132,20 @@ def write_platform_icons() -> None:
         ("app-icon-light-1024.png", "app-icon-light.svg"),
         ("app-icon-android-1024.png", "app-icon-android.svg"),
     ]:
-        render(BRAND / source, ICONS / name, 1024)
+        render(BRAND / source, ICONS / name, 1024, opaque=name == "app-icon-dark-1024.png")
     for size in (16, 32, 64, 128, 256, 512):
         render(BRAND / "desktop-icon.svg", ICONS / f"desktop-{size}.png", size)
     run("magick", *(str(ICONS / f"desktop-{size}.png") for size in (16, 32, 64, 256)),
         str(ICONS / "icon.ico"))
-    if shutil.which("iconutil"):
-        with tempfile.TemporaryDirectory() as temporary:
-            iconset = Path(temporary) / "Oxid.iconset"
-            iconset.mkdir()
-            for point_size in (16, 32, 128, 256, 512):
-                render(BRAND / "desktop-icon.svg", iconset / f"icon_{point_size}x{point_size}.png", point_size)
-                render(BRAND / "desktop-icon.svg", iconset / f"icon_{point_size}x{point_size}@2x.png", point_size * 2)
-            run("iconutil", "-c", "icns", str(iconset), "-o", str(ICONS / "icon.icns"))
+    if not shutil.which("iconutil"):
+        raise SystemExit("iconutil is required to package the macOS icon")
+    with tempfile.TemporaryDirectory() as temporary:
+        iconset = Path(temporary) / "Oxid.iconset"
+        iconset.mkdir()
+        for point_size in (16, 32, 128, 256, 512):
+            render(BRAND / "desktop-icon.svg", iconset / f"icon_{point_size}x{point_size}.png", point_size)
+            render(BRAND / "desktop-icon.svg", iconset / f"icon_{point_size}x{point_size}@2x.png", point_size * 2)
+        run("iconutil", "-c", "icns", str(iconset), "-o", str(ICONS / "icon.icns"))
 
 
 if __name__ == "__main__":

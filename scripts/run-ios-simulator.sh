@@ -306,6 +306,7 @@ if [ "$operation" != "deploy" ]; then
     echo "Dioxus did not create the expected app bundle: $app_bundle" >&2
     exit 1
   fi
+  python3 "$repository_root/scripts/package-mobile-icons.py" ios "$app_bundle"
   if [ "$mobile_presentation_proving" = "artifacts" ]; then
     packaged_bytes="$(find "$app_bundle" -type f -exec /usr/bin/stat -f '%z' {} + | awk '{ total += $1 } END { print total + 0 }')"
     echo "Authenticated Compact artifact measurement bundle: $packaged_bytes uncompressed bytes."

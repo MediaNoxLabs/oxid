@@ -162,6 +162,12 @@ every pack, or inspect the default generated semantic CSS, with:
 cargo run -p oxid-brand-build --bin oxid-brand-check -- --css brands/oxid
 ```
 
+To regenerate the checked-in logo and launcher family, install `CairoSVG` and
+`Pillow` with `python3 -m pip install -r scripts/logo-requirements.txt`.
+CairoSVG requires native `libcairo`; ImageMagick (`magick`) creates the Windows
+ICO and macOS `iconutil` creates the ICNS, so regeneration fails clearly when
+either platform packager is unavailable.
+
 Brand packs cannot select wallet adapters, protocols, custody, trust, consent,
 or safety copy. See [ADR-0092](docs/adr/0092-generate-validated-build-time-brand-packs.md)
 and the [white-label design](docs/design/white-label.md).
