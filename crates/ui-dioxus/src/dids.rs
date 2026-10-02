@@ -2,7 +2,7 @@
 
 use super::*;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 enum DidJourney {
     Inventory,
     Create,
@@ -10,11 +10,11 @@ enum DidJourney {
     Detail(String),
 }
 
-fn did_journey_after_open(current: &DidJourney, requested: DidJourney) -> DidJourney {
+fn did_journey_after_open(current: &DidJourney, requested: DidJourney) -> Option<DidJourney> {
     if current == &requested {
-        current.clone()
+        None
     } else {
-        requested
+        Some(requested)
     }
 }
 
@@ -672,10 +672,14 @@ pub(super) fn DidsPage(
                                             aria_label: "{accessible_label}",
                                             onclick: {
                                                 let did = did.clone();
-                                                move |_| journey.set(did_journey_after_open(
-                                                    &journey(),
-                                                    DidJourney::Detail(did.clone()),
-                                                ))
+                                                move |_| {
+                                                    if let Some(next) = did_journey_after_open(
+                                                        &journey(),
+                                                        DidJourney::Detail(did.clone()),
+                                                    ) {
+                                                        journey.set(next);
+                                                    }
+                                                }
                                             },
                                             span { class: "did-inventory-card__mark", aria_hidden: "true" }
                                             span { class: "did-inventory-card__body",
@@ -1070,17 +1074,17 @@ mod tests {
     #[test]
     fn identity_navigation_preserves_repeat_selection_and_opens_details() {
         let inventory = DidJourney::Inventory;
-        assert_eq!(
-            did_journey_after_open(&inventory, DidJourney::Inventory),
-            DidJourney::Inventory
+        assert!(did_journey_after_open(&inventory, DidJourney::Inventory).is_none());
+
+        let opened = did_journey_after_open(
+            &inventory,
+            DidJourney::Detail("did:midnight:undeployed:alice".to_owned()),
         );
-        assert_eq!(
-            did_journey_after_open(
-                &inventory,
-                DidJourney::Detail("did:midnight:undeployed:alice".to_owned()),
-            ),
-            DidJourney::Detail("did:midnight:undeployed:alice".to_owned())
-        );
+        assert!(matches!(
+            opened,
+            Some(DidJourney::Detail(identifier))
+                if identifier == "did:midnight:undeployed:alice"
+        ));
     }
 
     #[test]

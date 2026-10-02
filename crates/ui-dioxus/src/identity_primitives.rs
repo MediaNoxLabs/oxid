@@ -52,7 +52,7 @@ pub(super) fn IdentityReviewSheet(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dioxus::dioxus_core::Mutation;
+    use dioxus::dioxus_core::{AttributeValue, Mutation};
 
     fn empty_state_harness() -> Element {
         rsx! {
@@ -63,6 +63,33 @@ mod tests {
                 class: "did-empty-state".to_owned(),
             }
         }
+    }
+
+    fn terminal_review_harness() -> Element {
+        rsx! {
+            IdentityReviewSheet {
+                test_id: "identity-review".to_owned(),
+                review_state: "refused".to_owned(),
+                terminal: true,
+                p { "Request refused" }
+            }
+        }
+    }
+
+    fn rendered_attributes(root: fn() -> Element) -> Vec<(String, String)> {
+        let mut dom = VirtualDom::new(root);
+        dom.rebuild_to_vec()
+            .edits
+            .iter()
+            .filter_map(|edit| match edit {
+                Mutation::SetAttribute {
+                    name,
+                    value: AttributeValue::Text(value),
+                    ..
+                } => Some((name.to_string(), value.clone())),
+                _ => None,
+            })
+            .collect()
     }
 
     fn rendered_text(root: fn() -> Element) -> Vec<String> {
@@ -82,6 +109,21 @@ mod tests {
         assert_eq!(review_surface_class(false), "credential-offer-preview");
         assert_eq!(review_surface_class(true), "credential-issued-receipt");
         assert_eq!(REVIEW_SHEET_PRIMITIVE, "Sheet");
+
+        let attributes = rendered_attributes(terminal_review_harness);
+        assert!(attributes.iter().any(|(name, value)| {
+            name == "data-ui-primitive" && value == REVIEW_SHEET_PRIMITIVE
+        }));
+        assert!(
+            attributes
+                .iter()
+                .any(|(name, value)| name == "data-review-state" && value == "refused")
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|(name, value)| name == "class" && value == "credential-issued-receipt")
+        );
     }
 
     #[test]
@@ -96,5 +138,10 @@ mod tests {
                 .any(|text| text == "Create or resolve an identity.")
         );
         assert!(rendered.iter().any(|text| text == "Profile scoped"));
+
+        let attributes = rendered_attributes(empty_state_harness);
+        assert!(attributes.iter().any(|(name, value)| {
+            name == "data-ui-primitive" && value == EMPTY_STATE_PRIMITIVE
+        }));
     }
 }

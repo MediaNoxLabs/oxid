@@ -12796,7 +12796,11 @@ mod tests {
             .next()
             .expect("production source precedes tests");
         let primitive_source = include_str!("identity_primitives.rs");
-        let contract_source = format!("{rendered_source}\n{primitive_source}");
+        let rendered_primitive_source = primitive_source
+            .split("\n#[cfg(test)]\nmod tests {")
+            .next()
+            .expect("production primitive source precedes tests");
+        let contract_source = format!("{rendered_source}\n{rendered_primitive_source}");
 
         for required in [
             "identity-document-inventory",
