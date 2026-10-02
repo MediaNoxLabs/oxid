@@ -657,6 +657,11 @@ struct CredentialIssuanceActivityState {
     issuance_ids: BTreeMap<CredentialIssuanceId, CredentialIssuanceActivityId>,
 }
 
+enum ActivityAdmissionError {
+    CapacityExhausted,
+    Unavailable,
+}
+
 /// Bounded application-owned producer/read projection. It is process-local,
 /// deleted on restart, and deliberately has neither persistence nor backup.
 pub struct CredentialIssuanceActivityStore {
@@ -710,10 +715,25 @@ impl CredentialIssuanceActivityStore {
         issuance_id: &CredentialIssuanceId,
         session: &Session,
     ) -> Option<CredentialIssuanceActivityId> {
-        let mut state = self.state.lock().ok()?;
+        self.try_begin(issuance_id, session).ok()
+    }
+
+    fn try_begin(
+        &self,
+        issuance_id: &CredentialIssuanceId,
+        session: &Session,
+    ) -> Result<CredentialIssuanceActivityId, ActivityAdmissionError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| ActivityAdmissionError::Unavailable)?;
         if let Some(id) = state.issuance_ids.get(issuance_id) {
-            return Some(*id);
+            return Ok(*id);
         }
+        let next_id = state
+            .next_id
+            .checked_add(1)
+            .ok_or(ActivityAdmissionError::Unavailable)?;
         let profile_id = session.profile_id.as_str().to_owned();
         let evicted = {
             let records = state
@@ -723,8 +743,13 @@ impl CredentialIssuanceActivityStore {
             if records.len() == MAX_CREDENTIAL_ISSUANCE_ACTIVITY_RECORDS {
                 let evict_at = records
                     .iter()
-                    .position(|record| record.status.is_evictable())?;
-                records.remove(evict_at)
+                    .position(|record| record.status.is_evictable())
+                    .ok_or(ActivityAdmissionError::CapacityExhausted)?;
+                Some(
+                    records
+                        .remove(evict_at)
+                        .ok_or(ActivityAdmissionError::Unavailable)?,
+                )
             } else {
                 None
             }
@@ -732,7 +757,7 @@ impl CredentialIssuanceActivityStore {
         if let Some(evicted) = evicted {
             state.issuance_ids.retain(|_, value| *value != evicted.id);
         }
-        state.next_id = state.next_id.checked_add(1)?;
+        state.next_id = next_id;
         let id = CredentialIssuanceActivityId(state.next_id);
         state
             .records_by_profile
@@ -749,7 +774,7 @@ impl CredentialIssuanceActivityStore {
                 observed_at_millis: Self::now(),
             });
         state.issuance_ids.insert(issuance_id.clone(), id);
-        Some(id)
+        Ok(id)
     }
 
     fn update(&self, issuance_id: &CredentialIssuanceId, status: CredentialIssuanceActivityStatus) {
@@ -850,6 +875,7 @@ pub enum CredentialIssuanceError {
     InvalidConfirmation,
     NotFound,
     InvalidState,
+    ActivityCapacityExhausted,
     Approval(AcceptedFlowApprovalError),
     Protocol(IssuanceProtocolError),
     Sink(IssuedCredentialSinkError),
@@ -872,6 +898,9 @@ impl fmt::Display for CredentialIssuanceError {
             }
             Self::NotFound => formatter.write_str("credential issuance session was not found"),
             Self::InvalidState => formatter.write_str("credential issuance state is invalid"),
+            Self::ActivityCapacityExhausted => formatter.write_str(
+                "too many credential issuances are pending for this profile; retry this offer after one finishes, or restart and prepare it again",
+            ),
             Self::Approval(error) => error.fmt(formatter),
             Self::Protocol(error) => error.fmt(formatter),
             Self::Sink(error) => error.fmt(formatter),
@@ -1168,8 +1197,13 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
                     .map_err(CredentialIssuanceError::Approval)?;
                 // Admission is durable within this process before protocol.issue can run.
                 self.activity
-                    .begin(&issuance_id, session)
-                    .ok_or(CredentialIssuanceError::Unavailable)?;
+                    .try_begin(&issuance_id, session)
+                    .map_err(|error| match error {
+                        ActivityAdmissionError::CapacityExhausted => {
+                            CredentialIssuanceError::ActivityCapacityExhausted
+                        }
+                        ActivityAdmissionError::Unavailable => CredentialIssuanceError::Unavailable,
+                    })?;
                 session.state = CredentialIssuanceState::Issuing;
                 authority
             };
@@ -3008,8 +3042,14 @@ mod tests {
                 },
             ))
         };
-        assert_eq!(accept(), Err(CredentialIssuanceError::Unavailable));
-        assert_eq!(accept(), Err(CredentialIssuanceError::Unavailable));
+        assert_eq!(
+            accept(),
+            Err(CredentialIssuanceError::ActivityCapacityExhausted)
+        );
+        assert_eq!(
+            accept(),
+            Err(CredentialIssuanceError::ActivityCapacityExhausted)
+        );
         assert_eq!(protocol.0.load(Ordering::Relaxed), 0);
         assert_eq!(sink.0.load(Ordering::Relaxed), 0);
         assert_eq!(
