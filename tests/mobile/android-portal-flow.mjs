@@ -633,6 +633,7 @@ try {
       45_000,
     );
     await click("Documents");
+    await click("Open Digital Passport document details");
     await waitFor(
       'document.querySelectorAll(".credential-record").length === 1 && document.body.innerText.includes("Valid")',
       "encrypted credential restore",

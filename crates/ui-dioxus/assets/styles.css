@@ -1810,6 +1810,82 @@ textarea:focus-visible {
   gap: var(--space-3);
 }
 
+.document-detail-header {
+  display: grid;
+  grid-template-columns: 3.25rem minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-4) 0 var(--space-5);
+}
+
+.document-detail-header p {
+  margin: 0;
+}
+
+.credential-inventory-card {
+  display: grid;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 9rem;
+  padding: var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-card);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--family-credential) 12%, var(--surface-raised)), var(--surface-raised));
+  box-shadow: var(--shadow-card);
+  color: var(--text-strong);
+  text-align: left;
+}
+
+.credential-inventory-card:hover,
+.credential-inventory-card:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  outline-offset: 2px;
+  transform: translateY(-1px);
+}
+
+.credential-inventory-card__heading {
+  display: flex;
+  min-width: 0;
+  gap: var(--space-3);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.credential-inventory-card__heading h2 {
+  margin: var(--space-1) 0 0;
+  font-size: var(--font-body);
+}
+
+.credential-inventory-card__facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.credential-inventory-card__facts dt {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  text-transform: uppercase;
+}
+
+.credential-inventory-card__facts dd {
+  margin: var(--space-1) 0 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--font-caption);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.credential-inventory-card__action {
+  color: var(--accent);
+  font-size: var(--font-label);
+  font-weight: 800;
+}
+
 .credential-inventory,
 .credential-list {
   display: grid;
@@ -4189,7 +4265,8 @@ select:focus-visible {
     flex-direction: column;
   }
 
-  .credential-record__facts {
+  .credential-record__facts,
+  .credential-inventory-card__facts {
     grid-template-columns: 1fr;
   }
 
