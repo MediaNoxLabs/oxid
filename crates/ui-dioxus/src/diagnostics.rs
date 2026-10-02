@@ -21,7 +21,6 @@ use super::{AccountPageState, WalletUiServices, load_account_page, run_ui_blocki
 /// Process-local, payload-free diagnostic use cases consumed by the
 /// Diagnostics page.
 pub struct DiagnosticsUiServices {
-    #[cfg(any(target_os = "ios", target_os = "android"))]
     pub(super) events: Arc<dyn DiagnosticEventSinkPort>,
     pub(super) get: Arc<dyn GetDiagnosticSnapshotUseCase>,
     pub(super) clear: Arc<dyn ClearDiagnosticsUseCase>,
@@ -34,14 +33,7 @@ impl DiagnosticsUiServices {
         get: Arc<dyn GetDiagnosticSnapshotUseCase>,
         clear: Arc<dyn ClearDiagnosticsUseCase>,
     ) -> Self {
-        #[cfg(not(any(target_os = "ios", target_os = "android")))]
-        let _ = events;
-        Self {
-            #[cfg(any(target_os = "ios", target_os = "android"))]
-            events,
-            get,
-            clear,
-        }
+        Self { events, get, clear }
     }
 }
 

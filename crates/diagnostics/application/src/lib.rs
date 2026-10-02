@@ -31,6 +31,8 @@ pub enum DiagnosticCode {
     MidnightContractCallWorkerPanicked,
     WalletLifecycleSuspended,
     WalletLifecycleResumed,
+    WalletReceiveAccountReadFailed,
+    WalletReceiveAddressesUnavailable,
     ScreenPrivacyActivationFailed,
 }
 
@@ -54,6 +56,8 @@ impl DiagnosticCode {
             Self::MidnightContractCallWorkerPanicked => "midnight.vault_call.worker_panicked",
             Self::WalletLifecycleSuspended => "wallet.lifecycle.suspended",
             Self::WalletLifecycleResumed => "wallet.lifecycle.resumed",
+            Self::WalletReceiveAccountReadFailed => "wallet.receive.account_read_failed",
+            Self::WalletReceiveAddressesUnavailable => "wallet.receive.addresses_unavailable",
             Self::ScreenPrivacyActivationFailed => "platform.screen_privacy.activation_failed",
         }
     }
@@ -411,6 +415,14 @@ mod tests {
         assert_eq!(
             DiagnosticCode::WalletLifecycleResumed.as_str(),
             "wallet.lifecycle.resumed"
+        );
+        assert_eq!(
+            DiagnosticCode::WalletReceiveAccountReadFailed.as_str(),
+            "wallet.receive.account_read_failed"
+        );
+        assert_eq!(
+            DiagnosticCode::WalletReceiveAddressesUnavailable.as_str(),
+            "wallet.receive.addresses_unavailable"
         );
     }
 }

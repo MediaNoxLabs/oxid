@@ -69,8 +69,8 @@ use receive::{
     public_export_message, render_qr_svg,
 };
 use selected_realm_sync::action_watch::{
-    ReceiveBoundaryStatus, WalletActionWatchContext, WalletActionWatchStatus,
-    receive_address_ready, reset_receive_watch, start_receive_watch, use_action_watch_projection,
+    WalletActionWatchContext, WalletActionWatchStatus, reset_receive_watch, start_receive_watch,
+    use_action_watch_projection,
 };
 use send_recipient::{
     SendWizardProgress, SendWizardStep, is_public_recipient_candidate, scanned_recipient_update,
@@ -93,9 +93,10 @@ use oxid_credential_application::{
     PreviewCredentialDisclosureUseCase, ReceiveCredentialUseCase, RevealCredentialClaimCommand,
     RevealCredentialClaimUseCase, ReverifyCredentialUseCase,
 };
-use oxid_diagnostics_application::{ClearDiagnosticsUseCase, GetDiagnosticSnapshotUseCase};
-#[cfg(any(target_os = "ios", target_os = "android"))]
-use oxid_diagnostics_application::{DiagnosticCode, DiagnosticEventSinkPort, DiagnosticSeverity};
+use oxid_diagnostics_application::{
+    ClearDiagnosticsUseCase, DiagnosticCode, DiagnosticEventSinkPort, DiagnosticSeverity,
+    GetDiagnosticSnapshotUseCase,
+};
 use oxid_identity_application::{
     CreateDidCommand, CreateDidUseCase, DeactivateDidCommand, DeactivateDidUseCase,
     DidKeyAlgorithm, DidOperationError, DidRecordQuery, DidRecordView, DidRefreshAvailability,
@@ -313,7 +314,6 @@ pub struct WalletUiServices {
     proof_benchmark: Option<Arc<dyn RunProofBenchmarkUseCase>>,
     #[cfg(feature = "proof-benchmark")]
     process_resource_sampler: Arc<dyn ProcessResourceSamplerPort>,
-    #[cfg(any(target_os = "ios", target_os = "android"))]
     diagnostic_events: Arc<dyn DiagnosticEventSinkPort>,
     get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase>,
     clear_diagnostics: Arc<dyn ClearDiagnosticsUseCase>,
@@ -1046,7 +1046,6 @@ impl WalletUiServices {
             proof_benchmark: None,
             #[cfg(feature = "proof-benchmark")]
             process_resource_sampler: Arc::new(UnavailableProcessResourceSampler),
-            #[cfg(any(target_os = "ios", target_os = "android"))]
             diagnostic_events: diagnostics.events,
             get_diagnostic_snapshot: diagnostics.get,
             clear_diagnostics: diagnostics.clear,
@@ -1214,6 +1213,11 @@ impl WalletUiServices {
     #[must_use]
     pub fn get_diagnostic_snapshot(&self) -> Arc<dyn GetDiagnosticSnapshotUseCase> {
         Arc::clone(&self.get_diagnostic_snapshot)
+    }
+
+    #[must_use]
+    pub fn diagnostic_events(&self) -> Arc<dyn DiagnosticEventSinkPort> {
+        Arc::clone(&self.diagnostic_events)
     }
 
     #[must_use]
@@ -5072,7 +5076,6 @@ fn ReceiveSheet(
     let mut selected_kind = use_signal(|| None::<String>);
     let mut export_notice = use_signal(|| None::<String>);
     let watch_session = use_signal(|| false);
-    let mut watch_boundary_ready = use_signal(|| false);
     let watch_generation = use_signal(|| 0_u64);
     let profile_id = active_profile.id.clone();
     let action_watch_projection =
@@ -5087,6 +5090,7 @@ fn ReceiveSheet(
             let next = run_ui_blocking(move || load_receive_sheet(&query_services, &query_profile))
                 .await
                 .unwrap_or(ReceiveSheetState::Failed);
+            record_receive_availability_diagnostic(&services, &next);
             if let ReceiveSheetState::Ready { account, .. } = &next {
                 selected_kind.set(default_receive_kind(account));
             }
@@ -5102,7 +5106,7 @@ fn ReceiveSheet(
                 watch_profile.clone(),
                 *account,
                 selected_kind,
-                (watch_session, watch_boundary_ready, watch_generation),
+                (watch_session, watch_generation),
             );
         }
     });
@@ -5127,7 +5131,7 @@ fn ReceiveSheet(
                         let profile_id = active_profile.id.clone();
                         export_notice.set(None);
                         selected_kind.set(None);
-                        reset_receive_watch((watch_session, watch_boundary_ready, watch_generation));
+                        reset_receive_watch((watch_session, watch_generation));
                         state.set(ReceiveSheetState::Loading);
                         spawn(async move {
                             let query_services = services.clone();
@@ -5137,6 +5141,7 @@ fn ReceiveSheet(
                             })
                             .await
                             .unwrap_or(ReceiveSheetState::Failed);
+                            record_receive_availability_diagnostic(&services, &next);
                             if let ReceiveSheetState::Ready { account, .. } = &next {
                                 selected_kind.set(default_receive_kind(account));
                             }
@@ -5258,7 +5263,6 @@ fn ReceiveSheet(
                                     aria_pressed: if selected { "true" } else { "false" },
                                     aria_label: "Use {ui::receive_address_tab(&address.kind)} receive address",
                                     onclick: move |_| {
-                                        watch_boundary_ready.set(false);
                                         selected_kind.set(Some(kind.clone()));
                                         export_notice.set(None);
                                     },
@@ -5268,8 +5272,7 @@ fn ReceiveSheet(
                         }
                     }
                 }
-                if receive_address_ready(&selected.kind, watch_boundary_ready()) {
-                    div { class: "receive-sheet__address",
+                div { class: "receive-sheet__address",
                         div {
                             strong { "{ui::address_kind(&selected.kind)}" }
                             p { "{ui::address_purpose(&selected.kind)}" }
@@ -5320,11 +5323,8 @@ fn ReceiveSheet(
                     if let Some(message) = export_notice.read().as_deref() {
                         p { class: "address-export-notice", role: "status", "{message}" }
                     }
-                    if let Some(action) = funding_action {
-                        {action}
-                    }
-                } else {
-                    ReceiveBoundaryStatus { failed: watch_session() }
+                if let Some(action) = funding_action {
+                    {action}
                 }
                 p { class: "receive-sheet__guarantee",
                     if receive_request.is_some() {
@@ -5388,6 +5388,21 @@ fn load_receive_sheet(services: &WalletUiServices, profile_id: &str) -> ReceiveS
                 .map(|profile| profile.execute()),
         })
         .unwrap_or(ReceiveSheetState::Failed)
+}
+
+fn record_receive_availability_diagnostic(services: &WalletUiServices, state: &ReceiveSheetState) {
+    let code = match state {
+        ReceiveSheetState::Failed => DiagnosticCode::WalletReceiveAccountReadFailed,
+        ReceiveSheetState::Ready { account, .. }
+            if protected_receive_addresses(account).is_none() =>
+        {
+            DiagnosticCode::WalletReceiveAddressesUnavailable
+        }
+        ReceiveSheetState::Loading | ReceiveSheetState::Ready { .. } => return,
+    };
+    services
+        .diagnostic_events()
+        .record(code, DiagnosticSeverity::Warning);
 }
 
 #[component]
