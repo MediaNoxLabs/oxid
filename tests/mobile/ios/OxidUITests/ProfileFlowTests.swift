@@ -39,8 +39,7 @@ final class ProfileFlowTests: XCTestCase {
         if createWallet.waitForExistence(timeout: 5) {
             createWallet.tap()
             application.buttons["Create and continue"].tap()
-            XCTAssertTrue(application.buttons["Skip for now"].waitForExistence(timeout: 10))
-            application.buttons["Skip for now"].tap()
+            WalletOnboardingFixture.completeDevelopmentRecoveryCeremony(in: application)
         }
         XCTAssertTrue(application.buttons["Scan identity QR code"].waitForExistence(timeout: 15))
     }
@@ -116,7 +115,7 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertFalse(application.staticTexts.matching(
             NSPredicate(format: "label BEGINSWITH %@", "profile_")
         ).firstMatch.exists)
-        application.buttons["Skip for now"].tap()
+        WalletOnboardingFixture.completeDevelopmentRecoveryCeremony(in: application)
 
         XCTAssertTrue(application.buttons["Home"].waitForExistence(timeout: 15))
         application.buttons["Wallet"].tap()
@@ -700,8 +699,7 @@ final class ProfileFlowTests: XCTestCase {
         if createWallet.waitForExistence(timeout: 5) {
             createWallet.tap()
             application.buttons["Create and continue"].tap()
-            XCTAssertTrue(application.buttons["Skip for now"].waitForExistence(timeout: 10))
-            application.buttons["Skip for now"].tap()
+            WalletOnboardingFixture.completeDevelopmentRecoveryCeremony(in: application)
         }
 
         let scanIdentityRequest = application.buttons["Scan"]
