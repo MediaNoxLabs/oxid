@@ -47,6 +47,25 @@ authorization and could let stale public state select an ineligible input.
 
 ## Decision
 
+### Milestone 0.2.0 development-realm amendment
+
+For the exact `undeployed` development realm, DUST registration is an
+automatic wallet prerequisite once the selected-realm projection provides
+fresh, funded NIGHT eligibility. The wallet application owns distinct,
+composition-only development authorization and submission use cases. Each
+re-reads the retained preview and accepts only the `undeployed` realm; neither
+can mint or consume the general wallet approval capability used by transfers,
+signing, key deletion, recovery, or DID/credential actions.
+
+This amendment supersedes the separate human-consent screen for standalone
+development profiles. It does not remove the exact preview, protected custody,
+single-use approval capability, durable pre-broadcast record, duplicate
+suppression, or reconciliation boundaries below. Selected-realm sync and
+lifecycle reconciliation trigger the same composition-owned convergence; the
+UI may observe its aggregate state but cannot prepare, authorize, submit,
+retry, or otherwise advance registration. PreProd and production policy remain
+explicit and are not broadened by this amendment.
+
 Add a focused Oxid-owned `WalletDustRegistrationPort` and matching application
 use cases. Registration is a distinct vertical capability, not another mode on
 `WalletTransactionPort` and not part of `WalletDustSyncPort`. Public domain and
