@@ -8463,7 +8463,6 @@ fn CredentialPresentationPanel(
                 IdentityReviewSheet {
                     test_id: "identity-presentation-review".to_owned(),
                     review_state: ui::review_state(&presentation.state).to_owned(),
-                    terminal: presentation_terminal_copy(&presentation).is_some(),
                     div { class: "consent-preview__heading",
                         h3 { "Presentation preview" }
                         span { class: "status-pill", "{ui::protocol_state(&presentation.state)}" }
@@ -9550,7 +9549,6 @@ fn CredentialsPage(
                         IdentityReviewSheet {
                             test_id: "identity-issuance-review".to_owned(),
                             review_state: ui::review_state(&preview.state).to_owned(),
-                            terminal: credential_issuance_review_is_terminal(Some(&preview)),
                             div { class: "consent-preview__heading",
                                 h3 {
                                     if preview.state == "succeeded" {

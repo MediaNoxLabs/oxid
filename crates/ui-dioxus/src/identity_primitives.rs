@@ -23,24 +23,19 @@ pub(super) fn IdentityEmptyState(
     }
 }
 
-pub(super) const fn review_surface_class(terminal: bool) -> &'static str {
-    if terminal {
-        "credential-issued-receipt"
-    } else {
-        "credential-offer-preview"
-    }
+pub(super) const fn review_surface_class() -> &'static str {
+    "credential-review-surface"
 }
 
 #[component]
 pub(super) fn IdentityReviewSheet(
     test_id: String,
     review_state: String,
-    terminal: bool,
     children: Element,
 ) -> Element {
     rsx! {
         div {
-            class: review_surface_class(terminal),
+            class: review_surface_class(),
             "data-testid": "{test_id}",
             "data-review-state": "{review_state}",
             "data-ui-primitive": REVIEW_SHEET_PRIMITIVE,
@@ -70,7 +65,6 @@ mod tests {
             IdentityReviewSheet {
                 test_id: "identity-review".to_owned(),
                 review_state: "refused".to_owned(),
-                terminal: true,
                 p { "Request refused" }
             }
         }
@@ -105,9 +99,8 @@ mod tests {
     }
 
     #[test]
-    fn shared_review_surface_preserves_open_and_terminal_structure() {
-        assert_eq!(review_surface_class(false), "credential-offer-preview");
-        assert_eq!(review_surface_class(true), "credential-issued-receipt");
+    fn shared_review_surface_uses_outcome_neutral_structure() {
+        assert_eq!(review_surface_class(), "credential-review-surface");
         assert_eq!(REVIEW_SHEET_PRIMITIVE, "Sheet");
 
         let attributes = rendered_attributes(terminal_review_harness);
@@ -122,7 +115,7 @@ mod tests {
         assert!(
             attributes
                 .iter()
-                .any(|(name, value)| name == "class" && value == "credential-issued-receipt")
+                .any(|(name, value)| name == "class" && value == "credential-review-surface")
         );
     }
 
