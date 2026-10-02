@@ -4333,7 +4333,7 @@ fn OnboardingFlow(
                     class: "secondary-action",
                     r#type: "button",
                     onclick: move |_| step.set(OnboardingStep::RestoreBackup),
-                    "Restore encrypted wallet backup"
+                    "Restore from backup"
                 }
                 {root_recovery_choice}
             }

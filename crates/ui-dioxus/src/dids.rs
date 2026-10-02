@@ -417,7 +417,7 @@ pub(super) fn DidsPage(
                         if authentication_busy() { "Checking request…" } else { "Preview login request" }
                     }
                     if let Some(preview) = prepared_authentication.read().clone() {
-                        div { class: "credential-offer-preview",
+                        div { class: "credential-review-surface",
                             div { class: "consent-preview__heading",
                                 h3 { "DID authentication preview" }
                                 span { class: "status-pill", "{ui::protocol_state(&preview.state)}" }

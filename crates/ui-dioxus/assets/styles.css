@@ -103,7 +103,7 @@ textarea {
 input,
 select,
 textarea {
-  font-size: 1rem;
+  font-size: var(--font-body);
 }
 
 button {
