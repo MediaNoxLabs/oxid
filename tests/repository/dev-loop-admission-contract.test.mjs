@@ -42,6 +42,9 @@ test("pre-Pi admission is recorded outside the child and verified against its ch
   assert.equal(verified.deliveryBase, "origin/milestone-0.2.0");
   assert.equal(verified.prePiCalls.commands, 5);
   assert.equal(JSON.parse(readFileSync(receipt, "utf8")).implementationChildCalls, 0);
+  const nested = path.join(root, "nested");
+  mkdirSync(nested);
+  assert.equal(verifyAdmission(937, { cwd: nested }).issue, 937);
   writeFileSync(startup, "{}\n");
   assert.throws(() => verifyAdmission(937, { cwd: root }), /stale or incomplete/u);
 });
@@ -58,4 +61,7 @@ test("admission refuses a stale snapshot or changed origin", (t) => {
   }), /stale or incomplete/u);
   git("remote", "set-url", "origin", "https://github.com/input-output-hk/oxid.git");
   assert.throws(() => verifyAdmission(937, { cwd: root }), /disagrees with the current checkout/u);
+  git("remote", "set-url", "origin", "https://github.com/MediaNoxLabs/oxid.git");
+  git("checkout", "--detach", "-q");
+  assert.throws(() => verifyAdmission(937, { cwd: root }), /requires the recorded delivery base/u);
 });

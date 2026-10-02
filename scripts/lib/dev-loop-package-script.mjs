@@ -44,9 +44,15 @@ export async function runDevLoopsPackageScript(
   if (!PACKAGE_SCRIPT_PATTERN.test(packageScript)) {
     throw new Error(`invalid dev-loops package script: ${packageScript}`);
   }
-  const boundArgv = packageScript.startsWith("scripts/github/")
-    ? bindPackageGithubRepository(argv, resolveCanonicalGithubRepository(cwd))
-    : argv;
+  let boundArgv;
+  try {
+    boundArgv = packageScript.startsWith("scripts/github/")
+      ? bindPackageGithubRepository(argv, resolveCanonicalGithubRepository(cwd))
+      : argv;
+  } catch (error) {
+    process.stderr.write(`[${path.basename(packageScript)}] ${error.message}\n`);
+    return 1;
+  }
   const { packageRoot } = await resolveDevLoopsPackageRoot({ cwd });
   const entry = await realpath(path.join(packageRoot, packageScript));
   if (!isContained(packageRoot, entry)) {

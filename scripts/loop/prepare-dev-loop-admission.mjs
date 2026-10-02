@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -18,7 +18,8 @@ function git(cwd, ...args) {
 }
 
 function paths(cwd, issue) {
-  const directory = path.join(cwd, "target", "tmp", "dev-loop");
+  const root = git(cwd, "rev-parse", "--show-toplevel");
+  const directory = path.join(root, "target", "tmp", "dev-loop");
   return {
     directory,
     receipt: path.join(directory, `issue-${issue}-admission.json`),
@@ -41,9 +42,14 @@ function assertCheckout(receipt, issue, cwd) {
   const root = git(cwd, "rev-parse", "--show-toplevel");
   const branch = git(cwd, "branch", "--show-current");
   const headSha = git(cwd, "rev-parse", "HEAD");
-  const deliveryBase = git(cwd, "config", "--local", "--get", `branch.${branch}.oxidDeliveryBase`);
+  let deliveryBase;
+  try {
+    deliveryBase = git(cwd, "config", "--local", "--get", `branch.${branch}.oxidDeliveryBase`);
+  } catch {
+    throw new Error(`admission requires the recorded delivery base for branch ${branch || "<detached>"}`);
+  }
   const repository = resolveCanonicalGithubRepository(root);
-  if (realpathSync(root) !== realpathSync(cwd) || !repository || repository.toLowerCase() !== receipt.repository?.toLowerCase()
+  if (!repository || repository.toLowerCase() !== receipt.repository?.toLowerCase()
     || branch !== receipt.branch || deliveryBase !== receipt.deliveryBase || !HEAD.test(headSha)) {
     throw new Error(`admission receipt disagrees with the current checkout for issue #${issue}`);
   }

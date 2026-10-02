@@ -21,10 +21,10 @@ import {
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
 import { bindPackageGithubRepository } from "../../scripts/lib/dev-loop-package-script.mjs";
-import { bindIssueReadRepository } from "../../scripts/github/view-issue.mjs";
 import {
   bindEnvelopeRepositoryIdentity,
   githubRepositoryFromOrigin,
+  isOxidCheckout,
   normalizeDevLoopsArgs,
   resolveCanonicalGithubRepository,
   resolveOxidCompatibilityRoute,
@@ -1027,17 +1027,21 @@ test("handoff envelopes bind the checkout GitHub identity and reject disagreemen
   );
 });
 
+test("Oxid checkout identity is recognized from its tracked manifest", async () => {
+  assert.equal(await isOxidCheckout(repoRoot), true);
+});
+
 test("issue-read wrapper derives origin and refuses a stale repository before dispatch", () => {
   const repository = "MediaNoxLabs/oxid";
-  assert.deepEqual(bindIssueReadRepository(["--issue", "937"], repository),
+  assert.deepEqual(bindPackageGithubRepository(["--issue", "937"], repository),
     ["--issue", "937", "--repo", repository]);
-  assert.deepEqual(bindIssueReadRepository(["--repo", "medianoxlabs/oxid", "--issue", "937"], repository),
+  assert.deepEqual(bindPackageGithubRepository(["--repo", "medianoxlabs/oxid", "--issue", "937"], repository),
     ["--repo", "medianoxlabs/oxid", "--issue", "937"]);
-  assert.throws(() => bindIssueReadRepository(["--repo", "input-output-hk/oxid", "--issue", "937"], repository),
+  assert.throws(() => bindPackageGithubRepository(["--repo", "input-output-hk/oxid", "--issue", "937"], repository),
     /disagrees with origin repository MediaNoxLabs\/oxid/u);
-  assert.deepEqual(bindIssueReadRepository(["--repo", "example/foreign", "--issue", "1"], null),
+  assert.deepEqual(bindPackageGithubRepository(["--repo", "example/foreign", "--issue", "1"], null),
     ["--repo", "example/foreign", "--issue", "1"]);
-  assert.throws(() => bindIssueReadRepository(["--issue", "1"], null), /refusing to infer a repository/u);
+  assert.throws(() => bindPackageGithubRepository(["--issue", "1"], null), /needs an exact origin or explicit --repo/u);
 });
 
 test("sanctioned package GitHub commands bind to origin before dispatch", () => {

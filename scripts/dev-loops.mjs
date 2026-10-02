@@ -53,6 +53,15 @@ export function resolveCanonicalGithubRepository(cwd, { run = execFileSync } = {
   }
 }
 
+export async function isOxidCheckout(root) {
+  try {
+    const manifest = await readFile(path.join(root, "Cargo.toml"), "utf8");
+    return /^repository\s*=\s*"https:\/\/github\.com\/MediaNoxLabs\/oxid"\s*$/mu.test(manifest);
+  } catch {
+    return false;
+  }
+}
+
 /** Bind a handoff envelope to origin and reject an authoritative identity split. */
 export function bindEnvelopeRepositoryIdentity(envelope, repository) {
   if (!repository) return envelope;
@@ -386,6 +395,9 @@ async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
     });
     const normalized = await normalizeHandoffEnvelopeCwd(candidate, resolved, core);
     const originRepository = resolveCanonicalGithubRepository(resolved.gitRoot);
+    if (!originRepository && await isOxidCheckout(resolved.gitRoot)) {
+      throw new Error("Oxid handoff requires an exact github.com origin repository; fix origin before dispatch");
+    }
     const identityBound = bindEnvelopeRepositoryIdentity(normalized, originRepository);
     const { contract, profile } = await loadDeliveryProfile(resolved.gitRoot, deliveryArgs.requested);
     const profiled = applyDeliveryProfile({
