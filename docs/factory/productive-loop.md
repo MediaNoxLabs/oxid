@@ -244,6 +244,20 @@ from that active worktree. `--git-common-dir` is used only for topology and
 shared private storage; a stale primary checkout must never replace the active
 worktree's tracked policy.
 
+The repository-owned `tmp/worktrees/dev-loops/issue-<n>` checkout remains the
+default Pi delivery location. A `/dev-loop` started from a Codex Desktop
+worktree may reuse that checkout instead of creating a duplicate only when the
+invocation checkout itself is registered in the repository's Git worktree
+topology, is exactly one `<desktop-id>/<repository>` below
+`~/.codex/worktrees`, is clean, has the exact conventional `type/issue-<n>`
+branch for the requested issue, and records an allowed `origin/develop` or
+`origin/milestone-x.y.z` delivery base that is an ancestor of `HEAD`. A main
+checkout cannot nominate an arbitrary Desktop path, and a dirty, stale,
+misnamed, unregistered, nested, or delivery-base-mismatched checkout fails
+closed before Pi dispatch. Codex Desktop remains the lifecycle owner for these
+external worktrees; archive them through the app after their exact PR is
+merged rather than teaching repository cleanup to delete app-managed paths.
+
 Rust targets stay worktree-local. Compilation is reused through one bounded 10 GiB
 `sccache`, so an old target can be deleted without paying the entire historical
 compile cost again.

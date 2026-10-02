@@ -1340,14 +1340,24 @@ async function makeEnvelopeGitFixture(t) {
     pr153: path.join(namespace, "pr-153"),
     phase150: path.join(namespace, "phase-150-issue-150"),
     phase151: path.join(namespace, "phase-151-other"),
+    codex856: path.join(parent, ".codex", "worktrees", "issue-856-presentation", "oxid"),
   };
   for (const [branch, target] of Object.entries(worktrees)) {
-    const branchName = branch === "issue158" ? "test/issue-158" : `fixture-${branch}`;
+    const branchName = branch === "issue158"
+      ? "test/issue-158"
+      : branch === "codex856" ? "feat/issue-856" : `fixture-${branch}`;
     execFileSync("git", ["worktree", "add", "--quiet", "-b", branchName, target], { cwd: root });
   }
   execFileSync(
     "git",
     ["config", "branch.test/issue-158.oxidDeliveryBase", "origin/develop"],
+    { cwd: root },
+  );
+  const baseHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+  execFileSync("git", ["update-ref", "refs/remotes/origin/milestone-0.2.0", baseHead], { cwd: root });
+  execFileSync(
+    "git",
+    ["config", "branch.feat/issue-856.oxidDeliveryBase", "origin/milestone-0.2.0"],
     { cwd: root },
   );
   return { parent, root: await realpath(root), namespace, worktrees };
@@ -1405,6 +1415,46 @@ test("handoff envelope cwd normalization uses owned canonical Git topology", asy
   assert.equal((await normalizeHandoffEnvelopeCwd(
     validEnvelope(phase, "ignored"), resolve(fixture.worktrees.phase150), handoffCore,
   )).cwd, fixture.worktrees.phase150);
+
+  const codexRoot = path.join(fixture.parent, ".codex", "worktrees");
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope({ ...issue, issue: 856 }, "ignored"),
+    resolve(fixture.worktrees.codex856),
+    handoffCore,
+    { codexWorktreesRoot: codexRoot },
+  )).cwd, fixture.worktrees.codex856);
+
+  await writeFile(path.join(fixture.worktrees.codex856, "untracked"), "dirty\n");
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(
+      validEnvelope({ ...issue, issue: 856 }, "ignored"),
+      resolve(fixture.worktrees.codex856),
+      handoffCore,
+      { codexWorktreesRoot: codexRoot },
+    ),
+    /disagrees with resolver target/,
+  );
+  await rm(path.join(fixture.worktrees.codex856, "untracked"));
+
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(
+      validEnvelope({ ...issue, issue: 857 }, "ignored"),
+      resolve(fixture.worktrees.codex856),
+      handoffCore,
+      { codexWorktreesRoot: codexRoot },
+    ),
+    /disagrees with resolver target/,
+  );
+
+  await assert.rejects(
+    normalizeHandoffEnvelopeCwd(
+      validEnvelope({ ...issue, issue: 856 }, "ignored"),
+      resolve(fixture.worktrees.codex856),
+      handoffCore,
+      { codexWorktreesRoot: path.join(fixture.parent, "other-worktrees") },
+    ),
+    /disagrees with resolver target/,
+  );
 
   await assert.rejects(
     normalizeHandoffEnvelopeCwd(validEnvelope({ ...issue, issue: 151 }, "ignored"), resolve(fixture.worktrees.issue150), handoffCore),
