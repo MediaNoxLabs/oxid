@@ -13,7 +13,7 @@ use std::{
         mpsc::{self, Receiver},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use futures::{SinkExt as _, StreamExt as _};
@@ -37,6 +37,7 @@ struct ProcessHarness {
     child: Child,
     input: ChildStdin,
     responses: Receiver<Result<String, io::ErrorKind>>,
+    reaped: bool,
 }
 
 impl ProcessHarness {
@@ -128,19 +129,27 @@ impl ProcessHarness {
             child,
             input,
             responses,
+            reaped: false,
         }
     }
 
     fn request(&mut self, request: Value) -> Value {
+        self.request_with_timeout(request, RESPONSE_TIMEOUT)
+    }
+
+    fn request_with_timeout(&mut self, request: Value, timeout: Duration) -> Value {
         serde_json::to_writer(&mut self.input, &request).expect("request should serialize");
         self.input
             .write_all(b"\n")
             .and_then(|()| self.input.flush())
             .expect("request should be written");
 
-        let line = match self.responses.recv_timeout(RESPONSE_TIMEOUT) {
+        let line = match self.responses.recv_timeout(timeout) {
             Ok(Ok(line)) => line,
-            Ok(Err(error)) => panic!("response should be readable: {error}"),
+            Ok(Err(error)) => {
+                self.stop_child();
+                panic!("response should be readable: {error}");
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 self.stop_child();
                 panic!("headless wallet did not respond before the response timeout");
@@ -150,13 +159,16 @@ impl ProcessHarness {
                 panic!("headless wallet ended before responding");
             }
         };
-        assert!(!line.is_empty(), "headless wallet ended before responding");
         serde_json::from_str(&line).expect("response should be JSON")
     }
 
     fn stop_child(&mut self) {
+        if self.reaped {
+            return;
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
+        self.reaped = true;
     }
 
     fn quit(mut self) {
@@ -167,12 +179,19 @@ impl ProcessHarness {
             "params": {}
         }));
         assert_eq!(response["ok"], true);
-        assert!(
-            self.child
-                .wait()
-                .expect("headless wallet should exit")
-                .success()
-        );
+        let deadline = Instant::now() + RESPONSE_TIMEOUT;
+        let status = loop {
+            if let Some(status) = self.child.try_wait().expect("headless wallet should exit") {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                self.stop_child();
+                panic!("headless wallet did not exit before the shutdown timeout");
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        self.reaped = true;
+        assert!(status.success());
     }
 }
 
@@ -183,20 +202,29 @@ impl Drop for ProcessHarness {
 }
 
 fn wait_for_shielded_sync(process: &mut ProcessHarness, prefix: &str) -> Value {
+    let deadline = Instant::now() + RESPONSE_TIMEOUT;
     for attempt in 0..200 {
-        let response = process.request(json!({
-            "protocol": "oxid.headless.v1",
-            "id": format!("{prefix}-{attempt}"),
-            "method": "wallet.shielded.sync.status",
-            "params": {}
-        }));
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "shielded worker exceeded its deadline"
+        );
+        let response = process.request_with_timeout(
+            json!({
+                "protocol": "oxid.headless.v1",
+                "id": format!("{prefix}-{attempt}"),
+                "method": "wallet.shielded.sync.status",
+                "params": {}
+            }),
+            remaining,
+        );
         let state = response["result"]["shieldedSync"]["state"]
             .as_str()
             .expect("shielded status should have a state");
         if !matches!(state, "syncing" | "cached") {
             return response;
         }
-        thread::sleep(std::time::Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(10));
     }
     panic!("shielded worker did not reach a terminal state");
 }
