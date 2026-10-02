@@ -1231,15 +1231,14 @@ pub(super) fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
 
     match page.read().clone() {
         PassportVaultPageState::Loading => rsx! {
-            section { class: "page-stack", aria_busy: "true",
-                h1 { "Passport Vault" }
+            section { class: "page-stack", aria_busy: "true", aria_label: "Loading Passport Vault",
                 p { "Loading standalone and Midnight vault capabilities…" }
             }
         },
         PassportVaultPageState::Failed(message) => rsx! {
             section { class: "page-stack",
                 div { class: "page-heading",
-                    div { h1 { "Passport Vault" } p { "Credential-gated NIGHT locks." } }
+                    div { p { "Credential-gated NIGHT locks." } }
                     span { class: "status-pill warning", "Unavailable" }
                 }
                 article { class: "info-card warning-card",
@@ -1265,7 +1264,6 @@ pub(super) fn PassportVaultPage(active_profile: WalletProfileView) -> Element {
                     div { class: "page-heading",
                         div {
                             p { class: "eyebrow", "Product adapter" }
-                            h1 { "Passport Vault" }
                             p { "Create, fund, claim, and withdraw credential-gated NIGHT locks." }
                         }
                         span { class: "status-pill", "Standalone + Midnight" }

@@ -32,9 +32,9 @@ pub(super) fn AssetsPage(
     match state.read().clone() {
         AccountPageState::Loading => rsx! {
             section { class: "wallet-hero", "data-ui-primitive": "Card Skeleton",
-                p { class: "eyebrow", "Wallet overview" }
+                p { class: "eyebrow", "Assets" }
                 div { class: "wallet-hero__number-row", aria_busy: "true",
-                    h1 { class: "wallet-skeleton", "…" }
+                    strong { class: "wallet-balance wallet-skeleton", "…" }
                     span { "NIGHT" }
                 }
                 p { class: "wallet-hero__hint", "Loading the selected Midnight account boundary…" }
@@ -42,9 +42,9 @@ pub(super) fn AssetsPage(
         },
         AccountPageState::Failed(error) => rsx! {
             section { class: "wallet-hero", "data-ui-primitive": "Card ErrorState",
-                p { class: "eyebrow", "Wallet overview" }
+                p { class: "eyebrow", "Assets" }
                 div { class: "wallet-hero__number-row",
-                    h1 { "—" }
+                    strong { class: "wallet-balance", "—" }
                     span { "NIGHT" }
                 }
                 p { class: "wallet-hero__hint", "Account state could not be loaded safely." }
@@ -123,14 +123,14 @@ pub(super) fn AssetsPage(
             rsx! {
                 section { class: "wallet-hero", "data-ui-primitive": "Card StatusPill",
                     div { class: "wallet-hero__heading-row",
-                        p { class: "eyebrow", "Wallet overview" }
+                        p { class: "eyebrow", "Assets" }
                         span { class: if account.source == "simulated" { "status-pill warning" } else { "status-pill" },
                             "{source_label}"
                         }
                     }
                     div { class: "wallet-hero__number-row",
-                        h1 {
-                            class: "privacy-value",
+                        strong {
+                            class: "wallet-balance privacy-value",
                             aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
                             "{night}"
                         }

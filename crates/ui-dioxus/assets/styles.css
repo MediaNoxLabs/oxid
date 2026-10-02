@@ -503,11 +503,6 @@ textarea:focus-visible {
   box-shadow: 0 0 0.7rem color-mix(in srgb, var(--positive) 35%, transparent);
 }
 
-.page-context__title {
-  color: var(--text-soft);
-  font-weight: 700;
-}
-
 .identity-ingress-notice {
   margin: calc(-1 * var(--space-1)) 0 var(--space-4);
   padding: var(--space-3) var(--space-3);
@@ -805,7 +800,10 @@ textarea:focus-visible {
   line-height: 0.92;
 }
 
-.home-hero h1.home-hero__realm-title {
+.home-hero .home-hero__realm-title {
+  margin: 0;
+  color: var(--text-strong);
+  font-weight: 900;
   max-width: 18ch;
   font-size: var(--font-display);
   letter-spacing: -0.04em;
@@ -1094,7 +1092,7 @@ textarea:focus-visible {
   flex-wrap: wrap;
 }
 
-.wallet-hero h1 {
+.wallet-balance {
   margin: 0;
   color: var(--text-strong);
   font-size: var(--font-numeral);
