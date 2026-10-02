@@ -213,7 +213,9 @@ export function validateInventory(inventory, schema = JSON.parse(readFileSync(in
       for (const checkId of plan.healthCheckIds) if (!plan.dependencyIds.includes(healthChecks.get(checkId).dependencyId)) fail(`scenario '${scenario.id}' health check '${checkId}' is outside the target dependency boundary`);
       text(plan.note, `scenario '${scenario.id}' target '${plan.targetId}' note`);
     }
-    if (targetPlans.get(scenario.defaultTargetId).status !== "supported") fail(`scenario '${scenario.id}' default target must be supported`);
+    const defaultPlan = targetPlans.get(scenario.defaultTargetId);
+    if (defaultPlan.status !== "supported" && scenario.evidenceClass !== "planned") fail(`scenario '${scenario.id}' default target must be supported`);
+    if (scenario.evidenceClass === "planned" && defaultPlan.evidenceClass !== "planned") fail(`scenario '${scenario.id}' planned default target must use planned evidence`);
     if (!evidenceClasses.has(scenario.evidenceClass)) fail(`scenario '${scenario.id}' has invalid evidence class`);
     if (!cadences.has(scenario.cadence)) fail(`scenario '${scenario.id}' has invalid cadence`);
     if (!scenario.testMapping || typeof scenario.testMapping !== "object") fail(`scenario '${scenario.id}' is missing a test mapping`);
