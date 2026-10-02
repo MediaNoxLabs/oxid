@@ -397,10 +397,18 @@ test("run.sh wires the repository contract once and delegates coverage to the ha
 
 test("hosted coverage uses the same fetched comparison base as target planning", async () => {
   const workflow = await readFile(path.join(repoRoot, ".github/workflows/ci.yml"), "utf8");
-  const planJob = workflow.slice(workflow.indexOf("\n  plan:\n"), workflow.indexOf("\n  basic:\n"));
-  const coverageJob = workflow.slice(workflow.indexOf("\n  coverage_linux:\n"), workflow.indexOf("\n  repository_gate:"));
+  const planStart = workflow.indexOf("\n  plan:\n");
+  const basicStart = workflow.indexOf("\n  basic:\n");
+  const coverageStart = workflow.indexOf("\n  coverage_linux:\n");
+  const gateStart = workflow.indexOf("\n  repository_gate:");
+  assert.ok(planStart >= 0 && basicStart > planStart);
+  assert.ok(coverageStart >= 0 && gateStart > coverageStart);
+  const planJob = workflow.slice(planStart, basicStart);
+  const coverageJob = workflow.slice(coverageStart, gateStart);
   const comparisonBase = "${{ github.event.pull_request.base.sha || inputs.comparison_base || github.event.before || 'origin/develop' }}";
   assert.match(workflow, /comparison_base:\n        description: Ancestor commit for an on-demand branch comparison/u);
+  assert.match(planJob, /COMPARISON_BASE_INPUT: \$\{\{ inputs\.comparison_base \|\| '' \}\}/u);
+  assert.match(planJob, /\^\[0-9a-f\]\{40\}\$/u);
   assert.ok(planJob.includes(`BASE_SHA: ${comparisonBase}`));
   assert.match(coverageJob, /fetch-depth: 0/u);
   assert.ok(coverageJob.includes(`OXID_COVERAGE_BASE: ${comparisonBase}`));

@@ -31,8 +31,11 @@ use tokio_tungstenite::{
 };
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+// Crypto fixtures exceeded 30 seconds under parallel test load.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(180);
+// Slow status responses share this wall-clock budget; 200 fast replies also cap polling.
 const SHIELDED_SYNC_TIMEOUT: Duration = Duration::from_secs(120);
+// A successful quit should exit promptly; do not spend the response budget again.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 
 struct ProcessHarness {
