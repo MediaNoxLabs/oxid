@@ -503,7 +503,10 @@ pub struct CredentialIssuanceView {
 
 /// Maximum number of credential issuance activity records retained per process.
 /// This in-memory projection is deleted on restart and is never backed up.
+/// Maximum process-local activity records retained independently for each profile.
 pub const MAX_CREDENTIAL_ISSUANCE_ACTIVITY_RECORDS: usize = 128;
+/// Maximum completed issuance sessions retained independently for each profile.
+pub const MAX_CREDENTIAL_ISSUANCE_TERMINAL_SESSIONS: usize = 128;
 
 /// Application-owned, bounded monotonic activity identity. This is deliberately
 /// distinct from the protocol issuance identifier and is the only identifier
@@ -652,7 +655,7 @@ pub trait ListCredentialIssuanceActivityUseCase: Send + Sync {
 #[derive(Default)]
 struct CredentialIssuanceActivityState {
     next_id: u64,
-    records: VecDeque<CredentialIssuanceActivityRecord>,
+    records_by_profile: BTreeMap<String, VecDeque<CredentialIssuanceActivityRecord>>,
     issuance_ids: BTreeMap<CredentialIssuanceId, CredentialIssuanceActivityId>,
 }
 
@@ -687,14 +690,12 @@ impl CredentialIssuanceActivityStore {
             .lock()
             .map_err(|_| CredentialIssuanceActivityError::Unavailable)?;
         let removed: BTreeSet<_> = state
-            .records
-            .iter()
-            .filter(|record| record.profile_id == profile_id)
+            .records_by_profile
+            .remove(profile_id)
+            .into_iter()
+            .flatten()
             .map(|record| record.id)
             .collect();
-        state
-            .records
-            .retain(|record| record.profile_id != profile_id);
         state.issuance_ids.retain(|_, id| !removed.contains(id));
         Ok(removed.len())
     }
@@ -715,26 +716,40 @@ impl CredentialIssuanceActivityStore {
         if let Some(id) = state.issuance_ids.get(issuance_id) {
             return Some(*id);
         }
-        if state.records.len() == MAX_CREDENTIAL_ISSUANCE_ACTIVITY_RECORDS {
-            let evict_at = state
-                .records
-                .iter()
-                .position(|record| record.status.is_evictable())?;
-            let evicted = state.records.remove(evict_at)?;
+        let profile_id = session.profile_id.as_str().to_owned();
+        let evicted = {
+            let records = state
+                .records_by_profile
+                .entry(profile_id.clone())
+                .or_default();
+            if records.len() == MAX_CREDENTIAL_ISSUANCE_ACTIVITY_RECORDS {
+                let evict_at = records
+                    .iter()
+                    .position(|record| record.status.is_evictable())?;
+                records.remove(evict_at)
+            } else {
+                None
+            }
+        };
+        if let Some(evicted) = evicted {
             state.issuance_ids.retain(|_, value| *value != evicted.id);
         }
         state.next_id = state.next_id.checked_add(1)?;
         let id = CredentialIssuanceActivityId(state.next_id);
-        state.records.push_back(CredentialIssuanceActivityRecord {
-            id,
-            profile_id: session.profile_id.as_str().to_owned(),
-            source: CredentialIssuanceActivitySource::OpenId4Vci,
-            issuer: session.preview.issuer().to_owned(),
-            credential_configuration_ids: session.preview.configuration_ids().to_vec(),
-            status: CredentialIssuanceActivityStatus::Pending,
-            finality: CredentialIssuanceActivityFinality::Pending,
-            observed_at_millis: Self::now(),
-        });
+        state
+            .records_by_profile
+            .entry(profile_id.clone())
+            .or_default()
+            .push_back(CredentialIssuanceActivityRecord {
+                id,
+                profile_id,
+                source: CredentialIssuanceActivitySource::OpenId4Vci,
+                issuer: session.preview.issuer().to_owned(),
+                credential_configuration_ids: session.preview.configuration_ids().to_vec(),
+                status: CredentialIssuanceActivityStatus::Pending,
+                finality: CredentialIssuanceActivityFinality::Pending,
+                observed_at_millis: Self::now(),
+            });
         state.issuance_ids.insert(issuance_id.clone(), id);
         Some(id)
     }
@@ -746,7 +761,12 @@ impl CredentialIssuanceActivityStore {
         let Some(id) = state.issuance_ids.get(issuance_id).copied() else {
             return;
         };
-        let Some(record) = state.records.iter_mut().find(|record| record.id == id) else {
+        let Some(record) = state
+            .records_by_profile
+            .values_mut()
+            .flat_map(|records| records.iter_mut())
+            .find(|record| record.id == id)
+        else {
             return;
         };
         if record.status == status
@@ -787,10 +807,10 @@ impl ListCredentialIssuanceActivityUseCase for CredentialIssuanceActivityStore {
             source: "application_event_projection".to_owned(),
             retention: "process_local_bounded_not_backed_up".to_owned(),
             records: state
-                .records
-                .iter()
-                .rev()
-                .filter(|record| record.profile_id == profile_id)
+                .records_by_profile
+                .get(&profile_id)
+                .into_iter()
+                .flat_map(|records| records.iter().rev())
                 .cloned()
                 .collect(),
         })
@@ -997,8 +1017,10 @@ impl CredentialIssuanceService {
         {
             session.state = CredentialIssuanceState::Failed;
             session.failure_code = Some(code.to_owned());
+            let profile_id = session.profile_id.clone();
             self.activity
                 .update(id, CredentialIssuanceActivityStatus::Failed);
+            Self::trim_terminal_sessions(&mut sessions, &profile_id);
         }
     }
 
@@ -1016,6 +1038,31 @@ impl CredentialIssuanceService {
 
     fn interrupt_if_issuing(&self, id: &CredentialIssuanceId, code: &str) {
         self.unknown_if_issuing(id, code);
+    }
+
+    fn trim_terminal_sessions(
+        sessions: &mut BTreeMap<CredentialIssuanceId, Session>,
+        profile_id: &ProtocolProfileId,
+    ) {
+        let terminal_ids: Vec<_> = sessions
+            .iter()
+            .filter(|(_, session)| {
+                session.profile_id == *profile_id
+                    && matches!(
+                        session.state,
+                        CredentialIssuanceState::Succeeded
+                            | CredentialIssuanceState::Failed
+                            | CredentialIssuanceState::Refused
+                    )
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in terminal_ids
+            .into_iter()
+            .skip(MAX_CREDENTIAL_ISSUANCE_TERMINAL_SESSIONS)
+        {
+            sessions.remove(&id);
+        }
     }
 }
 
@@ -1186,7 +1233,10 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
             session.failure_code = None;
             self.activity
                 .update(&issuance_id, CredentialIssuanceActivityStatus::Stored);
-            Ok(session.view(&issuance_id))
+            let profile_id = session.profile_id.clone();
+            let view = session.view(&issuance_id);
+            Self::trim_terminal_sessions(&mut sessions, &profile_id);
+            Ok(view)
         })
     }
 }
@@ -1244,7 +1294,9 @@ impl RefuseCredentialIssuanceUseCase for CredentialIssuanceService {
         let _ = self.activity.begin(&issuance_id, session);
         self.activity
             .update(&issuance_id, CredentialIssuanceActivityStatus::Refused);
+        let profile_id = session.profile_id.clone();
         let view = session.view(&issuance_id);
+        Self::trim_terminal_sessions(&mut sessions, &profile_id);
         drop(sessions);
         drop(refusal_attempt);
         Ok(view)
@@ -2837,6 +2889,113 @@ mod tests {
                 .records
                 .iter()
                 .all(|record| record.id.value() != 2)
+        );
+    }
+
+    #[test]
+    fn activity_capacity_is_scoped_to_each_profile() {
+        let store = CredentialIssuanceActivityStore::new();
+        let preview = CredentialOfferPreview::new(
+            "https://issuer.example",
+            vec!["identity".to_owned()],
+            vec!["Identity credential".to_owned()],
+        )
+        .expect("valid preview");
+        let profile_one = Session {
+            profile_id: ProtocolProfileId::parse("profile_1").expect("valid profile"),
+            preview: preview.clone(),
+            state: CredentialIssuanceState::Issuing,
+            credential_id: None,
+            failure_code: None,
+            refusal_in_progress: false,
+            protocol_discarded: false,
+        };
+        let profile_two = Session {
+            profile_id: ProtocolProfileId::parse("profile_2").expect("valid profile"),
+            preview,
+            state: CredentialIssuanceState::Issuing,
+            credential_id: None,
+            failure_code: None,
+            refusal_in_progress: false,
+            protocol_discarded: false,
+        };
+        for index in 0..MAX_CREDENTIAL_ISSUANCE_ACTIVITY_RECORDS {
+            let id = CredentialIssuanceId::parse(format!("profile_one_{index}")).expect("valid id");
+            assert!(store.begin(&id, &profile_one).is_some());
+        }
+        let profile_two_id = CredentialIssuanceId::parse("profile_two_first").expect("valid id");
+        assert!(store.begin(&profile_two_id, &profile_two).is_some());
+        assert_eq!(
+            store
+                .execute("profile_1".to_owned())
+                .expect("profile one projection")
+                .records
+                .len(),
+            MAX_CREDENTIAL_ISSUANCE_ACTIVITY_RECORDS
+        );
+        assert_eq!(
+            store
+                .execute("profile_2".to_owned())
+                .expect("profile two projection")
+                .records
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn terminal_session_retention_is_bounded_without_evicting_unknown_outcomes() {
+        let preview = CredentialOfferPreview::new(
+            "https://issuer.example",
+            vec!["identity".to_owned()],
+            vec!["Identity credential".to_owned()],
+        )
+        .expect("valid preview");
+        let profile_id = ProtocolProfileId::parse("profile_1").expect("valid profile");
+        let mut sessions = BTreeMap::new();
+        for index in 0..=MAX_CREDENTIAL_ISSUANCE_TERMINAL_SESSIONS {
+            sessions.insert(
+                CredentialIssuanceId::parse(format!("terminal_{index:03}")).expect("valid id"),
+                Session {
+                    profile_id: profile_id.clone(),
+                    preview: preview.clone(),
+                    state: CredentialIssuanceState::Failed,
+                    credential_id: None,
+                    failure_code: Some("issuer_rejected".to_owned()),
+                    refusal_in_progress: false,
+                    protocol_discarded: false,
+                },
+            );
+        }
+        let unknown = CredentialIssuanceId::parse("unknown_outcome").expect("valid id");
+        sessions.insert(
+            unknown.clone(),
+            Session {
+                profile_id: profile_id.clone(),
+                preview,
+                state: CredentialIssuanceState::OutcomeUnknown,
+                credential_id: None,
+                failure_code: Some("issuance_interrupted".to_owned()),
+                refusal_in_progress: false,
+                protocol_discarded: false,
+            },
+        );
+
+        CredentialIssuanceService::trim_terminal_sessions(&mut sessions, &profile_id);
+
+        assert_eq!(
+            sessions
+                .values()
+                .filter(|session| session.state == CredentialIssuanceState::Failed)
+                .count(),
+            MAX_CREDENTIAL_ISSUANCE_TERMINAL_SESSIONS
+        );
+        assert_eq!(
+            sessions
+                .get(&unknown)
+                .expect("unknown outcome is retained")
+                .state,
+            CredentialIssuanceState::OutcomeUnknown
         );
     }
 
