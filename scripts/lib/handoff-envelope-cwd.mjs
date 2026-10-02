@@ -139,7 +139,7 @@ async function authorizeCodexIssueWorktree(target, candidate, {
   codexWorktreesRoot,
   worktrees,
 }) {
-  if (target?.kind !== "issue" || !worktrees.includes(candidate)) return false;
+  if (!["issue", "local_phase"].includes(target?.kind) || !worktrees.includes(candidate)) return false;
   const relative = path.relative(codexWorktreesRoot, candidate);
   if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) return false;
   const segments = relative.split(path.sep).filter(Boolean);
