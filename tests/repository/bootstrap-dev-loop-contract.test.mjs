@@ -10,12 +10,19 @@ import { parseBootstrapDevLoopInvocation, resolveBootstrapDevLoopCwd } from "../
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const main = "/fixture/oxid";
 const canonical = `${main}/tmp/worktrees/dev-loops/issue-305`;
+const codexRoot = "/fixture/.codex/worktrees";
+const codex = `${codexRoot}/issue-305-wallet/oxid`;
 const issue = JSON.stringify({
   title: "feat(wallet): enter the canonical worktree",
   body: "## Delivery target\n\ndevelop\n",
 });
 
-function gitFixture(current) {
+function gitFixture(current, {
+  includeCodex = false,
+  dirtyCodex = false,
+  codexDeliveryBase = "origin/develop",
+  codexBaseIsAncestor = true,
+} = {}) {
   return (program, args) => {
     if (program === "gh") return issue;
     assert.equal(program, "git");
@@ -23,8 +30,16 @@ function gitFixture(current) {
     const gitArgs = args.slice(2);
     if (gitArgs.join(" ") === "rev-parse --show-toplevel") return `${current}\n`;
     if (gitArgs.join(" ") === "remote get-url origin") return "https://github.com/MediaNoxLabs/oxid.git\n";
-    if (gitArgs.join(" ") === "worktree list --porcelain") return `worktree ${main}\n\nworktree ${canonical}\n\n`;
-    if (repository === canonical && gitArgs.join(" ") === "branch --show-current") return "feat/issue-305\n";
+    if (gitArgs.join(" ") === "worktree list --porcelain") {
+      return `worktree ${main}\n\nworktree ${canonical}\n\n${includeCodex ? `worktree ${codex}\n\n` : ""}`;
+    }
+    if ((repository === canonical || repository === codex) && gitArgs.join(" ") === "branch --show-current") return "feat/issue-305\n";
+    if (repository === codex && gitArgs.join(" ") === "status --porcelain") return dirtyCodex ? "?? dirty\n" : "";
+    if (repository === main && gitArgs.join(" ") === "config --get branch.feat/issue-305.oxidDeliveryBase") return `${codexDeliveryBase}\n`;
+    if (repository === codex && gitArgs.join(" ") === `merge-base --is-ancestor ${codexDeliveryBase} HEAD`) {
+      if (!codexBaseIsAncestor) throw new Error("not an ancestor");
+      return "";
+    }
     throw new Error(`unexpected command: ${program} ${args.join(" ")}`);
   };
 }
@@ -63,6 +78,44 @@ test("linked canonical /dev-loop print stays in that worktree", async () => {
   });
   assert.equal(cwd, canonical);
   assert.equal(ensured, false);
+});
+
+test("verified Codex Desktop /dev-loop print stays in its registered issue worktree", async () => {
+  let ensured = false;
+  const recorded = [];
+  const cwd = await resolveBootstrapDevLoopCwd(["--print", "/dev-loop production-ready issue 305"], {
+    repoRoot: codex,
+    run: gitFixture(codex, { includeCodex: true }),
+    ensureWorktree: async () => { ensured = true; return 0; },
+    recordDeliveryBase: (...args) => recorded.push(args),
+    codexWorktreesRoot: codexRoot,
+  });
+  assert.equal(cwd, codex);
+  assert.equal(ensured, false);
+  assert.deepEqual(recorded, [[main, "feat/issue-305", "origin/develop"]]);
+});
+
+test("dirty Codex Desktop worktrees remain outside dev-loop admission", async () => {
+  await assert.rejects(resolveBootstrapDevLoopCwd(["--print", "/dev-loop production-ready issue 305"], {
+    repoRoot: codex,
+    run: gitFixture(codex, { includeCodex: true, dirtyCodex: true }),
+    recordDeliveryBase: () => {},
+    codexWorktreesRoot: codexRoot,
+  }), /refusing \/dev-loop dispatch from non-canonical linked worktree/);
+});
+
+test("stale or mismatched Codex Desktop delivery bases remain outside admission", async () => {
+  for (const options of [
+    { includeCodex: true, codexDeliveryBase: "origin/milestone-9.9.9" },
+    { includeCodex: true, codexBaseIsAncestor: false },
+  ]) {
+    await assert.rejects(resolveBootstrapDevLoopCwd(["--print", "/dev-loop production-ready issue 305"], {
+      repoRoot: codex,
+      run: gitFixture(codex, options),
+      recordDeliveryBase: () => {},
+      codexWorktreesRoot: codexRoot,
+    }), /refusing \/dev-loop dispatch from non-canonical linked worktree/);
+  }
 });
 
 test("bootstrap reads issue metadata from the exact origin repository", async () => {

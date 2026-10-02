@@ -3,6 +3,7 @@
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -83,6 +84,26 @@ function assertCanonicalBranch(commandRunner, canonical, branch) {
   if (actual !== branch) throw new Error(`canonical worktree branch mismatch: expected ${branch}, found ${actual || "detached HEAD"}`);
 }
 
+function isVerifiedCodexIssueWorktree(commandRunner, topology, branch, deliveryBase, {
+  codexWorktreesRoot = path.join(homedir(), ".codex", "worktrees"),
+} = {}) {
+  const current = topology.current;
+  if (!topology.worktrees.includes(current)) return false;
+  const relative = path.relative(path.resolve(codexWorktreesRoot), current);
+  if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) return false;
+  if (relative.split(path.sep).filter(Boolean).length !== 2) return false;
+  if (git(commandRunner, current, ["branch", "--show-current"]) !== branch) return false;
+  if (git(commandRunner, current, ["status", "--porcelain"]) !== "") return false;
+  let recordedBase;
+  try {
+    recordedBase = git(commandRunner, topology.main, ["config", "--get", `branch.${branch}.oxidDeliveryBase`]);
+    git(commandRunner, current, ["merge-base", "--is-ancestor", recordedBase, "HEAD"]);
+  } catch {
+    return false;
+  }
+  return recordedBase === deliveryBase;
+}
+
 /**
  * Resolve the cwd before Pi starts. Only the exact public initial command can
  * cross this boundary; malformed lookalikes stop before Pi is dispatched.
@@ -93,6 +114,7 @@ export async function resolveBootstrapDevLoopCwd(piArgs, {
   ensureWorktree = runEnsureWorktree,
   recordDeliveryBase = ensureRecordedDeliveryBase,
   recordAdmission = () => {},
+  codexWorktreesRoot,
 } = {}) {
   if (!repoRoot) throw new Error("--repo-root is required");
   const invocation = parseBootstrapDevLoopInvocation(piArgs);
@@ -103,12 +125,12 @@ export async function resolveBootstrapDevLoopCwd(piArgs, {
   const topology = mainWorktree(trackedRun, repoRoot);
   const { branch, target, repository } = issueIdentity(trackedRun, topology.main, invocation.issue);
   const canonical = resolveRepositoryWorktreePath(topology.main, ["--issue", String(invocation.issue)]);
-  const finish = () => {
+  const finish = (worktree = canonical) => {
     recordAdmission({
       schema: "oxid-dev-loop-admission-v1", issue: invocation.issue, repository,
       branch, deliveryBase: target.remoteRef, calls,
     });
-    return canonical;
+    return worktree;
   };
   if (topology.current === canonical) {
     if (!topology.worktrees.includes(canonical)) throw new Error(`canonical worktree is not registered: ${canonical}`);
@@ -118,6 +140,11 @@ export async function resolveBootstrapDevLoopCwd(piArgs, {
     return finish();
   }
   if (topology.current !== topology.main) {
+    if (isVerifiedCodexIssueWorktree(trackedRun, topology, branch, target.remoteRef, { codexWorktreesRoot })) {
+      calls.recordDeliveryBase += 1;
+      recordDeliveryBase(topology.main, branch, target.remoteRef);
+      return finish(topology.current);
+    }
     throw new Error(`refusing /dev-loop dispatch from non-canonical linked worktree ${topology.current}`);
   }
 
