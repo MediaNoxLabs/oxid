@@ -759,9 +759,18 @@ mod tests {
         assert!(index.contains("width=device-width"));
         assert!(index.contains("initial-scale=1"));
         assert!(index.contains("viewport-fit=cover"));
-        assert!(index.contains("<div id=\"main\"></div>"));
-        assert!(index.contains("<!-- CUSTOM HEAD -->"));
-        assert!(index.contains("<!-- MODULE LOADER -->"));
+        let custom_head = index
+            .find("<!-- CUSTOM HEAD -->")
+            .expect("custom head marker");
+        let head_close = index.find("</head>").expect("head close");
+        let main_root = index.find("<div id=\"main\"></div>").expect("main root");
+        let module_loader = index.find("<!-- MODULE LOADER -->").expect("module loader");
+        let body_close = index.find("</body>").expect("body close");
+
+        assert!(custom_head < head_close);
+        assert!(head_close < main_root);
+        assert!(main_root < module_loader);
+        assert!(module_loader < body_close);
     }
 
     #[test]
