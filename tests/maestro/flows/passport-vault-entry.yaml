@@ -11,13 +11,12 @@ name: Passport Vault entry
     speed: 40
     timeout: 20000
     centerElement: true
-- scrollUntilVisible:
-    element:
-      text: "Open Passport Vault"
+# Maestro's iOS WebView hierarchy exposes this carousel reliably to gestures, but
+# not to horizontal `scrollUntilVisible` queries.
+- swipe:
     direction: LEFT
-    speed: 40
-    timeout: 20000
-    centerElement: true
+- swipe:
+    direction: LEFT
 - tapOn: "Open Passport Vault"
 - assertVisible: "Passport Vault"
 - assertVisible: "Create, fund, claim, and withdraw credential-gated NIGHT locks."
