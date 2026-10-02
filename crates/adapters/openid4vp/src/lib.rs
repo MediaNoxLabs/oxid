@@ -1280,11 +1280,7 @@ mod tests {
                 profile_id: profile.clone(),
                 presentation_id: prepared.id.clone(),
                 credential_id: "vc_one".to_owned(),
-                authority: Some(presentation_authority(
-                    "profile_one",
-                    prepared.id.as_str(),
-                    "vc_one",
-                )),
+                authority: presentation_authority("profile_one", prepared.id.as_str(), "vc_one"),
             })),
             Err(PresentationProtocolError::ProofUnavailable)
         );
@@ -1294,7 +1290,7 @@ mod tests {
                 profile_id: profile,
                 presentation_id: prepared.id,
                 credential_id: "vc_one".to_owned(),
-                authority: Some(authority),
+                authority,
             })),
             Err(PresentationProtocolError::InvalidRequest)
         );
@@ -1328,7 +1324,7 @@ mod tests {
                 profile_id: profile,
                 presentation_id: prepared.id,
                 credential_id: "vc_one".to_owned(),
-                authority: Some(authority),
+                authority,
             }))
             .expect("present");
         assert!(outcome.verifier_validated);
