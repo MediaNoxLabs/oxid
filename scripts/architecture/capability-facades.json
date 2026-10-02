@@ -137,6 +137,12 @@
           ]
         },
         {
+          "name": "credential-inventory",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/credential_inventory"
+          ]
+        },
+        {
           "name": "identity-interactions",
           "modulePathPrefixes": [
             "crates/ui-dioxus/src/identity_primitives"
