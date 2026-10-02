@@ -13,6 +13,9 @@ future reviewed mapping and do not activate an unshipped light theme.
 
 **Layer 1 — brand tokens** (supplied per brand, white-label.md):
 palette primitives, type family, radius personality, logo/mascot assets.
+The default pack's fingerprint-crescent geometry and platform icon treatments
+are specified in [brand-identity.md](brand-identity.md). The inline logo uses
+the semantic accent; gradients are confined to exported brand artwork.
 
 **Layer 2 — semantic tokens** (fixed vocabulary, consumed by components;
 brands may only re-point them at their primitives):

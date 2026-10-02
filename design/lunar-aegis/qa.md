@@ -32,8 +32,9 @@ for direct implementation.
   draft; the published gallery remains a known issue.
 - [logo-concept.jpg](assets/logo-concept.jpg) is a visual reference with
   “0xID” lettering. [logo-master.svg](assets/logo-master.svg) differs in
-  geometry and detail. Review the final wordmark and 16–120 px app icon
-  before replacing shipped assets.
+  geometry and detail. The owner resolved the production mark choice with
+  the fingerprint-crescent family in [brand-icons.md](brand-icons.md); the
+  original files remain an unchanged UX Pilot snapshot.
 - The screen HTML imports remote Tailwind, Font Awesome, Google Fonts, and
   a UX Pilot-hosted logo. The local PNGs and bundled assets are the offline
   reference. Generated HTML interaction code does not define wallet

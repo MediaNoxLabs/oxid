@@ -6,12 +6,22 @@ android_main_activity = "android/MainActivity.kt"
 [bundle]
 identifier = "io.medianox.oxid"
 publisher = "MediaNoxLabs"
+icon = [
+  "icons/desktop-16.png",
+  "icons/desktop-32.png",
+  "icons/desktop-64.png",
+  "icons/desktop-128.png",
+  "icons/desktop-256.png",
+  "icons/icon.icns",
+  "icons/icon.ico",
+]
 
 [deep_links]
 schemes = ["openid-credential-offer", "openid4vp"]
 
 [ios]
 deployment_target = "15.0"
+icon = ["icons/app-icon-dark-1024.png"]
 
 [ios.plist]
 NSCameraUsageDescription = "Scan credential offers and identity requests into your Oxid wallet."
@@ -20,3 +30,4 @@ NSFaceIDUsageDescription = "Authorize access to your protected Oxid wallet."
 [android]
 min_sdk = 23
 target_sdk = 35
+icon = ["icons/app-icon-android-1024.png"]

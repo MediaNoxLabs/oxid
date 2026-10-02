@@ -2,7 +2,8 @@
 
 **Profile ID:** `lunar-aegis`.
 
-**Status:** 0.2.0 design target; the running app has not yet adopted these tokens or assets.
+**Status:** 0.2.0 design target; the shared token, type, navigation, and logo
+foundation is implemented, while individual screen flows remain in the backlog.
 **Source snapshot:** 27 September 2026.
 
 This is the first repository-owned design profile for the Oxid crypto and
@@ -27,6 +28,7 @@ profiles.
 | Existing-code mapping and implementation order | [implementation.md](implementation.md) |
 | Open design-quality findings | [qa.md](qa.md) |
 | Logo references, five navigation SVGs, and their hashes | [assets/](assets/) |
+| Owner-approved fingerprint-crescent icon family and platform usage | [brand-icons.md](brand-icons.md) |
 | Bundled typefaces and license files | [fonts/](fonts/) |
 | Offline export integrity check | [verify.py](verify.py) |
 
@@ -96,8 +98,8 @@ semantically distinct from the brand accents.
    visual details or wording from a proposed screen.
 3. Build reusable Dioxus components through the existing semantic token
    architecture; [implementation.md](implementation.md) names the concrete
-   repository seams. Use the local fonts, vector mark, and navigation icons
-   after resolving the logo's small-size treatment.
+   repository seams. Use the local fonts, approved fingerprint-crescent mark,
+   and navigation icons.
 4. Bind labels and controls to real app state. Keep unavailable, simulated,
    cached, pending, confirmed, and unknown outcomes visibly distinct.
 5. Compare on Android and iOS at 375 px and larger widths, with large text,
@@ -105,6 +107,6 @@ semantically distinct from the brand accents.
    screenshots as acceptance baselines.
 
 The original user-supplied raster concept says “0xID” and differs from its
-master SVG. Both are saved in [assets/](assets/) for comparison; neither
-settles the production app icon by itself. The current shipped logo in
-`brands/oxid/assets/logo.svg` remains unchanged by this export.
+master SVG. Both remain in [assets/](assets/) as the immutable 27 September
+export. The owner subsequently chose the simpler fingerprint-crescent mark
+documented in [brand-icons.md](brand-icons.md) for production use.

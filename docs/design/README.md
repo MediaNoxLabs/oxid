@@ -9,6 +9,7 @@ of the honesty and safety culture the codebase already enforces.
 | [information-architecture.md](information-architecture.md) | Navigation shell, screen map, per-screen anatomy. |
 | [journeys.md](journeys.md) | The core user journeys, redesigned with step budgets, mapped to the existing flow state machines. |
 | [design-system.md](design-system.md) | Tokens, components, motion, accessibility, and the copy system (including the machine-string labeling layer). |
+| [brand-identity.md](brand-identity.md) | Oxid fingerprint-crescent logo family, dark/light app icons, platform exports, and usage rules. |
 | [white-label.md](white-label.md) | Build-time brand packs: architecture, schema, the non-brandable surface, CI gates. |
 | [ui-profiles.md](ui-profiles.md) | The user / dev / secret / demo presentation profiles: rules, matrix, OS snapshot protection. |
 | [rollout.md](rollout.md) | Phased delivery plan sliced for the backlog, success metrics, open product questions. |
