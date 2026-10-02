@@ -7,6 +7,7 @@ mod activity_page;
 mod android_platform;
 mod assets_page;
 mod brand;
+mod credential_inventory;
 #[cfg(feature = "standalone-deployment-profile")]
 mod deployment_profile;
 #[cfg(feature = "desktop-developer-pager-driver")]
@@ -46,6 +47,7 @@ use assets_page::{
     has_protected_account, wallet_account_activation_available, wallet_write_actions_available,
 };
 pub use brand::{BrandProfile, SecurityCopySnapshot, security_copy_snapshot};
+use credential_inventory::CredentialInventoryCard;
 #[cfg(feature = "standalone-deployment-profile")]
 use deployment_profile::DeploymentProfileCard;
 use developer_notices::{
@@ -5548,12 +5550,14 @@ fn DocumentsPage(
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| CredentialPageState::Loading);
+    let mut selected_document = use_signal(|| None::<String>);
     let profile_id = active_profile.id.clone();
     let load_services = services.clone();
     let load_profile = profile_id.clone();
     use_effect(move || {
         let services = load_services.clone();
         let profile_id = load_profile.clone();
+        selected_document.set(None);
         spawn(async move {
             state.set(
                 run_ui_blocking(move || load_credential_page(&services, &profile_id))
@@ -5564,26 +5568,28 @@ fn DocumentsPage(
     });
 
     rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", "Your holder wallet" }
-            p { "Review what is stored, who issued it, and whether it is ready to use." }
-        }
-        div { class: "documents-actions",
-            button {
-                class: "primary-action", r#type: "button",
-                onclick: move |event| on_add_document.call(event),
-                "Add document"
+        if selected_document.read().is_none() {
+            section { class: "page-heading",
+                p { class: "eyebrow", "Your holder wallet" }
+                p { "Review what is stored, who issued it, and whether it is ready to use." }
             }
-            button {
-                class: "secondary-action", r#type: "button",
-                onclick: move |event| on_present.call(event),
-                "Present"
-            }
-            button {
-                class: "secondary-action", r#type: "button",
-                aria_label: "Manage identities",
-                onclick: move |event| on_manage_identities.call(event),
-                "Manage identities"
+            div { class: "documents-actions",
+                button {
+                    class: "primary-action", r#type: "button",
+                    onclick: move |event| on_add_document.call(event),
+                    "Add document"
+                }
+                button {
+                    class: "secondary-action", r#type: "button",
+                    onclick: move |event| on_present.call(event),
+                    "Present"
+                }
+                button {
+                    class: "secondary-action", r#type: "button",
+                    aria_label: "Manage identities",
+                    onclick: move |event| on_manage_identities.call(event),
+                    "Manage identities"
+                }
             }
         }
         match state.read().clone() {
@@ -5633,7 +5639,55 @@ fn DocumentsPage(
                         "{error}"
                     }
                 }
-                if credentials.is_empty() {
+                if let Some(selected_id) = selected_document.read().as_ref() {
+                    if let Some(credential) = credentials
+                        .iter()
+                        .find(|credential| credential.id == *selected_id)
+                    {
+                        {
+                            let retained = credentials.clone();
+                            rsx! {
+                                div { class: "document-detail-header",
+                                    button {
+                                        class: "did-back-action",
+                                        r#type: "button",
+                                        aria_label: "Back to documents",
+                                        onclick: move |_| selected_document.set(None),
+                                        span { aria_hidden: "true", "‹" }
+                                    }
+                                    div {
+                                        p { class: "eyebrow", "Document details" }
+                                    }
+                                }
+                                div { "data-testid": "identity-document-detail",
+                                    CredentialRecordCard {
+                                        profile_id: profile_id.clone(),
+                                        credential: credential.clone(),
+                                        item_index: 0,
+                                        on_change: move |change| {
+                                            let deleted = matches!(&change, CredentialChange::Deleted(_));
+                                            state.set(credential_page_after_change(retained.clone(), change));
+                                            if deleted {
+                                                selected_document.set(None);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        article { class: "empty-state surface-card", role: "status",
+                            h2 { "Document no longer available" }
+                            p { "Return to the document list and choose another credential." }
+                            button {
+                                class: "secondary-action",
+                                r#type: "button",
+                                onclick: move |_| selected_document.set(None),
+                                "Back to documents"
+                            }
+                        }
+                    }
+                } else if credentials.is_empty() {
                     IdentityEmptyState {
                         title: "No documents yet".to_owned(),
                         description: "Add a credential offer to review it before anything is stored in your wallet.".to_owned(),
@@ -5645,17 +5699,13 @@ fn DocumentsPage(
                         "data-testid": "identity-document-inventory",
                         for (index, credential) in credentials.clone().into_iter().enumerate() {
                             {
-                                let retained = credentials.clone();
                                 let current_id = credential.id.clone();
                                 rsx! {
-                                    CredentialRecordCard {
+                                    CredentialInventoryCard {
                                         key: "{current_id}",
-                                        profile_id: profile_id.clone(),
                                         credential,
                                         item_index: index,
-                                        on_change: move |change| {
-                                            state.set(credential_page_after_change(retained.clone(), change));
-                                        }
+                                        on_open: move |_| selected_document.set(Some(current_id.clone())),
                                     }
                                 }
                             }
@@ -12180,11 +12230,17 @@ mod tests {
             .split("\n#[cfg(test)]\nmod tests {")
             .next()
             .expect("production primitive source precedes tests");
-        let contract_source = format!("{rendered_source}\n{rendered_primitive_source}");
+        let credential_inventory_source = include_str!("credential_inventory.rs");
+        let contract_source = format!(
+            "{rendered_source}\n{rendered_primitive_source}\n{credential_inventory_source}"
+        );
 
         for required in [
             "identity-document-inventory",
             "identity-document-item-{item_index}",
+            "identity-document-detail",
+            "credential-inventory-card",
+            "Back to documents",
             "identity-issuance-review",
             "identity-presentation-review",
             "identity-presentation-document-{index}",
