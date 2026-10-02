@@ -104,7 +104,10 @@ export async function resolveBootstrapDevLoopCwd(piArgs, {
   const { branch, target, repository } = issueIdentity(trackedRun, topology.main, invocation.issue);
   const canonical = resolveRepositoryWorktreePath(topology.main, ["--issue", String(invocation.issue)]);
   const finish = () => {
-    recordAdmission({ schema: "oxid-dev-loop-admission-v1", issue: invocation.issue, repository, calls });
+    recordAdmission({
+      schema: "oxid-dev-loop-admission-v1", issue: invocation.issue, repository,
+      branch, deliveryBase: target.remoteRef, calls,
+    });
     return canonical;
   };
   if (topology.current === canonical) {

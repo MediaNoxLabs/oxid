@@ -48,6 +48,7 @@ test("primary exact /dev-loop print enters the canonical issue worktree before P
   assert.deepEqual(recorded, [[main, "feat/issue-305", "origin/develop"]]);
   assert.deepEqual(admissions, [{
     schema: "oxid-dev-loop-admission-v1", issue: 305, repository: "MediaNoxLabs/oxid",
+    branch: "feat/issue-305", deliveryBase: "origin/develop",
     calls: { commands: 7, ensureWorktree: 1, recordDeliveryBase: 1 },
   }]);
 });

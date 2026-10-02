@@ -1007,13 +1007,15 @@ test("pinned core resolution accepts bounded hoisted and nested package layouts"
 test("handoff envelopes bind the checkout GitHub identity and reject disagreement", () => {
   assert.equal(githubRepositoryFromOrigin("https://github.com/MediaNoxLabs/oxid.git"), "MediaNoxLabs/oxid");
   assert.equal(githubRepositoryFromOrigin("git@github.com:MediaNoxLabs/oxid.git"), "MediaNoxLabs/oxid");
+  assert.equal(githubRepositoryFromOrigin("ssh://git@github.com:22/MediaNoxLabs/oxid.git"), "MediaNoxLabs/oxid");
+  assert.equal(githubRepositoryFromOrigin("https://x-access-token:secret@github.com/MediaNoxLabs/oxid.git"), "MediaNoxLabs/oxid");
   assert.equal(githubRepositoryFromOrigin("https://example.invalid/MediaNoxLabs/oxid.git"), null);
   assert.equal(resolveCanonicalGithubRepository("/fixture", {
     run: () => "https://github.com/MediaNoxLabs/oxid.git\n",
   }), "MediaNoxLabs/oxid");
   const bound = bindEnvelopeRepositoryIdentity({ target: { kind: "local_phase", repo: "medianoxlabs/oxid" } }, "MediaNoxLabs/oxid");
   assert.equal(bound.repository, "MediaNoxLabs/oxid");
-  assert.equal(bound.target.repo, "MediaNoxLabs/oxid");
+  assert.equal(bound.target.repo, "medianoxlabs/oxid");
   assert.throws(
     () => bindEnvelopeRepositoryIdentity({ target: { repo: "input-output-hk/oxid" } }, "MediaNoxLabs/oxid"),
     /disagrees with origin repository/,
@@ -1034,6 +1036,7 @@ test("issue-read wrapper derives origin and refuses a stale repository before di
     /disagrees with origin repository MediaNoxLabs\/oxid/u);
   assert.deepEqual(bindIssueReadRepository(["--repo", "example/foreign", "--issue", "1"], null),
     ["--repo", "example/foreign", "--issue", "1"]);
+  assert.throws(() => bindIssueReadRepository(["--issue", "1"], null), /refusing to infer a repository/u);
 });
 
 test("repository wrappers force only the public PR-creation and managed-worktree routes", () => {

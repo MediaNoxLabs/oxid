@@ -46,26 +46,35 @@ the source of tracked executable policy for a linked-worktree run.
 
 Do not invoke a package `cli/index.mjs` directly. Do not use user-home, global npm, Node module-search, package-relative, arbitrary-ancestor, or filesystem-search fallbacks. If the tracked wrapper cannot resolve the exact project pin, stop at its diagnostic. Pi 0.84 extension hooks are advisory and cannot cancel provider execution.
 
-Before envelope construction, read the issue body only through
+Before envelope construction, run
+`node <git-root>/scripts/loop/prepare-dev-loop-admission.mjs verify --issue <n>`.
+When it succeeds, use its verified `repository`, `deliveryBase`, and `startupPath`
+as the authoritative admission facts. Bootstrap recorded the issue read and
+startup before launching this child, so do not repeat those calls. Their
+pre-Pi counts are in `target/tmp/dev-loop/issue-<n>-admission.json` and are
+separate from this child's implementation tool budget. If the receipt is
+missing because Pi was started directly, read the issue body only through
 `node <git-root>/scripts/github/view-issue.mjs --issue <n>` and resolve the
-single `## Delivery target` from that response.
-The repository-owned wrapper binds the issue read to the checkout's exact
-GitHub origin and rejects a conflicting explicit `--repo` before network access.
-Never infer a repository owner from memory or the issue title. The
+single `## Delivery target` from that response, then run startup as below.
+Any other verification failure is a stop, not permission to reconstruct state.
+The repository-owned issue wrapper binds the read to the exact GitHub origin
+and rejects a conflicting explicit `--repo` before network access. Never
+infer a repository owner from memory or the issue title. The
 `scripts/dev-loops.mjs` wrapper has no `github` command family: never invent or
 invoke `scripts/dev-loops.mjs github issue-view` (including as a help probe).
 Stop before envelope construction if the issue reader exits nonzero or the
 delivery target is missing, malformed, ambiguous, or disagrees with the active
 worktree's recorded target.
-For issue runs, invoke `loop startup --issue <n> --json` once and preserve its
-stdout at `target/tmp/dev-loop/issue-<n>-startup.json`, inside the repository's
-ignored `target/` namespace; pass that exact file as the
-`loop build-envelope --input` value instead of trying to reconstruct resolver
-state from terminal output.
+For a verified bootstrap admission, pass its `startupPath` as the
+`loop build-envelope --input` value. For a direct Pi run without a receipt,
+invoke `loop startup --issue <n> --json` once and preserve its stdout at
+`target/tmp/dev-loop/issue-<n>-startup.json`, inside the repository's ignored
+`target/` namespace; pass that exact file as the input. Never reconstruct
+resolver state from terminal output.
 <!-- /pi-only -->
 
 1. Before startup, routing, or tools that act on routed state, run `node <git-root>/scripts/loop/pre-flight-gate.mjs --check-subagents` from the active canonical linked worktree identified by `<git-root>`. Stop on any nonzero result. Run it again immediately before each later routed action; `DEVLOOPS_PREFLIGHT_BYPASS` is forbidden.
-2. Run the deterministic startup resolver to produce the authoritative state bundle: `node <git-root>/scripts/dev-loops.mjs loop startup --issue <n>` for issues, or `node <git-root>/scripts/dev-loops.mjs loop startup --pr <n>` for PRs. Resolve the issue's single delivery target before any worktree creation. When already inside the canonical linked worktree, reuse it; any ensure-worktree call must pass the main checkout as `--repo-root`, never the linked worktree itself, plus the exact conventional `--branch <type>/issue-<n>` and `--delivery-base <target>`.
+2. Use the verified bootstrap startup bundle for issue runs. When there is no receipt, run the deterministic startup resolver to produce the authoritative state bundle: `node <git-root>/scripts/dev-loops.mjs loop startup --issue <n>` for issues, or `node <git-root>/scripts/dev-loops.mjs loop startup --pr <n>` for PRs. Resolve the issue's single delivery target before any worktree creation. When already inside the canonical linked worktree, reuse it; any ensure-worktree call must pass the main checkout as `--repo-root`, never the linked worktree itself, plus the exact conventional `--branch <type>/issue-<n>` and `--delivery-base <target>`.
 3. Pass the resolver output file, current gate state, delivery target, and invocation profile to `node <git-root>/scripts/dev-loops.mjs loop build-envelope --input <resolver-output> --gate-state <json> --delivery-base <target> --delivery-profile <profile>`. Parse only the exact `prototype` or `production-ready` token from the invocation at this point; an omitted token means `production-ready`. Do not call the package builder directly. The tracked route loads the candidate checkout's `.devloops`, preserves pinned derivation, records the immutable delivery base in the envelope, applies the tracked delivery-profile envelope, reuses an identity-matching existing canonical managed worktree, rejects ambiguous/foreign/nested topology, and validates the normalized envelope with the exact pinned core validator before emission.
 4. A successful tracked `loop build-envelope` result is already validated with
    `validateHandoffEnvelope()` before emission. Treat a nonzero build result as

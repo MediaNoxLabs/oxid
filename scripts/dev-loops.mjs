@@ -20,11 +20,26 @@ const PRE_MUTATION_ASSESSMENT_OPTION = "--pre-mutation-assessment";
 const OXID_REPOSITORY = "medianoxlabs/oxid";
 const OXID_SIZE_BUDGET_COMMAND = "scripts/dev-loops.mjs gate size-budget";
 const OXID_PR_CREATE_COMMAND = "scripts/dev-loops.mjs pr create";
-const GITHUB_ORIGIN_PATTERN = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/;
+const GITHUB_REPOSITORY_PATH = /^\/?([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/u;
 
 /** Resolve one GitHub identity from the checkout's trusted origin, if available. */
 export function githubRepositoryFromOrigin(origin) {
-  const match = typeof origin === "string" ? origin.trim().match(GITHUB_ORIGIN_PATTERN) : null;
+  if (typeof origin !== "string") return null;
+  const value = origin.trim();
+  const scp = /^git@github\.com:(.+)$/u.exec(value);
+  let repositoryPath = scp?.[1];
+  if (!repositoryPath) {
+    try {
+      const url = new URL(value);
+      if (url.hostname.toLowerCase() !== "github.com"
+        || !["https:", "ssh:", "git:"].includes(url.protocol)
+        || (url.port && !(url.protocol === "ssh:" && url.port === "22"))) return null;
+      repositoryPath = url.pathname;
+    } catch {
+      return null;
+    }
+  }
+  const match = repositoryPath.match(GITHUB_REPOSITORY_PATH);
   return match ? `${match[1]}/${match[2]}` : null;
 }
 
@@ -49,7 +64,7 @@ export function bindEnvelopeRepositoryIdentity(envelope, repository) {
   return {
     ...envelope,
     repository,
-    target: { ...envelope.target, repo: repository },
+    target: { ...envelope.target, repo: repository.toLowerCase() },
   };
 }
 

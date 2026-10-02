@@ -8,7 +8,7 @@ import { runDevLoopsPackageScript } from "../lib/dev-loop-package-script.mjs";
 
 /** Bind issue reads to the checkout origin before the package may contact GitHub. */
 export function bindIssueReadRepository(argv, originRepository) {
-  if (argv.includes("--help") || argv.includes("-h") || !originRepository) return argv;
+  if (argv.includes("--help") || argv.includes("-h")) return argv;
   const repositories = [];
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === "--repo") repositories.push(argv[++index]);
@@ -16,6 +16,12 @@ export function bindIssueReadRepository(argv, originRepository) {
   }
   if (repositories.length > 1 || repositories.some((repository) => !repository)) {
     throw new Error("issue read accepts at most one nonempty --repo");
+  }
+  if (!originRepository) {
+    if (repositories.length === 0) {
+      throw new Error("issue read needs an exact GitHub origin or an explicit --repo; refusing to infer a repository");
+    }
+    return argv;
   }
   if (repositories.length === 1 && repositories[0].toLowerCase() !== originRepository.toLowerCase()) {
     throw new Error(`issue read repository ${repositories[0]} disagrees with origin repository ${originRepository}; use --repo ${originRepository}`);
