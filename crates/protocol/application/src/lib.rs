@@ -501,8 +501,6 @@ pub struct CredentialIssuanceView {
     pub failure_code: Option<String>,
 }
 
-/// Maximum number of credential issuance activity records retained per process.
-/// This in-memory projection is deleted on restart and is never backed up.
 /// Maximum process-local activity records retained independently for each profile.
 pub const MAX_CREDENTIAL_ISSUANCE_ACTIVITY_RECORDS: usize = 128;
 /// Maximum completed issuance sessions retained independently for each profile.
@@ -918,7 +916,47 @@ pub struct CredentialIssuanceService {
     sink: Arc<dyn IssuedCredentialSinkPort>,
     authority: Arc<dyn CredentialIssuanceAuthorityPort>,
     activity: Arc<CredentialIssuanceActivityStore>,
-    sessions: Mutex<BTreeMap<CredentialIssuanceId, Session>>,
+    sessions: Mutex<CredentialIssuanceSessionState>,
+}
+
+#[derive(Default)]
+struct CredentialIssuanceSessionState {
+    sessions: BTreeMap<CredentialIssuanceId, Session>,
+    terminal_order_by_profile: BTreeMap<ProtocolProfileId, VecDeque<CredentialIssuanceId>>,
+}
+
+impl CredentialIssuanceSessionState {
+    fn retain_recent_terminal(
+        &mut self,
+        id: &CredentialIssuanceId,
+        profile_id: &ProtocolProfileId,
+    ) {
+        if !matches!(
+            self.sessions.get(id),
+            Some(session)
+                if session.profile_id == *profile_id
+                    && matches!(
+                        session.state,
+                        CredentialIssuanceState::Succeeded
+                            | CredentialIssuanceState::Failed
+                            | CredentialIssuanceState::Refused
+                    )
+        ) {
+            return;
+        }
+        let order = self
+            .terminal_order_by_profile
+            .entry(profile_id.clone())
+            .or_default();
+        if !order.contains(id) {
+            order.push_back(id.clone());
+        }
+        while order.len() > MAX_CREDENTIAL_ISSUANCE_TERMINAL_SESSIONS {
+            if let Some(oldest) = order.pop_front() {
+                self.sessions.remove(&oldest);
+            }
+        }
+    }
 }
 
 /// Restores a recoverable session state if an issuance future is dropped or
@@ -945,7 +983,7 @@ struct RefusalAttempt<'a> {
 impl Drop for RefusalAttempt<'_> {
     fn drop(&mut self) {
         if let Ok(mut sessions) = self.service.sessions.lock()
-            && let Some(session) = sessions.get_mut(&self.issuance_id)
+            && let Some(session) = sessions.sessions.get_mut(&self.issuance_id)
         {
             session.refusal_in_progress = false;
         }
@@ -992,7 +1030,7 @@ impl CredentialIssuanceService {
             sink,
             authority,
             activity,
-            sessions: Mutex::new(BTreeMap::new()),
+            sessions: Mutex::new(CredentialIssuanceSessionState::default()),
         }
     }
 
@@ -1003,8 +1041,7 @@ impl CredentialIssuanceService {
 
     fn sessions(
         &self,
-    ) -> Result<MutexGuard<'_, BTreeMap<CredentialIssuanceId, Session>>, CredentialIssuanceError>
-    {
+    ) -> Result<MutexGuard<'_, CredentialIssuanceSessionState>, CredentialIssuanceError> {
         self.sessions
             .lock()
             .map_err(|_| CredentialIssuanceError::Unavailable)
@@ -1012,7 +1049,7 @@ impl CredentialIssuanceService {
 
     fn fail_if_issuing(&self, id: &CredentialIssuanceId, code: &str) {
         if let Ok(mut sessions) = self.sessions.lock()
-            && let Some(session) = sessions.get_mut(id)
+            && let Some(session) = sessions.sessions.get_mut(id)
             && session.state == CredentialIssuanceState::Issuing
         {
             session.state = CredentialIssuanceState::Failed;
@@ -1020,13 +1057,13 @@ impl CredentialIssuanceService {
             let profile_id = session.profile_id.clone();
             self.activity
                 .update(id, CredentialIssuanceActivityStatus::Failed);
-            Self::trim_terminal_sessions(&mut sessions, &profile_id);
+            sessions.retain_recent_terminal(id, &profile_id);
         }
     }
 
     fn unknown_if_issuing(&self, id: &CredentialIssuanceId, code: &str) {
         if let Ok(mut sessions) = self.sessions.lock()
-            && let Some(session) = sessions.get_mut(id)
+            && let Some(session) = sessions.sessions.get_mut(id)
             && session.state == CredentialIssuanceState::Issuing
         {
             session.state = CredentialIssuanceState::OutcomeUnknown;
@@ -1038,31 +1075,6 @@ impl CredentialIssuanceService {
 
     fn interrupt_if_issuing(&self, id: &CredentialIssuanceId, code: &str) {
         self.unknown_if_issuing(id, code);
-    }
-
-    fn trim_terminal_sessions(
-        sessions: &mut BTreeMap<CredentialIssuanceId, Session>,
-        profile_id: &ProtocolProfileId,
-    ) {
-        let terminal_ids: Vec<_> = sessions
-            .iter()
-            .filter(|(_, session)| {
-                session.profile_id == *profile_id
-                    && matches!(
-                        session.state,
-                        CredentialIssuanceState::Succeeded
-                            | CredentialIssuanceState::Failed
-                            | CredentialIssuanceState::Refused
-                    )
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
-        for id in terminal_ids
-            .into_iter()
-            .skip(MAX_CREDENTIAL_ISSUANCE_TERMINAL_SESSIONS)
-        {
-            sessions.remove(&id);
-        }
     }
 }
 
@@ -1103,9 +1115,11 @@ impl PrepareCredentialIssuanceUseCase for CredentialIssuanceService {
                 protocol_discarded: false,
             };
             let view = session.view(&prepared.id);
-            if self.sessions()?.insert(prepared.id, session).is_some() {
+            let mut sessions = self.sessions()?;
+            if sessions.sessions.contains_key(&prepared.id) {
                 return Err(CredentialIssuanceError::InvalidState);
             }
+            sessions.sessions.insert(prepared.id, session);
             Ok(view)
         })
     }
@@ -1131,6 +1145,7 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
             let authority = {
                 let mut sessions = self.sessions()?;
                 let session = sessions
+                    .sessions
                     .get_mut(&issuance_id)
                     .ok_or(CredentialIssuanceError::NotFound)?;
                 if session.profile_id != profile_id {
@@ -1220,6 +1235,7 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
             };
             let mut sessions = self.sessions()?;
             let session = sessions
+                .sessions
                 .get_mut(&issuance_id)
                 .ok_or(CredentialIssuanceError::NotFound)?;
             if !matches!(
@@ -1235,7 +1251,7 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
                 .update(&issuance_id, CredentialIssuanceActivityStatus::Stored);
             let profile_id = session.profile_id.clone();
             let view = session.view(&issuance_id);
-            Self::trim_terminal_sessions(&mut sessions, &profile_id);
+            sessions.retain_recent_terminal(&issuance_id, &profile_id);
             Ok(view)
         })
     }
@@ -1251,6 +1267,7 @@ impl RefuseCredentialIssuanceUseCase for CredentialIssuanceService {
         {
             let mut sessions = self.sessions()?;
             let session = sessions
+                .sessions
                 .get_mut(&issuance_id)
                 .ok_or(CredentialIssuanceError::NotFound)?;
             if session.profile_id != profile_id {
@@ -1280,6 +1297,7 @@ impl RefuseCredentialIssuanceUseCase for CredentialIssuanceService {
 
         let mut sessions = self.sessions()?;
         let session = sessions
+            .sessions
             .get_mut(&issuance_id)
             .ok_or(CredentialIssuanceError::NotFound)?;
         session.protocol_discarded = true;
@@ -1296,7 +1314,7 @@ impl RefuseCredentialIssuanceUseCase for CredentialIssuanceService {
             .update(&issuance_id, CredentialIssuanceActivityStatus::Refused);
         let profile_id = session.profile_id.clone();
         let view = session.view(&issuance_id);
-        Self::trim_terminal_sessions(&mut sessions, &profile_id);
+        sessions.retain_recent_terminal(&issuance_id, &profile_id);
         drop(sessions);
         drop(refusal_attempt);
         Ok(view)
@@ -1312,6 +1330,7 @@ impl GetCredentialIssuanceUseCase for CredentialIssuanceService {
         let issuance_id = issuance_id(query.issuance_id)?;
         let sessions = self.sessions()?;
         let session = sessions
+            .sessions
             .get(&issuance_id)
             .filter(|session| session.profile_id == profile_id)
             .ok_or(CredentialIssuanceError::NotFound)?;
@@ -1327,6 +1346,7 @@ impl ListCredentialIssuancesUseCase for CredentialIssuanceService {
         let profile_id = profile(query.profile_id)?;
         Ok(self
             .sessions()?
+            .sessions
             .iter()
             .filter(|(_, session)| session.profile_id == profile_id)
             .map(|(id, session)| session.view(id))
@@ -2952,10 +2972,19 @@ mod tests {
         )
         .expect("valid preview");
         let profile_id = ProtocolProfileId::parse("profile_1").expect("valid profile");
-        let mut sessions = BTreeMap::new();
+        let mut sessions = CredentialIssuanceSessionState::default();
+        let oldest = CredentialIssuanceId::parse("terminal_z_oldest").expect("valid id");
+        let newest = CredentialIssuanceId::parse("terminal_a_newest").expect("valid id");
         for index in 0..=MAX_CREDENTIAL_ISSUANCE_TERMINAL_SESSIONS {
-            sessions.insert(
-                CredentialIssuanceId::parse(format!("terminal_{index:03}")).expect("valid id"),
+            let id = if index == 0 {
+                oldest.clone()
+            } else if index == MAX_CREDENTIAL_ISSUANCE_TERMINAL_SESSIONS {
+                newest.clone()
+            } else {
+                CredentialIssuanceId::parse(format!("terminal_{index:03}")).expect("valid id")
+            };
+            sessions.sessions.insert(
+                id.clone(),
                 Session {
                     profile_id: profile_id.clone(),
                     preview: preview.clone(),
@@ -2966,9 +2995,10 @@ mod tests {
                     protocol_discarded: false,
                 },
             );
+            sessions.retain_recent_terminal(&id, &profile_id);
         }
         let unknown = CredentialIssuanceId::parse("unknown_outcome").expect("valid id");
-        sessions.insert(
+        sessions.sessions.insert(
             unknown.clone(),
             Session {
                 profile_id: profile_id.clone(),
@@ -2981,10 +3011,11 @@ mod tests {
             },
         );
 
-        CredentialIssuanceService::trim_terminal_sessions(&mut sessions, &profile_id);
+        sessions.retain_recent_terminal(&unknown, &profile_id);
 
         assert_eq!(
             sessions
+                .sessions
                 .values()
                 .filter(|session| session.state == CredentialIssuanceState::Failed)
                 .count(),
@@ -2992,10 +3023,49 @@ mod tests {
         );
         assert_eq!(
             sessions
+                .sessions
                 .get(&unknown)
                 .expect("unknown outcome is retained")
                 .state,
             CredentialIssuanceState::OutcomeUnknown
+        );
+        assert!(!sessions.sessions.contains_key(&oldest));
+        assert!(sessions.sessions.contains_key(&newest));
+    }
+
+    #[test]
+    fn duplicate_prepared_id_does_not_replace_an_existing_profile_session() {
+        let service = service();
+        let original = prepare(&service);
+        let duplicate = futures_lite(PrepareCredentialIssuanceUseCase::execute(
+            &service,
+            PrepareCredentialIssuanceCommand {
+                profile_id: "profile_2".to_owned(),
+                offer: "another offer".to_owned(),
+            },
+        ));
+        assert_eq!(duplicate, Err(CredentialIssuanceError::InvalidState));
+        assert_eq!(
+            GetCredentialIssuanceUseCase::execute(
+                &service,
+                CredentialIssuanceQuery {
+                    profile_id: "profile_1".to_owned(),
+                    issuance_id: original.id.clone(),
+                },
+            )
+            .expect("original session remains")
+            .state,
+            "awaiting_consent"
+        );
+        assert_eq!(
+            GetCredentialIssuanceUseCase::execute(
+                &service,
+                CredentialIssuanceQuery {
+                    profile_id: "profile_2".to_owned(),
+                    issuance_id: original.id,
+                },
+            ),
+            Err(CredentialIssuanceError::NotFound)
         );
     }
 
