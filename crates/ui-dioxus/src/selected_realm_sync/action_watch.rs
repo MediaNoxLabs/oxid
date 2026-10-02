@@ -106,7 +106,7 @@ pub(crate) fn record_included_transfer(
 }
 
 pub(crate) fn reset_receive_watch(
-    (mut session_active, mut boundary_ready, mut generation): ReceiveWatchSignals,
+    (mut session_active, mut generation): ReceiveWatchSignals,
 ) -> u64 {
     let next_generation = {
         let mut current = generation.write();
@@ -115,7 +115,6 @@ pub(crate) fn reset_receive_watch(
         next
     };
     session_active.set(false);
-    boundary_ready.set(false);
     next_generation
 }
 
@@ -126,8 +125,11 @@ pub(crate) fn start_receive_watch(
     selected_kind: Signal<Option<String>>,
     signals: ReceiveWatchSignals,
 ) {
-    let (session_active, boundary_ready, generation) = signals;
+    let (session_active, generation) = signals;
     let expected_generation = reset_receive_watch(signals);
+    if !receive_watch_enabled(&initial.source, selected_kind().as_deref()) {
+        return;
+    }
     spawn(async move {
         observe_receive_arrival(
             services,
@@ -135,7 +137,6 @@ pub(crate) fn start_receive_watch(
             initial,
             selected_kind,
             session_active,
-            boundary_ready,
             generation,
             expected_generation,
         )
@@ -143,7 +144,7 @@ pub(crate) fn start_receive_watch(
     });
 }
 
-pub(crate) type ReceiveWatchSignals = (Signal<bool>, Signal<bool>, Signal<u64>);
+pub(crate) type ReceiveWatchSignals = (Signal<bool>, Signal<u64>);
 
 async fn observe_receive_arrival(
     services: WalletUiServices,
@@ -151,7 +152,6 @@ async fn observe_receive_arrival(
     initial: WalletAccountView,
     selected_kind: Signal<Option<String>>,
     mut session_active: Signal<bool>,
-    mut boundary_ready: Signal<bool>,
     generation: Signal<u64>,
     expected_generation: u64,
 ) {
@@ -267,7 +267,6 @@ async fn observe_receive_arrival(
     let Ok(Some(handle)) = manager.admit(watch, deadline_millis, now_millis) else {
         return;
     };
-    boundary_ready.set(true);
     session_active.set(true);
     let mut guard = ActionWatchCancellation::new(manager.clone(), handle);
 
@@ -363,27 +362,8 @@ fn receive_watch_supported(kind: Option<&str>) -> bool {
     kind == Some("unshielded")
 }
 
-pub(crate) fn receive_address_ready(kind: &str, boundary_ready: bool) -> bool {
-    kind != "unshielded" || boundary_ready
-}
-
-#[component]
-pub(crate) fn ReceiveBoundaryStatus(failed: bool) -> Element {
-    rsx! {
-        div { class: "receive-sheet__state", role: "status",
-            if !failed {
-                span { class: "loading-mark", aria_hidden: "true" }
-            }
-            strong {
-                if failed {
-                    "Public receive is unavailable"
-                } else {
-                    "Preparing public receive…"
-                }
-            }
-            p { "The address stays hidden until synchronized arrival tracking is ready." }
-        }
-    }
+fn receive_watch_enabled(source: &str, kind: Option<&str>) -> bool {
+    source == "live" && receive_watch_supported(kind)
 }
 
 fn synchronized_account_checkpoint(account: &WalletAccountView) -> Option<u64> {
@@ -875,9 +855,9 @@ mod tests {
         assert!(receive_watch_supported(Some("unshielded")));
         assert!(!receive_watch_supported(Some("shielded")));
         assert!(!receive_watch_supported(None));
-        assert!(!receive_address_ready("unshielded", false));
-        assert!(receive_address_ready("unshielded", true));
-        assert!(receive_address_ready("shielded", false));
+        assert!(receive_watch_enabled("live", Some("unshielded")));
+        assert!(!receive_watch_enabled("simulated", Some("unshielded")));
+        assert!(!receive_watch_enabled("cached", Some("unshielded")));
     }
 
     #[test]
