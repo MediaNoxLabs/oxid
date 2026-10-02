@@ -17,6 +17,10 @@ on:
         description: Extra hosted targets (comma-separated)
         required: false
         type: string
+      comparison_base:
+        description: Ancestor commit for an on-demand branch comparison
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -53,7 +57,7 @@ jobs:
       - name: Select profile and target lanes
         id: plan
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/develop' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || inputs.comparison_base || github.event.before || 'origin/develop' }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           EVENT_NAME: ${{ github.event_name }}
           PR_DRAFT: ${{ github.event.pull_request.draft || 'false' }}
@@ -301,7 +305,7 @@ jobs:
             core.exportVariable('SCCACHE_GHA_RW_MODE', 'READ_ONLY');
       - name: Measure the non-UI workspace once
         env:
-          OXID_COVERAGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/develop' }}
+          OXID_COVERAGE_BASE: ${{ github.event.pull_request.base.sha || inputs.comparison_base || github.event.before || 'origin/develop' }}
         run: nix develop .#ci-coverage --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh coverage --strict
 
   repository_gate:
