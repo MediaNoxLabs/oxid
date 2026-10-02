@@ -503,11 +503,6 @@ textarea:focus-visible {
   box-shadow: 0 0 0.7rem color-mix(in srgb, var(--positive) 35%, transparent);
 }
 
-.page-context__title {
-  color: var(--text-soft);
-  font-weight: 700;
-}
-
 .identity-ingress-notice {
   margin: calc(-1 * var(--space-1)) 0 var(--space-4);
   padding: var(--space-3) var(--space-3);
@@ -805,7 +800,10 @@ textarea:focus-visible {
   line-height: 0.92;
 }
 
-.home-hero h1.home-hero__realm-title {
+.home-hero .home-hero__realm-title {
+  margin: 0;
+  color: var(--text-strong);
+  font-weight: 900;
   max-width: 18ch;
   font-size: var(--font-display);
   letter-spacing: -0.04em;
@@ -1094,7 +1092,7 @@ textarea:focus-visible {
   flex-wrap: wrap;
 }
 
-.wallet-hero h1 {
+.wallet-balance {
   margin: 0;
   color: var(--text-strong);
   font-size: var(--font-numeral);
@@ -1527,12 +1525,12 @@ textarea:focus-visible {
   padding: var(--space-4) 0 var(--space-5);
 }
 
-.did-journey-header h1,
+.did-journey-header h2,
 .did-journey-header p {
   margin: 0;
 }
 
-.did-journey-header h1 {
+.did-journey-header h2 {
   overflow: hidden;
   color: var(--text-strong);
   font-size: var(--font-title);
@@ -1715,6 +1713,10 @@ textarea:focus-visible {
   user-select: text;
 }
 
+.did-copy-action {
+  width: fit-content;
+}
+
 .did-detail-facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1806,6 +1808,82 @@ textarea:focus-visible {
 .credential-record {
   display: grid;
   gap: var(--space-3);
+}
+
+.document-detail-header {
+  display: grid;
+  grid-template-columns: 3.25rem minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-4) 0 var(--space-5);
+}
+
+.document-detail-header p {
+  margin: 0;
+}
+
+.credential-inventory-card {
+  display: grid;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 9rem;
+  padding: var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-card);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--family-credential) 12%, var(--surface-raised)), var(--surface-raised));
+  box-shadow: var(--shadow-card);
+  color: var(--text-strong);
+  text-align: left;
+}
+
+.credential-inventory-card:hover,
+.credential-inventory-card:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  outline-offset: 2px;
+  transform: translateY(-1px);
+}
+
+.credential-inventory-card__heading {
+  display: flex;
+  min-width: 0;
+  gap: var(--space-3);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.credential-inventory-card__heading h2 {
+  margin: var(--space-1) 0 0;
+  font-size: var(--font-body);
+}
+
+.credential-inventory-card__facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.credential-inventory-card__facts dt {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  text-transform: uppercase;
+}
+
+.credential-inventory-card__facts dd {
+  margin: var(--space-1) 0 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--font-caption);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.credential-inventory-card__action {
+  color: var(--accent);
+  font-size: var(--font-label);
+  font-weight: 800;
 }
 
 .credential-inventory,
@@ -4187,7 +4265,8 @@ select:focus-visible {
     flex-direction: column;
   }
 
-  .credential-record__facts {
+  .credential-record__facts,
+  .credential-inventory-card__facts {
     grid-template-columns: 1fr;
   }
 
@@ -4256,48 +4335,4 @@ select:focus-visible {
 
 [dir="rtl"] .back-action__icon {
   transform: rotate(180deg);
-}
-.settlement-steps {
-  display: grid;
-  gap: 0.7rem;
-  margin: 1rem 0;
-  padding: 0;
-  list-style: none;
-}
-
-.settlement-step {
-  display: grid;
-  grid-template-columns: 1.5rem minmax(0, 1fr);
-  align-items: center;
-  gap: 0.65rem;
-  color: var(--text-muted);
-  font-weight: 650;
-}
-
-.settlement-step__mark {
-  display: grid;
-  width: 1.5rem;
-  height: 1.5rem;
-  place-items: center;
-  font-size: var(--font-caption);
-}
-
-.settlement-step-active {
-  color: var(--text-primary);
-}
-
-.settlement-step-active .settlement-step__mark {
-  color: var(--accent);
-}
-
-.settlement-step-complete {
-  color: var(--text-primary);
-}
-
-.settlement-step-complete .settlement-step__mark {
-  color: var(--success);
-}
-
-.settlement-status {
-  margin-top: 0.75rem;
 }

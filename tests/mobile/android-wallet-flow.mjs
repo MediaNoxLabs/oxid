@@ -144,6 +144,18 @@ async function openDocuments() {
   await clickButton("Documents");
 }
 
+async function openFirstDocumentDetails() {
+  await waitFor(
+    "Boolean(document.querySelector('.credential-inventory-card'))",
+    "credential inventory card",
+  );
+  await clickButtonByLabel("Open Digital Passport document details");
+  await waitFor(
+    "Boolean(document.querySelector('[data-testid=\"identity-document-detail\"]'))",
+    "credential document detail",
+  );
+}
+
 async function openIdentities() {
   await openDocuments();
   await clickButton("Manage identities");
@@ -501,6 +513,7 @@ try {
       30_000,
     );
     await openDocuments();
+    await openFirstDocumentDetails();
     await waitFor(
       `document.body.innerText.includes('Digital Passport') && Boolean(${buttonExpression("Reverify")})`,
       "restored Digital Passport",
@@ -995,6 +1008,7 @@ try {
       "document.body.innerText.includes('standalone-fixture-v2')",
     );
     await openDocuments();
+    await openFirstDocumentDetails();
     await waitFor(
       "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('Valid') && document.body.innerText.includes('Proof')",
       "verified issued credential",
@@ -1048,6 +1062,7 @@ try {
       "document.body.innerText.includes('standalone-3') && document.body.innerText.includes('Deactivated')",
     );
     await openDocuments();
+    await openFirstDocumentDetails();
     await waitFor(
       "document.body.innerText.includes('Digital Passport') && document.body.innerText.includes('Valid') && Boolean(document.querySelector('.passport-claims')) && !document.body.innerText.includes('Alice') && !document.body.innerText.includes('Example')",
       "restored credential inventory",

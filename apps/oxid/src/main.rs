@@ -62,50 +62,6 @@ impl oxid_ui_dioxus::WalletDustSettlementUiPort for ComposedWalletDustSettlement
     fn subscribe(&self) -> oxid_ui_dioxus::WalletDustSettlementSubscription {
         self.capability.subscribe()
     }
-
-    fn authorization_review(
-        &self,
-    ) -> Result<oxid_ui_dioxus::WalletDustAuthorizationReview, String> {
-        self.capability
-            .authorization_review()
-            .map(|review| oxid_ui_dioxus::WalletDustAuthorizationReview {
-                network_id: review.network_id,
-                registered_night: review.registered_night,
-                input_count: review.input_count,
-                maximum_fee_allowance: review.maximum_fee_allowance,
-            })
-            .map_err(|error| error.to_string())
-    }
-
-    fn refresh(&self, profile_id: String) -> oxid_ui_dioxus::WalletDustSettlementUiFuture<'_> {
-        Box::pin(async move {
-            self.capability
-                .refresh(profile_id)
-                .await
-                .map_err(|error| error.to_string())
-        })
-    }
-
-    fn authorize(
-        &self,
-        confirmation: oxid_ui_dioxus::WalletDustSettlementConfirmation,
-    ) -> oxid_ui_dioxus::WalletDustSettlementUiFuture<'_> {
-        Box::pin(async move {
-            self.capability
-                .authorize(confirmation)
-                .await
-                .map_err(|error| error.to_string())
-        })
-    }
-
-    fn retry(&self) -> oxid_ui_dioxus::WalletDustSettlementUiFuture<'_> {
-        Box::pin(async move {
-            self.capability
-                .retry()
-                .await
-                .map_err(|error| error.to_string())
-        })
-    }
 }
 
 fn main() {

@@ -275,12 +275,29 @@ pub struct AuthorizeWalletDustRegistrationCommand {
     pub confirmation: SensitiveOperationConfirmation,
 }
 
+/// Composition-only request to authorize the exact retained registration for
+/// the local development realm without an incoming consent surface.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthorizeDevelopmentWalletDustRegistrationCommand {
+    pub profile_id: String,
+    pub draft_id: String,
+    pub authorization_challenge: String,
+}
+
 /// Incoming request to prove and submit an authorized registration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubmitWalletDustRegistrationCommand {
     pub profile_id: String,
     pub draft_id: String,
     pub confirmation: SensitiveOperationConfirmation,
+}
+
+/// Composition-only request to submit an already authorized local-development
+/// registration. This does not carry or mint general wallet approval.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubmitDevelopmentWalletDustRegistrationCommand {
+    pub profile_id: String,
+    pub draft_id: String,
 }
 
 /// Incoming query for one safe retained registration preview.
@@ -444,11 +461,27 @@ pub trait AuthorizeWalletDustRegistrationUseCase: Send + Sync {
     ) -> WalletDustRegistrationPreviewViewFuture<'a>;
 }
 
+/// Closed automatic authority for the exact local-development DUST operation.
+pub trait AuthorizeDevelopmentWalletDustRegistrationUseCase: Send + Sync {
+    fn execute<'a>(
+        &'a self,
+        command: AuthorizeDevelopmentWalletDustRegistrationCommand,
+    ) -> WalletDustRegistrationPreviewViewFuture<'a>;
+}
+
 /// Incoming use case for proving and submitting an authorized registration.
 pub trait SubmitWalletDustRegistrationUseCase: Send + Sync {
     fn execute<'a>(
         &'a self,
         command: SubmitWalletDustRegistrationCommand,
+    ) -> WalletDustRegistrationSubmissionViewFuture<'a>;
+}
+
+/// Closed automatic submission authority paired with development authorization.
+pub trait SubmitDevelopmentWalletDustRegistrationUseCase: Send + Sync {
+    fn execute<'a>(
+        &'a self,
+        command: SubmitDevelopmentWalletDustRegistrationCommand,
     ) -> WalletDustRegistrationSubmissionViewFuture<'a>;
 }
 
@@ -524,6 +557,7 @@ pub enum WalletDustRegistrationError {
     InvalidAuthorizationChallenge(OpaqueIdError),
     ConfirmationRequired,
     InvalidConfirmation,
+    DevelopmentAuthorityUnavailable,
     Approval(WalletApprovalError),
     Clock(PlatformError),
     Operation(WalletDustRegistrationPortError),
@@ -537,6 +571,9 @@ impl fmt::Display for WalletDustRegistrationError {
             | Self::InvalidAuthorizationChallenge(error) => error.fmt(formatter),
             Self::ConfirmationRequired => formatter.write_str("explicit confirmation is required"),
             Self::InvalidConfirmation => formatter.write_str("confirmation intent is invalid"),
+            Self::DevelopmentAuthorityUnavailable => {
+                formatter.write_str("automatic DUST authority is unavailable for this realm")
+            }
             Self::Approval(error) => error.fmt(formatter),
             Self::Clock(error) => error.fmt(formatter),
             Self::Operation(error) => error.fmt(formatter),
@@ -724,6 +761,51 @@ where
     }
 }
 
+impl<T, C> AuthorizeDevelopmentWalletDustRegistrationUseCase for WalletDustRegistrationService<T, C>
+where
+    T: WalletDustRegistrationPort + 'static,
+    C: ClockPort + 'static,
+{
+    fn execute<'a>(
+        &'a self,
+        command: AuthorizeDevelopmentWalletDustRegistrationCommand,
+    ) -> WalletDustRegistrationPreviewViewFuture<'a> {
+        Box::pin(async move {
+            let profile_id = WalletProfileId::parse(command.profile_id)
+                .map_err(WalletDustRegistrationError::InvalidProfileIdentifier)?;
+            let draft_id = WalletTransactionDraftId::parse(command.draft_id)
+                .map_err(WalletDustRegistrationError::InvalidDraftIdentifier)?;
+            let authorization_challenge =
+                WalletTransactionAuthorizationChallenge::parse(command.authorization_challenge)
+                    .map_err(WalletDustRegistrationError::InvalidAuthorizationChallenge)?;
+            let preview = self
+                .approval_preview(
+                    &profile_id,
+                    &draft_id,
+                    Some(&authorization_challenge),
+                    WalletTransactionDraftState::Prepared,
+                )
+                .await?;
+            if preview.network_id().as_str() != "undeployed" {
+                return Err(WalletDustRegistrationError::DevelopmentAuthorityUnavailable);
+            }
+            let preview = self
+                .registrations
+                .authorize(
+                    &profile_id,
+                    AuthorizeWalletDustRegistrationRequest {
+                        draft_id,
+                        authorization_challenge,
+                        now: self.now()?,
+                    },
+                )
+                .await
+                .map_err(WalletDustRegistrationError::Operation)?;
+            Ok(WalletDustRegistrationPreviewView::from(&preview))
+        })
+    }
+}
+
 impl<T, C> SubmitWalletDustRegistrationUseCase for WalletDustRegistrationService<T, C>
 where
     T: WalletDustRegistrationPort + 'static,
@@ -754,6 +836,47 @@ where
                 .submit(
                     &profile_id,
                     SubmitWalletDustRegistrationRequest { draft_id, now },
+                )
+                .await
+                .map_err(WalletDustRegistrationError::Operation)?;
+            Ok(WalletDustRegistrationSubmissionView::from(&submitted))
+        })
+    }
+}
+
+impl<T, C> SubmitDevelopmentWalletDustRegistrationUseCase for WalletDustRegistrationService<T, C>
+where
+    T: WalletDustRegistrationPort + 'static,
+    C: ClockPort + 'static,
+{
+    fn execute<'a>(
+        &'a self,
+        command: SubmitDevelopmentWalletDustRegistrationCommand,
+    ) -> WalletDustRegistrationSubmissionViewFuture<'a> {
+        Box::pin(async move {
+            let profile_id = WalletProfileId::parse(command.profile_id)
+                .map_err(WalletDustRegistrationError::InvalidProfileIdentifier)?;
+            let draft_id = WalletTransactionDraftId::parse(command.draft_id)
+                .map_err(WalletDustRegistrationError::InvalidDraftIdentifier)?;
+            let preview = self
+                .approval_preview(
+                    &profile_id,
+                    &draft_id,
+                    None,
+                    WalletTransactionDraftState::Authorized,
+                )
+                .await?;
+            if preview.network_id().as_str() != "undeployed" {
+                return Err(WalletDustRegistrationError::DevelopmentAuthorityUnavailable);
+            }
+            let submitted = self
+                .registrations
+                .submit(
+                    &profile_id,
+                    SubmitWalletDustRegistrationRequest {
+                        draft_id,
+                        now: self.now()?,
+                    },
                 )
                 .await
                 .map_err(WalletDustRegistrationError::Operation)?;
@@ -1174,6 +1297,36 @@ mod tests {
             ))
         );
         assert_eq!(*registrations.submit_calls.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn dedicated_development_authority_crosses_only_the_dust_registration_boundary() {
+        let registrations = Arc::new(RecordingRegistrations::default());
+        let service =
+            WalletDustRegistrationService::new(registrations.clone(), Arc::new(FixedClock));
+
+        let authorized = ready(AuthorizeDevelopmentWalletDustRegistrationUseCase::execute(
+            &service,
+            AuthorizeDevelopmentWalletDustRegistrationCommand {
+                profile_id: "profile_test".into(),
+                draft_id: "dustreg_test".into(),
+                authorization_challenge: "dustauth_test".into(),
+            },
+        ))
+        .expect("the exact undeployed registration is authorized");
+        assert!(authorized.submission_ready);
+
+        let submitted = ready(SubmitDevelopmentWalletDustRegistrationUseCase::execute(
+            &service,
+            SubmitDevelopmentWalletDustRegistrationCommand {
+                profile_id: "profile_test".into(),
+                draft_id: "dustreg_test".into(),
+            },
+        ))
+        .expect("the same authorized registration is submitted");
+        assert_eq!(submitted.transaction_id, "tx_registration");
+        assert_eq!(*registrations.authorize_calls.lock().unwrap(), 1);
+        assert_eq!(*registrations.submit_calls.lock().unwrap(), 1);
     }
 
     #[test]

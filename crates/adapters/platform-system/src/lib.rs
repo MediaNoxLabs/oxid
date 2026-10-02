@@ -30,8 +30,8 @@ use oxid_adapter_mobile_native::{
 use oxid_foundation::UnixTimestampMillis;
 use oxid_platform_ports::{
     ClockPort, PlatformError, ProcessResourceSample, ProcessResourceSampleError,
-    ProcessResourceSamplerPort, PublicReceiveAddress, PublicTextExportError, PublicTextExportPort,
-    RandomPort, ScreenPrivacyError, ScreenPrivacyPort,
+    ProcessResourceSamplerPort, PublicDid, PublicReceiveAddress, PublicTextExportError,
+    PublicTextExportPort, RandomPort, ScreenPrivacyError, ScreenPrivacyPort,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, get_current_pid};
@@ -95,6 +95,10 @@ impl RandomPort for OsRandom {
 pub struct NativePublicTextExporter;
 
 impl PublicTextExportPort for NativePublicTextExporter {
+    fn copy_did(&self, did: PublicDid) -> Result<(), PublicTextExportError> {
+        copy_public_text(did.as_str())
+    }
+
     fn copy_receive_address(
         &self,
         address: PublicReceiveAddress,
@@ -204,13 +208,23 @@ const fn map_screen_privacy_bridge_error(error: NativeBridgeError) -> ScreenPriv
 
 #[cfg(any(target_os = "ios", target_os = "android"))]
 fn copy_public_receive_address(address: PublicReceiveAddress) -> Result<(), PublicTextExportError> {
-    let status = native_copy_public_receive_address(address.as_str())
-        .map_err(map_public_export_bridge_error)?;
+    copy_public_text(address.as_str())
+}
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+fn copy_public_text(value: &str) -> Result<(), PublicTextExportError> {
+    let status =
+        native_copy_public_receive_address(value).map_err(map_public_export_bridge_error)?;
     map_public_export_status(&status, "copied")
 }
 
 #[cfg(target_os = "macos")]
 fn copy_public_receive_address(address: PublicReceiveAddress) -> Result<(), PublicTextExportError> {
+    copy_public_text(address.as_str())
+}
+
+#[cfg(target_os = "macos")]
+fn copy_public_text(value: &str) -> Result<(), PublicTextExportError> {
     let mut child = Command::new("/usr/bin/pbcopy")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -221,7 +235,7 @@ fn copy_public_receive_address(address: PublicReceiveAddress) -> Result<(), Publ
         .stdin
         .take()
         .ok_or(PublicTextExportError::Failed)?
-        .write_all(address.as_str().as_bytes())
+        .write_all(value.as_bytes())
         .map_err(|_| PublicTextExportError::Failed)?;
     if child
         .wait()
@@ -238,6 +252,11 @@ fn copy_public_receive_address(address: PublicReceiveAddress) -> Result<(), Publ
 fn copy_public_receive_address(
     _address: PublicReceiveAddress,
 ) -> Result<(), PublicTextExportError> {
+    Err(PublicTextExportError::Unavailable)
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "android", target_os = "macos")))]
+fn copy_public_text(_value: &str) -> Result<(), PublicTextExportError> {
     Err(PublicTextExportError::Unavailable)
 }
 

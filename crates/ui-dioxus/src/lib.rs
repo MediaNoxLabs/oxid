@@ -7,6 +7,7 @@ mod activity_page;
 mod android_platform;
 mod assets_page;
 mod brand;
+mod credential_inventory;
 #[cfg(feature = "standalone-deployment-profile")]
 mod deployment_profile;
 #[cfg(feature = "desktop-developer-pager-driver")]
@@ -46,6 +47,7 @@ use assets_page::{
     has_protected_account, wallet_account_activation_available, wallet_write_actions_available,
 };
 pub use brand::{BrandProfile, SecurityCopySnapshot, security_copy_snapshot};
+use credential_inventory::CredentialInventoryCard;
 #[cfg(feature = "standalone-deployment-profile")]
 use deployment_profile::DeploymentProfileCard;
 use developer_notices::{
@@ -78,7 +80,7 @@ use wallet_onboarding::{WalletOnboarding, WalletOnboardingIntent};
 #[cfg(feature = "preprod-observation")]
 use wallet_root_recovery::WalletRootRecoveryForm;
 
-use std::{collections::BTreeMap, fmt, future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, fmt, future::Future, sync::Arc, time::Duration};
 
 use dioxus::prelude::*;
 #[cfg(feature = "ui-profile-dev")]
@@ -109,8 +111,8 @@ use oxid_passport_vault_application::{
     WithdrawPassportVaultLockUseCase,
 };
 use oxid_platform_ports::{
-    IdentityLinkIngressError, IdentityLinkIngressPort, PublicReceiveAddress, PublicTextExportPort,
-    QrScanError, QrScannerPort, ScreenPrivacyPort,
+    IdentityLinkIngressError, IdentityLinkIngressPort, PublicDid, PublicReceiveAddress,
+    PublicTextExportError, PublicTextExportPort, QrScanError, QrScannerPort, ScreenPrivacyPort,
 };
 #[cfg(feature = "proof-benchmark")]
 use oxid_platform_ports::{ProcessResourceSamplerPort, UnavailableProcessResourceSampler};
@@ -165,7 +167,6 @@ use oxid_wallet_application::{
     StartWalletShieldedSyncUseCase, SubmitWalletTransferCommand, SubmitWalletTransferUseCase,
     SyncWalletAccountUseCase, UnlockWalletUseCase, WalletAccountError, WalletAccountPortError,
     WalletAccountQuery, WalletAccountView, WalletBackupReceiptCommand, WalletBackupReceiptView,
-    WalletDustRegistrationAssetView, WalletDustRegistrationSettlementProjection,
     WalletDustSyncView, WalletNetworkListView, WalletProfileSecurityCommand, WalletProfileView,
     WalletRealmFamilyView, WalletRecoverySecret, WalletSecurityStatusView, WalletShieldedSyncView,
     WalletSyncStatusView, WalletTransferDraftQuery, WalletTransferPreviewView,
@@ -196,21 +197,20 @@ use screen_privacy::protect_suspended_snapshot;
 use screen_privacy::route_forces_screen_privacy;
 use selected_realm_sync::{
     AccountSyncCardState, account_sync_card_accepts_projection,
-    begin_account_sync_card_observation, dust_progress_percent, dust_status_pill_class,
-    finish_account_sync_card_action, non_native_shielded_balances, poll_account_sync,
-    reload_account_sync_card, selected_realm_chain_tip, selected_realm_dust_balance,
-    selected_realm_dust_note, selected_realm_dust_state, selected_realm_is_syncing,
-    selected_realm_lifecycle_presentation, selected_realm_provenance,
-    selected_realm_shielded_balance, selected_realm_shielded_note, selected_realm_shielded_state,
-    selected_realm_sync_progress, selected_realm_sync_state,
+    begin_account_sync_card_observation, dust_status_pill_class, finish_account_sync_card_action,
+    non_native_shielded_balances, poll_account_sync, reload_account_sync_card,
+    selected_realm_chain_tip, selected_realm_dust_balance, selected_realm_dust_note,
+    selected_realm_dust_state, selected_realm_is_syncing, selected_realm_lifecycle_presentation,
+    selected_realm_provenance, selected_realm_shielded_balance, selected_realm_shielded_note,
+    selected_realm_shielded_state, selected_realm_sync_progress, selected_realm_sync_state,
 };
 #[cfg(test)]
-use selected_realm_sync::{dust_sync_note, shielded_progress_percent, shielded_sync_note};
+use selected_realm_sync::{
+    dust_progress_percent, dust_sync_note, shielded_progress_percent, shielded_sync_note,
+};
 use wallet_realm_lifecycle::{WalletRealmLifecycleWake, WalletRealmProjectionWake};
 
 const BASE_STYLES: &str = include_str!("../assets/styles.css");
-const DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL: &str = "Protected DUST registration";
-const DUST_REGISTRATION_AUTHORIZE_ACCESSIBLE_LABEL: &str = "Authorize DUST registration";
 const CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS: &str =
     "Credential issuance terminal error: protocol unavailable";
 const CREDENTIAL_ISSUANCE_PROTOCOL_ERROR_STATUS: &str =
@@ -431,44 +431,20 @@ impl WalletOperationalUiServices {
     }
 }
 
-/// Public facts required for the single protected DUST authorization prompt.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WalletDustAuthorizationReview {
-    pub network_id: String,
-    pub registered_night: oxid_wallet_application::WalletDustRegistrationAssetView,
-    pub input_count: u16,
-    pub maximum_fee_allowance: oxid_wallet_application::WalletDustRegistrationAssetView,
-}
-
 pub type WalletDustSettlementProjection =
     oxid_wallet_application::WalletDustRegistrationSettlementProjection;
-pub type WalletDustSettlementConfirmation = SensitiveOperationConfirmation;
 pub type WalletDustSettlementSubscription =
     tokio::sync::watch::Receiver<WalletDustSettlementProjection>;
 
 /// Adapter boundary for the composition-owned DUST settlement coordinator.
 ///
-/// The UI consumes one projection and one consent operation; it cannot invoke
-/// the legacy prepare, submit, status, reconcile, or family-sync operations.
+/// The UI can only observe the composition-owned projection. Registration,
+/// reconciliation, and retries remain application/composition concerns.
 pub trait WalletDustSettlementUiPort: Send + Sync {
     fn projection(&self) -> Result<WalletDustSettlementProjection, String>;
 
     fn subscribe(&self) -> WalletDustSettlementSubscription;
-
-    fn authorization_review(&self) -> Result<WalletDustAuthorizationReview, String>;
-
-    fn refresh(&self, profile_id: String) -> WalletDustSettlementUiFuture<'_>;
-
-    fn authorize(
-        &self,
-        confirmation: WalletDustSettlementConfirmation,
-    ) -> WalletDustSettlementUiFuture<'_>;
-
-    fn retry(&self) -> WalletDustSettlementUiFuture<'_>;
 }
-
-pub type WalletDustSettlementUiFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<WalletDustSettlementProjection, String>> + Send + 'a>>;
 
 #[derive(Clone)]
 pub struct WalletDustSettlementUiServices {
@@ -3657,7 +3633,6 @@ fn WalletApp() -> Element {
             active_route
         }
     });
-    let active_primary = navigation.read().active_primary();
     let can_go_back = navigation.read().can_go_back();
     let profile_monogram = profile_monogram(&active_profile.display_name, brand.wordmark());
     let pending_identity_request_has_raw_uri = pending_identity_request
@@ -3763,9 +3738,6 @@ fn WalletApp() -> Element {
                 span { class: "connection-state",
                     span { class: "status-dot" }
                     "{active_profile.display_name}"
-                }
-                if let Some(primary_label) = page_context_primary_label(content_route, active_primary) {
-                    span { class: "page-context__title", "{primary_label}" }
                 }
             }
 
@@ -4901,7 +4873,7 @@ fn HomePage(
         HomePageState::Loading => rsx! {
             section { class: "home-hero home-hero--loading", role: "status", aria_busy: "true",
                 p { class: "eyebrow", "Current realm" }
-                h1 { class: "home-hero__realm-title", "Loading network…" }
+                h2 { class: "home-hero__realm-title", "Loading network…" }
                 p { class: "home-hero__hint", "Preparing {active_profile.display_name} without carrying values across profiles." }
             }
             HomeQuickActions { scan_busy, on_receive, on_send, on_present, on_scan }
@@ -4928,7 +4900,7 @@ fn HomePage(
                     p { class: "eyebrow", "Current realm" }
                     span { class: "status-pill warning", "Unavailable" }
                 }
-                h1 { class: "home-hero__realm-title", "{active_profile.display_name}" }
+                h2 { class: "home-hero__realm-title", "{active_profile.display_name}" }
                 p { class: "home-hero__hint", "The selected network context could not be loaded safely." }
             }
             HomeQuickActions { scan_busy, on_receive, on_send, on_present, on_scan }
@@ -5002,7 +4974,7 @@ fn HomeHero(active_profile: WalletProfileView, account: WalletAccountView) -> El
                     "{source} · {freshness}"
                 }
             }
-            h1 { class: "home-hero__realm-title", "{account.network_name}" }
+            h2 { class: "home-hero__realm-title", "{account.network_name}" }
             p { class: "home-hero__profile", "{active_profile.display_name} · {account.chain}" }
             p { class: "home-hero__hint", "{ui::account_source_note(&account.source)}" }
         }
@@ -5578,12 +5550,14 @@ fn DocumentsPage(
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| CredentialPageState::Loading);
+    let mut selected_document = use_signal(|| None::<String>);
     let profile_id = active_profile.id.clone();
     let load_services = services.clone();
     let load_profile = profile_id.clone();
     use_effect(move || {
         let services = load_services.clone();
         let profile_id = load_profile.clone();
+        selected_document.set(None);
         spawn(async move {
             state.set(
                 run_ui_blocking(move || load_credential_page(&services, &profile_id))
@@ -5594,27 +5568,28 @@ fn DocumentsPage(
     });
 
     rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", "Your holder wallet" }
-            h1 { "Documents" }
-            p { "Review what is stored, who issued it, and whether it is ready to use." }
-        }
-        div { class: "documents-actions",
-            button {
-                class: "primary-action", r#type: "button",
-                onclick: move |event| on_add_document.call(event),
-                "Add document"
+        if selected_document.read().is_none() {
+            section { class: "page-heading",
+                p { class: "eyebrow", "Your holder wallet" }
+                p { "Review what is stored, who issued it, and whether it is ready to use." }
             }
-            button {
-                class: "secondary-action", r#type: "button",
-                onclick: move |event| on_present.call(event),
-                "Present"
-            }
-            button {
-                class: "secondary-action", r#type: "button",
-                aria_label: "Manage identities",
-                onclick: move |event| on_manage_identities.call(event),
-                "Manage identities"
+            div { class: "documents-actions",
+                button {
+                    class: "primary-action", r#type: "button",
+                    onclick: move |event| on_add_document.call(event),
+                    "Add document"
+                }
+                button {
+                    class: "secondary-action", r#type: "button",
+                    onclick: move |event| on_present.call(event),
+                    "Present"
+                }
+                button {
+                    class: "secondary-action", r#type: "button",
+                    aria_label: "Manage identities",
+                    onclick: move |event| on_manage_identities.call(event),
+                    "Manage identities"
+                }
             }
         }
         match state.read().clone() {
@@ -5664,7 +5639,55 @@ fn DocumentsPage(
                         "{error}"
                     }
                 }
-                if credentials.is_empty() {
+                if let Some(selected_id) = selected_document.read().as_ref() {
+                    if let Some(credential) = credentials
+                        .iter()
+                        .find(|credential| credential.id == *selected_id)
+                    {
+                        {
+                            let retained = credentials.clone();
+                            rsx! {
+                                div { class: "document-detail-header",
+                                    button {
+                                        class: "did-back-action",
+                                        r#type: "button",
+                                        aria_label: "Back to documents",
+                                        onclick: move |_| selected_document.set(None),
+                                        span { aria_hidden: "true", "‹" }
+                                    }
+                                    div {
+                                        p { class: "eyebrow", "Document details" }
+                                    }
+                                }
+                                div { "data-testid": "identity-document-detail",
+                                    CredentialRecordCard {
+                                        profile_id: profile_id.clone(),
+                                        credential: credential.clone(),
+                                        item_index: 0,
+                                        on_change: move |change| {
+                                            let deleted = matches!(&change, CredentialChange::Deleted(_));
+                                            state.set(credential_page_after_change(retained.clone(), change));
+                                            if deleted {
+                                                selected_document.set(None);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        article { class: "empty-state surface-card", role: "status",
+                            h2 { "Document no longer available" }
+                            p { "Return to the document list and choose another credential." }
+                            button {
+                                class: "secondary-action",
+                                r#type: "button",
+                                onclick: move |_| selected_document.set(None),
+                                "Back to documents"
+                            }
+                        }
+                    }
+                } else if credentials.is_empty() {
                     IdentityEmptyState {
                         title: "No documents yet".to_owned(),
                         description: "Add a credential offer to review it before anything is stored in your wallet.".to_owned(),
@@ -5676,17 +5699,13 @@ fn DocumentsPage(
                         "data-testid": "identity-document-inventory",
                         for (index, credential) in credentials.clone().into_iter().enumerate() {
                             {
-                                let retained = credentials.clone();
                                 let current_id = credential.id.clone();
                                 rsx! {
-                                    CredentialRecordCard {
+                                    CredentialInventoryCard {
                                         key: "{current_id}",
-                                        profile_id: profile_id.clone(),
                                         credential,
                                         item_index: index,
-                                        on_change: move |change| {
-                                            state.set(credential_page_after_change(retained.clone(), change));
-                                        }
+                                        on_open: move |_| selected_document.set(Some(current_id.clone())),
                                     }
                                 }
                             }
@@ -5742,7 +5761,6 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
     rsx! {
         section { class: "page-heading",
             p { class: "eyebrow", "Wallet history" }
-            h1 { "Activity" }
             p { "Midnight transfers, Passport Vault operations, and recoverable submissions appear here." }
         }
         match state.read().clone() {
@@ -6220,454 +6238,6 @@ fn AccountSyncCard(
             }
         }
     }
-}
-
-#[component]
-fn DustRegistrationPanel(profile_id: String, dust_balance_positive: bool) -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let mut realm_lifecycle_wake = consume_context::<Signal<WalletRealmLifecycleWake>>();
-    let WalletRealmProjectionWake(realm_projection_wake) =
-        consume_context::<WalletRealmProjectionWake>();
-    let settlement = services.wallet_dust_settlement();
-    let initial_projection = settlement.projection().ok();
-    let mut projection = use_signal(move || initial_projection);
-    let mut operation_error = use_signal(|| None::<String>);
-    let mut dust_sync = use_signal(|| None::<WalletDustSyncView>);
-    let mut dust_observation_running = use_signal(|| false);
-
-    let observations = settlement.subscribe();
-    use_effect(move || {
-        let mut observations = observations.clone();
-        let mut previous_state = projection().map(|projection| projection.state);
-        spawn(async move {
-            while observations.changed().await.is_ok() {
-                let updated = observations.borrow_and_update().clone();
-                let entered_ready = dust_settlement_entered_ready(previous_state, updated.state);
-                previous_state = Some(updated.state);
-                projection.set(Some(updated));
-                operation_error.set(None);
-                if entered_ready {
-                    realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
-                }
-            }
-        });
-    });
-
-    let refresh_settlement = settlement.clone();
-    let refresh_profile = profile_id.clone();
-    use_effect(move || {
-        let _realm_generation = realm_projection_wake();
-        let settlement = refresh_settlement.clone();
-        let profile_id = refresh_profile.clone();
-        spawn(async move {
-            match run_ui_future(async move { settlement.refresh(profile_id).await }).await {
-                Ok(Ok(updated)) => {
-                    projection.set(Some(updated));
-                    operation_error.set(None);
-                }
-                Ok(Err(error)) => operation_error.set(Some(error.to_string())),
-                Err(error) => operation_error.set(Some(error.to_string())),
-            }
-        });
-    });
-
-    let current = projection.read().clone();
-    let presentation = current.as_ref().map_or(
-        DustSettlementPresentation::Unavailable,
-        dust_settlement_presentation,
-    );
-    let observe_services = services.clone();
-    let observe_settlement = settlement.clone();
-    let observe_profile = profile_id.clone();
-    use_effect(move || {
-        let reconciling = projection.read().as_ref().is_some_and(|projection| {
-            projection.state
-                == oxid_wallet_application::WalletDustRegistrationSettlementState::Reconciling
-        });
-        if !reconciling {
-            dust_sync.set(None);
-            return;
-        }
-        if dust_observation_running() {
-            return;
-        }
-        dust_observation_running.set(true);
-        let services = observe_services.clone();
-        let settlement = observe_settlement.clone();
-        let profile_id = observe_profile.clone();
-        spawn(async move {
-            while projection.read().as_ref().is_some_and(|projection| {
-                projection.state
-                    == oxid_wallet_application::WalletDustRegistrationSettlementState::Reconciling
-            }) {
-                let query_services = services.clone();
-                let query_profile = profile_id.clone();
-                if let Ok(Ok(realm)) = run_ui_blocking(move || {
-                    query_services.get_selected_wallet_realm_sync().execute(
-                        SelectedWalletRealmSyncCommand {
-                            profile_id: query_profile,
-                        },
-                    )
-                })
-                .await
-                    && let WalletRealmFamilyView::Ready(status) = realm.view.dust
-                {
-                    dust_sync.set(Some(status));
-                }
-
-                let refresh_settlement = settlement.clone();
-                let refresh_profile = profile_id.clone();
-                match run_ui_future(
-                    async move { refresh_settlement.refresh(refresh_profile).await },
-                )
-                .await
-                {
-                    Ok(Ok(updated)) => {
-                        let complete = updated.state
-                            != oxid_wallet_application::WalletDustRegistrationSettlementState::Reconciling;
-                        projection.set(Some(updated));
-                        operation_error.set(None);
-                        if complete {
-                            break;
-                        }
-                    }
-                    Ok(Err(error)) => {
-                        operation_error.set(Some(error.to_string()));
-                    }
-                    Err(error) => {
-                        operation_error.set(Some(error.to_string()));
-                    }
-                }
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
-            dust_observation_running.set(false);
-        });
-    });
-    let review = if presentation == DustSettlementPresentation::AwaitingAuthorization {
-        settlement.authorization_review().ok()
-    } else {
-        None
-    };
-    let refresh_action_settlement = settlement.clone();
-    let decline_action_settlement = settlement.clone();
-    let approve_action_settlement = settlement.clone();
-    let retry_action_settlement = settlement.clone();
-    let action_profile = profile_id.clone();
-    let error = operation_error.read().clone();
-
-    rsx! {
-        article {
-            id: "dust-registration",
-            class: "surface-card account-sync-card",
-            aria_label: DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL,
-            p { class: "card-eyebrow", "DUST setup" }
-            h2 {
-                if presentation == DustSettlementPresentation::Ready && dust_balance_positive {
-                    "DUST ready"
-                } else if presentation == DustSettlementPresentation::Ready {
-                    "DUST enabled"
-                } else {
-                    "Enable DUST for this wallet"
-                }
-            }
-            DustSettlementSteps { presentation }
-            if let Some(error) = error {
-                p { class: "wallet-sync-error", role: "alert", "{error}" }
-            }
-            match presentation {
-                DustSettlementPresentation::ActionRequired => rsx! {
-                    p { "DUST setup is ready. Review the one-time registration before continuing." }
-                    p { class: "consent-copy", "This setup does not authorize a NIGHT transfer." }
-                    button {
-                        class: "primary-action",
-                        r#type: "button",
-                        aria_label: "Review and enable DUST",
-                        onclick: move |_| {
-                            let settlement = refresh_action_settlement.clone();
-                            let profile_id = action_profile.clone();
-                            operation_error.set(None);
-                            spawn(async move {
-                                match run_ui_future(async move { settlement.refresh(profile_id).await }).await {
-                                    Ok(Ok(updated)) => projection.set(Some(updated)),
-                                    Ok(Err(error)) => operation_error.set(Some(error.to_string())),
-                Err(error) => operation_error.set(Some(error.to_string())),
-                                }
-                            });
-                        },
-                        "Review and enable"
-                    }
-                },
-                DustSettlementPresentation::AwaitingAuthorization => {
-                    let decline_review = review.clone();
-                    let approve_review = review.clone();
-                    rsx! {
-                    if let Some(review) = review {
-                        DustSettlementReview { review }
-                        p { class: "consent-copy", "Device protection approves only this registration. The wallet continues automatically afterward." }
-                        div { class: "transfer-actions",
-                            button {
-                                class: "secondary-action",
-                                r#type: "button",
-                                aria_label: "Decline DUST registration authorization",
-                                onclick: move |_| {
-                                    let settlement = decline_action_settlement.clone();
-                                    let Some(review) = decline_review.as_ref() else { return; };
-                                    let confirmation = dust_settlement_authorization_confirmation(review, false);
-                                    operation_error.set(None);
-                                    spawn(async move {
-                                        match run_ui_future(async move { settlement.authorize(confirmation).await }).await {
-                                            Ok(Ok(updated)) => projection.set(Some(updated)),
-                                            Ok(Err(error)) => operation_error.set(Some(error.to_string())),
-                Err(error) => operation_error.set(Some(error.to_string())),
-                                        }
-                                    });
-                                },
-                                "Not now"
-                            }
-                            button {
-                                class: "primary-action",
-                                r#type: "button",
-                                aria_label: DUST_REGISTRATION_AUTHORIZE_ACCESSIBLE_LABEL,
-                                onclick: move |_| {
-                                    let settlement = approve_action_settlement.clone();
-                                    let Some(review) = approve_review.as_ref() else { return; };
-                                    let confirmation = dust_settlement_authorization_confirmation(review, true);
-                                    operation_error.set(None);
-                                    spawn(async move {
-                                        match run_ui_future(async move { settlement.authorize(confirmation).await }).await {
-                                            Ok(Ok(updated)) => projection.set(Some(updated)),
-                                            Ok(Err(error)) => operation_error.set(Some(error.to_string())),
-                Err(error) => operation_error.set(Some(error.to_string())),
-                                        }
-                                    });
-                                },
-                                "Approve and continue"
-                            }
-                        }
-                    } else {
-                        p { class: "wallet-sync-error", role: "alert", "The authorization review is no longer available. Observe the selected realm again before continuing." }
-                    }
-                    }
-                },
-                DustSettlementPresentation::Registering => rsx! {
-                    p { class: "settlement-status", role: "status", aria_live: "polite", "Registering DUST. You can leave this screen; setup continues automatically." }
-                },
-                DustSettlementPresentation::WaitingForMidnight => rsx! {
-                    p { class: "settlement-status", role: "status", aria_live: "polite", "Waiting for Midnight to confirm the submitted registration." }
-                },
-                DustSettlementPresentation::UpdatingBalance => rsx! {
-                    p { class: "settlement-status", role: "status", aria_live: "polite", "Registration is confirmed. Updating the wallet balance automatically." }
-                    if let Some(status) = dust_sync.read().as_ref() {
-                        if let Some(percent) = dust_progress_percent(status) {
-                            div {
-                                class: "wallet-sync-progress",
-                                role: "progressbar",
-                                aria_label: "DUST synchronization progress",
-                                aria_valuemin: "0",
-                                aria_valuemax: "100",
-                                aria_valuenow: "{percent}",
-                                div { class: "wallet-sync-progress__bar", style: "width: {percent}%" }
-                            }
-                            p { class: "account-sync-card__provenance",
-                                "Scanning DUST history · {percent}% · {status.events_processed} events processed"
-                            }
-                        } else {
-                            p { class: "account-sync-card__provenance", "Starting the DUST history scan…" }
-                        }
-                    }
-                },
-                DustSettlementPresentation::Ready => rsx! {
-                    p { class: "settlement-status", role: "status", aria_live: "polite",
-                        if dust_balance_positive {
-                            "Registration is confirmed and spendable DUST is available."
-                        } else {
-                            "Registration is confirmed. DUST is enabled and generating."
-                        }
-                    }
-                    details { class: "account-sync-card__details",
-                        summary { "Setup details" }
-                        p { "The registration is included and the current DUST observation is synchronized." }
-                    }
-                },
-                DustSettlementPresentation::Unavailable => rsx! {
-                    p { class: "consent-copy", "DUST setup is unavailable until this wallet and network can be observed." }
-                },
-                DustSettlementPresentation::NotEligible => rsx! {
-                    p { class: "consent-copy", "Waiting for funded NIGHT. Setup becomes available automatically after the wallet balance is updated." }
-                },
-                DustSettlementPresentation::Offline => rsx! {
-                    p { class: "consent-copy", "Waiting for a connection. Setup continues automatically when the network is available." }
-                },
-                DustSettlementPresentation::Suspended => rsx! {
-                    p { class: "consent-copy", "Setup is paused and will resume safely when the app returns." }
-                },
-                DustSettlementPresentation::NeedsAttention => rsx! {
-                    p { class: "consent-copy", "The last safe setup progress is retained. No replacement registration will be created." }
-                    button {
-                        class: "secondary-action",
-                        r#type: "button",
-                        onclick: move |_| {
-                            let settlement = retry_action_settlement.clone();
-                            operation_error.set(None);
-                            spawn(async move {
-                                match run_ui_future(async move { settlement.retry().await }).await {
-                                    Ok(Ok(updated)) => projection.set(Some(updated)),
-                                    Ok(Err(error)) => operation_error.set(Some(error.to_string())),
-                                    Err(error) => operation_error.set(Some(error.to_string())),
-                                }
-                            });
-                        },
-                        "Retry"
-                    }
-                },
-            }
-        }
-    }
-}
-
-const fn dust_settlement_entered_ready(
-    previous: Option<oxid_wallet_application::WalletDustRegistrationSettlementState>,
-    current: oxid_wallet_application::WalletDustRegistrationSettlementState,
-) -> bool {
-    use oxid_wallet_application::WalletDustRegistrationSettlementState as State;
-    !matches!(previous, Some(State::Ready)) && matches!(current, State::Ready)
-}
-
-#[component]
-fn DustSettlementSteps(presentation: DustSettlementPresentation) -> Element {
-    let active = dust_settlement_active_step(presentation);
-    rsx! {
-        ol { class: "settlement-steps", aria_label: "DUST setup progress",
-            for (step, label) in ["Registering", "Waiting for Midnight", "Updating balance", "Ready"].into_iter().enumerate() {
-                li {
-                    class: dust_settlement_step_class(presentation, step as u8),
-                    aria_current: if active == Some(step as u8) { "step" } else { "false" },
-                    span { class: "settlement-step__mark", aria_hidden: "true", "{dust_settlement_step_mark(presentation, step as u8)}" }
-                    span { "{label}" }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn DustSettlementReview(review: WalletDustAuthorizationReview) -> Element {
-    rsx! {
-        dl { class: "preview-list", aria_label: "Public DUST registration summary",
-            div { dt { "NIGHT aggregate" } dd { "{format_dust_registration_asset(&review.registered_night)}" } }
-            div { dt { "Eligible inputs" } dd { "{review.input_count}" } }
-            div { dt { "Maximum DUST fee allowance" } dd { "{format_dust_registration_asset(&review.maximum_fee_allowance)}" } }
-            div { dt { "Network" } dd { "{ui::midnight_network(&review.network_id)}" } }
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DustSettlementPresentation {
-    Unavailable,
-    NotEligible,
-    ActionRequired,
-    AwaitingAuthorization,
-    Registering,
-    WaitingForMidnight,
-    UpdatingBalance,
-    Ready,
-    Offline,
-    Suspended,
-    NeedsAttention,
-}
-
-fn dust_settlement_presentation(
-    projection: &WalletDustRegistrationSettlementProjection,
-) -> DustSettlementPresentation {
-    dust_settlement_presentation_for_state(
-        projection.state,
-        projection
-            .registration
-            .as_ref()
-            .is_some_and(|registration| registration.included),
-    )
-}
-
-const fn dust_settlement_presentation_for_state(
-    state: oxid_wallet_application::WalletDustRegistrationSettlementState,
-    registration_included: bool,
-) -> DustSettlementPresentation {
-    use oxid_wallet_application::WalletDustRegistrationSettlementState as State;
-
-    match state {
-        State::Unavailable => DustSettlementPresentation::Unavailable,
-        State::NotEligible => DustSettlementPresentation::NotEligible,
-        State::ActionRequired | State::Cancelled => DustSettlementPresentation::ActionRequired,
-        State::AwaitingAuthorization => DustSettlementPresentation::AwaitingAuthorization,
-        State::Submitting => DustSettlementPresentation::Registering,
-        State::Confirming => DustSettlementPresentation::WaitingForMidnight,
-        State::Reconciling if registration_included => DustSettlementPresentation::UpdatingBalance,
-        State::Reconciling => DustSettlementPresentation::WaitingForMidnight,
-        State::Ready => DustSettlementPresentation::Ready,
-        State::Offline => DustSettlementPresentation::Offline,
-        State::Suspended => DustSettlementPresentation::Suspended,
-        State::TimedOut | State::Degraded => DustSettlementPresentation::NeedsAttention,
-    }
-}
-
-const fn dust_settlement_active_step(presentation: DustSettlementPresentation) -> Option<u8> {
-    match presentation {
-        DustSettlementPresentation::Registering => Some(0),
-        DustSettlementPresentation::WaitingForMidnight => Some(1),
-        DustSettlementPresentation::UpdatingBalance => Some(2),
-        _ => None,
-    }
-}
-
-const fn dust_settlement_step_class(
-    presentation: DustSettlementPresentation,
-    step: u8,
-) -> &'static str {
-    if matches!(presentation, DustSettlementPresentation::Ready) {
-        return "settlement-step settlement-step-complete";
-    }
-    let active_step = dust_settlement_active_step(presentation);
-    match active_step {
-        Some(active) if step < active => "settlement-step settlement-step-complete",
-        Some(active) if step == active => "settlement-step settlement-step-active",
-        _ => "settlement-step",
-    }
-}
-
-const fn dust_settlement_step_mark(
-    presentation: DustSettlementPresentation,
-    step: u8,
-) -> &'static str {
-    if matches!(presentation, DustSettlementPresentation::Ready) {
-        return "✓";
-    }
-    match dust_settlement_active_step(presentation) {
-        Some(active) if step < active => "✓",
-        Some(active) if step == active => "●",
-        _ => "○",
-    }
-}
-
-fn dust_settlement_authorization_confirmation(
-    review: &WalletDustAuthorizationReview,
-    confirmed: bool,
-) -> SensitiveOperationConfirmation {
-    SensitiveOperationConfirmation {
-        title: "Authorize DUST registration".to_owned(),
-        summary: format!(
-            "Authorize registration of {} from {} eligible NIGHT inputs on {} with a maximum fee allowance of {}.",
-            format_dust_registration_asset(&review.registered_night),
-            review.input_count,
-            ui::midnight_network(&review.network_id),
-            format_dust_registration_asset(&review.maximum_fee_allowance),
-        ),
-        confirmed,
-    }
-}
-
-fn format_dust_registration_asset(asset: &WalletDustRegistrationAssetView) -> String {
-    ui::format_asset_amount(&asset.atomic_units, asset.decimals, &asset.symbol)
 }
 
 fn load_account_page(services: &WalletUiServices, profile_id: &str) -> AccountPageState {
@@ -8187,17 +7757,6 @@ fn apply_route_transition(transition: RouteTransition) {
         let _ = dioxus_document::eval(
             "document.querySelector('.page-content')?.scrollTo({ top: 0, behavior: 'instant' }); document.querySelector('#destination-heading')?.focus({ preventScroll: true });",
         );
-    }
-}
-
-const fn page_context_primary_label(
-    content_route: Route,
-    active_primary: PrimaryDestination,
-) -> Option<&'static str> {
-    if content_route.primary().is_some() && !is_developer_route(content_route) {
-        Some(active_primary.label())
-    } else {
-        None
     }
 }
 
@@ -10732,13 +10291,8 @@ mod tests {
         assert!(developer_routes.into_iter().all(|route| {
             route.primary().is_none()
                 && is_developer_route(route)
-                && page_context_primary_label(route, PrimaryDestination::Home).is_none()
                 && !route_forces_screen_privacy(route)
         }));
-        assert_eq!(
-            page_context_primary_label(Route::Wallet, PrimaryDestination::Wallet),
-            Some("Wallet")
-        );
 
         let mut navigation = RouteStack::default();
         navigation.push(Route::Developer);
@@ -11760,19 +11314,7 @@ mod tests {
     }
 
     #[test]
-    fn page_context_label_is_only_shown_for_the_rendered_primary_route() {
-        assert_eq!(
-            page_context_primary_label(Route::Activity, PrimaryDestination::Activity),
-            Some("Activity")
-        );
-        assert_eq!(
-            page_context_primary_label(Route::Settings, PrimaryDestination::Activity),
-            None
-        );
-        assert_eq!(
-            page_context_primary_label(Route::BackupRecovery, PrimaryDestination::Documents),
-            None
-        );
+    fn primary_navigation_state_follows_only_the_rendered_primary_route() {
         assert!(primary_destination_is_active(
             Route::Activity,
             PrimaryDestination::Activity
@@ -12616,116 +12158,6 @@ mod tests {
         state.timeout(second_generation);
         assert!(state.masked);
     }
-
-    #[test]
-    fn dust_registration_has_explicit_accessible_actions() {
-        assert_eq!(
-            DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL,
-            "Protected DUST registration"
-        );
-        assert_eq!(
-            DUST_REGISTRATION_AUTHORIZE_ACCESSIBLE_LABEL,
-            "Authorize DUST registration"
-        );
-    }
-
-    #[test]
-    fn dust_settlement_presentation_maps_every_shared_state() {
-        use oxid_wallet_application::WalletDustRegistrationSettlementState as State;
-
-        assert_eq!(
-            dust_settlement_presentation_for_state(State::Unavailable, false),
-            DustSettlementPresentation::Unavailable
-        );
-        assert_eq!(
-            dust_settlement_presentation_for_state(State::NotEligible, false),
-            DustSettlementPresentation::NotEligible
-        );
-        assert_eq!(
-            dust_settlement_presentation_for_state(State::ActionRequired, false),
-            DustSettlementPresentation::ActionRequired
-        );
-        assert_eq!(
-            dust_settlement_presentation_for_state(State::AwaitingAuthorization, false),
-            DustSettlementPresentation::AwaitingAuthorization
-        );
-        assert_eq!(
-            dust_settlement_presentation_for_state(State::Submitting, false),
-            DustSettlementPresentation::Registering
-        );
-        assert_eq!(
-            dust_settlement_presentation_for_state(State::Confirming, false),
-            DustSettlementPresentation::WaitingForMidnight
-        );
-        assert_eq!(
-            dust_settlement_presentation_for_state(State::Reconciling, false),
-            DustSettlementPresentation::WaitingForMidnight
-        );
-        assert_eq!(
-            dust_settlement_presentation_for_state(State::Reconciling, true),
-            DustSettlementPresentation::UpdatingBalance
-        );
-        assert_eq!(
-            dust_settlement_presentation_for_state(State::Ready, true),
-            DustSettlementPresentation::Ready
-        );
-        assert_eq!(
-            dust_settlement_presentation_for_state(State::Cancelled, false),
-            DustSettlementPresentation::ActionRequired
-        );
-        assert_eq!(
-            dust_settlement_presentation_for_state(State::Offline, false),
-            DustSettlementPresentation::Offline
-        );
-        assert_eq!(
-            dust_settlement_presentation_for_state(State::TimedOut, false),
-            DustSettlementPresentation::NeedsAttention
-        );
-        assert_eq!(
-            dust_settlement_presentation_for_state(State::Degraded, false),
-            DustSettlementPresentation::NeedsAttention
-        );
-        assert_eq!(
-            dust_settlement_presentation_for_state(State::Suspended, false),
-            DustSettlementPresentation::Suspended
-        );
-        assert!(dust_settlement_entered_ready(
-            Some(State::Reconciling),
-            State::Ready
-        ));
-        assert!(!dust_settlement_entered_ready(
-            Some(State::Ready),
-            State::Ready
-        ));
-    }
-
-    #[test]
-    fn dust_registration_requires_one_explicit_authorization() {
-        let review = WalletDustAuthorizationReview {
-            network_id: "undeployed".to_owned(),
-            registered_night: WalletDustRegistrationAssetView {
-                asset_id: "midnight:night".to_owned(),
-                symbol: "NIGHT".to_owned(),
-                decimals: 6,
-                atomic_units: "12500000".to_owned(),
-            },
-            input_count: 2,
-            maximum_fee_allowance: WalletDustRegistrationAssetView {
-                asset_id: "midnight:dust".to_owned(),
-                symbol: "DUST".to_owned(),
-                decimals: 15,
-                atomic_units: "2500000000000000".to_owned(),
-            },
-        };
-        let declined = dust_settlement_authorization_confirmation(&review, false);
-        assert!(!declined.confirmed);
-        assert_eq!(declined.title, "Authorize DUST registration");
-        let approved = dust_settlement_authorization_confirmation(&review, true);
-        assert!(approved.confirmed);
-        assert!(approved.summary.contains("12.5 NIGHT"));
-        assert!(approved.summary.contains("2.5 DUST"));
-    }
-
     #[test]
     fn did_creation_requires_explicit_rearming_and_confirmation() {
         let mut creation = DidCreationState::Ready;
@@ -12798,11 +12230,17 @@ mod tests {
             .split("\n#[cfg(test)]\nmod tests {")
             .next()
             .expect("production primitive source precedes tests");
-        let contract_source = format!("{rendered_source}\n{rendered_primitive_source}");
+        let credential_inventory_source = include_str!("credential_inventory.rs");
+        let contract_source = format!(
+            "{rendered_source}\n{rendered_primitive_source}\n{credential_inventory_source}"
+        );
 
         for required in [
             "identity-document-inventory",
             "identity-document-item-{item_index}",
+            "identity-document-detail",
+            "credential-inventory-card",
+            "Back to documents",
             "identity-issuance-review",
             "identity-presentation-review",
             "identity-presentation-document-{index}",

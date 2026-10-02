@@ -20,7 +20,17 @@ import {
   resolveDevLoopsPackageRoot,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
-import { normalizeDevLoopsArgs, resolveOxidCompatibilityRoute, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
+import { bindPackageGithubRepository } from "../../scripts/lib/dev-loop-package-script.mjs";
+import {
+  bindEnvelopeRepositoryIdentity,
+  githubRepositoryFromOrigin,
+  isOxidCheckout,
+  normalizeDevLoopsArgs,
+  resolveCanonicalGithubRepository,
+  resolveOxidCompatibilityRoute,
+  resolvePinnedCoreModulePath,
+  runDevLoops,
+} from "../../scripts/dev-loops.mjs";
 import { editPrBody, parseEditPrArgs } from "../../scripts/github/edit-pr.mjs";
 import { normalizeSupersededPrStatusRollup, reconcileOptionalSarifProjectionWait, watchOxidPrCiStatus } from "../../scripts/github/watch-oxid-ci.mjs";
 import { CRITICAL_CHECKS } from "../../scripts/github/optional-sarif-policy.mjs";
@@ -881,7 +891,7 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   assert.match(devLoop, /scripts\/dev-loops\.mjs/);
   assert.match(devLoop, /successful tracked `loop build-envelope` result is already validated/u);
   assert.match(devLoop, /Do not infer or invoke a second\s+`loop validate-envelope` route/u);
-  assert.match(devLoop, /scripts\/github\/view-issue\.mjs --repo <owner\/name> --issue <n>/u);
+  assert.match(devLoop, /scripts\/github\/view-issue\.mjs --issue <n>/u);
   assert.match(devLoop, /scripts\/dev-loops\.mjs` wrapper has no `github` command family/u);
   assert.match(devLoop, /never invent or\s+invoke `scripts\/dev-loops\.mjs github issue-view`/u);
   assert.equal(devLoop.match(/scripts\/dev-loops\.mjs github issue-view/gu)?.length, 1,
@@ -993,6 +1003,64 @@ test("pinned core resolution accepts bounded hoisted and nested package layouts"
 
   await writeFile(path.join(nestedRoot, "package.json"), JSON.stringify({ name: "@dev-loops/core", version: "0.9.1" }));
   await assert.rejects(resolvePinnedCoreModulePath(packageRoot), /expected @dev-loops\/core@1\.0\.2/);
+});
+
+test("handoff envelopes bind the checkout GitHub identity and reject disagreement", () => {
+  assert.equal(githubRepositoryFromOrigin("https://github.com/MediaNoxLabs/oxid.git"), "MediaNoxLabs/oxid");
+  assert.equal(githubRepositoryFromOrigin("git@github.com:MediaNoxLabs/oxid.git"), "MediaNoxLabs/oxid");
+  assert.equal(githubRepositoryFromOrigin("ssh://git@github.com:22/MediaNoxLabs/oxid.git"), "MediaNoxLabs/oxid");
+  assert.equal(githubRepositoryFromOrigin("https://x-access-token:secret@github.com/MediaNoxLabs/oxid.git"), "MediaNoxLabs/oxid");
+  assert.equal(githubRepositoryFromOrigin("https://example.invalid/MediaNoxLabs/oxid.git"), null);
+  assert.equal(resolveCanonicalGithubRepository("/fixture", {
+    run: () => "https://github.com/MediaNoxLabs/oxid.git\n",
+  }), "MediaNoxLabs/oxid");
+  assert.equal(resolveCanonicalGithubRepository("/fixture", {
+    run: (program) => program === "git"
+      ? "git@gh-work:MediaNoxLabs/oxid.git\n"
+      : "hostname github.com\nport 22\n",
+  }), "MediaNoxLabs/oxid");
+  assert.equal(resolveCanonicalGithubRepository("/fixture", {
+    run: (program) => program === "git"
+      ? "git@gh-work:MediaNoxLabs/oxid.git\n"
+      : "hostname example.invalid\nport 22\n",
+  }), null);
+  const bound = bindEnvelopeRepositoryIdentity({ target: { kind: "local_phase", repo: "medianoxlabs/oxid" } }, "MediaNoxLabs/oxid");
+  assert.equal(bound.repository, "MediaNoxLabs/oxid");
+  assert.equal(bound.target.repo, "medianoxlabs/oxid");
+  assert.throws(
+    () => bindEnvelopeRepositoryIdentity({ target: { repo: "input-output-hk/oxid" } }, "MediaNoxLabs/oxid"),
+    /disagrees with origin repository/,
+  );
+  assert.throws(
+    () => bindEnvelopeRepositoryIdentity({ repository: "input-output-hk/oxid", target: { repo: "MediaNoxLabs/oxid" } }, "MediaNoxLabs/oxid"),
+    /disagrees with origin repository/,
+  );
+});
+
+test("Oxid checkout identity is recognized from its tracked manifest", async () => {
+  assert.equal(await isOxidCheckout(repoRoot), true);
+});
+
+test("issue-read wrapper derives origin and refuses a stale repository before dispatch", () => {
+  const repository = "MediaNoxLabs/oxid";
+  assert.deepEqual(bindPackageGithubRepository(["--issue", "937"], repository),
+    ["--issue", "937", "--repo", repository]);
+  assert.deepEqual(bindPackageGithubRepository(["--repo", "medianoxlabs/oxid", "--issue", "937"], repository),
+    ["--repo", "medianoxlabs/oxid", "--issue", "937"]);
+  assert.throws(() => bindPackageGithubRepository(["--repo", "input-output-hk/oxid", "--issue", "937"], repository),
+    /disagrees with origin repository MediaNoxLabs\/oxid/u);
+  assert.deepEqual(bindPackageGithubRepository(["--repo", "example/foreign", "--issue", "1"], null),
+    ["--repo", "example/foreign", "--issue", "1"]);
+  assert.throws(() => bindPackageGithubRepository(["--issue", "1"], null), /needs an exact origin or explicit --repo/u);
+});
+
+test("sanctioned package GitHub commands bind to origin before dispatch", () => {
+  assert.deepEqual(bindPackageGithubRepository(["--pr", "956"], "MediaNoxLabs/oxid"),
+    ["--pr", "956", "--repo", "MediaNoxLabs/oxid"]);
+  assert.throws(() => bindPackageGithubRepository(["--repo", "input-output-hk/oxid", "--pr", "956"],
+    "MediaNoxLabs/oxid"), /disagrees with origin repository/u);
+  assert.deepEqual(bindPackageGithubRepository(["--repo", "foreign/repo", "--pr", "1"], null),
+    ["--repo", "foreign/repo", "--pr", "1"]);
 });
 
 test("repository wrappers force only the public PR-creation and managed-worktree routes", () => {

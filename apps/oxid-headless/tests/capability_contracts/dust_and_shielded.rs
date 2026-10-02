@@ -145,14 +145,14 @@ fn selected_realm_sync_projects_public_dust_and_shielded_outcomes_together() {
         assert!(response["result"]["realmSync"]["dust"]["state"].is_string());
         assert!(response["result"]["realmSync"]["shielded"]["state"].is_string());
     }
-    assert_eq!(
-        responses[2]["result"]["realmSync"]["dust"]["value"]["state"],
-        "cancelled"
-    );
-    assert_eq!(
-        responses[2]["result"]["realmSync"]["shielded"]["value"]["state"],
-        "cancelled"
-    );
+    for family in ["dust", "shielded"] {
+        let projection = &responses[2]["result"]["realmSync"][family];
+        match projection["state"].as_str() {
+            Some("busy") => assert!(projection.get("value").is_none()),
+            Some("ready") => assert_eq!(projection["value"]["state"], "cancelled"),
+            state => panic!("unexpected {family} cancellation projection: {state:?}"),
+        }
+    }
 }
 
 #[test]

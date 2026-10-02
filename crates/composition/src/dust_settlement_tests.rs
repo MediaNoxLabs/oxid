@@ -60,6 +60,13 @@ impl FakeServices {
     fn record(&self, call: &'static str) {
         self.calls.lock().unwrap().push(call);
     }
+
+    fn preview(&self, submission_ready: bool) -> WalletDustRegistrationPreviewView {
+        preview(
+            submission_ready,
+            self.selected.lock().unwrap().identity.realm.as_str(),
+        )
+    }
 }
 
 impl GetSelectedWalletRealmSyncUseCase for FakeServices {
@@ -89,6 +96,26 @@ impl SyncSelectedWalletRealmUseCase for FakeServices {
     }
 }
 
+impl ReconcileSelectedWalletRealmUseCase for FakeServices {
+    fn execute(
+        &self,
+        command: SelectedWalletRealmSyncCommand,
+        _: WalletRealmReconciliationTrigger,
+    ) -> SelectedWalletRealmReconciliationFuture<'_> {
+        Box::pin(async move {
+            let projection = SyncSelectedWalletRealmUseCase::execute(self, command).await?;
+            Ok(oxid_wallet_application::SelectedWalletRealmReconciliation {
+                projection,
+                facets: oxid_wallet_application::WalletRealmReconciliationState {
+                    account: oxid_wallet_application::WalletRealmFacetState::Current,
+                    dust: oxid_wallet_application::WalletRealmFacetState::Current,
+                    shielded: oxid_wallet_application::WalletRealmFacetState::Current,
+                },
+            })
+        })
+    }
+}
+
 impl PrepareWalletDustRegistrationUseCase for FakeServices {
     fn execute<'a>(
         &'a self,
@@ -114,7 +141,7 @@ impl PrepareWalletDustRegistrationUseCase for FakeServices {
                     WalletDustRegistrationPortError::RegistrationAlreadyCurrent,
                 ));
             }
-            Ok(preview(false))
+            Ok(self.preview(false))
         })
     }
 }
@@ -154,7 +181,21 @@ impl AuthorizeWalletDustRegistrationUseCase for FakeServices {
             assert_eq!(command.draft_id, "dustreg_test");
             assert_eq!(command.authorization_challenge, "dustauth_test");
             assert!(command.confirmation.confirmed);
-            Ok(preview(true))
+            Ok(self.preview(true))
+        })
+    }
+}
+
+impl AuthorizeDevelopmentWalletDustRegistrationUseCase for FakeServices {
+    fn execute<'a>(
+        &'a self,
+        command: AuthorizeDevelopmentWalletDustRegistrationCommand,
+    ) -> WalletDustRegistrationPreviewViewFuture<'a> {
+        Box::pin(async move {
+            self.record("authorize");
+            assert_eq!(command.draft_id, "dustreg_test");
+            assert_eq!(command.authorization_challenge, "dustauth_test");
+            Ok(self.preview(true))
         })
     }
 }
@@ -182,7 +223,7 @@ impl SubmitWalletDustRegistrationUseCase for FakeServices {
                 ));
             }
             Ok(WalletDustRegistrationSubmissionView {
-                registration: preview(true),
+                registration: self.preview(true),
                 transaction_id: "tx_registration".to_owned(),
                 block_id: "block_registration".to_owned(),
                 fee: asset("midnight:dust", "DUST", 15, "42"),
@@ -191,6 +232,22 @@ impl SubmitWalletDustRegistrationUseCase for FakeServices {
                 dust_readiness: "requires_synchronization".to_owned(),
             })
         })
+    }
+}
+
+impl SubmitDevelopmentWalletDustRegistrationUseCase for FakeServices {
+    fn execute<'a>(
+        &'a self,
+        _: SubmitDevelopmentWalletDustRegistrationCommand,
+    ) -> WalletDustRegistrationSubmissionViewFuture<'a> {
+        SubmitWalletDustRegistrationUseCase::execute(
+            self,
+            SubmitWalletDustRegistrationCommand {
+                profile_id: "profile_test".to_owned(),
+                draft_id: "dustreg_test".to_owned(),
+                confirmation: confirmation(true),
+            },
+        )
     }
 }
 
@@ -223,6 +280,20 @@ fn capability(fake: &Arc<FakeServices>) -> WalletDustSettlementCapability {
         fake,
         Arc::new(InMemoryWalletDustRegistrationRecoveryStore::default()),
     )
+}
+
+fn automatic_capability(fake: &Arc<FakeServices>) -> WalletDustSettlementCapability {
+    WalletDustSettlementCapability::with_automatic_development_authority_and_recovery_store(
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        Arc::new(InMemoryWalletDustRegistrationRecoveryStore::default()),
+    )
+    .unwrap()
 }
 
 fn capability_with_store(
@@ -328,11 +399,11 @@ fn asset(id: &str, symbol: &str, decimals: u8, units: &str) -> WalletDustRegistr
     }
 }
 
-fn preview(submission_ready: bool) -> WalletDustRegistrationPreviewView {
+fn preview(submission_ready: bool, network_id: &str) -> WalletDustRegistrationPreviewView {
     WalletDustRegistrationPreviewView {
         draft_id: "dustreg_test".to_owned(),
         authorization_challenge: "dustauth_test".to_owned(),
-        network_id: "undeployed".to_owned(),
+        network_id: network_id.to_owned(),
         account_id: "midnight_account_test".to_owned(),
         registered_night: asset("midnight:night", "NIGHT", 6, "50000000"),
         input_count: 1,
@@ -469,6 +540,102 @@ fn one_authorization_drives_submission_reconciliation_and_refresh() {
             "reconcile",
             "refresh"
         ]
+    );
+}
+
+#[test]
+fn development_realm_converges_without_an_incoming_authorization_action() {
+    let fake = Arc::new(FakeServices::new());
+    let capability = automatic_capability(&fake);
+
+    let ready = block_on(capability.refresh("profile_test".to_owned())).unwrap();
+
+    assert_eq!(
+        ready.state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Ready
+    );
+    assert_eq!(
+        *fake.calls.lock().unwrap(),
+        [
+            "prepare",
+            "authorize",
+            "submit",
+            "status",
+            "reconcile",
+            "refresh"
+        ]
+    );
+
+    let repeated = block_on(capability.refresh("profile_test".to_owned())).unwrap();
+    assert_eq!(
+        repeated.state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Ready
+    );
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "submit")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn automatic_authority_stops_at_the_boundary_outside_the_development_realm() {
+    let fake = Arc::new(FakeServices::new());
+    let mut selected = fake.selected.lock().unwrap();
+    selected.identity.realm = ChainNetworkId::parse("preprod").unwrap();
+    if let WalletRealmFamilyView::Ready(account) = &mut selected.view.account {
+        account.network_id = "preprod".to_owned();
+    }
+    if let WalletRealmFamilyView::Ready(dust) = &mut selected.view.dust {
+        dust.network_id = "preprod".to_owned();
+    }
+    if let WalletRealmFamilyView::Ready(shielded) = &mut selected.view.shielded {
+        shielded.network_id = "preprod".to_owned();
+    }
+    drop(selected);
+    let capability = automatic_capability(&fake);
+
+    let pending = block_on(capability.refresh("profile_test".to_owned())).unwrap();
+
+    assert_eq!(
+        pending.state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::AwaitingAuthorization
+    );
+    assert_eq!(*fake.calls.lock().unwrap(), ["prepare"]);
+}
+
+#[test]
+fn selected_realm_lifecycle_triggers_the_same_automatic_convergence() {
+    let fake = Arc::new(FakeServices::new());
+    let dust = Arc::new(automatic_capability(&fake));
+    let reconciler =
+        AutomaticDustRealmReconciler::new(fake.clone(), fake.clone(), fake.clone(), dust.clone());
+
+    block_on(ReconcileSelectedWalletRealmUseCase::execute(
+        &reconciler,
+        SelectedWalletRealmSyncCommand {
+            profile_id: "profile_test".to_owned(),
+        },
+        WalletRealmReconciliationTrigger::Initial,
+    ))
+    .unwrap();
+
+    assert_eq!(
+        dust.projection().unwrap().state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Ready
+    );
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "submit")
+            .count(),
+        1
     );
 }
 

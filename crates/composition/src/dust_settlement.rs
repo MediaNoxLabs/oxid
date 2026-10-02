@@ -20,13 +20,17 @@ const MAX_SETTLEMENT_RETRIES: u8 = 3;
 use tokio::sync::watch;
 
 use oxid_wallet_application::{
-    AuthorizeWalletDustRegistrationCommand, AuthorizeWalletDustRegistrationUseCase,
-    ChainTransactionId, ExecuteWalletDustRegistrationOperation, GetSelectedWalletRealmSyncUseCase,
+    AuthorizeDevelopmentWalletDustRegistrationCommand,
+    AuthorizeDevelopmentWalletDustRegistrationUseCase, AuthorizeWalletDustRegistrationCommand,
+    AuthorizeWalletDustRegistrationUseCase, ChainTransactionId,
+    ExecuteWalletDustRegistrationOperation, GetSelectedWalletRealmSyncUseCase,
     GetWalletDustRegistrationStatusCommand, GetWalletDustRegistrationStatusUseCase,
     PrepareWalletDustRegistrationCommand, PrepareWalletDustRegistrationUseCase,
-    ReconcileWalletDustRegistrationSubmissionCommand,
+    ReconcileSelectedWalletRealmUseCase, ReconcileWalletDustRegistrationSubmissionCommand,
     ReconcileWalletDustRegistrationSubmissionUseCase, SelectedWalletRealmProjection,
+    SelectedWalletRealmProjectionFuture, SelectedWalletRealmReconciliationFuture,
     SelectedWalletRealmSyncCommand, SensitiveOperationConfirmation,
+    SubmitDevelopmentWalletDustRegistrationCommand, SubmitDevelopmentWalletDustRegistrationUseCase,
     SubmitWalletDustRegistrationCommand, SubmitWalletDustRegistrationUseCase,
     SyncSelectedWalletRealmUseCase, WalletDustRegistrationDriver,
     WalletDustRegistrationDriverError, WalletDustRegistrationEffect,
@@ -36,8 +40,24 @@ use oxid_wallet_application::{
     WalletDustRegistrationRecoveryStoreError, WalletDustRegistrationRuntimeOperation,
     WalletDustRegistrationSettlementEvent, WalletDustRegistrationSettlementIdentity,
     WalletDustRegistrationSettlementProjection, WalletDustRegistrationSettlementReconciliation,
-    WalletRealmFamilyView, WalletTransactionDraftId,
+    WalletRealmFamilyView, WalletRealmReconciliationTrigger, WalletTransactionDraftId,
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DustSettlementAuthority {
+    Explicit,
+    AutomaticDevelopment,
+}
+
+enum DustRegistrationAuthorization {
+    Explicit(Arc<dyn AuthorizeWalletDustRegistrationUseCase>),
+    AutomaticDevelopment(Arc<dyn AuthorizeDevelopmentWalletDustRegistrationUseCase>),
+}
+
+enum DustRegistrationSubmission {
+    Explicit(Arc<dyn SubmitWalletDustRegistrationUseCase>),
+    AutomaticDevelopment(Arc<dyn SubmitDevelopmentWalletDustRegistrationUseCase>),
+}
 
 /// Composition-owned capability shared by headless and graphical adapters.
 pub struct WalletDustSettlementCapability {
@@ -46,6 +66,7 @@ pub struct WalletDustSettlementCapability {
     driver: WalletDustRegistrationDriver,
     projections: watch::Sender<WalletDustRegistrationSettlementProjection>,
     retry_attempts: Mutex<(Option<WalletDustRegistrationSettlementIdentity>, u8)>,
+    authority: DustSettlementAuthority,
 }
 
 /// Public, presentation-safe facts for the one DUST authorization decision.
@@ -72,15 +93,43 @@ impl WalletDustSettlementCapability {
         reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
         store: Arc<dyn WalletDustRegistrationRecoveryStore>,
     ) -> Result<Self, WalletDustSettlementError> {
-        Self::with_recovery_store_and_deadline(
+        Self::with_recovery_store_authority_and_deadline(
             selected_realm,
             sync_selected_realm,
             prepare,
-            authorize,
-            submit,
+            DustRegistrationAuthorization::Explicit(authorize),
+            DustRegistrationSubmission::Explicit(submit),
             status,
             reconcile,
             store,
+            DustSettlementAuthority::Explicit,
+            OPERATION_DEADLINE,
+        )
+    }
+
+    /// Builds a capability that automatically admits the exact DUST
+    /// registration preview for the local development realm only.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_automatic_development_authority_and_recovery_store(
+        selected_realm: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+        sync_selected_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
+        prepare: Arc<dyn PrepareWalletDustRegistrationUseCase>,
+        authorize: Arc<dyn AuthorizeDevelopmentWalletDustRegistrationUseCase>,
+        submit: Arc<dyn SubmitDevelopmentWalletDustRegistrationUseCase>,
+        status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
+        reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
+        store: Arc<dyn WalletDustRegistrationRecoveryStore>,
+    ) -> Result<Self, WalletDustSettlementError> {
+        Self::with_recovery_store_authority_and_deadline(
+            selected_realm,
+            sync_selected_realm,
+            prepare,
+            DustRegistrationAuthorization::AutomaticDevelopment(authorize),
+            DustRegistrationSubmission::AutomaticDevelopment(submit),
+            status,
+            reconcile,
+            store,
+            DustSettlementAuthority::AutomaticDevelopment,
             OPERATION_DEADLINE,
         )
     }
@@ -98,6 +147,33 @@ impl WalletDustSettlementCapability {
         status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
         reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
         store: Arc<dyn WalletDustRegistrationRecoveryStore>,
+        operation_deadline: Duration,
+    ) -> Result<Self, WalletDustSettlementError> {
+        Self::with_recovery_store_authority_and_deadline(
+            selected_realm,
+            sync_selected_realm,
+            prepare,
+            DustRegistrationAuthorization::Explicit(authorize),
+            DustRegistrationSubmission::Explicit(submit),
+            status,
+            reconcile,
+            store,
+            DustSettlementAuthority::Explicit,
+            operation_deadline,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn with_recovery_store_authority_and_deadline(
+        selected_realm: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+        sync_selected_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
+        prepare: Arc<dyn PrepareWalletDustRegistrationUseCase>,
+        authorize: DustRegistrationAuthorization,
+        submit: DustRegistrationSubmission,
+        status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
+        reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
+        store: Arc<dyn WalletDustRegistrationRecoveryStore>,
+        authority: DustSettlementAuthority,
         operation_deadline: Duration,
     ) -> Result<Self, WalletDustSettlementError> {
         let (loaded, mut initially_durable) = match store.load() {
@@ -193,6 +269,7 @@ impl WalletDustSettlementCapability {
             driver,
             projections,
             retry_attempts: Mutex::new((initial.identity, 0)),
+            authority,
         })
     }
 
@@ -229,7 +306,7 @@ impl WalletDustSettlementCapability {
                 .map_err(|_| WalletDustSettlementError::RetainedStateUnavailable)? =
                 (Some(identity.clone()), 0);
         }
-        let result = self
+        let mut result = self
             .driver
             .advance(WalletDustRegistrationSettlementEvent::Eligibility {
                 identity: identity.clone(),
@@ -238,6 +315,21 @@ impl WalletDustSettlementCapability {
             })
             .await
             .map_err(WalletDustSettlementError::Driver)?;
+        if self.authority == DustSettlementAuthority::AutomaticDevelopment
+            && identity.realm.as_str() == "undeployed"
+            && result.state
+                == oxid_wallet_application::WalletDustRegistrationSettlementState::AwaitingAuthorization
+        {
+            let authorized = self
+                .driver
+                .authorize()
+                .await
+                .map_err(WalletDustSettlementError::Driver);
+            if authorized.is_err() {
+                self.executor.clear_confirmation();
+            }
+            result = authorized?;
+        }
         if !is_recoverable_state(result.state) {
             self.reset_retry_attempts(identity)?;
         }
@@ -395,6 +487,71 @@ impl WalletDustSettlementCapability {
     }
 }
 
+/// Adds automatic DUST convergence to both explicit and lifecycle-selected
+/// realm reconciliation. A DUST failure remains visible in its own projection
+/// and never hides a successful wallet-realm refresh.
+pub struct AutomaticDustRealmReconciler {
+    sync: Arc<dyn SyncSelectedWalletRealmUseCase>,
+    reconcile: Arc<dyn ReconcileSelectedWalletRealmUseCase>,
+    get: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+    dust: Arc<WalletDustSettlementCapability>,
+}
+
+impl AutomaticDustRealmReconciler {
+    #[must_use]
+    pub fn new(
+        sync: Arc<dyn SyncSelectedWalletRealmUseCase>,
+        reconcile: Arc<dyn ReconcileSelectedWalletRealmUseCase>,
+        get: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+        dust: Arc<WalletDustSettlementCapability>,
+    ) -> Self {
+        Self {
+            sync,
+            reconcile,
+            get,
+            dust,
+        }
+    }
+}
+
+impl SyncSelectedWalletRealmUseCase for AutomaticDustRealmReconciler {
+    fn execute(
+        &self,
+        command: SelectedWalletRealmSyncCommand,
+    ) -> SelectedWalletRealmProjectionFuture<'_> {
+        Box::pin(async move {
+            let profile_id = command.profile_id.clone();
+            let projection = self.sync.execute(command).await?;
+            let _ = self.dust.refresh(profile_id.clone()).await;
+            Ok(self
+                .get
+                .execute(SelectedWalletRealmSyncCommand { profile_id })
+                .unwrap_or(projection))
+        })
+    }
+}
+
+impl ReconcileSelectedWalletRealmUseCase for AutomaticDustRealmReconciler {
+    fn execute(
+        &self,
+        command: SelectedWalletRealmSyncCommand,
+        trigger: WalletRealmReconciliationTrigger,
+    ) -> SelectedWalletRealmReconciliationFuture<'_> {
+        Box::pin(async move {
+            let profile_id = command.profile_id.clone();
+            let mut reconciliation = self.reconcile.execute(command, trigger).await?;
+            let _ = self.dust.refresh(profile_id.clone()).await;
+            if let Ok(projection) = self
+                .get
+                .execute(SelectedWalletRealmSyncCommand { profile_id })
+            {
+                reconciliation.projection = projection;
+            }
+            Ok(reconciliation)
+        })
+    }
+}
+
 /// Bounded composition failures; adapter payloads and custody material never
 /// cross the incoming boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -439,8 +596,8 @@ struct ComposedDustRegistrationExecutor {
     selected_realm: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
     sync_selected_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
     prepare: Arc<dyn PrepareWalletDustRegistrationUseCase>,
-    authorize: Arc<dyn AuthorizeWalletDustRegistrationUseCase>,
-    submit: Arc<dyn SubmitWalletDustRegistrationUseCase>,
+    authorize: DustRegistrationAuthorization,
+    submit: DustRegistrationSubmission,
     status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
     reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
     retained: Mutex<RetainedSettlement>,
@@ -630,32 +787,46 @@ impl ComposedDustRegistrationExecutor {
                 .preview
                 .clone()
                 .ok_or(WalletDustRegistrationExecutorFailure::Degraded)?;
-            let confirmation = retained
-                .confirmation
-                .take()
-                .ok_or(WalletDustRegistrationExecutorFailure::Unavailable)?;
+            let confirmation = retained.confirmation.take();
             (preview, confirmation)
         };
         if preview.draft_id != draft_id.as_str() {
             return Err(WalletDustRegistrationExecutorFailure::Degraded);
         }
-        if !confirmation.confirmed {
-            return Ok(
-                WalletDustRegistrationOperationCompletion::authorization_rejected(
-                    identity, draft_id,
-                ),
-            );
+        let authorized = match &self.authorize {
+            DustRegistrationAuthorization::Explicit(authorize) => {
+                let confirmation =
+                    confirmation.ok_or(WalletDustRegistrationExecutorFailure::Unavailable)?;
+                if !confirmation.confirmed {
+                    return Ok(
+                        WalletDustRegistrationOperationCompletion::authorization_rejected(
+                            identity, draft_id,
+                        ),
+                    );
+                }
+                authorize
+                    .execute(AuthorizeWalletDustRegistrationCommand {
+                        profile_id: identity.profile.as_str().to_owned(),
+                        draft_id: preview.draft_id.clone(),
+                        authorization_challenge: preview.authorization_challenge,
+                        confirmation,
+                    })
+                    .await
+            }
+            DustRegistrationAuthorization::AutomaticDevelopment(authorize) => {
+                if identity.realm.as_str() != "undeployed" || preview.network_id != "undeployed" {
+                    return Err(WalletDustRegistrationExecutorFailure::Unavailable);
+                }
+                authorize
+                    .execute(AuthorizeDevelopmentWalletDustRegistrationCommand {
+                        profile_id: identity.profile.as_str().to_owned(),
+                        draft_id: preview.draft_id.clone(),
+                        authorization_challenge: preview.authorization_challenge,
+                    })
+                    .await
+            }
         }
-        let authorized = self
-            .authorize
-            .execute(AuthorizeWalletDustRegistrationCommand {
-                profile_id: identity.profile.as_str().to_owned(),
-                draft_id: preview.draft_id.clone(),
-                authorization_challenge: preview.authorization_challenge,
-                confirmation,
-            })
-            .await
-            .map_err(map_registration_failure)?;
+        .map_err(map_registration_failure)?;
         if authorized.draft_id != draft_id.as_str() || !authorized.submission_ready {
             return Err(WalletDustRegistrationExecutorFailure::Degraded);
         }
@@ -743,14 +914,28 @@ impl ComposedDustRegistrationExecutor {
             .lock()
             .map_err(|_| WalletDustRegistrationExecutorFailure::Unavailable)?
             .submission_uncertain = true;
-        let submitted = self
-            .submit
-            .execute(SubmitWalletDustRegistrationCommand {
-                profile_id: identity.profile.as_str().to_owned(),
-                draft_id: draft_id.as_str().to_owned(),
-                confirmation: continuation_confirmation(&preview),
-            })
-            .await;
+        let submitted = match &self.submit {
+            DustRegistrationSubmission::Explicit(submit) => {
+                submit
+                    .execute(SubmitWalletDustRegistrationCommand {
+                        profile_id: identity.profile.as_str().to_owned(),
+                        draft_id: draft_id.as_str().to_owned(),
+                        confirmation: continuation_confirmation(&preview),
+                    })
+                    .await
+            }
+            DustRegistrationSubmission::AutomaticDevelopment(submit) => {
+                if identity.realm.as_str() != "undeployed" || preview.network_id != "undeployed" {
+                    return Err(WalletDustRegistrationExecutorFailure::Unavailable);
+                }
+                submit
+                    .execute(SubmitDevelopmentWalletDustRegistrationCommand {
+                        profile_id: identity.profile.as_str().to_owned(),
+                        draft_id: draft_id.as_str().to_owned(),
+                    })
+                    .await
+            }
+        };
         let submitted = match submitted {
             Ok(submitted) => submitted,
             Err(oxid_wallet_application::WalletDustRegistrationError::Operation(

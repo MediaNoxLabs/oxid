@@ -506,6 +506,10 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(application.staticTexts["standalone-1"].waitForExistence(timeout: 10))
         credentials.tap()
         XCTAssertTrue(application.staticTexts["Digital Passport"].waitForExistence(timeout: 10))
+        let openDocument = application.buttons["Open Digital Passport document details"]
+        XCTAssertTrue(openDocument.waitForExistence(timeout: 5))
+        openDocument.tap()
+        XCTAssertTrue(application.buttons["Back to documents"].waitForExistence(timeout: 5))
         XCTAssertTrue(application.buttons["Reveal First name locally"].waitForExistence(timeout: 5))
         XCTAssertTrue(application.buttons["Preview disclosure plan"].exists)
         XCTAssertFalse(application.staticTexts["Alice"].exists)
@@ -742,7 +746,7 @@ final class ProfileFlowTests: XCTestCase {
                 "App link recognized as a DID login request. Review the request before consent."
             ].waitForExistence(timeout: 10)
         )
-        XCTAssertTrue(application.staticTexts["My identities"].exists)
+        XCTAssertTrue(application.staticTexts["Manage identities"].exists)
         application.buttons["Dismiss identity request"].tap()
 
         application.terminate()

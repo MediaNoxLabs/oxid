@@ -32,9 +32,9 @@ pub(super) fn AssetsPage(
     match state.read().clone() {
         AccountPageState::Loading => rsx! {
             section { class: "wallet-hero", "data-ui-primitive": "Card Skeleton",
-                p { class: "eyebrow", "Wallet overview" }
+                p { class: "eyebrow", "Assets" }
                 div { class: "wallet-hero__number-row", aria_busy: "true",
-                    h1 { class: "wallet-skeleton", "…" }
+                    strong { class: "wallet-balance wallet-skeleton", "…" }
                     span { "NIGHT" }
                 }
                 p { class: "wallet-hero__hint", "Loading the selected Midnight account boundary…" }
@@ -42,9 +42,9 @@ pub(super) fn AssetsPage(
         },
         AccountPageState::Failed(error) => rsx! {
             section { class: "wallet-hero", "data-ui-primitive": "Card ErrorState",
-                p { class: "eyebrow", "Wallet overview" }
+                p { class: "eyebrow", "Assets" }
                 div { class: "wallet-hero__number-row",
-                    h1 { "—" }
+                    strong { class: "wallet-balance", "—" }
                     span { "NIGHT" }
                 }
                 p { class: "wallet-hero__hint", "Account state could not be loaded safely." }
@@ -88,8 +88,6 @@ pub(super) fn AssetsPage(
             let dust = balance_for(&account, "DUST")
                 .map(|balance| ui::format_atomic_units(&balance.atomic_units, balance.decimals))
                 .unwrap_or_else(|| "—".to_owned());
-            let dust_balance_positive = balance_for(&account, "DUST")
-                .is_some_and(|balance| balance.atomic_units.bytes().any(|digit| digit != b'0'));
             let unavailable = account.source == "unavailable";
             let is_busy = busy.is_some();
             let account_hint = account_hint(&account, busy);
@@ -123,14 +121,14 @@ pub(super) fn AssetsPage(
             rsx! {
                 section { class: "wallet-hero", "data-ui-primitive": "Card StatusPill",
                     div { class: "wallet-hero__heading-row",
-                        p { class: "eyebrow", "Wallet overview" }
+                        p { class: "eyebrow", "Assets" }
                         span { class: if account.source == "simulated" { "status-pill warning" } else { "status-pill" },
                             "{source_label}"
                         }
                     }
                     div { class: "wallet-hero__number-row",
-                        h1 {
-                            class: "privacy-value",
+                        strong {
+                            class: "wallet-balance privacy-value",
                             aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
                             "{night}"
                         }
@@ -381,11 +379,6 @@ pub(super) fn AssetsPage(
                         p { class: "card-eyebrow", "PreProd observation" }
                         h2 { "Balances only" }
                         p { "This recovery profile exposes synchronization and receive addresses only. Sending, DUST registration, proving, and transaction submission are disabled for this slice." }
-                    }
-                } else if protection_unlocked {
-                    DustRegistrationPanel {
-                        profile_id: active_profile.id.clone(),
-                        dust_balance_positive,
                     }
                 }
 

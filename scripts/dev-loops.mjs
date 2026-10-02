@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import { readFile, realpath } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
@@ -19,6 +20,89 @@ const PRE_MUTATION_ASSESSMENT_OPTION = "--pre-mutation-assessment";
 const OXID_REPOSITORY = "medianoxlabs/oxid";
 const OXID_SIZE_BUDGET_COMMAND = "scripts/dev-loops.mjs gate size-budget";
 const OXID_PR_CREATE_COMMAND = "scripts/dev-loops.mjs pr create";
+const GITHUB_REPOSITORY_PATH = /^\/?([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/u;
+
+/** Resolve one GitHub identity from the checkout's trusted origin, if available. */
+export function githubRepositoryFromOrigin(origin) {
+  if (typeof origin !== "string") return null;
+  const value = origin.trim();
+  const scp = /^git@github\.com:(.+)$/u.exec(value);
+  let repositoryPath = scp?.[1];
+  if (!repositoryPath) {
+    try {
+      const url = new URL(value);
+      if (url.hostname.toLowerCase() !== "github.com"
+        || !["https:", "ssh:", "git:"].includes(url.protocol)
+        || (url.port && !(url.protocol === "ssh:" && url.port === "22"))) return null;
+      repositoryPath = url.pathname;
+    } catch {
+      return null;
+    }
+  }
+  const match = repositoryPath.match(GITHUB_REPOSITORY_PATH);
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+
+function githubRepositoryFromSshAlias(origin, run) {
+  const value = origin.trim();
+  const scp = /^(?:git@)?([A-Za-z0-9_.-]+):(.+)$/u.exec(value);
+  let host = scp?.[1];
+  let repositoryPath = scp?.[2];
+  if (!host) {
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "ssh:") return null;
+      host = url.hostname;
+      repositoryPath = url.pathname;
+    } catch {
+      return null;
+    }
+  }
+  const match = repositoryPath?.match(GITHUB_REPOSITORY_PATH);
+  if (!match || host.toLowerCase() === "github.com") return null;
+  const config = run("ssh", ["-G", host], {
+    encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000,
+  });
+  const hostname = /^hostname\s+(\S+)$/miu.exec(config)?.[1];
+  const port = /^port\s+(\S+)$/miu.exec(config)?.[1];
+  return hostname?.toLowerCase() === "github.com" && (!port || port === "22")
+    ? `${match[1]}/${match[2]}` : null;
+}
+
+export function resolveCanonicalGithubRepository(cwd, { run = execFileSync } = {}) {
+  try {
+    const origin = run("git", ["-C", cwd, "remote", "get-url", "origin"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return githubRepositoryFromOrigin(origin) ?? githubRepositoryFromSshAlias(origin, run);
+  } catch {
+    return null;
+  }
+}
+
+export async function isOxidCheckout(root) {
+  try {
+    const manifest = await readFile(path.join(root, "Cargo.toml"), "utf8");
+    return /^repository\s*=\s*"https:\/\/github\.com\/MediaNoxLabs\/oxid"\s*$/mu.test(manifest);
+  } catch {
+    return false;
+  }
+}
+
+/** Bind a handoff envelope to origin and reject an authoritative identity split. */
+export function bindEnvelopeRepositoryIdentity(envelope, repository) {
+  if (!repository) return envelope;
+  for (const declared of [envelope?.repository, envelope?.target?.repo]) {
+    if (typeof declared === "string" && declared.toLowerCase() !== repository.toLowerCase()) {
+      throw new Error(`handoff envelope repository ${declared} disagrees with origin repository ${repository}`);
+    }
+  }
+  return {
+    ...envelope,
+    repository,
+    target: { ...envelope.target, repo: repository.toLowerCase() },
+  };
+}
 
 export function applyOxidSanctionedCommandOverrides(envelope) {
   const sanctionedCommands = envelope?.sanctionedCommands;
@@ -337,9 +421,14 @@ async function runBuildEnvelope(args, { cwd, stdout, stderr, resolved }) {
       adapter: { getCwd: () => cwd, getRepoRoot: () => resolved.gitRoot },
     });
     const normalized = await normalizeHandoffEnvelopeCwd(candidate, resolved, core);
+    const originRepository = resolveCanonicalGithubRepository(resolved.gitRoot);
+    if (!originRepository && await isOxidCheckout(resolved.gitRoot)) {
+      throw new Error("Oxid handoff requires an exact github.com origin repository; fix origin before dispatch");
+    }
+    const identityBound = bindEnvelopeRepositoryIdentity(normalized, originRepository);
     const { contract, profile } = await loadDeliveryProfile(resolved.gitRoot, deliveryArgs.requested);
     const profiled = applyDeliveryProfile({
-      ...normalized,
+      ...identityBound,
       ...(assessmentArgs.assessment === undefined ? {} : { preMutationAssessment: assessmentArgs.assessment }),
     }, contract, profile, deliveryTarget);
     const repositoryAcceptance = applyOxidSanctionedCommandOverrides(applyRepositoryAcceptance(profiled));
