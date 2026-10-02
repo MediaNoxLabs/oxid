@@ -194,7 +194,7 @@ test("inventory records closed native transport trust readiness without sensitiv
   assert.doesNotMatch(publishedEvidence, /(?:\d{1,3}\.){3}\d{1,3}/u);
 });
 
-test("inventory records the approved 0.2.0 product journeys without claiming unfinished execution", () => {
+test("inventory records approved product journeys without claiming deferred Vault acceptance", () => {
   const inventory = loadInventory();
   const approvedUseCases = [
     "fresh-wallet-onboarding", "wallet-recovery", "profile-and-realm-switching",
@@ -221,6 +221,11 @@ test("inventory records the approved 0.2.0 product journeys without claiming unf
     assert.equal(scenario.testMapping.status, "planned");
     assert.match(renderPreparationBrief(inventory, scenarioId), /Target: .+ \(unsupported; planned\)/u);
   }
+
+  const vault = inventory.scenarios.find(({ id }) => id === "journey-passport-vault-readiness");
+  assert.match(vault.targetPlans[0].note, /deferred beyond 0\.2\.0.+not milestone acceptance/u);
+  const passportDemo = inventory.demos.find(({ id }) => id === "oxid-passport");
+  assert.match(passportDemo.expectedOutcome, /post-0\.2\.0.+does not claim a supported milestone demo/u);
 });
 
 test("validator rejects broken references, unsafe operations, and invalid evidence contracts", () => {

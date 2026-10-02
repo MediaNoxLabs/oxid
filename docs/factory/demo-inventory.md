@@ -52,15 +52,15 @@ cadence/evidence values, and scenarios without test mappings. Live, expensive
 or physical evidence remains on its declared cadence; it is not a universal PR
 gate.
 
-## Approved 0.2.0 product journeys
+## Approved product journeys
 
-The approved product map adds sixteen owner-facing use cases without replacing
+The 0.2.0 product map adds the wallet and identity use cases without replacing
 the lower-level executable inventory: onboarding, recovery, profile/realm
 switching, automatic reconciliation, receive/fund NIGHT, send NIGHT, DID
 inventory/creation, DID detail/maintenance, OID4VCI issuance, credential
 inventory/detail, OID4VP presentation, SIOPv2 authentication,
-activity/transaction detail, security/backup settings, Passport Vault, and
-development diagnostics.
+activity/transaction detail, security/backup settings, and development
+diagnostics.
 
 They compose into five ordered journeys:
 
@@ -68,11 +68,15 @@ They compose into five ordered journeys:
 2. `journey-realm-profile-resilience`
 3. `journey-did-to-issued-credential`
 4. `journey-presentation-and-authentication`
-5. `journey-passport-vault-readiness`
+5. `journey-passport-vault-readiness` — approved as a future concept and
+   deferred beyond 0.2.0
 
-Those journeys compose three reviewable products: `oxid-wallet-essentials`,
-`oxid-identity-wallet`, and `oxid-passport`. The inventory deliberately records
-their default targets as **unsupported; planned** until one exact target has
+The first four journeys compose the 0.2.0 review products
+`oxid-wallet-essentials` and `oxid-identity-wallet`. Passport Vault and the
+`oxid-passport` demo remain in the inventory as post-0.2.0 product concepts;
+they are not milestone acceptance requirements. The inventory deliberately
+records every unfinished default target as **unsupported; planned** until an
+exact target has
 complete commands, health checks, cleanup, and evidence. `/scenario prepare`
 therefore reports the gap instead of converting scattered component evidence
 into a false end-to-end claim. A follow-up UI or Maestro slice promotes only
