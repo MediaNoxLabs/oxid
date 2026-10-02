@@ -2964,6 +2964,87 @@ mod tests {
     }
 
     #[test]
+    fn full_activity_window_refuses_before_protocol_and_allows_a_truthful_retry() {
+        let protocol = Arc::new(CountingProtocol(AtomicUsize::new(0)));
+        let sink = Arc::new(CountingSink(AtomicUsize::new(0)));
+        let activity = Arc::new(CredentialIssuanceActivityStore::new());
+        let service = CredentialIssuanceService::with_authority_and_activity(
+            protocol.clone(),
+            sink.clone(),
+            issuance_authority(),
+            Arc::clone(&activity),
+        );
+        let prepared = prepare(&service);
+        let pending = Session {
+            profile_id: ProtocolProfileId::parse("profile_1").expect("valid profile"),
+            preview: CredentialOfferPreview::new(
+                "https://issuer.example",
+                vec!["identity".to_owned()],
+                vec!["Identity credential".to_owned()],
+            )
+            .expect("valid preview"),
+            state: CredentialIssuanceState::Issuing,
+            credential_id: None,
+            failure_code: None,
+            refusal_in_progress: false,
+            protocol_discarded: false,
+        };
+        for index in 0..MAX_CREDENTIAL_ISSUANCE_ACTIVITY_RECORDS {
+            let id =
+                CredentialIssuanceId::parse(format!("pending_{index}")).expect("valid fixture id");
+            assert!(activity.begin(&id, &pending).is_some());
+        }
+        let accept = || {
+            futures_lite(AcceptCredentialIssuanceUseCase::execute(
+                &service,
+                AcceptCredentialIssuanceCommand {
+                    profile_id: "profile_1".to_owned(),
+                    issuance_id: prepared.id.clone(),
+                    holder_did: HOLDER_DID.to_owned(),
+                    method_id: format!("{HOLDER_DID}#auth-1"),
+                    holder_binding_method_id: format!("{HOLDER_DID}#holder-jubjub-1"),
+                    confirmed: true,
+                    intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
+                },
+            ))
+        };
+        assert_eq!(accept(), Err(CredentialIssuanceError::Unavailable));
+        assert_eq!(accept(), Err(CredentialIssuanceError::Unavailable));
+        assert_eq!(protocol.0.load(Ordering::Relaxed), 0);
+        assert_eq!(sink.0.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            GetCredentialIssuanceUseCase::execute(
+                &service,
+                CredentialIssuanceQuery {
+                    profile_id: "profile_1".to_owned(),
+                    issuance_id: prepared.id.clone(),
+                },
+            )
+            .expect("consent session remains retryable")
+            .state,
+            "awaiting_consent"
+        );
+        let first = CredentialIssuanceId::parse("pending_0").expect("valid fixture id");
+        activity.update(&first, CredentialIssuanceActivityStatus::Stored);
+        assert_eq!(
+            accept(),
+            Err(CredentialIssuanceError::Protocol(
+                IssuanceProtocolError::IssuerRejected
+            ))
+        );
+        assert_eq!(protocol.0.load(Ordering::Relaxed), 1);
+        assert_eq!(sink.0.load(Ordering::Relaxed), 0);
+        assert!(
+            activity
+                .execute("profile_1".to_owned())
+                .expect("bounded projection")
+                .records
+                .iter()
+                .any(|record| record.status == CredentialIssuanceActivityStatus::Failed)
+        );
+    }
+
+    #[test]
     fn terminal_session_retention_is_bounded_without_evicting_unknown_outcomes() {
         let preview = CredentialOfferPreview::new(
             "https://issuer.example",
