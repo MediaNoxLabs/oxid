@@ -7689,7 +7689,10 @@ fn discard_open_credential_issuance_reviews(
     };
     for review in reviews {
         match review.state.as_str() {
-            "awaiting_consent" => {
+            "awaiting_consent" | "failed" | "outcome_unknown" => {
+                // The refusal use case performs an idempotent local protocol
+                // discard. For failed and uncertain sessions it preserves the
+                // historical outcome rather than rewriting it as refused.
                 match refuse_service.execute(RefuseCredentialIssuanceCommand {
                     profile_id: profile_id.to_owned(),
                     issuance_id: review.id,
@@ -7699,7 +7702,7 @@ fn discard_open_credential_issuance_reviews(
                     Err(error) => return Err(credential_issuance_message(error)),
                 }
             }
-            "failed" | "refused" | "succeeded" | "outcome_unknown" => {}
+            "refused" | "succeeded" => {}
             _ => {
                 return Err(
                     "Credential cleanup is still in progress. Retry after it finishes.".to_owned(),
@@ -10674,6 +10677,91 @@ mod tests {
         assert_eq!(
             discard_open_credential_issuance_reviews(&AwaitingList, &MissingRefusal, "profile-1"),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn leave_review_discards_failed_and_unknown_issuances_once_and_reports_errors() {
+        fn review(id: &str, state: &str) -> CredentialIssuanceView {
+            CredentialIssuanceView {
+                id: id.to_owned(),
+                issuer: "https://issuer.example".to_owned(),
+                configuration_ids: vec!["DigitalPassport".to_owned()],
+                display_names: vec!["Digital Passport".to_owned()],
+                state: state.to_owned(),
+                credential_id: None,
+                failure_code: None,
+            }
+        }
+
+        struct TerminalList;
+        impl ListCredentialIssuancesUseCase for TerminalList {
+            fn execute(
+                &self,
+                _: CredentialIssuanceProfileQuery,
+            ) -> Result<Vec<CredentialIssuanceView>, CredentialIssuanceError> {
+                Ok(vec![
+                    review("issuance-failed", "failed"),
+                    review("issuance-unknown", "outcome_unknown"),
+                    review("issuance-refused", "refused"),
+                    review("issuance-succeeded", "succeeded"),
+                ])
+            }
+        }
+
+        struct RecordingRefusal {
+            calls: std::sync::Mutex<Vec<String>>,
+            fail: bool,
+        }
+        impl RefuseCredentialIssuanceUseCase for RecordingRefusal {
+            fn execute(
+                &self,
+                command: RefuseCredentialIssuanceCommand,
+            ) -> Result<CredentialIssuanceView, CredentialIssuanceError> {
+                self.calls
+                    .lock()
+                    .expect("test refusal calls")
+                    .push(command.issuance_id.clone());
+                if self.fail {
+                    return Err(CredentialIssuanceError::InvalidState);
+                }
+                let state = if command.issuance_id == "issuance-failed" {
+                    "failed"
+                } else {
+                    "outcome_unknown"
+                };
+                Ok(review(&command.issuance_id, state))
+            }
+        }
+
+        let refusal = RecordingRefusal {
+            calls: std::sync::Mutex::new(Vec::new()),
+            fail: false,
+        };
+        assert_eq!(
+            discard_open_credential_issuance_reviews(&TerminalList, &refusal, "profile-1"),
+            Ok(())
+        );
+        assert_eq!(
+            *refusal.calls.lock().expect("test refusal calls"),
+            ["issuance-failed", "issuance-unknown"],
+            "terminal historical states use the idempotent refusal path exactly once"
+        );
+
+        let failing_refusal = RecordingRefusal {
+            calls: std::sync::Mutex::new(Vec::new()),
+            fail: true,
+        };
+        assert_eq!(
+            discard_open_credential_issuance_reviews(&TerminalList, &failing_refusal, "profile-1"),
+            Err(credential_issuance_message(
+                CredentialIssuanceError::InvalidState
+            ))
+        );
+        assert_eq!(
+            *failing_refusal.calls.lock().expect("test refusal calls"),
+            ["issuance-failed"],
+            "cleanup stops and surfaces refusal failures"
         );
     }
 

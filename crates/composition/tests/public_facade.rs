@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use futures::executor::block_on;
 use oxid_composition::*;
+use oxid_protocol_application::{
+    CredentialIssuanceActivityFinality, CredentialIssuanceActivityStatus,
+    PrepareCredentialIssuanceCommand, RefuseCredentialIssuanceCommand,
+};
 use std::sync::Arc;
 
 fn assert_clone<T: Clone>() {}
@@ -131,6 +136,35 @@ fn headless_issuance_activity_uses_one_application_projection() {
         .expect("headless activity projection");
     assert!(view.records.is_empty());
     assert_eq!(view.source, "application_event_projection");
+
+    let prepared = block_on(services.prepare_credential_issuance().execute(
+        PrepareCredentialIssuanceCommand {
+            profile_id: "profile_1".to_owned(),
+            offer: standalone_oid4vci_offer(),
+        },
+    ))
+    .expect("composed issuance preparation");
+    services
+        .refuse_credential_issuance()
+        .execute(RefuseCredentialIssuanceCommand {
+            profile_id: "profile_1".to_owned(),
+            issuance_id: prepared.id,
+        })
+        .expect("composed issuance refusal");
+
+    let activity = services
+        .list_credential_issuance_activity()
+        .execute("profile_1".to_owned())
+        .expect("composed activity projection");
+    assert_eq!(activity.records.len(), 1);
+    assert_eq!(
+        activity.records[0].status,
+        CredentialIssuanceActivityStatus::Refused
+    );
+    assert_eq!(
+        activity.records[0].finality,
+        CredentialIssuanceActivityFinality::Final
+    );
 }
 
 #[test]

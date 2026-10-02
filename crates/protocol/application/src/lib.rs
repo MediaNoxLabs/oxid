@@ -990,10 +990,6 @@ impl CredentialIssuanceService {
             .map_err(|_| CredentialIssuanceError::Unavailable)
     }
 
-    fn fail(&self, id: &CredentialIssuanceId, code: &str) {
-        self.fail_if_issuing(id, code);
-    }
-
     fn fail_if_issuing(&self, id: &CredentialIssuanceId, code: &str) {
         if let Ok(mut sessions) = self.sessions.lock()
             && let Some(session) = sessions.get_mut(id)
@@ -1136,7 +1132,7 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
                     if error == IssuanceProtocolError::Unavailable {
                         self.unknown_if_issuing(&issuance_id, error.code());
                     } else {
-                        self.fail(&issuance_id, error.code());
+                        self.fail_if_issuing(&issuance_id, error.code());
                     }
                     return Err(CredentialIssuanceError::Protocol(error));
                 }
@@ -1170,7 +1166,7 @@ impl AcceptCredentialIssuanceUseCase for CredentialIssuanceService {
                     ) {
                         self.unknown_if_issuing(&issuance_id, code);
                     } else {
-                        self.fail(&issuance_id, code);
+                        self.fail_if_issuing(&issuance_id, code);
                     }
                     return Err(CredentialIssuanceError::Sink(error));
                 }
