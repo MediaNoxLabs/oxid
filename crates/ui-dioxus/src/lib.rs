@@ -109,8 +109,8 @@ use oxid_passport_vault_application::{
     WithdrawPassportVaultLockUseCase,
 };
 use oxid_platform_ports::{
-    IdentityLinkIngressError, IdentityLinkIngressPort, PublicReceiveAddress, PublicTextExportPort,
-    QrScanError, QrScannerPort, ScreenPrivacyPort,
+    IdentityLinkIngressError, IdentityLinkIngressPort, PublicDid, PublicReceiveAddress,
+    PublicTextExportError, PublicTextExportPort, QrScanError, QrScannerPort, ScreenPrivacyPort,
 };
 #[cfg(feature = "proof-benchmark")]
 use oxid_platform_ports::{ProcessResourceSamplerPort, UnavailableProcessResourceSampler};
