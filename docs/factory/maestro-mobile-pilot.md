@@ -25,9 +25,9 @@ simulator lifecycle instead of supplying an ambient device:
 The runner creates an iPhone SE (3rd generation), builds or reuses and deploys the exact
 clean-head receipt, runs every safe inventory-owned iOS scenario with
 `canonical-holder-evidence` last, and deletes the receipt-owned simulator. It retains only the
-eight canonical holder screenshots, two public developer-banner screenshots, the newest
-bounded 200-line Maestro tail, and a
-machine-readable receipt below ignored
+eight canonical holder screenshots, two public developer-banner screenshots, one bounded
+200-line Maestro tail per executed scenario when available, a scenario-to-artifact manifest at
+`scenarios/manifest.jsonl`, and a machine-readable receipt that references that manifest below ignored
 `target/mobile-visual-accessibility/ios-run-<head>-<started-at>/`. Raw per-device
 Maestro/XCTest logs and diagnostics are deleted after collection, including on
 failure. The receipt records duration, retry-independent outcome, public bytes,

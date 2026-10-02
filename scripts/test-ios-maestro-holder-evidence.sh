@@ -24,20 +24,29 @@ raw_artifacts_removed=false
 runtime_version="unknown"
 
 collect_public_artifacts() {
-  local raw_root latest log_file screenshot source
+  local scenario="$1" raw_root latest log_file screenshot source source_key scenario_root
   [ -n "$DEVICE" ] || return 0
   raw_root="$ROOT/target/mobile-visual-accessibility/ios/$DEVICE"
   if [ ! -d "$raw_root" ]; then raw_artifacts_removed=true; return 0; fi
+  scenario_root="$RUN_ROOT/scenarios/$scenario"
   latest="$(find "$raw_root" -name manifest.json -type f -print 2>/dev/null | sort | tail -1)"
   if [ -n "$latest" ]; then
     latest="$(dirname "$latest")"
-    mkdir -p "$RUN_ROOT/screenshots"
     while IFS= read -r source; do
-      screenshot="$(basename "$source")"
-      cp -- "$source" "$RUN_ROOT/screenshots/$screenshot"
+      source_key="$(shasum -a 256 "$source" | awk '{print substr($1, 1, 16)}')"
+      screenshot="${source_key}-$(basename "$source")"
+      mkdir -p "$scenario_root/screenshots"
+      cp -- "$source" "$scenario_root/screenshots/$screenshot"
+      jq -cn --arg scenario "$scenario" --arg artifact "scenarios/$scenario/screenshots/$screenshot" \
+        '{scenario:$scenario,artifact:$artifact,kind:"screenshot"}' >>"$RUN_ROOT/scenarios/manifest.jsonl"
     done < <(find "$raw_root" -type f \( -name 'lunar-aegis-ios-*.png' -o -name 'developer-profile-banner-*.png' \) -print 2>/dev/null | sort)
     log_file="$latest/logs/maestro.log"
-    [ ! -f "$log_file" ] || tail -n 200 "$log_file" >"$RUN_ROOT/maestro-tail.log"
+    if [ -f "$log_file" ]; then
+      mkdir -p "$scenario_root"
+      tail -n 200 "$log_file" >"$scenario_root/maestro-tail.log"
+      jq -cn --arg scenario "$scenario" --arg artifact "scenarios/$scenario/maestro-tail.log" \
+        '{scenario:$scenario,artifact:$artifact,kind:"bounded-log"}' >>"$RUN_ROOT/scenarios/manifest.jsonl"
+    fi
   fi
   rm -rf -- "$raw_root"
   raw_artifacts_removed=true
@@ -47,7 +56,7 @@ cleanup() {
   local status=$? finished_at duration artifact_bytes screenshot_count artifact_file artifact_size outcomes
   trap - EXIT INT TERM HUP
   set +e
-  collect_public_artifacts
+  collect_public_artifacts "${scenario:-cleanup}"
   if [ "$owned" = 1 ]; then oxid_ios_delete_owned "$DEVELOPER_DIR" "$RECEIPT" >/dev/null && cleanup_ok=true; else cleanup_ok=true; fi
   finished_at="$(date +%s)"
   duration=$((finished_at - STARTED_AT))
@@ -65,7 +74,7 @@ cleanup() {
     --argjson bytes "$artifact_bytes" --argjson screenshots "$screenshot_count" \
     --argjson passed "$( [ "$status" -eq 0 ] && printf true || printf false )" \
     --argjson cleaned "$cleanup_ok" --argjson rawRemoved "$raw_artifacts_removed" --argjson scenario_outcomes "$outcomes" \
-    '{schema:"oxid-ios-maestro-evidence-v2",oxid:{head:$head},platform:{kind:"ios_simulator",viewport:"375-pt-class",deviceType:"iPhone SE (3rd generation)",udid:$device,runtime:$runtime},outcome:{passed:$passed,startedAtUnix:$started,finishedAtUnix:$finished,durationSeconds:$duration,scenarios:$scenario_outcomes},artifacts:{publicBytes:$bytes,screenshotCount:$screenshots,boundedLog:"maestro-tail.log"},cleanup:{receiptOwnedSimulator:true,privateDiagnosticsRemoved:$cleaned,rawArtifactsRemoved:$rawRemoved}}' >"$METRICS"
+    '{schema:"oxid-ios-maestro-evidence-v2",oxid:{head:$head},platform:{kind:"ios_simulator",viewport:"375-pt-class",deviceType:"iPhone SE (3rd generation)",udid:$device,runtime:$runtime},outcome:{passed:$passed,startedAtUnix:$started,finishedAtUnix:$finished,durationSeconds:$duration,scenarios:$scenario_outcomes},artifacts:{publicBytes:$bytes,screenshotCount:$screenshots,manifest:"scenarios/manifest.jsonl"},cleanup:{receiptOwnedSimulator:true,privateDiagnosticsRemoved:$cleaned,rawArtifactsRemoved:$rawRemoved}}' >"$METRICS"
   chmod 644 "$METRICS"
   [ "$cleanup_ok" = true ] && rm -rf -- "$PRIVATE_ROOT"
   exit "$status"
@@ -76,7 +85,7 @@ fail() { printf 'ios-maestro-holder-evidence: FAIL %s\n' "$1" >&2; exit 1; }
 [ "$(uname -s)" = Darwin ] || fail platform
 [ -z "${OXID_IOS_DEVICE:-}" ] || fail ambient-device-selector
 [ -z "$(git -C "$ROOT" status --porcelain)" ] || fail dirty-source
-for command in jq nix node rustup timeout; do command -v "$command" >/dev/null 2>&1 || fail "missing-$command"; done
+for command in jq nix node rustup shasum timeout; do command -v "$command" >/dev/null 2>&1 || fail "missing-$command"; done
 
 DEVELOPER_DIR="${OXID_XCODE_DEVELOPER_DIR:-$(env -u DEVELOPER_DIR /usr/bin/xcode-select -p)}"
 RUNTIME_ID="${OXID_IOS_RUNTIME_ID:-com.apple.CoreSimulator.SimRuntime.iOS-17-5}"
@@ -88,6 +97,8 @@ runtime_version="$(
 )" || fail runtime
 mkdir -p "$RUN_ROOT" || fail evidence-root
 mkdir -m 700 "$PRIVATE_ROOT" || fail private-root
+mkdir -p "$RUN_ROOT/scenarios" || fail scenario-root
+: >"$RUN_ROOT/scenarios/manifest.jsonl" || fail scenario-manifest
 DEVICE="$(oxid_ios_create_owned "$DEVELOPER_DIR" "$RUNTIME_ID" "$DEVICE_TYPE" "oxid-maestro-${HEAD:0:12}" "$RECEIPT")" || fail simulator-create
 owned=1
 chmod 600 "$RECEIPT" || fail receipt-mode
@@ -105,8 +116,10 @@ done < <(jq -r '
 scenarios+=(canonical-holder-evidence)
 for scenario in "${scenarios[@]}"; do
   if OXID_IOS_DEVICE="$DEVICE" OXID_XCODE_DEVELOPER_DIR="$DEVELOPER_DIR" "$ROOT/scripts/run-maestro-ios.sh" --composition "$(jq -r --arg id "$scenario" '.scenarios[] | select(.id == $id) | .composition' "$ROOT/tests/maestro/inventory.json")" --flow "$scenario"; then
+    collect_public_artifacts "$scenario"
     jq -cn --arg id "$scenario" '{id:$id,outcome:"passed"}' >>"$OUTCOMES"
   else
+    collect_public_artifacts "$scenario"
     jq -cn --arg id "$scenario" '{id:$id,outcome:"failed"}' >>"$OUTCOMES"
     fail "maestro-$scenario"
   fi
