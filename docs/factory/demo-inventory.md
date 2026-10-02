@@ -52,6 +52,32 @@ cadence/evidence values, and scenarios without test mappings. Live, expensive
 or physical evidence remains on its declared cadence; it is not a universal PR
 gate.
 
+## Approved 0.2.0 product journeys
+
+The approved product map adds sixteen owner-facing use cases without replacing
+the lower-level executable inventory: onboarding, recovery, profile/realm
+switching, automatic reconciliation, receive/fund NIGHT, send NIGHT, DID
+inventory/creation, DID detail/maintenance, OID4VCI issuance, credential
+inventory/detail, OID4VP presentation, SIOPv2 authentication,
+activity/transaction detail, security/backup settings, Passport Vault, and
+development diagnostics.
+
+They compose into five ordered journeys:
+
+1. `journey-new-wallet-first-night-transfer`
+2. `journey-realm-profile-resilience`
+3. `journey-did-to-issued-credential`
+4. `journey-presentation-and-authentication`
+5. `journey-passport-vault-readiness`
+
+Those journeys compose three reviewable products: `oxid-wallet-essentials`,
+`oxid-identity-wallet`, and `oxid-passport`. The inventory deliberately records
+their default targets as **unsupported; planned** until one exact target has
+complete commands, health checks, cleanup, and evidence. `/scenario prepare`
+therefore reports the gap instead of converting scattered component evidence
+into a false end-to-end claim. A follow-up UI or Maestro slice promotes only
+the journey it actually makes repeatable.
+
 ## Native transport trust readiness
 
 `transportTrustReadiness` is a closed, payload-free release-evidence manifest.

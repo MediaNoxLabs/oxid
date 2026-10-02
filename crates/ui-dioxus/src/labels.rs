@@ -288,12 +288,15 @@ pub(crate) fn key_curve(value: &str) -> &'static str {
 
 pub(crate) fn review_state(value: &str) -> &'static str {
     match value {
+        "idle" => "idle",
         "awaiting_consent" => "awaiting-consent",
         "authenticating" | "issuing" | "presenting" | "cancellation_requested" => "in-progress",
         "succeeded" => "succeeded",
-        "cancelled" | "refused" | "timed_out" => "closed",
+        "cancelled" => "cancelled",
+        "refused" => "refused",
+        "timed_out" => "timed-out",
         "failed" => "failed",
-        _ => "idle",
+        _ => "unknown",
     }
 }
 
@@ -785,6 +788,9 @@ mod tests {
         assert_eq!(midnight_network("preview"), "Preview");
         assert_eq!(review_state("awaiting_consent"), "awaiting-consent");
         assert_eq!(review_state("presenting"), "in-progress");
-        assert_eq!(review_state("unexpected"), "idle");
+        assert_eq!(review_state("cancelled"), "cancelled");
+        assert_eq!(review_state("refused"), "refused");
+        assert_eq!(review_state("timed_out"), "timed-out");
+        assert_eq!(review_state("unexpected"), "unknown");
     }
 }

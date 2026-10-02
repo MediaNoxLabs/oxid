@@ -115,6 +115,15 @@
       "icon": "assets/icons/activity.svg"
     }
   ],
+  "brandIcons": {
+    "status": "owner-approved-after-source-snapshot",
+    "mark": "../../brands/oxid/assets/logo.svg",
+    "dark": "../../brands/oxid/assets/app-icon-dark.svg",
+    "light": "../../brands/oxid/assets/app-icon-light.svg",
+    "android": "../../brands/oxid/assets/app-icon-android.svg",
+    "desktop": "../../brands/oxid/assets/desktop-icon.svg",
+    "guide": "brand-icons.md"
+  },
   "screens": {
     "manifest": "screens/manifest.json",
     "flow": "flow.json"

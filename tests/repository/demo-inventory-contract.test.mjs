@@ -194,6 +194,35 @@ test("inventory records closed native transport trust readiness without sensitiv
   assert.doesNotMatch(publishedEvidence, /(?:\d{1,3}\.){3}\d{1,3}/u);
 });
 
+test("inventory records the approved 0.2.0 product journeys without claiming unfinished execution", () => {
+  const inventory = loadInventory();
+  const approvedUseCases = [
+    "fresh-wallet-onboarding", "wallet-recovery", "profile-and-realm-switching",
+    "automatic-account-reconciliation", "receive-and-fund-night", "send-night",
+    "did-inventory-and-creation", "did-details-and-maintenance", "oid4vci-issuance",
+    "credential-inventory-and-details", "oid4vp-presentation", "siopv2-authentication",
+    "activity-and-transaction-detail", "security-and-backup-settings",
+    "passport-vault-journey", "developer-diagnostics",
+  ];
+  const approvedScenarios = [
+    "journey-new-wallet-first-night-transfer", "journey-realm-profile-resilience",
+    "journey-did-to-issued-credential", "journey-presentation-and-authentication",
+    "journey-passport-vault-readiness",
+  ];
+  const approvedDemos = ["oxid-wallet-essentials", "oxid-identity-wallet", "oxid-passport"];
+
+  assert.deepEqual(approvedUseCases.filter((id) => !inventory.useCases.some((useCase) => useCase.id === id)), []);
+  assert.deepEqual(approvedScenarios.filter((id) => !inventory.scenarios.some((scenario) => scenario.id === id)), []);
+  assert.deepEqual(approvedDemos.filter((id) => !inventory.demos.some((demo) => demo.id === id)), []);
+
+  for (const scenarioId of approvedScenarios) {
+    const scenario = inventory.scenarios.find(({ id }) => id === scenarioId);
+    assert.equal(scenario.evidenceClass, "planned");
+    assert.equal(scenario.testMapping.status, "planned");
+    assert.match(renderPreparationBrief(inventory, scenarioId), /Target: .+ \(unsupported; planned\)/u);
+  }
+});
+
 test("validator rejects broken references, unsafe operations, and invalid evidence contracts", () => {
   const valid = loadInventory();
   const cases = [
@@ -207,6 +236,10 @@ test("validator rejects broken references, unsafe operations, and invalid eviden
     ["invalid evidence", (inventory) => { inventory.scenarios[0].evidenceClass = "live"; }, /invalid evidence|schema enum/u],
     ["invalid target evidence", (inventory) => { inventory.scenarios[0].targetPlans[0].evidenceClass = "live"; }, /invalid evidence class|schema enum/u],
     ["unsupported default target", (inventory) => { inventory.scenarios[0].defaultTargetId = "ios-physical"; }, /default target must be supported/u],
+    ["planned target without planned evidence", (inventory) => {
+      const scenario = inventory.scenarios.find(({ id }) => id === "journey-new-wallet-first-night-transfer");
+      scenario.targetPlans[0].evidenceClass = "diagnostic";
+    }, /planned default target must use planned evidence/u],
     ["wrong command phase", (inventory) => { inventory.scenarios[0].targetPlans[0].commandIds.build = ["desktop-run"]; }, /from phase 'run'/u],
     ["missing test mapping", (inventory) => { delete inventory.scenarios[0].testMapping; }, /missing a test mapping|schema required property 'testMapping'/u],
     ["unknown schema property", (inventory) => { inventory.products[0].unpublished = true; }, /schema.*additional property|additional property.*schema/u],
