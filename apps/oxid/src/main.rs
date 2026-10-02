@@ -579,6 +579,7 @@ fn main() {
                     application.accept_credential_issuance(),
                     application.refuse_credential_issuance(),
                     application.list_credential_issuances(),
+                    application.list_credential_issuance_activity(),
                     standalone_credential_offer,
                     credential_issuance_ready,
                 ),

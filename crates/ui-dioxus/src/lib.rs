@@ -38,7 +38,10 @@ pub use wallet_realm_sync_services::{WalletAccountUiServices, WalletRealmSyncUiS
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
 
-use activity_page::{PassportVaultActivityCard, VaultActivityPageState};
+use activity_page::{
+    CredentialIssuanceActivityCard, CredentialIssuanceActivityPageState, PassportVaultActivityCard,
+    VaultActivityPageState,
+};
 #[cfg(target_os = "android")]
 pub use android_platform::{AndroidPlatformInitialization, App};
 use assets_page::AssetsPage;
@@ -128,13 +131,13 @@ use oxid_protocol_application::{
     AcceptCredentialIssuanceCommand, AcceptCredentialIssuanceUseCase,
     AcceptSelfIssuedAuthenticationCommand, AcceptSelfIssuedAuthenticationUseCase,
     CredentialIssuanceError, CredentialIssuanceProfileQuery, CredentialIssuanceView,
-    IdentityRequestKind, IdentityRequestRoutingError, ListCredentialIssuancesUseCase,
-    PrepareCredentialIssuanceCommand, PrepareCredentialIssuanceUseCase,
-    PrepareSelfIssuedAuthenticationCommand, PrepareSelfIssuedAuthenticationUseCase,
-    RefuseCredentialIssuanceCommand, RefuseCredentialIssuanceUseCase,
-    RefuseSelfIssuedAuthenticationCommand, RefuseSelfIssuedAuthenticationUseCase,
-    RouteIdentityRequestCommand, RouteIdentityRequestUseCase, SelfIssuedAuthenticationError,
-    SelfIssuedAuthenticationView,
+    IdentityRequestKind, IdentityRequestRoutingError, ListCredentialIssuanceActivityUseCase,
+    ListCredentialIssuancesUseCase, PrepareCredentialIssuanceCommand,
+    PrepareCredentialIssuanceUseCase, PrepareSelfIssuedAuthenticationCommand,
+    PrepareSelfIssuedAuthenticationUseCase, RefuseCredentialIssuanceCommand,
+    RefuseCredentialIssuanceUseCase, RefuseSelfIssuedAuthenticationCommand,
+    RefuseSelfIssuedAuthenticationUseCase, RouteIdentityRequestCommand,
+    RouteIdentityRequestUseCase, SelfIssuedAuthenticationError, SelfIssuedAuthenticationView,
 };
 #[cfg(feature = "proof-benchmark")]
 use oxid_wallet_application::RunProofBenchmarkUseCase;
@@ -381,6 +384,7 @@ pub struct WalletUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
+    list_credential_issuance_activity: Arc<dyn ListCredentialIssuanceActivityUseCase>,
     standalone_credential_offer: Option<String>,
     credential_issuance_ready: bool,
     prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
@@ -488,6 +492,7 @@ pub struct CredentialUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
+    list_credential_issuance_activity: Arc<dyn ListCredentialIssuanceActivityUseCase>,
     standalone_credential_offer: Option<String>,
     credential_issuance_ready: bool,
     prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
@@ -531,6 +536,7 @@ pub struct CredentialIssuanceUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
+    list_credential_issuance_activity: Arc<dyn ListCredentialIssuanceActivityUseCase>,
     standalone_credential_offer: Option<String>,
     credential_issuance_ready: bool,
 }
@@ -617,6 +623,7 @@ impl CredentialIssuanceUiServices {
         accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
         refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
         list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
+        list_credential_issuance_activity: Arc<dyn ListCredentialIssuanceActivityUseCase>,
         standalone_credential_offer: Option<String>,
         credential_issuance_ready: bool,
     ) -> Self {
@@ -625,6 +632,7 @@ impl CredentialIssuanceUiServices {
             accept_credential_issuance,
             refuse_credential_issuance,
             list_credential_issuances,
+            list_credential_issuance_activity,
             standalone_credential_offer,
             credential_issuance_ready,
         }
@@ -652,6 +660,7 @@ impl CredentialUiServices {
             accept_credential_issuance: issuance.accept_credential_issuance,
             refuse_credential_issuance: issuance.refuse_credential_issuance,
             list_credential_issuances: issuance.list_credential_issuances,
+            list_credential_issuance_activity: issuance.list_credential_issuance_activity,
             standalone_credential_offer: issuance.standalone_credential_offer,
             credential_issuance_ready: issuance.credential_issuance_ready,
             prepare_credential_presentation: presentation.prepare,
@@ -1109,6 +1118,7 @@ impl WalletUiServices {
             accept_credential_issuance: credentials.accept_credential_issuance,
             refuse_credential_issuance: credentials.refuse_credential_issuance,
             list_credential_issuances: credentials.list_credential_issuances,
+            list_credential_issuance_activity: credentials.list_credential_issuance_activity,
             standalone_credential_offer: credentials.standalone_credential_offer,
             credential_issuance_ready: credentials.credential_issuance_ready,
             prepare_credential_presentation: credentials.prepare_credential_presentation,
@@ -1487,6 +1497,13 @@ impl WalletUiServices {
     #[must_use]
     pub fn list_credential_issuances(&self) -> Arc<dyn ListCredentialIssuancesUseCase> {
         Arc::clone(&self.list_credential_issuances)
+    }
+
+    #[must_use]
+    pub fn list_credential_issuance_activity(
+        &self,
+    ) -> Arc<dyn ListCredentialIssuanceActivityUseCase> {
+        Arc::clone(&self.list_credential_issuance_activity)
     }
 
     #[must_use]
@@ -5722,6 +5739,8 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
     let services = consume_context::<WalletUiServices>();
     let mut state = use_signal(|| AccountPageState::Loading);
     let mut vault_activity = use_signal(|| VaultActivityPageState::Loading);
+    let mut credential_issuance_activity =
+        use_signal(|| CredentialIssuanceActivityPageState::Loading);
     let profile_id = active_profile.id.clone();
     let services_for_load = services.clone();
     use_effect(move || {
@@ -5756,12 +5775,37 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
             );
         });
     });
+    let issuance_activity_service = services.list_credential_issuance_activity();
+    let issuance_activity_profile = active_profile.id.clone();
+    use_effect(move || {
+        let service = issuance_activity_service.clone();
+        let profile_id = issuance_activity_profile.clone();
+        spawn(async move {
+            credential_issuance_activity.set(
+                run_ui_blocking(move || service.execute(profile_id))
+                    .await
+                    .map_or_else(
+                        |error| CredentialIssuanceActivityPageState::Unavailable(error.to_string()),
+                        |result| {
+                            result.map_or_else(
+                                |error| {
+                                    CredentialIssuanceActivityPageState::Unavailable(
+                                        error.to_string(),
+                                    )
+                                },
+                                CredentialIssuanceActivityPageState::Ready,
+                            )
+                        },
+                    ),
+            );
+        });
+    });
 
     let retry_profile_id = active_profile.id.clone();
     rsx! {
         section { class: "page-heading",
             p { class: "eyebrow", "Wallet history" }
-            p { "Midnight transfers, Passport Vault operations, and recoverable submissions appear here." }
+            p { "Midnight transfers, Passport Vault operations, credential issuance, and recoverable submissions appear here." }
         }
         match state.read().clone() {
             AccountPageState::Loading => rsx! {
@@ -5799,6 +5843,7 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
             },
         }
         PassportVaultActivityCard { state: vault_activity.read().clone() }
+        CredentialIssuanceActivityCard { state: credential_issuance_activity.read().clone() }
         SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
     }
 }
@@ -5809,10 +5854,11 @@ fn AccountActivityCard(account: WalletAccountView, unavailable: bool) -> Element
         article { class: "surface-card",
             p { class: "card-eyebrow", "Wallet activity" }
             h2 { "On-chain transfers" }
-            p { class: "activity-source-note", "Source: Midnight wallet account. Passport Vault operations are listed separately below." }
+            p { class: "activity-source-note", "Source: Midnight wallet account. Passport Vault and credential issuance activity are listed separately below." }
             div { class: "activity-filters", role: "group", aria_label: "Activity sources",
                 span { class: "status-pill", "Wallet" }
                 span { class: "status-pill", "Passport Vault" }
+                span { class: "status-pill", "Credential issuance" }
             }
             if account.transactions.is_empty() {
                 p { class: "activity-empty-state",
