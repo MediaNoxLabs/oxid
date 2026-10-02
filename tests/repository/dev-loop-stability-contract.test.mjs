@@ -20,6 +20,7 @@ import {
   resolveDevLoopsPackageRoot,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
+import { bindPackageGithubRepository } from "../../scripts/lib/dev-loop-package-script.mjs";
 import { bindIssueReadRepository } from "../../scripts/github/view-issue.mjs";
 import {
   bindEnvelopeRepositoryIdentity,
@@ -1037,6 +1038,15 @@ test("issue-read wrapper derives origin and refuses a stale repository before di
   assert.deepEqual(bindIssueReadRepository(["--repo", "example/foreign", "--issue", "1"], null),
     ["--repo", "example/foreign", "--issue", "1"]);
   assert.throws(() => bindIssueReadRepository(["--issue", "1"], null), /refusing to infer a repository/u);
+});
+
+test("sanctioned package GitHub commands bind to origin before dispatch", () => {
+  assert.deepEqual(bindPackageGithubRepository(["--pr", "956"], "MediaNoxLabs/oxid"),
+    ["--pr", "956", "--repo", "MediaNoxLabs/oxid"]);
+  assert.throws(() => bindPackageGithubRepository(["--repo", "input-output-hk/oxid", "--pr", "956"],
+    "MediaNoxLabs/oxid"), /disagrees with origin repository/u);
+  assert.deepEqual(bindPackageGithubRepository(["--repo", "foreign/repo", "--pr", "1"], null),
+    ["--repo", "foreign/repo", "--pr", "1"]);
 });
 
 test("repository wrappers force only the public PR-creation and managed-worktree routes", () => {
