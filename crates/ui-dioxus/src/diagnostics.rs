@@ -280,16 +280,18 @@ fn project_event_log(
         .collect()
 }
 
-const fn diagnostic_view_state(
-    state: &LocalDiagnosticsPageState,
-    visible_events: usize,
-) -> &'static str {
+fn diagnostic_view_state(state: &LocalDiagnosticsPageState, visible_events: usize) -> &'static str {
     match state {
         LocalDiagnosticsPageState::Loading => "loading",
         LocalDiagnosticsPageState::Failed => "error",
-        LocalDiagnosticsPageState::Ready(_) if visible_events == 0 => "empty",
+        LocalDiagnosticsPageState::Ready(snapshot) if snapshot.recent().is_empty() => "empty",
+        LocalDiagnosticsPageState::Ready(_) if visible_events == 0 => "filtered-empty",
         LocalDiagnosticsPageState::Ready(_) => "ready",
     }
+}
+
+fn has_retained_diagnostic_events(state: &LocalDiagnosticsPageState) -> bool {
+    matches!(state, LocalDiagnosticsPageState::Ready(snapshot) if !snapshot.recent().is_empty())
 }
 
 fn project_diagnostics(state: &LocalDiagnosticsPageState) -> DiagnosticsProjection {
@@ -449,6 +451,7 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
     let diagnostics_ready = diagnostic_projection.ready;
     let diagnostics_empty = diagnostic_projection.empty;
     let diagnostic_toolbar = diagnostic_event_toolbar_state(&diagnostic_state.read());
+    let has_retained_events = has_retained_diagnostic_events(&diagnostic_state.read());
     let diagnostic_events = project_event_log(
         &diagnostic_state.read(),
         show_info(),
@@ -539,6 +542,7 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
                     show_warnings,
                     show_errors,
                     event_query,
+                    has_retained_events,
                     key_prefix: "diagnostic-event",
                 }
             }
@@ -571,6 +575,7 @@ pub(super) fn DeveloperDiagnosticsPage() -> Element {
     });
 
     let projection = project_diagnostics(&diagnostic_state.read());
+    let has_retained_events = has_retained_diagnostic_events(&diagnostic_state.read());
     let events = project_event_log(
         &diagnostic_state.read(),
         show_info(),
@@ -633,6 +638,7 @@ pub(super) fn DeveloperDiagnosticsPage() -> Element {
                 show_warnings,
                 show_errors,
                 event_query,
+                has_retained_events,
                 key_prefix: "developer-diagnostic-event",
             }
             details { class: "diagnostic-operation-log",
@@ -669,6 +675,7 @@ fn DiagnosticEventFeed(
     mut show_warnings: Signal<bool>,
     mut show_errors: Signal<bool>,
     mut event_query: Signal<String>,
+    has_retained_events: bool,
     key_prefix: &'static str,
 ) -> Element {
     rsx! {
@@ -691,7 +698,11 @@ fn DiagnosticEventFeed(
             input { r#type: "search", value: "{event_query}", "data-action": "search-event-codes", placeholder: "midnight.dust", oninput: move |event| event_query.set(event.value()) }
         }
         if events.is_empty() && ready {
-            p { class: "field-hint", "No retained events match these filters." }
+            if has_retained_events {
+                p { class: "field-hint", "No retained events match these filters." }
+            } else {
+                p { class: "field-hint", "No events have been retained in this process." }
+            }
         }
         div { class: "diagnostic-grid",
             for event in events {
@@ -1094,6 +1105,10 @@ mod tests {
             "empty"
         );
         assert_eq!(
+            diagnostic_view_state(&LocalDiagnosticsPageState::Ready(populated_snapshot()), 0),
+            "filtered-empty"
+        );
+        assert_eq!(
             diagnostic_view_state(&LocalDiagnosticsPageState::Ready(populated_snapshot()), 1),
             "ready"
         );
@@ -1173,7 +1188,13 @@ mod tests {
         let error = project_event_log(&state, true, false, true, "error");
         assert_eq!(error.len(), 1);
         assert_eq!(error[0].sequence, 4);
-        assert!(project_event_log(&state, false, false, false, "").is_empty());
+        let filtered = project_event_log(&state, false, false, false, "");
+        assert!(filtered.is_empty());
+        assert_eq!(project_event_log(&state, true, true, true, ""), all);
+        let LocalDiagnosticsPageState::Ready(snapshot) = &state else {
+            unreachable!("test state is ready");
+        };
+        assert_eq!(snapshot.recent().len(), 2);
     }
 
     #[test]
