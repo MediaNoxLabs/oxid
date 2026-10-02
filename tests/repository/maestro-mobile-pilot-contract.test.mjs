@@ -125,6 +125,8 @@ test("platform wrappers admit only inventory-owned flows and reuse build receipt
   assert.match(android, /\^emulator-\[0-9\]\+\$/u);
   assert.match(android, /refusing non-emulator device/u);
   assert.match(android, /--device "\$OXID_ANDROID_DEVICE"/u);
+  assert.match(android, /run_phase maestro nix run \.#maestro -- test "\$flow"/u);
+  assert.doesNotMatch(android, /local maestro_pid=\$!|wait "\$maestro_pid"/u);
   for (const wrapper of [ios, android]) {
     assert.match(wrapper, /if \[ "\$status" -ne 0 \]; then[\s\S]*rm -rf -- "\$artifact_root"/u);
   }
@@ -171,6 +173,15 @@ test("mobile visual accessibility evidence preserves the scoped matrix and priva
   assert.match(iosRunner, /id != "canonical-holder-evidence"/u);
   assert.match(iosRunner, /scenarios\+=\(canonical-holder-evidence\)/u);
   assert.match(iosRunner, /scenario_outcomes/u);
+  assert.match(iosRunner, /scenarios\/\$scenario\/screenshots/u);
+  assert.match(iosRunner, /scenarios\/manifest\.jsonl/u);
+  assert.match(iosRunner, /for command in jq nix node rustup shasum timeout/u);
+  assert.match(iosRunner, /source_key="\$\(shasum -a 256 "\$source"/u);
+  assert.doesNotMatch(iosRunner, /printf '%s' "\$source" \| shasum/u);
+  assert.match(iosRunner, /while IFS= read -r source; do[\s\S]*mkdir -p "\$scenario_root\/screenshots"[\s\S]*done < <\(find/u);
+  assert.match(iosRunner, /manifest:"scenarios\/manifest\.jsonl"/u);
+  assert.doesNotMatch(iosRunner, /boundedLog:"maestro-tail\.log"/u);
+  assert.match(iosRunner, /collect_public_artifacts "\$scenario"/u);
   assert.match(androidRunner, /oxid-android-maestro-semantic-evidence-v1/u);
   assert.match(androidRunner, /emulator-\*/u);
   assert.match(androidRunner, /OXID_ANDROID_DISPOSABLE/u);
@@ -178,6 +189,9 @@ test("mobile visual accessibility evidence preserves the scoped matrix and priva
   assert.match(androidRunner, /rm -rf -- "\$artifact_root"/u);
   assert.match(androidRunner, /privateDiagnosticsRemoved:\$privateRemoved/u);
   assert.match(androidRunner, /"\$\{#scenarios\[@\]\}" -gt 0/u);
+  const passportVault = await read("tests/maestro/flows/passport-vault-entry.yaml");
+  assert.match(passportVault, /scrollUntilVisible:[\s\S]*text: "Open Passport Vault"[\s\S]*direction: LEFT/u);
+  assert.doesNotMatch(passportVault, /- swipe:/u);
   for (const state of [
     "Welcome and create-vs-restore fork",
     "Mandatory device-protection explanation",
