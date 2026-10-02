@@ -8,8 +8,8 @@ use oxid_ui_dioxus::{
     DiagnosticsUiServices, DidUiServices, IdentityIngressUiServices, IdentityUiServices,
     PassportVaultContractCallRecoveryUiServices, PassportVaultContractCallUiServices,
     PassportVaultUiServices, SecurityCopySnapshot, SelfIssuedAuthenticationUiServices,
-    WalletAccountUiServices, WalletBackupUiServices, WalletDustAuthorizationReview,
-    WalletDustSettlementUiServices, WalletDustSyncUiServices, WalletOperationalUiServices,
+    WalletAccountUiServices, WalletBackupUiServices, WalletDustSettlementUiServices,
+    WalletDustSyncUiServices, WalletOperationalUiServices,
     WalletProfileUiServices, WalletRealmSyncUiServices, WalletSecurityUiServices,
     WalletShieldedSyncUiServices, WalletTransactionPreparationUiServices,
     WalletTransactionRecoveryUiServices, WalletTransactionUiServices, WalletUiServices,
@@ -46,7 +46,6 @@ fn service_facade_type_and_constructor_paths_remain_at_the_crate_root() {
     assert_public_type::<WalletRealmSyncUiServices>();
     assert_public_type::<WalletDustSyncUiServices>();
     assert_public_type::<WalletDustSettlementUiServices>();
-    assert_public_type::<WalletDustAuthorizationReview>();
     assert_public_type::<WalletShieldedSyncUiServices>();
     assert_public_type::<WalletTransactionUiServices>();
     assert_public_type::<WalletTransactionPreparationUiServices>();
