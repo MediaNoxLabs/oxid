@@ -504,6 +504,11 @@ pub(super) fn dust_registration_error(
             "invalid_argument",
             "confirmation title and summary must be non-empty and bounded",
         ),
+        WalletDustRegistrationError::DevelopmentAuthorityUnavailable => Response::error(
+            id,
+            "capability_unavailable",
+            "automatic DUST registration is unavailable for this realm",
+        ),
         WalletDustRegistrationError::Approval(error) => {
             Response::error(id, "approval_unavailable", error.to_string())
         }
