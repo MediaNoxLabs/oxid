@@ -114,7 +114,7 @@ pub struct ProtocolPresentCredentialRequest {
     pub profile_id: PresentationProfileId,
     pub presentation_id: CredentialPresentationId,
     pub credential_id: String,
-    pub authority: Option<AcceptedCredentialPresentationFlow>,
+    pub authority: AcceptedCredentialPresentationFlow,
 }
 
 impl fmt::Debug for ProtocolPresentCredentialRequest {
@@ -124,7 +124,7 @@ impl fmt::Debug for ProtocolPresentCredentialRequest {
             .field("profile_id", &self.profile_id)
             .field("presentation_id", &self.presentation_id)
             .field("credential_id", &self.credential_id)
-            .field("authority", &self.authority.as_ref().map(|_| "[REDACTED]"))
+            .field("authority", &"[REDACTED]")
             .finish()
     }
 }
@@ -184,7 +184,7 @@ pub struct PresentationProofRequest {
     pub challenge_hash: [u8; 32],
     pub verifier_domain_hash: [u8; 32],
     pub requested_claims: Vec<RequestedPresentationClaim>,
-    pub authority: Option<AcceptedCredentialPresentationFlow>,
+    pub authority: AcceptedCredentialPresentationFlow,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -222,7 +222,7 @@ impl fmt::Debug for PresentationProofRequest {
             .field("credential_id", &self.credential_id)
             .field("verifier", &self.verifier)
             .field("requested_claim_count", &self.requested_claims.len())
-            .field("authority", &self.authority.as_ref().map(|_| "[REDACTED]"))
+            .field("authority", &"[REDACTED]")
             .finish_non_exhaustive()
     }
 }
@@ -849,7 +849,7 @@ impl AcceptCredentialPresentationUseCase for CredentialPresentationService {
                     profile_id,
                     presentation_id: presentation_id.clone(),
                     credential_id: command.credential_id,
-                    authority: Some(authority),
+                    authority,
                 })
                 .await
             {
