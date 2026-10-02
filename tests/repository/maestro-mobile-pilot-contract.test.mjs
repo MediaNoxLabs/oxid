@@ -190,8 +190,7 @@ test("mobile visual accessibility evidence preserves the scoped matrix and priva
   assert.match(androidRunner, /privateDiagnosticsRemoved:\$privateRemoved/u);
   assert.match(androidRunner, /"\$\{#scenarios\[@\]\}" -gt 0/u);
   const passportVault = await read("tests/maestro/flows/passport-vault-entry.yaml");
-  assert.match(passportVault, /scrollUntilVisible:[\s\S]*text: "Open Passport Vault"[\s\S]*direction: LEFT/u);
-  assert.doesNotMatch(passportVault, /- swipe:/u);
+  assert.match(passportVault, /- swipe:\n    direction: LEFT\n- swipe:\n    direction: LEFT\n- tapOn: "Open Passport Vault"/u);
   for (const state of [
     "Welcome and create-vs-restore fork",
     "Mandatory device-protection explanation",
