@@ -10,10 +10,22 @@ enum DidJourney {
     Detail(String),
 }
 
+fn did_journey_after_open(current: &DidJourney, requested: DidJourney) -> Option<DidJourney> {
+    if current == &requested {
+        None
+    } else {
+        Some(requested)
+    }
+}
+
 fn did_method_name(identifier: &str) -> &str {
     identifier
         .rsplit_once('#')
         .map_or(identifier, |(_, fragment)| fragment)
+}
+
+fn did_inventory_accessible_label(status: &str, management: &str, ordinal: usize) -> String {
+    format!("Open {status} {management} DID {ordinal} details")
 }
 
 #[component]
@@ -618,12 +630,11 @@ pub(super) fn DidsPage(
                 }
                 if active_journey == DidJourney::Inventory {
                     if records.is_empty() {
-                        article { class: "empty-state surface-card did-empty-state",
-                            "data-ui-primitive": "EmptyState",
-                            span { class: "empty-state__mark", aria_hidden: "true", "◇" }
-                            h2 { "No identities yet" }
-                            p { "Create a DID controlled by this wallet, or resolve an existing public DID." }
-                            span { class: "status-pill", "Profile and network scoped" }
+                        IdentityEmptyState {
+                            title: "No identities yet".to_owned(),
+                            description: "Create a DID controlled by this wallet, or resolve an existing public DID.".to_owned(),
+                            scope: "Profile and network scoped".to_owned(),
+                            class: "did-empty-state".to_owned(),
                         }
                     } else {
                         section { class: "did-inventory", aria_label: "Saved decentralized identifiers",
@@ -649,6 +660,8 @@ pub(super) fn DidsPage(
                                     } else {
                                         "did-inventory-card__status"
                                     };
+                                    let accessible_label =
+                                        did_inventory_accessible_label(status, management, ordinal);
                                     rsx! {
                                         button {
                                             class: "did-inventory-card",
@@ -656,10 +669,17 @@ pub(super) fn DidsPage(
                                             "data-testid": "identity-did-item-{index}",
                                             "data-ui-primitive": "IdentityCard",
                                             r#type: "button",
-                                            aria_label: "Open {status} {management} DID {ordinal} details",
+                                            aria_label: "{accessible_label}",
                                             onclick: {
                                                 let did = did.clone();
-                                                move |_| journey.set(DidJourney::Detail(did.clone()))
+                                                move |_| {
+                                                    if let Some(next) = did_journey_after_open(
+                                                        &journey(),
+                                                        DidJourney::Detail(did.clone()),
+                                                    ) {
+                                                        journey.set(next);
+                                                    }
+                                                }
                                             },
                                             span { class: "did-inventory-card__mark", aria_hidden: "true" }
                                             span { class: "did-inventory-card__body",
@@ -943,7 +963,10 @@ pub(super) fn DidsPage(
 
 #[cfg(test)]
 mod tests {
-    use super::{DidRefreshControl, did_method_name};
+    use super::{
+        DidJourney, DidRefreshControl, did_inventory_accessible_label, did_journey_after_open,
+        did_method_name,
+    };
     use dioxus::{
         dioxus_core::{AttributeValue, Mutation},
         prelude::*,
@@ -1016,7 +1039,7 @@ mod tests {
         assert!(source.contains("identity-did-item-{index}"));
         assert!(source.contains("data-review-state"));
         assert!(source.contains("did-inventory-card"));
-        assert!(source.contains("Open {status} {management} DID {ordinal} details"));
+        assert!(source.contains("did_inventory_accessible_label(status, management, ordinal)"));
         assert!(!source.contains("aria_label: \"Open DID details for {did}\""));
         assert!(source.contains("did-detail-hero"));
         assert!(source.contains("DID document details"));
@@ -1046,6 +1069,35 @@ mod tests {
             did_method_name("did:midnight:undeployed:alice"),
             "did:midnight:undeployed:alice"
         );
+    }
+
+    #[test]
+    fn identity_navigation_preserves_repeat_selection_and_opens_details() {
+        let inventory = DidJourney::Inventory;
+        assert!(did_journey_after_open(&inventory, DidJourney::Inventory).is_none());
+
+        let opened = did_journey_after_open(
+            &inventory,
+            DidJourney::Detail("did:midnight:undeployed:alice".to_owned()),
+        );
+        assert!(matches!(
+            opened,
+            Some(DidJourney::Detail(identifier))
+                if identifier == "did:midnight:undeployed:alice"
+        ));
+    }
+
+    #[test]
+    fn identity_focus_order_uses_privacy_safe_one_based_accessible_names() {
+        assert_eq!(
+            did_inventory_accessible_label("Active", "Managed", 1),
+            "Open Active Managed DID 1 details"
+        );
+        assert_eq!(
+            did_inventory_accessible_label("Observed", "Read only", 2),
+            "Open Observed Read only DID 2 details"
+        );
+        assert!(!did_inventory_accessible_label("Active", "Managed", 1).contains("did:midnight"));
     }
 
     #[test]

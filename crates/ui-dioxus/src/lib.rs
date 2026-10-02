@@ -19,6 +19,7 @@ mod developer_tools;
 mod diagnostics;
 mod dids;
 mod header_menu;
+mod identity_primitives;
 mod labels;
 mod passport_vault;
 mod profile_guard;
@@ -52,6 +53,7 @@ use developer_notices::{
 };
 pub use diagnostics::DiagnosticsUiServices;
 use dids::DidsPage;
+use identity_primitives::{IdentityEmptyState, IdentityReviewSheet};
 #[cfg(feature = "ui-profile-dev")]
 pub use oxid_capabilities_application::CapabilityManifestContext;
 pub use passport_vault::{
@@ -5663,12 +5665,11 @@ fn DocumentsPage(
                     }
                 }
                 if credentials.is_empty() {
-                    article { class: "empty-state surface-card",
-                        "data-ui-primitive": "EmptyState",
-                        span { class: "empty-state__mark", aria_hidden: "true", "◇" }
-                        h2 { "No documents yet" }
-                        p { "Add a credential offer to review it before anything is stored in your wallet." }
-                        span { class: "status-pill", "Profile scoped" }
+                    IdentityEmptyState {
+                        title: "No documents yet".to_owned(),
+                        description: "Add a credential offer to review it before anything is stored in your wallet.".to_owned(),
+                        scope: "Profile scoped".to_owned(),
+                        class: String::new(),
                     }
                 } else {
                     section { class: "credential-inventory", aria_label: "Saved documents",
@@ -8459,10 +8460,10 @@ fn CredentialPresentationPanel(
                 if busy() { "Checking request…" } else { "Preview presentation request" }
             }
             if let Some(presentation) = preview.read().clone() {
-                div { class: "credential-offer-preview",
-                    "data-testid": "identity-presentation-review",
-                    "data-review-state": "{ui::review_state(&presentation.state)}",
-                    "data-ui-primitive": "Sheet",
+                IdentityReviewSheet {
+                    test_id: "identity-presentation-review".to_owned(),
+                    review_state: ui::review_state(&presentation.state).to_owned(),
+                    terminal: presentation_terminal_copy(&presentation).is_some(),
                     div { class: "consent-preview__heading",
                         h3 { "Presentation preview" }
                         span { class: "status-pill", "{ui::protocol_state(&presentation.state)}" }
@@ -9097,7 +9098,7 @@ fn CredentialRecordCard(
                 }
                 button {
                     class: "danger-action", r#type: "button",
-                    disabled: working() || !delete_confirmed(),
+                    disabled: !credential_removal_enabled(working(), delete_confirmed()),
                     onclick: move |_| {
                         let service = delete_services.delete_credential();
                         let profile_id = delete_profile.clone();
@@ -9128,6 +9129,10 @@ fn CredentialRecordCard(
             }
         }
     }
+}
+
+const fn credential_removal_enabled(working: bool, confirmed: bool) -> bool {
+    !working && confirmed
 }
 
 fn compact_credential_policy_summary(credential: &CredentialView) -> Option<String> {
@@ -9542,10 +9547,10 @@ fn CredentialsPage(
                         }
                     }
                     if let Some(preview) = prepared_issuance.read().clone() {
-                        div { class: if credential_issuance_review_is_terminal(Some(&preview)) { "credential-issued-receipt" } else { "credential-offer-preview" },
-                            "data-testid": "identity-issuance-review",
-                            "data-review-state": "{ui::review_state(&preview.state)}",
-                            "data-ui-primitive": "Sheet",
+                        IdentityReviewSheet {
+                            test_id: "identity-issuance-review".to_owned(),
+                            review_state: ui::review_state(&preview.state).to_owned(),
+                            terminal: credential_issuance_review_is_terminal(Some(&preview)),
                             div { class: "consent-preview__heading",
                                 h3 {
                                     if preview.state == "succeeded" {
@@ -10571,6 +10576,13 @@ const LUCIDE_SEND: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn destructive_credential_removal_requires_confirmation_and_an_idle_worker() {
+        assert!(!credential_removal_enabled(false, false));
+        assert!(credential_removal_enabled(false, true));
+        assert!(!credential_removal_enabled(true, true));
+    }
 
     #[cfg(feature = "preprod-observation")]
     #[test]
@@ -12783,6 +12795,12 @@ mod tests {
             .split("\n#[cfg(test)]\nmod tests {")
             .next()
             .expect("production source precedes tests");
+        let primitive_source = include_str!("identity_primitives.rs");
+        let rendered_primitive_source = primitive_source
+            .split("\n#[cfg(test)]\nmod tests {")
+            .next()
+            .expect("production primitive source precedes tests");
+        let contract_source = format!("{rendered_source}\n{rendered_primitive_source}");
 
         for required in [
             "identity-document-inventory",
@@ -12801,7 +12819,7 @@ mod tests {
             "\"EmptyState\"",
         ] {
             assert!(
-                rendered_source.contains(required),
+                contract_source.contains(required),
                 "missing identity presentation contract: {required}",
             );
         }
