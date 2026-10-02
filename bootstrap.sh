@@ -90,6 +90,12 @@ case "${1:-}" in
         echo "Pi runtime smoke failed; resolve the reported package/resource problem before starting an agent." >&2
         exit 1
       }
+      # Resolve startup in the supervisor process, before the implementation
+      # child receives its own tool budget. The child verifies this snapshot.
+      node "$repo_root/scripts/loop/prepare-dev-loop-admission.mjs" prepare -- "$@" || {
+        echo "Pi admission failed before child dispatch." >&2
+        exit 1
+      }
       exec pi "$@"
     ' bootstrap-pi "$repo_root" "$@"
     ;;
