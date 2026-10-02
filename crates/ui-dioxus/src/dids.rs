@@ -25,6 +25,30 @@ fn did_inventory_accessible_label(
     format!("Open {status} {management} DID {ordinal} details")
 }
 
+fn did_inventory_preview(did: &str) -> String {
+    truncate_middle(did, 20, 10)
+}
+
+fn did_copy_message(result: Result<(), PublicTextExportError>) -> String {
+    match result {
+        Ok(()) => "DID copied to the clipboard.".to_owned(),
+        Err(PublicTextExportError::Unavailable) => {
+            "Clipboard access is unavailable on this device.".to_owned()
+        }
+        Err(PublicTextExportError::InvalidPublicText) => {
+            "This DID cannot be copied because it is invalid.".to_owned()
+        }
+        Err(PublicTextExportError::Failed) => "The DID could not be copied.".to_owned(),
+    }
+}
+
+fn copy_public_did(
+    exporter: &dyn PublicTextExportPort,
+    value: String,
+) -> Result<(), PublicTextExportError> {
+    PublicDid::new(value).and_then(|did| exporter.copy_did(did))
+}
+
 #[component]
 fn DidRefreshControl(
     availability: DidRefreshAvailability,
@@ -79,6 +103,7 @@ pub(super) fn DidsPage(
     let mut did_creation_notice = use_signal(|| None::<String>);
     let mut did_publication_busy = use_signal(|| false);
     let mut did_publication_notice = use_signal(|| None::<String>);
+    let mut did_copy_notice = use_signal(|| None::<String>);
     let mut authentication_input = use_signal(String::new);
     let mut prepared_authentication = use_signal(|| None::<SelfIssuedAuthenticationView>);
     let mut authentication_consent = use_signal(|| false);
@@ -140,14 +165,12 @@ pub(super) fn DidsPage(
         DidPageState::Loading => rsx! {
             section { class: "page-heading",
                 p { class: "eyebrow", "Decentralized identity" }
-                h1 { "My identities" }
                 p { "Loading public DID records for this wallet profile…" }
             }
         },
         DidPageState::Failed(message) => rsx! {
             section { class: "page-heading",
                 p { class: "eyebrow", "Decentralized identity" }
-                h1 { "My identities" }
                 p { "DID inventory is an independently composed identity capability." }
             }
             article { class: "empty-state surface-card", role: "alert",
@@ -208,7 +231,6 @@ pub(super) fn DidsPage(
                 if active_journey == DidJourney::Inventory {
                     section { class: "page-heading did-page-heading",
                         p { class: "eyebrow", "Midnight identity" }
-                        h1 { "My identities" }
                         p {
                             if records.is_empty() {
                                 "Create a managed identity or save a public DID you want to follow."
@@ -231,7 +253,7 @@ pub(super) fn DidsPage(
                         }
                         div {
                             p { class: "eyebrow", "Managed identity" }
-                            h1 { "Create a DID" }
+                            h2 { "Create a DID" }
                         }
                     }
                     article { class: "surface-card did-resolver-card did-task-card",
@@ -341,7 +363,7 @@ pub(super) fn DidsPage(
                             class: "credential-reverification-success",
                             role: "status",
                             aria_live: "polite",
-                            "A managed DID is ready. Open it from My identities to review or update its public document."
+                            "A managed DID is ready. Open it from the identity list to review or update its public document."
                         }
                     }
                     }
@@ -569,7 +591,7 @@ pub(super) fn DidsPage(
                         }
                         div {
                             p { class: "eyebrow", "Public identity" }
-                            h1 { "Resolve a DID" }
+                            h2 { "Resolve a DID" }
                         }
                     }
                     article { class: "surface-card did-resolver-card did-task-card",
@@ -670,12 +692,15 @@ pub(super) fn DidsPage(
                                             aria_label: "{accessible_label}",
                                             onclick: {
                                                 let did = did.clone();
-                                                move |_| journey.set(DidJourney::Detail(did.clone()))
+                                                move |_| {
+                                                    did_copy_notice.set(None);
+                                                    journey.set(DidJourney::Detail(did.clone()));
+                                                }
                                             },
                                             span { class: "did-inventory-card__mark", aria_hidden: "true" }
                                             span { class: "did-inventory-card__body",
                                                 span { class: "did-inventory-card__topline",
-                                                    span { class: "privacy-value did-inventory-card__did", title: "{did}", "{truncate_middle(&did, 20, 10)}" }
+                                                    span { class: "did-inventory-card__did", title: "{did}", "{did_inventory_preview(&did)}" }
                                                     span { class: "{status_class}", "{status}" }
                                                 }
                                                 span { class: "did-inventory-card__context", "{ui::midnight_network(&record.document.network)} · {source} · {management}" }
@@ -721,6 +746,8 @@ pub(super) fn DidsPage(
                             let retained_for_forget = records.clone();
                             let update_records = records.clone();
                             let publication_did = did.clone();
+                            let copy_did = did.clone();
+                            let copy_exporter = services.public_text_exporter();
                             let source = ui::did_source(&record.source);
                             let management = did_record_management_label(&record.source, &record.managed_method_ids);
                             let version = record.document_metadata.version_id.clone().unwrap_or_else(|| "Unversioned".to_owned());
@@ -738,7 +765,6 @@ pub(super) fn DidsPage(
                                     }
                                     div {
                                         p { class: "eyebrow", "DID details" }
-                                        h1 { "Identity" }
                                     }
                                 }
                                 article { class: "surface-card did-detail-hero",
@@ -750,7 +776,28 @@ pub(super) fn DidsPage(
                                         }
                                         span { "{ui::midnight_network(&record.document.network)} · {source}" }
                                     }
-                                    code { class: "privacy-value did-detail-hero__identifier", title: "{did}", "{did}" }
+                                    code { class: "did-detail-hero__identifier", title: "{did}", "{did}" }
+                                    button {
+                                        class: "secondary-action did-copy-action",
+                                        r#type: "button",
+                                        aria_label: "Copy DID",
+                                        onclick: move |_| {
+                                            let exporter = copy_exporter.clone();
+                                            let value = copy_did.clone();
+                                            spawn(async move {
+                                                let result = run_ui_blocking(move || {
+                                                    copy_public_did(exporter.as_ref(), value)
+                                                })
+                                                .await
+                                                .unwrap_or(Err(PublicTextExportError::Failed));
+                                                did_copy_notice.set(Some(did_copy_message(result)));
+                                            });
+                                        },
+                                        "Copy DID"
+                                    }
+                                    if let Some(notice) = did_copy_notice.read().as_ref() {
+                                        p { class: "form-hint", role: "status", aria_live: "polite", "{notice}" }
+                                    }
                                     p { "{management}" }
                                     dl { class: "did-detail-facts",
                                         div { dt { "Version" } dd { "{version}" } }
@@ -942,7 +989,7 @@ pub(super) fn DidsPage(
                     } else {
                         article { class: "empty-state surface-card", role: "alert",
                             h2 { "Identity no longer available" }
-                            p { "Return to My identities and choose another DID." }
+                            p { "Return to the identity list and choose another DID." }
                             button { class: "secondary-action", r#type: "button", onclick: move |_| journey.set(DidJourney::Inventory), "Back to identities" }
                         }
                     }
@@ -954,12 +1001,48 @@ pub(super) fn DidsPage(
 
 #[cfg(test)]
 mod tests {
-    use super::{DidRefreshControl, did_inventory_accessible_label, did_method_name};
+    use super::{
+        DidRefreshControl, copy_public_did, did_inventory_accessible_label, did_inventory_preview,
+        did_method_name,
+    };
     use dioxus::{
         dioxus_core::{AttributeValue, Mutation},
         prelude::*,
     };
     use oxid_identity_application::DidRefreshAvailability;
+    use oxid_platform_ports::{
+        PublicDid, PublicReceiveAddress, PublicTextExportError, PublicTextExportPort,
+    };
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct RecordingExporter {
+        copied_dids: Mutex<Vec<String>>,
+    }
+
+    impl PublicTextExportPort for RecordingExporter {
+        fn copy_did(&self, did: PublicDid) -> Result<(), PublicTextExportError> {
+            self.copied_dids
+                .lock()
+                .expect("recording lock")
+                .push(did.as_str().to_owned());
+            Ok(())
+        }
+
+        fn copy_receive_address(
+            &self,
+            _address: PublicReceiveAddress,
+        ) -> Result<(), PublicTextExportError> {
+            unreachable!("DID copy must not use the receive-address boundary")
+        }
+
+        fn share_receive_address(
+            &self,
+            _address: PublicReceiveAddress,
+        ) -> Result<(), PublicTextExportError> {
+            unreachable!("DID copy must not use the share boundary")
+        }
+    }
 
     #[derive(Clone, PartialEq, Props)]
     struct RefreshHarnessProps {
@@ -1058,6 +1141,29 @@ mod tests {
         assert_eq!(
             did_method_name("did:midnight:undeployed:alice"),
             "did:midnight:undeployed:alice"
+        );
+    }
+
+    #[test]
+    fn did_inventory_preview_keeps_recognizable_ends_for_narrow_rows() {
+        assert_eq!(
+            did_inventory_preview("did:midnight:undeployed:abcdefghijklmnopqrstuvwxyz0123456789"),
+            "did:midnight:undeplo…0123456789"
+        );
+        assert_eq!(
+            did_inventory_preview("did:midnight:alice"),
+            "did:midnight:alice"
+        );
+    }
+
+    #[test]
+    fn did_copy_exports_the_exact_public_identifier_through_its_typed_boundary() {
+        let exporter = RecordingExporter::default();
+        let did = "did:midnight:undeployed:alice#authentication";
+        copy_public_did(&exporter, did.to_owned()).expect("copy public DID");
+        assert_eq!(
+            *exporter.copied_dids.lock().expect("recording lock"),
+            [did.to_owned()]
         );
     }
 

@@ -181,6 +181,39 @@ impl fmt::Debug for PublicReceiveAddress {
     }
 }
 
+/// A public DID explicitly approved for clipboard export. The type keeps
+/// secret-bearing identity payloads out of the platform clipboard boundary.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PublicDid(String);
+
+impl PublicDid {
+    pub fn new(value: String) -> Result<Self, PublicTextExportError> {
+        if value.len() <= "did:".len()
+            || !value.starts_with("did:")
+            || value.len() > 8 * 1_024
+            || value.trim() != value
+            || value.chars().any(char::is_control)
+        {
+            return Err(PublicTextExportError::InvalidPublicText);
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for PublicDid {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PublicDid")
+            .field("length", &self.0.len())
+            .finish_non_exhaustive()
+    }
+}
+
 /// Stable public-export failures that never reproduce the exported value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PublicTextExportError {
@@ -201,10 +234,12 @@ impl fmt::Display for PublicTextExportError {
 
 impl Error for PublicTextExportError {}
 
-/// Copies or shares only a typed public receive address. Credential requests,
-/// authorization responses, and other secret-bearing strings have no method on
-/// this port.
+/// Copies or shares only explicitly typed public wallet identifiers. Credential
+/// requests, authorization responses, and other secret-bearing strings have no
+/// method on this port.
 pub trait PublicTextExportPort: Send + Sync {
+    fn copy_did(&self, did: PublicDid) -> Result<(), PublicTextExportError>;
+
     fn copy_receive_address(
         &self,
         address: PublicReceiveAddress,
@@ -330,6 +365,10 @@ impl IdentityLinkIngressPort for UnavailableIdentityLinkIngress {
 pub struct UnavailablePublicTextExporter;
 
 impl PublicTextExportPort for UnavailablePublicTextExporter {
+    fn copy_did(&self, _did: PublicDid) -> Result<(), PublicTextExportError> {
+        Err(PublicTextExportError::Unavailable)
+    }
+
     fn copy_receive_address(
         &self,
         _address: PublicReceiveAddress,
@@ -443,6 +482,18 @@ mod tests {
     }
 
     #[test]
+    fn only_well_formed_public_dids_reach_export_ports() {
+        let did = PublicDid::new("did:midnight:undeployed:alice".to_owned()).expect("public DID");
+        let debug = format!("{did:?}");
+        assert!(debug.contains("length"));
+        assert!(!debug.contains("alice"));
+        assert_eq!(did.as_str(), "did:midnight:undeployed:alice");
+        assert!(PublicDid::new("midnight:alice".to_owned()).is_err());
+        assert!(PublicDid::new("did:midnight:alice\n".to_owned()).is_err());
+        assert!(PublicDid::new(format!("did:{}", "x".repeat(8 * 1_024))).is_err());
+    }
+
+    #[test]
     fn unavailable_native_edges_fail_closed_without_payloads() {
         assert_eq!(
             UnavailableIdentityLinkIngress.capture("openid4vp://private".to_owned()),
@@ -450,6 +501,11 @@ mod tests {
         );
         assert_eq!(UnavailableIdentityLinkIngress.take_pending(), Ok(None));
         let address = PublicReceiveAddress::new("mn_addr_public".to_owned()).expect("address");
+        let did = PublicDid::new("did:midnight:undeployed:alice".to_owned()).expect("DID");
+        assert_eq!(
+            UnavailablePublicTextExporter.copy_did(did),
+            Err(PublicTextExportError::Unavailable)
+        );
         assert_eq!(
             UnavailablePublicTextExporter.copy_receive_address(address.clone()),
             Err(PublicTextExportError::Unavailable)

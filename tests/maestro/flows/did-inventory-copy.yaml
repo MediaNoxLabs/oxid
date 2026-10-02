@@ -1,5 +1,5 @@
 appId: io.medianox.oxid
-name: DID inventory empty state
+name: DID inventory and public identifier copy
 ---
 - runFlow: ../subflows/launch-clean.yaml
 - runFlow: ../subflows/demo-profile.yaml
@@ -12,5 +12,9 @@ name: DID inventory empty state
     timeout: 20000
     centerElement: true
 - tapOn: "Manage identities"
-- assertVisible: "Manage identities"
-- assertVisible: "No identities yet"
+- tapOn: "Create a DID"
+- tapOn: "Create DID"
+- assertVisible: "DID details"
+- assertVisible: "Copy DID"
+- tapOn: "Copy DID"
+- assertVisible: "DID copied to the clipboard."

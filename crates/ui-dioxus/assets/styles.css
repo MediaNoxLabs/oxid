@@ -1525,12 +1525,12 @@ textarea:focus-visible {
   padding: var(--space-4) 0 var(--space-5);
 }
 
-.did-journey-header h1,
+.did-journey-header h2,
 .did-journey-header p {
   margin: 0;
 }
 
-.did-journey-header h1 {
+.did-journey-header h2 {
   overflow: hidden;
   color: var(--text-strong);
   font-size: var(--font-title);
@@ -1711,6 +1711,10 @@ textarea:focus-visible {
   font-size: var(--font-caption);
   line-height: 1.55;
   user-select: text;
+}
+
+.did-copy-action {
+  width: fit-content;
 }
 
 .did-detail-facts {
