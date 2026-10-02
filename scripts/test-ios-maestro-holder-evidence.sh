@@ -36,6 +36,7 @@ collect_public_artifacts() {
       source_key="$(shasum -a 256 "$source" | awk '{print substr($1, 1, 16)}')"
       screenshot="${source_key}-$(basename "$source")"
       mkdir -p "$scenario_root/screenshots"
+      [ ! -e "$scenario_root/screenshots/$screenshot" ] || fail duplicate-public-artifact
       cp -- "$source" "$scenario_root/screenshots/$screenshot"
       jq -cn --arg scenario "$scenario" --arg artifact "scenarios/$scenario/screenshots/$screenshot" \
         '{scenario:$scenario,artifact:$artifact,kind:"screenshot"}' >>"$RUN_ROOT/scenarios/manifest.jsonl"
@@ -43,6 +44,7 @@ collect_public_artifacts() {
     log_file="$latest/logs/maestro.log"
     if [ -f "$log_file" ]; then
       mkdir -p "$scenario_root"
+      [ ! -e "$scenario_root/maestro-tail.log" ] || fail duplicate-public-artifact
       tail -n 200 "$log_file" >"$scenario_root/maestro-tail.log"
       jq -cn --arg scenario "$scenario" --arg artifact "scenarios/$scenario/maestro-tail.log" \
         '{scenario:$scenario,artifact:$artifact,kind:"bounded-log"}' >>"$RUN_ROOT/scenarios/manifest.jsonl"
@@ -77,6 +79,9 @@ cleanup() {
     '{schema:"oxid-ios-maestro-evidence-v2",oxid:{head:$head},platform:{kind:"ios_simulator",viewport:"375-pt-class",deviceType:"iPhone SE (3rd generation)",udid:$device,runtime:$runtime},outcome:{passed:$passed,startedAtUnix:$started,finishedAtUnix:$finished,durationSeconds:$duration,scenarios:$scenario_outcomes},artifacts:{publicBytes:$bytes,screenshotCount:$screenshots,manifest:"scenarios/manifest.jsonl"},cleanup:{receiptOwnedSimulator:true,privateDiagnosticsRemoved:$cleaned,rawArtifactsRemoved:$rawRemoved}}' >"$METRICS"
   chmod 644 "$METRICS"
   [ "$cleanup_ok" = true ] && rm -rf -- "$PRIVATE_ROOT"
+  if ! node "$ROOT/scripts/lib/validate-ios-maestro-evidence.mjs" "$RUN_ROOT"; then
+    status=1
+  fi
   exit "$status"
 }
 trap cleanup EXIT INT TERM HUP
