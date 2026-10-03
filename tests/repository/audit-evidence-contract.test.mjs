@@ -611,6 +611,23 @@ test("collection refuses file-backed evidence from dirty or non-primary checkout
   }), /does not match the recorded primary commit/u);
 });
 
+test("collection records bounded and unbounded windows in the evidence anchor", () => {
+  const primarySha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const run = stubRunner({
+    "gh api repos/o/r --jq .default_branch": "develop",
+    "git rev-parse refs/remotes/origin/develop": primarySha,
+    "git status --porcelain": "",
+    "git rev-parse HEAD": primarySha,
+  });
+  const common = { repository: "o/r", primary: "develop", root: sandbox(), run };
+  assert.deepEqual(collect(common).window, { since: null, until: null });
+  assert.deepEqual(collect({
+    ...common,
+    since: "2026-09-01T00:00:00Z",
+    until: "2026-09-30T23:59:59Z",
+  }).window, { since: "2026-09-01T00:00:00Z", until: "2026-09-30T23:59:59Z" });
+});
+
 test("collection refuses evidence when any requested branch ref is unresolved", () => {
   assert.throws(
     () => collect({
