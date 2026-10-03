@@ -52,9 +52,10 @@ use oxid_protocol_application::{
     RefuseSelfIssuedAuthenticationUseCase, RouteIdentityRequestUseCase,
 };
 use oxid_wallet_application::{
-    AuthorizeWalletDustRegistrationUseCase, AuthorizeWalletTransferUseCase,
-    CancelSelectedWalletRealmSyncUseCase, CancelWalletDustRegistrationSubmissionUseCase,
-    CancelWalletDustSyncUseCase, CancelWalletOnboardingUseCase, CancelWalletShieldedSyncUseCase,
+    AuthorizeDevelopmentWalletTransferUseCase, AuthorizeWalletDustRegistrationUseCase,
+    AuthorizeWalletTransferUseCase, CancelSelectedWalletRealmSyncUseCase,
+    CancelWalletDustRegistrationSubmissionUseCase, CancelWalletDustSyncUseCase,
+    CancelWalletOnboardingUseCase, CancelWalletShieldedSyncUseCase,
     CancelWalletTransferSubmissionUseCase, CompleteWalletOnboardingUseCase,
     CreateWalletProfileUseCase, DeleteWalletKeyUseCase, DeriveWalletAccountUseCase,
     ExportCompleteWalletBackupUseCase, ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase,
@@ -73,9 +74,9 @@ use oxid_wallet_application::{
     RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupUseCase,
     RecoverPortableWalletBackupUseCase, RecoverWalletRootUseCase, SelectWalletNetworkUseCase,
     SelectWalletProfileUseCase, SignWalletDataUseCase, StartWalletDustSyncUseCase,
-    StartWalletShieldedSyncUseCase, SubmitWalletDustRegistrationUseCase,
-    SubmitWalletTransferUseCase, SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase,
-    UnlockWalletUseCase,
+    StartWalletShieldedSyncUseCase, SubmitDevelopmentWalletTransferUseCase,
+    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferUseCase,
+    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
 };
 
 /// Application capabilities shared by every incoming adapter.
@@ -150,6 +151,9 @@ pub struct ApplicationServices {
     pub(super) prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
     pub(super) authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
     pub(super) submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
+    pub(super) authorize_development_wallet_transfer:
+        Arc<dyn AuthorizeDevelopmentWalletTransferUseCase>,
+    pub(super) submit_development_wallet_transfer: Arc<dyn SubmitDevelopmentWalletTransferUseCase>,
     pub(super) get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase>,
     pub(super) get_wallet_transfer_submission_status:
         Arc<dyn GetWalletTransferSubmissionStatusUseCase>,
@@ -643,6 +647,22 @@ impl ApplicationServices {
     #[must_use]
     pub fn submit_wallet_transfer(&self) -> Arc<dyn SubmitWalletTransferUseCase> {
         Arc::clone(&self.submit_wallet_transfer)
+    }
+
+    /// Narrow undeployed-realm authority for dedicated development composition.
+    #[must_use]
+    pub fn authorize_development_wallet_transfer(
+        &self,
+    ) -> Arc<dyn AuthorizeDevelopmentWalletTransferUseCase> {
+        Arc::clone(&self.authorize_development_wallet_transfer)
+    }
+
+    /// Narrow undeployed-realm submission for dedicated development composition.
+    #[must_use]
+    pub fn submit_development_wallet_transfer(
+        &self,
+    ) -> Arc<dyn SubmitDevelopmentWalletTransferUseCase> {
+        Arc::clone(&self.submit_development_wallet_transfer)
     }
 
     #[must_use]

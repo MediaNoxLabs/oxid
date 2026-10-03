@@ -4,10 +4,10 @@
 
 use dioxus::prelude::*;
 use oxid_wallet_application::{
-    SelectedWalletRealmSyncCommand, WalletAccountError, WalletAccountPortError, WalletAccountQuery,
-    WalletAccountSource, WalletAccountView, WalletActionWatch, WalletActionWatchHandle,
-    WalletActionWatchKind, WalletActionWatchObservation, WalletActionWatchProjection,
-    WalletActionWatchState, WalletSyncState,
+    WalletAccountError, WalletAccountPortError, WalletAccountQuery, WalletAccountSource,
+    WalletAccountView, WalletActionWatch, WalletActionWatchHandle, WalletActionWatchKind,
+    WalletActionWatchObservation, WalletActionWatchProjection, WalletActionWatchState,
+    WalletSyncState,
 };
 use std::{collections::BTreeSet, time::Duration};
 
@@ -170,40 +170,17 @@ async fn observe_receive_arrival(
     let manager = services.manage_wallet_action_watch();
     let fallback_checkpoint = initial.sync.current_cursor.unwrap_or_default();
 
-    let preflight = crate::run_ui_future(crate::wallet_realm_lifecycle::explicit_retry(
-        services.clone(),
-        SelectedWalletRealmSyncCommand {
-            profile_id: profile_id.clone(),
-        },
-    ))
-    .await;
-    if !receive_watch_is_current(
-        *generation.peek(),
-        expected_generation,
-        selected_kind().as_deref(),
-    ) {
-        return;
-    }
-    if !matches!(preflight, Ok(Ok(_))) {
-        if publish_receive_terminal(
-            &manager,
-            &account_id,
-            fallback_checkpoint,
-            WalletActionWatchState::Degraded,
-        ) {
-            session_active.set(true);
-        }
-        return;
-    }
-
-    let baseline_services = services.clone();
-    let baseline_profile = profile_id.clone();
-    let baseline = crate::run_ui_blocking(move || {
-        baseline_services
-            .get_wallet_account()
+    // A receive sheet is an action-scoped observer, not a second owner of the
+    // selected-realm lifecycle. Synchronize the account directly so opening a
+    // sheet cannot collide with the background reconciliation lease.
+    let preflight_service = services.sync_wallet_account();
+    let preflight_profile = profile_id.clone();
+    let preflight = crate::run_ui_future(async move {
+        preflight_service
             .execute(WalletAccountQuery {
-                profile_id: baseline_profile,
+                profile_id: preflight_profile,
             })
+            .await
     })
     .await;
     if !receive_watch_is_current(
@@ -213,7 +190,7 @@ async fn observe_receive_arrival(
     ) {
         return;
     }
-    let baseline = match baseline {
+    let baseline = match preflight {
         Ok(Ok(account)) => account,
         Ok(Err(error)) => {
             if publish_receive_terminal(
@@ -286,14 +263,14 @@ async fn observe_receive_arrival(
             guard.disarm();
             return;
         }
-        let query_services = services.clone();
+        let sync_service = services.sync_wallet_account();
         let query_profile = profile_id.clone();
-        let observed = crate::run_ui_blocking(move || {
-            query_services
-                .get_wallet_account()
+        let observed = crate::run_ui_future(async move {
+            sync_service
                 .execute(WalletAccountQuery {
                     profile_id: query_profile,
                 })
+                .await
         })
         .await;
         if !receive_watch_is_current(
@@ -364,7 +341,10 @@ fn receive_watch_supported(kind: Option<&str>) -> bool {
 }
 
 fn receive_watch_enabled(source: WalletAccountSource, kind: Option<&str>) -> bool {
-    source == WalletAccountSource::Live && receive_watch_supported(kind)
+    matches!(
+        source,
+        WalletAccountSource::Live | WalletAccountSource::Cached
+    ) && receive_watch_supported(kind)
 }
 
 fn synchronized_account_checkpoint(account: &WalletAccountView) -> Option<u64> {
@@ -899,7 +879,7 @@ mod tests {
             WalletAccountSource::Simulated,
             Some("unshielded")
         ));
-        assert!(!receive_watch_enabled(
+        assert!(receive_watch_enabled(
             WalletAccountSource::Cached,
             Some("unshielded")
         ));
