@@ -157,7 +157,7 @@ chmod 700 "$temporary/owner.sh"
 timeout -k 1s 30s "$temporary/owner.sh" "$temporary/owner.pid" \
   "$temporary/grandchild.sh" "$temporary/grandchild.pid" "$temporary/term.seen" &
 supervisor_pid=$!
-for ((_attempt = 0; _attempt < 50; _attempt++)); do
+for ((_attempt = 0; _attempt < 200; _attempt++)); do
   [ -s "$temporary/grandchild.pid" ] && break
   timeout -k 1s 1s sleep 0.05
 done
@@ -219,13 +219,15 @@ fi
 
 copy_fixture emulator.mjs "$temporary/emulator.mjs"
 OXID_FAKE_EMULATOR_TERM="$temporary/emulator-term.seen" \
+  OXID_FAKE_EMULATOR_READY="$temporary/emulator-ready.seen" \
   node "$temporary/emulator.mjs" -avd exact_avd -read-only -no-snapshot -no-snapshot-save -port 5562 &
 fake_emulator_pid=$!
 fake_emulator_executable=node
-for ((_attempt = 0; _attempt < 50; _attempt++)); do
-  oxid_emulator_job_owned "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 && break
+for ((_attempt = 0; _attempt < 200; _attempt++)); do
+  [ -f "$temporary/emulator-ready.seen" ] && break
   timeout -k 1s 1s sleep 0.05
 done
+[ -f "$temporary/emulator-ready.seen" ] || fail direct-emulator-ready
 oxid_emulator_job_owned "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 \
   || fail direct-emulator-owned
 oxid_terminate_emulator_job "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 \
