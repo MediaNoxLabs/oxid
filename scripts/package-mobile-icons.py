@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ICONS = ROOT / "apps/oxid/icons"
 IOS_SOURCE = ICONS / "app-icon-dark-1024.png"
 ANDROID_SOURCE = ICONS / "app-icon-android-1024.png"
+ANDROID_ICON_NAMES = ("ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png")
 
 
 def image(source: Path, target: Path, size: int, opaque: bool = False) -> None:
@@ -61,7 +62,10 @@ def package_android(project: Path) -> None:
     densities = {"mipmap-mdpi": 48, "mipmap-hdpi": 72, "mipmap-xhdpi": 96,
                  "mipmap-xxhdpi": 144, "mipmap-xxxhdpi": 192}
     for directory, size in densities.items():
-        for name in ("ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png"):
+        for name in ANDROID_ICON_NAMES:
+            stem = Path(name).stem
+            for generated in (resource_root / directory).glob(f"{stem}.*"):
+                generated.unlink()
             image(ANDROID_SOURCE, resource_root / directory / name, size)
     adaptive = resource_root / "mipmap-anydpi-v26"
     adaptive.mkdir(parents=True, exist_ok=True)
@@ -75,15 +79,30 @@ def package_android(project: Path) -> None:
         (adaptive / name).write_text(launcher, encoding="utf-8")
 
 
+def clean_android(project: Path) -> None:
+    """Remove only launcher files owned by this packager before Dioxus regenerates."""
+    resource_root = project / "app/src/main/res"
+    if not resource_root.is_dir():
+        return
+    for directory in resource_root.glob("mipmap-*"):
+        for name in ANDROID_ICON_NAMES:
+            (directory / name).unlink(missing_ok=True)
+    adaptive = resource_root / "mipmap-anydpi-v26"
+    for name in ("ic_launcher.xml", "ic_launcher_round.xml"):
+        (adaptive / name).unlink(missing_ok=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("platform", choices=("ios", "android"))
+    parser.add_argument("platform", choices=("ios", "android", "android-clean"))
     parser.add_argument("path", type=Path)
     arguments = parser.parse_args()
     if arguments.platform == "ios":
         package_ios(arguments.path)
-    else:
+    elif arguments.platform == "android":
         package_android(arguments.path)
+    else:
+        clean_android(arguments.path)
 
 
 if __name__ == "__main__":
