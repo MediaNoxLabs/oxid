@@ -154,14 +154,18 @@ copy_fixture grandchild.sh "$temporary/grandchild.sh"
 chmod 700 "$temporary/grandchild.sh"
 copy_fixture owner.sh "$temporary/owner.sh"
 chmod 700 "$temporary/owner.sh"
+wait_for_nonempty_file() {
+  local path="$1" attempts="$2"
+  for ((_attempt = 0; _attempt < attempts; _attempt++)); do
+    [ -s "$path" ] && return 0
+    timeout -k 1s 1s sleep 0.05 || return 1
+  done
+  [ -s "$path" ]
+}
 timeout -k 1s 30s "$temporary/owner.sh" "$temporary/owner.pid" \
   "$temporary/grandchild.sh" "$temporary/grandchild.pid" "$temporary/term.seen" &
 supervisor_pid=$!
-for ((_attempt = 0; _attempt < 50; _attempt++)); do
-  [ -s "$temporary/grandchild.pid" ] && break
-  timeout -k 1s 1s sleep 0.05
-done
-[ -s "$temporary/grandchild.pid" ] || fail process-group-ready
+wait_for_nonempty_file "$temporary/grandchild.pid" 200 || fail process-group-ready
 owner_pid="$(<"$temporary/owner.pid")"
 grandchild_pid="$(<"$temporary/grandchild.pid")"
 oxid_job_is_running "$supervisor_pid" || fail supervisor-job
@@ -219,9 +223,11 @@ fi
 
 copy_fixture emulator.mjs "$temporary/emulator.mjs"
 OXID_FAKE_EMULATOR_TERM="$temporary/emulator-term.seen" \
+  OXID_FAKE_EMULATOR_READY="$temporary/emulator-ready.seen" \
   node "$temporary/emulator.mjs" -avd exact_avd -read-only -no-snapshot -no-snapshot-save -port 5562 &
 fake_emulator_pid=$!
 fake_emulator_executable=node
+wait_for_nonempty_file "$temporary/emulator-ready.seen" 200 || fail direct-emulator-ready
 for ((_attempt = 0; _attempt < 50; _attempt++)); do
   oxid_emulator_job_owned "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 && break
   timeout -k 1s 1s sleep 0.05
