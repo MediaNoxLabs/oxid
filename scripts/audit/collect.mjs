@@ -157,11 +157,13 @@ export function collectBranchProtection({ repository, branches, run = runner, cw
       entry.allowsDeletion = parsed.allow_deletions?.enabled ?? false;
       entry.requiresSignatures = parsed.required_signatures?.enabled ?? false;
     }
-    if (rules.ok) {
+    if (!rules.ok) {
+      anyFailure = rules.error;
+    } else {
       try {
         entry.rulesetCount = JSON.parse(rules.out).length;
       } catch {
-        entry.rulesetCount = 0;
+        anyFailure = `unparseable ruleset payload for ${branch}`;
       }
     }
     if (deleteBranchOnMerge !== undefined) entry.deleteBranchOnMerge = deleteBranchOnMerge;
@@ -371,13 +373,18 @@ export function collectCoveragePolicyDrift({
     return unavailable(`${policyPath} is not valid JSON: ${error.message}`, source);
   }
 
-  const scopes = Object.entries(policy)
-    .filter(([key]) => /Floor(Percent)?$/u.test(key))
-    .map(([key, value]) => ({
-      scope: key.replace(/Floor(Percent)?$/u, ""),
-      hasFloor: typeof value === "number" && value > 0,
-      ...(typeof value === "number" ? { floorPercent: value } : {}),
-    }));
+  const floor = (scope, value) => ({
+    scope,
+    hasFloor: typeof value === "number" && value > 0,
+    ...(typeof value === "number" ? { floorPercent: value } : {}),
+  });
+  // Coverage policy intentionally nests package and changed-line floors. Read
+  // those actual locations rather than treating only top-level keys as policy.
+  const scopes = [
+    floor("workspace", policy.workspaceFloorPercent),
+    ...Object.entries(policy.packageFloorsPercent ?? {}).map(([name, value]) => floor(`package.${name}`, value)),
+    floor("changedLines", policy.changedLines?.floorPercent ?? policy.changedLinesFloor),
+  ].filter((scope) => scope.hasFloor || scope.floorPercent !== undefined);
 
   let enforcementPath;
   for (const candidate of enforcementCandidates) {
@@ -873,6 +880,16 @@ export function resolveBranches({ repository, branches, run = runner, cwd }) {
   return { defaultBranch, resolved, defaultResolved: defaultQuery.ok };
 }
 
+function requirePrimaryCheckout({ primarySha, run, cwd }) {
+  const status = tryRun(run, "git", ["status", "--porcelain"], { cwd });
+  if (!status.ok) throw new Error("could not verify checkout cleanliness before collecting file-backed evidence");
+  if (status.out) throw new Error("refusing file-backed evidence from a dirty checkout");
+  const head = tryRun(run, "git", ["rev-parse", "HEAD"], { cwd });
+  if (!head.ok || head.out !== primarySha) {
+    throw new Error("refusing file-backed evidence because checkout HEAD does not match the recorded primary commit");
+  }
+}
+
 export function collect({
   repository,
   primary,
@@ -899,6 +916,8 @@ export function collect({
     const missing = branchNames.filter((name) => !available.has(name));
     throw new Error(`could not resolve requested branch ref(s) ${missing.join(", ")}; refusing to emit incomplete audit evidence`);
   }
+  const primarySha = resolved.find((entry) => entry.name === primary)?.sha;
+  requirePrimaryCheckout({ primarySha, run, cwd: root });
   const refs = branchNames.map((name) => `refs/remotes/origin/${name}`);
 
   // A collector that throws unexpectedly degrades to `unavailable` rather than
@@ -941,6 +960,7 @@ export function collect({
     collectedAt: now(),
     repository,
     defaultBranch,
+    window: { since, until },
     branches: resolved.map((entry) => ({
       ...entry,
       role: entry.name === primary ? "primary" : entry.name === defaultBranch ? "comparison" : "baseline",

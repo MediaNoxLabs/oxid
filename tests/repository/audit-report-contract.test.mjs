@@ -92,6 +92,15 @@ test("unavailable collector evidence cannot prove a verified-sound claim", () =>
   assert.ok(problems.some((problem) => /cites unavailable evidence anchor/u.test(problem)));
 });
 
+test("malformed supplied evidence is rejected before citations can be trusted", () => {
+  const evidence = exampleEvidence();
+  delete evidence.window;
+  const result = checkReport(exampleReport(), { evidence });
+  assert.equal(result.ok, false);
+  assert.ok(result.evidenceErrors.some((error) => /missing required property "window"/u.test(error.message)));
+  assert.deepEqual(result.crossErrors, []);
+});
+
 test("an anchor citation without a supplied evidence artifact is rejected", () => {
   const problems = crossCheck(exampleReport());
   assert.ok(problems.some((problem) => /no evidence artifact was supplied/u.test(problem)));
@@ -407,6 +416,12 @@ test("an unexpected top-level property is rejected", () => {
   // The output is a triaged slate, not a grade; the schema is closed so a
   // scoring field cannot be smuggled in.
   assert.ok(validate(reportSchema, report).some((error) => /unexpected property "score"/u.test(error.message)));
+});
+
+test("report window must match the supplied evidence artifact", () => {
+  const report = exampleReport();
+  report.anchor.window.until = "2026-09-10T00:00:00Z";
+  assert.ok(crossCheck(report, { evidence: exampleEvidence() }).some((problem) => /report window does not match/u.test(problem)));
 });
 
 test("report branch scope must match the supplied evidence artifact", () => {

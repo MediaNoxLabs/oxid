@@ -288,6 +288,22 @@ test("coverage.policyDrift reports an unenforced floor and a documented figure t
   assert.deepEqual(result.facts.documentedClaims, [{ path: "CONTRIBUTING.md", line: 1, claimedPercent: 80 }]);
 });
 
+test("coverage.policyDrift reads nested workspace, package, critical, and changed-line floors", () => {
+  const root = sandbox();
+  plant(root, "scripts/coverage/policy.json", JSON.stringify({
+    workspaceFloorPercent: 70,
+    packageFloorsPercent: { core: 75, critical: 80 },
+    changedLines: { floorPercent: 90 },
+  }));
+  const result = collectCoveragePolicyDrift({ root });
+  assert.deepEqual(result.facts.scopes, [
+    { scope: "workspace", hasFloor: true, floorPercent: 70 },
+    { scope: "package.core", hasFloor: true, floorPercent: 75 },
+    { scope: "package.critical", hasFloor: true, floorPercent: 80 },
+    { scope: "changedLines", hasFloor: true, floorPercent: 90 },
+  ]);
+});
+
 test("coverage.policyDrift records enforcement when the flag reaches the runner", () => {
   const root = sandbox();
   plant(root, "scripts/coverage/policy.json", JSON.stringify({ workspaceFloorPercent: 70 }));
@@ -502,6 +518,19 @@ test("branch.protection distinguishes an unprotected train from a protected defa
   assert.deepEqual(develop.requiredChecks, ["basic", "quality"]);
 });
 
+test("branch.protection degrades when a ruleset lookup is unavailable", () => {
+  const failure = new Error("rules unavailable");
+  failure.stderr = "rules unavailable";
+  const run = stubRunner({
+    "gh api repos/o/r --jq .delete_branch_on_merge": "true",
+    "gh api repos/o/r/branches/develop/protection": JSON.stringify({}),
+    "gh api repos/o/r/rules/branches/develop": failure,
+  });
+  const result = collectBranchProtection({ repository: "o/r", branches: ["develop"], run });
+  assert.equal(result.status, "degraded");
+  assert.match(result.reason, /rules unavailable/u);
+});
+
 test("branch.protection is unavailable when no branch could be queried", () => {
   const failure = new Error("network down");
   failure.stderr = "network down";
@@ -565,6 +594,38 @@ test("collection refuses to emit evidence without a collected default branch", (
     () => collect({ repository: "o/r", primary: "develop", root: sandbox(), run: stubRunner({ "gh api": failure }) }),
     /refusing to emit schema-invalid audit evidence/u,
   );
+});
+
+test("collection refuses file-backed evidence from dirty or non-primary checkouts", () => {
+  const base = {
+    "gh api repos/o/r --jq .default_branch": "develop",
+    "git rev-parse refs/remotes/origin/develop": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  };
+  assert.throws(() => collect({
+    repository: "o/r", primary: "develop", root: sandbox(),
+    run: stubRunner({ ...base, "git status --porcelain": " M scripts/audit/collect.mjs" }),
+  }), /dirty checkout/u);
+  assert.throws(() => collect({
+    repository: "o/r", primary: "develop", root: sandbox(),
+    run: stubRunner({ ...base, "git status --porcelain": "", "git rev-parse HEAD": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }),
+  }), /does not match the recorded primary commit/u);
+});
+
+test("collection records bounded and unbounded windows in the evidence anchor", () => {
+  const primarySha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const run = stubRunner({
+    "gh api repos/o/r --jq .default_branch": "develop",
+    "git rev-parse refs/remotes/origin/develop": primarySha,
+    "git status --porcelain": "",
+    "git rev-parse HEAD": primarySha,
+  });
+  const common = { repository: "o/r", primary: "develop", root: sandbox(), run };
+  assert.deepEqual(collect(common).window, { since: null, until: null });
+  assert.deepEqual(collect({
+    ...common,
+    since: "2026-09-01T00:00:00Z",
+    until: "2026-09-30T23:59:59Z",
+  }).window, { since: "2026-09-01T00:00:00Z", until: "2026-09-30T23:59:59Z" });
 });
 
 test("collection refuses evidence when any requested branch ref is unresolved", () => {
