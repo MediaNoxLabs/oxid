@@ -2,7 +2,7 @@
 
 Custody-only exports use `OXIDBAK1` version **6**, adopting the fixed policy
 reviewed for complete-wallet backups in
-[ADR-0078](adr-catalog.md).
+[ADR-0078](adr-catalog.md#adr-0078).
 This changes the authenticated envelope, not the custody payload schema.
 It does not establish production or physical-device readiness.
 
@@ -25,9 +25,11 @@ length, is authenticated associated data.
 The entry point's version allowlist and exact work-factor/algorithm matching
 reject unknown legacy versions, wrong payload families, mismatched parameters,
 and invalid lengths before deriving a key. A structurally valid future version
-is reported as requiring a newer Oxid build without deriving a key or exposing
-backup contents. Zero or implausibly large declared KDF parameters and other
-malformed headers remain invalid. Payload-schema validation occurs only
+is reported as declaring a newer format without deriving a key or exposing
+backup contents. The header is not authenticated until after KDF work, so users
+should update Oxid and check that the file is intact if recovery still fails.
+Zero or implausibly large declared KDF parameters and other malformed headers
+remain invalid. Payload-schema validation occurs only
 after successful authentication and decryption. The decoder never allocates an
 Argon2 arena from arbitrary header values. A changed v6 header claiming v1/v4
 with unchanged strong parameters is invalid before derivation; changing both

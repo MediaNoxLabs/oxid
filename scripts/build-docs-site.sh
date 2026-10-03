@@ -25,4 +25,9 @@ node "$repo_root/scripts/docs/generate-adr-catalog.mjs" \
   --index "$adr_index" --output "$catalog"
 
 mdbook build "$site_dir"
+if ! grep -qF 'href="adr-catalog.html#adr-0078"' "$site_dir/book/portable-custody-kdf.html" \
+  || ! grep -qF 'id="adr-0078"' "$site_dir/book/adr-catalog.html"; then
+  echo "Rendered portable-custody ADR-0078 link or target is missing." >&2
+  exit 1
+fi
 echo "Site built at $site_dir/book (index: $site_dir/book/index.html)."

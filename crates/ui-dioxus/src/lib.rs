@@ -4703,7 +4703,7 @@ fn portable_backup_recovery_error_message(
             oxid_wallet_application::WalletPortableBackupPortError::UnsupportedVersion
         )
     ) {
-        "This backup needs a newer version of Oxid. Update Oxid and try again.".to_owned()
+        "This backup appears to use a newer format. Update Oxid and try again. If it still fails, check the file.".to_owned()
     } else {
         error.to_string()
     }
@@ -11736,7 +11736,18 @@ mod tests {
         );
         assert_eq!(
             message,
-            "This backup needs a newer version of Oxid. Update Oxid and try again."
+            "This backup appears to use a newer format. Update Oxid and try again. If it still fails, check the file."
+        );
+    }
+
+    #[test]
+    fn complete_recovery_other_errors_keep_their_existing_message() {
+        let error = oxid_wallet_application::WalletPortableBackupUseCaseError::Operation(
+            oxid_wallet_application::WalletPortableBackupPortError::InvalidPackage,
+        );
+        assert_eq!(
+            portable_backup_recovery_error_message(&error),
+            error.to_string()
         );
     }
 
