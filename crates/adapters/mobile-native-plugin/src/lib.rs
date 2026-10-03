@@ -353,6 +353,10 @@ fn receive_android_custody(
         _ => return Err(custody::Error::Invalid),
     };
     let control = prepare().map_err(map_android_custody_bridge_error)?;
+    if let Err(error) = custody::validate_material_control(operation, control.as_bytes()) {
+        let _ = call_android_activity("oxidCustodyDiscardPending");
+        return Err(error);
+    }
     let received = (|| {
         let value = call_android_activity("oxidCustodyPendingLengthJson")
             .map_err(map_android_custody_bridge_error)?;
@@ -955,6 +959,12 @@ mod tests {
         assert!(android.contains("material.bytes.fill(0)"));
         assert!(android.contains("material.profileId != profileId"));
         assert!(android.contains("material.generation != expectedGeneration"));
+        assert!(android.contains("controlFromLegacy"));
+        assert!(!android.contains("private fun control(operation: String, legacy: String)"));
+        assert!(android.contains("put(\"length\", \"0\")"));
+        assert!(android.contains(
+            "try {\n            if (!validProfileId(profileId) || !validPlaintext(plaintext))"
+        ));
         assert!(!android.contains("Base64.encodeToString(plaintext"));
         assert!(!activity.contains("oxidCustodyJson"));
         assert!(!storage.contains("initialize_custody_json"));
