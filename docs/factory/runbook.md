@@ -314,8 +314,12 @@ undetectable later. The check that matters is `gates` parsing.
   `scripts/review/claude-current-head.mjs` once on the final head as
   documented in `docs/dev-loop-stability.md`. The wrapper selects and records
   the branch's recorded delivery base (or requires `--delivery-base`) and
-  bounded `medium` effort by default; a timeout remains a failed review rather
-  than permission to merge. Concrete blocking findings stop delivery;
+  bounded `medium` effort by default. The single attempt has a ten-minute
+  ceiling and emits `completed`, `timed_out`, `failed`, or `unavailable` with
+  reviewer, duration, and actionable-finding metrics; it is never retried
+  automatically. A timeout remains inconclusive rather than review approval,
+  but does not block delivery when required exact-head repository gates pass.
+  Concrete blocking findings stop delivery;
   recommendations are retained on the PR and tracked as follow-up issues.
 
 ## Review budget and controlled debt

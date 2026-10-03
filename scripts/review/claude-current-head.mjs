@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { parseDeliveryTarget } from "../lib/delivery-target.mjs";
-export const MAX_CLAUDE_REVIEW_TIMEOUT_MS = 5 * 60 * 1000;
+export const MAX_CLAUDE_REVIEW_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = MAX_CLAUDE_REVIEW_TIMEOUT_MS;
 const DEFAULT_MAX_BUDGET_USD = 10;
 export const MAXIMUM_CLAUDE_REVIEW_BUDGET_USD = 10;
@@ -83,6 +83,17 @@ export class ClaudeReviewFindingsError extends Error {
     this.name = "ClaudeReviewFindingsError";
     this.evidencePath = evidencePath;
     this.evidence = evidence;
+  }
+}
+
+export class ClaudeReviewExecutionError extends Error {
+  constructor(outcome, durationMs, message) {
+    super(message);
+    this.name = "ClaudeReviewExecutionError";
+    this.outcome = outcome;
+    this.durationMs = durationMs;
+    this.reviewer = "claude-code";
+    this.actionableFindings = false;
   }
 }
 
@@ -652,7 +663,17 @@ export async function runClaudeCurrentHeadReview({
   const evidencePath = path.join(outputRoot, `${runId}.evidence.json`);
   await atomicPrivateWrite(diffPath, diffContent);
 
-  const probe = probeClaudeCliCapabilities({ claudeCommand, cwd: outputRoot, runner: claudeRunner });
+  const executionStartedMs = Date.now();
+  let probe;
+  try {
+    probe = probeClaudeCliCapabilities({ claudeCommand, cwd: outputRoot, runner: claudeRunner });
+  } catch (error) {
+    throw new ClaudeReviewExecutionError(
+      "unavailable",
+      Date.now() - executionStartedMs,
+      `Claude review is unavailable: ${error.message}`,
+    );
+  }
   const { accountStatus } = probe;
   const claudeVersion = probe.version;
   await atomicPrivateWrite(helpPath, probe.help);
@@ -676,16 +697,28 @@ export async function runClaudeCurrentHeadReview({
     boundary: randomBytes(24).toString("hex"),
   });
   const startedAt = new Date().toISOString();
+  const reviewStartedMs = Date.now();
   const result = claudeRunner(invocation.command, invocation.args, { cwd: outputRoot, timeout: timeoutMs, input: prompt });
+  const durationMs = Date.now() - reviewStartedMs;
   const reviewedAt = new Date().toISOString();
   const rawResponse = result.stdout ?? "";
   await atomicPrivateWrite(rawResponsePath, rawResponse);
 
   // Preserve the process failure as the primary deterministic diagnostic even
   // if the checkout also moved while the process was running.
-  if (result.error?.code === "ETIMEDOUT" || result.signal) throw new Error(`Claude review timed out or was terminated after ${timeoutMs}ms`);
-  if (result.error) throw new Error(`Claude review could not start: ${result.error.message}`);
-  if (result.status !== 0) throw new Error(`Claude review exited ${result.status}: ${String(result.stderr ?? "").trim()}`);
+  if (result.error?.code === "ETIMEDOUT") {
+    throw new ClaudeReviewExecutionError("timed_out", durationMs, `Claude review timed out after ${timeoutMs}ms`);
+  }
+  if (result.error) {
+    throw new ClaudeReviewExecutionError("unavailable", durationMs, `Claude review could not start: ${result.error.message}`);
+  }
+  if (result.signal || result.status !== 0) {
+    throw new ClaudeReviewExecutionError(
+      "failed",
+      durationMs,
+      `Claude review ${result.signal ? `was terminated by ${result.signal}` : `exited ${result.status}`}: ${String(result.stderr ?? "").trim()}`,
+    );
+  }
 
   assertClean(gitCommand, root);
   const finalHead = gitText(gitCommand, ["rev-parse", "HEAD"], root);
@@ -695,7 +728,12 @@ export async function runClaudeCurrentHeadReview({
     throw new Error("head, delivery merge base, or exact diff bytes changed during Claude review; evidence is stale");
   }
 
-  const parsed = parseClaudeReviewResult(rawResponse);
+  let parsed;
+  try {
+    parsed = parseClaudeReviewResult(rawResponse);
+  } catch (error) {
+    throw new ClaudeReviewExecutionError("failed", durationMs, error.message);
+  }
   const evidence = {
     schemaVersion: 3,
     evidenceKind: "local-attestation",
@@ -742,6 +780,10 @@ export async function runClaudeCurrentHeadReview({
     invocation: {
       startedAt,
       reviewedAt,
+      reviewer: "claude-code",
+      durationMs,
+      outcome: "completed",
+      actionableFindings: parsed.review.findings.length > 0,
       timeoutMs,
       maximumTimeoutMs: MAX_CLAUDE_REVIEW_TIMEOUT_MS,
       maxBudgetUsd: validatedBudgetUsd,
@@ -785,6 +827,13 @@ export async function verifyClaudeReviewEvidence({ evidencePath, repoRoot = proc
   }
   if (evidence.invocation.maximumTimeoutMs !== MAX_CLAUDE_REVIEW_TIMEOUT_MS) {
     throw new Error("Claude review attestation does not bind the maximum review timeout");
+  }
+  if (evidence.invocation.reviewer !== "claude-code"
+    || evidence.invocation.outcome !== "completed"
+    || evidence.invocation.actionableFindings !== false
+    || !Number.isSafeInteger(evidence.invocation.durationMs)
+    || evidence.invocation.durationMs < 0) {
+    throw new Error("Claude review attestation is missing valid execution metrics");
   }
   try {
     if (typeof evidence.invocation?.maxBudgetUsd !== "number") {
@@ -890,7 +939,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     strict: true,
   });
   if (values.help) {
-    stdout.write(`Usage: claude-current-head.mjs --issue NUMBER [--delivery-base REF] [--repo-root PATH] [--evidence-dir PATH] [--issue-contract-file PATH] [--expected-head SHA] [--effort LEVEL] [--timeout-ms INTEGER] [--max-budget-usd NUMBER]\n       claude-current-head.mjs --verify-evidence FILE [--repo-root PATH]\n\nAttested effort levels: ${CLAUDE_REVIEW_EFFORTS.join(", ")}.\nDefaults: --effort ${DEFAULT_CLAUDE_REVIEW_EFFORT}; --timeout-ms ${DEFAULT_TIMEOUT_MS} (five minutes); --max-budget-usd ${DEFAULT_MAX_BUDGET_USD}. Budget must be positive and no more than ${MAXIMUM_CLAUDE_REVIEW_BUDGET_USD} USD.\n`);
+    stdout.write(`Usage: claude-current-head.mjs --issue NUMBER [--delivery-base REF] [--repo-root PATH] [--evidence-dir PATH] [--issue-contract-file PATH] [--expected-head SHA] [--effort LEVEL] [--timeout-ms INTEGER] [--max-budget-usd NUMBER]\n       claude-current-head.mjs --verify-evidence FILE [--repo-root PATH]\n\nAttested effort levels: ${CLAUDE_REVIEW_EFFORTS.join(", ")}.\nDefaults: --effort ${DEFAULT_CLAUDE_REVIEW_EFFORT}; --timeout-ms ${DEFAULT_TIMEOUT_MS} (ten minutes); --max-budget-usd ${DEFAULT_MAX_BUDGET_USD}. Budget must be positive and no more than ${MAXIMUM_CLAUDE_REVIEW_BUDGET_USD} USD.\n`);
     return;
   }
   if (values["verify-evidence"]) {
@@ -937,6 +986,32 @@ export function claudeReviewCliFailure(error) {
     return {
       exitCode: 3,
       output: `${JSON.stringify({ ok: false, code: error.code, message: error.message })}\n`,
+    };
+  }
+  if (error instanceof ClaudeReviewExecutionError) {
+    return {
+      exitCode: 1,
+      output: `${JSON.stringify({
+        ok: false,
+        reviewer: error.reviewer,
+        outcome: error.outcome,
+        durationMs: error.durationMs,
+        actionableFindings: error.actionableFindings,
+        message: error.message,
+      })}\n`,
+    };
+  }
+  if (error instanceof ClaudeReviewFindingsError) {
+    return {
+      exitCode: 1,
+      output: `${JSON.stringify({
+        ok: false,
+        reviewer: "claude-code",
+        outcome: "completed",
+        durationMs: error.evidence.invocation.durationMs,
+        actionableFindings: true,
+        message: error.message,
+      })}\n`,
     };
   }
   return { exitCode: 1, output: `[claude-current-head] ${error.message}\n` };
