@@ -158,7 +158,6 @@ export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaul
 
   run("git", ["fetch", "--no-tags", "origin", eligibility.target.branch, pr.headRefOid], { cwd: root, label: "refresh milestone and PR head" });
   const localBase = run("git", ["rev-parse", `refs/remotes/origin/${eligibility.target.branch}`], { cwd: root, label: "resolve fetched milestone" }).trim();
-  if (localBase !== pr.baseRefOid) throw new Error(`base changed during audit: GitHub ${pr.baseRefOid}, fetched ${localBase}`);
   run("git", ["merge-base", "--is-ancestor", localBase, pr.headRefOid], { cwd: root, label: "verify current-head freshness" });
   run("git", ["merge-tree", "--write-tree", localBase, pr.headRefOid], { cwd: root, label: "verify conflict-free merge tree" });
 
@@ -192,8 +191,10 @@ export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaul
   }
 
   run(process.execPath, [path.join(root, "scripts", "dev-loops.mjs"), "gates"], { cwd: root, label: "validate repository dev-loop policy" });
-  const current = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", "baseRefName,baseRefOid,headRefOid"], root, "re-read pull request head");
-  if (current?.baseRefName !== eligibility.target.branch || current?.baseRefOid !== localBase || current?.headRefOid !== pr.headRefOid) {
+  run("git", ["fetch", "--no-tags", "origin", eligibility.target.branch, pr.headRefOid], { cwd: root, label: "re-read milestone and PR head" });
+  const currentBase = run("git", ["rev-parse", `refs/remotes/origin/${eligibility.target.branch}`], { cwd: root, label: "re-read fetched milestone" }).trim();
+  const current = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", "baseRefName,headRefOid"], root, "re-read pull request head");
+  if (currentBase !== localBase || current?.baseRefName !== eligibility.target.branch || current?.headRefOid !== pr.headRefOid) {
     throw new Error("pull request head or milestone base changed during the merge audit");
   }
   return {

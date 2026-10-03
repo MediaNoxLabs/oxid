@@ -6,11 +6,18 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  auditDevelopMerge,
   closingIssueNumber,
   parseMergeDevelopArgs,
   validatePrForDevelopMerge,
   validateRequiredChecks,
 } from "../../scripts/github/merge-develop-pr.mjs";
+import {
+  authorizeReview,
+  buildReviewControlComment,
+  freezeReview,
+  initialReviewControl,
+} from "../../scripts/github/review-control.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (relativePath) => readFile(path.join(repoRoot, relativePath), "utf8");
@@ -82,6 +89,41 @@ test("required checks include a passing signature and DCO gate", () => {
   assert.equal(validateRequiredChecks([]).ok, false);
   assert.equal(validateRequiredChecks(passing.map((check) => ({ ...check, bucket: "pending" }))).ok, false);
   assert.equal(validateRequiredChecks([{ name: "Repository gate", bucket: "pass", state: "SUCCESS" }]).ok, false);
+});
+
+function developAuditRun({
+  localBase = "c".repeat(40),
+  reReadBase = localBase,
+} = {}) {
+  const pr = eligibleDevelopPr();
+  const control = {
+    body: buildReviewControlComment(freezeReview(
+      authorizeReview(initialReviewControl(pr.headRefOid), { headSha: pr.headRefOid }),
+      { headSha: pr.headRefOid, disposition: "clean" },
+    )),
+    user: { login: "yshyn-iohk" },
+  };
+  let baseReads = 0;
+  return (command, args) => {
+    if (command === "git" && args[0] === "rev-parse" && args[1] === "--show-toplevel") return "/repo\n";
+    if (command === "git" && args[0] === "rev-parse") return `${baseReads++ === 0 ? localBase : reReadBase}\n`;
+    if (command === "git" || command === process.execPath) return "";
+    if (args[0] === "pr" && args[1] === "view" && args.at(-1).includes("state,")) return JSON.stringify(pr);
+    if (args[0] === "pr" && args[1] === "view") return JSON.stringify({ baseRefName: "develop", headRefOid: pr.headRefOid });
+    if (args[0] === "issue") return JSON.stringify({ state: "OPEN", body: "A sufficiently detailed backing issue problem statement." });
+    if (args[0] === "pr" && args[1] === "checks") return JSON.stringify([{ name: "Verify commit sign-offs", bucket: "pass", state: "SUCCESS" }]);
+    if (args[0] === "api") return JSON.stringify([[control]]);
+    throw new Error(`unexpected command ${command} ${args.join(" ")}`);
+  };
+}
+
+test("develop audit accepts an advanced current base and rejects final base drift", () => {
+  const options = { repo: "MediaNoxLabs/oxid", pr: 168, execute: false };
+  assert.equal(auditDevelopMerge(options, { cwd: "/repo", run: developAuditRun() }).baseSha, "c".repeat(40));
+  assert.throws(() => auditDevelopMerge(options, {
+    cwd: "/repo",
+    run: developAuditRun({ reReadBase: "d".repeat(40) }),
+  }), /base changed during the merge audit/);
 });
 
 test("legacy develop wrapper retains exact-head audit but cannot execute a merge", async () => {
