@@ -512,7 +512,13 @@ fn credential_presentation(
     service
         .credential_presentation
         .as_ref()
-        .map(|(authority, hash, challenge)| (authority.as_ref(), hash.as_ref(), challenge.as_ref()))
+        .map(|authority| {
+            (
+                authority.flow.as_ref(),
+                authority.hash.as_ref(),
+                authority.challenge_signing.as_ref(),
+            )
+        })
         .ok_or(DidOperationError::CredentialPresentation(
             CredentialPresentationFlowError::Unavailable,
         ))

@@ -388,6 +388,12 @@ impl From<&DidResolution> for DidRecordView {
     }
 }
 
+struct CredentialPresentationAuthority {
+    flow: Arc<CredentialPresentationFlowService>,
+    hash: Arc<dyn oxid_platform_ports::Sha256Port>,
+    challenge_signing: Arc<dyn DidJubjubChallengeSigningPort>,
+}
+
 pub struct DidService {
     repository: Arc<dyn DidRecordRepository>,
     resolver: Arc<dyn DidResolutionPort>,
@@ -404,11 +410,7 @@ pub struct DidService {
         Arc<SelfIssuedAuthenticationFlowService>,
         Arc<dyn oxid_platform_ports::Sha256Port>,
     )>,
-    credential_presentation: Option<(
-        Arc<CredentialPresentationFlowService>,
-        Arc<dyn oxid_platform_ports::Sha256Port>,
-        Arc<dyn DidJubjubChallengeSigningPort>,
-    )>,
+    credential_presentation: Option<CredentialPresentationAuthority>,
 }
 
 pub struct DidPublicationService {
@@ -529,7 +531,11 @@ impl DidService {
         hash: Arc<dyn oxid_platform_ports::Sha256Port>,
         challenge_signing: Arc<dyn DidJubjubChallengeSigningPort>,
     ) -> Self {
-        self.credential_presentation = Some((authority, hash, challenge_signing));
+        self.credential_presentation = Some(CredentialPresentationAuthority {
+            flow: authority,
+            hash,
+            challenge_signing,
+        });
         self
     }
 }
