@@ -8,7 +8,7 @@ use oxid_diagnostics_application::{
     DiagnosticEventSinkPort, DiagnosticSeverity, DiagnosticSnapshotView,
     GetDiagnosticSnapshotUseCase,
 };
-use oxid_wallet_application::WalletProfileView;
+use oxid_wallet_application::{WalletAccountSource, WalletProfileView};
 #[cfg(feature = "ui-profile-dev")]
 use oxid_wallet_application::{
     WalletDustRegistrationTimelineCode, WalletOperationEffect, WalletOperationEvent,
@@ -419,17 +419,17 @@ pub(super) fn DiagnosticsPage(active_profile: WalletProfileView) -> Element {
                 account, security, ..
             } => {
                 let protection_ready = security.is_available();
-                let midnight_ready = account.source != "unavailable";
+                let midnight_ready = account.source != WalletAccountSource::Unavailable;
                 (
                     format!("{} · {}", security.state_name(), security.protection_name()),
                     protection_ready,
                     format!(
                         "{} · {}",
-                        ui::account_source(&account.source),
-                        ui::sync_state(&account.sync.state)
+                        ui::account_source(account.source),
+                        ui::account_sync_state(account.sync.state)
                     ),
                     midnight_ready,
-                    if account.source == "simulated" {
+                    if account.source == WalletAccountSource::Simulated {
                         "Deterministic simulation".to_owned()
                     } else {
                         "Not connected".to_owned()

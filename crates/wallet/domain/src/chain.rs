@@ -521,6 +521,19 @@ pub enum WalletSyncState {
     Unavailable,
 }
 
+impl WalletSyncState {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NeverSynced => "never_synced",
+            Self::Syncing => "syncing",
+            Self::Synced => "synced",
+            Self::Stalled => "stalled",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
 /// Lifecycle of the key-scoped Midnight DUST event index.
 ///
 /// DUST synchronization is deliberately separate from the public account
@@ -1028,6 +1041,18 @@ pub enum WalletAccountSource {
     Cached,
     Simulated,
     Unavailable,
+}
+
+impl WalletAccountSource {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Cached => "cached",
+            Self::Simulated => "simulated",
+            Self::Unavailable => "unavailable",
+        }
+    }
 }
 
 /// Complete public read model for one profile's selected chain account.

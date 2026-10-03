@@ -88,10 +88,10 @@ pub(super) fn AssetsPage(
             let dust = balance_for(&account, "DUST")
                 .map(|balance| ui::format_atomic_units(&balance.atomic_units, balance.decimals))
                 .unwrap_or_else(|| "—".to_owned());
-            let unavailable = account.source == "unavailable";
+            let unavailable = account.source == WalletAccountSource::Unavailable;
             let is_busy = busy.is_some();
             let account_hint = account_hint(&account, busy);
-            let source_label = ui::account_source(&account.source);
+            let source_label = ui::account_source(account.source);
             let protected_account = has_protected_account(&account);
             let protection_available = security.is_available();
             let protection_unlocked = security.state_name() == "Unlocked";
@@ -122,7 +122,7 @@ pub(super) fn AssetsPage(
                 section { class: "wallet-hero", "data-ui-primitive": "Card StatusPill",
                     div { class: "wallet-hero__heading-row",
                         p { class: "eyebrow", "Assets" }
-                        span { class: if account.source == "simulated" { "status-pill warning" } else { "status-pill" },
+                        span { class: if account.source == WalletAccountSource::Simulated { "status-pill warning" } else { "status-pill" },
                             "{source_label}"
                         }
                     }
@@ -151,9 +151,9 @@ pub(super) fn AssetsPage(
                         strong { "{active_profile.display_name} · {account.network_name}" }
                         p {
                             if let Some(height) = account.sync.chain_tip_height {
-                                "{ui::sync_state(&account.sync.state)} · block {height} · {source_label} source"
+                                "{ui::account_sync_state(account.sync.state)} · block {height} · {source_label} source"
                             } else {
-                                "{ui::sync_state(&account.sync.state)} · {source_label} source"
+                                "{ui::account_sync_state(account.sync.state)} · {source_label} source"
                             }
                         }
                         if let Some(lifecycle_label) = lifecycle_label.as_deref() {
@@ -163,7 +163,7 @@ pub(super) fn AssetsPage(
                 }
 
                 if send_entry {
-                    if wallet_write_actions_available(observation_only) && protected_account && protection_unlocked && account.sync.state == "synced" {
+                    if wallet_write_actions_available(observation_only) && protected_account && protection_unlocked && account.sync.state == WalletSyncState::Synced {
                         if let (Some(unshielded), Some(shielded)) = (
                             account.addresses.iter().find(|address| address.kind == "unshielded"),
                             account.addresses.iter().find(|address| address.kind == "shielded"),
@@ -406,7 +406,7 @@ pub(super) fn AssetsPage(
                     SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
                 }
 
-                if !send_entry && wallet_write_actions_available(observation_only) && protected_account && protection_unlocked && account.sync.state == "synced" {
+                if !send_entry && wallet_write_actions_available(observation_only) && protected_account && protection_unlocked && account.sync.state == WalletSyncState::Synced {
                     if let (Some(unshielded), Some(shielded)) = (
                         account.addresses.iter().find(|address| address.kind == "unshielded"),
                         account.addresses.iter().find(|address| address.kind == "shielded"),

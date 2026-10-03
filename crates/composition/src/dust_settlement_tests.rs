@@ -13,13 +13,13 @@ use oxid_wallet_application::{
     SelectedWalletRealmActionReadiness, SelectedWalletRealmIdentity,
     SelectedWalletRealmObservation, SelectedWalletRealmProjectionFuture,
     SelectedWalletRealmSyncError, SelectedWalletRealmSyncView, SubmitWalletDustRegistrationCommand,
-    WalletAccountView, WalletAssetBalanceView, WalletDustRegistrationAssetView,
-    WalletDustRegistrationError, WalletDustRegistrationPortError,
+    WalletAccountSource, WalletAccountView, WalletAssetBalanceView,
+    WalletDustRegistrationAssetView, WalletDustRegistrationError, WalletDustRegistrationPortError,
     WalletDustRegistrationPreviewView, WalletDustRegistrationPreviewViewFuture,
     WalletDustRegistrationStatusViewFuture, WalletDustRegistrationSubmissionStatusView,
     WalletDustRegistrationSubmissionView, WalletDustRegistrationSubmissionViewFuture,
     WalletDustSyncView, WalletProfileId, WalletRealmFamilyView, WalletShieldedSyncView,
-    WalletSyncStatusView,
+    WalletSyncState, WalletSyncStatusView,
 };
 
 use super::*;
@@ -481,7 +481,7 @@ fn selected_projection(
                 network_name: "Standalone".to_owned(),
                 network_environment: "standalone".to_owned(),
                 account_id: Some("midnight_account_test".to_owned()),
-                source: "live".to_owned(),
+                source: WalletAccountSource::Live,
                 addresses: Vec::new(),
                 balances: vec![WalletAssetBalanceView {
                     asset_id: "midnight:night".to_owned(),
@@ -490,7 +490,7 @@ fn selected_projection(
                     atomic_units: if eligible { "50000000" } else { "0" }.to_owned(),
                 }],
                 sync: WalletSyncStatusView {
-                    state: "synced".to_owned(),
+                    state: WalletSyncState::Synced,
                     current_cursor: Some(1),
                     target_cursor: Some(1),
                     chain_tip_height: Some(1),

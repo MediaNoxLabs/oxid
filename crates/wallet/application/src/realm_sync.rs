@@ -76,6 +76,38 @@ pub struct SelectedWalletRealmSyncView {
     pub shielded: WalletRealmFamilyView<WalletShieldedSyncView>,
 }
 
+/// Shared application policy for the selected-realm public account observation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectedWalletRealmAccountState {
+    AwaitingInitialSync,
+    Refreshing,
+    Fresh,
+    Stale,
+    Unavailable,
+}
+
+impl SelectedWalletRealmAccountState {
+    #[must_use]
+    pub const fn derive(source: WalletAccountSource, sync: WalletSyncState) -> Self {
+        match (source, sync) {
+            (WalletAccountSource::Unavailable | WalletAccountSource::Simulated, _) => {
+                Self::Unavailable
+            }
+            (_, WalletSyncState::Unavailable) => Self::Unavailable,
+            (
+                WalletAccountSource::Live | WalletAccountSource::Cached,
+                WalletSyncState::NeverSynced,
+            ) => Self::AwaitingInitialSync,
+            (WalletAccountSource::Live | WalletAccountSource::Cached, WalletSyncState::Syncing) => {
+                Self::Refreshing
+            }
+            (WalletAccountSource::Live, WalletSyncState::Synced) => Self::Fresh,
+            (WalletAccountSource::Live | WalletAccountSource::Cached, WalletSyncState::Stalled)
+            | (WalletAccountSource::Cached, WalletSyncState::Synced) => Self::Stale,
+        }
+    }
+}
+
 /// Spendable native NIGHT balance derived from the selected-realm account observation.
 ///
 /// This is intentionally not a vault total: missing, refreshing, stale, and
@@ -110,20 +142,17 @@ impl SelectedWalletRealmSpendableNightView {
             .iter()
             .find(|balance| balance.symbol == "NIGHT")
             .map_or("0", |balance| balance.atomic_units.as_str());
-        if matches!(account.source.as_str(), "unavailable" | "simulated") {
-            return Self::Unavailable;
-        }
-        match (account.sync.state.as_str(), account.source.as_str()) {
-            ("never_synced" | "syncing", _) => Self::Loading,
-            ("synced", "live") if atomic_units == "0" => Self::Zero,
-            ("synced", "live") => Self::Fresh {
+        match SelectedWalletRealmAccountState::derive(account.source, account.sync.state) {
+            SelectedWalletRealmAccountState::AwaitingInitialSync
+            | SelectedWalletRealmAccountState::Refreshing => Self::Loading,
+            SelectedWalletRealmAccountState::Fresh if atomic_units == "0" => Self::Zero,
+            SelectedWalletRealmAccountState::Fresh => Self::Fresh {
                 atomic_units: atomic_units.to_owned(),
             },
-            ("synced", "cached") | ("stalled", "live" | "cached") => Self::Stale {
+            SelectedWalletRealmAccountState::Stale => Self::Stale {
                 atomic_units: atomic_units.to_owned(),
             },
-            ("unavailable", _) => Self::Unavailable,
-            _ => Self::Failed,
+            SelectedWalletRealmAccountState::Unavailable => Self::Unavailable,
         }
     }
 }
@@ -141,8 +170,8 @@ mod spendable_night_tests {
     }
 
     fn account(
-        source: &str,
-        state: &str,
+        source: WalletAccountSource,
+        state: WalletSyncState,
         amount: Option<&str>,
     ) -> WalletRealmFamilyView<WalletAccountView> {
         WalletRealmFamilyView::Ready(WalletAccountView {
@@ -151,7 +180,7 @@ mod spendable_night_tests {
             network_name: "Testnet".to_owned(),
             network_environment: "test".to_owned(),
             account_id: None,
-            source: source.to_owned(),
+            source,
             addresses: vec![],
             balances: amount
                 .map(|amount| {
@@ -164,7 +193,7 @@ mod spendable_night_tests {
                 })
                 .unwrap_or_default(),
             sync: crate::WalletSyncStatusView {
-                state: state.to_owned(),
+                state,
                 current_cursor: None,
                 target_cursor: None,
                 chain_tip_height: None,
@@ -175,78 +204,78 @@ mod spendable_night_tests {
     }
 
     #[test]
-    fn spendable_night_keeps_fresh_stale_loading_failed_and_zero_distinct() {
+    fn account_policy_covers_every_typed_source_and_sync_state_pair() {
+        use SelectedWalletRealmAccountState::{
+            AwaitingInitialSync, Fresh, Refreshing, Stale, Unavailable,
+        };
+        use WalletAccountSource::{Cached, Live, Simulated, Unavailable as SourceUnavailable};
+        use WalletSyncState::{
+            NeverSynced, Stalled, Synced, Syncing, Unavailable as SyncUnavailable,
+        };
+
+        let expectations = [
+            (Live, NeverSynced, AwaitingInitialSync),
+            (Live, Syncing, Refreshing),
+            (Live, Synced, Fresh),
+            (Live, Stalled, Stale),
+            (Live, SyncUnavailable, Unavailable),
+            (Cached, NeverSynced, AwaitingInitialSync),
+            (Cached, Syncing, Refreshing),
+            (Cached, Synced, Stale),
+            (Cached, Stalled, Stale),
+            (Cached, SyncUnavailable, Unavailable),
+            (Simulated, NeverSynced, Unavailable),
+            (Simulated, Syncing, Unavailable),
+            (Simulated, Synced, Unavailable),
+            (Simulated, Stalled, Unavailable),
+            (Simulated, SyncUnavailable, Unavailable),
+            (SourceUnavailable, NeverSynced, Unavailable),
+            (SourceUnavailable, Syncing, Unavailable),
+            (SourceUnavailable, Synced, Unavailable),
+            (SourceUnavailable, Stalled, Unavailable),
+            (SourceUnavailable, SyncUnavailable, Unavailable),
+        ];
+        for (source, sync, expected) in expectations {
+            assert_eq!(
+                SelectedWalletRealmAccountState::derive(source, sync),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn spendable_night_uses_the_shared_typed_policy() {
         assert!(matches!(
             SelectedWalletRealmSpendableNightView::from_realm_view(&realm(account(
-                "live",
-                "synced",
+                WalletAccountSource::Live,
+                WalletSyncState::Synced,
                 Some("12")
             ))),
             SelectedWalletRealmSpendableNightView::Fresh { atomic_units } if atomic_units == "12"
         ));
+        assert_eq!(
+            SelectedWalletRealmSpendableNightView::from_realm_view(&realm(account(
+                WalletAccountSource::Live,
+                WalletSyncState::Synced,
+                Some("0")
+            ))),
+            SelectedWalletRealmSpendableNightView::Zero
+        );
         assert!(matches!(
             SelectedWalletRealmSpendableNightView::from_realm_view(&realm(account(
-                "cached",
-                "synced",
+                WalletAccountSource::Cached,
+                WalletSyncState::Synced,
                 Some("12")
             ))),
             SelectedWalletRealmSpendableNightView::Stale { atomic_units } if atomic_units == "12"
         ));
         assert_eq!(
             SelectedWalletRealmSpendableNightView::from_realm_view(&realm(account(
-                "live",
-                "synced",
-                Some("0")
+                WalletAccountSource::Simulated,
+                WalletSyncState::Synced,
+                Some("12")
             ))),
-            SelectedWalletRealmSpendableNightView::Zero
-        );
-        assert_eq!(
-            SelectedWalletRealmSpendableNightView::from_realm_view(&realm(account(
-                "live", "synced", None
-            ))),
-            SelectedWalletRealmSpendableNightView::Zero
-        );
-        assert_eq!(
-            SelectedWalletRealmSpendableNightView::from_realm_view(&realm(account(
-                "live",
-                "syncing",
-                Some("0")
-            ))),
-            SelectedWalletRealmSpendableNightView::Loading
-        );
-        assert!(matches!(
-            SelectedWalletRealmSpendableNightView::from_realm_view(&realm(account(
-                "live",
-                "stalled",
-                Some("0")
-            ))),
-            SelectedWalletRealmSpendableNightView::Stale { atomic_units } if atomic_units == "0"
-        ));
-        for unavailable in [
-            account("unavailable", "unavailable", None),
-            account("simulated", "synced", Some("12")),
-            account("simulated", "never_synced", None),
-            WalletRealmFamilyView::NotFound,
-        ] {
-            assert_eq!(
-                SelectedWalletRealmSpendableNightView::from_realm_view(&realm(unavailable)),
-                SelectedWalletRealmSpendableNightView::Unavailable
-            );
-        }
-        for failed in [
-            account("future_source", "synced", Some("12")),
-            account("live", "future_state", Some("12")),
-        ] {
-            assert_eq!(
-                SelectedWalletRealmSpendableNightView::from_realm_view(&realm(failed)),
-                SelectedWalletRealmSpendableNightView::Failed
-            );
-        }
-        assert_eq!(
-            SelectedWalletRealmSpendableNightView::from_realm_view(&realm(
-                WalletRealmFamilyView::Busy
-            )),
-            SelectedWalletRealmSpendableNightView::Loading
+            SelectedWalletRealmSpendableNightView::Unavailable
         );
         assert_eq!(
             SelectedWalletRealmSpendableNightView::from_realm_view(&realm(
@@ -752,6 +781,20 @@ impl SelectedWalletRealmRuntime {
         Some(1)
     }
 
+    fn latest_projection(
+        &self,
+        profile: &WalletProfileId,
+    ) -> Option<(ChainNetworkId, SelectedWalletRealmPublishedProjection)> {
+        let realm = self
+            .selections
+            .iter()
+            .find(|selection| &selection.profile == profile)?
+            .realm
+            .clone();
+        self.authoritative_projection(profile, &realm)
+            .map(|projection| (realm, projection))
+    }
+
     fn authoritative_projection(
         &self,
         profile: &WalletProfileId,
@@ -1164,6 +1207,7 @@ impl<W> SelectedWalletRealmSyncService<W> {
             })
     }
 
+    #[cfg(test)]
     fn projection(
         &self,
         profile: WalletProfileId,
@@ -1762,44 +1806,20 @@ where
 
 impl<W> GetSelectedWalletRealmSyncUseCase for SelectedWalletRealmSyncService<W>
 where
-    W: WalletNetworkPort
-        + WalletAccountReadPort
-        + WalletDustSyncPort
-        + WalletShieldedSyncPort
-        + 'static,
+    W: Send + Sync,
 {
     fn execute(
         &self,
         command: SelectedWalletRealmSyncCommand,
     ) -> Result<SelectedWalletRealmProjection, SelectedWalletRealmSyncError> {
         let profile = Self::profile(command)?;
-        let (realm, authoritative_account) = {
-            let _selection = self
-                .selection_gate
-                .lock()
-                .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?;
-            let realm = self
-                .wallet
-                .selected_network(&profile)
-                .map_err(SelectedWalletRealmSyncError::SelectedNetwork)?;
-            self.pin_selected_realm(&profile, &realm)?;
-            let authoritative_account = self
-                .runtime
-                .lock()
-                .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?
-                .authoritative_projection(&profile, &realm)
-                .filter(|published| selected_realm_account_is_fresh(&published.view))
-                .map(|published| published.view.account);
-            (realm, authoritative_account)
-        };
-        let observation_generation = self.begin_observation(&profile, &realm)?;
-        let mut view = self.observed(&profile, &realm).view;
-        if !selected_realm_account_is_fresh(&view)
-            && let Some(authoritative_account) = authoritative_account
-        {
-            view.account = authoritative_account;
-        }
-        self.projection(profile, realm, observation_generation, view)
+        let (realm, published) = self
+            .runtime
+            .lock()
+            .map_err(|_| SelectedWalletRealmSyncError::Unavailable)?
+            .latest_projection(&profile)
+            .ok_or(SelectedWalletRealmSyncError::ObservationSuperseded)?;
+        Ok(Self::projection_from_published(profile, realm, published))
     }
 }
 
@@ -2030,11 +2050,11 @@ fn selected_realm_is_fresh(view: &SelectedWalletRealmSyncView) -> bool {
 }
 
 fn selected_realm_account_is_fresh(view: &SelectedWalletRealmSyncView) -> bool {
-    matches!(&view.account, WalletRealmFamilyView::Ready(account) if account.sync.state == "synced" && account.source == "live")
+    matches!(&view.account, WalletRealmFamilyView::Ready(account) if SelectedWalletRealmAccountState::derive(account.source, account.sync.state) == SelectedWalletRealmAccountState::Fresh)
 }
 
 fn selected_realm_is_refreshing(view: &SelectedWalletRealmSyncView) -> bool {
-    matches!(&view.account, WalletRealmFamilyView::Ready(account) if account.sync.state == "syncing")
+    matches!(&view.account, WalletRealmFamilyView::Ready(account) if SelectedWalletRealmAccountState::derive(account.source, account.sync.state) == SelectedWalletRealmAccountState::Refreshing)
         || matches!(&view.dust, WalletRealmFamilyView::Ready(dust) if dust.state == "syncing")
         || matches!(&view.shielded, WalletRealmFamilyView::Ready(shielded) if shielded.state == "syncing")
         || matches!(&view.dust, WalletRealmFamilyView::Busy)
@@ -2915,6 +2935,33 @@ mod tests {
         }
     }
 
+    fn seed_projection<W>(
+        service: &SelectedWalletRealmSyncService<W>,
+    ) -> SelectedWalletRealmProjection
+    where
+        W: WalletNetworkPort
+            + WalletAccountReadPort
+            + WalletDustSyncPort
+            + WalletShieldedSyncPort
+            + 'static,
+    {
+        let profile = WalletProfileId::parse("profile_test").expect("profile id");
+        let realm = service
+            .wallet
+            .selected_network(&profile)
+            .expect("selected realm");
+        service
+            .pin_selected_realm(&profile, &realm)
+            .expect("selection is recorded");
+        let observation = service
+            .begin_observation(&profile, &realm)
+            .expect("observation begins");
+        let view = service.observed(&profile, &realm).view;
+        service
+            .projection(profile, realm, observation, view)
+            .expect("fixture projection publishes")
+    }
+
     fn resolve<T>(future: impl Future<Output = T>) -> T {
         let mut future = Box::pin(future);
         let waker = Waker::noop();
@@ -3366,8 +3413,7 @@ mod tests {
     fn cancellation_supersedes_a_read_admitted_before_its_side_effects() {
         let service =
             SelectedWalletRealmSyncService::new(Arc::new(CancelDuringAccountWallet::default()));
-        let first = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
-            .expect("initial projection");
+        let first = seed_projection(&service);
         let stale = service
             .begin_observation(&first.identity.profile, &first.identity.realm)
             .expect("read is admitted before cancellation");
@@ -3420,7 +3466,7 @@ mod tests {
     }
 
     #[test]
-    fn status_read_retains_live_account_while_refreshing_private_facet_progress() {
+    fn passive_status_read_returns_the_latest_projection_without_observing_ports() {
         let wallet = Arc::new(CancelDuringAccountWallet::default());
         wallet.account_ready.store(true, Ordering::Relaxed);
         let service = SelectedWalletRealmSyncService::new(Arc::clone(&wallet));
@@ -3436,25 +3482,25 @@ mod tests {
             "uninitialized private facets keep the aggregate stale"
         );
 
+        let dust_starts_before_read = wallet.dust_starts.load(Ordering::Relaxed);
         wallet.dust_observation.store(1, Ordering::Relaxed);
         let retained = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
-            .expect("status combines authoritative account and current worker progress");
-        assert!(retained.revision > reconciled.revision);
+            .expect("status returns the latest published projection");
+        assert_eq!(retained.revision, reconciled.revision);
         assert!(!retained.fresh);
         let WalletRealmFamilyView::Ready(account) = retained.view.account else {
             panic!("live account projection is retained");
         };
-        assert_eq!(account.source, "live");
-        let WalletRealmFamilyView::Ready(dust) = retained.view.dust else {
-            panic!("current DUST observation is published");
-        };
-        assert_eq!(dust.state, "syncing");
-        assert_eq!(dust.current_cursor, Some(4));
-        assert_eq!(dust.target_cursor, Some(9));
+        assert_eq!(account.source, WalletAccountSource::Live);
+        assert_eq!(retained.view.dust, reconciled.view.dust);
+        assert_eq!(
+            wallet.dust_starts.load(Ordering::Relaxed),
+            dust_starts_before_read
+        );
     }
 
     #[test]
-    fn completed_command_preserves_newer_untouched_facet_observations() {
+    fn completed_command_ignores_unpublished_private_facet_observations() {
         let wallet = Arc::new(CancelDuringAccountWallet::default());
         wallet.dust_observation.store(1, Ordering::Relaxed);
         let service = SelectedWalletRealmSyncService::new(Arc::clone(&wallet));
@@ -3468,11 +3514,11 @@ mod tests {
 
         wallet.dust_observation.store(2, Ordering::Relaxed);
         let intermediate = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
-            .expect("status read publishes the completed DUST observation");
+            .expect("status read remains passive while the command is pending");
         let WalletRealmFamilyView::Ready(intermediate_dust) = &intermediate.view.dust else {
             panic!("intermediate DUST observation is available");
         };
-        assert_eq!(intermediate_dust.state, "synced");
+        assert_eq!(intermediate_dust.state, "syncing");
 
         wallet.account_ready.store(true, Ordering::Relaxed);
         let Poll::Ready(Ok(completed)) = reconcile.as_mut().poll(&mut context) else {
@@ -3530,8 +3576,7 @@ mod tests {
             selection_observer,
             selection_gate,
         );
-        let cached = GetSelectedWalletRealmSyncUseCase::execute(service.as_ref(), command())
-            .expect("realm A has a published projection before reconciliation");
+        let cached = seed_projection(service.as_ref());
         let mut reconcile = service.reconcile(command(), WalletRealmReconciliationTrigger::Initial);
         let waker = Waker::noop();
         let mut context = Context::from_waker(waker);
@@ -3611,8 +3656,7 @@ mod tests {
     fn projection_rejects_a_realm_switch_deterministically() {
         let wallet = Arc::new(CancelDuringAccountWallet::default());
         let service = SelectedWalletRealmSyncService::new(Arc::clone(&wallet));
-        let first = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
-            .expect("initial projection");
+        let first = seed_projection(&service);
         let unchanged = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
             .expect("unchanged projection");
         assert_eq!(first.revision, unchanged.revision);
@@ -3640,8 +3684,7 @@ mod tests {
             .expect("select replacement realm");
         WalletNetworkSelectionObserver::selected(&service, &profile, &preprod)
             .expect("record replacement realm");
-        let replacement = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
-            .expect("replacement projection");
+        let replacement = seed_projection(&service);
         assert_ne!(first.identity, replacement.identity);
         assert!(!replacement.supersedes(&first));
 
@@ -3650,8 +3693,7 @@ mod tests {
             .expect("restore original realm");
         WalletNetworkSelectionObserver::selected(&service, &profile, &network_id())
             .expect("record restored realm");
-        let restored = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
-            .expect("restored projection");
+        let restored = seed_projection(&service);
         assert_eq!(first.identity, restored.identity);
         assert!(restored.generation > first.generation);
         assert!(restored.revision > first.revision);
@@ -3702,8 +3744,7 @@ mod tests {
     #[test]
     fn selection_invalidation_never_recovers_a_cached_previous_realm() {
         let service = SelectedWalletRealmSyncService::new(Arc::new(PartialWallet::default()));
-        let first = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
-            .expect("initial projection");
+        let first = seed_projection(&service);
         let stale = service
             .begin_observation(&first.identity.profile, &first.identity.realm)
             .expect("observation begins before selection changes");
@@ -3745,8 +3786,7 @@ mod tests {
             observer,
             Arc::clone(&selection_gate),
         ));
-        let first = GetSelectedWalletRealmSyncUseCase::execute(service.as_ref(), command())
-            .expect("initial projection");
+        let first = seed_projection(service.as_ref());
         let guard = selection_gate.lock().expect("selection gate");
         let (started_tx, started_rx) = mpsc::channel();
         let (done_tx, done_rx) = mpsc::channel();
@@ -3778,8 +3818,7 @@ mod tests {
                 .expect("selection succeeds");
         });
 
-        let selected = GetSelectedWalletRealmSyncUseCase::execute(service.as_ref(), command())
-            .expect("replacement projection");
+        let selected = seed_projection(service.as_ref());
         assert_eq!(selected.identity.realm.as_str(), "preprod");
         assert!(!selected.supersedes(&first));
     }
@@ -3787,8 +3826,7 @@ mod tests {
     #[test]
     fn superseded_action_returns_the_newer_published_projection() {
         let service = SelectedWalletRealmSyncService::new(Arc::new(PartialWallet::default()));
-        let first = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
-            .expect("initial projection");
+        let first = seed_projection(&service);
         let older = service
             .begin_observation(&first.identity.profile, &first.identity.realm)
             .expect("action observation begins");
@@ -3826,15 +3864,14 @@ mod tests {
     #[test]
     fn cached_account_snapshot_never_makes_the_realm_fresh() {
         let service = SelectedWalletRealmSyncService::new(Arc::new(PartialWallet::default()));
-        let first = GetSelectedWalletRealmSyncUseCase::execute(&service, command())
-            .expect("initial projection");
+        let first = seed_projection(&service);
         let mut view = first.view;
         {
             let WalletRealmFamilyView::Ready(account) = &mut view.account else {
                 panic!("account fixture must be present");
             };
-            account.sync.state = "synced".to_owned();
-            account.source = "cached".to_owned();
+            account.sync.state = WalletSyncState::Synced;
+            account.source = WalletAccountSource::Cached;
         }
         view.dust = WalletRealmFamilyView::Ready(WalletDustSyncView {
             network_id: "undeployed".to_owned(),
@@ -3861,7 +3898,7 @@ mod tests {
 
         assert!(!selected_realm_is_fresh(&view));
         if let WalletRealmFamilyView::Ready(account) = &mut view.account {
-            account.source = "live".to_owned();
+            account.source = WalletAccountSource::Live;
         }
         assert!(selected_realm_is_fresh(&view));
 

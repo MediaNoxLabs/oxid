@@ -8,6 +8,7 @@
 //! of being echoed to the user.
 
 use oxid_protocol_application::IdentityRequestKind;
+use oxid_wallet_application::{WalletAccountSource, WalletSyncState};
 
 pub(crate) const NIGHT_DECIMALS: u8 = 6;
 pub(crate) const DUST_DECIMALS: u8 = 15;
@@ -20,23 +21,39 @@ pub(crate) fn identity_request_kind(value: IdentityRequestKind) -> &'static str 
     }
 }
 
-pub(crate) fn account_source(value: &str) -> &'static str {
+pub(crate) const fn account_source(value: WalletAccountSource) -> &'static str {
     match value {
-        "live" => "Live",
-        "cached" => "Saved",
-        "simulated" => "Simulated",
-        "unavailable" => "Not connected",
-        _ => "Source unavailable",
+        WalletAccountSource::Live => "Live",
+        WalletAccountSource::Cached => "Saved",
+        WalletAccountSource::Simulated => "Simulated",
+        WalletAccountSource::Unavailable => "Not connected",
     }
 }
 
-pub(crate) fn account_source_note(value: &str) -> &'static str {
+pub(crate) const fn account_source_note(value: WalletAccountSource) -> &'static str {
     match value {
-        "live" => "Live account state reported by the configured Midnight adapter.",
-        "cached" => "Showing local state from the most recent successful synchronization.",
-        "simulated" => "Development-only public fixture state; no chain was contacted.",
-        "unavailable" => "Native custody and a live Midnight account source are not connected yet.",
-        _ => "The account source could not be identified safely.",
+        WalletAccountSource::Live => {
+            "Live account state reported by the configured Midnight adapter."
+        }
+        WalletAccountSource::Cached => {
+            "Showing local state from the most recent successful synchronization."
+        }
+        WalletAccountSource::Simulated => {
+            "Development-only public fixture state; no chain was contacted."
+        }
+        WalletAccountSource::Unavailable => {
+            "Native custody and a live Midnight account source are not connected yet."
+        }
+    }
+}
+
+pub(crate) const fn account_sync_state(value: WalletSyncState) -> &'static str {
+    match value {
+        WalletSyncState::NeverSynced => "Not synced",
+        WalletSyncState::Syncing => "Syncing",
+        WalletSyncState::Synced => "Synced",
+        WalletSyncState::Stalled => "Needs attention",
+        WalletSyncState::Unavailable => "Unavailable",
     }
 }
 
@@ -707,7 +724,6 @@ mod tests {
     fn unknown_machine_values_never_echo() {
         let raw = "future_machine_value";
         for label in [
-            account_source(raw),
             sync_state(raw),
             sync_failure(raw),
             submission_state(raw),

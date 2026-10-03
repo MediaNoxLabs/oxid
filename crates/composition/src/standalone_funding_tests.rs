@@ -30,10 +30,10 @@ use oxid_wallet_application::{
     PrepareWalletTransferCommand, ReconcileWalletDustRegistrationSubmissionCommand,
     SelectWalletNetworkCommand, SensitiveOperationConfirmation,
     SubmitWalletDustRegistrationCommand, SubmitWalletTransferCommand, WalletAccountQuery,
-    WalletDustRegistrationError, WalletDustRegistrationPortError,
+    WalletAccountSource, WalletDustRegistrationError, WalletDustRegistrationPortError,
     WalletDustRegistrationPreviewView, WalletDustSyncCommand, WalletDustSyncView,
     WalletHdPathComponent, WalletProfileSecurityCommand, WalletProtectionPort,
-    WalletShieldedSyncCommand, WalletShieldedSyncView, WalletTransactionError,
+    WalletShieldedSyncCommand, WalletShieldedSyncView, WalletSyncState, WalletTransactionError,
     WalletTransactionPortError, WalletTransferDraftQuery, WalletTransferSubmissionQuery,
 };
 use zeroize::Zeroizing;
@@ -791,8 +791,8 @@ fn live_night_balance(application: &ApplicationServices, profile_id: &str) -> u1
         },
     ))
     .expect("live account synchronization");
-    assert_eq!(account.source, "live");
-    assert_eq!(account.sync.state, "synced");
+    assert_eq!(account.source, WalletAccountSource::Live);
+    assert_eq!(account.sync.state, WalletSyncState::Synced);
     account
         .balances
         .iter()
