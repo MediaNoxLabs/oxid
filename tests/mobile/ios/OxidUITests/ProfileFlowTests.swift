@@ -233,7 +233,7 @@ final class ProfileFlowTests: XCTestCase {
         // field through the fixed, non-interactive center of the app header so
         // the following tap reaches the review button instead of a keypad key.
         application.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
-        let review = application.buttons["Review exact transfer"]
+        let review = application.buttons["Review transfer"]
         scrollTo(review, in: application)
         review.tap()
 

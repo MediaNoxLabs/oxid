@@ -6642,8 +6642,8 @@ fn SendTransferPanel(
                                     }
                                     shielded.set(false);
                                 },
-                                strong { "Public" }
-                                small { "Visible in public Midnight account history" }
+                                span { class: "privacy-choice__icon", aria_hidden: "true", "◌" }
+                                strong { "Public NIGHT" }
                             }
                             button {
                                 class: if shielded() { "privacy-choice__option selected" } else { "privacy-choice__option" },
@@ -6656,8 +6656,8 @@ fn SendTransferPanel(
                                     }
                                     shielded.set(true);
                                 },
-                                strong { "Shielded" }
-                                small { "Uses the synchronized private note set" }
+                                span { class: "privacy-choice__icon", aria_hidden: "true", "◈" }
+                                strong { "Shielded NIGHT" }
                             }
                         }
                         label { r#for: "transfer-amount", "Amount (NIGHT)" }
@@ -6698,8 +6698,10 @@ fn SendTransferPanel(
                             button {
                                 class: "secondary-action",
                                 r#type: "button",
+                                aria_label: "Back to recipient",
                                 onclick: move |_| wizard_step.set(SendWizardStep::Recipient),
-                                "Back"
+                                span { aria_hidden: "true", "‹" }
+                                span { class: "back-action__label", "Back to recipient" }
                             }
                             button {
                                 class: "primary-action",
@@ -6771,7 +6773,7 @@ fn SendTransferPanel(
                                     }),
                                 }
                             },
-                                "Review exact transfer"
+                                "Review transfer"
                             }
                         }
                     }

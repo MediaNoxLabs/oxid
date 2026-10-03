@@ -3556,8 +3556,10 @@ textarea:focus-visible {
 }
 
 .privacy-choice__option {
-  display: grid;
-  gap: var(--space-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
   min-height: 2.65rem;
   padding: var(--space-2) var(--space-3);
   border: 1px solid transparent;
@@ -3569,11 +3571,9 @@ textarea:focus-visible {
   cursor: pointer;
 }
 
-.privacy-choice__option small {
-  color: var(--text-muted);
-  font-size: var(--font-caption);
-  font-weight: 600;
-  line-height: 1.35;
+.privacy-choice__icon {
+  font-size: 1.2rem;
+  line-height: 1;
 }
 
 .privacy-choice__option.selected {
@@ -3590,6 +3590,7 @@ textarea:focus-visible {
 .transfer-card input {
   width: 100%;
   min-height: 3.15rem;
+  font-size: max(16px, var(--font-body));
   padding: 0 var(--space-3);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-control);
@@ -3735,6 +3736,13 @@ textarea:focus-visible {
 
 .transfer-actions .primary-action {
   margin-top: 0;
+}
+
+.transfer-actions .secondary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
 }
 
 .submitting-card {
