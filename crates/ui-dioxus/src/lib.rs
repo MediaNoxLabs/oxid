@@ -6503,12 +6503,30 @@ fn SendTransferPanel(
     let mut using_own_address = use_signal(|| false);
     let mut amount = use_signal(String::new);
     let mut shielded = use_signal(|| false);
+    let mut shielded_status = use_signal(|| None::<Result<WalletShieldedSyncView, String>>);
     let recipient_scan_busy = use_signal(|| false);
     let mut recipient_scan_notice = use_signal(|| None::<String>);
     let recipient_scanner = services.qr_scanner();
     let action_watch_projection =
         use_action_watch_projection(services.clone(), WalletActionWatchContext::Send);
     let show_action_watch = matches!(*panel.read(), TransferPanelState::Submitted(_));
+    let shielded_status_services = services.clone();
+    let shielded_status_profile = profile_id.clone();
+    use_effect(move || {
+        let service = shielded_status_services.get_wallet_shielded_sync_status();
+        let profile_id = shielded_status_profile.clone();
+        spawn(async move {
+            let result = run_ui_blocking(move || {
+                service.execute(oxid_wallet_application::WalletShieldedSyncCommand { profile_id })
+            })
+            .await;
+            shielded_status.set(Some(match result {
+                Ok(Ok(status)) => Ok(status),
+                Ok(Err(error)) => Err(error.to_string()),
+                Err(error) => Err(error.to_string()),
+            }));
+        });
+    });
 
     let content = match panel.read().clone() {
         TransferPanelState::Editing => match wizard_step() {
@@ -6621,6 +6639,11 @@ fn SendTransferPanel(
                 let maximum_amount = night_balance.as_ref().map(|balance| {
                     ui::format_atomic_units(&balance.atomic_units, balance.decimals)
                 });
+                let shielded_available = shielded_status
+                    .read()
+                    .as_ref()
+                    .and_then(|result| result.as_ref().ok())
+                    .and_then(native_shielded_transfer_balance);
                 let public_address = unshielded_receive_address.clone();
                 let private_address = shielded_receive_address.clone();
                 rsx! {
@@ -6675,7 +6698,18 @@ fn SendTransferPanel(
                         }
                         div { class: "send-wizard__balance",
                             if shielded() {
-                                span { "Private balance is validated from the latest shielded synchronization." }
+                                if let Some((available, maximum)) = shielded_available {
+                                    span { "Available privately {available}" }
+                                    button {
+                                        class: "inline-action",
+                                        r#type: "button",
+                                        aria_label: "Use maximum available shielded NIGHT amount",
+                                        onclick: move |_| amount.set(maximum.clone()),
+                                        "Max"
+                                    }
+                                } else {
+                                    span { "Shielded balance is validated before review." }
+                                }
                             } else if let Some(available) = available_label {
                                 span { "Available {available}" }
                                 if let Some(maximum) = maximum_amount {
@@ -6794,6 +6828,11 @@ fn SendTransferPanel(
         TransferPanelState::Prepared(preview) => {
             let amount_label = format_transfer_asset(&preview.amount);
             let change_label = format_transfer_asset(&preview.change);
+            let fee_label = transfer_preview_fee_label(&preview);
+            let freshness_label = format!(
+                "Current inputs · valid until {}",
+                ui::format_epoch_millis(preview.expires_at_millis)
+            );
             let recipient_label = truncate_middle(&preview.recipient_address, 18, 8);
             let summary = preview.review_summary.clone();
             let review_title = preview.review_title.clone();
@@ -6874,7 +6913,8 @@ fn SendTransferPanel(
                                 div { dt { "Network" } dd { "{ui::midnight_network(&preview.network_id)}" } }
                                 div { dt { "Change" } dd { "{change_label}" } }
                                 div { dt { "Inputs" } dd { "{preview.input_count}" } }
-                                div { dt { "DUST fee" } dd { "Calculated during proving" } }
+                                div { dt { "Freshness" } dd { "{freshness_label}" } }
+                                div { dt { "DUST fee" } dd { "{fee_label}" } }
                             }
                         }
                         p { class: "consent-copy", "Only the exact transfer shown here can be authorized." }
@@ -7202,6 +7242,28 @@ fn night_display_to_atomic_units(value: &str) -> Result<String, &'static str> {
 
 fn format_transfer_asset(asset: &oxid_wallet_application::WalletTransferAssetView) -> String {
     ui::format_asset_amount(&asset.atomic_units, asset.decimals, &asset.symbol)
+}
+
+fn native_shielded_transfer_balance(status: &WalletShieldedSyncView) -> Option<(String, String)> {
+    if !status.is_complete() {
+        return None;
+    }
+    let atomic_units = status
+        .balances
+        .iter()
+        .find(|balance| balance.token_type_hex == NATIVE_SHIELDED_NIGHT_TOKEN_TYPE)
+        .map_or("0", |balance| balance.atomic_units.as_str());
+    Some((
+        ui::format_shielded_amount(NATIVE_SHIELDED_NIGHT_TOKEN_TYPE, atomic_units),
+        ui::format_atomic_units(atomic_units, 6),
+    ))
+}
+
+fn transfer_preview_fee_label(preview: &WalletTransferPreviewView) -> String {
+    preview.fee.as_ref().map_or_else(
+        || "Calculated during proving".to_owned(),
+        format_transfer_asset,
+    )
 }
 
 fn transfer_review_summary(preview: &WalletTransferPreviewView) -> String {
@@ -11419,6 +11481,48 @@ mod tests {
             ui::transfer_privacy_adverb("unexpected"),
             "with unavailable privacy"
         );
+    }
+
+    #[test]
+    fn send_amount_uses_only_fresh_native_shielded_balance() {
+        let mut status = WalletShieldedSyncView {
+            network_id: "undeployed".to_owned(),
+            state: "synced".to_owned(),
+            current_cursor: Some(7),
+            target_cursor: Some(7),
+            events_processed: 8,
+            owned_note_count: Some(1),
+            commitment_count: Some(1),
+            balances: vec![oxid_wallet_application::WalletShieldedTokenBalanceView {
+                token_type_hex: NATIVE_SHIELDED_NIGHT_TOKEN_TYPE.to_owned(),
+                atomic_units: "12500000".to_owned(),
+            }],
+            updated_at_millis: Some(42),
+            failure: None,
+        };
+
+        assert_eq!(
+            native_shielded_transfer_balance(&status),
+            Some(("12.5 NIGHT".to_owned(), "12.5".to_owned()))
+        );
+        status.state = "syncing".to_owned();
+        assert_eq!(native_shielded_transfer_balance(&status), None);
+    }
+
+    #[test]
+    fn send_review_prefers_the_known_dust_fee() {
+        let mut preview = transfer_preview("unshielded");
+        assert_eq!(
+            transfer_preview_fee_label(&preview),
+            "Calculated during proving"
+        );
+        preview.fee = Some(oxid_wallet_application::WalletTransferAssetView {
+            asset_id: "dust".to_owned(),
+            symbol: "DUST".to_owned(),
+            decimals: 6,
+            atomic_units: "250000".to_owned(),
+        });
+        assert_eq!(transfer_preview_fee_label(&preview), "0.25 DUST");
     }
 
     #[test]
