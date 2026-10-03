@@ -14,7 +14,7 @@ pub(crate) fn standalone_funding_action(
         Some(oxid_capabilities_application::DeploymentRouteClass::Local) => rsx! {
             div { class: "receive-sheet__funding",
                 strong { "Development funding" }
-                p { "Request the fixed local development grant, then sync your balance." }
+                p { "Request the fixed local development grant. Arrival and balance confirmation continue automatically while this sheet is open." }
                 a {
                     class: "secondary-action",
                     href: "http://127.0.0.1:36301",
@@ -27,7 +27,7 @@ pub(crate) fn standalone_funding_action(
         Some(oxid_capabilities_application::DeploymentRouteClass::Tailnet) => rsx! {
             div { class: "receive-sheet__funding",
                 strong { "Development funding" }
-                p { "Ask the operator to use the private Tailnet faucet to fund this displayed address, then sync your balance." }
+                p { "Ask the operator to use the private Tailnet faucet to fund this displayed address. Arrival and balance confirmation continue automatically while this sheet is open." }
             }
         },
         None => rsx! {},

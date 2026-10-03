@@ -10,9 +10,9 @@ use std::{
 
 use oxid_composition::{ApplicationServices, public_standalone_profile_name};
 use oxid_wallet_application::{
-    AuthorizeWalletTransferCommand, CreateWalletProfileCommand, DeriveWalletAccountCommand,
-    PrepareWalletTransferCommand, SelectWalletNetworkCommand, SelectWalletProfileCommand,
-    SensitiveOperationConfirmation, SubmitWalletTransferCommand, WalletAccountQuery,
+    AuthorizeDevelopmentWalletTransferCommand, CreateWalletProfileCommand,
+    DeriveWalletAccountCommand, PrepareWalletTransferCommand, SelectWalletNetworkCommand,
+    SelectWalletProfileCommand, SubmitDevelopmentWalletTransferCommand, WalletAccountQuery,
     WalletProfileSecurityCommand, WalletTransactionError, WalletTransactionPortError,
 };
 use oxid_wallet_domain::WalletProtectionState;
@@ -137,33 +137,37 @@ impl NightGrantPort for ApplicationNightGrant {
                 recipient_address: recipient_address.to_owned(),
                 amount_atomic_units: FIXED_GRANT_ATOMIC_UNITS.to_string(),
             })
-            .map_err(map_transaction_error)?;
+            .map_err(|error| {
+                eprintln!("standalone faucet prepare failed: {error:?}");
+                map_transaction_error(error)
+            })?;
         let authorized = self
             .application
-            .authorize_wallet_transfer()
-            .execute(AuthorizeWalletTransferCommand {
+            .authorize_development_wallet_transfer()
+            .execute(AuthorizeDevelopmentWalletTransferCommand {
                 profile_id: self.profile_id.clone(),
                 draft_id: prepared.draft_id.clone(),
                 authorization_challenge: prepared.authorization_challenge,
             })
-            .map_err(map_transaction_error)?;
+            .map_err(|error| {
+                eprintln!("standalone faucet authorize failed: {error:?}");
+                map_transaction_error(error)
+            })?;
         if !authorized.submission_ready {
             return Err(GrantError::Unavailable);
         }
-        let submitted =
-            futures::executor::block_on(self.application.submit_wallet_transfer().execute(
-                SubmitWalletTransferCommand {
+        let submitted = futures::executor::block_on(
+            self.application
+                .submit_development_wallet_transfer()
+                .execute(SubmitDevelopmentWalletTransferCommand {
                     profile_id: self.profile_id.clone(),
                     draft_id: prepared.draft_id,
-                    confirmation: SensitiveOperationConfirmation {
-                        title: "Submit standalone NIGHT grant".to_owned(),
-                        summary:
-                            "Prove and submit the authorized fixed development grant".to_owned(),
-                        confirmed: true,
-                    },
-                },
-            ))
-            .map_err(map_transaction_error)?;
+                }),
+        )
+        .map_err(|error| {
+            eprintln!("standalone faucet submit failed: {error:?}");
+            map_transaction_error(error)
+        })?;
         *self
             .pending_maximum_night_balance
             .lock()
