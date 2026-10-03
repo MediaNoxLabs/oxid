@@ -280,6 +280,8 @@ test("mobile visual accessibility evidence preserves the scoped matrix and priva
   assert.match(iosRunner, /OXID_IOS_EVIDENCE_DEVICE_TYPE:-com\.apple\.CoreSimulator\.SimDeviceType\.iPhone-SE-3rd-generation/u);
   assert.doesNotMatch(iosRunner, /boundedLog:"maestro-tail\.log"/u);
   assert.match(iosRunner, /collect_public_artifacts "\$scenario" "\$ui_profile"/u);
+  assert.match(iosRunner, /if \[ -n "\$\{scenario:-\}" \] && \[ -n "\$\{ui_profile:-\}" \]; then[\s\S]*collect_public_artifacts "\$scenario" "\$ui_profile"/u);
+  assert.match(iosRunner, /rm -rf -- "\$ROOT\/target\/mobile-visual-accessibility\/ios\/\$DEVICE"/u);
   assert.match(androidRunner, /oxid-android-maestro-semantic-evidence-v1/u);
   assert.match(androidRunner, /emulator-\*/u);
   assert.match(androidRunner, /OXID_ANDROID_DISPOSABLE/u);

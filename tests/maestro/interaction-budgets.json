@@ -19,7 +19,7 @@
       "useCaseId": "wallet-recovery",
       "scenarioId": "onboarding-restore-boundary",
       "state": "recovery",
-      "flowSha256": "c25de09e5d08637c6025188929df4f03639cdfd24b44a7e97538d2257fc7e040",
+      "flowSha256": "508f38682e875e0d6209b16c7c08e34284e8f5626f6f04895b2bcc06c14a2e0e",
       "observed": {"entryTaps": 1, "decisionScreens": 1, "authorizationPrompts": 0, "routineManualSyncActions": 0},
       "countedActions": [
         {"kind": "entry-tap", "label": "Restore 24-word recovery phrase"},
@@ -74,7 +74,7 @@
       "useCaseId": "did-inventory-and-creation",
       "scenarioId": "did-inventory-copy",
       "state": "ready",
-      "flowSha256": "c40b6131c78ea26fe9b5c2b4d5c466ed846273f6b7f6e150a3afb1b4b3fa9aef",
+      "flowSha256": "c07bd616b46ea4786c75222f3b3eb78bd60b827a178178e6c99dff9b24c93125",
       "observed": {"entryTaps": 1, "decisionScreens": 2, "authorizationPrompts": 1, "routineManualSyncActions": 0},
       "countedActions": [
         {"kind": "entry-tap", "label": "Manage identities"},
@@ -88,7 +88,7 @@
       "useCaseId": "oid4vci-issuance",
       "scenarioId": "credential-offer-refusal",
       "state": "refusal",
-      "flowSha256": "e67ec7b8f18e8ac314812b0f7d53d4223c470a5c91ec53a55e215e2d23aa3e3b",
+      "flowSha256": "0d47038ac6ebcac165810af1bf607a8fb4be398c6fa0af13441ae4eea763c011",
       "observed": {"entryTaps": 0, "decisionScreens": 1, "authorizationPrompts": 0, "routineManualSyncActions": 0},
       "countedActions": [
         {"kind": "decision-screen", "label": "Credential offer preview and refusal"}
@@ -99,7 +99,7 @@
       "useCaseId": "oid4vp-presentation",
       "scenarioId": "credential-presentation-refusal",
       "state": "refusal",
-      "flowSha256": "7216bd318d2f82f5ae7fd42f7d1dd6f8ebb52e34dc64315991743e29531cef37",
+      "flowSha256": "dcb2c2252820b679aad6cbd8e3526ceb6dc6ea5fbf05e7d03317060cff1677c5",
       "observed": {"entryTaps": 0, "decisionScreens": 1, "authorizationPrompts": 0, "routineManualSyncActions": 0},
       "countedActions": [
         {"kind": "decision-screen", "label": "Presentation preview and refusal"}
