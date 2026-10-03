@@ -348,7 +348,7 @@ pub(super) fn selected_realm_provenance(realm: &SelectedWalletRealmSyncView) -> 
             "{} · {} · {} source",
             account.network_name,
             account.chain,
-            ui::account_source(&account.source).to_lowercase(),
+            ui::account_source(account.source).to_lowercase(),
         ),
         family => format!("Selected realm · {} source", realm_family_source(family)),
     }
@@ -379,7 +379,7 @@ pub(super) fn selected_realm_chain_tip(realm: &SelectedWalletRealmSyncView) -> S
 
 fn selected_realm_account_state(family: &WalletRealmFamilyView<WalletAccountView>) -> &str {
     match family {
-        WalletRealmFamilyView::Ready(account) => &account.sync.state,
+        WalletRealmFamilyView::Ready(account) => account.sync.state.as_str(),
         WalletRealmFamilyView::Busy => "syncing",
         WalletRealmFamilyView::NotFound => "never_synced",
         _ => "unavailable",

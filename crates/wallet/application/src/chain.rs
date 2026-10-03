@@ -539,7 +539,7 @@ pub struct WalletAssetChangeView {
 /// Safe synchronization state for presentation and automation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WalletSyncStatusView {
-    pub state: String,
+    pub state: WalletSyncState,
     pub current_cursor: Option<u64>,
     pub target_cursor: Option<u64>,
     pub chain_tip_height: Option<u64>,
@@ -566,7 +566,7 @@ pub struct WalletAccountView {
     pub network_name: String,
     pub network_environment: String,
     pub account_id: Option<String>,
-    pub source: String,
+    pub source: WalletAccountSource,
     pub addresses: Vec<WalletAddressView>,
     pub balances: Vec<WalletAssetBalanceView>,
     pub sync: WalletSyncStatusView,
@@ -612,11 +612,11 @@ impl WalletAccountView {
             network_name: snapshot.network().display_name().as_str().to_owned(),
             network_environment: environment_name(snapshot.network().environment()).to_owned(),
             account_id: snapshot.account_id().map(|id| id.as_str().to_owned()),
-            source: account_source_name(snapshot.source()).to_owned(),
+            source: snapshot.source(),
             addresses,
             balances,
             sync: WalletSyncStatusView {
-                state: sync_state_name(snapshot.sync().state()).to_owned(),
+                state: snapshot.sync().state(),
                 current_cursor: snapshot.sync().current_cursor(),
                 target_cursor: snapshot.sync().target_cursor(),
                 chain_tip_height: snapshot.sync().chain_tip_height(),
@@ -1047,25 +1047,6 @@ const fn transaction_status_name(status: WalletTransactionStatus) -> &'static st
     }
 }
 
-const fn sync_state_name(state: WalletSyncState) -> &'static str {
-    match state {
-        WalletSyncState::NeverSynced => "never_synced",
-        WalletSyncState::Syncing => "syncing",
-        WalletSyncState::Synced => "synced",
-        WalletSyncState::Stalled => "stalled",
-        WalletSyncState::Unavailable => "unavailable",
-    }
-}
-
-const fn account_source_name(source: WalletAccountSource) -> &'static str {
-    match source {
-        WalletAccountSource::Live => "live",
-        WalletAccountSource::Cached => "cached",
-        WalletAccountSource::Simulated => "simulated",
-        WalletAccountSource::Unavailable => "unavailable",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -1305,11 +1286,11 @@ mod tests {
         )
         .expect("account query succeeds");
 
-        assert_eq!(view.source, "simulated");
+        assert_eq!(view.source, WalletAccountSource::Simulated);
         assert_eq!(view.balances[0].atomic_units, u128::MAX.to_string());
         assert_eq!(view.addresses[0].kind, "unshielded");
         assert_eq!(view.transactions[0].transaction_id, "tx_new");
-        assert_eq!(view.sync.state, "synced");
+        assert_eq!(view.sync.state, WalletSyncState::Synced);
     }
 
     #[test]

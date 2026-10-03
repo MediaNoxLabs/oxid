@@ -171,12 +171,12 @@ use oxid_wallet_application::{
     SelectedWalletRealmSyncView, SensitiveOperationConfirmation, StartWalletDustSyncUseCase,
     StartWalletShieldedSyncUseCase, SubmitWalletTransferCommand, SubmitWalletTransferUseCase,
     SyncWalletAccountUseCase, UnlockWalletUseCase, WalletAccountError, WalletAccountPortError,
-    WalletAccountQuery, WalletAccountView, WalletBackupReceiptCommand, WalletBackupReceiptView,
-    WalletDustSyncView, WalletNetworkListView, WalletProfileSecurityCommand, WalletProfileView,
-    WalletRealmFamilyView, WalletRecoverySecret, WalletSecurityStatusView, WalletShieldedSyncView,
-    WalletSyncStatusView, WalletTransferDraftQuery, WalletTransferPreviewView,
-    WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView,
-    WalletTransferSubmissionView,
+    WalletAccountQuery, WalletAccountSource, WalletAccountView, WalletBackupReceiptCommand,
+    WalletBackupReceiptView, WalletDustSyncView, WalletNetworkListView,
+    WalletProfileSecurityCommand, WalletProfileView, WalletRealmFamilyView, WalletRecoverySecret,
+    WalletSecurityStatusView, WalletShieldedSyncView, WalletSyncState, WalletSyncStatusView,
+    WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionQuery,
+    WalletTransferSubmissionStatusView, WalletTransferSubmissionView,
 };
 #[cfg(feature = "preprod-observation")]
 use oxid_wallet_application::{
@@ -2924,7 +2924,7 @@ async fn execute_demo_data_action(
             .await
             .map_err(|error| error.to_string())??;
             if !demo_funding_source_is_safe(
-                &account.source,
+                account.source.as_str(),
                 &account.network_id,
                 &account.network_environment,
             ) {
@@ -4994,8 +4994,8 @@ fn HomePage(
 
 #[component]
 fn HomeHero(active_profile: WalletProfileView, account: WalletAccountView) -> Element {
-    let source = ui::account_source(&account.source);
-    let freshness = ui::sync_state(&account.sync.state);
+    let source = ui::account_source(account.source);
+    let freshness = ui::account_sync_state(account.sync.state);
     let status_class = if matches!(
         account.source.as_str(),
         "simulated" | "cached" | "unavailable"
@@ -5017,7 +5017,7 @@ fn HomeHero(active_profile: WalletProfileView, account: WalletAccountView) -> El
             }
             h2 { class: "home-hero__realm-title", "{account.network_name}" }
             p { class: "home-hero__profile", "{active_profile.display_name} · {account.chain}" }
-            p { class: "home-hero__hint", "{ui::account_source_note(&account.source)}" }
+            p { class: "home-hero__hint", "{ui::account_source_note(account.source)}" }
         }
     }
 }
@@ -5224,7 +5224,7 @@ fn ReceiveSheet(
                 .find(|address| Some(address.kind.as_str()) == selected_kind_value.as_deref())
                 .cloned()
                 .unwrap_or_else(|| addresses[0].clone());
-            let source = ui::account_source(&account.source);
+            let source = ui::account_source(account.source);
             let status_class = if matches!(
                 account.source.as_str(),
                 "simulated" | "cached" | "unavailable"
@@ -5516,8 +5516,8 @@ fn home_wallet_summary(account: &WalletAccountView) -> (String, String) {
         account.network_name.clone(),
         format!(
             "{} · {}",
-            ui::sync_state(&account.sync.state),
-            ui::account_source(&account.source),
+            ui::account_sync_state(account.sync.state),
+            ui::account_source(account.source),
         ),
     )
 }
@@ -5824,7 +5824,7 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
                 }
             },
             AccountPageState::Ready { account, .. } => {
-                let unavailable = account.source == "unavailable";
+                let unavailable = account.source == WalletAccountSource::Unavailable;
                 rsx! { AccountActivityCard { account: *account, unavailable } }
             },
         }
@@ -6379,11 +6379,11 @@ fn protected_account_placeholder(networks: &WalletNetworkListView) -> Option<Wal
         network_name: network.display_name.clone(),
         network_environment: network.environment.clone(),
         account_id: None,
-        source: "unavailable".to_owned(),
+        source: WalletAccountSource::Unavailable,
         addresses: Vec::new(),
         balances: Vec::new(),
         sync: WalletSyncStatusView {
-            state: "unavailable".to_owned(),
+            state: WalletSyncState::Unavailable,
             current_cursor: None,
             target_cursor: None,
             chain_tip_height: None,
@@ -7291,7 +7291,7 @@ fn account_hint(account: &WalletAccountView, busy: Option<AccountOperation>) -> 
             AccountOperation::Syncing => "Synchronizing account state from the configured source…",
         }
     } else {
-        ui::account_source_note(&account.source)
+        ui::account_source_note(account.source)
     }
 }
 
@@ -11594,10 +11594,10 @@ mod tests {
         let account = protected_account_placeholder(&networks).expect("selected network");
 
         assert_eq!(account.network_id, "undeployed");
-        assert_eq!(account.source, "unavailable");
+        assert_eq!(account.source, WalletAccountSource::Unavailable);
         assert!(account.account_id.is_none());
         assert!(account.addresses.is_empty());
-        assert_eq!(account.sync.state, "unavailable");
+        assert_eq!(account.sync.state, WalletSyncState::Unavailable);
         assert!(!has_protected_account(&account));
         assert!(protected_receive_addresses(&account).is_none());
     }
@@ -11615,7 +11615,7 @@ mod tests {
             }],
         };
         let mut account = protected_account_placeholder(&networks).expect("selected network");
-        account.source = "simulated".to_owned();
+        account.source = WalletAccountSource::Simulated;
         account.addresses = vec![
             WalletAddressView {
                 kind: "unshielded".to_owned(),
@@ -12030,7 +12030,7 @@ mod tests {
     }
 
     fn selected_realm_status(
-        account_state: &str,
+        account_state: WalletSyncState,
         dust: WalletDustSyncView,
         shielded: WalletShieldedSyncView,
     ) -> SelectedWalletRealmSyncView {
@@ -12041,11 +12041,11 @@ mod tests {
                 network_name: "Standalone".to_owned(),
                 network_environment: "development".to_owned(),
                 account_id: Some("account_1".to_owned()),
-                source: "live".to_owned(),
+                source: WalletAccountSource::Live,
                 addresses: Vec::new(),
                 balances: Vec::new(),
                 sync: WalletSyncStatusView {
-                    state: account_state.to_owned(),
+                    state: account_state,
                     current_cursor: Some(2),
                     target_cursor: Some(2),
                     chain_tip_height: Some(5_255),
@@ -12129,14 +12129,14 @@ mod tests {
     fn account_sync_card_combines_progress_without_event_count_copy() {
         let dust = dust_status("syncing", Some(0), Some(2));
         let shielded = shielded_status("syncing", Some(2), Some(2));
-        let realm = selected_realm_status("synced", dust.clone(), shielded.clone());
+        let realm = selected_realm_status(WalletSyncState::Synced, dust.clone(), shielded.clone());
 
         assert_eq!(selected_realm_sync_state(&realm), "syncing");
         assert_eq!(selected_realm_sync_progress(&realm), Some(66));
         assert!(!dust_sync_note(&dust).contains("event"));
         assert!(!shielded_sync_note(&shielded).contains("event"));
         let synced = selected_realm_status(
-            "synced",
+            WalletSyncState::Synced,
             dust_status("synced", Some(2), Some(2)),
             shielded_status("synced", Some(2), Some(2)),
         );
@@ -12171,7 +12171,7 @@ mod tests {
     #[test]
     fn selected_realm_provenance_is_public_and_endpoint_free() {
         let realm = selected_realm_status(
-            "synced",
+            WalletSyncState::Synced,
             dust_status("synced", Some(2), Some(2)),
             shielded_status("synced", Some(2), Some(2)),
         );

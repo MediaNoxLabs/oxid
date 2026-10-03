@@ -32,7 +32,7 @@ use oxid_wallet_application::{
     SelectedWalletRealmSyncCommand, SensitiveOperationConfirmation,
     SubmitDevelopmentWalletDustRegistrationCommand, SubmitDevelopmentWalletDustRegistrationUseCase,
     SubmitWalletDustRegistrationCommand, SubmitWalletDustRegistrationUseCase,
-    SyncSelectedWalletRealmUseCase, WalletDustRegistrationDriver,
+    SyncSelectedWalletRealmUseCase, WalletAccountSource, WalletDustRegistrationDriver,
     WalletDustRegistrationDriverError, WalletDustRegistrationEffect,
     WalletDustRegistrationExecutorFailure, WalletDustRegistrationOperationCompletion,
     WalletDustRegistrationOperationFuture, WalletDustRegistrationPreviewView,
@@ -40,7 +40,8 @@ use oxid_wallet_application::{
     WalletDustRegistrationRecoveryStoreError, WalletDustRegistrationRuntimeOperation,
     WalletDustRegistrationSettlementEvent, WalletDustRegistrationSettlementIdentity,
     WalletDustRegistrationSettlementProjection, WalletDustRegistrationSettlementReconciliation,
-    WalletRealmFamilyView, WalletRealmReconciliationTrigger, WalletTransactionDraftId,
+    WalletRealmFamilyView, WalletRealmReconciliationTrigger, WalletSyncState,
+    WalletTransactionDraftId,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1197,8 +1198,8 @@ impl ExecuteWalletDustRegistrationOperation for ComposedDustRegistrationExecutor
 fn selected_realm_is_eligible(selected: &SelectedWalletRealmProjection) -> bool {
     matches!(&selected.view.account, WalletRealmFamilyView::Ready(account) if
     account.network_id == selected.identity.realm.as_str()
-        && account.source == "live"
-        && account.sync.state == "synced"
+        && account.source == WalletAccountSource::Live
+        && account.sync.state == WalletSyncState::Synced
         && account.balances.iter().any(|balance| {
             balance.asset_id == "midnight:night"
                 && balance.atomic_units.parse::<u128>().is_ok_and(|value| value > 0)

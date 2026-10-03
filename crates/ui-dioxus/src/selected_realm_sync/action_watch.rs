@@ -5,8 +5,9 @@
 use dioxus::prelude::*;
 use oxid_wallet_application::{
     SelectedWalletRealmSyncCommand, WalletAccountError, WalletAccountPortError, WalletAccountQuery,
-    WalletAccountView, WalletActionWatch, WalletActionWatchHandle, WalletActionWatchKind,
-    WalletActionWatchObservation, WalletActionWatchProjection, WalletActionWatchState,
+    WalletAccountSource, WalletAccountView, WalletActionWatch, WalletActionWatchHandle,
+    WalletActionWatchKind, WalletActionWatchObservation, WalletActionWatchProjection,
+    WalletActionWatchState, WalletSyncState,
 };
 use std::{collections::BTreeSet, time::Duration};
 
@@ -127,7 +128,7 @@ pub(crate) fn start_receive_watch(
 ) {
     let (session_active, generation) = signals;
     let expected_generation = reset_receive_watch(signals);
-    if !receive_watch_enabled(&initial.source, selected_kind().as_deref()) {
+    if !receive_watch_enabled(initial.source, selected_kind().as_deref()) {
         return;
     }
     spawn(async move {
@@ -323,7 +324,7 @@ async fn observe_receive_arrival(
             guard.disarm();
             return;
         }
-        if observed.sync.state == "syncing" {
+        if observed.sync.state == WalletSyncState::Syncing {
             continue;
         }
         let Some(observed_checkpoint) = observed.sync.current_cursor else {
@@ -362,12 +363,12 @@ fn receive_watch_supported(kind: Option<&str>) -> bool {
     kind == Some("unshielded")
 }
 
-fn receive_watch_enabled(source: &str, kind: Option<&str>) -> bool {
-    source == "live" && receive_watch_supported(kind)
+fn receive_watch_enabled(source: WalletAccountSource, kind: Option<&str>) -> bool {
+    source == WalletAccountSource::Live && receive_watch_supported(kind)
 }
 
 fn synchronized_account_checkpoint(account: &WalletAccountView) -> Option<u64> {
-    if account_state(account).is_none() && account.sync.state == "synced" {
+    if account_state(account).is_none() && account.sync.state == WalletSyncState::Synced {
         account.sync.current_cursor
     } else {
         None
@@ -375,10 +376,15 @@ fn synchronized_account_checkpoint(account: &WalletAccountView) -> Option<u64> {
 }
 
 fn account_state(account: &WalletAccountView) -> Option<WalletActionWatchState> {
-    if account.source == "unavailable" || account.sync.state == "unavailable" {
+    if account.source == WalletAccountSource::Unavailable
+        || account.sync.state == WalletSyncState::Unavailable
+    {
         Some(WalletActionWatchState::Offline)
-    } else if account.source != "live"
-        || !matches!(account.sync.state.as_str(), "synced" | "syncing")
+    } else if account.source != WalletAccountSource::Live
+        || !matches!(
+            account.sync.state,
+            WalletSyncState::Synced | WalletSyncState::Syncing
+        )
     {
         Some(WalletActionWatchState::Degraded)
     } else {
@@ -591,8 +597,8 @@ mod tests {
     };
 
     fn account(
-        source: &str,
-        sync_state: &str,
+        source: WalletAccountSource,
+        sync_state: WalletSyncState,
         cursor: Option<u64>,
         transactions: Vec<WalletTransactionView>,
     ) -> WalletAccountView {
@@ -602,11 +608,11 @@ mod tests {
             network_name: "Standalone".to_owned(),
             network_environment: "undeployed".to_owned(),
             account_id: Some("account-ui".to_owned()),
-            source: source.to_owned(),
+            source,
             addresses: Vec::new(),
             balances: Vec::new(),
             sync: WalletSyncStatusView {
-                state: sync_state.to_owned(),
+                state: sync_state,
                 current_cursor: cursor,
                 target_cursor: cursor,
                 chain_tip_height: cursor,
@@ -805,27 +811,57 @@ mod tests {
     #[test]
     fn receive_baseline_requires_a_live_synchronized_chain_cursor() {
         assert_eq!(
-            synchronized_account_checkpoint(&account("live", "synced", Some(7), Vec::new())),
+            synchronized_account_checkpoint(&account(
+                WalletAccountSource::Live,
+                WalletSyncState::Synced,
+                Some(7),
+                Vec::new()
+            )),
             Some(7)
         );
         assert_eq!(
-            synchronized_account_checkpoint(&account("cached", "synced", Some(7), Vec::new())),
+            synchronized_account_checkpoint(&account(
+                WalletAccountSource::Cached,
+                WalletSyncState::Synced,
+                Some(7),
+                Vec::new()
+            )),
             None
         );
         assert_eq!(
-            account_state(&account("unavailable", "unavailable", None, Vec::new())),
+            account_state(&account(
+                WalletAccountSource::Unavailable,
+                WalletSyncState::Unavailable,
+                None,
+                Vec::new()
+            )),
             Some(WalletActionWatchState::Offline)
         );
         assert_eq!(
-            account_state(&account("live", "stalled", Some(7), Vec::new())),
+            account_state(&account(
+                WalletAccountSource::Live,
+                WalletSyncState::Stalled,
+                Some(7),
+                Vec::new()
+            )),
             Some(WalletActionWatchState::Degraded)
         );
         assert_eq!(
-            account_state(&account("live", "syncing", Some(7), Vec::new())),
+            account_state(&account(
+                WalletAccountSource::Live,
+                WalletSyncState::Syncing,
+                Some(7),
+                Vec::new()
+            )),
             None
         );
         assert_eq!(
-            synchronized_account_checkpoint(&account("live", "syncing", Some(7), Vec::new())),
+            synchronized_account_checkpoint(&account(
+                WalletAccountSource::Live,
+                WalletSyncState::Syncing,
+                Some(7),
+                Vec::new()
+            )),
             None
         );
     }
@@ -833,8 +869,8 @@ mod tests {
     #[test]
     fn receive_observation_uses_only_confirmed_incoming_rows() {
         let observed = account(
-            "live",
-            "synced",
+            WalletAccountSource::Live,
+            WalletSyncState::Synced,
             Some(9),
             vec![
                 transaction("confirmed-incoming", "incoming", "confirmed"),
@@ -855,9 +891,18 @@ mod tests {
         assert!(receive_watch_supported(Some("unshielded")));
         assert!(!receive_watch_supported(Some("shielded")));
         assert!(!receive_watch_supported(None));
-        assert!(receive_watch_enabled("live", Some("unshielded")));
-        assert!(!receive_watch_enabled("simulated", Some("unshielded")));
-        assert!(!receive_watch_enabled("cached", Some("unshielded")));
+        assert!(receive_watch_enabled(
+            WalletAccountSource::Live,
+            Some("unshielded")
+        ));
+        assert!(!receive_watch_enabled(
+            WalletAccountSource::Simulated,
+            Some("unshielded")
+        ));
+        assert!(!receive_watch_enabled(
+            WalletAccountSource::Cached,
+            Some("unshielded")
+        ));
     }
 
     #[test]
