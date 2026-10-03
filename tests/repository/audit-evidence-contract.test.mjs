@@ -474,6 +474,25 @@ test("adr.collisions flags an accepted record depending on a proposed one", () =
   ]);
 });
 
+test("adr.collisions parses every unique ADR identifier in an amendment field", () => {
+  const run = stubRunner({
+    "git ls-tree -r --name-only refs/remotes/origin/develop": "docs/adr/0025-old.md\ndocs/adr/0106-proposed.md\ndocs/adr/0107-proposed.md\ndocs/adr/0108-proposed.md",
+    "git cat-file --batch": catFileBatch({
+      "refs/remotes/origin/develop:docs/adr/0025-old.md": "Status: Accepted\n\nAmended by: ADR-0106, ADR-0107; then ADR-0106 and ADR-0108\n\nUnrelated ADR-0999 prose.\n",
+      "refs/remotes/origin/develop:docs/adr/0106-proposed.md": "Status: Proposed\n",
+      "refs/remotes/origin/develop:docs/adr/0107-proposed.md": "Status: Proposed\n",
+      "refs/remotes/origin/develop:docs/adr/0108-proposed.md": "Status: Proposed\n",
+    }),
+  });
+  const result = collectAdrCollisions({
+    branches: ["refs/remotes/origin/develop"], run });
+  assert.deepEqual(result.facts.statusBlindBacklinks, [
+    { from: "docs/adr/0025-old.md", fromStatus: "Accepted", to: "docs/adr/0106-proposed.md", toStatus: "Proposed" },
+    { from: "docs/adr/0025-old.md", fromStatus: "Accepted", to: "docs/adr/0107-proposed.md", toStatus: "Proposed" },
+    { from: "docs/adr/0025-old.md", fromStatus: "Accepted", to: "docs/adr/0108-proposed.md", toStatus: "Proposed" },
+  ]);
+});
+
 test("adr.collisions reports a clean corpus as clean", () => {
   const run = stubRunner({
     "git ls-tree -r --name-only refs/remotes/origin/develop": "docs/adr/0025-old.md\ndocs/adr/0106-new.md",
