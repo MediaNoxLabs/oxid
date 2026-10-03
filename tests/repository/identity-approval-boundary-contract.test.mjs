@@ -13,6 +13,8 @@ const environmentCompositionPath = "crates/composition/src/profile_environment.r
 const portalCompositionPath = "crates/composition/src/profile_mobile.rs";
 const fixtureExecutablePath = "apps/oxid-headless/tests/support/development_did_approval_fixture_main.rs";
 const headlessManifestPath = "apps/oxid-headless/Cargo.toml";
+const demoApplicationPath = "apps/oxid/src/main.rs";
+const demoManifestPath = "apps/oxid/Cargo.toml";
 const fixtureGate = '#[cfg(any(test, feature = "development-approval"))]';
 const compositionGate = '#[cfg(any(test, feature = "development-did-approval"))]';
 const environmentFixtureGate = `#[cfg(all(
@@ -103,6 +105,22 @@ function violations(files) {
         || /(?:std::env|serde|Deserialize)/u.test(source)) failures.push(path);
       continue;
     }
+    if (path === demoApplicationPath) {
+      const fixtureCall = "oxid_composition::compose_headless_with_development_did_approval()";
+      const fixtureGate = `#[cfg(all(
+        feature = "standalone-development",
+        not(feature = "standalone-native-custody"),
+        feature = "ui-profile-demo",
+        not(feature = "standalone-tailnet"),
+        not(feature = "standalone-local"),
+        not(feature = "standalone-portal-tailnet"),
+        not(feature = "desktop-portal-test"),
+        not(target_arch = "wasm32")
+    ))]`;
+      if (!source.includes(`${fixtureGate}\n    let application = ${fixtureCall};`)
+        || source.split(fixtureCall).length !== 2) failures.push(path);
+      continue;
+    }
     if (path.startsWith("apps/oxid-headless/tests/") || [
       "crates/composition/src/profile_in_memory/tests.rs",
       "crates/composition/src/passport_vault/tests.rs",
@@ -129,6 +147,13 @@ test("DID authority is unavailable except for the feature-gated explicit fixture
   assert.match(manifest, /development-did-approval-fixture = \["oxid-composition\/development-did-approval"\]/u);
   assert.match(manifest, /name = "oxid-headless-development-did-approval-fixture"[\s\S]*required-features = \["development-did-approval-fixture"\]/u);
   assert.doesNotMatch(manifest, /default = \[[^\]]*development-did-approval-fixture/u);
+
+  const demoManifest = readFileSync(demoManifestPath, "utf8");
+  assert.match(
+    demoManifest,
+    /ui-profile-demo = \[[\s\S]*?"oxid-composition\/development-did-approval"[\s\S]*?\]/u,
+  );
+  assert.doesNotMatch(demoManifest, /default = \[[^\]]*ui-profile-demo/u);
 
   assert.match(fixtureExecutablePath, /^apps\/oxid-headless\/tests\/support\//u);
 });
