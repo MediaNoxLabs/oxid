@@ -70,20 +70,41 @@ authorize_prompt() {
   for _attempt in $(seq 1 90); do
     if credential_prompt_focused; then
       echo "Android device-credential prompt observed on $device." >&2
-      "$adb_command" -s "$device" shell input text "$test_pin" >/dev/null
+      # Activity focus can precede the credential editor becoming input-ready.
+      # Allow the system transition to settle before injecting the first digit.
+      sleep 1
+      for ((_digit_index = 0; _digit_index < ${#test_pin}; _digit_index++)); do
+        _digit="${test_pin:_digit_index:1}"
+        "$adb_command" -s "$device" shell input keyevent "$((10#$_digit + 7))" >/dev/null
+        sleep 0.15
+      done
+      "$adb_command" -s "$device" shell input keyevent ENTER >/dev/null
       for _settle_attempt in $(seq 1 10); do
         if ! credential_prompt_focused; then
           return 0
         fi
         sleep 0.2
       done
-      "$adb_command" -s "$device" shell input keyevent ENTER >/dev/null
-      return 0
+      for _settle_attempt in $(seq 1 50); do
+        if ! credential_prompt_focused; then
+          return 0
+        fi
+        sleep 0.2
+      done
+      echo "Android device-credential prompt remained focused after authorization." >&2
+      return 1
     fi
     sleep 1
   done
   echo "Android device-credential prompt did not appear." >&2
   return 1
+}
+
+authorize_prompts() {
+  local count="$1"
+  for _prompt in $(seq 1 "$count"); do
+    authorize_prompt
+  done
 }
 
 run_webview_mode() {
@@ -127,12 +148,12 @@ run_webview_mode() {
   return "$node_status"
 }
 
-authorize_prompt &
+authorize_prompts 2 &
 first_authorizer=$!
 first_authorization="$(run_webview_mode native-authorize)"
 wait "$first_authorizer"
-if [ "$(jq -r '.securityAction' <<<"$first_authorization")" != "Initialize wallet" ]; then
-  echo "Android native custody did not request first-use initialization." >&2
+if [ "$(jq -r '.securityAction' <<<"$first_authorization")" != "already unlocked" ]; then
+  echo "Android native custody did not complete first-use initialization." >&2
   exit 1
 fi
 
@@ -189,7 +210,7 @@ if [ -z "$old_process_id" ] || [ -z "$new_process_id" ] || [ "$old_process_id" =
   echo "Android did not establish a distinct native custody process after restart." >&2
   exit 1
 fi
-authorize_prompt &
+authorize_prompts 1 &
 second_authorizer=$!
 second_authorization="$(run_webview_mode native-authorize)"
 wait "$second_authorizer"

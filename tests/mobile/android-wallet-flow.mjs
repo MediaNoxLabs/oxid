@@ -166,6 +166,16 @@ async function openSettings() {
   await clickGlobalAction("Settings");
 }
 
+async function openSecuritySettings() {
+  await openSettings();
+  await clickButtonByLabel("Open Security");
+}
+
+async function openBackupSettings() {
+  await openSettings();
+  await clickButtonByLabel("Open Backup");
+}
+
 async function openPassportVault() {
   await clickButton("Home");
   await waitFor(
@@ -457,7 +467,7 @@ try {
       30_000,
     );
 
-    await openSettings();
+    await openBackupSettings();
     await waitFor(
       "document.body.innerText.includes('One encrypted wallet document')",
       "complete wallet backup settings",
@@ -1093,18 +1103,10 @@ try {
     const createProfile = await evaluate(`Boolean(${buttonExpression("Create private wallet")})`);
     if (createProfile) await createFreshProfile();
     await openWallet();
-    await waitFor(
-      'Boolean(document.querySelector(\'button[aria-label="Activate protected Midnight account"]\')) || Boolean(document.querySelector(\'.address-row\')) || Boolean(document.querySelector(\'[role="alert"]\'))',
-      "settled pre-authorization account state",
-      90_000,
-    );
-    const accountLoadFailed = await evaluate(
-      'Boolean(document.querySelector(\'[role="alert"]\'))',
-    );
-    if (accountLoadFailed) {
-      throw new Error("native custody account status failed safely before authorization");
-    }
-    await openSettings();
+    // A restarted protected profile cannot settle its account projection until
+    // custody is unlocked. Enter Security first, then validate the account in
+    // the native-custody/native-restored phase below.
+    await openSecuritySettings();
     await waitFor(
       "document.body.textContent.includes('Wallet protection') && !document.body.textContent.includes('Checking custody capability')",
       "settled native protection settings card",
@@ -1136,10 +1138,10 @@ try {
   } else if (mode === "native-custody" || mode === "native-restored") {
     await openWallet();
     await waitFor(
-      "document.body.textContent.includes('Wallet overview')",
+      "Boolean(document.querySelector('.account-sync-card'))",
       "Assets page before custody refresh",
     );
-    await openSettings();
+    await openSecuritySettings();
     await waitFor(
       "document.body.textContent.includes('Local controls') && document.body.textContent.includes('Wallet protection') && !document.body.textContent.includes('Checking custody capability')",
       "refreshed native protection settings card",
@@ -1155,7 +1157,7 @@ try {
     }
     await openWallet();
     await waitFor(
-      "document.body.textContent.includes('Wallet overview')",
+      "Boolean(document.querySelector('.account-sync-card'))",
       "Assets page before native account activation",
     );
     try {
@@ -1202,7 +1204,7 @@ try {
     if (!receiveAddress.startsWith("mn_addr_")) {
       throw new Error("native custody did not derive the expected public Midnight address");
     }
-    await openSettings();
+    await openSecuritySettings();
     await waitFor(
       "document.body.textContent.includes('Wallet protection') && !document.body.textContent.includes('Checking custody capability')",
       "settled native protection settings card",
