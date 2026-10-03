@@ -36,6 +36,12 @@ const LEGACY_COMPLETE_WALLET_FORMAT_VERSION_V3: u16 = 3;
 const LEGACY_CUSTODY_FORMAT_VERSION_V4: u16 = 4;
 const COMPLETE_WALLET_FORMAT_VERSION: u16 = 5;
 const CURRENT_CUSTODY_FORMAT_VERSION: u16 = 6;
+const LATEST_SUPPORTED_FORMAT_VERSION: u16 =
+    if CURRENT_CUSTODY_FORMAT_VERSION > COMPLETE_WALLET_FORMAT_VERSION {
+        CURRENT_CUSTODY_FORMAT_VERSION
+    } else {
+        COMPLETE_WALLET_FORMAT_VERSION
+    };
 const KDF_ARGON2ID: u8 = 1;
 const AEAD_XCHACHA20_POLY1305: u8 = 1;
 const LEGACY_ARGON2_POLICY: Argon2Policy = Argon2Policy {
@@ -835,7 +841,7 @@ fn decode_header(bytes: &[u8]) -> Result<DecodedHeader, WalletPortableBackupPort
     }
     let argon2_policy = match argon2_policy_for_format(format_version) {
         Some(policy) => policy,
-        None if format_version > CURRENT_CUSTODY_FORMAT_VERSION => {
+        None if format_version > LATEST_SUPPORTED_FORMAT_VERSION => {
             return Err(WalletPortableBackupPortError::UnsupportedVersion);
         }
         None => return Err(WalletPortableBackupPortError::InvalidPackage),
@@ -1387,15 +1393,15 @@ mod tests {
                     ));
                 }
             }
-            for unknown in [0_u16, CURRENT_CUSTODY_FORMAT_VERSION + 1, u16::MAX] {
+            assert_eq!(LATEST_SUPPORTED_FORMAT_VERSION, 6);
+            for (unknown, expected) in [
+                (0_u16, WalletPortableBackupPortError::InvalidPackage),
+                (7_u16, WalletPortableBackupPortError::UnsupportedVersion),
+                (u16::MAX, WalletPortableBackupPortError::UnsupportedVersion),
+            ] {
                 let mut changed = bytes.clone();
                 changed[HEADER_VERSION_OFFSET..HEADER_KDF_OFFSET]
                     .copy_from_slice(&unknown.to_be_bytes());
-                let expected = if unknown > CURRENT_CUSTODY_FORMAT_VERSION {
-                    WalletPortableBackupPortError::UnsupportedVersion
-                } else {
-                    WalletPortableBackupPortError::InvalidPackage
-                };
                 assert!(matches!(decode_header(&changed), Err(error) if error == expected));
             }
         }

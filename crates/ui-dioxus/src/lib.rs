@@ -4645,7 +4645,7 @@ fn FreshInstallRecovery(on_recovered: EventHandler<WalletProfileView>) -> Elemen
                                                 confirmed: true,
                                             },
                                         })
-                                        .map_err(|error| complete_recovery_error_message(&error))?;
+                                        .map_err(|error| portable_backup_recovery_error_message(&error))?;
                                     let active_profile = services
                                         .get_active_wallet_profile
                                         .execute()
@@ -4694,7 +4694,7 @@ fn complete_recovery_message(summary: &CompleteWalletRecoverySummary) -> String 
     )
 }
 
-fn complete_recovery_error_message(
+fn portable_backup_recovery_error_message(
     error: &oxid_wallet_application::WalletPortableBackupUseCaseError,
 ) -> String {
     if matches!(
@@ -9915,7 +9915,7 @@ fn SettingsPage(
                                                                     confirmed: true,
                                                                 },
                                                             })
-                                                            .map_err(|error| error.to_string())?;
+                                                            .map_err(|error| portable_backup_recovery_error_message(&error))?;
                                                         let status = services
                                                             .get_wallet_security_status
                                                             .execute(WalletProfileSecurityCommand {
@@ -11729,7 +11729,7 @@ mod tests {
 
     #[test]
     fn complete_recovery_future_version_guidance_is_actionable_and_payload_free() {
-        let message = complete_recovery_error_message(
+        let message = portable_backup_recovery_error_message(
             &oxid_wallet_application::WalletPortableBackupUseCaseError::Operation(
                 oxid_wallet_application::WalletPortableBackupPortError::UnsupportedVersion,
             ),
