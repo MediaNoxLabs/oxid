@@ -2057,7 +2057,7 @@ enum PortableBackupUiState {
     Working(&'static str),
     Succeeded(String),
     CompleteExported(WalletBackupReceiptView),
-    Cancelled,
+    Cancelled(&'static str),
     Failed(String),
 }
 
@@ -2067,6 +2067,18 @@ enum BackupReceiptState {
     Ready(Option<WalletBackupReceiptView>),
     Failed,
 }
+
+const fn backup_receipt_label(export_recorded: bool, supported: bool) -> &'static str {
+    if export_recorded {
+        "Export recorded"
+    } else if supported {
+        "Available"
+    } else {
+        "Fail closed"
+    }
+}
+
+const BACKUP_EXPORT_EVIDENCE: &str = "The app recorded this export, but has not tested recovery and cannot guarantee that the external document remains available. Store the document and recovery secret separately.";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum DidPageState {
@@ -4677,9 +4689,9 @@ fn FreshInstallRecovery(on_recovered: EventHandler<WalletProfileView>) -> Elemen
                 p { "Backup completed at {ui::format_epoch_millis(receipt.completed_at_millis)}." }
             }
         },
-        PortableBackupUiState::Cancelled => rsx! {
+        PortableBackupUiState::Cancelled(message) => rsx! {
             div { class: "result", role: "status",
-                p { "Document selection cancelled. No recovery was started." }
+                p { "{message}" }
             }
         },
         PortableBackupUiState::Failed(message) => rsx! {
@@ -4774,7 +4786,9 @@ fn FreshInstallRecovery(on_recovered: EventHandler<WalletProfileView>) -> Elemen
                                 }
                             }
                             Err(PortableWalletBackupDocumentError::Cancelled) => {
-                                recovery_state.set(PortableBackupUiState::Cancelled);
+                                recovery_state.set(PortableBackupUiState::Cancelled(
+                                    "Document selection cancelled. Your Restore from backup task is still selected; no recovery was started.",
+                                ));
                                 return;
                             }
                             Err(error) => Err(error.to_string()),
@@ -5694,7 +5708,7 @@ fn HomeSecurityStrip(
     on_open_settings: EventHandler<MouseEvent>,
 ) -> Element {
     let backup_status = match backup_receipt {
-        HomeResource::Ready(Some(_)) => "Backed up",
+        HomeResource::Ready(Some(_)) => "Backup exported",
         HomeResource::Ready(None) => ui::backup_capability(security.portable_backup_supported),
         HomeResource::Unavailable => "Backup status unavailable",
     };
@@ -9880,13 +9894,7 @@ fn SettingsPage(
                 BackupReceiptState::Ready(receipt) => receipt,
                 BackupReceiptState::Loading | BackupReceiptState::Failed => None,
             };
-            let receipt_label = if receipt.is_some() {
-                "Backed up"
-            } else if supported {
-                "Available"
-            } else {
-                "Fail closed"
-            };
+            let receipt_label = backup_receipt_label(receipt.is_some(), supported);
             let busy = matches!(*backup_state.read(), PortableBackupUiState::Working(_));
             let can_export = supported
                 && status.state_name() != "Uninitialized"
@@ -9918,7 +9926,7 @@ fn SettingsPage(
                     }
                     if let Some(receipt) = receipt {
                         p { class: "form-hint",
-                            "Latest completed export: {ui::format_epoch_millis(receipt.completed_at_millis)}. The external document can still be moved or deleted outside {brand.product_name()}."
+                            "Latest recorded export: {ui::format_epoch_millis(receipt.completed_at_millis)}. This receipt does not prove that recovery was tested, and the external document can still be moved or deleted outside {brand.product_name()}."
                         }
                     } else if matches!(*backup_receipt.read(), BackupReceiptState::Failed) {
                         p { class: "form-hint", "Backup completion status could not be read." }
@@ -10017,9 +10025,11 @@ fn SettingsPage(
                                             })
                                             .await;
                                             let next = match package {
-                                                Ok(Ok(package)) => match services
-                                                    .portable_wallet_backup_documents
-                                                    .export(
+                                                Ok(Ok(package)) => {
+                                                    backup_state.set(PortableBackupUiState::Working(
+                                                        "Waiting for a location to save the encrypted document",
+                                                    ));
+                                                    match services.portable_wallet_backup_documents.export(
                                                         PortableWalletBackupDocumentKind::CompleteWallet,
                                                         &package,
                                                     )
@@ -10046,11 +10056,14 @@ fn SettingsPage(
                                                         }
                                                     }
                                                     Err(PortableWalletBackupDocumentError::Cancelled) => {
-                                                        PortableBackupUiState::Cancelled
+                                                        PortableBackupUiState::Cancelled(
+                                                            "Export cancelled. Your Export backup task is still selected, and no export receipt was recorded.",
+                                                        )
                                                     }
                                                     Err(error) => PortableBackupUiState::Failed(
                                                         error.to_string(),
                                                     ),
+                                                }
                                                 },
                                                 Ok(Err(error)) => PortableBackupUiState::Failed(
                                                     error.to_string(),
@@ -10156,7 +10169,9 @@ fn SettingsPage(
                                                     }
                                                 }
                                                 Err(PortableWalletBackupDocumentError::Cancelled) => {
-                                                    backup_state.set(PortableBackupUiState::Cancelled);
+                                                    backup_state.set(PortableBackupUiState::Cancelled(
+                                                        "Document selection cancelled. Your legacy recovery task is still selected; no custody state was changed.",
+                                                    ));
                                                     return;
                                                 }
                                                 Err(error) => Err(error.to_string()),
@@ -10199,14 +10214,14 @@ fn SettingsPage(
                             div { class: "result success backup-celebration", role: "status", aria_live: "polite",
                                 span { class: "empty-state__mark", aria_hidden: "true", "✓" }
                                 div {
-                                    strong { "Backup complete" }
+                                    strong { "Backup document exported" }
                                     p { "Encrypted complete wallet backup saved at {ui::format_epoch_millis(receipt.completed_at_millis)}." }
-                                    small { "{brand.product_name()} recorded this export, but cannot guarantee that the external document remains available." }
+                                    small { "{brand.product_name()}: {BACKUP_EXPORT_EVIDENCE}" }
                                 }
                             }
                         },
-                        PortableBackupUiState::Cancelled => rsx! {
-                            div { class: "result", role: "status", p { "Document selection cancelled. No custody state was changed." } }
+                        PortableBackupUiState::Cancelled(message) => rsx! {
+                            div { class: "result", role: "status", p { "{message}" } }
                         },
                         PortableBackupUiState::Failed(message) => rsx! {
                             div { class: "result error", role: "alert", p { "{message}" } }
@@ -11594,6 +11609,9 @@ mod tests {
         );
         assert_eq!(ui::backup_capability(true), "Backup available");
         assert_ne!(ui::backup_capability(true), "Backed up");
+        assert_eq!(backup_receipt_label(true, true), "Export recorded");
+        assert_eq!(backup_receipt_label(false, true), "Available");
+        assert!(BACKUP_EXPORT_EVIDENCE.contains("has not tested recovery"));
         assert_eq!(
             ui::wallet_protection("unexpected"),
             "Protection class unavailable"

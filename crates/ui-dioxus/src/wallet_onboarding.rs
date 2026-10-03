@@ -96,6 +96,26 @@ const fn onboarding_explanation(intent: WalletOnboardingIntent) -> &'static str 
     }
 }
 
+const fn onboarding_acknowledgement(intent: WalletOnboardingIntent) -> &'static str {
+    match intent {
+        WalletOnboardingIntent::Create => "I saved this new recovery phrase outside the app.",
+        WalletOnboardingIntent::RestorePhrase => {
+            "I verified that this is the recovery phrase I intend to restore."
+        }
+    }
+}
+
+const fn onboarding_failure_next_step(intent: WalletOnboardingIntent) -> &'static str {
+    match intent {
+        WalletOnboardingIntent::Create => {
+            "Your Create wallet task is still selected. Confirm that this device has a passcode or biometric lock, then retry; no wallet root was installed."
+        }
+        WalletOnboardingIntent::RestorePhrase => {
+            "Your Restore wallet task is still selected. Check the 24 words and retry; no existing wallet state was merged or replaced."
+        }
+    }
+}
+
 #[component]
 pub(crate) fn WalletOnboarding(
     profile: WalletProfileView,
@@ -168,7 +188,10 @@ pub(crate) fn WalletOnboarding(
 
     let feedback = match &*state.read() {
         WalletOnboardingState::Failed(message) => rsx! {
-            div { class: "result error", role: "alert", p { "{message}" } }
+            div { class: "result error", role: "alert",
+                p { "{message}" }
+                p { "{onboarding_failure_next_step(intent)}" }
+            }
         },
         WalletOnboardingState::Working => rsx! {
             div { class: "result", role: "status", aria_busy: "true",
@@ -227,7 +250,7 @@ pub(crate) fn WalletOnboarding(
                         disabled: busy,
                         oninput: move |event| acknowledged.set(event.checked()),
                     }
-                    "I have securely saved or verified this recovery phrase."
+                    "{onboarding_acknowledgement(intent)}"
                 }
             }
             if prepared_id.is_none() {
@@ -457,6 +480,10 @@ mod tests {
             onboarding_action(WalletOnboardingIntent::Create),
             onboarding_action(WalletOnboardingIntent::RestorePhrase)
         );
+        assert!(onboarding_acknowledgement(WalletOnboardingIntent::Create).contains("saved"));
+        assert!(
+            onboarding_acknowledgement(WalletOnboardingIntent::RestorePhrase).contains("restore")
+        );
         assert!(
             onboarding_explanation(WalletOnboardingIntent::Create)
                 .contains("Device protection is required")
@@ -467,6 +494,14 @@ mod tests {
         assert!(
             !onboarding_explanation(WalletOnboardingIntent::RestorePhrase)
                 .contains("new recovery phrase")
+        );
+        assert!(
+            onboarding_failure_next_step(WalletOnboardingIntent::Create)
+                .contains("Create wallet task is still selected")
+        );
+        assert!(
+            onboarding_failure_next_step(WalletOnboardingIntent::RestorePhrase)
+                .contains("Restore wallet task is still selected")
         );
     }
 
