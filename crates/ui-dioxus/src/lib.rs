@@ -69,7 +69,7 @@ pub use passport_vault::{
 use receive::standalone_funding_action;
 use receive::{
     default_receive_kind, grouped_address_preview, protected_receive_addresses,
-    public_export_message, render_qr_svg,
+    public_export_message, receive_address_is_exportable, render_qr_svg,
 };
 use selected_realm_sync::action_watch::{
     WalletActionWatchContext, WalletActionWatchStatus, reset_receive_watch, start_receive_watch,
@@ -5259,8 +5259,11 @@ fn ReceiveSheet(
                 &account.network_id,
                 &selected,
             );
+            let address_is_exportable = receive_address_is_exportable(&selected.value);
             let qr_payload = receive_request.as_deref().unwrap_or(&selected.value);
-            let qr = render_qr_svg(qr_payload);
+            let qr = address_is_exportable
+                .then(|| render_qr_svg(qr_payload))
+                .flatten();
             let address_kind = ui::address_kind(&selected.kind);
             let qr_label = format!("QR code for {address_kind} receive address");
             let preview = grouped_address_preview(&selected.value);
@@ -5315,7 +5318,8 @@ fn ReceiveSheet(
                 }
                 div { class: "receive-sheet__address",
                         div {
-                            strong { "{ui::address_kind(&selected.kind)}" }
+                            p { class: "card-eyebrow", "Selected destination" }
+                            strong { "{ui::address_kind(&selected.kind)} on {ui::midnight_network(&account.network_id)}" }
                             p { "{ui::address_purpose(&selected.kind)}" }
                         }
                         div {
@@ -5324,8 +5328,10 @@ fn ReceiveSheet(
                             aria_label: "{qr_label}",
                             if let Some(svg) = qr {
                                 div { class: "address-qr__frame", dangerous_inner_html: "{svg}" }
-                            } else {
+                            } else if address_is_exportable {
                                 p { role: "alert", "This address could not be encoded as a QR code." }
+                            } else {
+                                p { role: "alert", "A valid protected receive address is required before showing a QR code or exporting it." }
                             }
                         }
                         code {
@@ -5342,6 +5348,7 @@ fn ReceiveSheet(
                             class: "receive-sheet__action",
                             r#type: "button",
                             aria_label: "Copy {ui::address_kind(&selected.kind)} receive address",
+                            disabled: !address_is_exportable,
                             onclick: move |_| {
                                 let result = PublicReceiveAddress::new(copy_value.clone())
                                     .and_then(|address| copy_exporter.copy_receive_address(address));
@@ -5353,6 +5360,7 @@ fn ReceiveSheet(
                             class: "receive-sheet__action",
                             r#type: "button",
                             aria_label: "Share {ui::address_kind(&selected.kind)} receive address",
+                            disabled: !address_is_exportable,
                             onclick: move |_| {
                                 let result = PublicReceiveAddress::new(share_value.clone())
                                     .and_then(|address| share_exporter.share_receive_address(address));
@@ -12271,6 +12279,15 @@ mod tests {
         );
         assert!(night_display_to_atomic_units("-1").is_err());
         assert!(night_display_to_atomic_units("1.2.3").is_err());
+    }
+
+    #[test]
+    fn receive_exports_require_a_valid_public_address() {
+        assert!(receive_address_is_exportable("mn_addr_undeployed1first"));
+        assert!(!receive_address_is_exportable(""));
+        assert!(!receive_address_is_exportable(
+            " address with surrounding whitespace "
+        ));
     }
 
     #[test]

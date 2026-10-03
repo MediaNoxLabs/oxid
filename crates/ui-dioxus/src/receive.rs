@@ -2,7 +2,7 @@
 
 #[cfg(feature = "standalone-deployment-profile")]
 use dioxus::prelude::*;
-use oxid_platform_ports::PublicTextExportError;
+use oxid_platform_ports::{PublicReceiveAddress, PublicTextExportError};
 use oxid_wallet_application::{WalletAccountView, WalletAddressView};
 
 #[cfg(feature = "standalone-deployment-profile")]
@@ -61,6 +61,10 @@ pub(crate) fn grouped_address_preview(value: &str) -> String {
         .map(|chunk| chunk.iter().collect::<String>())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+pub(crate) fn receive_address_is_exportable(value: &str) -> bool {
+    PublicReceiveAddress::new(value.to_owned()).is_ok()
 }
 
 pub(crate) fn render_qr_svg(value: &str) -> Option<String> {
