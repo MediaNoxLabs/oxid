@@ -130,7 +130,7 @@ check_workspace_dependencies oxid-adapter-storage-memory \
 check_workspace_dependencies oxid-adapter-diagnostics-memory \
   oxid-diagnostics-application
 check_workspace_dependencies oxid-adapter-diagnostics-encrypted \
-  oxid-diagnostics-application
+  oxid-adapter-store-atomic oxid-diagnostics-application
 check_workspace_dependencies oxid-adapter-deployment-profile \
   oxid-adapter-platform-system oxid-capabilities-application
 check_workspace_dependencies oxid-adapter-storage-dev \
