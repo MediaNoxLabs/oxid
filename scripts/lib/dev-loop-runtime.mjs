@@ -219,7 +219,8 @@ async function copyLegacyStore(legacyStore, stageStore) {
  */
 export async function ensureSharedPiPackageStore({
   cwd = process.cwd(), install, waitMs = PI_CLOSURE_LOCK_WAIT_MS, staleMs = PI_CLOSURE_STALE_MS,
-  now = () => Date.now(), isProcessAlive = processIsAlive,
+  now = () => Date.now(), isProcessAlive = processIsAlive, setTimes = utimes,
+  beforeQuarantinePublish = async () => {},
 } = {}) {
   const gitRoot = await findGitRoot(cwd);
   const commonRoot = await resolveCommonCheckoutRoot(gitRoot);
@@ -302,15 +303,17 @@ export async function ensureSharedPiPackageStore({
       const quarantinedAt = now();
       quarantinedStore = path.join(paths.quarantine, `${worktree}.npm-${quarantinedAt}-${process.pid}`);
       if (await lstatIfPresent(quarantinedStore)) throw new Error(`Pi package quarantine target already exists: ${quarantinedStore}`);
-      await rename(localStore, quarantinedStore);
-      // A rename preserves the source directory mtime. Start the recovery
-      // window when the store enters quarantine, not when its owner last
-      // happened to modify it, or routine cleanup can reclaim it immediately.
+      // A rename preserves the source directory mtime. Establish the recovery
+      // timestamp while the store remains at its owner path, then publish it
+      // to quarantine. Cleanup can therefore never observe an old quarantine
+      // entry between publication and timestamp establishment.
       const quarantineTime = new Date(quarantinedAt);
+      await setTimes(localStore, quarantineTime, quarantineTime);
       try {
-        await utimes(quarantinedStore, quarantineTime, quarantineTime);
+        await beforeQuarantinePublish();
+        await rename(localStore, quarantinedStore);
       } catch (error) {
-        await rename(quarantinedStore, localStore).catch(() => {});
+        await utimes(localStore, localInfo.atime, localInfo.mtime).catch(() => {});
         throw error;
       }
     } else {
