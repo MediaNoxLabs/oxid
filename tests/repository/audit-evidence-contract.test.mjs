@@ -572,12 +572,44 @@ test("mainline.divergence reports paths modified on both sides", () => {
   });
   const result = collectMainlineDivergence({ branches: ["a", "b"], run });
   assert.equal(result.status, "ok");
-  assert.equal(result.facts.mergeBase, "5ba38b9b00000000000000000000000000000000");
   const [pair] = result.facts.pairs;
+  assert.equal(pair.mergeBase, "5ba38b9b00000000000000000000000000000000");
   assert.equal(pair.changedFiles, 3, "changed files is the symmetric union of both branch tips");
   assert.equal(pair.leftOnlyCommits, 12);
   assert.equal(pair.rightOnlyCommits, 20);
   assert.deepEqual(pair.bothSidesModified, ["shared.rs"], "a path touched on both sides auto-merges silently");
+});
+
+test("mainline.divergence records each pair's merge base", () => {
+  const run = stubRunner({
+    "git merge-base a b": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "git merge-base a c": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "git merge-base b c": "cccccccccccccccccccccccccccccccccccccccc",
+    "git rev-list --count": "1",
+    "git diff --name-only": "shared.rs",
+  });
+  const result = collectMainlineDivergence({ branches: ["a", "b", "c"], run });
+  assert.equal(result.status, "ok");
+  assert.deepEqual(result.facts.pairs.map((pair) => pair.mergeBase), [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "cccccccccccccccccccccccccccccccccccccccc",
+  ]);
+});
+
+test("mainline.divergence degrades instead of treating a failed diff as no paths", () => {
+  const failure = new Error("diff unavailable");
+  failure.stderr = "diff unavailable";
+  const run = stubRunner({
+    "git merge-base a b": "5ba38b9b00000000000000000000000000000000",
+    "git rev-list --count": "1",
+    "git diff --name-only 5ba38b9b00000000000000000000000000000000..a": failure,
+    "git diff --name-only 5ba38b9b00000000000000000000000000000000..b": "shared.rs",
+  });
+  const result = collectMainlineDivergence({ branches: ["a", "b"], run });
+  assert.equal(result.status, "unavailable");
+  assert.match(result.reason, /cannot list changed paths/u);
+  assert.equal(result.facts, undefined);
 });
 
 test("invalid audit window bounds fail before any collector runs", () => {

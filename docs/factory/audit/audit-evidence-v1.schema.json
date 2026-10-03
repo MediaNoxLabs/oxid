@@ -316,18 +316,18 @@
             "facts": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["mergeBase", "pairs"],
+              "required": ["pairs"],
               "properties": {
-                "mergeBase": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
                 "pairs": {
                   "type": "array",
                   "items": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["left", "right", "changedFiles"],
+                    "required": ["left", "right", "mergeBase", "changedFiles"],
                     "properties": {
                       "left": { "type": "string", "minLength": 1 },
                       "right": { "type": "string", "minLength": 1 },
+                      "mergeBase": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
                       "changedFiles": { "type": "integer", "minimum": 0 },
                       "leftOnlyCommits": { "type": "integer", "minimum": 0 },
                       "rightOnlyCommits": { "type": "integer", "minimum": 0 },

@@ -688,7 +688,6 @@ export function collectAdvisoryState({
 export function collectMainlineDivergence({ branches, run = runner, cwd }) {
   const source = [];
   const pairs = [];
-  let mergeBase = null;
   let failure = null;
 
   for (let index = 0; index < branches.length; index += 1) {
@@ -700,7 +699,6 @@ export function collectMainlineDivergence({ branches, run = runner, cwd }) {
         failure = `cannot resolve merge-base of ${left} and ${right}: ${base.error}`;
         continue;
       }
-      if (!mergeBase) mergeBase = base.out;
       source.push(`git merge-base ${left} ${right}`);
 
       const leftOnly = tryRun(run, "git", ["rev-list", "--count", `${base.out}..${left}`], { cwd });
@@ -708,14 +706,21 @@ export function collectMainlineDivergence({ branches, run = runner, cwd }) {
       const leftPaths = tryRun(run, "git", ["diff", "--name-only", `${base.out}..${left}`], { cwd });
       const rightPaths = tryRun(run, "git", ["diff", "--name-only", `${base.out}..${right}`], { cwd });
 
-      const leftSet = new Set(leftPaths.ok ? leftPaths.out.split("\n").filter(Boolean) : []);
-      const rightSet = new Set(rightPaths.ok ? rightPaths.out.split("\n").filter(Boolean) : []);
+      if (!leftPaths.ok || !rightPaths.ok) {
+        const failedSide = !leftPaths.ok ? left : right;
+        const error = !leftPaths.ok ? leftPaths.error : rightPaths.error;
+        return unavailable(`cannot list changed paths for ${failedSide} against ${base.out}: ${error}`, source);
+      }
+
+      const leftSet = new Set(leftPaths.out.split("\n").filter(Boolean));
+      const rightSet = new Set(rightPaths.out.split("\n").filter(Boolean));
       const bothSidesModified = [...leftSet].filter((file) => rightSet.has(file)).sort();
       const changedFiles = new Set([...leftSet, ...rightSet]).size;
 
       pairs.push({
         left,
         right,
+        mergeBase: base.out,
         changedFiles,
         ...(leftOnly.ok ? { leftOnlyCommits: Number(leftOnly.out) } : {}),
         ...(rightOnly.ok ? { rightOnlyCommits: Number(rightOnly.out) } : {}),
@@ -724,10 +729,10 @@ export function collectMainlineDivergence({ branches, run = runner, cwd }) {
     }
   }
 
-  if (pairs.length === 0 || !mergeBase) {
+  if (pairs.length === 0) {
     return unavailable(failure ?? "no branch pair could be compared", source);
   }
-  const facts = { mergeBase, pairs };
+  const facts = { pairs };
   return failure ? degraded(failure, facts, source) : ok(facts, source);
 }
 
