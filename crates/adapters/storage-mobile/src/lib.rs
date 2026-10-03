@@ -14,8 +14,6 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-#[cfg(target_os = "android")]
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use oxid_adapter_backup_portable::{
     PortableCustodyKey, PortableCustodyVault, PortableCustodyVaultPort, PortableKeyMaterialRef,
     open_portable_custody, seal_portable_custody,
@@ -156,9 +154,13 @@ impl SealedVaultPort for NativeMobileSealedVault {
         }
         #[cfg(target_os = "android")]
         {
-            let response = oxid_adapter_mobile_native::inspect_custody_json(profile_id.as_str())
-                .map_err(map_bridge_error)?;
-            return parse_state_response(response);
+            return match oxid_adapter_mobile_native::inspect_custody(profile_id.as_str()) {
+                Ok(state) => Ok(map_custody_state(state)),
+                Err(oxid_adapter_mobile_native::custody::Error::Unavailable) => {
+                    Ok(SealedVaultState::Unavailable)
+                }
+                Err(error) => Err(map_custody_error(error)),
+            };
         }
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
@@ -190,11 +192,17 @@ impl SealedVaultPort for NativeMobileSealedVault {
         #[cfg(target_os = "android")]
         {
             validate_plaintext_size(plaintext)?;
-            let payload = Zeroizing::new(BASE64_STANDARD.encode(plaintext));
-            let response =
-                oxid_adapter_mobile_native::initialize_custody_json(profile_id.as_str(), &payload)
-                    .map_err(map_bridge_error)?;
-            return parse_success_response(response).map(|response| response.protection);
+            let bytes = oxid_adapter_mobile_native::custody::CustodyBytes::receive(
+                plaintext.len(),
+                |destination| {
+                    destination.copy_from_slice(plaintext);
+                    Ok(destination.len())
+                },
+            )
+            .map_err(map_custody_error)?;
+            return oxid_adapter_mobile_native::initialize_custody(profile_id.as_str(), &bytes)
+                .map(map_custody_protection)
+                .map_err(map_custody_error);
         }
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
@@ -216,10 +224,9 @@ impl SealedVaultPort for NativeMobileSealedVault {
         }
         #[cfg(target_os = "android")]
         {
-            let response =
-                oxid_adapter_mobile_native::unlock_custody_json(profile_id.as_str(), reason)
-                    .map_err(map_bridge_error)?;
-            return decode_success_payload(response);
+            return oxid_adapter_mobile_native::unlock_custody(profile_id.as_str(), reason)
+                .map(|protected| protected.bytes.into_zeroizing_vec())
+                .map_err(map_custody_error);
         }
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
@@ -237,9 +244,9 @@ impl SealedVaultPort for NativeMobileSealedVault {
         }
         #[cfg(target_os = "android")]
         {
-            let response = oxid_adapter_mobile_native::load_custody_json(profile_id.as_str())
-                .map_err(map_bridge_error)?;
-            return decode_success_payload(response);
+            return oxid_adapter_mobile_native::load_custody(profile_id.as_str())
+                .map(|protected| protected.bytes.into_zeroizing_vec())
+                .map_err(map_custody_error);
         }
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
@@ -267,11 +274,17 @@ impl SealedVaultPort for NativeMobileSealedVault {
         #[cfg(target_os = "android")]
         {
             validate_plaintext_size(plaintext)?;
-            let payload = Zeroizing::new(BASE64_STANDARD.encode(plaintext));
-            let response =
-                oxid_adapter_mobile_native::save_custody_json(profile_id.as_str(), &payload)
-                    .map_err(map_bridge_error)?;
-            return parse_success_response(response).map(|_| ());
+            let bytes = oxid_adapter_mobile_native::custody::CustodyBytes::receive(
+                plaintext.len(),
+                |destination| {
+                    destination.copy_from_slice(plaintext);
+                    Ok(destination.len())
+                },
+            )
+            .map_err(map_custody_error)?;
+            return oxid_adapter_mobile_native::save_custody(profile_id.as_str(), &bytes)
+                .map(|_| ())
+                .map_err(map_custody_error);
         }
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
@@ -289,9 +302,9 @@ impl SealedVaultPort for NativeMobileSealedVault {
         }
         #[cfg(target_os = "android")]
         {
-            let response = oxid_adapter_mobile_native::lock_custody_json(profile_id.as_str())
-                .map_err(map_bridge_error)?;
-            return parse_locked_response(response);
+            return oxid_adapter_mobile_native::lock_custody(profile_id.as_str())
+                .map(|_| ())
+                .map_err(map_custody_error);
         }
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
@@ -301,7 +314,7 @@ impl SealedVaultPort for NativeMobileSealedVault {
     }
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 const fn map_custody_protection(
     protection: oxid_adapter_mobile_native::custody::Protection,
 ) -> SealedVaultProtection {
@@ -315,7 +328,7 @@ const fn map_custody_protection(
     }
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 const fn map_custody_state(
     state: oxid_adapter_mobile_native::custody::CustodyState,
 ) -> SealedVaultState {
@@ -332,7 +345,7 @@ const fn map_custody_state(
     }
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 const fn map_custody_error(error: oxid_adapter_mobile_native::custody::Error) -> SealedVaultError {
     match error {
         oxid_adapter_mobile_native::custody::Error::Unavailable => SealedVaultError::Unavailable,
@@ -1318,14 +1331,6 @@ const fn map_vault_error(error: SealedVaultError) -> WalletSecurityPortError {
     }
 }
 
-#[cfg(target_os = "android")]
-fn map_bridge_error(error: oxid_adapter_mobile_native::NativeBridgeError) -> SealedVaultError {
-    match error {
-        oxid_adapter_mobile_native::NativeBridgeError::Unavailable => SealedVaultError::Unavailable,
-        oxid_adapter_mobile_native::NativeBridgeError::Failed => SealedVaultError::Invalid,
-    }
-}
-
 #[cfg(any(target_os = "ios", target_os = "android"))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1337,87 +1342,12 @@ struct NativeCustodyResponse {
     payload: Option<String>,
 }
 
-#[cfg(target_os = "android")]
-struct NativeSuccessResponse {
-    protection: SealedVaultProtection,
-    payload: Option<String>,
-}
-
 #[cfg(any(target_os = "ios", target_os = "android"))]
 fn parse_native_response(response: String) -> Result<NativeCustodyResponse, SealedVaultError> {
     if response.is_empty() || response.len() > MAX_VAULT_BYTES * 2 {
         return Err(SealedVaultError::Invalid);
     }
     serde_json::from_str(&response).map_err(|_| SealedVaultError::Invalid)
-}
-
-#[cfg(target_os = "android")]
-fn parse_protection(value: Option<&str>) -> Result<SealedVaultProtection, SealedVaultError> {
-    match value {
-        Some("operating_system") => Ok(SealedVaultProtection::OperatingSystem),
-        Some("hardware_backed") => Ok(SealedVaultProtection::HardwareBacked),
-        _ => Err(SealedVaultError::Invalid),
-    }
-}
-
-#[cfg(target_os = "android")]
-fn response_error(status: &str) -> SealedVaultError {
-    match status {
-        "unavailable" => SealedVaultError::Unavailable,
-        "not_initialized" => SealedVaultError::NotInitialized,
-        "already_initialized" => SealedVaultError::AlreadyInitialized,
-        "locked" => SealedVaultError::Locked,
-        "authorization_denied" => SealedVaultError::AuthorizationDenied,
-        _ => SealedVaultError::Invalid,
-    }
-}
-
-#[cfg(target_os = "android")]
-fn parse_state_response(response: String) -> Result<SealedVaultState, SealedVaultError> {
-    let response = parse_native_response(response)?;
-    match response.status.as_str() {
-        "uninitialized" => Ok(SealedVaultState::Uninitialized),
-        "locked" => Ok(SealedVaultState::Locked(parse_protection(
-            response.protection.as_deref(),
-        )?)),
-        "unlocked" => Ok(SealedVaultState::Unlocked(parse_protection(
-            response.protection.as_deref(),
-        )?)),
-        "unavailable" => Ok(SealedVaultState::Unavailable),
-        status => Err(response_error(status)),
-    }
-}
-
-#[cfg(target_os = "android")]
-fn parse_success_response(response: String) -> Result<NativeSuccessResponse, SealedVaultError> {
-    let response = parse_native_response(response)?;
-    if response.status != "succeeded" {
-        return Err(response_error(&response.status));
-    }
-    Ok(NativeSuccessResponse {
-        protection: parse_protection(response.protection.as_deref())?,
-        payload: response.payload,
-    })
-}
-
-#[cfg(target_os = "android")]
-fn decode_success_payload(response: String) -> Result<Zeroizing<Vec<u8>>, SealedVaultError> {
-    let response = parse_success_response(response)?;
-    let payload = Zeroizing::new(response.payload.ok_or(SealedVaultError::Invalid)?);
-    let bytes = BASE64_STANDARD
-        .decode(payload.as_bytes())
-        .map_err(|_| SealedVaultError::Invalid)?;
-    validate_plaintext_size(&bytes)?;
-    Ok(Zeroizing::new(bytes))
-}
-
-#[cfg(target_os = "android")]
-fn parse_locked_response(response: String) -> Result<(), SealedVaultError> {
-    let response = parse_native_response(response)?;
-    match response.status.as_str() {
-        "locked" => Ok(()),
-        status => Err(response_error(status)),
-    }
 }
 
 #[cfg(any(target_os = "ios", target_os = "android"))]

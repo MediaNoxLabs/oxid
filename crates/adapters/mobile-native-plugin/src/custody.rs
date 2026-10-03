@@ -3,8 +3,8 @@
 //! Shared custody migration contract, independent of JNI and Swift transport.
 //!
 //! Control JSON is closed, bounded and secret-free. Custody uses a separate
-//! mutable-byte channel, never serde or strings. The legacy platform entrypoints
-//! do not implement this contract yet; see `custody-contract.md`.
+//! mutable-byte channel, never serde or strings. Both mobile platform adapters
+//! implement this contract; see `custody-contract.md`.
 
 use std::fmt;
 

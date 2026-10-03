@@ -4,6 +4,7 @@ package dev.dioxus.main
 
 import android.content.Intent
 import android.os.Bundle
+import java.nio.ByteBuffer
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
 import io.medianox.oxid.mobile.OxidMobilePlugin
@@ -112,7 +113,33 @@ class MainActivity : WryActivity() {
     fun oxidTakeBackupDocumentResultJson(): String =
         oxidMobilePlugin.takeBackupDocumentResultJson()
 
-    fun oxidCustodyJson(request: String): String = oxidMobilePlugin.custodyJson(request)
+    fun oxidAuthorizeRecoveryPhraseRevealJson(): String =
+        oxidMobilePlugin.authorizeRecoveryPhraseRevealJson()
+
+    fun oxidCustodyInspectControl(profileId: String): String =
+        oxidMobilePlugin.custodyInspectControl(profileId)
+
+    fun oxidCustodyInitializeControl(profileId: String, source: ByteBuffer): String =
+        oxidMobilePlugin.custodyInitializeControl(profileId, source)
+
+    fun oxidCustodyPrepareUnlockControl(profileId: String, reason: String): String =
+        oxidMobilePlugin.custodyPrepareUnlockControl(profileId, reason)
+
+    fun oxidCustodyPrepareLoadControl(profileId: String): String =
+        oxidMobilePlugin.custodyPrepareLoadControl(profileId)
+
+    fun oxidCustodyPendingLengthJson(): String = oxidMobilePlugin.custodyPendingLengthJson()
+
+    fun oxidCustodyTakePending(request: String, destination: ByteBuffer): String =
+        oxidMobilePlugin.custodyTakePending(request, destination)
+
+    fun oxidCustodyDiscardPending(): String = oxidMobilePlugin.custodyDiscardPending()
+
+    fun oxidCustodySaveControl(profileId: String, source: ByteBuffer): String =
+        oxidMobilePlugin.custodySaveControl(profileId, source)
+
+    fun oxidCustodyLockControl(profileId: String): String =
+        oxidMobilePlugin.custodyLockControl(profileId)
 
     /** Smoke-only JNI failure injection; normal builds have no Rust caller for this method. */
     fun oxidThrowForJniRecoveryTest(): String {
