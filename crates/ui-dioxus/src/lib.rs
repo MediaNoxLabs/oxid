@@ -5099,6 +5099,11 @@ fn ReceiveSheet(
     let profile_id = active_profile.id.clone();
     let action_watch_projection =
         use_action_watch_projection(services.clone(), WalletActionWatchContext::Receive);
+    use_effect(|| {
+        let _ = dioxus_document::eval(
+            "window.scrollTo({ top: 0, behavior: 'instant' }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; document.querySelector('.page-content')?.scrollTo({ top: 0, behavior: 'instant' }); window.requestAnimationFrame(() => document.querySelector('.receive-sheet__body')?.scrollTo({ top: 0, behavior: 'instant' }));",
+        );
+    });
     let services_for_load = services.clone();
     use_effect(move || {
         let services = services_for_load.clone();
@@ -5204,14 +5209,16 @@ fn ReceiveSheet(
                                 "Close"
                             }
                         }
-                        div { class: "receive-sheet__state",
-                            strong { "Protected receive addresses are not ready" }
-                            p { "Activate and derive this profile's protected Midnight account before sharing a holder-controlled address." }
-                            button {
-                                class: "primary-action",
-                                r#type: "button",
-                                onclick: move |event| on_open_wallet.call(event),
-                                "Open Wallet to activate"
+                        div { class: "receive-sheet__body",
+                            div { class: "receive-sheet__state",
+                                strong { "Protected receive addresses are not ready" }
+                                p { "Activate and derive this profile's protected Midnight account before sharing a holder-controlled address." }
+                                button {
+                                    class: "primary-action",
+                                    r#type: "button",
+                                    onclick: move |event| on_open_wallet.call(event),
+                                    "Open Wallet to activate"
+                                }
                             }
                         }
                     }
@@ -5383,12 +5390,14 @@ fn ReceiveSheet(
                     "Close"
                 }
             }
-            if watch_session() {
-                if let Some(projection) = action_watch_projection() {
-                    WalletActionWatchStatus { projection }
+            div { class: "receive-sheet__body",
+                if watch_session() {
+                    if let Some(projection) = action_watch_projection() {
+                        WalletActionWatchStatus { projection }
+                    }
                 }
+                {content}
             }
-            {content}
         }
     }
 }

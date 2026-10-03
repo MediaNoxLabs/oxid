@@ -3268,7 +3268,9 @@ textarea:focus-visible {
   width: min(100%, 42rem);
   max-height: calc(100vh - env(safe-area-inset-top) - var(--space-5));
   margin: 0 auto;
-  overflow-y: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   padding: var(--space-3) var(--space-5) calc(var(--space-5) + env(safe-area-inset-bottom));
   border: 1px solid var(--line-strong);
   border-bottom: 0;
@@ -3297,6 +3299,13 @@ textarea:focus-visible {
 
 .receive-sheet__heading {
   align-items: flex-start;
+  padding-bottom: var(--space-2);
+  background: var(--surface-sheet);
+}
+
+.receive-sheet__body {
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .receive-sheet__heading h2,
