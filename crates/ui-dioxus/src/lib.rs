@@ -6642,8 +6642,8 @@ fn SendTransferPanel(
                                     }
                                     shielded.set(false);
                                 },
-                                strong { "Public" }
-                                small { "Visible in public Midnight account history" }
+                                span { class: "privacy-choice__icon", aria_hidden: "true", dangerous_inner_html: SEND_PUBLIC_NIGHT_ICON }
+                                strong { "Public NIGHT" }
                             }
                             button {
                                 class: if shielded() { "privacy-choice__option selected" } else { "privacy-choice__option" },
@@ -6656,8 +6656,8 @@ fn SendTransferPanel(
                                     }
                                     shielded.set(true);
                                 },
-                                strong { "Shielded" }
-                                small { "Uses the synchronized private note set" }
+                                span { class: "privacy-choice__icon", aria_hidden: "true", dangerous_inner_html: SEND_SHIELDED_NIGHT_ICON }
+                                strong { "Shielded NIGHT" }
                             }
                         }
                         label { r#for: "transfer-amount", "Amount (NIGHT)" }
@@ -6694,16 +6694,18 @@ fn SendTransferPanel(
                         p { class: "send-wizard__fee-note",
                             "The DUST fee is calculated while proving and cannot spend more NIGHT than the reviewed transfer allows."
                         }
-                        div { class: "transfer-actions",
+                        div { class: "transfer-actions send-wizard__actions",
                             button {
-                                class: "secondary-action",
+                                class: "secondary-action send-wizard__back",
                                 r#type: "button",
+                                aria_label: "Back to recipient",
                                 onclick: move |_| wizard_step.set(SendWizardStep::Recipient),
-                                "Back"
+                                span { class: "transfer-action__icon", aria_hidden: "true", dangerous_inner_html: SEND_BACK_ICON }
                             }
                             button {
                                 class: "primary-action",
                                 r#type: "button",
+                                aria_label: "Review exact transfer",
                                 disabled: !can_review,
                                 onclick: move |_| {
                                 match night_display_to_atomic_units(&amount.read()) {
@@ -6771,7 +6773,8 @@ fn SendTransferPanel(
                                     }),
                                 }
                             },
-                                "Review exact transfer"
+                                span { "Review" }
+                                span { class: "transfer-action__icon", aria_hidden: "true", dangerous_inner_html: SEND_REVIEW_ICON }
                             }
                         }
                     }
@@ -10189,6 +10192,13 @@ const LUCIDE_ACTIVITY: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="
 const LUCIDE_SCAN_LINE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>"#;
 const LUCIDE_RECEIVE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>"#;
 const LUCIDE_SEND: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>"#;
+
+// Transfer mode icons use the same NIGHT crescent. The quiet shield outline
+// distinguishes the private route without suggesting that DUST is sent.
+const SEND_PUBLIC_NIGHT_ICON: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M14.5 5.7a6.6 6.6 0 1 0 3.8 11.5 7 7 0 0 1-3.8-11.5Z"/></svg>"#;
+const SEND_SHIELDED_NIGHT_ICON: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 20 6v5.6c0 4.9-3 8.1-8 9.9-5-1.8-8-5-8-9.9V6l8-3.5Z"/><path d="M13.5 7a5 5 0 1 0 2.9 8.7A5.3 5.3 0 0 1 13.5 7Z"/></svg>"#;
+const SEND_BACK_ICON: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>"#;
+const SEND_REVIEW_ICON: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>"#;
 
 #[cfg(test)]
 mod tests {
