@@ -738,7 +738,7 @@ impl HeadlessWallet {
         self.account_projection(request, "wallet.address.list", |account| {
             json!({
                 "networkId": account.network_id,
-                "source": account.source,
+                "source": account.source.as_str(),
                 "addresses": account.addresses.iter().map(address_value).collect::<Vec<_>>()
             })
         })
@@ -748,7 +748,7 @@ impl HeadlessWallet {
         self.account_projection(request, "wallet.address.unshielded", |account| {
             json!({
                 "networkId": account.network_id,
-                "source": account.source,
+                "source": account.source.as_str(),
                 "address": account.addresses.iter().find(|address| address.kind == "unshielded").map(address_value)
             })
         })
@@ -758,7 +758,7 @@ impl HeadlessWallet {
         self.account_projection(request, "wallet.address.shielded", |account| {
             json!({
                 "networkId": account.network_id,
-                "source": account.source,
+                "source": account.source.as_str(),
                 "address": account.addresses.iter().find(|address| address.kind == "shielded").map(address_value)
             })
         })
@@ -768,7 +768,7 @@ impl HeadlessWallet {
         self.account_projection(request, "wallet.balance.snapshot", |account| {
             json!({
                 "networkId": account.network_id,
-                "source": account.source,
+                "source": account.source.as_str(),
                 "balances": account.balances.iter().map(balance_value).collect::<Vec<_>>(),
                 "sync": sync_value(account)
             })
@@ -779,7 +779,7 @@ impl HeadlessWallet {
         self.account_projection(request, "wallet.transaction.history", |account| {
             json!({
                 "networkId": account.network_id,
-                "source": account.source,
+                "source": account.source.as_str(),
                 "transactions": account.transactions.iter().map(transaction_value).collect::<Vec<_>>()
             })
         })

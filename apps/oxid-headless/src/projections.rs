@@ -49,7 +49,7 @@ pub(super) fn account_value(account: &WalletAccountView) -> Value {
         "networkName": account.network_name,
         "networkEnvironment": account.network_environment,
         "accountId": account.account_id,
-        "source": account.source,
+        "source": account.source.as_str(),
         "addresses": account.addresses.iter().map(address_value).collect::<Vec<_>>(),
         "balances": account.balances.iter().map(balance_value).collect::<Vec<_>>(),
         "sync": sync_value(account),
@@ -85,7 +85,7 @@ pub(super) fn balance_value(balance: &oxid_wallet_application::WalletAssetBalanc
 
 pub(super) fn sync_value(account: &WalletAccountView) -> Value {
     json!({
-        "state": account.sync.state,
+        "state": account.sync.state.as_str(),
         "currentCursor": account.sync.current_cursor,
         "targetCursor": account.sync.target_cursor,
         "chainTipHeight": account.sync.chain_tip_height,
