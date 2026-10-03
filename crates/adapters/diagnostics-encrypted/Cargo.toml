@@ -14,6 +14,7 @@ getrandom.workspace = true
 hkdf.workspace = true
 hmac.workspace = true
 oxid-diagnostics-application.workspace = true
+oxid-adapter-store-atomic.workspace = true
 sha2.workspace = true
 zeroize.workspace = true
 

@@ -9,6 +9,12 @@
 //! and the expected previous sealed head. Only the closed application event
 //! can become plaintext record material.
 
+mod store;
+
+pub use store::{
+    RecoveredSupportJournalArchive, SupportJournalArchiveError, SupportJournalArchiveStore,
+};
+
 use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
     aead::{Aead as _, Key, KeyInit as _, Payload},
