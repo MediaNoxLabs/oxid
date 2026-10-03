@@ -3,6 +3,16 @@ name: activity fixture history
 ---
 - runFlow: ../subflows/launch-clean.yaml
 - runFlow: ../subflows/demo-profile.yaml
+- tapOn: "Open standalone demo setup"
+- tapOn: "Run demo action: Derive Midnight account"
+- extendedWaitUntil:
+    visible: "Derived the existing protected 0/0 Midnight account idempotently."
+    timeout: 60000
+- tapOn: "Run demo action: Load simulated funding"
+- extendedWaitUntil:
+    visible: "Loaded the deterministic public 5 NIGHT funding snapshot; no chain was contacted."
+    timeout: 60000
+- tapOn: "Close standalone demo setup"
 - tapOn: "Activity"
 - assertVisible: "Activity"
 - extendedWaitUntil:
