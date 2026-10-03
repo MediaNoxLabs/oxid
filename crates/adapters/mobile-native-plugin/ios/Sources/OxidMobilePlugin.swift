@@ -595,13 +595,12 @@ private final class CustodyCoordinator {
             prompt: reason,
             allowAuthenticationUI: true
         ) {
-        case .success(let plaintext):
+        case .success(var plaintext):
             sessions[profileId] = Session(
                 context: context,
                 expiresAt: Date().addingTimeInterval(sessionDuration)
             )
             guard let activeGeneration = nextGeneration() else {
-                var plaintext = plaintext
                 plaintext.resetBytes(in: 0..<plaintext.count)
                 context.invalidate()
                 sessions.removeValue(forKey: profileId)
@@ -645,9 +644,8 @@ private final class CustodyCoordinator {
             prompt: "",
             allowAuthenticationUI: false
         ) {
-        case .success(let plaintext):
+        case .success(var plaintext):
             guard let activeGeneration = nextGeneration() else {
-                var plaintext = plaintext
                 plaintext.resetBytes(in: 0..<plaintext.count)
                 return control(operation: "load", status: "failed")
             }

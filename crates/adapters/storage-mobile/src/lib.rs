@@ -146,9 +146,13 @@ impl SealedVaultPort for NativeMobileSealedVault {
     fn inspect(&self, profile_id: &WalletProfileId) -> Result<SealedVaultState, SealedVaultError> {
         #[cfg(target_os = "ios")]
         {
-            return oxid_adapter_mobile_native::inspect_custody(profile_id.as_str())
-                .map(map_custody_state)
-                .map_err(map_custody_error);
+            return match oxid_adapter_mobile_native::inspect_custody(profile_id.as_str()) {
+                Ok(state) => Ok(map_custody_state(state)),
+                Err(oxid_adapter_mobile_native::custody::Error::Unavailable) => {
+                    Ok(SealedVaultState::Unavailable)
+                }
+                Err(error) => Err(map_custody_error(error)),
+            };
         }
         #[cfg(target_os = "android")]
         {

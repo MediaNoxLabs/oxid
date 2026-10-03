@@ -310,7 +310,7 @@ fn ios_buffer_request(
 pub fn inspect_custody(profile_id: &str) -> Result<custody::CustodyState, custody::Error> {
     let _call = IOS_CUSTODY_CALL
         .lock()
-        .map_err(|_| custody::Error::Failed)?;
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let plugin = OxidMobilePlugin::new().map_err(|_| custody::Error::Unavailable)?;
     let control = custodyInspectControl(&plugin, profile_id.to_owned())
         .map_err(|_| custody::Error::Failed)?;
@@ -329,7 +329,7 @@ pub fn initialize_custody(
 ) -> Result<custody::Protection, custody::Error> {
     let _call = IOS_CUSTODY_CALL
         .lock()
-        .map_err(|_| custody::Error::Failed)?;
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let plugin = OxidMobilePlugin::new().map_err(|_| custody::Error::Unavailable)?;
     let request = ios_buffer_request(
         profile_id,
@@ -370,7 +370,7 @@ fn receive_ios_custody(
 ) -> Result<custody::ProtectedCustody, custody::Error> {
     let _call = IOS_CUSTODY_CALL
         .lock()
-        .map_err(|_| custody::Error::Failed)?;
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let plugin = OxidMobilePlugin::new().map_err(|_| custody::Error::Unavailable)?;
     let control = prepare(&plugin).map_err(|_| custody::Error::Failed)?;
     let length = match custodyPendingLengthJson(&plugin)
@@ -448,7 +448,7 @@ pub fn save_custody(
 ) -> Result<custody::Protection, custody::Error> {
     let _call = IOS_CUSTODY_CALL
         .lock()
-        .map_err(|_| custody::Error::Failed)?;
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let plugin = OxidMobilePlugin::new().map_err(|_| custody::Error::Unavailable)?;
     let request = ios_buffer_request(
         profile_id,
@@ -466,7 +466,7 @@ pub fn save_custody(
 pub fn lock_custody(profile_id: &str) -> Result<custody::Protection, custody::Error> {
     let _call = IOS_CUSTODY_CALL
         .lock()
-        .map_err(|_| custody::Error::Failed)?;
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let plugin = OxidMobilePlugin::new().map_err(|_| custody::Error::Unavailable)?;
     let control =
         custodyLockControl(&plugin, profile_id.to_owned()).map_err(|_| custody::Error::Failed)?;
@@ -729,8 +729,8 @@ mod tests {
         assert!(ios.contains("material.generation == expectedGeneration"));
         assert!(!ios.contains("plaintext.base64EncodedString()"));
         assert!(!ios.contains("Data(base64Encoded: payload)"));
-        assert!(storage.contains("oxid_adapter_mobile_native::initialize_custody"));
-        assert!(storage.contains("oxid_adapter_mobile_native::unlock_custody"));
+        assert!(storage.contains("return oxid_adapter_mobile_native::initialize_custody("));
+        assert!(storage.contains("return oxid_adapter_mobile_native::unlock_custody("));
     }
 
     #[test]

@@ -3,12 +3,12 @@
 ## Scope and adoption
 
 `oxid_adapter_mobile_native::custody` defines the shared, host-testable contract
-for issue #779. It is **not yet the active platform transport**. Android/JNI
-migration is #780 and iOS/Swift migration is #781. Existing `*_custody_json`,
-`custodyJson`, `oxidCustodyJson`, and `storage-mobile` base64 parsing remain
-legacy until those ordered slices replace them independently. Parent #760 must
-remain open until both paths are removed and platform cleanup is verified.
-There is no availability, authorization, or storage-format change in this slice.
+for issue #779. It is the active iOS/Swift transport after #781; Android/JNI
+migration remains #780. Android's `*_custody_json`, `oxidCustodyJson`, and
+`storage-mobile` base64 parsing remain legacy until that ordered slice replaces
+them. Parent #760 must remain open until both paths are removed and platform
+cleanup is verified. The iOS migration preserves the prior availability,
+authorization, storage-format, and 30-second session semantics.
 
 This refines the adapter-private boundary described in ADR-0071; it does not
 change application ports, the vault format, key protection labels, the 30-second
