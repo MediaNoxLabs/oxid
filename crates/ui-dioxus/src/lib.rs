@@ -69,7 +69,7 @@ pub use passport_vault::{
 use receive::standalone_funding_action;
 use receive::{
     default_receive_kind, grouped_address_preview, protected_receive_addresses,
-    public_export_message, render_qr_svg,
+    public_export_message, receive_address_is_exportable, render_qr_svg,
 };
 use selected_realm_sync::action_watch::{
     WalletActionWatchContext, WalletActionWatchStatus, reset_receive_watch, start_receive_watch,
@@ -5259,10 +5259,18 @@ fn ReceiveSheet(
                 &account.network_id,
                 &selected,
             );
+            let address_is_exportable =
+                receive_address_is_exportable(&selected.kind, &account.network_id, &selected.value);
             let qr_payload = receive_request.as_deref().unwrap_or(&selected.value);
-            let qr = render_qr_svg(qr_payload);
+            let qr = address_is_exportable
+                .then(|| render_qr_svg(qr_payload))
+                .flatten();
             let address_kind = ui::address_kind(&selected.kind);
-            let qr_label = format!("QR code for {address_kind} receive address");
+            let qr_label = if receive_request.is_some() {
+                "QR code for public NIGHT receive request".to_owned()
+            } else {
+                format!("QR code for {address_kind} receive address")
+            };
             let preview = grouped_address_preview(&selected.value);
             #[cfg(feature = "standalone-deployment-profile")]
             let route_class = Some(
@@ -5315,23 +5323,39 @@ fn ReceiveSheet(
                 }
                 div { class: "receive-sheet__address",
                         div {
-                            strong { "{ui::address_kind(&selected.kind)}" }
+                            p { class: "card-eyebrow", "Selected destination" }
+                            strong { "{ui::address_kind(&selected.kind)} on {ui::midnight_network(&account.network_id)}" }
                             p { "{ui::address_purpose(&selected.kind)}" }
                         }
                         div {
                             class: "address-qr privacy-qr",
-                            role: "img",
-                            aria_label: "{qr_label}",
                             if let Some(svg) = qr {
-                                div { class: "address-qr__frame", dangerous_inner_html: "{svg}" }
-                            } else {
+                                div {
+                                    class: "address-qr__frame",
+                                    role: "img",
+                                    aria_label: "{qr_label}",
+                                    dangerous_inner_html: "{svg}"
+                                }
+                            } else if address_is_exportable {
                                 p { role: "alert", "This address could not be encoded as a QR code." }
+                            } else {
+                                div { class: "receive-sheet__state", role: "alert",
+                                    p { "This receive address is unavailable. Refresh the account before sharing it." }
+                                    button {
+                                        class: "secondary-action",
+                                        r#type: "button",
+                                        onclick: move |event| on_open_wallet.call(event),
+                                        "Open Wallet"
+                                    }
+                                }
                             }
                         }
-                        code {
-                            class: "receive-sheet__preview privacy-value",
-                            aria_label: "Full validated raw {ui::address_kind(&selected.kind)} receive address {selected.value}",
-                            "{preview}"
+                        if address_is_exportable {
+                            code {
+                                class: "receive-sheet__preview privacy-value",
+                                aria_label: "Full validated raw {ui::address_kind(&selected.kind)} receive address {selected.value}",
+                                "{preview}"
+                            }
                         }
                         if receive_request.is_some() {
                             p { "The QR carries a versioned public NIGHT request; copy and share export the raw address shown." }
@@ -5342,6 +5366,7 @@ fn ReceiveSheet(
                             class: "receive-sheet__action",
                             r#type: "button",
                             aria_label: "Copy {ui::address_kind(&selected.kind)} receive address",
+                            disabled: !address_is_exportable,
                             onclick: move |_| {
                                 let result = PublicReceiveAddress::new(copy_value.clone())
                                     .and_then(|address| copy_exporter.copy_receive_address(address));
@@ -5353,6 +5378,7 @@ fn ReceiveSheet(
                             class: "receive-sheet__action",
                             r#type: "button",
                             aria_label: "Share {ui::address_kind(&selected.kind)} receive address",
+                            disabled: !address_is_exportable,
                             onclick: move |_| {
                                 let result = PublicReceiveAddress::new(share_value.clone())
                                     .and_then(|address| share_exporter.share_receive_address(address));
@@ -12271,6 +12297,40 @@ mod tests {
         );
         assert!(night_display_to_atomic_units("-1").is_err());
         assert!(night_display_to_atomic_units("1.2.3").is_err());
+    }
+
+    #[test]
+    fn receive_exports_require_a_valid_address_for_the_selected_kind_and_network() {
+        const UNSHIELDED: &str =
+            "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
+        const SHIELDED: &str = concat!(
+            "mn_shield-addr_devnet1p99fzfvf2z2q05zaaqzml8laccfd8uhzm9t2jewxggyr65tj4dp4g",
+            "cfv7e04ka0x7qeajljmln7za5d4edntjxncx4q0uh6gkkj706ggme77n"
+        );
+
+        assert!(receive_address_is_exportable(
+            "unshielded",
+            "undeployed",
+            UNSHIELDED
+        ));
+        assert!(receive_address_is_exportable(
+            "shielded", "devnet", SHIELDED
+        ));
+        assert!(!receive_address_is_exportable(
+            "unshielded",
+            "undeployed",
+            "not a valid address"
+        ));
+        assert!(!receive_address_is_exportable(
+            "unshielded",
+            "preprod",
+            UNSHIELDED
+        ));
+        assert!(!receive_address_is_exportable(
+            "shielded",
+            "undeployed",
+            UNSHIELDED
+        ));
     }
 
     #[test]
