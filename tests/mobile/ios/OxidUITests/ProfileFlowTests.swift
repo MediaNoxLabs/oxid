@@ -33,6 +33,15 @@ final class ProfileFlowTests: XCTestCase {
     }
 
     @MainActor
+    private func waitForSwitch(_ element: XCUIElement, value: String, timeout: TimeInterval = 5) {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", value),
+            object: element
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: timeout), .completed)
+    }
+
+    @MainActor
     private func ensureProfile(in application: XCUIApplication) {
         application.launch()
         let createWallet = application.buttons["Create private wallet"]
@@ -210,7 +219,7 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(shieldedTransfer.waitForExistence(timeout: 5))
         scrollTo(shieldedTransfer, in: application)
         shieldedTransfer.tap()
-        XCTAssertEqual(shieldedTransfer.value as? String, "1")
+        waitForSwitch(shieldedTransfer, value: "1")
 
         let amount = application.textFields["Amount in NIGHT"]
         XCTAssertTrue(amount.exists)
