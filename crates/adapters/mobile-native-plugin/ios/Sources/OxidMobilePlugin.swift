@@ -66,8 +66,52 @@ public final class OxidMobilePlugin: NSObject {
         BackupDocumentCoordinator.shared.take()
     }
 
-    @objc public func custodyJson(_ request: String) -> String {
-        CustodyCoordinator.shared.dispatch(request: request)
+    @objc public func authorizeRecoveryPhraseRevealJson() -> String {
+        CustodyCoordinator.shared.authorizeRecoveryPhraseReveal()
+    }
+
+    @objc public func custodyInspectControl(_ profileId: String) -> String {
+        CustodyCoordinator.shared.inspectControl(profileId: profileId)
+    }
+
+    @objc public func custodyInitializeControl(
+        _ request: String
+    ) -> String {
+        CustodyCoordinator.shared.initializeControl(request: request)
+    }
+
+    @objc public func custodyPrepareUnlockControl(
+        _ request: String
+    ) -> String {
+        CustodyCoordinator.shared.prepareUnlockControl(request: request)
+    }
+
+    @objc public func custodyPrepareLoadControl(_ profileId: String) -> String {
+        CustodyCoordinator.shared.prepareLoadControl(profileId: profileId)
+    }
+
+    @objc public func custodyPendingLengthJson() -> String {
+        CustodyCoordinator.shared.pendingLengthJson()
+    }
+
+    @objc public func custodyTakePending(
+        _ request: String
+    ) -> String {
+        CustodyCoordinator.shared.takePending(request: request) ? "taken" : "failed"
+    }
+
+    @objc public func custodyDiscardPending() -> String {
+        CustodyCoordinator.shared.discardPending() ? "discarded" : "failed"
+    }
+
+    @objc public func custodySaveControl(
+        _ request: String
+    ) -> String {
+        CustodyCoordinator.shared.saveControl(request: request)
+    }
+
+    @objc public func custodyLockControl(_ profileId: String) -> String {
+        CustodyCoordinator.shared.lockControl(profileId: profileId)
     }
 
     private func onMain(_ operation: @escaping () -> String) -> String {
@@ -356,57 +400,20 @@ private final class CustodyCoordinator {
         let expiresAt: Date
     }
 
+    private struct PendingMaterial {
+        let operation: String
+        let profileId: String
+        let generation: UInt64
+        var bytes: Data
+    }
+
     private let lock = NSLock()
     private let service = "io.medianox.oxid.mobile-custody.v1"
     private let sessionDuration: TimeInterval = 30
     private let maximumPayloadBytes = 512 * 1024
     private var sessions: [String: Session] = [:]
-
-    func dispatch(request: String) -> String {
-        guard !request.isEmpty,
-              request.utf8.count <= maximumPayloadBytes * 2,
-              let data = request.data(using: .utf8),
-              let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let operation = body["operation"] as? String else {
-            return json(status: "invalid")
-        }
-        if operation == "authorize_recovery_phrase_reveal" {
-            guard Set(body.keys) == ["operation"] else { return json(status: "invalid") }
-            return authorizeRecoveryPhraseReveal()
-        }
-        guard let profileId = body["profile_id"] as? String else { return json(status: "invalid") }
-        let expected: Set<String>
-        switch operation {
-        case "initialize", "save":
-            expected = ["operation", "profile_id", "payload"]
-        case "unlock":
-            expected = ["operation", "profile_id", "reason"]
-        case "inspect", "load", "lock":
-            expected = ["operation", "profile_id"]
-        default:
-            return json(status: "invalid")
-        }
-        guard Set(body.keys) == expected else { return json(status: "invalid") }
-        switch operation {
-        case "inspect":
-            return inspect(profileId: profileId)
-        case "initialize":
-            guard let payload = body["payload"] as? String else { return json(status: "invalid") }
-            return initialize(profileId: profileId, payload: payload)
-        case "unlock":
-            guard let reason = body["reason"] as? String else { return json(status: "invalid") }
-            return unlock(profileId: profileId, reason: reason)
-        case "load":
-            return load(profileId: profileId)
-        case "save":
-            guard let payload = body["payload"] as? String else { return json(status: "invalid") }
-            return save(profileId: profileId, payload: payload)
-        case "lock":
-            return lock(profileId: profileId)
-        default:
-            return json(status: "invalid")
-        }
-    }
+    private var pendingMaterial: PendingMaterial?
+    private var generation: UInt64 = 0
 
     func authorizeRecoveryPhraseReveal() -> String {
         let context = LAContext()
@@ -444,13 +451,12 @@ private final class CustodyCoordinator {
         return json(status: "locked", protection: "operating_system")
     }
 
-    func initialize(profileId: String, payload: String) -> String {
+    private func initialize(profileId: String, plaintext: inout Data) -> String {
         lock.lock()
         defer { lock.unlock() }
-        guard validProfileId(profileId), var plaintext = decodePayload(payload) else {
+        guard validProfileId(profileId), validPlaintext(plaintext) else {
             return json(status: "invalid")
         }
-        defer { plaintext.resetBytes(in: 0..<plaintext.count) }
         switch itemExistence(profileId: profileId) {
         case .present:
             return json(status: "already_initialized")
@@ -508,79 +514,12 @@ private final class CustodyCoordinator {
         }
     }
 
-    func unlock(profileId: String, reason: String) -> String {
+    private func save(profileId: String, plaintext: inout Data) -> String {
         lock.lock()
         defer { lock.unlock() }
-        guard validProfileId(profileId), validReason(reason) else { return json(status: "invalid") }
-        switch itemExistence(profileId: profileId) {
-        case .missing:
-            return json(status: "not_initialized")
-        case .unavailable:
-            return json(status: "unavailable")
-        case .present:
-            break
-        }
-        sessions.removeValue(forKey: profileId)?.context.invalidate()
-        let context = LAContext()
-        context.touchIDAuthenticationAllowableReuseDuration = 0
-        switch read(
-            profileId: profileId,
-            context: context,
-            prompt: reason,
-            allowAuthenticationUI: true
-        ) {
-        case .success(var plaintext):
-            defer { plaintext.resetBytes(in: 0..<plaintext.count) }
-            sessions[profileId] = Session(
-                context: context,
-                expiresAt: Date().addingTimeInterval(sessionDuration)
-            )
-            return json(
-                status: "succeeded",
-                protection: "operating_system",
-                payload: plaintext.base64EncodedString()
-            )
-        case .failure(let status):
-            context.invalidate()
-            return json(status: status)
-        }
-    }
-
-    func load(profileId: String) -> String {
-        lock.lock()
-        defer { lock.unlock() }
-        guard validProfileId(profileId) else { return json(status: "invalid") }
-        guard let session = activeSession(profileId: profileId) else {
-            return itemExistence(profileId: profileId) == .missing
-                ? json(status: "not_initialized")
-                : json(status: "locked")
-        }
-        switch read(
-            profileId: profileId,
-            context: session.context,
-            prompt: "",
-            allowAuthenticationUI: false
-        ) {
-        case .success(var plaintext):
-            defer { plaintext.resetBytes(in: 0..<plaintext.count) }
-            return json(
-                status: "succeeded",
-                protection: "operating_system",
-                payload: plaintext.base64EncodedString()
-            )
-        case .failure:
-            sessions.removeValue(forKey: profileId)?.context.invalidate()
-            return json(status: "locked")
-        }
-    }
-
-    func save(profileId: String, payload: String) -> String {
-        lock.lock()
-        defer { lock.unlock() }
-        guard validProfileId(profileId), var plaintext = decodePayload(payload) else {
+        guard validProfileId(profileId), validPlaintext(plaintext) else {
             return json(status: "invalid")
         }
-        defer { plaintext.resetBytes(in: 0..<plaintext.count) }
         guard let session = activeSession(profileId: profileId) else {
             return json(status: "locked")
         }
@@ -607,6 +546,199 @@ private final class CustodyCoordinator {
         }
         sessions.removeValue(forKey: profileId)?.context.invalidate()
         return json(status: "locked", protection: "operating_system")
+    }
+
+    func inspectControl(profileId: String) -> String {
+        control(operation: "inspect", legacy: inspect(profileId: profileId))
+    }
+
+    func initializeControl(request: String) -> String {
+        guard let input = bufferRequest(request) else {
+            return control(operation: "initialize", status: "invalid")
+        }
+        guard var plaintext = bytes(address: input.address, length: input.length) else {
+            return control(operation: "initialize", status: "invalid")
+        }
+        defer { plaintext.resetBytes(in: 0..<plaintext.count) }
+        return control(
+            operation: "initialize",
+            legacy: initialize(profileId: input.profileId, plaintext: &plaintext)
+        )
+    }
+
+    func prepareUnlockControl(request: String) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        clearPending()
+        guard let body = closedObject(request, keys: ["profile_id", "reason"]),
+              let profileId = body["profile_id"] as? String,
+              let reason = body["reason"] as? String else {
+            return control(operation: "unlock", status: "invalid")
+        }
+        guard validProfileId(profileId), validReason(reason) else {
+            return control(operation: "unlock", status: "invalid")
+        }
+        switch itemExistence(profileId: profileId) {
+        case .missing:
+            return control(operation: "unlock", status: "not_initialized")
+        case .unavailable:
+            return control(operation: "unlock", status: "unavailable")
+        case .present:
+            break
+        }
+        sessions.removeValue(forKey: profileId)?.context.invalidate()
+        let context = LAContext()
+        context.touchIDAuthenticationAllowableReuseDuration = 0
+        switch read(
+            profileId: profileId,
+            context: context,
+            prompt: reason,
+            allowAuthenticationUI: true
+        ) {
+        case .success(var plaintext):
+            sessions[profileId] = Session(
+                context: context,
+                expiresAt: Date().addingTimeInterval(sessionDuration)
+            )
+            guard let activeGeneration = nextGeneration() else {
+                plaintext.resetBytes(in: 0..<plaintext.count)
+                context.invalidate()
+                sessions.removeValue(forKey: profileId)
+                return control(operation: "unlock", status: "failed")
+            }
+            pendingMaterial = PendingMaterial(
+                operation: "unlock",
+                profileId: profileId,
+                generation: activeGeneration,
+                bytes: plaintext
+            )
+            return control(
+                operation: "unlock",
+                status: "succeeded",
+                protection: "operating_system"
+            )
+        case .failure(let status):
+            context.invalidate()
+            return control(operation: "unlock", status: status)
+        }
+    }
+
+    func prepareLoadControl(profileId: String) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        clearPending()
+        guard validProfileId(profileId) else {
+            return control(operation: "load", status: "invalid")
+        }
+        guard let session = activeSession(profileId: profileId) else {
+            return control(
+                operation: "load",
+                status: itemExistence(profileId: profileId) == .missing
+                    ? "not_initialized"
+                    : "locked"
+            )
+        }
+        switch read(
+            profileId: profileId,
+            context: session.context,
+            prompt: "",
+            allowAuthenticationUI: false
+        ) {
+        case .success(var plaintext):
+            guard let activeGeneration = nextGeneration() else {
+                plaintext.resetBytes(in: 0..<plaintext.count)
+                return control(operation: "load", status: "failed")
+            }
+            pendingMaterial = PendingMaterial(
+                operation: "load",
+                profileId: profileId,
+                generation: activeGeneration,
+                bytes: plaintext
+            )
+            return control(
+                operation: "load",
+                status: "succeeded",
+                protection: "operating_system"
+            )
+        case .failure:
+            sessions.removeValue(forKey: profileId)?.context.invalidate()
+            return control(operation: "load", status: "locked")
+        }
+    }
+
+    func pendingLengthJson() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        let body = [
+            "length": String(pendingMaterial?.bytes.count ?? 0),
+            "generation": String(pendingMaterial?.generation ?? 0)
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: body),
+              let text = String(data: data, encoding: .utf8) else {
+            return "{\"generation\":\"0\",\"length\":\"0\"}"
+        }
+        return text
+    }
+
+    func takePending(request: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let body = closedObject(
+                request,
+                keys: ["operation", "profile_id", "generation", "address", "length"]
+              ),
+              let operation = body["operation"] as? String,
+              let profileId = body["profile_id"] as? String,
+              let generationText = body["generation"] as? String,
+              let addressText = body["address"] as? String,
+              let lengthText = body["length"] as? String,
+              let expectedGeneration = UInt64(generationText),
+              let address = UInt64(addressText),
+              let length = UInt64(lengthText) else {
+            clearPending()
+            return false
+        }
+        guard address != 0,
+              let count = Int(exactly: length),
+              var material = pendingMaterial,
+              material.operation == operation,
+              material.profileId == profileId,
+              material.generation == expectedGeneration,
+              material.bytes.count == count,
+              let pointer = UnsafeMutableRawPointer(bitPattern: UInt(address)) else {
+            clearPending()
+            return false
+        }
+        pendingMaterial = nil
+        defer { material.bytes.resetBytes(in: 0..<material.bytes.count) }
+        material.bytes.copyBytes(
+            to: pointer.assumingMemoryBound(to: UInt8.self),
+            count: count
+        )
+        return true
+    }
+
+    func discardPending() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        clearPending()
+        return true
+    }
+
+    func saveControl(request: String) -> String {
+        guard let input = bufferRequest(request),
+              var plaintext = bytes(address: input.address, length: input.length) else {
+            return control(operation: "save", status: "invalid")
+        }
+        defer { plaintext.resetBytes(in: 0..<plaintext.count) }
+        return control(
+            operation: "save",
+            legacy: save(profileId: input.profileId, plaintext: &plaintext)
+        )
+    }
+
+    func lockControl(profileId: String) -> String {
+        control(operation: "lock", legacy: lock(profileId: profileId))
     }
 
     private enum Existence { case missing, present, unavailable }
@@ -686,15 +818,89 @@ private final class CustodyCoordinator {
         return session
     }
 
-    private func decodePayload(_ payload: String) -> Data? {
-        guard !payload.isEmpty,
-              payload.utf8.count <= maximumPayloadBytes * 2,
-              let data = Data(base64Encoded: payload),
-              !data.isEmpty,
-              data.count <= maximumPayloadBytes else {
+    private func bytes(address: UInt64, length: UInt64) -> Data? {
+        guard address != 0,
+              let count = Int(exactly: length),
+              count > 0,
+              count <= maximumPayloadBytes,
+              let pointer = UnsafeRawPointer(bitPattern: UInt(address)) else {
             return nil
         }
-        return data
+        return Data(bytes: pointer, count: count)
+    }
+
+    private typealias BufferRequest = (profileId: String, address: UInt64, length: UInt64)
+
+    private func bufferRequest(_ request: String) -> BufferRequest? {
+        guard let body = closedObject(request, keys: ["profile_id", "address", "length"]),
+              let profileId = body["profile_id"] as? String,
+              let addressText = body["address"] as? String,
+              let lengthText = body["length"] as? String,
+              let address = UInt64(addressText),
+              let length = UInt64(lengthText) else {
+            return nil
+        }
+        return (profileId, address, length)
+    }
+
+    private func closedObject(_ request: String, keys: Set<String>) -> [String: Any]? {
+        guard !request.isEmpty,
+              request.utf8.count <= 1024,
+              let data = request.data(using: .utf8),
+              let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              Set(body.keys) == keys else {
+            return nil
+        }
+        return body
+    }
+
+    private func validPlaintext(_ plaintext: Data) -> Bool {
+        !plaintext.isEmpty && plaintext.count <= maximumPayloadBytes
+    }
+
+    private func clearPending() {
+        guard var material = pendingMaterial else { return }
+        pendingMaterial = nil
+        material.bytes.resetBytes(in: 0..<material.bytes.count)
+    }
+
+    private func nextGeneration() -> UInt64? {
+        guard generation < UInt64.max else { return nil }
+        generation += 1
+        return generation
+    }
+
+    private func control(operation: String, legacy: String) -> String {
+        guard let data = legacy.data(using: .utf8),
+              let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let status = body["status"] as? String,
+              Set(body.keys).isSubset(of: ["status", "protection"]),
+              body["payload"] == nil else {
+            return control(operation: operation, status: "invalid")
+        }
+        return control(
+            operation: operation,
+            status: status,
+            protection: body["protection"] as? String
+        )
+    }
+
+    private func control(
+        operation: String,
+        status: String,
+        protection: String? = nil
+    ) -> String {
+        var body: [String: Any] = [
+            "version": 1,
+            "operation": operation,
+            "status": status
+        ]
+        if let protection { body["protection"] = protection }
+        guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else {
+            return "{\"operation\":\"\(operation)\",\"status\":\"invalid\",\"version\":1}"
+        }
+        return text
     }
 
     private func validProfileId(_ value: String) -> Bool {
@@ -713,12 +919,10 @@ private final class CustodyCoordinator {
 
     private func json(
         status: String,
-        protection: String? = nil,
-        payload: String? = nil
+        protection: String? = nil
     ) -> String {
         var body = ["status": status]
         if let protection { body["protection"] = protection }
-        if let payload { body["payload"] = payload }
         guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]),
               let text = String(data: data, encoding: .utf8) else {
             return "{\"status\":\"invalid\"}"
