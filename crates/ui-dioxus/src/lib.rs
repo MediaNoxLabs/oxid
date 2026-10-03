@@ -6016,6 +6016,8 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
 
 #[component]
 fn AccountActivityCard(account: WalletAccountView, unavailable: bool) -> Element {
+    let source_label = ui::account_source(account.source);
+    let source_freshness = wallet_activity_freshness(account.source);
     rsx! {
         article { class: "surface-card",
             p { class: "card-eyebrow", "Wallet activity" }
@@ -6028,7 +6030,7 @@ fn AccountActivityCard(account: WalletAccountView, unavailable: bool) -> Element
             }
             if account.transactions.is_empty() {
                 p { class: "activity-empty-state",
-                    if unavailable { "Wallet activity is unavailable because a live Midnight account source is not connected." } else { "No synced wallet activity is available for this profile yet." }
+                    if unavailable { "Wallet activity is unavailable because a live Midnight account source is not connected. Open Wallet to restore the selected realm." } else { "No synced wallet activity is available for this profile yet. Receive or send NIGHT to create the first transaction." }
                 }
             } else {
                 div { class: "activity-list", aria_label: "Wallet transaction activity",
@@ -6038,15 +6040,16 @@ fn AccountActivityCard(account: WalletAccountView, unavailable: bool) -> Element
                             div {
                                 strong { "{ui::transaction_direction(&transaction.direction)}" }
                                 small { class: "privacy-value", "{transaction_status_line(transaction)}" }
+                                small { class: "activity-row__source", "{source_label} · {source_freshness}" }
                                 small { class: "privacy-value", "{activity_observed_at_line(transaction.observed_at_millis)}" }
                             }
-                            code { class: "privacy-value", "{truncate_middle(&transaction.transaction_id, 12, 6)}" }
                             details { class: "activity-row__details",
                                 summary { "Transaction details" }
                                 dl { class: "preview-list",
-                                    div { dt { "Source" } dd { "Midnight wallet account" } }
+                                    div { dt { "Source" } dd { "{source_label} · {source_freshness}" } }
                                     div { dt { "Status" } dd { "{ui::transaction_status(&transaction.status)}" } }
                                     div { dt { "Observed" } dd { "{activity_observed_at_line(transaction.observed_at_millis)}" } }
+                                    div { dt { "Transaction" } dd { class: "privacy-value", title: "{transaction.transaction_id}", "{truncate_middle(&transaction.transaction_id, 12, 6)}" } }
                                     if let Some(block_height) = transaction.block_height {
                                         div { dt { "Block" } dd { "{block_height}" } }
                                     }
@@ -6057,6 +6060,15 @@ fn AccountActivityCard(account: WalletAccountView, unavailable: bool) -> Element
                 }
             }
         }
+    }
+}
+
+const fn wallet_activity_freshness(source: WalletAccountSource) -> &'static str {
+    match source {
+        WalletAccountSource::Live => "Live account",
+        WalletAccountSource::Cached => "Saved snapshot",
+        WalletAccountSource::Simulated => "Simulated fixture",
+        WalletAccountSource::Unavailable => "Source unavailable",
     }
 }
 
@@ -11597,6 +11609,26 @@ mod tests {
         assert_eq!(
             activity_observed_at_line(None),
             "Observed timestamp unavailable"
+        );
+    }
+
+    #[test]
+    fn wallet_activity_provenance_distinguishes_live_saved_and_fixture_data() {
+        assert_eq!(
+            wallet_activity_freshness(WalletAccountSource::Live),
+            "Live account"
+        );
+        assert_eq!(
+            wallet_activity_freshness(WalletAccountSource::Cached),
+            "Saved snapshot"
+        );
+        assert_eq!(
+            wallet_activity_freshness(WalletAccountSource::Simulated),
+            "Simulated fixture"
+        );
+        assert_eq!(
+            wallet_activity_freshness(WalletAccountSource::Unavailable),
+            "Source unavailable"
         );
     }
 
