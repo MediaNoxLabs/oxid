@@ -474,18 +474,24 @@ export function collectAdrCollisions({ branches, adrDir = "docs/adr", run = runn
   const pathForNumber = (number) => [...byNumber.get(number)?.keys() ?? []][0] ?? null;
 
   const statusBlindBacklinks = [];
+  const seenBacklinks = new Set();
   for (const [file, content] of [...seen].sort(([a], [b]) => a.localeCompare(b))) {
     const fromStatus = statusOf(content);
-    for (const match of content.matchAll(/Amended by:?\s*ADR-(\d{4})/giu)) {
-      const targetPath = pathForNumber(match[1]);
-      const targetStatus = targetPath ? statusOf(seen.get(targetPath)) : null;
-      if (fromStatus && targetStatus && /^accepted$/iu.test(fromStatus) && !/^accepted$/iu.test(targetStatus)) {
-        statusBlindBacklinks.push({
-          from: file,
-          fromStatus,
-          to: targetPath ?? `ADR-${match[1]}`,
-          toStatus: targetStatus,
-        });
+    for (const amendment of content.matchAll(/^\s*(?:[-*]\s*)?Amended by:?\s*(.*)$/gimu)) {
+      for (const target of amendment[1].matchAll(/ADR-(\d{4})/giu)) {
+        const targetPath = pathForNumber(target[1]);
+        const targetStatus = targetPath ? statusOf(seen.get(targetPath)) : null;
+        const backlink = `${file}\u0000${targetPath ?? `ADR-${target[1]}`}`;
+        if (seenBacklinks.has(backlink)) continue;
+        seenBacklinks.add(backlink);
+        if (fromStatus && targetStatus && /^accepted$/iu.test(fromStatus) && !/^accepted$/iu.test(targetStatus)) {
+          statusBlindBacklinks.push({
+            from: file,
+            fromStatus,
+            to: targetPath ?? `ADR-${target[1]}`,
+            toStatus: targetStatus,
+          });
+        }
       }
     }
   }
