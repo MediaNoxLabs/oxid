@@ -627,9 +627,11 @@ pub(super) fn compose_development_portal_from_config(
         config,
         portal,
         credential_presentation,
-        clock,
-        security,
-        profiles,
+        DevelopmentPortalStorage {
+            clock,
+            security,
+            profiles,
+        },
         |security| security,
         None,
     )
@@ -652,9 +654,11 @@ pub(super) fn compose_development_portal_from_config_with_did_approvals(
         config,
         portal,
         credential_presentation,
-        clock,
-        security,
-        profiles,
+        DevelopmentPortalStorage {
+            clock,
+            security,
+            profiles,
+        },
         |security| security,
         Some(did_approvals),
     )
@@ -681,9 +685,11 @@ fn compose_mobile_public_genesis_portal_from_config(
         config,
         portal,
         credential_presentation,
-        clock,
-        security,
-        profiles,
+        DevelopmentPortalStorage {
+            clock,
+            security,
+            profiles,
+        },
         move |security| {
             Arc::new(public_profile_protection(
                 public_network,
@@ -709,9 +715,7 @@ fn compose_development_portal_with_security<N, F>(
     config: MidnightStandaloneConfig,
     portal: PortalIdentityConfiguration,
     credential_presentation: CredentialPresentationComposition,
-    clock: Arc<SystemClock>,
-    security: Arc<DevelopmentWalletSecurity<SystemClock, N>>,
-    profiles: Arc<JsonWalletProfileRepository>,
+    storage: DevelopmentPortalStorage<N>,
     protection_for_security: F,
     did_approvals: Option<Arc<oxid_identity_application::DidApprovalService>>,
 ) -> ApplicationServices
@@ -719,6 +723,11 @@ where
     N: oxid_platform_ports::RandomPort + 'static,
     F: FnOnce(Arc<DevelopmentWalletSecurity<SystemClock, N>>) -> Arc<dyn WalletProtectionPort>,
 {
+    let DevelopmentPortalStorage {
+        clock,
+        security,
+        profiles,
+    } = storage;
     let network_id = config.indexer().network_id().as_str().to_owned();
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let midnight = Arc::new(
@@ -738,6 +747,22 @@ where
         with_portal_wallet_onboarding(services, profiles, security, midnight, network_id),
         passport_vault_state_source,
     )
+}
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        all(not(target_os = "ios"), not(target_os = "android")),
+        all(
+            feature = "mobile-portal",
+            any(target_os = "ios", target_os = "android")
+        )
+    )
+))]
+struct DevelopmentPortalStorage<N> {
+    clock: Arc<SystemClock>,
+    security: Arc<DevelopmentWalletSecurity<SystemClock, N>>,
+    profiles: Arc<JsonWalletProfileRepository>,
 }
 
 #[cfg(all(
