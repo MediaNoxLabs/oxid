@@ -4,7 +4,10 @@
 
 pub mod custody;
 
-#[cfg(any(target_os = "android", test))]
+#[cfg(target_os = "ios")]
+use std::sync::Mutex;
+
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 use serde::Deserialize;
 #[cfg(any(target_os = "ios", target_os = "android", test))]
 use serde::Serialize;
@@ -178,7 +181,8 @@ fn backup_export_request(
 /// profile, secret, or caller-controlled reason crosses this operation.
 #[cfg(target_os = "ios")]
 pub fn authorize_recovery_phrase_reveal_json() -> Result<String, NativeBridgeError> {
-    call_ios_custody("authorize_recovery_phrase_reveal", "", None, None)
+    let plugin = OxidMobilePlugin::new().map_err(|_| NativeBridgeError::Unavailable)?;
+    authorizeRecoveryPhraseRevealJson(&plugin).map_err(|_| NativeBridgeError::Failed)
 }
 
 #[cfg(target_os = "android")]
@@ -188,22 +192,9 @@ pub fn authorize_recovery_phrase_reveal_json() -> Result<String, NativeBridgeErr
 
 // Legacy platform transport. New adapters implement the separate custody
 // byte contract; never wrap this JSON path to implement CustodyTransport.
-#[cfg(target_os = "ios")]
-pub fn inspect_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
-    call_ios_custody("inspect", profile_id, None, None)
-}
-
 #[cfg(target_os = "android")]
 pub fn inspect_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
     call_android_custody("inspect", profile_id, None, None)
-}
-
-#[cfg(target_os = "ios")]
-pub fn initialize_custody_json(
-    profile_id: &str,
-    payload: &str,
-) -> Result<String, NativeBridgeError> {
-    call_ios_custody("initialize", profile_id, Some(payload), None)
 }
 
 #[cfg(target_os = "android")]
@@ -214,19 +205,9 @@ pub fn initialize_custody_json(
     call_android_custody("initialize", profile_id, Some(payload), None)
 }
 
-#[cfg(target_os = "ios")]
-pub fn unlock_custody_json(profile_id: &str, reason: &str) -> Result<String, NativeBridgeError> {
-    call_ios_custody("unlock", profile_id, None, Some(reason))
-}
-
 #[cfg(target_os = "android")]
 pub fn unlock_custody_json(profile_id: &str, reason: &str) -> Result<String, NativeBridgeError> {
     call_android_custody("unlock", profile_id, None, Some(reason))
-}
-
-#[cfg(target_os = "ios")]
-pub fn load_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
-    call_ios_custody("load", profile_id, None, None)
 }
 
 #[cfg(target_os = "android")]
@@ -234,19 +215,9 @@ pub fn load_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> 
     call_android_custody("load", profile_id, None, None)
 }
 
-#[cfg(target_os = "ios")]
-pub fn save_custody_json(profile_id: &str, payload: &str) -> Result<String, NativeBridgeError> {
-    call_ios_custody("save", profile_id, Some(payload), None)
-}
-
 #[cfg(target_os = "android")]
 pub fn save_custody_json(profile_id: &str, payload: &str) -> Result<String, NativeBridgeError> {
     call_android_custody("save", profile_id, Some(payload), None)
-}
-
-#[cfg(target_os = "ios")]
-pub fn lock_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
-    call_ios_custody("lock", profile_id, None, None)
 }
 
 #[cfg(target_os = "android")]
@@ -254,7 +225,7 @@ pub fn lock_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> 
     call_android_custody("lock", profile_id, None, None)
 }
 
-#[cfg(any(target_os = "ios", target_os = "android", test))]
+#[cfg(any(target_os = "android", test))]
 #[derive(Serialize)]
 struct NativeCustodyRequest<'a> {
     operation: &'a str,
@@ -266,7 +237,7 @@ struct NativeCustodyRequest<'a> {
     reason: Option<&'a str>,
 }
 
-#[cfg(any(target_os = "ios", target_os = "android", test))]
+#[cfg(any(target_os = "android", test))]
 fn custody_request(
     operation: &str,
     profile_id: &str,
@@ -284,15 +255,225 @@ fn custody_request(
 }
 
 #[cfg(target_os = "ios")]
-fn call_ios_custody(
-    operation: &str,
+static IOS_CUSTODY_CALL: Mutex<()> = Mutex::new(());
+
+#[cfg(target_os = "ios")]
+#[derive(Serialize)]
+struct IosCustodyBufferRequest<'a> {
+    profile_id: &'a str,
+    address: String,
+    length: String,
+}
+
+#[cfg(target_os = "ios")]
+#[derive(Serialize)]
+struct IosCustodyUnlockRequest<'a> {
+    profile_id: &'a str,
+    reason: &'a str,
+}
+
+#[cfg(target_os = "ios")]
+#[derive(Serialize)]
+struct IosCustodyTakeRequest<'a> {
+    operation: &'a str,
+    profile_id: &'a str,
+    generation: String,
+    address: String,
+    length: String,
+}
+
+#[cfg(target_os = "ios")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IosCustodyLength {
+    length: String,
+    generation: String,
+}
+
+#[cfg(target_os = "ios")]
+fn ios_buffer_request(
     profile_id: &str,
-    payload: Option<&str>,
-    reason: Option<&str>,
-) -> Result<String, NativeBridgeError> {
-    let request = custody_request(operation, profile_id, payload, reason)?;
-    let plugin = OxidMobilePlugin::new().map_err(|_| NativeBridgeError::Unavailable)?;
-    custodyJson(&plugin, request.to_string()).map_err(|_| NativeBridgeError::Failed)
+    address: u64,
+    length: usize,
+) -> Result<String, custody::Error> {
+    serde_json::to_string(&IosCustodyBufferRequest {
+        profile_id,
+        address: address.to_string(),
+        length: length.to_string(),
+    })
+    .map_err(|_| custody::Error::Failed)
+}
+
+/// Secret-safe iOS custody transport. Only closed control JSON crosses as a
+/// string; custody is copied synchronously through a Rust-owned mutable buffer.
+#[cfg(target_os = "ios")]
+pub fn inspect_custody(profile_id: &str) -> Result<custody::CustodyState, custody::Error> {
+    let _call = IOS_CUSTODY_CALL
+        .lock()
+        .map_err(|_| custody::Error::Failed)?;
+    let plugin = OxidMobilePlugin::new().map_err(|_| custody::Error::Unavailable)?;
+    let control = custodyInspectControl(&plugin, profile_id.to_owned())
+        .map_err(|_| custody::Error::Failed)?;
+    match custody::decode_reply(custody::Operation::Inspect, control.as_bytes(), None)? {
+        custody::Reply::Uninitialized => Ok(custody::CustodyState::Uninitialized),
+        custody::Reply::Locked(protection) => Ok(custody::CustodyState::Locked(protection)),
+        custody::Reply::Unlocked(protection) => Ok(custody::CustodyState::Unlocked(protection)),
+        _ => Err(custody::Error::Invalid),
+    }
+}
+
+#[cfg(target_os = "ios")]
+pub fn initialize_custody(
+    profile_id: &str,
+    bytes: &custody::CustodyBytes,
+) -> Result<custody::Protection, custody::Error> {
+    let _call = IOS_CUSTODY_CALL
+        .lock()
+        .map_err(|_| custody::Error::Failed)?;
+    let plugin = OxidMobilePlugin::new().map_err(|_| custody::Error::Unavailable)?;
+    let request = ios_buffer_request(
+        profile_id,
+        bytes.as_bytes().as_ptr() as usize as u64,
+        bytes.as_bytes().len(),
+    )?;
+    let control = custodyInitializeControl(&plugin, request).map_err(|_| custody::Error::Failed)?;
+    match custody::decode_reply(custody::Operation::Initialize, control.as_bytes(), None)? {
+        custody::Reply::Stored(protection) => Ok(protection),
+        _ => Err(custody::Error::Invalid),
+    }
+}
+
+#[cfg(target_os = "ios")]
+pub fn unlock_custody(
+    profile_id: &str,
+    reason: &str,
+) -> Result<custody::ProtectedCustody, custody::Error> {
+    receive_ios_custody(custody::Operation::Unlock, profile_id, |plugin| {
+        let request = serde_json::to_string(&IosCustodyUnlockRequest { profile_id, reason })
+            .map_err(|_| "invalid request")?;
+        custodyPrepareUnlockControl(plugin, request)
+    })
+}
+
+#[cfg(target_os = "ios")]
+pub fn load_custody(profile_id: &str) -> Result<custody::ProtectedCustody, custody::Error> {
+    receive_ios_custody(custody::Operation::Load, profile_id, |plugin| {
+        custodyPrepareLoadControl(plugin, profile_id.to_owned())
+    })
+}
+
+#[cfg(target_os = "ios")]
+fn receive_ios_custody(
+    operation: custody::Operation,
+    profile_id: &str,
+    prepare: impl FnOnce(&OxidMobilePlugin) -> Result<String, &'static str>,
+) -> Result<custody::ProtectedCustody, custody::Error> {
+    let _call = IOS_CUSTODY_CALL
+        .lock()
+        .map_err(|_| custody::Error::Failed)?;
+    let plugin = OxidMobilePlugin::new().map_err(|_| custody::Error::Unavailable)?;
+    let control = prepare(&plugin).map_err(|_| custody::Error::Failed)?;
+    let length = match custodyPendingLengthJson(&plugin)
+        .map_err(|_| custody::Error::Failed)
+        .and_then(|length| {
+            serde_json::from_str::<IosCustodyLength>(&length).map_err(|_| custody::Error::Invalid)
+        })
+        .and_then(|length| {
+            let generation = length
+                .generation
+                .parse::<u64>()
+                .map_err(|_| custody::Error::Invalid)?;
+            let length = length
+                .length
+                .parse::<usize>()
+                .map_err(|_| custody::Error::Invalid)?;
+            Ok((length, generation))
+        }) {
+        Ok(length) => length,
+        Err(error) => {
+            let _ = custodyDiscardPending(&plugin);
+            return Err(error);
+        }
+    };
+    let (length, generation) = length;
+    let bytes = if length == 0 {
+        None
+    } else {
+        let received = custody::CustodyBytes::receive(length, |destination| {
+            let operation = match operation {
+                custody::Operation::Unlock => "unlock",
+                custody::Operation::Load => "load",
+                _ => return Err(custody::Error::Invalid),
+            };
+            let request = serde_json::to_string(&IosCustodyTakeRequest {
+                operation,
+                profile_id,
+                generation: generation.to_string(),
+                address: (destination.as_mut_ptr() as usize as u64).to_string(),
+                length: destination.len().to_string(),
+            })
+            .map_err(|_| custody::Error::Failed)?;
+            let accepted =
+                custodyTakePending(&plugin, request).map_err(|_| custody::Error::Failed)?;
+            if accepted == "taken" {
+                Ok(destination.len())
+            } else {
+                Err(custody::Error::Invalid)
+            }
+        });
+        match received {
+            Ok(bytes) => Some(bytes),
+            Err(error) => {
+                let _ = custodyDiscardPending(&plugin);
+                return Err(error);
+            }
+        }
+    };
+    let reply = custody::decode_reply(operation, control.as_bytes(), bytes);
+    if reply.is_err() {
+        let _ = custodyDiscardPending(&plugin);
+    }
+    match reply? {
+        custody::Reply::Material { protection, bytes } => {
+            Ok(custody::ProtectedCustody { protection, bytes })
+        }
+        _ => Err(custody::Error::Invalid),
+    }
+}
+
+#[cfg(target_os = "ios")]
+pub fn save_custody(
+    profile_id: &str,
+    bytes: &custody::CustodyBytes,
+) -> Result<custody::Protection, custody::Error> {
+    let _call = IOS_CUSTODY_CALL
+        .lock()
+        .map_err(|_| custody::Error::Failed)?;
+    let plugin = OxidMobilePlugin::new().map_err(|_| custody::Error::Unavailable)?;
+    let request = ios_buffer_request(
+        profile_id,
+        bytes.as_bytes().as_ptr() as usize as u64,
+        bytes.as_bytes().len(),
+    )?;
+    let control = custodySaveControl(&plugin, request).map_err(|_| custody::Error::Failed)?;
+    match custody::decode_reply(custody::Operation::Save, control.as_bytes(), None)? {
+        custody::Reply::Stored(protection) => Ok(protection),
+        _ => Err(custody::Error::Invalid),
+    }
+}
+
+#[cfg(target_os = "ios")]
+pub fn lock_custody(profile_id: &str) -> Result<custody::Protection, custody::Error> {
+    let _call = IOS_CUSTODY_CALL
+        .lock()
+        .map_err(|_| custody::Error::Failed)?;
+    let plugin = OxidMobilePlugin::new().map_err(|_| custody::Error::Unavailable)?;
+    let control =
+        custodyLockControl(&plugin, profile_id.to_owned()).map_err(|_| custody::Error::Failed)?;
+    match custody::decode_reply(custody::Operation::Lock, control.as_bytes(), None)? {
+        custody::Reply::Locked(protection) => Ok(protection),
+        _ => Err(custody::Error::Invalid),
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -471,9 +652,12 @@ pub fn verify_android_jni_exception_recovery() -> Result<(), NativeBridgeError> 
 
 #[cfg(target_os = "ios")]
 use ios_bridge::{
-    OxidMobilePlugin, copyPublicReceiveAddress, custodyJson, setScreenPrivacy,
-    sharePublicReceiveAddress, startBackupExportJson, startBackupImportJson, startScanJson,
-    takeBackupDocumentResultJson, takeScanResultJson, timeoutScanJson,
+    OxidMobilePlugin, authorizeRecoveryPhraseRevealJson, copyPublicReceiveAddress,
+    custodyDiscardPending, custodyInitializeControl, custodyInspectControl, custodyLockControl,
+    custodyPendingLengthJson, custodyPrepareLoadControl, custodyPrepareUnlockControl,
+    custodySaveControl, custodyTakePending, setScreenPrivacy, sharePublicReceiveAddress,
+    startBackupExportJson, startBackupImportJson, startScanJson, takeBackupDocumentResultJson,
+    takeScanResultJson, timeoutScanJson,
 };
 
 #[cfg(target_os = "ios")]
@@ -491,7 +675,16 @@ mod ios_bridge {
         pub fn startBackupExportJson(this: &OxidMobilePlugin, request: String) -> String;
         pub fn startBackupImportJson(this: &OxidMobilePlugin) -> String;
         pub fn takeBackupDocumentResultJson(this: &OxidMobilePlugin) -> String;
-        pub fn custodyJson(this: &OxidMobilePlugin, request: String) -> String;
+        pub fn authorizeRecoveryPhraseRevealJson(this: &OxidMobilePlugin) -> String;
+        pub fn custodyInspectControl(this: &OxidMobilePlugin, profile_id: String) -> String;
+        pub fn custodyInitializeControl(this: &OxidMobilePlugin, request: String) -> String;
+        pub fn custodyPrepareUnlockControl(this: &OxidMobilePlugin, request: String) -> String;
+        pub fn custodyPrepareLoadControl(this: &OxidMobilePlugin, profile_id: String) -> String;
+        pub fn custodyPendingLengthJson(this: &OxidMobilePlugin) -> String;
+        pub fn custodyTakePending(this: &OxidMobilePlugin, request: String) -> String;
+        pub fn custodyDiscardPending(this: &OxidMobilePlugin) -> String;
+        pub fn custodySaveControl(this: &OxidMobilePlugin, request: String) -> String;
+        pub fn custodyLockControl(this: &OxidMobilePlugin, profile_id: String) -> String;
     }
 }
 
@@ -511,8 +704,8 @@ mod tests {
     #[test]
     fn native_phrase_authorization_accepts_only_the_payload_free_operation() {
         let ios = include_str!("../ios/Sources/OxidMobilePlugin.swift");
-        assert!(ios.contains("operation == \"authorize_recovery_phrase_reveal\""));
-        assert!(ios.contains("Set(body.keys) == [\"operation\"]"));
+        assert!(ios.contains("authorizeRecoveryPhraseRevealJson()"));
+        assert!(!ios.contains("@objc public func custodyJson"));
         assert!(ios.contains("Confirm to reveal your new wallet recovery phrase"));
 
         let android =
@@ -522,6 +715,22 @@ mod tests {
         assert!(
             android.contains("Confirm the device credential to reveal your new recovery phrase")
         );
+    }
+
+    #[test]
+    fn ios_custody_uses_closed_control_and_mutable_bytes_without_legacy_secret_strings() {
+        let ios = include_str!("../ios/Sources/OxidMobilePlugin.swift");
+        let storage = include_str!("../../storage-mobile/src/lib.rs");
+        assert!(ios.contains("custodyInitializeControl"));
+        assert!(ios.contains("custodyTakePending"));
+        assert!(ios.contains("UnsafeMutableRawPointer"));
+        assert!(ios.contains("material.bytes.resetBytes"));
+        assert!(ios.contains("material.profileId == profileId"));
+        assert!(ios.contains("material.generation == expectedGeneration"));
+        assert!(!ios.contains("plaintext.base64EncodedString()"));
+        assert!(!ios.contains("Data(base64Encoded: payload)"));
+        assert!(storage.contains("oxid_adapter_mobile_native::initialize_custody"));
+        assert!(storage.contains("oxid_adapter_mobile_native::unlock_custody"));
     }
 
     #[test]

@@ -73,6 +73,14 @@ impl CustodyBytes {
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
+
+    /// Copy the fixed allocation into the application adapter's zeroizing
+    /// vector without exposing an unprotected intermediate. Both allocations
+    /// are wiped by their `Zeroizing` owners.
+    #[must_use]
+    pub fn into_zeroizing_vec(self) -> Zeroizing<Vec<u8>> {
+        Zeroizing::new(self.as_bytes().to_vec())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
