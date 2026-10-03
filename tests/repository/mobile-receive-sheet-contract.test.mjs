@@ -10,7 +10,10 @@ const text = (relative) => readFile(new URL(relative, root), "utf8");
 test("Receive does not expose QR or export controls for an invalid address", async () => {
   const source = await text("crates/ui-dioxus/src/lib.rs");
 
-  assert.match(source, /let address_is_exportable = receive_address_is_exportable\(&selected\.value\);/);
+  assert.match(
+    source,
+    /let address_is_exportable\s*=\s*receive_address_is_exportable\(\s*&selected\.kind,\s*&account\.network_id,\s*&selected\.value\s*\);/s,
+  );
   assert.match(source, /address_is_exportable\s*\.then\(\|\| render_qr_svg\(qr_payload\)\)\s*\.flatten\(\)/s);
   assert.match(source, /disabled: !address_is_exportable,[\s\S]*?"Copy address"/);
   assert.match(source, /disabled: !address_is_exportable,[\s\S]*?"Share"/);

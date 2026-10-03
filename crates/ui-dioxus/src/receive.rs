@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use bech32::{Bech32m, primitives::decode::CheckedHrpstring};
 #[cfg(feature = "standalone-deployment-profile")]
 use dioxus::prelude::*;
 use oxid_platform_ports::{PublicReceiveAddress, PublicTextExportError};
@@ -63,8 +64,23 @@ pub(crate) fn grouped_address_preview(value: &str) -> String {
         .join(" ")
 }
 
-pub(crate) fn receive_address_is_exportable(value: &str) -> bool {
-    PublicReceiveAddress::new(value.to_owned()).is_ok()
+pub(crate) fn receive_address_is_exportable(kind: &str, network_id: &str, value: &str) -> bool {
+    let (prefix, payload_bytes) = match kind {
+        "unshielded" => ("mn_addr", 32),
+        "shielded" => ("mn_shield-addr", 64),
+        _ => return false,
+    };
+    let expected_hrp = if network_id == "mainnet" {
+        prefix.to_owned()
+    } else {
+        format!("{prefix}_{network_id}")
+    };
+
+    CheckedHrpstring::new::<Bech32m>(value).is_ok_and(|decoded| {
+        decoded.hrp().as_str() == expected_hrp
+            && decoded.byte_iter().count() == payload_bytes
+            && PublicReceiveAddress::new(value.to_owned()).is_ok()
+    })
 }
 
 pub(crate) fn render_qr_svg(value: &str) -> Option<String> {

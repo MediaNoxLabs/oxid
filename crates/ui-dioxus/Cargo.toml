@@ -36,6 +36,7 @@ desktop-test-click-driver = []
 desktop-developer-pager-driver = []
 
 [dependencies]
+bech32.workspace = true
 dioxus = { workspace = true, features = ["minimal"] }
 dioxus-document.workspace = true
 oxid-capabilities-application = { workspace = true, optional = true }

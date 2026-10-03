@@ -5259,7 +5259,8 @@ fn ReceiveSheet(
                 &account.network_id,
                 &selected,
             );
-            let address_is_exportable = receive_address_is_exportable(&selected.value);
+            let address_is_exportable =
+                receive_address_is_exportable(&selected.kind, &account.network_id, &selected.value);
             let qr_payload = receive_request.as_deref().unwrap_or(&selected.value);
             let qr = address_is_exportable
                 .then(|| render_qr_svg(qr_payload))
@@ -12282,11 +12283,36 @@ mod tests {
     }
 
     #[test]
-    fn receive_exports_require_a_valid_public_address() {
-        assert!(receive_address_is_exportable("mn_addr_undeployed1first"));
-        assert!(!receive_address_is_exportable(""));
+    fn receive_exports_require_a_valid_address_for_the_selected_kind_and_network() {
+        const UNSHIELDED: &str =
+            "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
+        const SHIELDED: &str = concat!(
+            "mn_shield-addr_devnet1p99fzfvf2z2q05zaaqzml8laccfd8uhzm9t2jewxggyr65tj4dp4g",
+            "cfv7e04ka0x7qeajljmln7za5d4edntjxncx4q0uh6gkkj706ggme77n"
+        );
+
+        assert!(receive_address_is_exportable(
+            "unshielded",
+            "undeployed",
+            UNSHIELDED
+        ));
+        assert!(receive_address_is_exportable(
+            "shielded", "devnet", SHIELDED
+        ));
         assert!(!receive_address_is_exportable(
-            " address with surrounding whitespace "
+            "unshielded",
+            "undeployed",
+            "not a valid address"
+        ));
+        assert!(!receive_address_is_exportable(
+            "unshielded",
+            "preprod",
+            UNSHIELDED
+        ));
+        assert!(!receive_address_is_exportable(
+            "shielded",
+            "undeployed",
+            UNSHIELDED
         ));
     }
 
