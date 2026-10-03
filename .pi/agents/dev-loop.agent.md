@@ -91,6 +91,14 @@ resolver state from terminal output.
    a global/user-home package copy.
 7. Execute `nextAction` constrained by `stopRules` and `acceptance`.
 
+Host-mobile work is never invoked directly. After the exact-head
+`production-ready` local gate passes, use only the validated envelope's
+`sanctionedCommands.lifecycle["host-mobile-run"]` wrapper with the immutable
+`--delivery-base`. The wrapper verifies the current gate receipt before it
+acquires the single host-mobile lease, rejects active iOS/Android/Maestro
+contention, and emits a payload-free admission metric. A rejection is a bounded
+stop, not permission to kill a foreign process or retry around the lease.
+
 **The agent MUST NOT load skills or route packs before the envelope is built and read. It MUST NOT delegate at any point.** The derivation contract is Workflow Handoff Contract (pinned package path `.pi/npm/node_modules/dev-loops/skills/docs/workflow-handoff-contract.md`).
 
 Prose task composition is a fallback only when `buildDevLoopHandoffEnvelope()` is unavailable (missing `@dev-loops/core` package) — the handoff contract in `skills/docs/workflow-handoff-contract.md` applies in that fallback case.

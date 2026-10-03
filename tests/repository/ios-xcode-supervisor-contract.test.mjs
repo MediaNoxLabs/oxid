@@ -26,10 +26,13 @@ function fixture() {
 }
 
 test("process contention recognizes active Xcode and test owners but ignores a persistent Simulator UI", () => {
-  assert.deepEqual(parseProcessSnapshot(" 12 /usr/bin/xcodebuild\n13 /usr/bin/simctl\n14 /bin/sleep\n15 /Applications/Xcode.app/Simulator\n16 /usr/bin/xctest\n"), [
+  assert.deepEqual(parseProcessSnapshot(" 12 /usr/bin/xcodebuild\n13 /usr/bin/simctl\n14 /bin/sleep\n15 /Applications/Xcode.app/Simulator\n16 /usr/bin/xctest\n17 /opt/android/emulator\n18 /opt/maestro\n19 /opt/qemu-system-aarch64\n"), [
     { pid: 12, command: "xcodebuild" },
     { pid: 13, command: "simctl" },
     { pid: 16, command: "xctest" },
+    { pid: 17, command: "emulator" },
+    { pid: 18, command: "maestro" },
+    { pid: 19, command: "qemu-system-aarch64" },
   ]);
 });
 
