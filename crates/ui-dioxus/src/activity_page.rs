@@ -5,6 +5,10 @@ use oxid_passport_vault_application::{
     PassportVaultActivitySource, PassportVaultActivityStatus, PassportVaultActivityView,
     PassportVaultCallKind,
 };
+use oxid_presentation_application::{
+    CredentialPresentationActivitySource, CredentialPresentationActivityStatus,
+    CredentialPresentationActivityView,
+};
 use oxid_protocol_application::{
     CredentialIssuanceActivitySource, CredentialIssuanceActivityStatus,
     CredentialIssuanceActivityView,
@@ -252,10 +256,139 @@ const fn credential_issuance_activity_source(
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum CredentialPresentationActivityPageState {
+    Loading,
+    Ready(CredentialPresentationActivityView),
+    Unavailable(String),
+}
+
+#[component]
+pub(super) fn CredentialPresentationActivitySection(profile_id: String) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut state = use_signal(|| CredentialPresentationActivityPageState::Loading);
+    let service = services.list_credential_presentation_activity();
+    use_effect(move || {
+        let service = service.clone();
+        let profile_id = profile_id.clone();
+        spawn(async move {
+            state.set(
+                run_ui_blocking(move || service.execute(profile_id))
+                    .await
+                    .map_or_else(
+                        |error| {
+                            CredentialPresentationActivityPageState::Unavailable(error.to_string())
+                        },
+                        |result| {
+                            result.map_or_else(
+                                |error| {
+                                    CredentialPresentationActivityPageState::Unavailable(
+                                        error.to_string(),
+                                    )
+                                },
+                                CredentialPresentationActivityPageState::Ready,
+                            )
+                        },
+                    ),
+            );
+        });
+    });
+    rsx! { CredentialPresentationActivityCard { state: state.read().clone() } }
+}
+
+#[component]
+pub(super) fn CredentialPresentationActivityCard(
+    state: CredentialPresentationActivityPageState,
+) -> Element {
+    rsx! {
+        article { class: "surface-card", aria_label: "Credential presentation activity",
+            p { class: "card-eyebrow", "Credential presentation activity" }
+            h2 { "Credential sharing" }
+            p { class: "activity-source-note", "Source: application-owned consented presentation lifecycle. Claims, disclosed values, proofs, keys, protocol payloads, identifiers, and raw errors are never retained." }
+            match state {
+                CredentialPresentationActivityPageState::Loading => rsx! {
+                    p { class: "activity-empty-state", role: "{credential_presentation_activity_status_role()}", "Loading credential presentation activity…" }
+                },
+                CredentialPresentationActivityPageState::Unavailable(error) => rsx! {
+                    p { class: "activity-empty-state", role: "{credential_presentation_activity_status_role()}", "Credential presentation activity is unavailable. {error}" }
+                },
+                CredentialPresentationActivityPageState::Ready(activity) if activity.records.is_empty() => rsx! {
+                    p { class: "activity-empty-state", role: "{credential_presentation_activity_status_role()}", "{credential_presentation_activity_empty_message()}" }
+                },
+                CredentialPresentationActivityPageState::Ready(activity) => {
+                    let retention = labels::activity_retention(&activity.retention);
+                    rsx! {
+                        div { class: "activity-list", aria_label: "Credential presentation activity",
+                            for record in activity.records {
+                                article { class: "activity-row", key: "{record.id.value()}",
+                                    span { class: "activity-row__mark", aria_hidden: "true", "◇" }
+                                    div {
+                                        strong { "Credential presentation" }
+                                        small { "Purpose: {record.purpose}" }
+                                        small { "{credential_presentation_activity_status(record.status)}" }
+                                        small { class: "privacy-value", "{activity_observed_at_line(record.observed_at_millis)}" }
+                                    }
+                                    details { class: "activity-row__details",
+                                        summary { "Presentation details" }
+                                        dl { class: "preview-list",
+                                            div { dt { "Source" } dd { "{credential_presentation_activity_source(record.source)}" } }
+                                            div { dt { "Status" } dd { "{credential_presentation_activity_status(record.status)}" } }
+                                            div { dt { "Finality" } dd { "{record.finality.name()}" } }
+                                            div { dt { "Type" } dd { "{record.presentation_type}" } }
+                                            if let Some(verifier) = record.verifier {
+                                                div { dt { "Verifier" } dd { "{verifier}" } }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        p { class: "field-hint", "Retention: {retention}." }
+                    }
+                },
+            }
+        }
+    }
+}
+
+const fn credential_presentation_activity_empty_message() -> &'static str {
+    "No credential presentation activity is available for this profile yet."
+}
+
+const fn credential_presentation_activity_status_role() -> &'static str {
+    "status"
+}
+
+const fn credential_presentation_activity_status(
+    status: CredentialPresentationActivityStatus,
+) -> &'static str {
+    match status {
+        CredentialPresentationActivityStatus::Pending => "Pending",
+        CredentialPresentationActivityStatus::Shared => "Shared",
+        CredentialPresentationActivityStatus::Failed => "Failed",
+        CredentialPresentationActivityStatus::Refused => "Refused",
+        CredentialPresentationActivityStatus::Cancelled => "Cancelled",
+        CredentialPresentationActivityStatus::TimedOut => "Timed out",
+        CredentialPresentationActivityStatus::OutcomeUnknown => "Outcome unknown",
+    }
+}
+
+const fn credential_presentation_activity_source(
+    source: CredentialPresentationActivitySource,
+) -> &'static str {
+    match source {
+        CredentialPresentationActivitySource::OpenId4Vp => "OpenID4VP",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use dioxus::dioxus_core::Mutation;
+    use oxid_presentation_application::{
+        CredentialPresentationActivityFinality, CredentialPresentationActivityId,
+        CredentialPresentationActivityRecord,
+    };
     use oxid_protocol_application::{
         CredentialIssuanceActivityFinality, CredentialIssuanceActivityId,
         CredentialIssuanceActivityRecord,
@@ -401,6 +534,91 @@ mod tests {
                 .any(|value| value.contains("This session only; bounded and not backed up"))
         );
         assert!(!text.iter().any(|value| value.contains("profile_1")));
+    }
+
+    #[test]
+    fn presentation_activity_empty_unavailable_and_safe_details_are_accessible() {
+        #[derive(Clone, PartialEq, Props)]
+        struct HarnessProps {
+            state: CredentialPresentationActivityPageState,
+        }
+        fn harness(props: HarnessProps) -> Element {
+            rsx! { CredentialPresentationActivityCard { state: props.state } }
+        }
+        fn render(state: CredentialPresentationActivityPageState) -> (Vec<String>, String) {
+            let mut dom = VirtualDom::new_with_props(harness, HarnessProps { state });
+            let edits = dom.rebuild_to_vec().edits;
+            let text = edits
+                .iter()
+                .filter_map(|edit| match edit {
+                    Mutation::CreateTextNode { value, .. } => Some(value.to_string()),
+                    _ => None,
+                })
+                .collect();
+            (text, format!("{edits:?}"))
+        }
+
+        let (empty, empty_dom) = render(CredentialPresentationActivityPageState::Ready(
+            CredentialPresentationActivityView {
+                source: "application_event_projection".to_owned(),
+                retention: "process_local_bounded_not_backed_up".to_owned(),
+                records: Vec::new(),
+            },
+        ));
+        assert!(
+            empty
+                .iter()
+                .any(|value| value.contains("No credential presentation activity")),
+            "{empty:?} {empty_dom}"
+        );
+        assert!(empty_dom.contains("role") && empty_dom.contains("status"));
+
+        let (unavailable, unavailable_dom) =
+            render(CredentialPresentationActivityPageState::Unavailable(
+                "projection unavailable".to_owned(),
+            ));
+        assert!(
+            unavailable
+                .iter()
+                .any(|value| value.contains("unavailable"))
+        );
+        assert!(unavailable_dom.contains("role") && unavailable_dom.contains("status"));
+
+        let (populated, _) = render(CredentialPresentationActivityPageState::Ready(
+            CredentialPresentationActivityView {
+                source: "application_event_projection".to_owned(),
+                retention: "process_local_bounded_not_backed_up".to_owned(),
+                records: vec![CredentialPresentationActivityRecord {
+                    id: CredentialPresentationActivityId::from_value(9).expect("id"),
+                    profile_id: "profile_one".to_owned(),
+                    source: CredentialPresentationActivitySource::OpenId4Vp,
+                    purpose: "Age assurance".to_owned(),
+                    presentation_type: "digital_passport".to_owned(),
+                    verifier: Some("https://verifier.example".to_owned()),
+                    status: CredentialPresentationActivityStatus::Shared,
+                    finality: CredentialPresentationActivityFinality::Final,
+                    observed_at_millis: Some(1_000),
+                }],
+            },
+        ));
+        assert!(
+            populated
+                .iter()
+                .any(|value| value.contains("Age assurance"))
+        );
+        assert!(
+            populated
+                .iter()
+                .any(|value| value.contains("digital_passport"))
+        );
+        assert!(
+            populated
+                .iter()
+                .any(|value| value.contains("https://verifier.example"))
+        );
+        assert!(populated.iter().any(|value| value.contains("Shared")));
+        assert!(!populated.iter().any(|value| value.contains("profile_one")));
+        assert!(!populated.iter().any(|value| value == "#9"));
     }
 
     #[test]

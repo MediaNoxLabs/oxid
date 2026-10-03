@@ -90,6 +90,7 @@ fn service_facade_type_and_constructor_paths_remain_at_the_crate_root() {
     assert_public_path(WalletRealmSyncUiServices::new);
     assert_public_path(WalletUiServices::get_wallet_operation_timeline);
     assert_public_path(WalletUiServices::list_credential_issuance_activity);
+    assert_public_path(WalletUiServices::list_credential_presentation_activity);
     assert_public_path(WalletDustSyncUiServices::new);
     assert_public_path(WalletDustSettlementUiServices::new);
     assert_public_path(WalletShieldedSyncUiServices::new);

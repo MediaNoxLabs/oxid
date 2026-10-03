@@ -38,7 +38,10 @@ pub use wallet_realm_sync_services::{WalletAccountUiServices, WalletRealmSyncUiS
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
 
-use activity_page::{CredentialIssuanceActivitySection, PassportVaultActivitySection};
+use activity_page::{
+    CredentialIssuanceActivitySection, CredentialPresentationActivitySection,
+    PassportVaultActivitySection,
+};
 #[cfg(target_os = "android")]
 pub use android_platform::{AndroidPlatformInitialization, App};
 use assets_page::AssetsPage;
@@ -120,7 +123,8 @@ use oxid_platform_ports::{ProcessResourceSamplerPort, UnavailableProcessResource
 use oxid_presentation_application::{
     AcceptCredentialPresentationCommand, AcceptCredentialPresentationUseCase,
     CancelCredentialPresentationCommand, CancelCredentialPresentationUseCase,
-    CredentialPresentationError, CredentialPresentationView, PrepareCredentialPresentationCommand,
+    CredentialPresentationError, CredentialPresentationView,
+    ListCredentialPresentationActivityUseCase, PrepareCredentialPresentationCommand,
     PrepareCredentialPresentationUseCase, PresentationProtocolError,
     RefuseCredentialPresentationCommand, RefuseCredentialPresentationUseCase,
     RequestedPresentationClaimView,
@@ -388,6 +392,7 @@ pub struct WalletUiServices {
     accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
     cancel_credential_presentation: Arc<dyn CancelCredentialPresentationUseCase>,
     refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase>,
+    list_credential_presentation_activity: Arc<dyn ListCredentialPresentationActivityUseCase>,
     standalone_openid4vp_request: Option<String>,
     prepare_self_issued_authentication: Arc<dyn PrepareSelfIssuedAuthenticationUseCase>,
     accept_self_issued_authentication: Arc<dyn AcceptSelfIssuedAuthenticationUseCase>,
@@ -496,6 +501,7 @@ pub struct CredentialUiServices {
     accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
     cancel_credential_presentation: Arc<dyn CancelCredentialPresentationUseCase>,
     refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase>,
+    list_credential_presentation_activity: Arc<dyn ListCredentialPresentationActivityUseCase>,
     standalone_openid4vp_request: Option<String>,
 }
 
@@ -544,6 +550,7 @@ pub struct CredentialPresentationUiServices {
     accept: Arc<dyn AcceptCredentialPresentationUseCase>,
     cancel: Arc<dyn CancelCredentialPresentationUseCase>,
     refuse: Arc<dyn RefuseCredentialPresentationUseCase>,
+    activity: Arc<dyn ListCredentialPresentationActivityUseCase>,
     standalone_request: Option<String>,
 }
 
@@ -554,6 +561,7 @@ impl CredentialPresentationUiServices {
         accept: Arc<dyn AcceptCredentialPresentationUseCase>,
         cancel: Arc<dyn CancelCredentialPresentationUseCase>,
         refuse: Arc<dyn RefuseCredentialPresentationUseCase>,
+        activity: Arc<dyn ListCredentialPresentationActivityUseCase>,
         standalone_request: Option<String>,
     ) -> Self {
         Self {
@@ -561,6 +569,7 @@ impl CredentialPresentationUiServices {
             accept,
             cancel,
             refuse,
+            activity,
             standalone_request,
         }
     }
@@ -664,6 +673,7 @@ impl CredentialUiServices {
             accept_credential_presentation: presentation.accept,
             cancel_credential_presentation: presentation.cancel,
             refuse_credential_presentation: presentation.refuse,
+            list_credential_presentation_activity: presentation.activity,
             standalone_openid4vp_request: presentation.standalone_request,
         }
     }
@@ -1121,6 +1131,8 @@ impl WalletUiServices {
             accept_credential_presentation: credentials.accept_credential_presentation,
             cancel_credential_presentation: credentials.cancel_credential_presentation,
             refuse_credential_presentation: credentials.refuse_credential_presentation,
+            list_credential_presentation_activity: credentials
+                .list_credential_presentation_activity,
             standalone_openid4vp_request: credentials.standalone_openid4vp_request,
             prepare_self_issued_authentication: authentication.prepare,
             accept_self_issued_authentication: authentication.accept,
@@ -1535,6 +1547,13 @@ impl WalletUiServices {
     #[must_use]
     pub fn refuse_credential_presentation(&self) -> Arc<dyn RefuseCredentialPresentationUseCase> {
         Arc::clone(&self.refuse_credential_presentation)
+    }
+
+    #[must_use]
+    pub fn list_credential_presentation_activity(
+        &self,
+    ) -> Arc<dyn ListCredentialPresentationActivityUseCase> {
+        Arc::clone(&self.list_credential_presentation_activity)
     }
 
     #[must_use]
@@ -5809,8 +5828,9 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
                 rsx! { AccountActivityCard { account: *account, unavailable } }
             },
         }
-        PassportVaultActivitySection { key: "vault-{active_profile.id}", profile_id: active_profile.id.clone() }
-        CredentialIssuanceActivitySection { key: "issuance-{active_profile.id}", profile_id: active_profile.id.clone() }
+        PassportVaultActivitySection { profile_id: active_profile.id.clone() }
+        CredentialIssuanceActivitySection { profile_id: active_profile.id.clone() }
+        CredentialPresentationActivitySection { profile_id: active_profile.id.clone() }
         SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
     }
 }
