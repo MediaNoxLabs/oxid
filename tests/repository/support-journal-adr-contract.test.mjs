@@ -55,3 +55,15 @@ test("ADR catalogs and amended process-local boundary remain linked", async () =
   for (const catalog of [index, site]) assert.match(catalog, /0119-bound-a-secret-safe-support-journal\.md/u);
   assert.match(processLocal, /Amended by: ADR-0095 and ADR-0119/u);
 });
+
+test("support journal application port has no arbitrary payload escape hatch", async () => {
+  const [source, facade] = await Promise.all([
+    read("crates/diagnostics/application/src/support_journal.rs"),
+    read("crates/diagnostics/application/src/lib.rs"),
+  ]);
+  assert.match(source, /pub struct SupportJournalEvent \{[\s\S]*?schema_version: u16,[\s\S]*?coarse_unix_minute: Option<u64>,\n\}/u);
+  assert.match(source, /pub trait SupportJournalEventSinkPort: Send \+ Sync/u);
+  assert.match(source, /pub struct NoopSupportJournalSink/u);
+  assert.doesNotMatch(source, /\b(?:String|HashMap|serde_json|dyn Any)\b|Vec\s*<\s*u8\s*>|&\s*\[\s*u8\s*\]/u);
+  assert.match(facade, /SupportJournalEventSinkPort/u);
+});

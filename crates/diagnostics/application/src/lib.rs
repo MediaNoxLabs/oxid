@@ -4,6 +4,21 @@
 
 use std::{error::Error, fmt, sync::Arc};
 
+mod support_journal;
+
+pub use support_journal::{
+    MAX_SUPPORT_JOURNAL_CAPTURE_HOURS, MAX_SUPPORT_JOURNAL_DURABLE_BYTES,
+    MAX_SUPPORT_JOURNAL_DURABLE_RECORDS, MAX_SUPPORT_JOURNAL_EXPORT_BYTES,
+    MAX_SUPPORT_JOURNAL_FLUSH_BATCH, MAX_SUPPORT_JOURNAL_FLUSH_LATENCY_SECONDS,
+    MAX_SUPPORT_JOURNAL_PAGE_RECORDS, MAX_SUPPORT_JOURNAL_PENDING_RECORDS,
+    MAX_SUPPORT_JOURNAL_RECORDS_PER_MINUTE, MAX_SUPPORT_JOURNAL_RECORDS_PER_SECOND,
+    MAX_SUPPORT_JOURNAL_RETENTION_DAYS, NoopSupportJournalSink, SUPPORT_JOURNAL_SCHEMA_VERSION,
+    SupportJournalActionToken, SupportJournalCode, SupportJournalEvent,
+    SupportJournalEventSinkPort, SupportJournalOutcome, SupportJournalRecordResult,
+    SupportJournalSessionEpoch, SupportJournalSeverity, SupportJournalStage,
+    SupportJournalSubsystem,
+};
+
 /// Exact confirmation required before an incoming adapter clears the local
 /// diagnostic buffer.
 pub const CLEAR_LOCAL_DIAGNOSTICS_INTENT: &str = "CLEAR_LOCAL_DIAGNOSTICS";
