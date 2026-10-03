@@ -135,3 +135,41 @@ test("settings and developer surfaces expose stable privacy-safe contracts", asy
   assert.ok(!productionSources[0].includes("30 seconds"));
   assert.ok(!productionSources[0].includes("30-second"));
 });
+
+test("prototype presentation inventory is closed and maps every required area", async () => {
+  const inventory = await readFile(
+    path.join(repository, "docs", "migration", "prototype-presentation-classification.md"),
+    "utf8",
+  );
+  const rows = inventory.split("\n")
+    .filter((line) => line.startsWith("| ") && !line.startsWith("| ---"))
+    .slice(1)
+    .map((line) => line.split("|").slice(1, -1).map((cell) => cell.trim()));
+  const classifications = new Set([
+    "Product capability",
+    "Reusable engineering pattern",
+    "Presentation debt",
+    "Prototype-only behavior",
+  ]);
+  assert.ok(rows.length >= 16, "classification inventory must cover the reviewed surface");
+  for (const [area, classification, evidence, authority, disposition] of rows) {
+    assert.ok(area && evidence && authority && disposition, `incomplete classification row: ${area}`);
+    assert.ok(classifications.has(classification), `unknown classification for ${area}: ${classification}`);
+  }
+  for (const area of [
+    "Profile, wallet, and realm selection",
+    "DID inventory and lifecycle",
+    "Credential inventory, issuance, presentation, and consent",
+    "Android/iOS TLS and trust initialization",
+    "UI-thread isolation and bounded workers",
+    "Suspend, resume, reconnect, and checkpoint recovery",
+    "Safe areas, snapshot privacy, and native lifecycle bridges",
+    "QR, app-link, and native identity ingress",
+    "Embedded proof demonstration",
+    "Persistent free-form logs, arbitrary tracing fields, and process telemetry",
+  ]) {
+    assert.ok(rows.some(([candidate]) => candidate === area), `missing prototype area: ${area}`);
+  }
+  assert.match(inventory, /evidence library, not an\nOxid visual or architectural authority/u);
+  assert.match(inventory, /scenario inventory contains no supported use\ncase that names it/u);
+});
