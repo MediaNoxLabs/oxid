@@ -21,6 +21,17 @@ and after confirming that no DUST registration is submitting or awaiting
 reconciliation. Removing it during an active submission intentionally makes a
 subsequent submission fail closed rather than allowing an unrecorded broadcast.
 
+Projection updates use a bounded latest-value persistence worker, so ordinary
+wallet observation and UI publication do not wait for filesystem I/O. Superseded
+non-submission records are coalesced. A `Submitting` checkpoint is instead pinned
+until the executor reads it back; a later projection cannot replace it in that
+window. Transaction submission is the durability boundary: the executor waits
+within its operation deadline, reads the pinned record back, and broadcasts only
+when it is the exact `Submitting` record for the authorized draft. The operation
+also flushes its latest recovery projection before returning. A stalled worker,
+failed write, timeout, or mismatched record therefore prevents the chain side
+effect without freezing read-only wallet state.
+
 ## Ownership and failure policy
 
 One wallet process owns a profile-store directory at a time. `save` uses the

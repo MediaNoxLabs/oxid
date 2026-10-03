@@ -9,13 +9,308 @@
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc::{SyncSender, TrySendError, sync_channel},
     },
     time::Duration,
 };
 
 const OPERATION_DEADLINE: Duration = Duration::from_secs(30);
 const MAX_SETTLEMENT_RETRIES: u8 = 3;
+
+#[derive(Clone)]
+struct RecoveryPersistenceJob {
+    generation: u64,
+    submission_barrier: bool,
+    record: WalletDustRegistrationRecoveryRecord,
+}
+
+#[derive(Default)]
+struct PendingRecoveryPersistence {
+    latest: Option<RecoveryPersistenceJob>,
+    submission: Option<RecoveryPersistenceJob>,
+}
+
+struct RecoveryPersistenceState {
+    pending: Mutex<PendingRecoveryPersistence>,
+    next_generation: AtomicU64,
+    persisted_generation: AtomicU64,
+    latest_generation: AtomicU64,
+    persisted_latest_generation: AtomicU64,
+    failed_latest_generation: AtomicU64,
+    required_submission_generation: AtomicU64,
+    persisted_submission_generation: AtomicU64,
+    failed_submission_generation: AtomicU64,
+    held_submission_generation: AtomicU64,
+    released_submission_generation: AtomicU64,
+    durable: Arc<AtomicBool>,
+    changed: tokio::sync::Notify,
+}
+
+#[derive(Clone)]
+struct RecoveryPersistence {
+    state: Arc<RecoveryPersistenceState>,
+    wake: SyncSender<()>,
+}
+
+impl RecoveryPersistence {
+    fn spawn(
+        store: Arc<dyn WalletDustRegistrationRecoveryStore>,
+        durable: Arc<AtomicBool>,
+    ) -> Result<Self, WalletDustSettlementError> {
+        let state = Arc::new(RecoveryPersistenceState {
+            pending: Mutex::new(PendingRecoveryPersistence::default()),
+            next_generation: AtomicU64::new(0),
+            persisted_generation: AtomicU64::new(0),
+            latest_generation: AtomicU64::new(0),
+            persisted_latest_generation: AtomicU64::new(0),
+            failed_latest_generation: AtomicU64::new(0),
+            required_submission_generation: AtomicU64::new(0),
+            persisted_submission_generation: AtomicU64::new(0),
+            failed_submission_generation: AtomicU64::new(0),
+            held_submission_generation: AtomicU64::new(0),
+            released_submission_generation: AtomicU64::new(0),
+            durable,
+            changed: tokio::sync::Notify::new(),
+        });
+        let (wake, receiver) = sync_channel(1);
+        let worker_state = Arc::clone(&state);
+        std::thread::Builder::new()
+            .name("oxid-dust-recovery".to_owned())
+            .spawn(move || {
+                while receiver.recv().is_ok() {
+                    loop {
+                        if worker_state
+                            .held_submission_generation
+                            .load(Ordering::Acquire)
+                            != 0
+                        {
+                            break;
+                        }
+                        let job = worker_state.pending.lock().ok().and_then(|mut pending| {
+                            pending.submission.take().or_else(|| pending.latest.take())
+                        });
+                        let Some(job) = job else {
+                            break;
+                        };
+                        if worker_state.persisted_generation.load(Ordering::Acquire)
+                            >= job.generation
+                        {
+                            if job.submission_barrier {
+                                worker_state
+                                    .persisted_submission_generation
+                                    .fetch_max(job.generation, Ordering::AcqRel);
+                            } else {
+                                worker_state
+                                    .persisted_latest_generation
+                                    .fetch_max(job.generation, Ordering::AcqRel);
+                            }
+                            worker_state.changed.notify_waiters();
+                            continue;
+                        }
+                        let persisted = store.save(job.record).is_ok();
+                        if job.submission_barrier {
+                            if persisted {
+                                worker_state
+                                    .persisted_generation
+                                    .store(job.generation, Ordering::Release);
+                                worker_state
+                                    .persisted_submission_generation
+                                    .fetch_max(job.generation, Ordering::AcqRel);
+                            } else {
+                                worker_state
+                                    .failed_submission_generation
+                                    .fetch_max(job.generation, Ordering::AcqRel);
+                            }
+                            worker_state.durable.store(persisted, Ordering::Release);
+                            if !persisted {
+                                worker_state.changed.notify_waiters();
+                                continue;
+                            }
+                            worker_state
+                                .held_submission_generation
+                                .store(job.generation, Ordering::Release);
+                            worker_state.changed.notify_waiters();
+                            if worker_state
+                                .released_submission_generation
+                                .load(Ordering::Acquire)
+                                >= job.generation
+                            {
+                                worker_state
+                                    .held_submission_generation
+                                    .store(0, Ordering::Release);
+                                continue;
+                            }
+                            break;
+                        }
+                        if persisted {
+                            worker_state
+                                .persisted_generation
+                                .store(job.generation, Ordering::Release);
+                            worker_state
+                                .persisted_latest_generation
+                                .fetch_max(job.generation, Ordering::AcqRel);
+                        } else {
+                            worker_state
+                                .failed_latest_generation
+                                .fetch_max(job.generation, Ordering::AcqRel);
+                        }
+                        worker_state.changed.notify_waiters();
+                    }
+                }
+            })
+            .map_err(|_| WalletDustSettlementError::RetainedStateUnavailable)?;
+        Ok(Self { state, wake })
+    }
+
+    fn enqueue(&self, record: WalletDustRegistrationRecoveryRecord) {
+        let submission_barrier = matches!(
+            record.state,
+            oxid_wallet_application::WalletDustRegistrationSettlementState::Submitting
+        );
+        let Ok(mut pending) = self.state.pending.lock() else {
+            self.reject_current();
+            return;
+        };
+        let generation = self
+            .state
+            .next_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .saturating_add(1);
+        let job = RecoveryPersistenceJob {
+            generation,
+            submission_barrier,
+            record,
+        };
+        if submission_barrier {
+            self.state
+                .required_submission_generation
+                .store(generation, Ordering::Release);
+            self.state.durable.store(false, Ordering::Release);
+            pending.submission = Some(job);
+        } else {
+            self.state
+                .latest_generation
+                .store(generation, Ordering::Release);
+            pending.latest = Some(job);
+        }
+        drop(pending);
+        match self.wake.try_send(()) {
+            Ok(()) | Err(TrySendError::Full(())) => {}
+            Err(TrySendError::Disconnected(())) => {
+                self.reject_generation(generation);
+            }
+        }
+    }
+
+    fn reject_current(&self) {
+        let generation = self
+            .state
+            .next_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .saturating_add(1);
+        self.reject_generation(generation);
+    }
+
+    fn reject_generation(&self, generation: u64) {
+        self.state
+            .required_submission_generation
+            .store(generation, Ordering::Release);
+        self.state.durable.store(false, Ordering::Release);
+        self.state
+            .failed_submission_generation
+            .fetch_max(generation, Ordering::AcqRel);
+        self.state.changed.notify_waiters();
+    }
+
+    async fn await_submission(&self) -> Option<u64> {
+        let target = self
+            .state
+            .required_submission_generation
+            .load(Ordering::Acquire);
+        if target == 0 {
+            return None;
+        }
+        loop {
+            let changed = self.state.changed.notified();
+            let held = self
+                .state
+                .held_submission_generation
+                .load(Ordering::Acquire);
+            if self.state.durable.load(Ordering::Acquire) && held >= target {
+                return Some(held);
+            }
+            if self
+                .state
+                .failed_submission_generation
+                .load(Ordering::Acquire)
+                >= target
+            {
+                return None;
+            }
+            changed.await;
+        }
+    }
+
+    async fn await_latest(&self) -> bool {
+        let target = self.state.latest_generation.load(Ordering::Acquire);
+        if target == 0 {
+            return true;
+        }
+        loop {
+            let changed = self.state.changed.notified();
+            if self
+                .state
+                .persisted_latest_generation
+                .load(Ordering::Acquire)
+                >= target
+            {
+                return true;
+            }
+            if self.state.failed_latest_generation.load(Ordering::Acquire) >= target {
+                return false;
+            }
+            changed.await;
+        }
+    }
+
+    fn release_submission(&self, generation: u64) {
+        let released = self
+            .state
+            .released_submission_generation
+            .fetch_max(generation, Ordering::AcqRel);
+        let released = released.max(generation);
+        loop {
+            let held = self
+                .state
+                .held_submission_generation
+                .load(Ordering::Acquire);
+            if held == 0 || held > released {
+                break;
+            }
+            if self
+                .state
+                .held_submission_generation
+                .compare_exchange(held, 0, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                let _ = self.wake.try_send(());
+                break;
+            }
+        }
+    }
+}
+
+struct SubmissionPersistenceGuard {
+    persistence: RecoveryPersistence,
+    generation: u64,
+}
+
+impl Drop for SubmissionPersistenceGuard {
+    fn drop(&mut self) {
+        self.persistence.release_submission(self.generation);
+    }
+}
 
 use tokio::sync::watch;
 
@@ -65,6 +360,8 @@ pub struct WalletDustSettlementCapability {
     selected_realm: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
     executor: Arc<ComposedDustRegistrationExecutor>,
     driver: WalletDustRegistrationDriver,
+    persistence: RecoveryPersistence,
+    operation_deadline: Duration,
     projections: watch::Sender<WalletDustRegistrationSettlementProjection>,
     retry_attempts: Mutex<(Option<WalletDustRegistrationSettlementIdentity>, u8)>,
     authority: DustSettlementAuthority,
@@ -213,6 +510,7 @@ impl WalletDustSettlementCapability {
             None => None,
         };
         let durable = Arc::new(AtomicBool::new(initially_durable));
+        let persistence = RecoveryPersistence::spawn(Arc::clone(&store), Arc::clone(&durable))?;
         let recovered_revision = restored
             .as_ref()
             .and_then(|runtime| runtime.coordinator().projection().registration.as_ref())
@@ -235,7 +533,7 @@ impl WalletDustSettlementCapability {
                 ..RetainedSettlement::default()
             }),
             store: Arc::clone(&store),
-            durable: Arc::clone(&durable),
+            persistence: persistence.clone(),
             operation_deadline,
         });
         let operation_executor: Arc<dyn ExecuteWalletDustRegistrationOperation> = executor.clone();
@@ -245,12 +543,15 @@ impl WalletDustSettlementCapability {
             .unwrap_or_default();
         let (projections, _) = watch::channel(initial.clone());
         let projection_sink = projections.clone();
+        let observer_persistence = persistence.clone();
         let observer: oxid_wallet_application::WalletDustRegistrationProjectionObserver =
             Arc::new(move |projection| {
-                let persisted = WalletDustRegistrationRecoveryRecord::from_projection(&projection)
-                    .is_ok_and(|record| store.save(record).is_ok());
-                durable.store(persisted, Ordering::Release);
+                let record = WalletDustRegistrationRecoveryRecord::from_projection(&projection);
                 projection_sink.send_replace(projection);
+                match record {
+                    Ok(record) => observer_persistence.enqueue(record),
+                    Err(_) => observer_persistence.reject_current(),
+                }
             });
         let driver = match restored {
             Some(runtime) => {
@@ -268,6 +569,8 @@ impl WalletDustSettlementCapability {
             selected_realm,
             executor,
             driver,
+            persistence,
+            operation_deadline,
             projections,
             retry_attempts: Mutex::new((initial.identity, 0)),
             authority,
@@ -330,6 +633,7 @@ impl WalletDustSettlementCapability {
                 self.executor.clear_confirmation();
             }
             result = authorized?;
+            self.ensure_latest_persisted().await?;
         }
         if !is_recoverable_state(result.state) {
             self.reset_retry_attempts(identity)?;
@@ -365,6 +669,7 @@ impl WalletDustSettlementCapability {
             self.executor.clear_confirmation();
         }
         let result = result?;
+        self.ensure_latest_persisted().await?;
         if let Some(identity) = result.identity.clone()
             && !is_recoverable_state(result.state)
         {
@@ -411,6 +716,9 @@ impl WalletDustSettlementCapability {
                 revision,
             })
             .await;
+        if !matches!(result, Err(WalletDustRegistrationDriverError::Busy)) {
+            self.ensure_latest_persisted().await?;
+        }
         match result {
             Ok(projection) => {
                 if is_recoverable_state(projection.state) {
@@ -478,6 +786,26 @@ impl WalletDustSettlementCapability {
             .map_err(|_| WalletDustSettlementError::RetainedStateUnavailable)? =
             (Some(identity), 0);
         Ok(())
+    }
+
+    async fn ensure_latest_persisted(&self) -> Result<(), WalletDustSettlementError> {
+        let wait = self.persistence.await_latest();
+        let persisted = if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::time::timeout(self.operation_deadline, wait)
+                .await
+                .unwrap_or(false)
+        } else {
+            wait.await
+        };
+        if persisted {
+            Ok(())
+        } else {
+            Err(WalletDustSettlementError::Driver(
+                WalletDustRegistrationDriverError::Executor(
+                    WalletDustRegistrationExecutorFailure::Unavailable,
+                ),
+            ))
+        }
     }
 
     /// Observes ordered public projection changes without transferring
@@ -603,7 +931,7 @@ struct ComposedDustRegistrationExecutor {
     reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
     retained: Mutex<RetainedSettlement>,
     store: Arc<dyn WalletDustRegistrationRecoveryStore>,
-    durable: Arc<AtomicBool>,
+    persistence: RecoveryPersistence,
     operation_deadline: Duration,
 }
 
@@ -847,6 +1175,13 @@ impl ComposedDustRegistrationExecutor {
     ) -> Result<WalletDustRegistrationOperationCompletion, WalletDustRegistrationExecutorFailure>
     {
         self.validate_bound(&identity)?;
+        let Some(submission_generation) = self.persistence.await_submission().await else {
+            return Err(WalletDustRegistrationExecutorFailure::Unavailable);
+        };
+        let _persistence_guard = SubmissionPersistenceGuard {
+            generation: submission_generation,
+            persistence: self.persistence.clone(),
+        };
         if self
             .retained
             .lock()
@@ -898,8 +1233,8 @@ impl ComposedDustRegistrationExecutor {
             }
         }
         // Fail closed unless the authorized draft was durably recorded before broadcast.
-        if !self.durable.load(Ordering::Acquire)
-            || !self.recovery_record(&identity)?.is_some_and(|record| {
+        let durable_submission = self.recovery_record(&identity).map(|record| {
+            record.is_some_and(|record| {
                 record.state
                     == oxid_wallet_application::WalletDustRegistrationSettlementState::Submitting
                     && record
@@ -907,7 +1242,8 @@ impl ComposedDustRegistrationExecutor {
                         .as_ref()
                         .is_some_and(|registration| registration.draft_id == draft_id.as_str())
             })
-        {
+        });
+        if !durable_submission? {
             return Err(WalletDustRegistrationExecutorFailure::Unavailable);
         }
         // A failed or cancelled submit future can have broadcast before returning.
