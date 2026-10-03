@@ -37,7 +37,8 @@
   --line-strong: color-mix(in srgb, var(--text-muted) 28%, transparent);
   --font-display: 2rem;
   --font-title: 1.35rem;
-  --font-body: 0.95rem;
+  /* Inputs use body type; smaller values trigger iOS WebKit focus zoom. */
+  --font-body: 1rem;
   --font-label: 0.8rem;
   --font-caption: 0.72rem;
   --font-numeral: clamp(3.2rem, 15vw, 5rem);
@@ -103,8 +104,7 @@ textarea {
 input,
 select,
 textarea {
-  /* iOS zooms the whole WKWebView when a smaller editable control takes focus. */
-  font-size: max(1rem, var(--font-body));
+  font-size: var(--font-body);
 }
 
 button {

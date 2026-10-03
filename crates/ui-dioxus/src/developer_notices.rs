@@ -124,6 +124,8 @@ mod tests {
             .expect("gateway notice safe-area rule");
         assert!(gateway_rule.contains("margin: 0 0 var(--space-2);"));
 
-        assert!(BASE_STYLES.contains("font-size: max(1rem, var(--font-body));"));
+        assert!(
+            BASE_STYLES.contains("input,\nselect,\ntextarea {\n  font-size: var(--font-body);")
+        );
     }
 }
