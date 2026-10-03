@@ -122,8 +122,29 @@
       "properties": {
         "id": {"$ref": "#/$defs/id"}, "outcome": {"$ref": "#/$defs/text"},
         "sourceReferences": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/text"}, "uniqueItems": true},
-        "scenarioIds": {"$ref": "#/$defs/idArray"}
+        "scenarioIds": {"$ref": "#/$defs/idArray"},
+        "interactionBudget": {"$ref": "#/$defs/interactionBudget"}
       }
+    },
+    "interactionBudget": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "entryTapsMax", "decisionScreensMax", "authorizationPromptsMax", "routineManualSyncActionsMax"],
+          "properties": {
+            "status": {"const": "active"},
+            "entryTapsMax": {"type": "integer", "minimum": 0, "maximum": 4},
+            "decisionScreensMax": {"type": "integer", "minimum": 0, "maximum": 6},
+            "authorizationPromptsMax": {"type": "integer", "minimum": 0, "maximum": 2},
+            "routineManualSyncActionsMax": {"type": "integer", "const": 0}
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["status"],
+          "properties": {"status": {"const": "deferred"}}
+        }
+      ]
     },
     "commandIds": {
       "type": "object", "additionalProperties": false,

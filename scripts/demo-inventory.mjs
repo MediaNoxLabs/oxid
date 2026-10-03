@@ -16,6 +16,14 @@ const commandStatuses = new Set(["unsupported", "manual", "delegated"]);
 const targetStatuses = new Set(["supported", "unsupported"]);
 const targetSupport = new Set(["development-only", "manual-acceptance", "diagnostic-only", "unsupported"]);
 const dependencyKinds = new Set(["device", "simulator", "service", "network", "tool"]);
+const approvedJourneyUseCaseIds = new Set([
+  "fresh-wallet-onboarding", "wallet-recovery", "profile-and-realm-switching",
+  "automatic-account-reconciliation", "receive-and-fund-night", "send-night",
+  "did-inventory-and-creation", "did-details-and-maintenance", "oid4vci-issuance",
+  "credential-inventory-and-details", "oid4vp-presentation", "siopv2-authentication",
+  "activity-and-transaction-detail", "security-and-backup-settings",
+  "passport-vault-journey", "developer-diagnostics",
+]);
 const environmentValues = new Map([
   ["OXID_MOBILE_CUSTODY", new Set(["development", "native"])],
   ["OXID_UI_PROFILE", new Set(["user", "dev", "demo"])],
@@ -84,8 +92,11 @@ function validateSchema(value, schema, root, label = "inventory") {
   if (rule.type === "array" && !Array.isArray(value)) fail(`${label} violates schema type array`);
   if (rule.type === "string" && typeof value !== "string") fail(`${label} violates schema type string`);
   if (rule.type === "boolean" && typeof value !== "boolean") fail(`${label} violates schema type boolean`);
+  if (rule.type === "integer" && !Number.isInteger(value)) fail(`${label} violates schema type integer`);
   if (rule.const !== undefined && !sameValue(value, rule.const)) fail(`${label} violates schema const`);
   if (rule.enum && !rule.enum.some((candidate) => sameValue(value, candidate))) fail(`${label} violates schema enum`);
+  if (rule.minimum !== undefined && value < rule.minimum) fail(`${label} violates schema minimum`);
+  if (rule.maximum !== undefined && value > rule.maximum) fail(`${label} violates schema maximum`);
   if (rule.minLength !== undefined && value.length < rule.minLength) fail(`${label} violates schema minLength`);
   if (rule.pattern && !new RegExp(rule.pattern, "u").test(value)) fail(`${label} violates schema pattern`);
   if (Array.isArray(value)) {
@@ -189,6 +200,15 @@ export function validateInventory(inventory, schema = JSON.parse(readFileSync(in
     text(useCase.outcome, `use case '${useCase.id}' outcome`);
     for (const reference of array(useCase.sourceReferences, `use case '${useCase.id}' sourceReferences`)) safeRelativePath(reference, `use case '${useCase.id}' source reference`);
     references(useCase.scenarioIds, scenarios, `use case '${useCase.id}' scenarioIds`);
+    if (approvedJourneyUseCaseIds.has(useCase.id) && !useCase.interactionBudget) {
+      fail(`approved use case '${useCase.id}' is missing an interaction budget`);
+    }
+    if (useCase.id === "passport-vault-journey" && useCase.interactionBudget?.status !== "deferred") {
+      fail("deferred Passport Vault use case cannot claim an active interaction budget");
+    }
+    if (approvedJourneyUseCaseIds.has(useCase.id) && useCase.id !== "passport-vault-journey" && useCase.interactionBudget?.status !== "active") {
+      fail(`approved use case '${useCase.id}' requires an active interaction budget`);
+    }
   }
   for (const scenario of scenarios.values()) {
     if (!products.has(scenario.productId)) fail(`scenario '${scenario.id}' references unknown product '${scenario.productId}'`);
@@ -274,7 +294,14 @@ export function renderShow(inventory, id, kind = "scenario") {
   const collection = kind === "use-case" ? inventory.useCases : inventory.scenarios;
   const item = collection.find((entry) => entry.id === id);
   if (!item) fail(`unknown ${kind} '${id}'`);
-  return `${kind}: ${item.id}\n${JSON.stringify(item, null, 2)}`;
+  let budget = "";
+  if (kind === "use-case" && item.interactionBudget?.status === "active") {
+    const value = item.interactionBudget;
+    budget = `\nInteraction budget: entry ≤${value.entryTapsMax} taps; decisions ≤${value.decisionScreensMax} screens; app authorization prompts ≤${value.authorizationPromptsMax}; routine manual sync actions ${value.routineManualSyncActionsMax}.`;
+  } else if (kind === "use-case" && item.interactionBudget?.status === "deferred") {
+    budget = "\nInteraction budget: deferred; no current product claim.";
+  }
+  return `${kind}: ${item.id}${budget}\n${JSON.stringify(item, null, 2)}`;
 }
 export function renderPreparationBrief(inventory, id, requestedTargetId) {
   const scenario = inventory.scenarios.find((entry) => entry.id === id);
