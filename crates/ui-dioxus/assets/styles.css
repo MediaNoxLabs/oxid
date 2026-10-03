@@ -3082,6 +3082,14 @@ textarea:focus-visible {
   color: var(--text-muted);
 }
 
+.activity-row__source {
+  width: fit-content;
+  padding: 0.1rem var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-raised) 78%, transparent);
+}
+
 .activity-row__details {
   width: 100%;
   margin-left: calc(2rem + var(--space-3));

@@ -80,9 +80,9 @@ pub(super) fn PassportVaultActivityCard(state: VaultActivityPageState) -> Elemen
                                     div {
                                         strong { "{vault_activity_operation(record.operation)}" }
                                         small { "{vault_activity_status(record.status)}" }
+                                        small { class: "activity-row__source", "{vault_activity_source(record.source)} · Session record" }
                                         small { class: "privacy-value", "{activity_observed_at_line(record.observed_at_millis)}" }
                                     }
-                                    code { "#{record.id.value()}" }
                                     details { class: "activity-row__details",
                                         summary { "Operation details" }
                                         dl { class: "preview-list",
@@ -191,7 +191,7 @@ pub(super) fn CredentialIssuanceActivityCard(
                     }
                 },
                 CredentialIssuanceActivityPageState::Ready(activity) if activity.records.is_empty() => {
-                    let empty_message = "No credential issuance activity is available for this profile yet.";
+                    let empty_message = "No credential issuance activity is available for this profile yet. Scan or open a credential offer to begin a review.";
                     let status_role = "status";
                     rsx! {
                         p { class: "activity-empty-state", role: "{status_role}", "{empty_message}" }
@@ -206,8 +206,8 @@ pub(super) fn CredentialIssuanceActivityCard(
                                     span { class: "activity-row__mark", aria_hidden: "true", "◇" }
                                     div {
                                         strong { "Credential issuance" }
-                                        small { "Issuer endpoint: {record.issuer}" }
                                         small { "{credential_issuance_activity_status(record.status)}" }
+                                        small { class: "activity-row__source", "{credential_issuance_activity_source(record.source)} · Session record" }
                                         small { class: "privacy-value", "{activity_observed_at_line(record.observed_at_millis)}" }
                                     }
                                     details { class: "activity-row__details",
@@ -216,6 +216,7 @@ pub(super) fn CredentialIssuanceActivityCard(
                                             div { dt { "Source" } dd { "{credential_issuance_activity_source(record.source)}" } }
                                             div { dt { "Status" } dd { "{credential_issuance_activity_status(record.status)}" } }
                                             div { dt { "Finality" } dd { "{record.finality.name()}" } }
+                                            div { dt { "Issuer endpoint" } dd { "{record.issuer}" } }
                                             div { dt { "Configurations" } dd {
                                                 for configuration in record.credential_configuration_ids {
                                                     span { "{configuration} " }
@@ -324,8 +325,8 @@ pub(super) fn CredentialPresentationActivityCard(
                                     span { class: "activity-row__mark", aria_hidden: "true", "◇" }
                                     div {
                                         strong { "Credential presentation" }
-                                        small { "Purpose: {record.purpose}" }
                                         small { "{credential_presentation_activity_status(record.status)}" }
+                                        small { class: "activity-row__source", "{credential_presentation_activity_source(record.source)} · Session record" }
                                         small { class: "privacy-value", "{activity_observed_at_line(record.observed_at_millis)}" }
                                     }
                                     details { class: "activity-row__details",
@@ -335,6 +336,7 @@ pub(super) fn CredentialPresentationActivityCard(
                                             div { dt { "Status" } dd { "{credential_presentation_activity_status(record.status)}" } }
                                             div { dt { "Finality" } dd { "{record.finality.name()}" } }
                                             div { dt { "Type" } dd { "{record.presentation_type}" } }
+                                            div { dt { "Purpose" } dd { "{record.purpose}" } }
                                             if let Some(verifier) = record.verifier {
                                                 div { dt { "Verifier" } dd { "{verifier}" } }
                                             }
@@ -352,7 +354,7 @@ pub(super) fn CredentialPresentationActivityCard(
 }
 
 const fn credential_presentation_activity_empty_message() -> &'static str {
-    "No credential presentation activity is available for this profile yet."
+    "No credential presentation activity is available for this profile yet. Open Present or scan a verifier request to begin a review."
 }
 
 const fn credential_presentation_activity_status_role() -> &'static str {
@@ -525,8 +527,9 @@ mod tests {
             text.iter()
                 .any(|value| value.contains("https://issuer.example"))
         );
-        assert!(text.iter().any(|value| value.contains("Issuer endpoint")));
         assert!(text.iter().any(|value| value.contains("Stored")));
+        assert!(text.iter().any(|value| value.contains("OpenID4VCI")));
+        assert!(text.iter().any(|value| value.contains("Session record")));
         assert!(text.iter().any(|value| value.contains("identity")));
         assert!(!text.iter().any(|value| value == "#7"));
         assert!(
@@ -617,6 +620,12 @@ mod tests {
                 .any(|value| value.contains("https://verifier.example"))
         );
         assert!(populated.iter().any(|value| value.contains("Shared")));
+        assert!(populated.iter().any(|value| value.contains("OpenID4VP")));
+        assert!(
+            populated
+                .iter()
+                .any(|value| value.contains("Session record"))
+        );
         assert!(!populated.iter().any(|value| value.contains("profile_one")));
         assert!(!populated.iter().any(|value| value == "#9"));
     }
