@@ -191,7 +191,10 @@ final class ProfileFlowTests: XCTestCase {
             application.images["QR code for Shielded receive address"]
                 .waitForExistence(timeout: 5)
         )
-        application.buttons["Close Receive"].firstMatch.tap()
+        let closeReceiveAfterSwitch = application.buttons["Close Receive"].firstMatch
+        XCTAssertTrue(closeReceiveAfterSwitch.waitForExistence(timeout: 5))
+        XCTAssertTrue(closeReceiveAfterSwitch.isHittable)
+        closeReceiveAfterSwitch.tap()
         XCTAssertTrue(application.buttons["Receive"].waitForExistence(timeout: 5))
 
         application.buttons["Wallet"].tap()
