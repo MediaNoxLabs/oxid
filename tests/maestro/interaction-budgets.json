@@ -1,0 +1,132 @@
+{
+  "schema": "oxid-maestro-interaction-budget-evidence-v1",
+  "countingRules": "docs/factory/demo-inventory.md#approved-product-journeys",
+  "measurements": [
+    {
+      "id": "fresh-wallet-create-protection-boundary",
+      "useCaseId": "fresh-wallet-onboarding",
+      "scenarioId": "onboarding-safe-boundary",
+      "state": "blocked",
+      "flowSha256": "71807b4283991681a88f4a1da2527b17dc467b4f9ec6940e90c551c1a9e60795",
+      "observed": {"entryTaps": 0, "decisionScreens": 2, "authorizationPrompts": 0, "routineManualSyncActions": 0},
+      "countedActions": [
+        {"kind": "decision-screen", "label": "Choose Create private wallet"},
+        {"kind": "decision-screen", "label": "Confirm Create and continue"}
+      ]
+    },
+    {
+      "id": "wallet-restore-safe-entry",
+      "useCaseId": "wallet-recovery",
+      "scenarioId": "onboarding-restore-boundary",
+      "state": "recovery",
+      "flowSha256": "c25de09e5d08637c6025188929df4f03639cdfd24b44a7e97538d2257fc7e040",
+      "observed": {"entryTaps": 1, "decisionScreens": 1, "authorizationPrompts": 0, "routineManualSyncActions": 0},
+      "countedActions": [
+        {"kind": "entry-tap", "label": "Restore 24-word recovery phrase"},
+        {"kind": "decision-screen", "label": "Name this wallet"}
+      ]
+    },
+    {
+      "id": "profile-chooser-entry",
+      "useCaseId": "profile-and-realm-switching",
+      "scenarioId": "profile-realm-switching",
+      "state": "ready",
+      "flowSha256": "4caf1133500a85ef4ff78a05222bbeebcf7aea28c11bd9eb2756c7c59be882e6",
+      "observed": {"entryTaps": 1, "decisionScreens": 1, "authorizationPrompts": 0, "routineManualSyncActions": 0},
+      "countedActions": [
+        {"kind": "entry-tap", "label": "Switch wallet profile"},
+        {"kind": "decision-screen", "label": "Active wallet profile chooser"}
+      ]
+    },
+    {
+      "id": "automatic-wallet-status-observation",
+      "useCaseId": "automatic-account-reconciliation",
+      "scenarioId": "wallet-sync-status",
+      "state": "ready",
+      "flowSha256": "5163350e3e0e0b9aa58c21dcaaca49ee3c045584e1b5b3ffe2359d9528a2a4bd",
+      "observed": {"entryTaps": 0, "decisionScreens": 0, "authorizationPrompts": 0, "routineManualSyncActions": 0},
+      "countedActions": []
+    },
+    {
+      "id": "receive-entry",
+      "useCaseId": "receive-and-fund-night",
+      "scenarioId": "home-receive-send-blocked",
+      "state": "ready",
+      "flowSha256": "23f74a7369d69ea210be54aef879d19cca38b274c2b80a4f1c99532d6200a09b",
+      "observed": {"entryTaps": 1, "decisionScreens": 0, "authorizationPrompts": 0, "routineManualSyncActions": 0},
+      "countedActions": [
+        {"kind": "entry-tap", "label": "Receive"}
+      ]
+    },
+    {
+      "id": "send-blocked-entry",
+      "useCaseId": "send-night",
+      "scenarioId": "home-receive-send-blocked",
+      "state": "blocked",
+      "flowSha256": "23f74a7369d69ea210be54aef879d19cca38b274c2b80a4f1c99532d6200a09b",
+      "observed": {"entryTaps": 1, "decisionScreens": 0, "authorizationPrompts": 0, "routineManualSyncActions": 0},
+      "countedActions": [
+        {"kind": "entry-tap", "label": "Send"}
+      ]
+    },
+    {
+      "id": "did-create-and-copy",
+      "useCaseId": "did-inventory-and-creation",
+      "scenarioId": "did-inventory-copy",
+      "state": "ready",
+      "flowSha256": "c40b6131c78ea26fe9b5c2b4d5c466ed846273f6b7f6e150a3afb1b4b3fa9aef",
+      "observed": {"entryTaps": 1, "decisionScreens": 2, "authorizationPrompts": 1, "routineManualSyncActions": 0},
+      "countedActions": [
+        {"kind": "entry-tap", "label": "Manage identities"},
+        {"kind": "decision-screen", "label": "Choose Create a DID"},
+        {"kind": "decision-screen", "label": "Confirm Create DID"},
+        {"kind": "authorization-prompt", "label": "Create DID invokes protected custody"}
+      ]
+    },
+    {
+      "id": "credential-offer-refusal",
+      "useCaseId": "oid4vci-issuance",
+      "scenarioId": "credential-offer-refusal",
+      "state": "refusal",
+      "flowSha256": "e67ec7b8f18e8ac314812b0f7d53d4223c470a5c91ec53a55e215e2d23aa3e3b",
+      "observed": {"entryTaps": 0, "decisionScreens": 1, "authorizationPrompts": 0, "routineManualSyncActions": 0},
+      "countedActions": [
+        {"kind": "decision-screen", "label": "Credential offer preview and refusal"}
+      ]
+    },
+    {
+      "id": "credential-presentation-refusal",
+      "useCaseId": "oid4vp-presentation",
+      "scenarioId": "credential-presentation-refusal",
+      "state": "refusal",
+      "flowSha256": "7216bd318d2f82f5ae7fd42f7d1dd6f8ebb52e34dc64315991743e29531cef37",
+      "observed": {"entryTaps": 0, "decisionScreens": 1, "authorizationPrompts": 0, "routineManualSyncActions": 0},
+      "countedActions": [
+        {"kind": "decision-screen", "label": "Presentation preview and refusal"}
+      ]
+    },
+    {
+      "id": "activity-entry",
+      "useCaseId": "activity-and-transaction-detail",
+      "scenarioId": "activity-fixture-history",
+      "state": "ready",
+      "flowSha256": "04a4135f4791b63f2ae002cb3903b1d30fdcd51749e6119c76725c032026fb98",
+      "observed": {"entryTaps": 1, "decisionScreens": 0, "authorizationPrompts": 0, "routineManualSyncActions": 0},
+      "countedActions": [
+        {"kind": "entry-tap", "label": "Activity"}
+      ]
+    },
+    {
+      "id": "settings-backup-entry",
+      "useCaseId": "security-and-backup-settings",
+      "scenarioId": "settings-security-backup-entry",
+      "state": "blocked",
+      "flowSha256": "d648e9676711ee93389f8906784df2ef5612f7ff71c9826798137497b7a1885d",
+      "observed": {"entryTaps": 2, "decisionScreens": 0, "authorizationPrompts": 0, "routineManualSyncActions": 0},
+      "countedActions": [
+        {"kind": "entry-tap", "label": "Open global menu"},
+        {"kind": "entry-tap", "label": "Settings"}
+      ]
+    }
+  ]
+}
