@@ -11738,7 +11738,6 @@ mod tests {
             message,
             "This backup needs a newer version of Oxid. Update Oxid and try again."
         );
-        assert!(!message.contains("OXIDBAK1"));
     }
 
     #[test]

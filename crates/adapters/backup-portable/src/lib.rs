@@ -61,6 +61,11 @@ const CUSTODY_V6_ARGON2_POLICY: Argon2Policy = Argon2Policy {
 const SALT_BYTES: usize = 16;
 const NONCE_BYTES: usize = 24;
 const TAG_BYTES: usize = 16;
+// Structural limits for reporting an unknown future version. These values are
+// never used to configure Argon2; only the exact version policy below may do so.
+const MAX_DECLARED_ARGON2_MEMORY_KIB: u32 = 1024 * 1024;
+const MAX_DECLARED_ARGON2_ITERATIONS: u32 = 10;
+const MAX_DECLARED_ARGON2_LANES: u32 = 16;
 const HEADER_VERSION_OFFSET: usize = MAGIC.len();
 const HEADER_KDF_OFFSET: usize = HEADER_VERSION_OFFSET + size_of::<u16>();
 const HEADER_AEAD_OFFSET: usize = HEADER_KDF_OFFSET + size_of::<u8>();
@@ -820,9 +825,9 @@ fn decode_header(bytes: &[u8]) -> Result<DecodedHeader, WalletPortableBackupPort
     ) as usize;
     if bytes[HEADER_KDF_OFFSET] != KDF_ARGON2ID
         || bytes[HEADER_AEAD_OFFSET] != AEAD_XCHACHA20_POLY1305
-        || memory == 0
-        || iterations == 0
-        || lanes == 0
+        || !(1..=MAX_DECLARED_ARGON2_MEMORY_KIB).contains(&memory)
+        || !(1..=MAX_DECLARED_ARGON2_ITERATIONS).contains(&iterations)
+        || !(1..=MAX_DECLARED_ARGON2_LANES).contains(&lanes)
         || ciphertext_len < TAG_BYTES
         || bytes.len() != HEADER_BYTES + ciphertext_len
     {
@@ -1451,6 +1456,41 @@ mod tests {
     }
 
     #[test]
+    fn frozen_legacy_v1_and_v4_envelopes_keep_literal_policies_and_recover() {
+        for (bytes, version, expected_profile, expected_keys) in [
+            (
+                include_bytes!("../tests/fixtures/legacy-custody-v1.bin").as_slice(),
+                1_u16,
+                "profile_legacy",
+                0_usize,
+            ),
+            (
+                include_bytes!("../tests/fixtures/legacy-custody-v4.bin").as_slice(),
+                4_u16,
+                "profile_one",
+                1_usize,
+            ),
+        ] {
+            let backup = PortableWalletBackup::parse(bytes.to_vec()).expect("frozen envelope");
+            let header = decode_header(backup.as_bytes()).expect("legacy header");
+            assert_eq!(header.format_version, version);
+            assert_eq!(
+                header.argon2_policy,
+                Argon2Policy {
+                    memory_kib: 19_456,
+                    iterations: 2,
+                    lanes: 1,
+                }
+            );
+            let opened = open_portable_custody(&backup, &secret(), &profile(expected_profile))
+                .expect("frozen legacy envelope remains readable");
+            assert_eq!(opened.root_seed_kind(), WalletRootSeedKind::RawDevelopment);
+            assert_eq!(opened.root_seed(), &[7; 32]);
+            assert_eq!(opened.keys().len(), expected_keys);
+        }
+    }
+
+    #[test]
     fn wrong_secret_and_ciphertext_tamper_are_indistinguishable() {
         let backup = seal_portable_custody(&vault(), &secret(), &IncrementingRandom::new())
             .expect("vault should encrypt");
@@ -1656,6 +1696,38 @@ mod tests {
                 open_complete_wallet_archive(&changed, &secret(), None)
                     .expect_err("version/parameter mismatch must fail before authentication"),
                 WalletPortableBackupPortError::InvalidPackage
+            );
+        }
+    }
+
+    #[test]
+    fn future_version_parameters_must_be_structurally_bounded_without_derivation() {
+        let mut future = encode_header(
+            CURRENT_CUSTODY_FORMAT_VERSION + 1,
+            Argon2Policy {
+                memory_kib: 128 * 1024,
+                iterations: 4,
+                lanes: 2,
+            },
+            &[1; SALT_BYTES],
+            &[2; NONCE_BYTES],
+            TAG_BYTES as u32,
+        );
+        future.extend_from_slice(&[0; TAG_BYTES]);
+        assert_eq!(
+            decode_header(&future).err(),
+            Some(WalletPortableBackupPortError::UnsupportedVersion)
+        );
+        for (offset, invalid) in [
+            (HEADER_MEMORY_KIB_OFFSET, MAX_DECLARED_ARGON2_MEMORY_KIB + 1),
+            (HEADER_ITERATIONS_OFFSET, MAX_DECLARED_ARGON2_ITERATIONS + 1),
+            (HEADER_LANES_OFFSET, MAX_DECLARED_ARGON2_LANES + 1),
+        ] {
+            let mut malformed = future.clone();
+            malformed[offset..offset + 4].copy_from_slice(&invalid.to_be_bytes());
+            assert_eq!(
+                decode_header(&malformed).err(),
+                Some(WalletPortableBackupPortError::InvalidPackage)
             );
         }
     }
