@@ -1380,47 +1380,12 @@ fn embedded_field_from_be(
 pub struct PreflightOnlyCompactPresentationProof {
     repository: Arc<dyn CredentialRepository>,
     clock: Arc<dyn ClockPort>,
-    accepted_holder_authorization: Option<Arc<dyn AcceptedPresentationHolderAuthorizationPort>>,
+    accepted_holder_authorization: Arc<dyn AcceptedPresentationHolderAuthorizationPort>,
     #[cfg(not(target_arch = "wasm32"))]
     runtime: Option<Arc<NativeCompactPresentationRuntime>>,
 }
 
 impl PreflightOnlyCompactPresentationProof {
-    /// Legacy preflight fixture; accepted holder effects are unavailable.
-    #[cfg(test)]
-    #[must_use]
-    pub fn new(
-        repository: Arc<dyn CredentialRepository>,
-        clock: Arc<dyn ClockPort>,
-        _holder_authorization: Arc<dyn PresentationHolderAuthorizationPort>,
-    ) -> Self {
-        Self {
-            repository,
-            clock,
-            accepted_holder_authorization: None,
-            #[cfg(not(target_arch = "wasm32"))]
-            runtime: None,
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[cfg(test)]
-    #[must_use]
-    pub fn with_runtime(
-        repository: Arc<dyn CredentialRepository>,
-        clock: Arc<dyn ClockPort>,
-        _holder_authorization: Arc<dyn PresentationHolderAuthorizationPort>,
-        _holder_proof: Arc<dyn CompactHolderProofPort>,
-        runtime: Arc<NativeCompactPresentationRuntime>,
-    ) -> Self {
-        Self {
-            repository,
-            clock,
-            accepted_holder_authorization: None,
-            runtime: Some(runtime),
-        }
-    }
-
     #[must_use]
     pub fn with_accepted_holder_proof(
         repository: Arc<dyn CredentialRepository>,
@@ -1430,7 +1395,7 @@ impl PreflightOnlyCompactPresentationProof {
         Self {
             repository,
             clock,
-            accepted_holder_authorization: Some(accepted_holder_authorization),
+            accepted_holder_authorization,
             #[cfg(not(target_arch = "wasm32"))]
             runtime: None,
         }
@@ -1447,7 +1412,7 @@ impl PreflightOnlyCompactPresentationProof {
         Self {
             repository,
             clock,
-            accepted_holder_authorization: Some(accepted_holder_authorization),
+            accepted_holder_authorization,
             runtime: Some(runtime),
         }
     }
@@ -1530,8 +1495,6 @@ impl PresentationProofPort for PreflightOnlyCompactPresentationProof {
             };
             let holder_proof_bytes = self
                 .accepted_holder_authorization
-                .as_ref()
-                .ok_or(PresentationProofError::HolderAuthorizationUnavailable)?
                 .authorize_accepted(AcceptedPresentationHolderAuthorizationRequest {
                     request: holder_authorization_request,
                     presentation_id: request.presentation_id.clone(),
@@ -1834,11 +1797,10 @@ mod tests {
     use super::*;
     use oxid_credential_application::CredentialRepository;
     use oxid_credential_domain::{CredentialPrivateMaterial, CredentialRecord};
-    use oxid_foundation::UnixTimestampMillis;
-    use oxid_identity_application::{
-        AcceptedCredentialPresentationContext, CredentialPresentationAuthorityPort,
-        CredentialPresentationFlowService,
+    use oxid_foundation::{
+        AcceptedFlowIssuer, CREDENTIAL_PRESENTATION_FLOW_KIND, UnixTimestampMillis,
     };
+    use oxid_identity_application::AcceptedCredentialPresentationContext;
     #[cfg(not(target_arch = "wasm32"))]
     use oxid_identity_application::{
         DidDocumentMetadataView, DidDocumentView, DidRecordView, DidRefreshAvailability,
@@ -2017,17 +1979,6 @@ mod tests {
         }
     }
 
-    struct Authorization;
-
-    impl PresentationHolderAuthorizationPort for Authorization {
-        fn authorize<'a>(
-            &'a self,
-            _: PresentationHolderAuthorizationRequest,
-        ) -> AuthorizePresentationHolderFuture<'a> {
-            Box::pin(async { Ok(()) })
-        }
-    }
-
     struct Repository(CredentialRecord);
 
     impl CredentialRepository for Repository {
@@ -2084,21 +2035,17 @@ mod tests {
         (credential_id, record)
     }
 
-    fn presentation_authority(
-        credential_id: &str,
-    ) -> oxid_foundation::AcceptedCredentialPresentationFlow {
-        CredentialPresentationFlowService::new(Arc::new(Clock))
-            .mint(AcceptedCredentialPresentationContext::new(
-                IdentityProfileId::parse("profile_one").expect("identity profile"),
-                oxid_presentation_application::OPENID4VP_CREDENTIAL_PRESENTATION_FLOW_ID,
-                "presentation_one",
-                credential_id,
-            ))
-            .expect("test presentation authority")
+    fn proof_request(
+        authorization: &AcceptedAuthorization,
+        credential_id: String,
+    ) -> PresentationProofRequest {
+        proof_request_with_authority(authorization.mint(&credential_id), credential_id)
     }
 
-    fn proof_request(credential_id: String) -> PresentationProofRequest {
-        let authority = presentation_authority(&credential_id);
+    fn proof_request_with_authority(
+        authority: oxid_foundation::AcceptedCredentialPresentationFlow,
+        credential_id: String,
+    ) -> PresentationProofRequest {
         PresentationProofRequest {
             profile_id: oxid_presentation_domain::PresentationProfileId::parse("profile_one")
                 .expect("profile"),
@@ -2116,18 +2063,81 @@ mod tests {
     }
 
     #[test]
-    fn standalone_proof_port_requires_the_holder_proof_capability_after_preflight() {
+    fn standalone_proof_port_consumes_accepted_authority_after_preflight() {
         let (credential_id, record) =
             standalone_record(standalone_compact_proof(), standalone_private_material());
-        let adapter = PreflightOnlyCompactPresentationProof::new(
-            Arc::new(Repository(record)),
-            Arc::new(Clock),
-            Arc::new(Authorization),
-        );
-        let result = poll(adapter.create(proof_request(credential_id)));
+        let (adapter, authorization) = accepted_adapter(record);
+        let result = poll(adapter.create(proof_request(&authorization, credential_id)));
+        assert_eq!(result, Err(PresentationProofError::Unavailable));
         assert_eq!(
-            result,
-            Err(PresentationProofError::HolderAuthorizationUnavailable)
+            authorization
+                .protected_effects
+                .load(std::sync::atomic::Ordering::Acquire),
+            1
+        );
+    }
+
+    #[test]
+    fn standalone_proof_port_rejects_mismatched_or_replayed_authority_without_effects() {
+        let (credential_id, record) =
+            standalone_record(standalone_compact_proof(), standalone_private_material());
+        let (adapter, authorization) = accepted_adapter(record);
+        let wrong_flow = authorization.mint_for(
+            "profile_one",
+            "wrong_flow",
+            "presentation_one",
+            &credential_id,
+        );
+        let wrong_session = authorization.mint_for(
+            "profile_one",
+            oxid_presentation_application::OPENID4VP_CREDENTIAL_PRESENTATION_FLOW_ID,
+            "presentation_other",
+            &credential_id,
+        );
+        let wrong_profile = authorization.mint_for(
+            "profile_other",
+            oxid_presentation_application::OPENID4VP_CREDENTIAL_PRESENTATION_FLOW_ID,
+            "presentation_one",
+            &credential_id,
+        );
+        let wrong_credential = authorization.mint_for(
+            "profile_one",
+            oxid_presentation_application::OPENID4VP_CREDENTIAL_PRESENTATION_FLOW_ID,
+            "presentation_one",
+            "credential_other",
+        );
+        let foreign = AcceptedAuthorization {
+            issuer: AcceptedFlowIssuer::new(),
+            protected_effects: std::sync::atomic::AtomicUsize::new(0),
+        }
+        .mint(&credential_id);
+        let replayed = authorization.mint(&credential_id);
+        authorization
+            .issuer
+            .try_consume(&replayed)
+            .expect("consume replay fixture authority");
+
+        for authority in [
+            wrong_flow,
+            wrong_session,
+            wrong_profile,
+            wrong_credential,
+            foreign,
+            replayed,
+        ] {
+            assert_eq!(
+                poll(adapter.create(proof_request_with_authority(
+                    authority,
+                    credential_id.clone(),
+                ))),
+                Err(PresentationProofError::HolderNotAuthorized)
+            );
+        }
+        assert_eq!(
+            authorization
+                .protected_effects
+                .load(std::sync::atomic::Ordering::Acquire),
+            0
         );
     }
 
@@ -2137,13 +2147,9 @@ mod tests {
         *detached_proof.last_mut().expect("proof byte") ^= 1;
         let (credential_id, record) =
             standalone_record(detached_proof, standalone_private_material());
-        let adapter = PreflightOnlyCompactPresentationProof::new(
-            Arc::new(Repository(record)),
-            Arc::new(Clock),
-            Arc::new(Authorization),
-        );
+        let (adapter, authorization) = accepted_adapter(record);
         assert_eq!(
-            poll(adapter.create(proof_request(credential_id))),
+            poll(adapter.create(proof_request(&authorization, credential_id))),
             Err(PresentationProofError::InvalidCredential)
         );
 
@@ -2151,13 +2157,9 @@ mod tests {
         *private_material.last_mut().expect("private byte") ^= 1;
         let (credential_id, record) =
             standalone_record(standalone_compact_proof(), private_material);
-        let adapter = PreflightOnlyCompactPresentationProof::new(
-            Arc::new(Repository(record)),
-            Arc::new(Clock),
-            Arc::new(Authorization),
-        );
+        let (adapter, authorization) = accepted_adapter(record);
         assert_eq!(
-            poll(adapter.create(proof_request(credential_id))),
+            poll(adapter.create(proof_request(&authorization, credential_id))),
             Err(PresentationProofError::InvalidCredential)
         );
     }
@@ -2181,21 +2183,15 @@ mod tests {
             inspected.verification,
         )
         .expect("record");
-        let adapter = PreflightOnlyCompactPresentationProof::new(
-            Arc::new(Repository(record)),
-            Arc::new(Clock),
-            Arc::new(Authorization),
-        );
+        let (adapter, authorization) = accepted_adapter(record);
         assert_eq!(
-            poll(adapter.create(proof_request(wrong_id.as_str().to_owned()))),
+            poll(adapter.create(proof_request(&authorization, wrong_id.as_str().to_owned()))),
             Err(PresentationProofError::InvalidCredential)
         );
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     struct HolderProof;
 
-    #[cfg(not(target_arch = "wasm32"))]
     impl CompactHolderProofPort for HolderProof {
         fn create_holder_proof(
             &self,
@@ -2221,6 +2217,97 @@ mod tests {
                 .ok_or(CompactHolderProofError::Rejected)?;
             encode_proof(&proof).map_err(|_| CompactHolderProofError::Rejected)
         }
+    }
+
+    struct AcceptedAuthorization {
+        issuer: AcceptedFlowIssuer<CREDENTIAL_PRESENTATION_FLOW_KIND>,
+        protected_effects: std::sync::atomic::AtomicUsize,
+    }
+
+    impl AcceptedAuthorization {
+        fn mint(&self, credential_id: &str) -> oxid_foundation::AcceptedCredentialPresentationFlow {
+            self.mint_for(
+                "profile_one",
+                oxid_presentation_application::OPENID4VP_CREDENTIAL_PRESENTATION_FLOW_ID,
+                "presentation_one",
+                credential_id,
+            )
+        }
+
+        fn mint_for(
+            &self,
+            profile: &str,
+            flow: &str,
+            session: &str,
+            credential_id: &str,
+        ) -> oxid_foundation::AcceptedCredentialPresentationFlow {
+            self.issuer.mint(
+                AcceptedCredentialPresentationContext::new(
+                    IdentityProfileId::parse(profile).expect("identity profile"),
+                    flow,
+                    session,
+                    credential_id,
+                ),
+                UnixTimestampMillis::new(0),
+                UnixTimestampMillis::new(u64::MAX),
+                0,
+            )
+        }
+    }
+
+    impl AcceptedPresentationHolderAuthorizationPort for AcceptedAuthorization {
+        fn authorize_accepted<'a>(
+            &'a self,
+            accepted: AcceptedPresentationHolderAuthorizationRequest,
+        ) -> AuthorizeAcceptedPresentationHolderFuture<'a> {
+            Box::pin(async move {
+                let expected = AcceptedCredentialPresentationContext::new(
+                    IdentityProfileId::parse(accepted.request.profile_id.as_str().to_owned())
+                        .map_err(|_| PresentationHolderAuthorizationError::Rejected)?,
+                    oxid_presentation_application::OPENID4VP_CREDENTIAL_PRESENTATION_FLOW_ID,
+                    accepted.presentation_id.as_str(),
+                    &accepted.credential_id,
+                );
+                if !self.issuer.owns(&accepted.authority)
+                    || !accepted.authority.binding_matches(&expected)
+                {
+                    return Err(PresentationHolderAuthorizationError::Rejected);
+                }
+                self.issuer
+                    .try_consume(&accepted.authority)
+                    .map_err(|_| PresentationHolderAuthorizationError::Rejected)?;
+                self.protected_effects
+                    .fetch_add(1, std::sync::atomic::Ordering::Release);
+                HolderProof
+                    .create_holder_proof(CompactHolderProofRequest {
+                        profile_id: accepted.request.profile_id.clone(),
+                        holder_did: accepted.request.holder_did,
+                        holder_method_id: accepted.request.holder_method_id,
+                        presentation_root: accepted.presentation_root,
+                        verifier_challenge_hash: accepted.verifier_challenge_hash,
+                        created_at_seconds: accepted.created_at_seconds,
+                    })
+                    .map_err(|_| PresentationHolderAuthorizationError::Rejected)
+            })
+        }
+    }
+
+    fn accepted_adapter(
+        record: CredentialRecord,
+    ) -> (
+        PreflightOnlyCompactPresentationProof,
+        Arc<AcceptedAuthorization>,
+    ) {
+        let authorization = Arc::new(AcceptedAuthorization {
+            issuer: AcceptedFlowIssuer::new(),
+            protected_effects: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let adapter = PreflightOnlyCompactPresentationProof::with_accepted_holder_proof(
+            Arc::new(Repository(record)),
+            Arc::new(Clock),
+            authorization.clone(),
+        );
+        (adapter, authorization)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -2343,14 +2430,17 @@ mod tests {
         );
         let (credential_id, record) =
             standalone_record(standalone_compact_proof(), standalone_private_material());
-        let adapter = PreflightOnlyCompactPresentationProof::with_runtime(
+        let authorization = Arc::new(AcceptedAuthorization {
+            issuer: AcceptedFlowIssuer::new(),
+            protected_effects: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let adapter = PreflightOnlyCompactPresentationProof::with_accepted_runtime(
             Arc::new(Repository(record)),
             Arc::new(ClockAt(NOW)),
-            Arc::new(Authorization),
-            Arc::new(HolderProof),
+            authorization.clone(),
             Arc::clone(&runtime),
         );
-        let artifact = poll(adapter.create(proof_request(credential_id.clone())))
+        let artifact = poll(adapter.create(proof_request(&authorization, credential_id.clone())))
             .expect("checked proof creation");
         let did = Arc::new(DidLookup(holder_did_record()));
         let verifier = NativeCompactPresentationVerifier::new(
