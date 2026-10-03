@@ -12,7 +12,9 @@ readonly PRIVATE_ROOT="$RUN_ROOT/private"
 readonly RECEIPT="$PRIVATE_ROOT/simulator-receipt.json"
 readonly METRICS="$RUN_ROOT/receipt.json"
 readonly OUTCOMES="$PRIVATE_ROOT/scenario-outcomes.jsonl"
-readonly DEVICE_TYPE="com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation"
+readonly DEVICE_TYPE="${OXID_IOS_EVIDENCE_DEVICE_TYPE:-com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation}"
+readonly VIEWPORT="${OXID_IOS_EVIDENCE_VIEWPORT:-375-pt-class}"
+readonly BUILD_PROFILE="holder-public"
 
 # shellcheck source=e2e/ios-simulator-ownership.sh
 source "$ROOT/scripts/e2e/ios-simulator-ownership.sh"
@@ -39,7 +41,8 @@ collect_public_artifacts() {
       [ ! -e "$scenario_root/screenshots/$screenshot" ] || fail duplicate-public-artifact
       cp -- "$source" "$scenario_root/screenshots/$screenshot"
       jq -cn --arg scenario "$scenario" --arg artifact "scenarios/$scenario/screenshots/$screenshot" \
-        '{scenario:$scenario,artifact:$artifact,kind:"screenshot"}' >>"$RUN_ROOT/scenarios/manifest.jsonl"
+        --arg route "$scenario" --arg state "public-safe" --arg design "no-match" \
+        '{scenario:$scenario,artifact:$artifact,kind:"screenshot",route:$route,state:$state,designReference:$design}' >>"$RUN_ROOT/scenarios/manifest.jsonl"
     done < <(find "$raw_root" -type f \( -name 'lunar-aegis-ios-*.png' -o -name 'developer-profile-banner-*.png' \) -print 2>/dev/null | sort)
     log_file="$latest/logs/maestro.log"
     if [ -f "$log_file" ]; then
@@ -47,7 +50,8 @@ collect_public_artifacts() {
       [ ! -e "$scenario_root/maestro-tail.log" ] || fail duplicate-public-artifact
       tail -n 200 "$log_file" >"$scenario_root/maestro-tail.log"
       jq -cn --arg scenario "$scenario" --arg artifact "scenarios/$scenario/maestro-tail.log" \
-        '{scenario:$scenario,artifact:$artifact,kind:"bounded-log"}' >>"$RUN_ROOT/scenarios/manifest.jsonl"
+        --arg route "$scenario" --arg state "public-safe" --arg design "no-match" \
+        '{scenario:$scenario,artifact:$artifact,kind:"bounded-log",route:$route,state:$state,designReference:$design}' >>"$RUN_ROOT/scenarios/manifest.jsonl"
     fi
   fi
   rm -rf -- "$raw_root"
@@ -72,11 +76,12 @@ cleanup() {
   [ ! -f "$OUTCOMES" ] || outcomes="$(jq -s . "$OUTCOMES")"
   mkdir -p "$RUN_ROOT"
   jq -n --arg head "$HEAD" --arg device "$DEVICE" --arg runtime "$runtime_version" \
+    --arg device_type "$DEVICE_TYPE" --arg viewport "$VIEWPORT" --arg build_profile "$BUILD_PROFILE" \
     --argjson started "$STARTED_AT" --argjson finished "$finished_at" --argjson duration "$duration" \
     --argjson bytes "$artifact_bytes" --argjson screenshots "$screenshot_count" \
     --argjson passed "$( [ "$status" -eq 0 ] && printf true || printf false )" \
     --argjson cleaned "$cleanup_ok" --argjson rawRemoved "$raw_artifacts_removed" --argjson scenario_outcomes "$outcomes" \
-    '{schema:"oxid-ios-maestro-evidence-v2",oxid:{head:$head},platform:{kind:"ios_simulator",viewport:"375-pt-class",deviceType:"iPhone SE (3rd generation)",udid:$device,runtime:$runtime},outcome:{passed:$passed,startedAtUnix:$started,finishedAtUnix:$finished,durationSeconds:$duration,scenarios:$scenario_outcomes},artifacts:{publicBytes:$bytes,screenshotCount:$screenshots,manifest:"scenarios/manifest.jsonl"},cleanup:{receiptOwnedSimulator:true,privateDiagnosticsRemoved:$cleaned,rawArtifactsRemoved:$rawRemoved}}' >"$METRICS"
+    '{schema:"oxid-ios-maestro-evidence-v3",oxid:{head:$head,buildProfile:$build_profile},platform:{kind:"ios_simulator",viewport:$viewport,deviceType:$device_type,udid:$device,runtime:$runtime},outcome:{passed:$passed,startedAtUnix:$started,finishedAtUnix:$finished,durationSeconds:$duration,scenarios:$scenario_outcomes},artifacts:{publicBytes:$bytes,screenshotCount:$screenshots,manifest:"scenarios/manifest.jsonl"},cleanup:{receiptOwnedSimulator:true,privateDiagnosticsRemoved:$cleaned,rawArtifactsRemoved:$rawRemoved}}' >"$METRICS"
   chmod 644 "$METRICS"
   [ "$cleanup_ok" = true ] && rm -rf -- "$PRIVATE_ROOT"
   if ! node "$ROOT/scripts/lib/validate-ios-maestro-evidence.mjs" "$RUN_ROOT"; then

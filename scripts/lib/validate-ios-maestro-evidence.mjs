@@ -43,7 +43,15 @@ async function assertPublicFile(runRoot, relative, label) {
 export async function validateIosMaestroEvidence(runRoot) {
   const root = await realpath(runRoot);
   const receipt = JSON.parse(await readFile(path.join(root, "receipt.json"), "utf8"));
-  if (receipt.schema !== "oxid-ios-maestro-evidence-v2") fail("unexpected receipt schema");
+  if (receipt.schema !== "oxid-ios-maestro-evidence-v3") fail("unexpected receipt schema");
+  if (receipt.oxid?.buildProfile !== "holder-public") fail("unexpected build profile");
+  if (typeof receipt.platform?.viewport !== "string" || !/^[0-9]+-pt-class$/u.test(receipt.platform.viewport)) {
+    fail("unexpected viewport");
+  }
+  if (typeof receipt.platform?.deviceType !== "string"
+      || !receipt.platform.deviceType.startsWith("com.apple.CoreSimulator.SimDeviceType.iPhone-")) {
+    fail("unexpected device type");
+  }
   if (receipt.artifacts?.manifest !== "scenarios/manifest.jsonl") fail("unexpected manifest path");
   if (receipt.cleanup?.receiptOwnedSimulator !== true
       || receipt.cleanup?.privateDiagnosticsRemoved !== true
@@ -71,6 +79,9 @@ export async function validateIosMaestroEvidence(runRoot) {
   let screenshots = 0;
   for (const [index, entry] of entries.entries()) {
     if (typeof entry?.scenario !== "string" || !entry.scenario) fail(`manifest line ${index + 1} has no scenario`);
+    if (typeof entry?.route !== "string" || !entry.route) fail(`manifest line ${index + 1} has no route`);
+    if (typeof entry?.state !== "string" || !entry.state) fail(`manifest line ${index + 1} has no state`);
+    if (entry?.designReference !== "no-match") fail(`manifest line ${index + 1} has an invalid design reference`);
     if (!new Set(["screenshot", "bounded-log"]).has(entry.kind)) fail(`manifest line ${index + 1} has an invalid kind`);
     if (seen.has(entry.artifact)) fail(`manifest reuses artifact path: ${entry.artifact}`);
     seen.add(entry.artifact);

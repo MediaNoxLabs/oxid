@@ -6,7 +6,7 @@ This matrix is the privacy-safe, exact-head evidence map for the simulated first
 
 | Scenario ID | Authority | Platform | Design reference/no-match | Artifact | Evidence layer | Known gap |
 | --- | --- | --- | --- | --- | --- | --- |
-| canonical-holder-evidence | maestro | iOS Simulator | Lunar Aegis holder shell; no single design ID | `lunar-aegis-ios-01` through `-08` public screenshots | iOS visual, 375 pt, canonical public evidence | Larger-width and screen-reader traversal remain lane observations. |
+| canonical-holder-evidence | maestro | iOS Simulator | no-match per retained artifact; the holder shell has no single Lunar Aegis design ID | `lunar-aegis-ios-01` through `-08` public screenshots and receipt manifest metadata | iOS visual, 375 pt and 402 pt receipt-owned lanes | Screen-reader traversal remains a lane observation. |
 | onboarding-safe-boundary | maestro | iOS Simulator; Android Emulator semantic | `XSwTg6CjwXruX8QP3tXy`, `FFMmLvVQlc5xIun63FYX` | receipt outcome only | Safe onboarding reachability; no recovery ceremony | Native focus-order detail remains harness-dependent. |
 | profile-realm-switching | maestro | iOS Simulator; Android Emulator semantic | no-match | receipt outcome only | Simulated profile and realm traversal | Real-network reconciliation remains lower-layer evidence. |
 | home-receive-send-blocked | maestro | iOS Simulator; Android Emulator semantic | `7u81lbjNIKcn8dS79axb` | canonical Home/Receive/Send screenshots on iOS; Android receipt | Public holder reachability and blocked send entry | No recipient, amount, or transfer action is entered. |
@@ -38,7 +38,13 @@ Run all safe `authority=maestro` iOS scenarios serially through the receipt-owne
 ./bootstrap.sh -- ./scripts/test-ios-maestro-holder-evidence.sh
 ```
 
-After that lane, run one final sweep only on a disposable `emulator-*` Android Emulator. It retains semantic outcomes only and deletes all Android screenshots and debug output, including failures.
+Run the larger iOS width as a separate receipt-owned simulator pass. Its receipt pins the same exact head, `holder-public` build profile, iPhone 17 Pro device type, runtime, 402-point class viewport, scenario route/state, and each artifact's Lunar Aegis `no-match` reference; it never reuses an ambient simulator.
+
+```sh
+./bootstrap.sh -- ./scripts/test-ios-maestro-holder-evidence-large.sh
+```
+
+After both iOS lanes, run one final sweep only on a disposable `emulator-*` Android Emulator. It retains semantic outcomes only and deletes all Android screenshots and debug output, including failures.
 
 ```sh
 OXID_ANDROID_DEVICE=emulator-<port> OXID_ANDROID_DISPOSABLE=1 \
@@ -58,5 +64,6 @@ just developer-pager-desktop-e2e
 - Android applies `FLAG_SECURE` after demo protection initializes. It is semantic-only in the final sweep; protected screenshots and failure artifacts are deleted.
 - A global Maestro state directory such as `~/.maestro/tests/` is never an accepted evidence path. Only receipt-owned, repository-scoped artifacts may be inspected or retained.
 - Android must be re-masked before any unrelated operator use after a semantic sweep. CDP/XCTest/Rust evidence remains authoritative for protected and protocol behavior.
-- Capture the canonical iOS public lane at 375 pt/dp-class width. A platform-harness limitation is evidence, not permission to weaken semantic assertions or capture sensitive data.
+- Capture the canonical iOS public lane at 375 pt/dp-class width and a separate receipt-owned larger 402 pt width. A platform-harness limitation is evidence, not permission to weaken semantic assertions or capture sensitive data.
+- Each retained iOS receipt records the exact head, `holder-public` build profile, OS runtime, device type/UDID, viewport, scenario route/state, and a Lunar Aegis design ID or `no-match` for every public artifact.
 - A reproduced navigation, overlap, privacy, focus, or misleading-state defect blocks this evidence slice. Cosmetic deltas require a linked follow-up rather than product-code changes here.
