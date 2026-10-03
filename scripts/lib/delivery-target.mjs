@@ -3,6 +3,28 @@
 export const DEVELOP_BRANCH = "develop";
 export const MILESTONE_BRANCH_PATTERN = /^milestone-(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 const DELIVERY_HEADING = /^#{2,3} Delivery target\s*$/gimu;
+const OXID_REPOSITORY = "medianoxlabs/oxid";
+const GIT_OID = /^[0-9a-f]{40}$/u;
+
+function repositoryFromGithubRemote(remoteUrl) {
+  if (typeof remoteUrl !== "string") return null;
+  const match = remoteUrl.match(/^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/u);
+  return match ? `${match[1]}/${match[2]}`.toLowerCase() : null;
+}
+
+function fetchMapsBranch(fetchRefspecs, branch) {
+  if (!Array.isArray(fetchRefspecs)) return false;
+  const source = `refs/heads/${branch}`;
+  const destination = `refs/remotes/origin/${branch}`;
+  return fetchRefspecs.some((refspec) => {
+    if (typeof refspec !== "string") return false;
+    const normalized = refspec.startsWith("+") ? refspec.slice(1) : refspec;
+    const [from, to] = normalized.split(":");
+    if (!from || !to) return false;
+    if (from === source && to === destination) return true;
+    return from === "refs/heads/*" && to === "refs/remotes/origin/*";
+  });
+}
 
 export function parseDeliveryTarget(value) {
   if (typeof value !== "string" || value.length === 0 || value !== value.trim()) {
@@ -65,4 +87,32 @@ export function assertIssueTarget(issueBody, expected) {
     throw new Error(`issue delivery target ${recorded.branch} does not match selected target ${selected?.branch ?? "none"}`);
   }
   return recorded;
+}
+
+/**
+ * Prove that a bare issue target and the envelope's origin ref are one pinned
+ * delivery target. This is intentionally stricter than textual normalization:
+ * repository identity, fetch mapping, ref name, and resolved OID must agree.
+ */
+export function assertNormalizedDeliveryBase(issueValue, envelopeValue, proof) {
+  const issueTarget = parseDeliveryTarget(issueValue);
+  const envelopeTarget = parseDeliveryTarget(envelopeValue);
+  if (issueTarget.branch !== envelopeTarget.branch) {
+    throw new Error(`issue delivery target ${issueTarget.branch} does not match envelope target ${envelopeTarget.branch}`);
+  }
+  if (proof?.repository?.toLowerCase() !== OXID_REPOSITORY
+      || repositoryFromGithubRemote(proof?.originUrl) !== OXID_REPOSITORY) {
+    throw new Error("delivery target repository does not match MediaNoxLabs/oxid origin");
+  }
+  if (proof?.remoteName !== "origin" || !fetchMapsBranch(proof?.fetchRefspecs, issueTarget.branch)) {
+    throw new Error(`origin fetch mapping does not resolve ${issueTarget.remoteRef}`);
+  }
+  if (proof?.resolvedRef !== issueTarget.remoteRef) {
+    throw new Error(`resolved delivery ref must be ${issueTarget.remoteRef}`);
+  }
+  if (!GIT_OID.test(proof?.issueTargetOid ?? "") || !GIT_OID.test(proof?.envelopeTargetOid ?? "")
+      || proof.issueTargetOid !== proof.envelopeTargetOid) {
+    throw new Error("issue and envelope delivery target OIDs do not match");
+  }
+  return issueTarget;
 }
