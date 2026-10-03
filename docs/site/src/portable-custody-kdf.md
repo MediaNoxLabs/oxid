@@ -2,7 +2,7 @@
 
 Custody-only exports use `OXIDBAK1` version **6**, adopting the fixed policy
 reviewed for complete-wallet backups in
-[ADR-0078](../../adr/0078-harden-complete-wallet-backup-derivation.md).
+[ADR-0078](adr-catalog.md#adr-0078).
 This changes the authenticated envelope, not the custody payload schema.
 It does not establish production or physical-device readiness.
 
@@ -23,14 +23,26 @@ version, algorithm identifiers, exact KDF tuple, salt, nonce, and ciphertext
 length, is authenticated associated data.
 
 The entry point's version allowlist and exact work-factor/algorithm matching
-reject unknown versions, wrong payload families, mismatched parameters, and
-invalid lengths before deriving a key. Payload-schema validation occurs only
+reject unknown legacy versions, wrong payload families, mismatched parameters,
+and invalid lengths before deriving a key. A structurally valid future version
+is reported as declaring a newer format without deriving a key or exposing
+backup contents. The header is not authenticated until after KDF work, so users
+should update Oxid and check that the file is intact if recovery still fails.
+Zero or implausibly large declared KDF parameters and other malformed headers
+remain invalid. Payload-schema validation occurs only
 after successful authentication and decryption. The decoder never allocates an
 Argon2 arena from arbitrary header values. A changed v6 header claiming v1/v4
 with unchanged strong parameters is invalid before derivation; changing both
 the version and parameters into an allowed legacy tuple still fails AEAD
 authentication. Substitution of the same-policy complete-wallet version also
 fails authentication. No fallback retries weaker policies.
+
+The recovery error contract keeps these cases separate: malformed headers and
+known versions used with the wrong backup family return `InvalidPackage`;
+structurally valid future versions return `UnsupportedVersion` before KDF work;
+and a wrong secret or tampered ciphertext returns `AuthenticationFailed` after
+KDF work. The recovery screen maps `UnsupportedVersion` to an instruction to
+update Oxid and retry. These outcomes contain no package bytes or secret data.
 
 The 64 MiB arena is additional to document, plaintext, and application memory.
 It raises the cost of each offline guess but does not make a weak recovery
@@ -42,7 +54,8 @@ secret safe. Keep recovery secrets, derived keys, and plaintext out of logs.
   64-byte BIP-39 root and raw development root. New exports never emit v1/v4.
 - There is no automatic expiry date for these legacy reads. Removing them
   requires a separately reviewed migration decision that does not strand
-  recovery files. Unknown future formats fail closed.
+  recovery files. Structurally valid future formats fail closed with update
+  guidance; malformed formats remain invalid.
 - Opening an old file does not modify it or silently strengthen it. Explicitly
   re-export with a v6-capable build and verify recovery before replacing an old
   backup. Older builds cannot read v6; retain access to a compatible build.

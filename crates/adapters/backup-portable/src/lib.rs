@@ -36,6 +36,12 @@ const LEGACY_COMPLETE_WALLET_FORMAT_VERSION_V3: u16 = 3;
 const LEGACY_CUSTODY_FORMAT_VERSION_V4: u16 = 4;
 const COMPLETE_WALLET_FORMAT_VERSION: u16 = 5;
 const CURRENT_CUSTODY_FORMAT_VERSION: u16 = 6;
+const LATEST_SUPPORTED_FORMAT_VERSION: u16 =
+    if CURRENT_CUSTODY_FORMAT_VERSION > COMPLETE_WALLET_FORMAT_VERSION {
+        CURRENT_CUSTODY_FORMAT_VERSION
+    } else {
+        COMPLETE_WALLET_FORMAT_VERSION
+    };
 const KDF_ARGON2ID: u8 = 1;
 const AEAD_XCHACHA20_POLY1305: u8 = 1;
 const LEGACY_ARGON2_POLICY: Argon2Policy = Argon2Policy {
@@ -61,6 +67,11 @@ const CUSTODY_V6_ARGON2_POLICY: Argon2Policy = Argon2Policy {
 const SALT_BYTES: usize = 16;
 const NONCE_BYTES: usize = 24;
 const TAG_BYTES: usize = 16;
+// Structural limits for reporting an unknown future version. These values are
+// never used to configure Argon2; only the exact version policy below may do so.
+const MAX_DECLARED_ARGON2_MEMORY_KIB: u32 = 1024 * 1024;
+const MAX_DECLARED_ARGON2_ITERATIONS: u32 = 10;
+const MAX_DECLARED_ARGON2_LANES: u32 = 16;
 const HEADER_VERSION_OFFSET: usize = MAGIC.len();
 const HEADER_KDF_OFFSET: usize = HEADER_VERSION_OFFSET + size_of::<u16>();
 const HEADER_AEAD_OFFSET: usize = HEADER_KDF_OFFSET + size_of::<u8>();
@@ -813,22 +824,32 @@ fn decode_header(bytes: &[u8]) -> Result<DecodedHeader, WalletPortableBackupPort
             .try_into()
             .expect("fixed header range"),
     );
-    let argon2_policy = argon2_policy_for_format(format_version)
-        .ok_or(WalletPortableBackupPortError::InvalidPackage)?;
-    if bytes[HEADER_KDF_OFFSET] != KDF_ARGON2ID
-        || bytes[HEADER_AEAD_OFFSET] != AEAD_XCHACHA20_POLY1305
-        || memory != argon2_policy.memory_kib
-        || iterations != argon2_policy.iterations
-        || lanes != argon2_policy.lanes
-    {
-        return Err(WalletPortableBackupPortError::InvalidPackage);
-    }
     let ciphertext_len = u32::from_be_bytes(
         bytes[HEADER_CIPHERTEXT_LEN_OFFSET..HEADER_BYTES]
             .try_into()
             .expect("fixed header range"),
     ) as usize;
-    if ciphertext_len < TAG_BYTES || bytes.len() != HEADER_BYTES + ciphertext_len {
+    if bytes[HEADER_KDF_OFFSET] != KDF_ARGON2ID
+        || bytes[HEADER_AEAD_OFFSET] != AEAD_XCHACHA20_POLY1305
+        || !(1..=MAX_DECLARED_ARGON2_MEMORY_KIB).contains(&memory)
+        || !(1..=MAX_DECLARED_ARGON2_ITERATIONS).contains(&iterations)
+        || !(1..=MAX_DECLARED_ARGON2_LANES).contains(&lanes)
+        || ciphertext_len < TAG_BYTES
+        || bytes.len() != HEADER_BYTES + ciphertext_len
+    {
+        return Err(WalletPortableBackupPortError::InvalidPackage);
+    }
+    let argon2_policy = match argon2_policy_for_format(format_version) {
+        Some(policy) => policy,
+        None if format_version > LATEST_SUPPORTED_FORMAT_VERSION => {
+            return Err(WalletPortableBackupPortError::UnsupportedVersion);
+        }
+        None => return Err(WalletPortableBackupPortError::InvalidPackage),
+    };
+    if memory != argon2_policy.memory_kib
+        || iterations != argon2_policy.iterations
+        || lanes != argon2_policy.lanes
+    {
         return Err(WalletPortableBackupPortError::InvalidPackage);
     }
     let mut salt = [0_u8; SALT_BYTES];
@@ -1351,6 +1372,9 @@ mod tests {
             (CURRENT_CUSTODY_FORMAT_VERSION, CUSTODY_V6_ARGON2_POLICY),
         ];
         for (version, expected) in known_versions {
+            assert!(expected.memory_kib <= MAX_DECLARED_ARGON2_MEMORY_KIB);
+            assert!(expected.iterations <= MAX_DECLARED_ARGON2_ITERATIONS);
+            assert!(expected.lanes <= MAX_DECLARED_ARGON2_LANES);
             assert_eq!(argon2_policy_for_format(version), Some(expected));
             let mut bytes = encode_header(version, expected, &[1; 16], &[2; 24], 16);
             bytes.extend_from_slice(&[0; 16]);
@@ -1372,14 +1396,16 @@ mod tests {
                     ));
                 }
             }
-            for unknown in [0_u16, CURRENT_CUSTODY_FORMAT_VERSION + 1, u16::MAX] {
+            assert_eq!(LATEST_SUPPORTED_FORMAT_VERSION, 6);
+            for (unknown, expected) in [
+                (0_u16, WalletPortableBackupPortError::InvalidPackage),
+                (7_u16, WalletPortableBackupPortError::UnsupportedVersion),
+                (u16::MAX, WalletPortableBackupPortError::UnsupportedVersion),
+            ] {
                 let mut changed = bytes.clone();
                 changed[HEADER_VERSION_OFFSET..HEADER_KDF_OFFSET]
                     .copy_from_slice(&unknown.to_be_bytes());
-                assert!(matches!(
-                    decode_header(&changed),
-                    Err(WalletPortableBackupPortError::InvalidPackage)
-                ));
+                assert!(matches!(decode_header(&changed), Err(error) if error == expected));
             }
         }
     }
@@ -1436,6 +1462,51 @@ mod tests {
             .expect("legacy custody remains readable");
         assert_eq!(opened.root_seed_kind(), WalletRootSeedKind::RawDevelopment);
         assert_eq!(opened.root_seed(), &[7; 32]);
+    }
+
+    #[test]
+    fn frozen_legacy_v1_and_v4_envelopes_keep_literal_policies_and_recover() {
+        for (encoded, version, expected_profile, expected_keys) in [
+            (
+                include_str!("../tests/fixtures/legacy-custody-v1.hex"),
+                1_u16,
+                "profile_legacy",
+                0_usize,
+            ),
+            (
+                include_str!("../tests/fixtures/legacy-custody-v4.hex"),
+                4_u16,
+                "profile_one",
+                1_usize,
+            ),
+        ] {
+            let hex = encoded.split_whitespace().collect::<String>();
+            assert_eq!(hex.len() % 2, 0, "fixture must contain whole bytes");
+            let bytes = hex
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|pair| {
+                    u8::from_str_radix(std::str::from_utf8(pair).expect("UTF-8 hex"), 16)
+                        .expect("hex byte")
+                })
+                .collect();
+            let backup = PortableWalletBackup::parse(bytes).expect("frozen envelope");
+            let header = decode_header(backup.as_bytes()).expect("legacy header");
+            assert_eq!(header.format_version, version);
+            assert_eq!(
+                header.argon2_policy,
+                Argon2Policy {
+                    memory_kib: 19_456,
+                    iterations: 2,
+                    lanes: 1,
+                }
+            );
+            let opened = open_portable_custody(&backup, &secret(), &profile(expected_profile))
+                .expect("frozen legacy envelope remains readable");
+            assert_eq!(opened.root_seed_kind(), WalletRootSeedKind::RawDevelopment);
+            assert_eq!(opened.root_seed(), &[7; 32]);
+            assert_eq!(opened.keys().len(), expected_keys);
+        }
     }
 
     #[test]
@@ -1608,7 +1679,7 @@ mod tests {
     }
 
     #[test]
-    fn future_versions_and_parameter_downgrades_fail_before_authentication() {
+    fn future_versions_are_distinguished_after_structural_header_validation() {
         for offset in [8_usize, 12, 16, 20] {
             let backup = seal_portable_custody(&vault(), &secret(), &IncrementingRandom::new())
                 .expect("vault should encrypt");
@@ -1618,7 +1689,11 @@ mod tests {
             assert_eq!(
                 open_portable_custody(&changed, &secret(), &profile("profile_one"))
                     .expect_err("metadata change must fail"),
-                WalletPortableBackupPortError::InvalidPackage
+                if offset == HEADER_VERSION_OFFSET {
+                    WalletPortableBackupPortError::UnsupportedVersion
+                } else {
+                    WalletPortableBackupPortError::InvalidPackage
+                }
             );
         }
 
@@ -1640,6 +1715,38 @@ mod tests {
                 open_complete_wallet_archive(&changed, &secret(), None)
                     .expect_err("version/parameter mismatch must fail before authentication"),
                 WalletPortableBackupPortError::InvalidPackage
+            );
+        }
+    }
+
+    #[test]
+    fn future_version_parameters_must_be_structurally_bounded_without_derivation() {
+        let mut future = encode_header(
+            CURRENT_CUSTODY_FORMAT_VERSION + 1,
+            Argon2Policy {
+                memory_kib: 128 * 1024,
+                iterations: 4,
+                lanes: 2,
+            },
+            &[1; SALT_BYTES],
+            &[2; NONCE_BYTES],
+            TAG_BYTES as u32,
+        );
+        future.extend_from_slice(&[0; TAG_BYTES]);
+        assert_eq!(
+            decode_header(&future).err(),
+            Some(WalletPortableBackupPortError::UnsupportedVersion)
+        );
+        for (offset, invalid) in [
+            (HEADER_MEMORY_KIB_OFFSET, MAX_DECLARED_ARGON2_MEMORY_KIB + 1),
+            (HEADER_ITERATIONS_OFFSET, MAX_DECLARED_ARGON2_ITERATIONS + 1),
+            (HEADER_LANES_OFFSET, MAX_DECLARED_ARGON2_LANES + 1),
+        ] {
+            let mut malformed = future.clone();
+            malformed[offset..offset + 4].copy_from_slice(&invalid.to_be_bytes());
+            assert_eq!(
+                decode_header(&malformed).err(),
+                Some(WalletPortableBackupPortError::InvalidPackage)
             );
         }
     }

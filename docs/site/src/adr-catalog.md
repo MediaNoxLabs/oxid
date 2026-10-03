@@ -229,6 +229,7 @@ not authorization for production Web UI blocking. The completed issue #42
 audit leaves direct only strict identity parsing, published sync snapshots,
 retained draft/status reads, and non-waiting cancellation signals whose port
 contracts explicitly forbid filesystem, transport, custody, or ledger work.
+<a id="adr-0078"></a>
 ADR-0078 treats the portable everything-file as a higher-value offline target
 than the first custody-only package. New complete-wallet exports use
 `OXIDBAK1` version 3 with Argon2id at 65,536 KiB/t=3/p=1. The decoder maps

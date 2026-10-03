@@ -4645,7 +4645,7 @@ fn FreshInstallRecovery(on_recovered: EventHandler<WalletProfileView>) -> Elemen
                                                 confirmed: true,
                                             },
                                         })
-                                        .map_err(|error| error.to_string())?;
+                                        .map_err(|error| portable_backup_recovery_error_message(&error))?;
                                     let active_profile = services
                                         .get_active_wallet_profile
                                         .execute()
@@ -4692,6 +4692,21 @@ fn complete_recovery_message(summary: &CompleteWalletRecoverySummary) -> String 
         "Recovered {} protected key(s), {} DID record(s), and {} credential(s).",
         summary.restored_key_count, summary.restored_did_count, summary.restored_credential_count,
     )
+}
+
+fn portable_backup_recovery_error_message(
+    error: &oxid_wallet_application::WalletPortableBackupUseCaseError,
+) -> String {
+    if matches!(
+        error,
+        oxid_wallet_application::WalletPortableBackupUseCaseError::Operation(
+            oxid_wallet_application::WalletPortableBackupPortError::UnsupportedVersion
+        )
+    ) {
+        "This backup appears to use a newer format. Update Oxid and try again. If it still fails, check the file.".to_owned()
+    } else {
+        error.to_string()
+    }
 }
 
 #[component]
@@ -9900,7 +9915,7 @@ fn SettingsPage(
                                                                     confirmed: true,
                                                                 },
                                                             })
-                                                            .map_err(|error| error.to_string())?;
+                                                            .map_err(|error| portable_backup_recovery_error_message(&error))?;
                                                         let status = services
                                                             .get_wallet_security_status
                                                             .execute(WalletProfileSecurityCommand {
@@ -11710,6 +11725,30 @@ mod tests {
             "Recovered 3 protected key(s), 2 DID record(s), and 1 credential(s)."
         );
         assert!(!complete_recovery_message(&summary).contains("profile_test"));
+    }
+
+    #[test]
+    fn complete_recovery_future_version_guidance_is_actionable_and_payload_free() {
+        let message = portable_backup_recovery_error_message(
+            &oxid_wallet_application::WalletPortableBackupUseCaseError::Operation(
+                oxid_wallet_application::WalletPortableBackupPortError::UnsupportedVersion,
+            ),
+        );
+        assert_eq!(
+            message,
+            "This backup appears to use a newer format. Update Oxid and try again. If it still fails, check the file."
+        );
+    }
+
+    #[test]
+    fn complete_recovery_other_errors_keep_their_existing_message() {
+        let error = oxid_wallet_application::WalletPortableBackupUseCaseError::Operation(
+            oxid_wallet_application::WalletPortableBackupPortError::InvalidPackage,
+        );
+        assert_eq!(
+            portable_backup_recovery_error_message(&error),
+            error.to_string()
+        );
     }
 
     #[test]

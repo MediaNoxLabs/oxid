@@ -11,6 +11,13 @@ source "$ROOT/scripts/e2e/android-avd-process-ownership.sh"
 
 fail() {
   printf 'android-avd-process-ownership-contract: FAIL phase=%s\n' "$1" >&2
+  if [ "$1" = occupied-project-phase ] && [ -f "${temporary:-}/occupied-project.err" ]; then
+    cat "${temporary}/occupied-project.err" >&2
+    if [ -f "${temporary}/docker-occupied-project.log" ]; then
+      printf 'fake Docker calls:\n' >&2
+      cat "${temporary}/docker-occupied-project.log" >&2
+    fi
+  fi
   exit 1
 }
 
@@ -157,7 +164,7 @@ chmod 700 "$temporary/owner.sh"
 timeout -k 1s 30s "$temporary/owner.sh" "$temporary/owner.pid" \
   "$temporary/grandchild.sh" "$temporary/grandchild.pid" "$temporary/term.seen" &
 supervisor_pid=$!
-for ((_attempt = 0; _attempt < 50; _attempt++)); do
+for ((_attempt = 0; _attempt < 200; _attempt++)); do
   [ -s "$temporary/grandchild.pid" ] && break
   timeout -k 1s 1s sleep 0.05
 done
@@ -219,13 +226,15 @@ fi
 
 copy_fixture emulator.mjs "$temporary/emulator.mjs"
 OXID_FAKE_EMULATOR_TERM="$temporary/emulator-term.seen" \
+  OXID_FAKE_EMULATOR_READY="$temporary/emulator-ready.seen" \
   node "$temporary/emulator.mjs" -avd exact_avd -read-only -no-snapshot -no-snapshot-save -port 5562 &
 fake_emulator_pid=$!
 fake_emulator_executable=node
-for ((_attempt = 0; _attempt < 50; _attempt++)); do
-  oxid_emulator_job_owned "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 && break
+for ((_attempt = 0; _attempt < 200; _attempt++)); do
+  [ -f "$temporary/emulator-ready.seen" ] && break
   timeout -k 1s 1s sleep 0.05
 done
+[ -f "$temporary/emulator-ready.seen" ] || fail direct-emulator-ready
 oxid_emulator_job_owned "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 \
   || fail direct-emulator-owned
 oxid_terminate_emulator_job "$fake_emulator_pid" "$$" "$fake_emulator_executable" exact_avd 5562 \
@@ -247,12 +256,15 @@ run_stack_fixture() {
   rm -rf -- "$fixture_root/target"
   : >"$temporary/docker-$name.log"
   rm -f -- "$temporary/docker-$name.count"
+  # A 200 ms Docker query budget can expire while the fake shell starts on a
+  # busy host, changing the expected refusal into an unrelated query error.
+  # The timeout fixture still exercises a bounded query with a 2 s budget.
   if OXID_FAKE_DOCKER_LOG="$temporary/docker-$name.log" \
     OXID_FAKE_DOCKER_COUNT="$temporary/docker-$name.count" \
     OXID_FAKE_DOCKER_INITIAL="$initial" OXID_FAKE_DOCKER_CLEANUP="$cleanup_behavior" \
     OXID_FAKE_STACK_MUTATION="$mutation" OXID_FAKE_STACK_ROOT="$fixture_root" \
-    OXID_STACK_DOCKER_QUERY_TIMEOUT_SECONDS=0.2 PATH="$temporary/fake-bin:$PATH" \
-    timeout -k 1s 8s "$fixture_root/scripts/e2e/portal-virtual-mobile-stack.sh" \
+    OXID_STACK_DOCKER_QUERY_TIMEOUT_SECONDS=2 PATH="$temporary/fake-bin:$PATH" \
+    timeout -k 1s 20s "$fixture_root/scripts/e2e/portal-virtual-mobile-stack.sh" \
     >"$temporary/$name.out" 2>"$temporary/$name.err"; then
     fail "$name-result"
   fi

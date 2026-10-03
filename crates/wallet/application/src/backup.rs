@@ -396,6 +396,7 @@ pub enum WalletPortableBackupPortError {
     Locked,
     AuthorizationDenied,
     InvalidPackage,
+    UnsupportedVersion,
     AuthenticationFailed,
     WrongProfile,
     Conflict,
@@ -411,6 +412,9 @@ impl fmt::Display for WalletPortableBackupPortError {
             Self::Locked => "wallet is locked",
             Self::AuthorizationDenied => "wallet backup authorization was denied",
             Self::InvalidPackage => "portable wallet backup is invalid",
+            Self::UnsupportedVersion => {
+                "portable wallet backup was created by a newer Oxid version"
+            }
             Self::AuthenticationFailed => "portable wallet backup authentication failed",
             Self::WrongProfile => "portable wallet backup belongs to another profile",
             Self::Conflict => "portable wallet recovery conflicts with existing state",
@@ -822,6 +826,17 @@ mod tests {
         assert_eq!(
             format!("{backup:?}"),
             "PortableWalletBackup { encrypted_bytes: 20 }"
+        );
+    }
+
+    #[test]
+    fn unsupported_backup_version_is_a_safe_actionable_application_outcome() {
+        let error = WalletPortableBackupUseCaseError::Operation(
+            WalletPortableBackupPortError::UnsupportedVersion,
+        );
+        assert_eq!(
+            error.to_string(),
+            "portable wallet backup was created by a newer Oxid version"
         );
     }
 
