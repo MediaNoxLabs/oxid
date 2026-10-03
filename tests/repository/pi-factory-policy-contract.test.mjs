@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -196,6 +196,32 @@ test("pi-subagents compiled capability verifier reports missing artifacts and ca
     verifyPiSubagentsPackage(missingCapability),
     /subagent-wait\.js lacks required capability attentionRunsForSession/u,
   );
+});
+
+test("pi-subagents verifier reports a stale pin before missing compiled artifacts", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-subagents-stale-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writePiSubagentsFixture(root, {
+    version: "0.67.0",
+    omit: "src/runs/background/auto-drain.js",
+  });
+  await assert.rejects(
+    verifyPiSubagentsPackage(root),
+    /unexpected pi-subagents package pi-subagents@0\.67\.0; expected pi-subagents@0\.70\.0/u,
+  );
+});
+
+test("pi-subagents verifier executes through its supported symlinked path", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-subagents-symlink-"));
+  const link = path.join(root, "verify-pi-subagents-package.mjs");
+  const packageRoot = path.join(root, "package");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writePiSubagentsFixture(packageRoot);
+  await symlink(path.join(repoRoot, "scripts", "factory", "verify-pi-subagents-package.mjs"), link);
+
+  const result = spawnSync(process.execPath, [link, packageRoot], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /verified pi-subagents@0\.70\.0 compiled capability surface/u);
 });
 
 test("Pi command discovery streams beyond pipe capacity and stays explicitly bounded", async () => {
