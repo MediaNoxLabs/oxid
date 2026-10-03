@@ -4,12 +4,21 @@
 set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
+umask 077
+lane_lock="$root/target/mobile-visual-accessibility/ios/.maestro-lane.lock"
+
+if [ "${1:-}" = "--cleanup-stale-lane" ]; then
+  [ "$#" -eq 2 ] || { echo "usage: $0 --cleanup-stale-lane <owner-token>" >&2; exit 2; }
+  node scripts/lib/maestro-ios-lane.mjs cleanup --lock "$lane_lock" --token "$2"
+  printf 'factory-metrics phase=maestro-ios-lane result=cleaned\n'
+  exit 0
+fi
+
 : "${OXID_IOS_DEVICE:?set OXID_IOS_DEVICE to the receipt-owned simulator UDID}"
 if ! [[ "$OXID_IOS_DEVICE" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]; then
   echo "OXID_IOS_DEVICE must be an explicit simulator UDID" >&2
   exit 2
 fi
-umask 077
 
 usage() {
   echo "usage: $0 --composition demo|dev --flow <inventory-id>" >&2
@@ -40,18 +49,32 @@ debug_root="$artifact_root/debug"
 mkdir -p "$debug_root"
 
 # One global local simulator lane prevents concurrent flows from reusing a receipt.
-lane_lock="$root/target/mobile-visual-accessibility/ios/.maestro-lane.lock"
-if ! mkdir "$lane_lock" 2>/dev/null; then
-  echo "another Maestro iOS simulator lane is active" >&2
+set +e
+lane_result="$(node scripts/lib/maestro-ios-lane.mjs acquire \
+  --lock "$lane_lock" --pid "$$" --host "$(hostname)" \
+  --started-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --worktree "$root" --flow "$flow_id")"
+lane_status=$?
+set -e
+if [ "$lane_status" -ne 0 ]; then
+  outcome="$(printf '%s' "$lane_result" | jq -r '.outcome // "failed"')"
+  token="$(printf '%s' "$lane_result" | jq -r '.owner.token // empty')"
+  printf 'factory-metrics phase=maestro-ios-lane result=%s\n' "$outcome" >&2
+  echo "Maestro iOS lane is unavailable: $lane_result" >&2
+  if [ -n "$token" ]; then
+    echo "after verifying the owner, clean this exact lease with: $0 --cleanup-stale-lane $token" >&2
+  fi
   exit 75
 fi
+lane_token="$(printf '%s' "$lane_result" | jq -r '.owner.token')"
+lane_outcome="$(printf '%s' "$lane_result" | jq -r '.outcome')"
+printf 'factory-metrics phase=maestro-ios-lane result=%s\n' "$lane_outcome"
 cleanup() {
   local status=$?
   trap - EXIT
   if [ "$status" -ne 0 ]; then
     rm -rf -- "$artifact_root"
   fi
-  rmdir -- "$lane_lock" 2>/dev/null || true
+  node scripts/lib/maestro-ios-lane.mjs release --lock "$lane_lock" --token "$lane_token" || true
   exit "$status"
 }
 trap cleanup EXIT
