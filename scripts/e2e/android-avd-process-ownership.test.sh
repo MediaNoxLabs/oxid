@@ -13,6 +13,10 @@ fail() {
   printf 'android-avd-process-ownership-contract: FAIL phase=%s\n' "$1" >&2
   if [ "$1" = occupied-project-phase ] && [ -f "${temporary:-}/occupied-project.err" ]; then
     cat "${temporary}/occupied-project.err" >&2
+    if [ -f "${temporary}/docker-occupied-project.log" ]; then
+      printf 'fake Docker calls:\n' >&2
+      cat "${temporary}/docker-occupied-project.log" >&2
+    fi
   fi
   exit 1
 }
