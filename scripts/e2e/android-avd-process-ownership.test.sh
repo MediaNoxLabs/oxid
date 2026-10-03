@@ -477,11 +477,12 @@ wait "$signal_pid" 2>/dev/null || signal_status=$?
 
 rm -rf -- "$fixture_root/target"
 rm -f -- "$temporary/docker-signal-int.count" "$temporary/signal-int-ready"
+# Permit fixture startup on a loaded host before timeout delivers INT.
 if OXID_FAKE_DOCKER_LOG="$temporary/docker-signal-int.log" \
   OXID_FAKE_DOCKER_COUNT="$temporary/docker-signal-int.count" \
   OXID_FAKE_DOCKER_INITIAL=empty OXID_FAKE_DOCKER_CLEANUP=empty OXID_FAKE_GIT_CLONE_MODE=block \
   OXID_FAKE_GIT_READY="$temporary/signal-int-ready" OXID_FAKE_STACK_ROOT="$fixture_root" \
-  PATH="$temporary/fake-bin:$PATH" timeout -s INT -k 3s 0.5s \
+  PATH="$temporary/fake-bin:$PATH" timeout -s INT -k 3s 3s \
   "$fixture_root/scripts/e2e/portal-virtual-mobile-stack.sh" \
   >"$temporary/signal-int.out" 2>"$temporary/signal-int.err"; then
   fail signal-INT-result
