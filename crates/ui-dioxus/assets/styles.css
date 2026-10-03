@@ -1203,9 +1203,19 @@ textarea:focus-visible {
 }
 
 .primary-action:hover:not(:disabled),
-.primary-button:hover:not(:disabled) {
+.primary-button:hover:not(:disabled),
+.secondary-action:hover:not(:disabled),
+.secondary-button:hover:not(:disabled) {
   filter: brightness(1.08);
   transform: translateY(-1px);
+}
+
+.primary-action:active:not(:disabled),
+.primary-button:active:not(:disabled),
+.secondary-action:active:not(:disabled),
+.secondary-button:active:not(:disabled) {
+  filter: brightness(0.96);
+  transform: translateY(0);
 }
 
 .primary-action:disabled,
@@ -1224,6 +1234,14 @@ textarea:focus-visible {
   border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   color: var(--accent);
+}
+
+.secondary-action:disabled,
+.secondary-button:disabled {
+  border-color: var(--line);
+  background: var(--surface-4);
+  color: var(--text-muted);
+  cursor: not-allowed;
 }
 
 .utility-icon-button {
@@ -1677,6 +1695,13 @@ textarea:focus-visible {
   display: grid;
   gap: var(--space-3);
   margin-top: var(--space-4);
+}
+
+.did-inventory-actions > .primary-action,
+.did-inventory-actions > .secondary-action {
+  width: 100%;
+  margin-top: 0;
+  padding: 0 var(--space-4);
 }
 
 .did-detail-hero,
