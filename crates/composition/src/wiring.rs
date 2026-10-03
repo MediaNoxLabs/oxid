@@ -222,12 +222,12 @@ use oxid_wallet_application::UnavailableWalletDustRegistrationPort;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_wallet_application::WalletDustRegistrationPort;
 use oxid_wallet_application::{
-    AuthorizeDevelopmentWalletDustRegistrationUseCase, AuthorizeWalletDustRegistrationUseCase,
-    AuthorizeWalletTransferUseCase, CancelSelectedWalletRealmSyncUseCase,
-    CancelWalletDustRegistrationSubmissionUseCase, CancelWalletDustSyncUseCase,
-    CancelWalletShieldedSyncUseCase, CancelWalletTransferSubmissionUseCase,
-    CompleteWalletBackupService, CreateWalletProfileService, DeleteWalletKeyUseCase,
-    DeriveWalletAccountUseCase, ExportCompleteWalletBackupUseCase,
+    AuthorizeDevelopmentWalletDustRegistrationUseCase, AuthorizeDevelopmentWalletTransferUseCase,
+    AuthorizeWalletDustRegistrationUseCase, AuthorizeWalletTransferUseCase,
+    CancelSelectedWalletRealmSyncUseCase, CancelWalletDustRegistrationSubmissionUseCase,
+    CancelWalletDustSyncUseCase, CancelWalletShieldedSyncUseCase,
+    CancelWalletTransferSubmissionUseCase, CompleteWalletBackupService, CreateWalletProfileService,
+    DeleteWalletKeyUseCase, DeriveWalletAccountUseCase, ExportCompleteWalletBackupUseCase,
     ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase, GetActiveWalletProfileService,
     GetSelectedWalletRealmSyncUseCase, GetWalletAccountUseCase, GetWalletBackupReceiptUseCase,
     GetWalletDustRegistrationStatusUseCase, GetWalletDustRegistrationUseCase,
@@ -245,19 +245,19 @@ use oxid_wallet_application::{
     SelectWalletNetworkUseCase, SelectWalletProfileService, SelectedWalletRealmRuntime,
     SelectedWalletRealmSyncService, SignWalletDataUseCase, StartWalletDustSyncUseCase,
     StartWalletShieldedSyncUseCase, SubmitDevelopmentWalletDustRegistrationUseCase,
-    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferUseCase,
-    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
-    WalletAccountDerivationPort, WalletAccountDerivationService, WalletAccountReadPort,
-    WalletAccountService, WalletBackupReceiptRepository, WalletBackupReceiptService,
-    WalletDustRegistrationRecoveryStoreProvider, WalletDustRegistrationService, WalletDustSyncPort,
-    WalletDustSyncService, WalletJubjubChallengeSigningPort, WalletKeyOperationPort,
-    WalletKeyService, WalletNetworkPort, WalletNetworkSelectionObserver, WalletNetworkService,
-    WalletOnboardingService, WalletPortableBackupPort, WalletPortableBackupService,
-    WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
-    WalletProtectionService, WalletRealmFacetState, WalletRealmLifecycleService,
-    WalletRealmReconciliationState, WalletRootRecoveryPort, WalletRootRecoveryService,
-    WalletShieldedSyncPort, WalletShieldedSyncService, WalletTransactionPort,
-    WalletTransactionService,
+    SubmitDevelopmentWalletTransferUseCase, SubmitWalletDustRegistrationUseCase,
+    SubmitWalletTransferUseCase, SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase,
+    UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
+    WalletAccountReadPort, WalletAccountService, WalletBackupReceiptRepository,
+    WalletBackupReceiptService, WalletDustRegistrationRecoveryStoreProvider,
+    WalletDustRegistrationService, WalletDustSyncPort, WalletDustSyncService,
+    WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
+    WalletNetworkSelectionObserver, WalletNetworkService, WalletOnboardingService,
+    WalletPortableBackupPort, WalletPortableBackupService, WalletProfileAssociationRepository,
+    WalletProfileRepository, WalletProtectionPort, WalletProtectionService, WalletRealmFacetState,
+    WalletRealmLifecycleService, WalletRealmReconciliationState, WalletRootRecoveryPort,
+    WalletRootRecoveryService, WalletShieldedSyncPort, WalletShieldedSyncService,
+    WalletTransactionPort, WalletTransactionService,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1332,6 +1332,10 @@ where
     let prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase> = transactions.clone();
     let authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase> = transactions.clone();
     let submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase> = transactions.clone();
+    let authorize_development_wallet_transfer: Arc<dyn AuthorizeDevelopmentWalletTransferUseCase> =
+        transactions.clone();
+    let submit_development_wallet_transfer: Arc<dyn SubmitDevelopmentWalletTransferUseCase> =
+        transactions.clone();
     let get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase> = transactions.clone();
     let get_wallet_transfer_submission_status: Arc<dyn GetWalletTransferSubmissionStatusUseCase> =
         transactions.clone();
@@ -1489,6 +1493,8 @@ where
         prepare_wallet_transfer,
         authorize_wallet_transfer,
         submit_wallet_transfer,
+        authorize_development_wallet_transfer,
+        submit_development_wallet_transfer,
         get_wallet_transfer_draft,
         get_wallet_transfer_submission_status,
         cancel_wallet_transfer_submission,
