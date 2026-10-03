@@ -196,7 +196,9 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
     const radius = members.length > 0
       ? Math.min(...members.map((finding) => RADIUS[finding.radius] ?? 9))
       : 9;
-    return [SEVERITY[effectiveSeverity(entry)] ?? 9, radius, COST[entry.cost] ?? 9];
+    const expiry = members.some((finding) => finding.expiry) ? 0 : 1;
+    const criterion = members.map((finding) => finding.criterion).sort()[0] ?? "~";
+    return [SEVERITY[effectiveSeverity(entry)] ?? 9, radius, COST[entry.cost] ?? 9, expiry, criterion];
   };
   const nonResidual = slate.filter((entry) => entry.residual !== true);
   const ranks = nonResidual.map((entry) => entry.rank);
@@ -216,12 +218,11 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
     const previous = ranked[index - 1];
     const current = ranked[index];
     const [pk, ck] = [rankKey(previous), rankKey(current)];
-    // A lower key must not sort after a higher one. An expiry on the later
-    // entry cannot justify it either: ranking rule 4 only breaks ties that
-    // rules 1-3 left equal.
+    // A lower key must not sort after a higher one. Each later key only
+    // breaks ties left by every earlier ranking rule.
     const comparison = pk.findIndex((value, position) => value !== ck[position]);
     if (comparison !== -1 && pk[comparison] > ck[comparison]) {
-      const axis = ["severity", "blast radius", "cost"][comparison];
+      const axis = ["severity", "blast radius", "cost", "expiry", "criterion id"][comparison];
       complain(
         `slate rank ${previous.rank} sorts above rank ${current.rank} but loses on ${axis}`
         + ` (${previous.severity}/${previous.cost} vs ${current.severity}/${current.cost}), which inverts the rubric`,
@@ -234,10 +235,19 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
   if (report.anchor?.mode === "delta" && !prior) {
     complain("delta report requires a prior report so every prior finding can be classified");
   }
+  const delta = report.delta ?? [];
+  const classifications = new Map();
+  for (const entry of delta) {
+    const count = (classifications.get(entry.priorId) ?? 0) + 1;
+    classifications.set(entry.priorId, count);
+    if (count === 2) complain(`delta prior finding ${entry.priorId} has multiple classifications`);
+    if (["still-present", "regressed"].includes(entry.classification) && !ids.has(entry.currentId)) {
+      complain(`delta ${entry.priorId} references unknown current finding "${entry.currentId}"`);
+    }
+  }
   if (prior) {
-    const classified = new Set((report.delta ?? []).map((entry) => entry.priorId));
     for (const finding of prior.findings ?? []) {
-      if (!classified.has(finding.id)) {
+      if (!classifications.has(finding.id)) {
         complain(`delta omits prior finding ${finding.id}; every prior finding must be classified`);
       }
     }

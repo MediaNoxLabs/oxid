@@ -458,7 +458,42 @@ test("registered linked worktrees use one fail-closed Pi package store", async (
   assert.match(recovered.quarantinedStore, /quarantine\/issue-150\.npm-123456-/u);
   assert.equal(await readFile(path.join(recovered.quarantinedStore, "owner-data"), "utf8"), "recover me\n");
   assert.equal((await stat(recovered.quarantinedStore)).mtimeMs, 123456, "quarantine starts a fresh recovery window");
+
   await rm(path.join(fixture.worktree, ".pi", "npm"));
+  await mkdir(path.join(fixture.worktree, ".pi", "npm"));
+  await writeFile(path.join(fixture.worktree, ".pi", "npm", "owner-data"), "recover me too\n");
+  const state = path.join(fixture.root, ".git", "oxid-factory", "pi-package-closures-v1");
+  const oldStore = new Date(1);
+  await utimes(path.join(fixture.worktree, ".pi", "npm"), oldStore, oldStore);
+  const recoveryTime = 987654;
+  let cleanupOverlappedPublication = false;
+  const raceSafe = await ensureSharedPiPackageStore({
+    cwd: fixture.worktree,
+    now: () => recoveryTime,
+    beforeQuarantinePublish: async () => {
+      cleanupOverlappedPublication = true;
+      const cleanup = await cleanupPiPackageClosures({ cwd: fixture.root, now: () => recoveryTime, olderThanMs: 1 });
+      assert.equal(cleanup.reclaimedQuarantine.some((name) => name.startsWith(`issue-150.npm-${recoveryTime}-`)), false, "cleanup cannot observe the store before its recovery timestamp");
+    },
+  });
+  assert.equal(await readFile(path.join(raceSafe.quarantinedStore, "owner-data"), "utf8"), "recover me too\n");
+  assert.equal(cleanupOverlappedPublication, true, "fixture overlapped cleanup with quarantine publication");
+  assert.ok(Math.abs((await stat(raceSafe.quarantinedStore)).mtimeMs - recoveryTime) < 1, "quarantine retains its recovery timestamp");
+  assert.equal((await readdir(path.join(state, "quarantine"))).includes(path.basename(raceSafe.quarantinedStore)), true);
+
+  await rm(path.join(fixture.worktree, ".pi", "npm"));
+  await mkdir(path.join(fixture.worktree, ".pi", "npm"));
+  await writeFile(path.join(fixture.worktree, ".pi", "npm", "owner-data"), "retain me\n");
+  await utimes(path.join(fixture.worktree, ".pi", "npm"), oldStore, oldStore);
+  await assert.rejects(ensureSharedPiPackageStore({
+    cwd: fixture.worktree,
+    now: () => recoveryTime + 1,
+    setTimes: async () => { throw new Error("simulated timestamp failure"); },
+  }), /simulated timestamp failure/);
+  assert.equal(await readFile(path.join(fixture.worktree, ".pi", "npm", "owner-data"), "utf8"), "retain me\n", "timestamp failure leaves owner data in place");
+  assert.equal((await stat(path.join(fixture.worktree, ".pi", "npm"))).mtimeMs, 1, "timestamp failure rolls back the timestamp mutation");
+
+  await rm(path.join(fixture.worktree, ".pi", "npm"), { recursive: true });
   await writeFile(path.join(fixture.worktree, ".pi", "npm"), "owner data\n");
   await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /must be absent, a real primary directory, or a managed closure symlink/);
   assert.equal(await readFile(path.join(fixture.worktree, ".pi", "npm"), "utf8"), "owner data\n");
