@@ -27,9 +27,10 @@ name: activity fixture history
 - tapOn: "Close standalone demo setup"
 - tapOn: "Activity"
 - assertVisible: "Activity"
-- extendedWaitUntil:
-    visible: "Sent"
-    timeout: 60000
+- scrollUntilVisible:
+    element:
+      text: "Sent"
+    direction: DOWN
 - scrollUntilVisible:
     element:
       text: "Received"
