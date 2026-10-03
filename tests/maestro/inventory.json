@@ -16,6 +16,7 @@
     {"id":"documents-empty-state","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/documents-empty-state.yaml","coverage":"Documents reachability and empty state"},
     {"id":"did-inventory-empty-state","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/did-inventory-empty-state.yaml","coverage":"DID inventory reachability and empty state"},
     {"id":"did-inventory-copy","composition":"demo","authority":"maestro","platforms":["ios"],"flow":"flows/did-inventory-copy.yaml","coverage":"DID creation, inventory detail, and exact public DID copy feedback"},
+    {"id":"credential-offer-refusal","composition":"demo","authority":"maestro","platforms":["ios"],"flow":"flows/credential-offer-refusal.yaml","coverage":"credential-offer review consent boundary and refusal"},
     {"id":"activity-fixture-history","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/activity-fixture-history.yaml","coverage":"Activity and fixture transaction detail"},
     {"id":"passport-vault-entry","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/passport-vault-entry.yaml","coverage":"Passport Vault review entry"},
     {"id":"settings-security-backup-entry","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/settings-security-backup-entry.yaml","coverage":"Settings, security, and backup entry"},
