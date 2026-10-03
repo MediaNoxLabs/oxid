@@ -1372,6 +1372,9 @@ mod tests {
             (CURRENT_CUSTODY_FORMAT_VERSION, CUSTODY_V6_ARGON2_POLICY),
         ];
         for (version, expected) in known_versions {
+            assert!(expected.memory_kib <= MAX_DECLARED_ARGON2_MEMORY_KIB);
+            assert!(expected.iterations <= MAX_DECLARED_ARGON2_ITERATIONS);
+            assert!(expected.lanes <= MAX_DECLARED_ARGON2_LANES);
             assert_eq!(argon2_policy_for_format(version), Some(expected));
             let mut bytes = encode_header(version, expected, &[1; 16], &[2; 24], 16);
             bytes.extend_from_slice(&[0; 16]);

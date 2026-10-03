@@ -247,7 +247,7 @@ fi
 # The portable-backup adapter alone interprets envelope versions. Consumers
 # receive its typed outcome instead of maintaining another accepted-version
 # list or inspecting the envelope magic.
-backup_version_authorities="$(rg -l 'OXIDBAK1|accepted_format_versions|accepted_backup_versions|argon2_policy_for_format|CURRENT_CUSTODY_FORMAT_VERSION|LEGACY_CUSTODY_FORMAT_VERSION' apps crates --glob '*.rs' | sort || true)"
+backup_version_authorities="$(rg -l 'OXIDBAK1|accepted_format_versions|accepted_backup_versions|argon2_policy_for_format|KDF_ARGON2ID|AEAD_XCHACHA20_POLY1305|CURRENT_CUSTODY_FORMAT_VERSION|LEGACY_CUSTODY_FORMAT_VERSION|COMPLETE_WALLET_FORMAT_VERSION' apps crates --glob '*.rs' | sort || true)"
 if [ "$backup_version_authorities" != 'crates/adapters/backup-portable/src/lib.rs' ]; then
   echo "Portable backup version policy must remain in oxid-adapter-backup-portable." >&2
   echo "$backup_version_authorities" >&2

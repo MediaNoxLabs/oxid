@@ -1235,7 +1235,12 @@ mod tests {
     };
     use oxid_foundation::UnixTimestampMillis;
     use oxid_platform_ports::PlatformError;
-    use oxid_wallet_application::WalletHdPathComponent;
+    use oxid_wallet_application::{
+        RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY, RECOVER_PORTABLE_WALLET_BACKUP_TITLE,
+        RecoverPortableWalletBackupCommand, RecoverPortableWalletBackupUseCase,
+        SensitiveOperationConfirmation, WalletHdPathComponent, WalletPortableBackupService,
+        WalletPortableBackupUseCaseError,
+    };
     use oxid_wallet_domain::{WalletKeyLabel, WalletKeyPurpose};
     use p256::ecdsa::{Signature as P256Signature, VerifyingKey as P256VerifyingKey};
 
@@ -1389,6 +1394,41 @@ mod tests {
         assert_eq!(
             destination.recover_portable_backup(&profile_id(), &backup, &secret),
             Err(WalletPortableBackupPortError::AlreadyInitialized)
+        );
+    }
+
+    #[test]
+    fn future_backup_version_reaches_the_recovery_application_without_security_error_mapping() {
+        let source = adapter();
+        source.initialize(&profile_id()).expect("initialize source");
+        let secret =
+            WalletRecoverySecret::parse("correct horse battery staple").expect("recovery secret");
+        let backup = source
+            .export_portable_backup(&profile_id(), &secret)
+            .expect("export source");
+        let mut bytes = backup.as_bytes().to_vec();
+        bytes[8..10].copy_from_slice(&7_u16.to_be_bytes());
+        let future = PortableWalletBackup::parse(bytes).expect("bounded future envelope");
+        let service = WalletPortableBackupService::new(Arc::new(adapter()));
+        let error = RecoverPortableWalletBackupUseCase::execute(
+            &service,
+            RecoverPortableWalletBackupCommand {
+                profile_id: profile_id().as_str().to_owned(),
+                backup: future,
+                recovery_secret: secret,
+                confirmation: SensitiveOperationConfirmation {
+                    title: RECOVER_PORTABLE_WALLET_BACKUP_TITLE.to_owned(),
+                    summary: RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY.to_owned(),
+                    confirmed: true,
+                },
+            },
+        )
+        .expect_err("future envelope needs a newer build");
+        assert_eq!(
+            error,
+            WalletPortableBackupUseCaseError::Operation(
+                WalletPortableBackupPortError::UnsupportedVersion
+            )
         );
     }
 
