@@ -137,7 +137,7 @@ async function runSynthetic(t, overrides = {}) {
 test("the policy is closed and classifies every workspace package exactly once", async () => {
   const policy = await loadPolicy();
   const packages = await discoverWorkspacePackages(repoRoot);
-  assert.equal(packages.length, 45);
+  assert.equal(packages.length, 46);
   assert.doesNotThrow(() => validatePolicy(policy, packages));
   assert.deepEqual(policy.classifications.plainTestExclusions.map(({ package: name }) => name), ["oxid-app"]);
   assert.deepEqual(policy.classifications.plainTestExclusions[0].command, ["cargo", "test", "-p", "oxid-app"]);

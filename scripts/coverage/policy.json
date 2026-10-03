@@ -123,6 +123,7 @@
       "oxid-adapter-siopv2",
       "oxid-adapter-midnight",
       "oxid-adapter-passport-vault",
+      "oxid-adapter-diagnostics-encrypted",
       "oxid-adapter-store-atomic",
       "oxid-adapter-storage-json",
       "oxid-adapter-storage-credential-json",
