@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::sync::{
-    Arc, Mutex,
+    Arc, Condvar, Mutex,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
@@ -365,6 +365,48 @@ impl WalletDustRegistrationRecoveryStore for UnavailableRecoveryStore {
 
 struct IntegrityRecoveryStore {
     clear_calls: Arc<AtomicUsize>,
+}
+
+#[derive(Default)]
+struct BlockingRecoveryStore {
+    released: Mutex<bool>,
+    release_changed: Condvar,
+    record: Mutex<Option<WalletDustRegistrationRecoveryRecord>>,
+}
+
+impl BlockingRecoveryStore {
+    fn release(&self) {
+        *self.released.lock().unwrap() = true;
+        self.release_changed.notify_all();
+    }
+}
+
+impl WalletDustRegistrationRecoveryStore for BlockingRecoveryStore {
+    fn save(
+        &self,
+        record: WalletDustRegistrationRecoveryRecord,
+    ) -> Result<(), WalletDustRegistrationRecoveryStoreError> {
+        let mut released = self.released.lock().unwrap();
+        while !*released {
+            released = self.release_changed.wait(released).unwrap();
+        }
+        *self.record.lock().unwrap() = Some(record);
+        Ok(())
+    }
+
+    fn load(
+        &self,
+    ) -> Result<
+        Option<WalletDustRegistrationRecoveryRecord>,
+        WalletDustRegistrationRecoveryStoreError,
+    > {
+        Ok(self.record.lock().unwrap().clone())
+    }
+
+    fn clear(&self) -> Result<(), WalletDustRegistrationRecoveryStoreError> {
+        *self.record.lock().unwrap() = None;
+        Ok(())
+    }
 }
 
 impl WalletDustRegistrationRecoveryStore for IntegrityRecoveryStore {
@@ -913,6 +955,181 @@ fn unavailable_recovery_store_keeps_wallet_available_but_blocks_broadcast() {
             .count(),
         0
     );
+}
+
+#[test]
+fn blocked_recovery_save_does_not_block_projection_refresh() {
+    let fake = Arc::new(FakeServices::new());
+    let store = Arc::new(BlockingRecoveryStore::default());
+    let capability = capability_with_store(&fake, store.clone());
+    let (result_sender, result_receiver) = std::sync::mpsc::channel();
+
+    std::thread::spawn(move || {
+        result_sender
+            .send(block_on(capability.refresh("profile_test".to_owned())))
+            .unwrap();
+    });
+
+    let result = result_receiver.recv_timeout(Duration::from_secs(1));
+    store.release();
+    assert_eq!(
+        result
+            .expect("projection refresh must not wait for recovery I/O")
+            .unwrap()
+            .state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::AwaitingAuthorization
+    );
+}
+
+#[test]
+fn blocked_recovery_save_holds_broadcast_at_the_durability_barrier() {
+    let fake = Arc::new(FakeServices::new());
+    let store = Arc::new(BlockingRecoveryStore::default());
+    let capability = capability_with_store(&fake, store.clone());
+    block_on(capability.refresh("profile_test".to_owned())).unwrap();
+    let (result_sender, result_receiver) = std::sync::mpsc::channel();
+
+    std::thread::spawn(move || {
+        result_sender
+            .send(block_on(capability.authorize(confirmation(true))))
+            .unwrap();
+    });
+
+    std::thread::sleep(Duration::from_millis(25));
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "submit")
+            .count(),
+        0
+    );
+    assert!(result_receiver.try_recv().is_err());
+    store.release();
+    assert_eq!(
+        result_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("authorization must resume after recovery persistence")
+            .unwrap()
+            .state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Ready
+    );
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "submit")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn later_projection_cannot_replace_the_submission_checkpoint_before_verification() {
+    let fake = Arc::new(FakeServices::new());
+    let capability = capability(&fake);
+    let projection = block_on(capability.refresh("profile_test".to_owned())).unwrap();
+    let mut submitting = WalletDustRegistrationRecoveryRecord::from_projection(&projection)
+        .expect("prepared projection has a recovery record");
+    let later = submitting.clone();
+    submitting.state = oxid_wallet_application::WalletDustRegistrationSettlementState::Submitting;
+    submitting
+        .registration
+        .as_mut()
+        .expect("prepared record retains its registration")
+        .authorization_phase =
+        oxid_wallet_application::WalletDustRegistrationSettlementAuthorizationPhase::Submitting;
+    let store = Arc::new(InMemoryWalletDustRegistrationRecoveryStore::default());
+    let persistence =
+        RecoveryPersistence::spawn(store.clone(), Arc::new(AtomicBool::new(false))).unwrap();
+
+    persistence.enqueue(submitting);
+    persistence.enqueue(later);
+
+    let submission_generation = block_on(persistence.await_submission())
+        .expect("the exact submission checkpoint must be pinned");
+    assert_eq!(
+        store.load().unwrap().unwrap().state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Submitting
+    );
+    persistence.release_submission(submission_generation);
+    assert!(block_on(persistence.await_latest()));
+    assert_eq!(
+        store.load().unwrap().unwrap().state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::AwaitingAuthorization
+    );
+}
+
+#[test]
+fn stale_projection_cannot_overwrite_a_newer_submission_checkpoint_after_release() {
+    let fake = Arc::new(FakeServices::new());
+    let capability = capability(&fake);
+    let projection = block_on(capability.refresh("profile_test".to_owned())).unwrap();
+    let stale = WalletDustRegistrationRecoveryRecord::from_projection(&projection)
+        .expect("prepared projection has a recovery record");
+    let mut submitting = stale.clone();
+    submitting.state = oxid_wallet_application::WalletDustRegistrationSettlementState::Submitting;
+    submitting
+        .registration
+        .as_mut()
+        .expect("prepared record retains its registration")
+        .authorization_phase =
+        oxid_wallet_application::WalletDustRegistrationSettlementAuthorizationPhase::Submitting;
+    let store = Arc::new(InMemoryWalletDustRegistrationRecoveryStore::default());
+    let persistence =
+        RecoveryPersistence::spawn(store.clone(), Arc::new(AtomicBool::new(false))).unwrap();
+
+    persistence.enqueue(stale);
+    persistence.enqueue(submitting);
+
+    let submission_generation = block_on(persistence.await_submission())
+        .expect("the newer submission checkpoint must be pinned");
+    persistence.release_submission(submission_generation);
+    assert!(block_on(persistence.await_latest()));
+    assert_eq!(
+        store.load().unwrap().unwrap().state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Submitting
+    );
+}
+
+#[test]
+fn each_submission_waiter_releases_the_generation_the_worker_pinned() {
+    let fake = Arc::new(FakeServices::new());
+    let capability = capability(&fake);
+    let projection = block_on(capability.refresh("profile_test".to_owned())).unwrap();
+    let later = WalletDustRegistrationRecoveryRecord::from_projection(&projection)
+        .expect("prepared projection has a recovery record");
+    let mut first = WalletDustRegistrationRecoveryRecord::from_projection(&projection)
+        .expect("prepared projection has a recovery record");
+    first.state = oxid_wallet_application::WalletDustRegistrationSettlementState::Submitting;
+    first
+        .registration
+        .as_mut()
+        .expect("prepared record retains its registration")
+        .authorization_phase =
+        oxid_wallet_application::WalletDustRegistrationSettlementAuthorizationPhase::Submitting;
+    let mut second = first.clone();
+    second
+        .registration
+        .as_mut()
+        .expect("prepared record retains its registration")
+        .draft_id = "draft_test_2".to_owned();
+    let store = Arc::new(InMemoryWalletDustRegistrationRecoveryStore::default());
+    let persistence = RecoveryPersistence::spawn(store, Arc::new(AtomicBool::new(false))).unwrap();
+
+    persistence.enqueue(first);
+    let first_generation = block_on(persistence.await_submission())
+        .expect("the first submission checkpoint must be pinned");
+    persistence.enqueue(second);
+    persistence.release_submission(first_generation);
+    let second_generation = block_on(persistence.await_submission())
+        .expect("the second submission checkpoint must be pinned");
+    assert!(second_generation > first_generation);
+    persistence.enqueue(later);
+    persistence.release_submission(second_generation);
+    assert!(block_on(persistence.await_latest()));
 }
 
 #[test]
