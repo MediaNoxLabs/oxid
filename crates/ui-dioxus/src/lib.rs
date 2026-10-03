@@ -5266,7 +5266,11 @@ fn ReceiveSheet(
                 .then(|| render_qr_svg(qr_payload))
                 .flatten();
             let address_kind = ui::address_kind(&selected.kind);
-            let qr_label = format!("QR code for {address_kind} receive address");
+            let qr_label = if receive_request.is_some() {
+                "QR code for public NIGHT receive request".to_owned()
+            } else {
+                format!("QR code for {address_kind} receive address")
+            };
             let preview = grouped_address_preview(&selected.value);
             #[cfg(feature = "standalone-deployment-profile")]
             let route_class = Some(
@@ -5332,13 +5336,23 @@ fn ReceiveSheet(
                             } else if address_is_exportable {
                                 p { role: "alert", "This address could not be encoded as a QR code." }
                             } else {
-                                p { role: "alert", "A valid protected receive address is required before showing a QR code or exporting it." }
+                                div { class: "receive-sheet__state", role: "alert",
+                                    p { "This receive address is unavailable. Refresh the account before sharing it." }
+                                    button {
+                                        class: "secondary-action",
+                                        r#type: "button",
+                                        onclick: move |event| on_open_wallet.call(event),
+                                        "Open Wallet"
+                                    }
+                                }
                             }
                         }
-                        code {
-                            class: "receive-sheet__preview privacy-value",
-                            aria_label: "Full validated raw {ui::address_kind(&selected.kind)} receive address {selected.value}",
-                            "{preview}"
+                        if address_is_exportable {
+                            code {
+                                class: "receive-sheet__preview privacy-value",
+                                aria_label: "Full validated raw {ui::address_kind(&selected.kind)} receive address {selected.value}",
+                                "{preview}"
+                            }
                         }
                         if receive_request.is_some() {
                             p { "The QR carries a versioned public NIGHT request; copy and share export the raw address shown." }
