@@ -7,6 +7,7 @@ pub(super) fn AssetsPage(
     active_profile: WalletProfileView,
     secret_mode: SecretModeController,
     send_entry: bool,
+    pending_payment_request: Signal<Option<PendingPaymentRequest>>,
     on_realm_changed: EventHandler<()>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
@@ -174,6 +175,7 @@ pub(super) fn AssetsPage(
                                 unshielded_receive_address: unshielded.value.clone(),
                                 shielded_receive_address: shielded.value.clone(),
                                 night_balance: balance_for(&account, "NIGHT").cloned(),
+                                pending_payment_request,
                             }
                         }
                     } else {
@@ -417,6 +419,7 @@ pub(super) fn AssetsPage(
                             unshielded_receive_address: unshielded.value.clone(),
                             shielded_receive_address: shielded.value.clone(),
                             night_balance: balance_for(&account, "NIGHT").cloned(),
+                            pending_payment_request,
                         }
                     }
                 }

@@ -1813,6 +1813,25 @@ impl Route {
     }
 }
 
+const fn review_route_title(
+    route: Route,
+    pending_kind: Option<IdentityRequestKind>,
+) -> &'static str {
+    match (route, pending_kind) {
+        (Route::Send, _) => "Review NIGHT payment",
+        (Route::CredentialRequest, Some(IdentityRequestKind::CredentialIssuance)) => {
+            "Review credential offer"
+        }
+        (Route::CredentialRequest, Some(IdentityRequestKind::CredentialPresentation)) => {
+            "Review presentation request"
+        }
+        (Route::DidAuthenticationRequest, Some(IdentityRequestKind::SelfIssuedAuthentication)) => {
+            "Review login request"
+        }
+        _ => route.title(),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RouteStack {
     routes: Vec<Route>,
@@ -1921,6 +1940,15 @@ impl RouteStack {
             | IdentityRequestKind::CredentialPresentation => Route::CredentialRequest,
         };
         self.push_from(PrimaryDestination::Documents, route);
+    }
+
+    fn route_scanned_identity_request(&mut self, kind: IdentityRequestKind) {
+        let route = match kind {
+            IdentityRequestKind::SelfIssuedAuthentication => Route::DidAuthenticationRequest,
+            IdentityRequestKind::CredentialIssuance
+            | IdentityRequestKind::CredentialPresentation => Route::CredentialRequest,
+        };
+        self.push(route);
     }
 
     fn dismiss_identity_request(&mut self) {
@@ -2152,6 +2180,11 @@ impl CredentialIssuanceTerminalError {
 struct PendingIdentityRequest {
     kind: IdentityRequestKind,
     request_uri: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingPaymentRequest {
+    recipient: String,
 }
 
 impl PendingIdentityRequest {
@@ -3487,6 +3520,7 @@ fn WalletApp() -> Element {
         state: secret_mode_state,
     };
     let mut pending_identity_request = use_signal(|| None::<PendingIdentityRequest>);
+    let pending_payment_request = use_signal(|| None::<PendingPaymentRequest>);
     let manual_credential_review_lock = use_signal(|| false);
     let mut identity_ingress_notice = use_signal(|| None::<String>);
     let identity_scan_busy = use_signal(|| false);
@@ -3683,6 +3717,13 @@ fn WalletApp() -> Element {
     };
 
     let active_route = navigation.read().current();
+    let active_route_title = review_route_title(
+        active_route,
+        pending_identity_request
+            .read()
+            .as_ref()
+            .map(|request| request.kind),
+    );
     use_effect(move || {
         apply_route_transition(navigation.read().transition());
     });
@@ -3711,8 +3752,12 @@ fn WalletApp() -> Element {
     );
     let home_scanner = services.qr_scanner();
     let home_router = services.route_identity_request();
+    let home_scan_services = services.clone();
+    let home_scan_profile_id = active_profile.id.clone();
     let navigation_scanner = services.qr_scanner();
     let navigation_router = services.route_identity_request();
+    let navigation_scan_services = services.clone();
+    let navigation_scan_profile_id = active_profile.id.clone();
     #[cfg(feature = "ui-profile-demo")]
     let demo_shell_banner = demo_profile_banner(demo_drawer_open);
     #[cfg(not(feature = "ui-profile-demo"))]
@@ -3775,7 +3820,7 @@ fn WalletApp() -> Element {
                         role: "heading",
                         aria_level: "1",
                         tabindex: "-1",
-                        "{active_route.title()}"
+                        "{active_route_title}"
                     }
                     small { "{brand.product_name()} {brand.tagline()}" }
                 }
@@ -3889,11 +3934,14 @@ fn WalletApp() -> Element {
                             },
                             on_scan: move |_| {
                                 start_identity_scan(
+                                    home_scan_services.clone(),
+                                    home_scan_profile_id.clone(),
                                     Arc::clone(&home_scanner),
                                     Arc::clone(&home_router),
                                     identity_scan_busy,
                                     identity_ingress_notice,
                                     pending_identity_request,
+                                    pending_payment_request,
                                     navigation,
                                     header_menu,
                                 );
@@ -3905,6 +3953,7 @@ fn WalletApp() -> Element {
                         active_profile: active_profile.clone(),
                         secret_mode,
                         send_entry: content_route == Route::Send,
+                        pending_payment_request,
                         on_realm_changed: move |_| {
                             realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
                         },
@@ -4074,11 +4123,14 @@ fn WalletApp() -> Element {
                         let router = Arc::clone(&navigation_router);
                         move |_| {
                             start_identity_scan(
+                                navigation_scan_services.clone(),
+                                navigation_scan_profile_id.clone(),
                                 Arc::clone(&scanner),
                                 Arc::clone(&router),
                                 identity_scan_busy,
                                 identity_ingress_notice,
                                 pending_identity_request,
+                                pending_payment_request,
                                 navigation,
                                 header_menu,
                             );
@@ -4156,11 +4208,14 @@ const fn identity_scan_is_admitted(scan_busy: bool, request_pending: bool) -> bo
 }
 
 fn start_identity_scan(
+    services: WalletUiServices,
+    profile_id: String,
     scanner: Arc<dyn QrScannerPort>,
     router: Arc<dyn RouteIdentityRequestUseCase>,
     mut busy: Signal<bool>,
     mut notice: Signal<Option<String>>,
     mut pending_request: Signal<Option<PendingIdentityRequest>>,
+    mut pending_payment: Signal<Option<PendingPaymentRequest>>,
     mut navigation: Signal<RouteStack>,
     mut header_menu: Signal<HeaderMenu>,
 ) {
@@ -4178,12 +4233,48 @@ fn start_identity_scan(
                     return;
                 }
                 let request_uri = payload.into_inner();
+                if is_public_recipient_candidate(&request_uri) {
+                    let account_services = services.clone();
+                    let account_profile_id = profile_id.clone();
+                    let account = run_ui_blocking(move || {
+                        account_services
+                            .get_wallet_account()
+                            .execute(WalletAccountQuery {
+                                profile_id: account_profile_id,
+                            })
+                    })
+                    .await;
+                    match account {
+                        Ok(Ok(account)) => match scanned_recipient_update(
+                            &account.network_id,
+                            request_uri,
+                        ) {
+                            Ok(update) => {
+                                pending_payment.set(Some(PendingPaymentRequest {
+                                    recipient: update.recipient,
+                                }));
+                                navigation.write().push(Route::Send);
+                                notice.set(Some(
+                                    "QR recognized as a public NIGHT payment request. Review the recipient and choose an amount; nothing has been sent."
+                                        .to_owned(),
+                                ));
+                            }
+                            Err(message) => notice.set(Some(message)),
+                        },
+                        Ok(Err(_)) | Err(_) => notice.set(Some(
+                            "The active wallet network could not be checked. Retry after Wallet is available; nothing was imported."
+                                .to_owned(),
+                        )),
+                    }
+                    busy.set(false);
+                    return;
+                }
                 match router.execute(RouteIdentityRequestCommand {
                     request_uri: request_uri.clone(),
                 }) {
                     Ok(kind) => {
                         pending_request.set(Some(PendingIdentityRequest { kind, request_uri }));
-                        navigation.write().route_identity_request(kind);
+                        navigation.write().route_scanned_identity_request(kind);
                         notice.set(Some(format!(
                             "QR recognized as {}. Review the request before consent.",
                             ui::identity_request_kind(kind)
@@ -6543,22 +6634,37 @@ fn SendTransferPanel(
     unshielded_receive_address: String,
     shielded_receive_address: String,
     night_balance: Option<oxid_wallet_application::WalletAssetBalanceView>,
+    mut pending_payment_request: Signal<Option<PendingPaymentRequest>>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let brand = consume_context::<BrandProfile>();
     let mut panel = use_signal(|| TransferPanelState::Editing);
     let mut wizard_step = use_signal(|| SendWizardStep::Recipient);
     let mut confirmation_open = use_signal(|| false);
-    let mut recipient = use_signal(String::new);
+    let scanned_recipient = pending_payment_request
+        .read()
+        .as_ref()
+        .map(|request| request.recipient.clone());
+    let mut recipient = use_signal(|| scanned_recipient.clone().unwrap_or_default());
     let mut using_own_address = use_signal(|| false);
     let mut amount = use_signal(String::new);
     let mut shielded = use_signal(|| false);
     let mut shielded_status = use_signal(|| None::<Result<WalletShieldedSyncView, String>>);
     let recipient_scan_busy = use_signal(|| false);
-    let mut recipient_scan_notice = use_signal(|| None::<String>);
+    let mut recipient_scan_notice = use_signal(|| {
+        scanned_recipient.as_ref().map(|_| {
+            "Scanned public NIGHT recipient loaded. Confirm it before choosing an amount."
+                .to_owned()
+        })
+    });
     let recipient_scanner = services.qr_scanner();
     let action_watch_projection =
         use_action_watch_projection(services.clone(), WalletActionWatchContext::Send);
+    use_effect(move || {
+        if pending_payment_request.read().is_some() {
+            pending_payment_request.set(None);
+        }
+    });
     let show_action_watch = matches!(*panel.read(), TransferPanelState::Submitted(_));
     let shielded_status_services = services.clone();
     let shielded_status_profile = profile_id.clone();
@@ -11705,6 +11811,41 @@ mod tests {
         );
         navigation.dismiss_identity_request();
         assert_eq!(navigation.routes, vec![Route::Documents]);
+    }
+
+    #[test]
+    fn scanned_identity_review_preserves_the_origin_for_back() {
+        let mut navigation = RouteStack::default();
+        navigation.select_primary(PrimaryDestination::Wallet);
+        navigation.route_scanned_identity_request(IdentityRequestKind::CredentialPresentation);
+        assert_eq!(
+            navigation.routes,
+            vec![Route::Wallet, Route::CredentialRequest]
+        );
+        assert!(navigation.pop());
+        assert_eq!(navigation.current(), Route::Wallet);
+    }
+
+    #[test]
+    fn inbound_reviews_have_task_specific_titles() {
+        assert_eq!(
+            review_route_title(Route::Send, None),
+            "Review NIGHT payment"
+        );
+        assert_eq!(
+            review_route_title(
+                Route::CredentialRequest,
+                Some(IdentityRequestKind::CredentialIssuance),
+            ),
+            "Review credential offer"
+        );
+        assert_eq!(
+            review_route_title(
+                Route::CredentialRequest,
+                Some(IdentityRequestKind::CredentialPresentation),
+            ),
+            "Review presentation request"
+        );
     }
 
     #[test]

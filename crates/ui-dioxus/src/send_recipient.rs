@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use dioxus::prelude::*;
 use oxid_platform_ports::{QrScanError, QrScannerPort};
-use oxid_wallet_application::import_midnight_night_receive_request;
+use oxid_wallet_application::{MidnightReceiveRequestError, import_midnight_night_receive_request};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SendWizardStep {
@@ -78,9 +78,17 @@ pub(super) fn scanned_recipient_update(
             advances_wizard: false,
             shielded: false,
         })
-        .map_err(|_| {
-            "This is not a valid public NIGHT receive request for the active network. Nothing was imported."
-                .to_owned()
+        .map_err(|error| {
+            match error {
+                MidnightReceiveRequestError::UnsupportedNetwork
+                | MidnightReceiveRequestError::AddressNetworkMismatch => {
+                    "This NIGHT request belongs to another network. Switch to that network and scan again; nothing was imported."
+                }
+                _ => {
+                    "This is not a valid public NIGHT receive request for the active network. Nothing was imported."
+                }
+            }
+            .to_owned()
         })
 }
 
@@ -181,12 +189,13 @@ mod tests {
             )
             .is_err()
         );
-        assert!(
+        assert_eq!(
             scanned_recipient_update(
                 "preprod",
                 "midnight-receive:v1|network=undeployed|asset=NIGHT|address=mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh".to_owned(),
             )
-            .is_err()
+            .expect_err("wrong-network request must be rejected"),
+            "This NIGHT request belongs to another network. Switch to that network and scan again; nothing was imported."
         );
     }
 }
