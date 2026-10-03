@@ -11,6 +11,9 @@ source "$ROOT/scripts/e2e/android-avd-process-ownership.sh"
 
 fail() {
   printf 'android-avd-process-ownership-contract: FAIL phase=%s\n' "$1" >&2
+  if [ "$1" = occupied-project-phase ] && [ -f "${temporary:-}/occupied-project.err" ]; then
+    cat "${temporary}/occupied-project.err" >&2
+  fi
   exit 1
 }
 
@@ -249,12 +252,15 @@ run_stack_fixture() {
   rm -rf -- "$fixture_root/target"
   : >"$temporary/docker-$name.log"
   rm -f -- "$temporary/docker-$name.count"
+  # A 200 ms Docker query budget can expire while the fake shell starts on a
+  # busy host, changing the expected refusal into an unrelated query error.
+  # The timeout fixture still exercises a bounded query with a 2 s budget.
   if OXID_FAKE_DOCKER_LOG="$temporary/docker-$name.log" \
     OXID_FAKE_DOCKER_COUNT="$temporary/docker-$name.count" \
     OXID_FAKE_DOCKER_INITIAL="$initial" OXID_FAKE_DOCKER_CLEANUP="$cleanup_behavior" \
     OXID_FAKE_STACK_MUTATION="$mutation" OXID_FAKE_STACK_ROOT="$fixture_root" \
-    OXID_STACK_DOCKER_QUERY_TIMEOUT_SECONDS=0.2 PATH="$temporary/fake-bin:$PATH" \
-    timeout -k 1s 8s "$fixture_root/scripts/e2e/portal-virtual-mobile-stack.sh" \
+    OXID_STACK_DOCKER_QUERY_TIMEOUT_SECONDS=2 PATH="$temporary/fake-bin:$PATH" \
+    timeout -k 1s 20s "$fixture_root/scripts/e2e/portal-virtual-mobile-stack.sh" \
     >"$temporary/$name.out" 2>"$temporary/$name.err"; then
     fail "$name-result"
   fi
