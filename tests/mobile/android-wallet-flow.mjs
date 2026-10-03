@@ -704,7 +704,7 @@ try {
     await clickButton("Use my receive address");
     await clickButtonByLabel("Continue to transfer amount");
     await setInput("Amount in NIGHT", "1.5");
-    await clickButton("Review transfer");
+    await clickButtonByLabel("Review exact transfer");
     await clickButtonByLabel("Continue to NIGHT transfer confirmation");
     await clickButtonByLabel("Authorize reviewed NIGHT transfer");
     await clickButtonByLabel("Prove and submit NIGHT transfer");
