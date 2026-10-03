@@ -825,6 +825,15 @@ enum SelectedWalletRealmEffectPublication {
     Superseded(SelectedWalletRealmProjection),
 }
 
+struct SelectedWalletRealmEffectCompletion {
+    effect: WalletRealmCoordinatorEffect,
+    attempt: WalletOperationAttempt,
+    caused_by: WalletOperationCausationId,
+    timeline_outcome: WalletOperationOutcome,
+    failure: Option<WalletOperationFailure>,
+    started: Instant,
+}
+
 struct SelectedWalletRealmTimelineOperation {
     timeline: WalletOperationTimeline,
     operation_id: WalletOperationId,
@@ -918,26 +927,31 @@ impl SelectedWalletRealmTimelineOperation {
         started: Instant,
     ) -> WalletOperationCausationId {
         self.completed_with_measurements(
-            effect,
-            attempt,
-            caused_by,
-            timeline_outcome,
-            failure,
-            started,
+            SelectedWalletRealmEffectCompletion {
+                effect,
+                attempt,
+                caused_by,
+                timeline_outcome,
+                failure,
+                started,
+            },
             WalletOperationResourceMeasurements::default(),
         )
     }
 
     fn completed_with_measurements(
         &mut self,
-        effect: WalletRealmCoordinatorEffect,
-        attempt: WalletOperationAttempt,
-        caused_by: WalletOperationCausationId,
-        timeline_outcome: WalletOperationOutcome,
-        failure: Option<WalletOperationFailure>,
-        started: Instant,
+        completion: SelectedWalletRealmEffectCompletion,
         measurements: WalletOperationResourceMeasurements,
     ) -> WalletOperationCausationId {
+        let SelectedWalletRealmEffectCompletion {
+            effect,
+            attempt,
+            caused_by,
+            timeline_outcome,
+            failure,
+            started,
+        } = completion;
         self.completed_effects = self.completed_effects.saturating_add(1);
         match timeline_outcome {
             WalletOperationOutcome::Succeeded => {}
@@ -984,23 +998,11 @@ impl SelectedWalletRealmTimelineOperation {
 
     fn completed_from_view(
         &mut self,
-        effect: WalletRealmCoordinatorEffect,
-        attempt: WalletOperationAttempt,
-        caused_by: WalletOperationCausationId,
-        timeline_outcome: WalletOperationOutcome,
-        failure: Option<WalletOperationFailure>,
-        started: Instant,
+        completion: SelectedWalletRealmEffectCompletion,
         view: &SelectedWalletRealmSyncView,
     ) -> WalletOperationCausationId {
-        self.completed_with_measurements(
-            effect,
-            attempt,
-            caused_by,
-            timeline_outcome,
-            failure,
-            started,
-            resource_measurements(effect.kind(), view),
-        )
+        let measurements = resource_measurements(completion.effect.kind(), view);
+        self.completed_with_measurements(completion, measurements)
     }
 
     fn terminal(
@@ -1604,12 +1606,14 @@ where
                             (timeline.as_mut(), effect_cause)
                         {
                             operation.completed_from_view(
-                                effect,
-                                attempt,
-                                cause,
-                                timeline_effect_outcome(outcome),
-                                failure,
-                                effect_started,
+                                SelectedWalletRealmEffectCompletion {
+                                    effect,
+                                    attempt,
+                                    caused_by: cause,
+                                    timeline_outcome: timeline_effect_outcome(outcome),
+                                    failure,
+                                    started: effect_started,
+                                },
                                 &view,
                             );
                         }
@@ -1626,12 +1630,14 @@ where
                             (timeline.as_mut(), effect_cause)
                         {
                             operation.completed_from_view(
-                                effect,
-                                attempt,
-                                cause,
-                                timeline_effect_outcome(outcome),
-                                failure,
-                                effect_started,
+                                SelectedWalletRealmEffectCompletion {
+                                    effect,
+                                    attempt,
+                                    caused_by: cause,
+                                    timeline_outcome: timeline_effect_outcome(outcome),
+                                    failure,
+                                    started: effect_started,
+                                },
                                 &published.view,
                             );
                         }
@@ -1651,12 +1657,14 @@ where
                             (timeline.as_mut(), effect_cause)
                         {
                             operation.completed_from_view(
-                                effect,
-                                attempt,
-                                cause,
-                                timeline_effect_outcome(outcome),
-                                failure,
-                                effect_started,
+                                SelectedWalletRealmEffectCompletion {
+                                    effect,
+                                    attempt,
+                                    caused_by: cause,
+                                    timeline_outcome: timeline_effect_outcome(outcome),
+                                    failure,
+                                    started: effect_started,
+                                },
                                 &published.view,
                             );
                         }
