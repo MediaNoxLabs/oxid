@@ -40,9 +40,12 @@ and any new unsafe code require review in their respective platform slices.
   identity and exact native authorization are bound by the synchronous call,
   not trusted from a returned JSON field. Platform adapters must serialize access
   and bind delayed native callbacks to the exact call generation and profile.
-- `decode_reply` consumes separate `CustodyBytes` and releases them only for a
-  valid load/unlock success with a protection class. Any malformed control or
-  failure drops the supplied material without interpolating parser/native errors.
+- `validate_material_control` first proves that a load/unlock control authorizes
+  exactly one material transfer; failure controls are decoded before pending
+  length or bytes are requested. `decode_reply` then consumes separate
+  `CustodyBytes` and releases them only for that valid success with a protection
+  class. Any malformed control or failure drops the supplied material without
+  interpolating parser/native errors.
 - The typed `CustodyTransport` narrows inspection to `CustodyState` and keeps
   `Protection` coupled to load/unlock material and save/lock completions. A
   platform adapter cannot discard the reviewed native protection class while
