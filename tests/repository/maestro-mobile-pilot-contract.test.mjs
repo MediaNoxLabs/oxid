@@ -105,10 +105,11 @@ test("Maestro subflows centralize clean setup and keep selectors privacy-safe", 
 });
 
 test("platform wrappers admit only inventory-owned flows and reuse build receipts", async () => {
-  const [ios, android, runner, runScript] = await Promise.all([
+  const [ios, android, runner, largerWidthRunner, runScript] = await Promise.all([
     read("scripts/run-maestro-ios.sh"),
     read("scripts/run-maestro-android.sh"),
     read("scripts/test-ios-maestro-holder-evidence.sh"),
+    read("scripts/test-ios-maestro-holder-evidence-large.sh"),
     read("run.sh"),
   ]);
 
@@ -137,6 +138,9 @@ test("platform wrappers admit only inventory-owned flows and reuse build receipt
   }
   assert.match(runner, /id != "canonical-holder-evidence"/u);
   assert.match(runner, /scenarios\+=\(canonical-holder-evidence\)/u);
+  assert.match(largerWidthRunner, /OXID_IOS_EVIDENCE_VIEWPORT="402-pt-class"/u);
+  assert.match(largerWidthRunner, /OXID_IOS_EVIDENCE_DEVICE_TYPE="com\.apple\.CoreSimulator\.SimDeviceType\.iPhone-17-Pro"/u);
+  assert.match(largerWidthRunner, /OXID_IOS_RUNTIME_ID="com\.apple\.CoreSimulator\.SimRuntime\.iOS-26-4"/u);
   assert.equal(runScript.match(/node --test tests\/repository\/maestro-mobile-pilot-contract\.test\.mjs/gu)?.length, 1);
 });
 
@@ -171,7 +175,7 @@ test("mobile visual accessibility evidence preserves the scoped matrix and priva
   for (const heading of ["Scenario ID", "Authority", "Platform", "Design reference/no-match", "Artifact", "Evidence layer", "Known gap"]) {
     assert.match(matrix, new RegExp(heading, "u"));
   }
-  assert.match(iosRunner, /oxid-ios-maestro-evidence-v2/u);
+  assert.match(iosRunner, /oxid-ios-maestro-evidence-v3/u);
   assert.match(iosRunner, /simctl list runtimes -j/u);
   assert.match(iosRunner, /select\(\.identifier == \$runtime and \.isAvailable == true\)/u);
   assert.doesNotMatch(iosRunner, /\bmapfile\b/u);
@@ -185,8 +189,12 @@ test("mobile visual accessibility evidence preserves the scoped matrix and priva
   assert.doesNotMatch(iosRunner, /printf '%s' "\$source" \| shasum/u);
   assert.match(iosRunner, /while IFS= read -r source; do[\s\S]*mkdir -p "\$scenario_root\/screenshots"[\s\S]*done < <\(find/u);
   assert.match(iosRunner, /manifest:"scenarios\/manifest\.jsonl"/u);
+  assert.match(iosRunner, /capturePolicy:\$capture_policy/u);
+  assert.match(iosRunner, /designReference:\$design,uiProfile:\$uiProfile/u);
+  assert.match(iosRunner, /OXID_IOS_EVIDENCE_VIEWPORT:-375-pt-class/u);
+  assert.match(iosRunner, /OXID_IOS_EVIDENCE_DEVICE_TYPE:-com\.apple\.CoreSimulator\.SimDeviceType\.iPhone-SE-3rd-generation/u);
   assert.doesNotMatch(iosRunner, /boundedLog:"maestro-tail\.log"/u);
-  assert.match(iosRunner, /collect_public_artifacts "\$scenario"/u);
+  assert.match(iosRunner, /collect_public_artifacts "\$scenario" "\$ui_profile"/u);
   assert.match(androidRunner, /oxid-android-maestro-semantic-evidence-v1/u);
   assert.match(androidRunner, /emulator-\*/u);
   assert.match(androidRunner, /OXID_ANDROID_DISPOSABLE/u);
