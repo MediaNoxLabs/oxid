@@ -375,14 +375,12 @@ impl WalletRealmLifecycleService {
         let previous_identity = state.checkpoint.identity.clone();
         if let WalletRealmLifecycleInput::Initialized { identity, .. }
         | WalletRealmLifecycleInput::RealmSelected { identity, .. } = &input
-        {
-            if previous_identity
+            && previous_identity
                 .as_ref()
                 .is_some_and(|previous| previous != identity)
-                && state.action_recovery.is_some()
-            {
-                return Err(WalletRealmLifecycleError::UnresolvedAction);
-            }
+            && state.action_recovery.is_some()
+        {
+            return Err(WalletRealmLifecycleError::UnresolvedAction);
         }
         state.checkpoint.observe(&input);
         if matches!(&input, WalletRealmLifecycleInput::Backgrounded { .. }) {

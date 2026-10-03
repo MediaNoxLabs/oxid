@@ -1324,7 +1324,7 @@ mod tests {
                 .unwrap()
                 .records()
                 .iter()
-                .map(|record| record.event.clone())
+                .map(|record| record.event)
                 .collect::<Vec<_>>(),
             expected
         );
