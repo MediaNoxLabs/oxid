@@ -10,6 +10,7 @@
   "scenarios": [
     {"id":"canonical-holder-evidence","composition":"demo","authority":"maestro","platforms":["ios"],"flow":"flows/canonical-holder-evidence.yaml","coverage":"canonical public visual evidence set"},
     {"id":"onboarding-safe-boundary","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/onboarding-safe-boundary.yaml","coverage":"onboarding and safe recovery boundary"},
+    {"id":"onboarding-restore-boundary","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/onboarding-restore-boundary.yaml","coverage":"wallet restore entry and safe cancellation boundary"},
     {"id":"profile-realm-switching","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/profile-realm-switching.yaml","coverage":"profile and realm switching"},
     {"id":"home-receive-send-blocked","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/home-receive-send-blocked.yaml","coverage":"Home, Receive, Send entry and blocked states"},
     {"id":"wallet-sync-status","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/wallet-sync-status.yaml","coverage":"wallet synchronization and status"},

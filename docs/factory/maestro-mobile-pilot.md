@@ -58,6 +58,8 @@ OXID_ANDROID_DEVICE=emulator-<port> OXID_ANDROID_DISPOSABLE=1 \
 
 `tests/maestro/flows/` contains independently runnable, scenario-sized journeys. They reuse the clean launch, deterministic demo-profile bootstrap, and global-menu subflows in `tests/maestro/subflows/`. The compile-time demo bootstrap creates only a profile and process-local protection; it never derives an account, loads funding, enters a recovery ceremony, or starts an external service.
 
+`tests/maestro/interaction-budgets.json` records the observed holder-owned entry taps, decision screens, authorization invocations, and routine manual-sync actions for the safe branches that Maestro can reach. Every record is bound to the SHA-256 digest of its exact flow and to the approved use-case budget in `docs/factory/demo-inventory.json`. A changed flow therefore fails the repository contract until the route is deliberately remeasured; increasing an approved budget only to pass the check is not an accepted fix. Network waits and OS-owned authorization UI remain outside the count, and routine synchronization must remain interaction-free.
+
 The inventory classifies each surface explicitly:
 
 - `maestro`: safe reachability or public simulated state that a wrapper may execute.

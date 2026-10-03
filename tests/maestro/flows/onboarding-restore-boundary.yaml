@@ -1,0 +1,11 @@
+appId: io.medianox.oxid
+name: onboarding restore boundary
+---
+- runFlow: ../subflows/launch-clean.yaml
+- assertVisible: "Restore 24-word.*"
+- tapOn: "Restore 24-word.*"
+- assertVisible: "Name this wallet"
+- assertVisible: "Create an empty local profile before entering.*"
+- tapOn: "Back to onboarding choices"
+- assertVisible: "Create private wallet"
+# Stop before profile creation, native authorization, or protected-word entry.

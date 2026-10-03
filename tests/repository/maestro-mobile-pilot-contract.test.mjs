@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 
 const root = new URL("../../", import.meta.url);
 const requiredCoverage = [
   "onboarding and safe recovery boundary",
+  "wallet restore entry and safe cancellation boundary",
   "profile and realm switching",
   "Home, Receive, Send entry and blocked states",
   "wallet synchronization and status",
@@ -29,6 +31,89 @@ const privateSelector = /(?:did:[a-z0-9]|openid|https?:\/\/|request_uri|issuer[-
 async function read(file) {
   return readFile(new URL(file, root), "utf8");
 }
+
+test("Maestro interaction measurements stay bound to approved use-case budgets", async () => {
+  const [evidence, maestro, demos] = await Promise.all([
+    read("tests/maestro/interaction-budgets.json").then(JSON.parse),
+    read("tests/maestro/inventory.json").then(JSON.parse),
+    read("docs/factory/demo-inventory.json").then(JSON.parse),
+  ]);
+  assert.equal(evidence.schema, "oxid-maestro-interaction-budget-evidence-v1");
+  assert.equal(evidence.countingRules, "docs/factory/demo-inventory.md#approved-product-journeys");
+
+  const scenarios = new Map(maestro.scenarios.map((scenario) => [scenario.id, scenario]));
+  const useCases = new Map(demos.useCases.map((useCase) => [useCase.id, useCase]));
+  const measuredIds = new Set();
+  const requiredUseCases = [
+    "fresh-wallet-onboarding",
+    "wallet-recovery",
+    "profile-and-realm-switching",
+    "automatic-account-reconciliation",
+    "receive-and-fund-night",
+    "send-night",
+    "did-inventory-and-creation",
+    "oid4vci-issuance",
+    "oid4vp-presentation",
+    "activity-and-transaction-detail",
+    "security-and-backup-settings",
+  ];
+  const measuredUseCases = new Set();
+  const fieldByKind = {
+    "entry-tap": "entryTaps",
+    "decision-screen": "decisionScreens",
+    "authorization-prompt": "authorizationPrompts",
+    "routine-manual-sync": "routineManualSyncActions",
+  };
+  const limitByObservedField = {
+    entryTaps: "entryTapsMax",
+    decisionScreens: "decisionScreensMax",
+    authorizationPrompts: "authorizationPromptsMax",
+    routineManualSyncActions: "routineManualSyncActionsMax",
+  };
+
+  for (const measurement of evidence.measurements) {
+    assert.match(measurement.id, /^[a-z0-9]+(?:-[a-z0-9]+)*$/u);
+    assert.ok(!measuredIds.has(measurement.id), `duplicate measurement: ${measurement.id}`);
+    measuredIds.add(measurement.id);
+    assert.ok(["ready", "blocked", "refusal", "recovery"].includes(measurement.state));
+
+    const scenario = scenarios.get(measurement.scenarioId);
+    assert.equal(scenario?.authority, "maestro", `${measurement.id} must reference a runnable Maestro scenario`);
+    const source = await read(`tests/maestro/${scenario.flow}`);
+    assert.equal(
+      createHash("sha256").update(source).digest("hex"),
+      measurement.flowSha256,
+      `${measurement.id} is stale; remeasure the changed flow instead of accepting silent interaction drift`,
+    );
+
+    const useCase = useCases.get(measurement.useCaseId);
+    assert.equal(useCase?.interactionBudget?.status, "active", `${measurement.id} requires an approved active budget`);
+    measuredUseCases.add(measurement.useCaseId);
+    const counted = Object.fromEntries(Object.values(fieldByKind).map((field) => [field, 0]));
+    for (const action of measurement.countedActions) {
+      const field = fieldByKind[action.kind];
+      assert.ok(field, `${measurement.id} has unknown action kind: ${action.kind}`);
+      assert.match(action.label, /\S/u);
+      counted[field] += 1;
+    }
+    assert.deepEqual(measurement.observed, counted, `${measurement.id} counts must be explained action by action`);
+    for (const [field, limitField] of Object.entries(limitByObservedField)) {
+      assert.ok(
+        measurement.observed[field] <= useCase.interactionBudget[limitField],
+        `${measurement.id} exceeds ${measurement.useCaseId}.${limitField}`,
+      );
+    }
+    assert.equal(
+      measurement.observed.routineManualSyncActions,
+      0,
+      `${measurement.id} must not make routine synchronization a holder task`,
+    );
+  }
+
+  for (const useCaseId of requiredUseCases) {
+    assert.ok(measuredUseCases.has(useCaseId), `missing interaction measurement for ${useCaseId}`);
+  }
+});
 
 test("Maestro inventory is closed, classified, and references every runnable flow", async () => {
   const inventory = JSON.parse(await read("tests/maestro/inventory.json"));
@@ -53,7 +138,7 @@ test("Maestro inventory is closed, classified, and references every runnable flo
       const source = await read(`tests/maestro/${scenario.flow}`);
       assert.match(source, /^appId: io\.medianox\.oxid/mu);
       assert.match(source, /runFlow: \.\.\/subflows\/launch-clean\.yaml/u);
-      if (!["onboarding-safe-boundary", "developer-profile-banner"].includes(scenario.id)) {
+      if (!["onboarding-safe-boundary", "onboarding-restore-boundary", "developer-profile-banner"].includes(scenario.id)) {
         assert.match(source, /runFlow: \.\.\/subflows\/demo-profile\.yaml/u);
       }
       assert.doesNotMatch(source, privateSelector, `${scenario.id} leaks a private or dynamic selector`);
