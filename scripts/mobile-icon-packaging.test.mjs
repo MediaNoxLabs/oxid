@@ -19,6 +19,10 @@ test("native icon packager replaces Dioxus defaults with platform launcher resou
   assert.match(packager, /mipmap-hdpi/);
   assert.match(packager, /ic_launcher_foreground/);
   assert.match(packager, /adaptive-icon/);
+  assert.match(packager, /glob\(f"\{stem\}\.\*"\)/);
+  assert.match(packager, /generated\.unlink\(\)/);
+  assert.match(packager, /def clean_android/);
+  assert.match(packager, /unlink\(missing_ok=True\)/);
 });
 
 test("mobile launchers package and verify icons before receipts", async () => {
@@ -33,6 +37,9 @@ test("mobile launchers package and verify icons before receipts", async () => {
   }
   assert.match(ios, /package-mobile-icons\.py" ios/);
   assert.match(android, /package-mobile-icons\.py" android/);
+  assert.match(android, /package-mobile-icons\.py" android-clean/);
+  assert.match(android, /gradlew" --project-dir "\$android_project"/);
+  assert.match(android, /ANDROID_HOME="\$android_sdk" ANDROID_SDK_ROOT="\$android_sdk"/);
 });
 
 test("brand generator produces an opaque iOS source and fails when ICNS cannot be generated", async () => {

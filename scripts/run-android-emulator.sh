@@ -642,6 +642,8 @@ elif [ "$operation" != "deploy" ]; then
   else
     android_rustflags="$android_linker_flags"
   fi
+  android_project="$repository_root/target/dx/oxid-app/debug/android/app"
+  python3 "$repository_root/scripts/package-mobile-icons.py" android-clean "$android_project"
 
   ANDROID_HOME="$android_sdk" \
   ANDROID_SDK_ROOT="$android_sdk" \
@@ -668,9 +670,9 @@ elif [ "$operation" != "deploy" ]; then
     echo "Dioxus did not create the expected APK: $apk" >&2
     exit 1
   fi
-  android_project="$repository_root/target/dx/oxid-app/debug/android/app"
   python3 "$repository_root/scripts/package-mobile-icons.py" android "$android_project"
-  "$android_project/gradlew" --no-daemon :app:assembleDebug
+  ANDROID_HOME="$android_sdk" ANDROID_SDK_ROOT="$android_sdk" \
+    "$android_project/gradlew" --project-dir "$android_project" --no-daemon :app:assembleDebug
   # Reject an unloadable Rust library before writing a receipt, installing the
   # APK, or spending emulator time. This also records the bounded ELF/hash
   # shape selected by the dedicated android-dev Cargo profile.
