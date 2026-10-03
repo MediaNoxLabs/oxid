@@ -10538,6 +10538,9 @@ mod tests {
         assert!(!credential_issuance_cleanup_allows_release(&Err(
             CredentialIssuanceError::InvalidState
         )));
+        assert!(!credential_issuance_cleanup_allows_release(&Err(
+            CredentialIssuanceError::ActivityCapacityExhausted
+        )));
         for error in [
             CredentialIssuanceError::NotFound,
             CredentialIssuanceError::Unavailable,

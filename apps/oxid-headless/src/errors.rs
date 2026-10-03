@@ -72,6 +72,10 @@ pub(super) fn credential_issuance_error(
             "failed_precondition",
             "credential issuance session is not awaiting this operation",
         ),
+        CredentialIssuanceError::ActivityCapacityExhausted => (
+            "resource_exhausted",
+            "too many credential issuances are pending for this profile; retry this prepared offer after one finishes, or restart and prepare it again",
+        ),
         CredentialIssuanceError::Approval(error) => (
             match error {
                 oxid_protocol_application::AcceptedFlowApprovalError::Unavailable => {
@@ -94,6 +98,27 @@ pub(super) fn credential_issuance_error(
         ),
     };
     Response::error(id, code, message)
+}
+
+#[cfg(test)]
+mod issuance_capacity_tests {
+    use super::*;
+
+    #[test]
+    fn capacity_refusal_has_a_distinct_retryable_headless_error() {
+        let response = serde_json::to_value(credential_issuance_error(
+            Some("capacity".to_owned()),
+            CredentialIssuanceError::ActivityCapacityExhausted,
+        ))
+        .expect("serializable response");
+        assert_eq!(response["error"]["code"], "resource_exhausted");
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .expect("message")
+                .contains("retry this prepared offer")
+        );
+    }
 }
 
 pub(super) fn credential_presentation_error(
