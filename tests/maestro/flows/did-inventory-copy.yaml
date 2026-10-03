@@ -12,6 +12,8 @@ name: DID inventory and public identifier copy
     timeout: 20000
     centerElement: true
 - tapOn: "Manage identities"
+- assertVisible: "Create a DID"
+- assertVisible: "Resolve a DID"
 - tapOn: "Create a DID"
 - tapOn: "Create DID"
 - assertVisible: "DID details"
