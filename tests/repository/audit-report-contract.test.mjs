@@ -270,6 +270,23 @@ test("a slate ordered by the rubric is accepted", () => {
   assert.deepEqual(crossCheck(report, { evidence: exampleEvidence() }), []);
 });
 
+test("a slate ordering that inverts expiry among equal entries is rejected", () => {
+  const report = exampleReport();
+  report.findings[0].expiry = "Protection remediation becomes more expensive after another train is created.";
+  report.findings[1].criterion = report.findings[0].criterion;
+  report.slate = [report.slate[1], report.slate[0]].map((entry, index) => ({ ...entry, rank: index + 1 }));
+  const problems = crossCheck(report, { evidence: exampleEvidence() });
+  assert.ok(problems.some((problem) => /loses on expiry/u.test(problem)), JSON.stringify(problems));
+});
+
+test("a slate ordering that inverts the final criterion-id tiebreaker is rejected", () => {
+  const report = exampleReport();
+  report.findings[1].criterion = "OXA-MIL-02";
+  report.slate = [report.slate[1], report.slate[0]].map((entry, index) => ({ ...entry, rank: index + 1 }));
+  const problems = crossCheck(report, { evidence: exampleEvidence() });
+  assert.ok(problems.some((problem) => /loses on criterion id/u.test(problem)), JSON.stringify(problems));
+});
+
 test("a slate entry cannot soften the highest severity of its findings", () => {
   const report = exampleReport();
   report.slate[0].severity = "defer";
@@ -325,6 +342,33 @@ test("a delta omitting a prior finding is rejected", () => {
   const problems = crossCheck(report, { prior });
   assert.ok(problems.some((problem) => /omits prior finding F-02/u.test(problem)));
   assert.ok(problems.some((problem) => /omits prior finding F-03/u.test(problem)));
+});
+
+test("a still-present delta entry without a current finding is rejected", () => {
+  const report = exampleReport();
+  report.anchor.mode = "delta";
+  report.anchor.sinceAnchor = "2026-08-01T00:00:00Z";
+  report.delta = [{ priorId: "F-01", classification: "still-present" }];
+  assert.ok(validate(reportSchema, report).some((error) => /currentId/u.test(error.message)));
+});
+
+test("a delta current finding must exist", () => {
+  const report = exampleReport();
+  report.anchor.mode = "delta";
+  report.anchor.sinceAnchor = "2026-08-01T00:00:00Z";
+  report.delta = [{ priorId: "F-01", classification: "regressed", currentId: "F-99" }];
+  assert.ok(crossCheck(report, {}).some((problem) => /unknown current finding "F-99"/u.test(problem)));
+});
+
+test("conflicting duplicate delta classifications are rejected", () => {
+  const report = exampleReport();
+  report.anchor.mode = "delta";
+  report.anchor.sinceAnchor = "2026-08-01T00:00:00Z";
+  report.delta = [
+    { priorId: "F-01", classification: "fixed" },
+    { priorId: "F-01", classification: "regressed", currentId: "F-01" },
+  ];
+  assert.ok(crossCheck(report, { prior: exampleReport() }).some((problem) => /multiple classifications/u.test(problem)));
 });
 
 test("a malformed prior report is rejected before delta completeness trusts it", () => {
