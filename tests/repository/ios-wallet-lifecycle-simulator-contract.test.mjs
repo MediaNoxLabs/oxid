@@ -40,9 +40,15 @@ test("iOS lifecycle diagnostic owns one simulator and records only closed outcom
 });
 
 test("profile acceptance serializes the host and bounds each XCTest scenario", async () => {
-  const script = await readFile(new URL("scripts/test-ios-profile-flow.sh", root), "utf8");
+  const [script, profileFlow] = await Promise.all([
+    readFile(new URL("scripts/test-ios-profile-flow.sh", root), "utf8"),
+    readFile(new URL("tests/mobile/ios/OxidUITests/ProfileFlowTests.swift", root), "utf8"),
+  ]);
   assert.match(script, /oxid_ios_supervise_acceptance "\$repository_root" ios-profile-flow 3600/u);
   assert.match(script, /oxid_ios_run_xctest "\$repository_root" "\$scenario_name" 600/u);
+  assert.match(profileFlow, /XCTNSPredicateExpectation\([\s\S]*?value == %@/u);
+  assert.match(profileFlow, /shieldedTransfer\.tap\(\)[\s\S]*?waitForSwitch\(shieldedTransfer, value: "1"\)/u);
+  assert.doesNotMatch(profileFlow, /shieldedTransfer\.tap\(\)[\s\S]{0,120}sleep/u);
 });
 
 test("development XCTest fixtures complete the protected recovery ceremony", async () => {
