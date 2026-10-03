@@ -1457,21 +1457,31 @@ mod tests {
 
     #[test]
     fn frozen_legacy_v1_and_v4_envelopes_keep_literal_policies_and_recover() {
-        for (bytes, version, expected_profile, expected_keys) in [
+        for (encoded, version, expected_profile, expected_keys) in [
             (
-                include_bytes!("../tests/fixtures/legacy-custody-v1.bin").as_slice(),
+                include_str!("../tests/fixtures/legacy-custody-v1.hex"),
                 1_u16,
                 "profile_legacy",
                 0_usize,
             ),
             (
-                include_bytes!("../tests/fixtures/legacy-custody-v4.bin").as_slice(),
+                include_str!("../tests/fixtures/legacy-custody-v4.hex"),
                 4_u16,
                 "profile_one",
                 1_usize,
             ),
         ] {
-            let backup = PortableWalletBackup::parse(bytes.to_vec()).expect("frozen envelope");
+            let hex = encoded.split_whitespace().collect::<String>();
+            assert_eq!(hex.len() % 2, 0, "fixture must contain whole bytes");
+            let bytes = hex
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|pair| {
+                    u8::from_str_radix(std::str::from_utf8(pair).expect("UTF-8 hex"), 16)
+                        .expect("hex byte")
+                })
+                .collect();
+            let backup = PortableWalletBackup::parse(bytes).expect("frozen envelope");
             let header = decode_header(backup.as_bytes()).expect("legacy header");
             assert_eq!(header.format_version, version);
             assert_eq!(
