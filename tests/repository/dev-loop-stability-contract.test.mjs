@@ -1423,6 +1423,12 @@ test("handoff envelope cwd normalization uses owned canonical Git topology", asy
     handoffCore,
     { codexWorktreesRoot: codexRoot },
   )).cwd, fixture.worktrees.codex856);
+  assert.equal((await normalizeHandoffEnvelopeCwd(
+    validEnvelope({ ...phase, issue: 856, phase: "issue-856" }, "ignored"),
+    resolve(fixture.worktrees.codex856),
+    handoffCore,
+    { codexWorktreesRoot: codexRoot },
+  )).cwd, fixture.worktrees.codex856);
 
   await writeFile(path.join(fixture.worktrees.codex856, "untracked"), "dirty\n");
   await assert.rejects(

@@ -104,6 +104,7 @@ fn application_service_getters_remain_available_at_the_root_facade() {
     let _ = services.refuse_credential_presentation();
     let _ = services.get_credential_presentation();
     let _ = services.list_credential_presentations();
+    let _ = services.list_credential_presentation_activity();
     let _ = services.list_passport_vault_locks();
     let _ = services.decode_passport_vault_contract_state();
     let _ = services.read_passport_vault_contract_state();
@@ -165,6 +166,19 @@ fn headless_issuance_activity_uses_one_application_projection() {
         activity.records[0].finality,
         CredentialIssuanceActivityFinality::Final
     );
+}
+
+#[test]
+fn headless_presentation_activity_uses_one_navigation_independent_projection() {
+    let services = compose_in_memory();
+    let first = services.list_credential_presentation_activity();
+    let second = services.list_credential_presentation_activity();
+    assert!(Arc::ptr_eq(&first, &second));
+    let activity = first
+        .execute("profile_1".to_owned())
+        .expect("headless presentation activity projection");
+    assert!(activity.records.is_empty());
+    assert_eq!(activity.source, "application_event_projection");
 }
 
 #[test]

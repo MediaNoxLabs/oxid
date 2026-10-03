@@ -588,6 +588,7 @@ fn main() {
                     application.accept_credential_presentation(),
                     application.cancel_credential_presentation(),
                     application.refuse_credential_presentation(),
+                    application.list_credential_presentation_activity(),
                     standalone_openid4vp_request,
                 ),
                 oxid_ui_dioxus::CredentialDisclosureUiServices::new(

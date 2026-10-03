@@ -39,9 +39,9 @@ use oxid_platform_ports::{
 };
 use oxid_presentation_application::{
     AcceptCredentialPresentationUseCase, CancelCredentialPresentationUseCase,
-    GetCredentialPresentationUseCase, ListCredentialPresentationsUseCase,
-    PrepareCredentialPresentationUseCase, RefuseCredentialPresentationUseCase,
-    SetCredentialPresentationForegroundUseCase,
+    GetCredentialPresentationUseCase, ListCredentialPresentationActivityUseCase,
+    ListCredentialPresentationsUseCase, PrepareCredentialPresentationUseCase,
+    RefuseCredentialPresentationUseCase, SetCredentialPresentationForegroundUseCase,
 };
 use oxid_protocol_application::{
     AcceptCredentialIssuanceUseCase, AcceptSelfIssuedAuthenticationUseCase,
@@ -193,6 +193,8 @@ pub struct ApplicationServices {
     pub(super) refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase>,
     pub(super) get_credential_presentation: Arc<dyn GetCredentialPresentationUseCase>,
     pub(super) list_credential_presentations: Arc<dyn ListCredentialPresentationsUseCase>,
+    pub(super) list_credential_presentation_activity:
+        Arc<dyn ListCredentialPresentationActivityUseCase>,
     pub(super) list_passport_vault_locks: Arc<dyn ListPassportVaultLocksUseCase>,
     pub(super) passport_vault_activity: Arc<PassportVaultActivityStore>,
     pub(super) decode_passport_vault_contract_state:
@@ -861,6 +863,13 @@ impl ApplicationServices {
     #[must_use]
     pub fn list_credential_presentations(&self) -> Arc<dyn ListCredentialPresentationsUseCase> {
         Arc::clone(&self.list_credential_presentations)
+    }
+
+    #[must_use]
+    pub fn list_credential_presentation_activity(
+        &self,
+    ) -> Arc<dyn ListCredentialPresentationActivityUseCase> {
+        Arc::clone(&self.list_credential_presentation_activity)
     }
 
     #[must_use]

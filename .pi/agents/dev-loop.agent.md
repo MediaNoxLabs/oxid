@@ -7,6 +7,7 @@ argument-hint: "[prototype|production-ready] plus an issue/PR number or URL; pro
 systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: true
+defaultContext: fresh
 user-invocable: true
 maxSubagentDepth: 1
 timeoutMs: 3600000

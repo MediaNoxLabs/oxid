@@ -60,6 +60,7 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
     "npm:@playwright/test@1.60.0",
     "npm:@axe-core/playwright@4.10.0",
     "npm:pi-subagents@0.70.0",
+    "npm:@earendil-works/pi-coding-agent@0.85.1",
     "npm:typebox@1.3.9",
     {
       source: "npm:pi-taskflow@0.2.10",
@@ -94,6 +95,8 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.doesNotMatch(smoke, /timeout[^\n]*--foreground/u);
   assert.doesNotMatch(smoke, /pi_rpc_output=/u);
   assert.match(smoke, /Pi 0\.85\.1 is required for native detached child dispatch/u);
+  assert.ok(settings.packages.includes("npm:@earendil-works/pi-coding-agent@0.85.1"),
+    "the isolated pi-subagents closure must carry the same exact runtime peer as the Nix entrypoint");
   assert.match(smoke, /PI_CODING_AGENT_SESSION_DIR/u);
   assert.match(smoke, /PI_SUBAGENTS_TEMP_ROOT/u);
   assert.match(smoke, /owner-private runtime state/u);

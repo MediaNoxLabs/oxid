@@ -120,10 +120,10 @@ use oxid_platform_ports::{
 use oxid_presentation_application::{
     AcceptCredentialPresentationUseCase, CancelCredentialPresentationUseCase,
     CredentialPresentationProtocolPort, CredentialPresentationService,
-    GetCredentialPresentationUseCase, ListCredentialPresentationsUseCase,
-    PrepareCredentialPresentationUseCase, RefuseCredentialPresentationUseCase,
-    SetCredentialPresentationForegroundUseCase, UnavailableCredentialPresentationProtocol,
-    UnavailablePresentationVerifier,
+    GetCredentialPresentationUseCase, ListCredentialPresentationActivityUseCase,
+    ListCredentialPresentationsUseCase, PrepareCredentialPresentationUseCase,
+    RefuseCredentialPresentationUseCase, SetCredentialPresentationForegroundUseCase,
+    UnavailableCredentialPresentationProtocol, UnavailablePresentationVerifier,
 };
 #[cfg(all(
     feature = "mobile-compact-artifacts",
@@ -1389,6 +1389,8 @@ where
     let get_credential_presentation: Arc<dyn GetCredentialPresentationUseCase> =
         credential_presentation.clone();
     let list_credential_presentations: Arc<dyn ListCredentialPresentationsUseCase> =
+        credential_presentation.clone();
+    let list_credential_presentation_activity: Arc<dyn ListCredentialPresentationActivityUseCase> =
         credential_presentation;
     let list_passport_vault_locks: Arc<dyn ListPassportVaultLocksUseCase> = passport_vault.clone();
     let decode_passport_vault_contract_state: Arc<dyn DecodePassportVaultContractStateUseCase> =
@@ -1527,6 +1529,7 @@ where
         refuse_credential_presentation,
         get_credential_presentation,
         list_credential_presentations,
+        list_credential_presentation_activity,
         list_passport_vault_locks,
         passport_vault_activity,
         decode_passport_vault_contract_state,

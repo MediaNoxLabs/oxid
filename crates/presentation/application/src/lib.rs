@@ -3,12 +3,13 @@
 #![forbid(unsafe_code)]
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet, VecDeque},
     error::Error,
     fmt,
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex, MutexGuard},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use oxid_foundation::{AcceptedCredentialPresentationFlow, OpaqueIdError};
@@ -548,6 +549,304 @@ pub struct CredentialPresentationView {
     pub failure_code: Option<String>,
 }
 
+/// Maximum number of presentation activity records retained per process.
+/// This privacy-safe projection is deleted on restart and is never backed up.
+pub const MAX_CREDENTIAL_PRESENTATION_ACTIVITY_RECORDS: usize = 128;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CredentialPresentationActivityId(u64);
+
+impl CredentialPresentationActivityId {
+    #[must_use]
+    pub const fn from_value(value: u64) -> Option<Self> {
+        if value == 0 { None } else { Some(Self(value)) }
+    }
+
+    #[must_use]
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialPresentationActivitySource {
+    OpenId4Vp,
+}
+
+impl CredentialPresentationActivitySource {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::OpenId4Vp => "openid4vp",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialPresentationActivityStatus {
+    Pending,
+    Shared,
+    Failed,
+    Refused,
+    Cancelled,
+    TimedOut,
+    OutcomeUnknown,
+}
+
+impl CredentialPresentationActivityStatus {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Shared => "shared",
+            Self::Failed => "failed",
+            Self::Refused => "refused",
+            Self::Cancelled => "cancelled",
+            Self::TimedOut => "timed_out",
+            Self::OutcomeUnknown => "outcome_unknown",
+        }
+    }
+
+    const fn is_final(self) -> bool {
+        matches!(
+            self,
+            Self::Shared | Self::Failed | Self::Refused | Self::Cancelled
+        )
+    }
+
+    const fn is_evictable(self) -> bool {
+        self.is_final() || matches!(self, Self::TimedOut | Self::OutcomeUnknown)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialPresentationActivityFinality {
+    Pending,
+    Final,
+    Unknown,
+}
+
+impl CredentialPresentationActivityFinality {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Final => "final",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl From<CredentialPresentationActivityStatus> for CredentialPresentationActivityFinality {
+    fn from(status: CredentialPresentationActivityStatus) -> Self {
+        match status {
+            CredentialPresentationActivityStatus::Pending => Self::Pending,
+            CredentialPresentationActivityStatus::TimedOut
+            | CredentialPresentationActivityStatus::OutcomeUnknown => Self::Unknown,
+            CredentialPresentationActivityStatus::Shared
+            | CredentialPresentationActivityStatus::Failed
+            | CredentialPresentationActivityStatus::Refused
+            | CredentialPresentationActivityStatus::Cancelled => Self::Final,
+        }
+    }
+}
+
+/// Privacy-safe presentation metadata. Claim names and values, selected
+/// credentials, proof material, protocol payloads, keys, and raw errors are
+/// intentionally absent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialPresentationActivityRecord {
+    pub id: CredentialPresentationActivityId,
+    pub profile_id: String,
+    pub source: CredentialPresentationActivitySource,
+    pub purpose: String,
+    pub presentation_type: String,
+    pub verifier: Option<String>,
+    pub status: CredentialPresentationActivityStatus,
+    pub finality: CredentialPresentationActivityFinality,
+    pub observed_at_millis: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialPresentationActivityView {
+    pub source: String,
+    pub retention: String,
+    pub records: Vec<CredentialPresentationActivityRecord>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialPresentationActivityError {
+    Unavailable,
+}
+
+impl fmt::Display for CredentialPresentationActivityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("credential presentation activity is unavailable")
+    }
+}
+
+impl Error for CredentialPresentationActivityError {}
+
+pub trait ListCredentialPresentationActivityUseCase: Send + Sync {
+    fn execute(
+        &self,
+        profile_id: String,
+    ) -> Result<CredentialPresentationActivityView, CredentialPresentationActivityError>;
+}
+
+#[derive(Default)]
+struct CredentialPresentationActivityState {
+    next_id: u64,
+    records: VecDeque<CredentialPresentationActivityRecord>,
+    presentation_ids: BTreeMap<CredentialPresentationId, CredentialPresentationActivityId>,
+}
+
+/// Bounded application-owned producer and projection. It is process-local,
+/// explicitly deletable, and deliberately has neither persistence nor backup.
+pub struct CredentialPresentationActivityStore {
+    state: Mutex<CredentialPresentationActivityState>,
+}
+
+impl Default for CredentialPresentationActivityStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CredentialPresentationActivityStore {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            state: Mutex::new(CredentialPresentationActivityState::default()),
+        }
+    }
+
+    pub fn clear_profile(
+        &self,
+        profile_id: &str,
+    ) -> Result<usize, CredentialPresentationActivityError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| CredentialPresentationActivityError::Unavailable)?;
+        let removed: BTreeSet<_> = state
+            .records
+            .iter()
+            .filter(|record| record.profile_id == profile_id)
+            .map(|record| record.id)
+            .collect();
+        state
+            .records
+            .retain(|record| record.profile_id != profile_id);
+        state.presentation_ids.retain(|_, id| !removed.contains(id));
+        Ok(removed.len())
+    }
+
+    fn now() -> Option<u64> {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|value| u64::try_from(value.as_millis()).ok())
+    }
+
+    fn begin(
+        &self,
+        presentation_id: &CredentialPresentationId,
+        session: &Session,
+    ) -> Option<CredentialPresentationActivityId> {
+        let mut state = self.state.lock().ok()?;
+        if let Some(id) = state.presentation_ids.get(presentation_id) {
+            return Some(*id);
+        }
+        if state.records.len() == MAX_CREDENTIAL_PRESENTATION_ACTIVITY_RECORDS {
+            let evict_at = state
+                .records
+                .iter()
+                .position(|record| record.status.is_evictable())?;
+            let evicted = state.records.remove(evict_at)?;
+            state.presentation_ids.retain(|_, id| *id != evicted.id);
+        }
+        state.next_id = state.next_id.checked_add(1)?;
+        let id = CredentialPresentationActivityId(state.next_id);
+        state
+            .records
+            .push_back(CredentialPresentationActivityRecord {
+                id,
+                profile_id: session.profile_id.as_str().to_owned(),
+                source: CredentialPresentationActivitySource::OpenId4Vp,
+                purpose: session.preview.purpose().to_owned(),
+                presentation_type: session.preview.query_id().to_owned(),
+                verifier: Some(session.preview.verifier().to_owned()),
+                status: CredentialPresentationActivityStatus::Pending,
+                finality: CredentialPresentationActivityFinality::Pending,
+                observed_at_millis: Self::now(),
+            });
+        state.presentation_ids.insert(presentation_id.clone(), id);
+        Some(id)
+    }
+
+    fn update(
+        &self,
+        presentation_id: &CredentialPresentationId,
+        status: CredentialPresentationActivityStatus,
+    ) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let Some(id) = state.presentation_ids.get(presentation_id).copied() else {
+            return;
+        };
+        let Some(record) = state.records.iter_mut().find(|record| record.id == id) else {
+            return;
+        };
+        if record.status == status
+            || record.status.is_final()
+            || matches!(status, CredentialPresentationActivityStatus::Pending)
+        {
+            return;
+        }
+        if matches!(
+            record.status,
+            CredentialPresentationActivityStatus::TimedOut
+                | CredentialPresentationActivityStatus::OutcomeUnknown
+        ) && matches!(
+            status,
+            CredentialPresentationActivityStatus::TimedOut
+                | CredentialPresentationActivityStatus::OutcomeUnknown
+                | CredentialPresentationActivityStatus::Refused
+                | CredentialPresentationActivityStatus::Cancelled
+        ) {
+            return;
+        }
+        record.status = status;
+        record.finality = status.into();
+        record.observed_at_millis = Self::now();
+    }
+}
+
+impl ListCredentialPresentationActivityUseCase for CredentialPresentationActivityStore {
+    fn execute(
+        &self,
+        profile_id: String,
+    ) -> Result<CredentialPresentationActivityView, CredentialPresentationActivityError> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| CredentialPresentationActivityError::Unavailable)?;
+        Ok(CredentialPresentationActivityView {
+            source: "application_event_projection".to_owned(),
+            retention: "process_local_bounded_not_backed_up".to_owned(),
+            records: state
+                .records
+                .iter()
+                .rev()
+                .filter(|record| record.profile_id == profile_id)
+                .cloned()
+                .collect(),
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Session {
     profile_id: PresentationProfileId,
@@ -556,6 +855,8 @@ struct Session {
     presentation_generated: bool,
     verifier_validated: bool,
     failure_code: Option<String>,
+    refusal_in_progress: bool,
+    protocol_discarded: bool,
 }
 
 impl Session {
@@ -692,17 +993,44 @@ pub trait ListCredentialPresentationsUseCase: Send + Sync {
 pub struct CredentialPresentationService {
     protocol: Arc<dyn CredentialPresentationProtocolPort>,
     authority: Arc<dyn CredentialPresentationAuthorityPort>,
+    activity: Arc<CredentialPresentationActivityStore>,
     sessions: Mutex<BTreeMap<CredentialPresentationId, Session>>,
+}
+
+struct PresentationAttempt<'a> {
+    service: &'a CredentialPresentationService,
+    presentation_id: CredentialPresentationId,
+}
+
+impl Drop for PresentationAttempt<'_> {
+    fn drop(&mut self) {
+        self.service.interrupt_if_presenting(&self.presentation_id);
+    }
+}
+
+struct PresentationRefusalAttempt<'a> {
+    service: &'a CredentialPresentationService,
+    presentation_id: CredentialPresentationId,
+}
+
+impl Drop for PresentationRefusalAttempt<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut sessions) = self.service.sessions.lock()
+            && let Some(session) = sessions.get_mut(&self.presentation_id)
+        {
+            session.refusal_in_progress = false;
+        }
+    }
 }
 
 impl CredentialPresentationService {
     #[must_use]
     pub fn new(protocol: Arc<dyn CredentialPresentationProtocolPort>) -> Self {
-        Self {
+        Self::with_authority_and_activity(
             protocol,
-            authority: Arc::new(UnavailableCredentialPresentationAuthority),
-            sessions: Mutex::new(BTreeMap::new()),
-        }
+            Arc::new(UnavailableCredentialPresentationAuthority),
+            Arc::new(CredentialPresentationActivityStore::new()),
+        )
     }
 
     #[must_use]
@@ -710,11 +1038,30 @@ impl CredentialPresentationService {
         protocol: Arc<dyn CredentialPresentationProtocolPort>,
         authority: Arc<dyn CredentialPresentationAuthorityPort>,
     ) -> Self {
+        Self::with_authority_and_activity(
+            protocol,
+            authority,
+            Arc::new(CredentialPresentationActivityStore::new()),
+        )
+    }
+
+    #[must_use]
+    pub fn with_authority_and_activity(
+        protocol: Arc<dyn CredentialPresentationProtocolPort>,
+        authority: Arc<dyn CredentialPresentationAuthorityPort>,
+        activity: Arc<CredentialPresentationActivityStore>,
+    ) -> Self {
         Self {
             protocol,
             authority,
+            activity,
             sessions: Mutex::new(BTreeMap::new()),
         }
+    }
+
+    #[must_use]
+    pub fn activity(&self) -> Arc<CredentialPresentationActivityStore> {
+        Arc::clone(&self.activity)
     }
 
     fn sessions(
@@ -731,18 +1078,48 @@ impl CredentialPresentationService {
     fn fail(&self, id: &CredentialPresentationId, error: PresentationProtocolError) {
         if let Ok(mut sessions) = self.sessions.lock()
             && let Some(session) = sessions.get_mut(id)
+            && matches!(
+                session.state,
+                CredentialPresentationState::Presenting
+                    | CredentialPresentationState::CancellationRequested
+            )
         {
-            session.state = match error {
+            let (state, status) = match error {
                 PresentationProtocolError::ProofCancelled
-                | PresentationProtocolError::ProofBackgrounded => {
-                    CredentialPresentationState::Cancelled
-                }
-                PresentationProtocolError::ProofTimedOut => CredentialPresentationState::TimedOut,
-                _ => CredentialPresentationState::Failed,
+                | PresentationProtocolError::ProofBackgrounded => (
+                    CredentialPresentationState::Cancelled,
+                    CredentialPresentationActivityStatus::Cancelled,
+                ),
+                PresentationProtocolError::ProofTimedOut => (
+                    CredentialPresentationState::TimedOut,
+                    CredentialPresentationActivityStatus::TimedOut,
+                ),
+                PresentationProtocolError::Unavailable => (
+                    CredentialPresentationState::Failed,
+                    CredentialPresentationActivityStatus::OutcomeUnknown,
+                ),
+                _ => (
+                    CredentialPresentationState::Failed,
+                    CredentialPresentationActivityStatus::Failed,
+                ),
             };
+            session.state = state;
             session.presentation_generated = false;
             session.verifier_validated = false;
             session.failure_code = Some(error.code().to_owned());
+            self.activity.update(id, status);
+        }
+    }
+
+    fn interrupt_if_presenting(&self, id: &CredentialPresentationId) {
+        if let Ok(mut sessions) = self.sessions.lock()
+            && let Some(session) = sessions.get_mut(id)
+            && session.state == CredentialPresentationState::Presenting
+        {
+            session.state = CredentialPresentationState::Failed;
+            session.failure_code = Some("presentation_outcome_unknown".to_owned());
+            self.activity
+                .update(id, CredentialPresentationActivityStatus::OutcomeUnknown);
         }
     }
 }
@@ -783,6 +1160,8 @@ impl PrepareCredentialPresentationUseCase for CredentialPresentationService {
                 presentation_generated: false,
                 verifier_validated: false,
                 failure_code: None,
+                refusal_in_progress: false,
+                protocol_discarded: false,
             };
             let view = session.view(&prepared.id);
             if self.sessions()?.insert(prepared.id, session).is_some() {
@@ -840,8 +1219,15 @@ impl AcceptCredentialPresentationUseCase for CredentialPresentationService {
                         credential_id: command.credential_id.clone(),
                     })
                     .map_err(CredentialPresentationError::Approval)?;
+                self.activity
+                    .begin(&presentation_id, session)
+                    .ok_or(CredentialPresentationError::Unavailable)?;
                 session.state = CredentialPresentationState::Presenting;
                 authority
+            };
+            let _attempt = PresentationAttempt {
+                service: self,
+                presentation_id: presentation_id.clone(),
             };
             let outcome = match self
                 .protocol
@@ -868,6 +1254,10 @@ impl AcceptCredentialPresentationUseCase for CredentialPresentationService {
                     PresentationProtocolError::VerifierRejected,
                 ));
             }
+            self.activity.update(
+                &presentation_id,
+                CredentialPresentationActivityStatus::Shared,
+            );
             let mut sessions = self.sessions()?;
             let session = sessions
                 .get_mut(&presentation_id)
@@ -946,17 +1336,27 @@ impl RefuseCredentialPresentationUseCase for CredentialPresentationService {
         let profile_id = profile(command.profile_id)?;
         let presentation_id = presentation_id(command.presentation_id)?;
         {
-            let sessions = self.sessions()?;
+            let mut sessions = self.sessions()?;
             let session = sessions
-                .get(&presentation_id)
+                .get_mut(&presentation_id)
                 .ok_or(CredentialPresentationError::NotFound)?;
             if session.profile_id != profile_id {
                 return Err(CredentialPresentationError::NotFound);
             }
-            if session.state != CredentialPresentationState::AwaitingConsent {
+            if session.protocol_discarded {
+                return Ok(session.view(&presentation_id));
+            }
+            if session.state != CredentialPresentationState::AwaitingConsent
+                || session.refusal_in_progress
+            {
                 return Err(CredentialPresentationError::InvalidState);
             }
+            session.refusal_in_progress = true;
         }
+        let refusal_attempt = PresentationRefusalAttempt {
+            service: self,
+            presentation_id: presentation_id.clone(),
+        };
         self.protocol
             .discard(&presentation_id)
             .map_err(CredentialPresentationError::Protocol)?;
@@ -964,8 +1364,18 @@ impl RefuseCredentialPresentationUseCase for CredentialPresentationService {
         let session = sessions
             .get_mut(&presentation_id)
             .ok_or(CredentialPresentationError::NotFound)?;
+        session.protocol_discarded = true;
         session.state = CredentialPresentationState::Refused;
-        Ok(session.view(&presentation_id))
+        session.failure_code = None;
+        let _ = self.activity.begin(&presentation_id, session);
+        self.activity.update(
+            &presentation_id,
+            CredentialPresentationActivityStatus::Refused,
+        );
+        let view = session.view(&presentation_id);
+        drop(sessions);
+        drop(refusal_attempt);
+        Ok(view)
     }
 }
 
@@ -997,6 +1407,15 @@ impl ListCredentialPresentationsUseCase for CredentialPresentationService {
             .filter(|(_, session)| session.profile_id == profile_id)
             .map(|(id, session)| session.view(id))
             .collect())
+    }
+}
+
+impl ListCredentialPresentationActivityUseCase for CredentialPresentationService {
+    fn execute(
+        &self,
+        profile_id: String,
+    ) -> Result<CredentialPresentationActivityView, CredentialPresentationActivityError> {
+        self.activity.execute(profile_id)
     }
 }
 
@@ -1059,7 +1478,7 @@ impl PresentationVerifierPort for UnavailablePresentationVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::task::{Context, Poll, Waker};
 
     struct PresentationAuthority(
@@ -1105,6 +1524,7 @@ mod tests {
         selected_credential_id: Mutex<Option<String>>,
         cancelled_presentation_id: Mutex<Option<String>>,
         foreground_events: Mutex<Vec<bool>>,
+        discard_count: AtomicUsize,
         present_succeeds: AtomicBool,
         present_yields_once: AtomicBool,
     }
@@ -1178,6 +1598,7 @@ mod tests {
         }
 
         fn discard(&self, _: &CredentialPresentationId) -> Result<(), PresentationProtocolError> {
+            self.discard_count.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
 
@@ -1471,6 +1892,210 @@ mod tests {
                 .lock()
                 .expect("foreground events lock"),
             vec![false]
+        );
+    }
+
+    #[test]
+    fn presentation_activity_exists_before_disclosure_and_records_safe_success() {
+        let protocol = Arc::new(Protocol::default());
+        protocol.present_succeeds.store(true, Ordering::SeqCst);
+        protocol.present_yields_once.store(true, Ordering::SeqCst);
+        let activity = Arc::new(CredentialPresentationActivityStore::new());
+        let service = CredentialPresentationService::with_authority_and_activity(
+            protocol,
+            Arc::new(PresentationAuthority(
+                oxid_foundation::AcceptedFlowIssuer::new(),
+            )),
+            activity.clone(),
+        );
+        let prepared = ready(PrepareCredentialPresentationUseCase::execute(
+            &service,
+            PrepareCredentialPresentationCommand {
+                profile_id: "profile_one".to_owned(),
+                request: "openid4vp://authorize".to_owned(),
+            },
+        ))
+        .expect("prepare");
+        let mut accept = Box::pin(AcceptCredentialPresentationUseCase::execute(
+            &service,
+            AcceptCredentialPresentationCommand {
+                profile_id: "profile_one".to_owned(),
+                presentation_id: prepared.id,
+                credential_id: "vc_one".to_owned(),
+                confirmed: true,
+                intent: "ACCEPT_CREDENTIAL_PRESENTATION".to_owned(),
+            },
+        ));
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(accept.as_mut().poll(&mut context), Poll::Pending));
+
+        let pending = activity
+            .execute("profile_one".to_owned())
+            .expect("pending activity");
+        assert_eq!(pending.records.len(), 1);
+        assert_eq!(pending.records[0].id.value(), 1);
+        assert_eq!(
+            pending.records[0].status,
+            CredentialPresentationActivityStatus::Pending
+        );
+        assert_eq!(pending.records[0].purpose, "Purpose for profile_one");
+        assert_eq!(pending.records[0].presentation_type, "digital_passport");
+        assert_eq!(
+            pending.records[0].verifier.as_deref(),
+            Some("https://verifier.example")
+        );
+
+        assert!(matches!(
+            accept.as_mut().poll(&mut context),
+            Poll::Ready(Ok(_))
+        ));
+        let shared = activity
+            .execute("profile_one".to_owned())
+            .expect("shared activity");
+        assert_eq!(shared.records[0].id.value(), 1);
+        assert_eq!(
+            shared.records[0].status,
+            CredentialPresentationActivityStatus::Shared
+        );
+        assert_eq!(
+            shared.records[0].finality,
+            CredentialPresentationActivityFinality::Final
+        );
+    }
+
+    #[test]
+    fn presentation_activity_command_event_matrix_is_idempotent_and_non_regressing() {
+        let store = CredentialPresentationActivityStore::new();
+        let session = Session {
+            profile_id: PresentationProfileId::parse("profile_one").expect("profile"),
+            preview: CredentialPresentationPreview::new(
+                "https://verifier.example",
+                "Age assurance",
+                "digital_passport",
+                vec![
+                    PresentationCredentialCandidate::new(
+                        "vc_one",
+                        "Digital Passport",
+                        "did:example:issuer",
+                    )
+                    .expect("candidate"),
+                ],
+                vec![
+                    RequestedPresentationClaim::reveal("/givenName", "Given name").expect("claim"),
+                ],
+            )
+            .expect("preview"),
+            state: CredentialPresentationState::AwaitingConsent,
+            presentation_generated: false,
+            verifier_validated: false,
+            failure_code: None,
+            refusal_in_progress: false,
+            protocol_discarded: false,
+        };
+
+        let first = CredentialPresentationId::parse("presentation_first").expect("first");
+        let stable = store.begin(&first, &session).expect("first activity");
+        assert_eq!(store.begin(&first, &session), Some(stable));
+        store.update(&first, CredentialPresentationActivityStatus::Pending);
+        store.update(&first, CredentialPresentationActivityStatus::TimedOut);
+        store.update(&first, CredentialPresentationActivityStatus::Shared);
+        store.update(&first, CredentialPresentationActivityStatus::Failed);
+
+        let refused = CredentialPresentationId::parse("presentation_refused").expect("refused");
+        store.begin(&refused, &session).expect("refused activity");
+        store.update(&refused, CredentialPresentationActivityStatus::Refused);
+        store.update(&refused, CredentialPresentationActivityStatus::Shared);
+
+        let cancelled =
+            CredentialPresentationId::parse("presentation_cancelled").expect("cancelled");
+        store
+            .begin(&cancelled, &session)
+            .expect("cancelled activity");
+        store.update(&cancelled, CredentialPresentationActivityStatus::Cancelled);
+        store.update(&cancelled, CredentialPresentationActivityStatus::Pending);
+
+        let unknown = CredentialPresentationId::parse("presentation_unknown").expect("unknown");
+        store.begin(&unknown, &session).expect("unknown activity");
+        store.update(
+            &unknown,
+            CredentialPresentationActivityStatus::OutcomeUnknown,
+        );
+        store.update(&unknown, CredentialPresentationActivityStatus::Shared);
+
+        let failed = CredentialPresentationId::parse("presentation_failed").expect("failed");
+        store.begin(&failed, &session).expect("failed activity");
+        store.update(&failed, CredentialPresentationActivityStatus::Failed);
+        store.update(&failed, CredentialPresentationActivityStatus::Shared);
+
+        let view = store
+            .execute("profile_one".to_owned())
+            .expect("matrix view");
+        let statuses = view
+            .records
+            .iter()
+            .map(|record| record.status)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            statuses,
+            vec![
+                CredentialPresentationActivityStatus::Failed,
+                CredentialPresentationActivityStatus::Shared,
+                CredentialPresentationActivityStatus::Cancelled,
+                CredentialPresentationActivityStatus::Refused,
+                CredentialPresentationActivityStatus::Shared,
+            ]
+        );
+    }
+
+    #[test]
+    fn refusal_activity_is_idempotent_and_process_local() {
+        let protocol = Arc::new(Protocol::default());
+        let activity = Arc::new(CredentialPresentationActivityStore::new());
+        let service = CredentialPresentationService::with_authority_and_activity(
+            protocol.clone(),
+            Arc::new(PresentationAuthority(
+                oxid_foundation::AcceptedFlowIssuer::new(),
+            )),
+            activity.clone(),
+        );
+        let prepared = ready(PrepareCredentialPresentationUseCase::execute(
+            &service,
+            PrepareCredentialPresentationCommand {
+                profile_id: "profile_one".to_owned(),
+                request: "openid4vp://authorize".to_owned(),
+            },
+        ))
+        .expect("prepare");
+        let command = RefuseCredentialPresentationCommand {
+            profile_id: "profile_one".to_owned(),
+            presentation_id: prepared.id,
+        };
+        RefuseCredentialPresentationUseCase::execute(&service, command.clone()).expect("refuse");
+        RefuseCredentialPresentationUseCase::execute(&service, command).expect("duplicate refuse");
+        assert_eq!(protocol.discard_count.load(Ordering::SeqCst), 1);
+        let view = activity
+            .execute("profile_one".to_owned())
+            .expect("refused activity");
+        assert_eq!(view.records.len(), 1);
+        assert_eq!(
+            view.records[0].status,
+            CredentialPresentationActivityStatus::Refused
+        );
+        assert_eq!(activity.clear_profile("profile_one").expect("clear"), 1);
+        assert!(
+            activity
+                .execute("profile_one".to_owned())
+                .expect("cleared")
+                .records
+                .is_empty()
+        );
+        assert!(
+            CredentialPresentationActivityStore::new()
+                .execute("profile_one".to_owned())
+                .expect("restart projection")
+                .records
+                .is_empty()
         );
     }
 

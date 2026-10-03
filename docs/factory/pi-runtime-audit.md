@@ -45,7 +45,7 @@ the startup audit rejects formats outside that tracked contract.
 | --- | --- | --- |
 | Devshell Pi | Nix-pinned; `./bootstrap.sh --check` passed | healthy |
 | Direct host Pi | outside Nix | unsupported path; use `./bootstrap.sh --pi` |
-| Project packages | `dev-loops@1.0.2` plus its separately pinned `@dev-loops/core@1.0.2` runtime (CLI/skills/agents; mutating extension filtered), `pi-subagents@0.70.0`, `agent-review-pi@0.6.0` plus exact peers | exact pins installed |
+| Project packages | `dev-loops@1.0.2` plus its separately pinned `@dev-loops/core@1.0.2` runtime (CLI/skills/agents; mutating extension filtered), `pi-subagents@0.70.0` plus its exact `pi-coding-agent@0.85.1` child-session peer, `agent-review-pi@0.6.0` plus exact peers | exact pins installed |
 | npm production audit | 0 reported vulnerabilities | healthy at audit time |
 | Common Pi package store | one shared store per Git common checkout | healthy |
 | Registered worktrees | above the active green limit | red; exact counts remain private operational telemetry |
@@ -84,6 +84,12 @@ leave every tracked agent hash unchanged.
 `pi-coding-agent@0.85.1` is locked through the Nix input and is the supported
 entrypoint for `pi-subagents@0.70.0`: its native child launcher receives the
 package context that the former standalone Nix `0.84.0` executable lacked.
+The same exact runtime is also installed in the repository package closure.
+This is not a second executable authority: it supplies the peer module that a
+fresh isolated workflow child imports from `pi-subagents`; Node ESM resolution
+does not inherit the Nix entrypoint's private module tree or ambient
+`NODE_PATH`. The factory contract keeps the closure peer and Nix entrypoint at
+the same version and fails closed on drift.
 The devshell leaves `PI_CODING_AGENT_DIR` user-scoped so the existing Codex
 authentication and bounded user policy remain available. It roots
 `PI_CODING_AGENT_SESSION_DIR` and `PI_SUBAGENTS_TEMP_ROOT` at owner-private
