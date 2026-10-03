@@ -26,6 +26,7 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import java.io.File
 import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import java.security.MessageDigest
@@ -89,7 +90,36 @@ class OxidMobilePlugin(private val activity: Activity) {
         return if (!changed) "failed" else if (enabled) "protected" else "unprotected"
     }
 
-    fun custodyJson(request: String): String = CustodyCoordinator.dispatch(activity, request)
+    fun authorizeRecoveryPhraseRevealJson(): String =
+        CustodyCoordinator.authorizeRecoveryPhraseReveal(activity)
+
+    fun custodyInspectControl(profileId: String): String =
+        CustodyCoordinator.inspectControl(activity, profileId)
+
+    fun custodyInitializeControl(profileId: String, source: ByteBuffer): String =
+        CustodyCoordinator.initializeControl(activity, profileId, source)
+
+    fun custodyPrepareUnlockControl(profileId: String, reason: String): String =
+        CustodyCoordinator.prepareUnlockControl(activity, profileId, reason)
+
+    fun custodyPrepareLoadControl(profileId: String): String =
+        CustodyCoordinator.prepareLoadControl(activity, profileId)
+
+    fun custodyPendingLengthJson(): String = CustodyCoordinator.pendingLengthJson()
+
+    fun custodyTakePending(request: String, destination: ByteBuffer): String =
+        if (CustodyCoordinator.takePending(request, destination)) "taken" else "failed"
+
+    fun custodyDiscardPending(): String {
+        CustodyCoordinator.discardPending()
+        return "discarded"
+    }
+
+    fun custodySaveControl(profileId: String, source: ByteBuffer): String =
+        CustodyCoordinator.saveControl(activity, profileId, source)
+
+    fun custodyLockControl(profileId: String): String =
+        CustodyCoordinator.lockControl(activity, profileId)
 
     fun startBackupExportJson(request: String): String =
         BackupDocumentCoordinator.startExport(activity, request)
@@ -332,33 +362,14 @@ private object CustodyCoordinator {
     private const val AUTH_DURATION_SECONDS = 30
     private val aadDomain = "oxid-mobile-custody-v1\u0000".toByteArray(StandardCharsets.UTF_8)
     private val sessions = mutableMapOf<String, Long>()
-
-    fun dispatch(activity: Activity, request: String): String {
-        if (request.isEmpty() || request.length > MAX_PLAINTEXT_BYTES * 2) return json("invalid")
-        val body = runCatching { JSONObject(request) }.getOrNull() ?: return json("invalid")
-        val operation = body.optString("operation", "")
-        if (operation == "authorize_recovery_phrase_reveal") {
-            if (body.keys().asSequence().toSet() != setOf("operation")) return json("invalid")
-            return authorizeRecoveryPhraseReveal(activity)
-        }
-        val profileId = body.optString("profile_id", "")
-        val expected = when (operation) {
-            "initialize", "save" -> setOf("operation", "profile_id", "payload")
-            "unlock" -> setOf("operation", "profile_id", "reason")
-            "inspect", "load", "lock" -> setOf("operation", "profile_id")
-            else -> return json("invalid")
-        }
-        if (body.keys().asSequence().toSet() != expected) return json("invalid")
-        return when (operation) {
-            "inspect" -> inspect(activity, profileId)
-            "initialize" -> initialize(activity, profileId, body.optString("payload", ""))
-            "unlock" -> unlock(activity, profileId, body.optString("reason", ""))
-            "load" -> load(activity, profileId)
-            "save" -> save(activity, profileId, body.optString("payload", ""))
-            "lock" -> lock(activity, profileId)
-            else -> json("invalid")
-        }
-    }
+    private data class PendingMaterial(
+        val operation: String,
+        val profileId: String,
+        val generation: Long,
+        val bytes: ByteArray,
+    )
+    private var pendingMaterial: PendingMaterial? = null
+    private var generation = 0L
 
     @Synchronized
     fun authorizeRecoveryPhraseReveal(activity: Activity): String {
@@ -383,9 +394,8 @@ private object CustodyCoordinator {
     }
 
     @Synchronized
-    fun initialize(activity: Activity, profileId: String, payload: String): String {
-        if (!validProfileId(profileId)) return json("invalid")
-        val plaintext = decodePayload(payload) ?: return json("invalid")
+    private fun initialize(activity: Activity, profileId: String, plaintext: ByteArray): String {
+        if (!validProfileId(profileId) || !validPlaintext(plaintext)) return json("invalid")
         try {
             when (recordState(activity, profileId)) {
                 RecordState.PRESENT -> return json("already_initialized")
@@ -422,54 +432,51 @@ private object CustodyCoordinator {
     }
 
     @Synchronized
-    fun unlock(activity: Activity, profileId: String, reason: String): String {
-        if (!validProfileId(profileId) || !validReason(reason)) return json("invalid")
+    private fun prepareUnlock(activity: Activity, profileId: String, reason: String): String {
+        clearPending()
+        if (!validProfileId(profileId) || !validReason(reason)) return control("unlock", "invalid")
         when (recordState(activity, profileId)) {
-            RecordState.MISSING -> return json("not_initialized")
-            RecordState.INVALID -> return json("invalid")
+            RecordState.MISSING -> return control("unlock", "not_initialized")
+            RecordState.INVALID -> return control("unlock", "invalid")
             RecordState.PRESENT -> Unit
         }
         sessions.remove(profileId)
         if (!CustodyAuthorization.request(activity, "Unlock Oxid", reason)) {
-            return json("authorization_denied")
+            return control("unlock", "authorization_denied")
         }
-        val plaintext = decrypt(activity, profileId) ?: return json("unavailable")
+        val plaintext = decrypt(activity, profileId) ?: return control("unlock", "unavailable")
         sessions[profileId] = sessionDeadline()
-        return try {
-            json(
-                "succeeded",
-                protection(activity, profileId) ?: "operating_system",
-                Base64.encodeToString(plaintext, Base64.NO_WRAP)
-            )
-        } finally {
+        val activeGeneration = nextGeneration() ?: run {
             plaintext.fill(0)
+            sessions.remove(profileId)
+            return control("unlock", "failed")
         }
+        pendingMaterial = PendingMaterial("unlock", profileId, activeGeneration, plaintext)
+        return control("unlock", "succeeded", protection(activity, profileId) ?: "operating_system")
     }
 
     @Synchronized
-    fun load(activity: Activity, profileId: String): String {
-        if (!validProfileId(profileId)) return json("invalid")
-        if (recordState(activity, profileId) == RecordState.MISSING) return json("not_initialized")
-        if (!active(profileId)) return json("locked")
+    private fun prepareLoad(activity: Activity, profileId: String): String {
+        clearPending()
+        if (!validProfileId(profileId)) return control("load", "invalid")
+        if (recordState(activity, profileId) == RecordState.MISSING) {
+            return control("load", "not_initialized")
+        }
+        if (!active(profileId)) return control("load", "locked")
         val plaintext = decrypt(activity, profileId) ?: run {
             sessions.remove(profileId)
-            return json("locked")
+            return control("load", "locked")
         }
-        return try {
-            json(
-                "succeeded",
-                protection(activity, profileId) ?: "operating_system",
-                Base64.encodeToString(plaintext, Base64.NO_WRAP)
-            )
-        } finally {
+        val activeGeneration = nextGeneration() ?: run {
             plaintext.fill(0)
+            return control("load", "failed")
         }
+        pendingMaterial = PendingMaterial("load", profileId, activeGeneration, plaintext)
+        return control("load", "succeeded", protection(activity, profileId) ?: "operating_system")
     }
 
-    @Synchronized
-    fun save(activity: Activity, profileId: String, payload: String): String {
-        if (!validProfileId(profileId)) return json("invalid")
-        val plaintext = decodePayload(payload) ?: return json("invalid")
+    private fun save(activity: Activity, profileId: String, plaintext: ByteArray): String {
+        if (!validProfileId(profileId) || !validPlaintext(plaintext)) return json("invalid")
         try {
             if (!active(profileId)) return json("locked")
             val key = key(profileId) ?: return json("not_initialized")
@@ -492,6 +499,84 @@ private object CustodyCoordinator {
         sessions.remove(profileId)
         return json("locked", protection(activity, profileId) ?: "operating_system")
     }
+
+    @Synchronized
+    fun inspectControl(activity: Activity, profileId: String): String =
+        control("inspect", inspect(activity, profileId))
+
+    @Synchronized
+    fun initializeControl(activity: Activity, profileId: String, source: ByteBuffer): String {
+        val plaintext = readDirect(source)
+            ?: return control("initialize", "invalid")
+        return control("initialize", initialize(activity, profileId, plaintext))
+    }
+
+    @Synchronized
+    fun prepareUnlockControl(activity: Activity, profileId: String, reason: String): String =
+        prepareUnlock(activity, profileId, reason)
+
+    @Synchronized
+    fun prepareLoadControl(activity: Activity, profileId: String): String =
+        prepareLoad(activity, profileId)
+
+    @Synchronized
+    fun pendingLengthJson(): String {
+        val material = pendingMaterial ?: return "{}"
+        return JSONObject().apply {
+            put("length", material.bytes.size.toString())
+            put("generation", material.generation.toString())
+        }.toString()
+    }
+
+    @Synchronized
+    fun takePending(request: String, destination: ByteBuffer): Boolean {
+        val body = closedObject(
+            request,
+            setOf("operation", "profile_id", "generation")
+        ) ?: run {
+            clearPending()
+            return false
+        }
+        val operation = body.optString("operation", "")
+        val profileId = body.optString("profile_id", "")
+        val expectedGeneration = body.optString("generation", "").toLongOrNull()
+        val material = pendingMaterial
+        if (expectedGeneration == null || material == null ||
+            material.operation != operation || material.profileId != profileId ||
+            material.generation != expectedGeneration || !destination.isDirect ||
+            destination.capacity() != material.bytes.size
+        ) {
+            clearPending()
+            return false
+        }
+        pendingMaterial = null
+        return try {
+            destination.duplicate().apply {
+                clear()
+                put(material.bytes)
+            }
+            true
+        } catch (_: Exception) {
+            false
+        } finally {
+            material.bytes.fill(0)
+        }
+    }
+
+    @Synchronized
+    fun discardPending() {
+        clearPending()
+    }
+
+    @Synchronized
+    fun saveControl(activity: Activity, profileId: String, source: ByteBuffer): String {
+        val plaintext = readDirect(source) ?: return control("save", "invalid")
+        return control("save", save(activity, profileId, plaintext))
+    }
+
+    @Synchronized
+    fun lockControl(activity: Activity, profileId: String): String =
+        control("lock", lock(activity, profileId))
 
     private enum class RecordState { MISSING, PRESENT, INVALID }
 
@@ -689,11 +774,60 @@ private object CustodyCoordinator {
     private fun sessionDeadline(): Long =
         SystemClock.elapsedRealtime() + TimeUnit.SECONDS.toMillis(AUTH_DURATION_SECONDS.toLong())
 
-    private fun decodePayload(payload: String): ByteArray? {
-        if (payload.isEmpty() || payload.length > MAX_PLAINTEXT_BYTES * 2) return null
-        return runCatching { Base64.decode(payload, Base64.NO_WRAP) }
-            .getOrNull()
-            ?.takeIf { it.isNotEmpty() && it.size <= MAX_PLAINTEXT_BYTES }
+    private fun readDirect(source: ByteBuffer): ByteArray? {
+        if (!source.isDirect || source.capacity() <= 0 ||
+            source.capacity() > MAX_PLAINTEXT_BYTES
+        ) return null
+        val plaintext = ByteArray(source.capacity())
+        return try {
+            source.duplicate().apply {
+                clear()
+                get(plaintext)
+            }
+            plaintext
+        } catch (_: Exception) {
+            plaintext.fill(0)
+            null
+        }
+    }
+
+    private fun validPlaintext(plaintext: ByteArray): Boolean =
+        plaintext.isNotEmpty() && plaintext.size <= MAX_PLAINTEXT_BYTES
+
+    private fun clearPending() {
+        val material = pendingMaterial ?: return
+        pendingMaterial = null
+        material.bytes.fill(0)
+    }
+
+    private fun nextGeneration(): Long? {
+        if (generation == Long.MAX_VALUE) return null
+        generation += 1
+        return generation
+    }
+
+    private fun closedObject(request: String, keys: Set<String>): JSONObject? {
+        if (request.isEmpty() || request.length > 1024) return null
+        val body = runCatching { JSONObject(request) }.getOrNull() ?: return null
+        return body.takeIf { it.keys().asSequence().toSet() == keys }
+    }
+
+    private fun control(operation: String, legacy: String): String {
+        val body = runCatching { JSONObject(legacy) }.getOrNull()
+            ?: return control(operation, "invalid")
+        if (body.keys().asSequence().toSet().any { it !in setOf("status", "protection") } ||
+            body.has("payload")
+        ) return control(operation, "invalid")
+        return control(operation, body.optString("status", "invalid"), body.optString("protection", null))
+    }
+
+    private fun control(operation: String, status: String, protection: String? = null): String {
+        return JSONObject().apply {
+            put("version", 1)
+            put("operation", operation)
+            put("status", status)
+            if (protection != null) put("protection", protection)
+        }.toString()
     }
 
     private fun validProfileId(value: String): Boolean {

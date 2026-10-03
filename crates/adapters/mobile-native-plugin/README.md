@@ -15,8 +15,8 @@ compiles multiple Swift packages but embeds only its primary framework.
 The [secret-safe custody contract](custody-contract.md) defines the shared
 mutable-byte Rust/native API, strict secret-free control schema, ownership,
 cleanup obligations, and command/event matrix. Host tests validate this boundary;
-existing Android and iOS managed-string transports remain explicitly legacy until
-their independent platform migrations. This is not end-to-end remediation yet.
+the Android and iOS adapters use bounded mutable buffers for plaintext custody
+and secret-free JSON only for control status.
 
 ## QR lifecycle contract
 
