@@ -24,6 +24,7 @@ import { formatErrors, validate } from "./lib/json-schema.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA_PATH = path.join(HERE, "..", "..", "docs", "factory", "audit", "audit-report-v1.schema.json");
+const EVIDENCE_SCHEMA_PATH = path.join(HERE, "..", "..", "docs", "factory", "audit", "audit-evidence-v1.schema.json");
 const FENCE = /^```json audit-report-v1\s*$/mu;
 
 export function extractReportBlock(markdown) {
@@ -112,6 +113,9 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
   if (evidence) {
     if (report.anchor?.defaultBranch !== evidence.defaultBranch) {
       complain(`report default branch ${JSON.stringify(report.anchor?.defaultBranch)} does not match evidence ${JSON.stringify(evidence.defaultBranch)}`);
+    }
+    if (JSON.stringify(report.anchor?.window) !== JSON.stringify(evidence.window)) {
+      complain("report window does not match the supplied evidence artifact");
     }
     const scope = (branches) => (branches ?? [])
       .map(({ name, sha, role }) => ({ name, sha, role }))
@@ -261,12 +265,14 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
 
 export function checkReport(source, { evidence = null, prior = null, markdown = null } = {}) {
   const schema = JSON.parse(readFileSync(SCHEMA_PATH, "utf8"));
+  const evidenceSchema = JSON.parse(readFileSync(EVIDENCE_SCHEMA_PATH, "utf8"));
   const schemaErrors = validate(schema, source);
+  const evidenceErrors = evidence ? validate(evidenceSchema, evidence) : [];
   const priorSchemaErrors = prior ? validate(schema, prior) : [];
   const crossErrors = schemaErrors.length === 0
     ? [
       ...priorSchemaErrors.map((error) => `prior report does not conform at ${error.path || "$"}: ${error.message}`),
-      ...(priorSchemaErrors.length === 0 ? crossCheck(source, { evidence, prior }) : []),
+      ...(evidenceErrors.length === 0 && priorSchemaErrors.length === 0 ? crossCheck(source, { evidence, prior }) : []),
     ]
     : [];
 
@@ -295,8 +301,9 @@ export function checkReport(source, { evidence = null, prior = null, markdown = 
   }
 
   return {
-    ok: schemaErrors.length === 0 && crossErrors.length === 0 && proseErrors.length === 0,
+    ok: schemaErrors.length === 0 && evidenceErrors.length === 0 && crossErrors.length === 0 && proseErrors.length === 0,
     schemaErrors,
+    evidenceErrors,
     crossErrors,
     proseErrors,
   };
@@ -356,6 +363,9 @@ function main(argv) {
 
   if (result.schemaErrors.length > 0) {
     process.stderr.write(`Report does not conform to audit-report-v1:\n${formatErrors(result.schemaErrors)}\n`);
+  }
+  if (result.evidenceErrors.length > 0) {
+    process.stderr.write(`Evidence does not conform to audit-evidence-v1:\n${formatErrors(result.evidenceErrors)}\n`);
   }
   for (const problem of [...result.crossErrors, ...result.proseErrors]) {
     process.stderr.write(`  ${problem}\n`);
