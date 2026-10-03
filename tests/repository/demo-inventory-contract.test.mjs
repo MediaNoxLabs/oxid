@@ -215,6 +215,16 @@ test("inventory records approved product journeys without claiming deferred Vaul
   assert.deepEqual(approvedScenarios.filter((id) => !inventory.scenarios.some((scenario) => scenario.id === id)), []);
   assert.deepEqual(approvedDemos.filter((id) => !inventory.demos.some((demo) => demo.id === id)), []);
 
+  for (const useCaseId of approvedUseCases.filter((id) => id !== "passport-vault-journey")) {
+    const budget = inventory.useCases.find(({ id }) => id === useCaseId).interactionBudget;
+    assert.equal(budget.status, "active", `${useCaseId} requires an active interaction budget`);
+    assert.equal(budget.routineManualSyncActionsMax, 0, `${useCaseId} cannot require routine manual sync`);
+  }
+  assert.deepEqual(
+    inventory.useCases.find(({ id }) => id === "passport-vault-journey").interactionBudget,
+    { status: "deferred" },
+  );
+
   for (const scenarioId of approvedScenarios) {
     const scenario = inventory.scenarios.find(({ id }) => id === scenarioId);
     assert.equal(scenario.evidenceClass, "planned");
@@ -247,6 +257,18 @@ test("validator rejects broken references, unsafe operations, and invalid eviden
     }, /planned default target must use planned evidence/u],
     ["wrong command phase", (inventory) => { inventory.scenarios[0].targetPlans[0].commandIds.build = ["desktop-run"]; }, /from phase 'run'/u],
     ["missing test mapping", (inventory) => { delete inventory.scenarios[0].testMapping; }, /missing a test mapping|schema required property 'testMapping'/u],
+    ["missing approved interaction budget", (inventory) => {
+      delete inventory.useCases.find(({ id }) => id === "send-night").interactionBudget;
+    }, /missing an interaction budget/u],
+    ["negative interaction budget", (inventory) => {
+      inventory.useCases.find(({ id }) => id === "send-night").interactionBudget.entryTapsMax = -1;
+    }, /interactionBudget.*oneOf/u],
+    ["manual sync interaction budget", (inventory) => {
+      inventory.useCases.find(({ id }) => id === "send-night").interactionBudget.routineManualSyncActionsMax = 1;
+    }, /interactionBudget.*oneOf/u],
+    ["unknown interaction budget field", (inventory) => {
+      inventory.useCases.find(({ id }) => id === "send-night").interactionBudget.networkWaits = 1;
+    }, /interactionBudget.*oneOf/u],
     ["unknown schema property", (inventory) => { inventory.products[0].unpublished = true; }, /schema.*additional property|additional property.*schema/u],
     ["invalid command oneOf", (inventory) => { inventory.commands[0].status = "manual"; }, /schema.*oneOf|oneOf.*schema/u],
     ["unknown trust target", (inventory) => { inventory.transportTrustReadiness.environments[0].targetEvidence[0].targetId = "unknown-target"; }, /trust readiness.*unknown target/u],
@@ -264,6 +286,8 @@ test("CLI exposes check, list, show, use-case, and preparation without a command
   assert.match(run("list"), /^wallet-root-recovery-native-presence\tacceptance\tbefore-release/mu);
   assert.match(run("show", "wallet-root-recovery-native-presence"), /"manualSteps"/u);
   assert.match(run("use-case", "show", "recover-existing-midnight-wallet-root"), /use-case:/u);
+  assert.match(run("use-case", "show", "send-night"), /Interaction budget: entry ≤1 taps; decisions ≤4 screens; app authorization prompts ≤1; routine manual sync actions 0\./u);
+  assert.match(run("use-case", "show", "passport-vault-journey"), /Interaction budget: deferred; no current product claim\./u);
   assert.match(run("prepare", "wallet-root-recovery-native-presence"), /active AGENT\.md define execution authority/u);
 });
 

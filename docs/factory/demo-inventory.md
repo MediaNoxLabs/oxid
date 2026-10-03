@@ -18,6 +18,15 @@ node scripts/demo-inventory.mjs prepare wallet-root-recovery-native-presence and
 node scripts/demo-inventory.mjs use-case list
 ```
 
+Approved product use cases carry an interaction budget. Entry taps are counted
+from the stable navigation shell (or from an already-classified ingress), and
+decision screens are Oxid-owned screens that ask the holder to choose or
+confirm something. The app action that invokes native authorization counts as
+an authorization prompt; the OS-owned prompt and network wait do not count as
+additional screens. A budget is a design acceptance target, not evidence that
+the journey passed. Normal holder journeys require zero routine manual sync
+actions. Deferred work carries no active budget claim.
+
 In Pi, `/scenario list`, `/scenario show <id>`, and
 `/scenario prepare <id> [target-id]` use the same validator; `/use-case list`
 and `/use-case show <id>` expose the atomic aliases. When no target is supplied,
