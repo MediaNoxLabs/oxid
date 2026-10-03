@@ -20,6 +20,7 @@ const PRE_MUTATION_ASSESSMENT_OPTION = "--pre-mutation-assessment";
 const OXID_REPOSITORY = "medianoxlabs/oxid";
 const OXID_SIZE_BUDGET_COMMAND = "scripts/dev-loops.mjs gate size-budget";
 const OXID_PR_CREATE_COMMAND = "scripts/dev-loops.mjs pr create";
+const OXID_HOST_MOBILE_COMMAND = "scripts/e2e/host-mobile-supervisor.mjs";
 const GITHUB_REPOSITORY_PATH = /^\/?([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/u;
 
 /** Resolve one GitHub identity from the checkout's trusted origin, if available. */
@@ -120,6 +121,7 @@ export function applyOxidSanctionedCommandOverrides(envelope) {
       lifecycle: {
         ...(sanctionedCommands.lifecycle ?? {}),
         "pr-create": OXID_PR_CREATE_COMMAND,
+        "host-mobile-run": OXID_HOST_MOBILE_COMMAND,
       },
     },
   };

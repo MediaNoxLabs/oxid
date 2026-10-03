@@ -56,6 +56,26 @@ Do not share `target/`, `.direnv/`, Pi session files, or a live worktree between
 parents. Linked worktrees reuse the common checkout's exact Pi package closure
 and bounded `sccache`; their mutable Rust targets remain isolated.
 
+### Exclusive host-mobile lane
+
+A Pi worker may enter iOS, Android, Maestro, Xcode, emulator, or local mobile
+runtime work only through the validated envelope's `host-mobile-run` sanctioned
+command. The wrapper first verifies the current HEAD's `production-ready`
+local-gate receipt against the issue's immutable `origin/<target>`, then
+atomically acquires the single host-mobile lease and checks for an already-live
+Xcode, QEMU/emulator, or Maestro owner. Missing gate evidence and occupied lanes
+are terminal admission rejections for that attempt; they are not retry signals.
+
+The supervised child runs in its own process group. Completion, timeout, or
+interruption releases only the exact lease receipt owned by that invocation and
+emits a payload-free metric containing the fixed outcome, reason, exact head,
+cleanup result, and duration. A dead-owner lease may be reclaimed only through
+the compare-after-claim procedure in `ios-xcode-supervisor.mjs`; a live or
+changed receipt is preserved. Never remove a lease directory manually or kill
+broad simulator/emulator process sets. Inspect the fixed rejection reason,
+allow the recorded owner to finish or use its own cleanup path, and begin a new
+canonical attempt only after a fresh exact-head gate if HEAD or the target moved.
+
 ## Another engineer or provider
 
 Every operator starts from a normal clone and installs the host-local policy:

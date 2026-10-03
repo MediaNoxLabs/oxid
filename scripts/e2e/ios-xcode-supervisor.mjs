@@ -27,7 +27,8 @@ export function parseProcessSnapshot(text) {
     const match = line.trim().match(/^(\d+)\s+(.+)$/u);
     if (!match) return [];
     const command = path.basename(match[2].trim().split(/\s+/u)[0] ?? "");
-    return ["simctl", "testmanagerd", "xcodebuild", "xctest"].includes(command)
+    return (["emulator", "maestro", "simctl", "testmanagerd", "xcodebuild", "xctest"].includes(command)
+      || command.startsWith("qemu-system-"))
       ? [{ pid: Number(match[1]), command }]
       : [];
   });
