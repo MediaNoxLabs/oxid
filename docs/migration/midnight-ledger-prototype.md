@@ -93,11 +93,14 @@ components with regression evidence.
 The prototype's screen composition, information architecture, copy density,
 developer controls, and monolithic UI state are not product requirements.
 The [Oxid design specification](../design/README.md) is the current presentation
-authority. [Issue #528](https://github.com/MediaNoxLabs/oxid/issues/528) tracks
-an evidence-preserving inventory and incremental removal or redesign of
-prototype-shaped presentation debt. Product capabilities remain governed by
-the [capability matrix](midnight-prototype-capability-matrix.md); provenance
-alone is never a reason either to preserve or delete a capability.
+authority. The
+[prototype presentation classification](prototype-presentation-classification.md)
+records the evidence-preserving inventory and incremental removal or redesign
+of prototype-shaped presentation debt tracked by
+[issue #528](https://github.com/MediaNoxLabs/oxid/issues/528). Product
+capabilities remain governed by the
+[capability matrix](midnight-prototype-capability-matrix.md); provenance alone
+is never a reason either to preserve or delete a capability.
 
 ## Second post-M0 slice: standalone headless harness
 
