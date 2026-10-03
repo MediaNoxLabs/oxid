@@ -20,6 +20,10 @@ name: activity fixture history
 - extendedWaitUntil:
     visible: "Loaded the deterministic public 5 NIGHT funding snapshot; no chain was contacted."
     timeout: 60000
+- scrollUntilVisible:
+    element:
+      text: "Close standalone demo setup"
+    direction: UP
 - tapOn: "Close standalone demo setup"
 - tapOn: "Activity"
 - assertVisible: "Activity"
