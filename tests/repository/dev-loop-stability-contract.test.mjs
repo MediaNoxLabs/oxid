@@ -64,6 +64,7 @@ import {
   MAXIMUM_CLAUDE_REVIEW_BUDGET_USD,
   buildClaudeInvocation,
   claudeReviewCliFailure,
+  ClaudeReviewExecutionError,
   ClaudeReviewEvidenceVersionError,
   ClaudeReviewFindingsError,
   MAX_CLAUDE_REVIEW_TIMEOUT_MS,
@@ -2842,7 +2843,7 @@ test("Claude review CLI rejects invalid resource arguments before model executio
   let help = "";
   await runClaudeReviewCli(["--help"], { stdout: { write(chunk) { help += chunk; } } });
   assert.match(help, /--timeout-ms INTEGER/);
-  assert.match(help, /--timeout-ms 300000 \(five minutes\)/);
+  assert.match(help, /--timeout-ms 600000 \(ten minutes\)/);
   assert.match(help, /Attested effort levels: medium, high, xhigh, max/);
   assert.match(help, /--max-budget-usd NUMBER/);
   assert.match(help, /--max-budget-usd 10/);
@@ -2865,8 +2866,8 @@ test("Claude review CLI rejects invalid resource arguments before model executio
     );
   }
   await assert.rejects(
-    runClaudeReviewCli(["--timeout-ms=300001"]),
-    /review timeout must be an integer between 1 and 300000 milliseconds/,
+    runClaudeReviewCli(["--timeout-ms=600001"]),
+    /review timeout must be an integer between 1 and 600000 milliseconds/,
   );
   await assert.rejects(
     runClaudeReviewCli(["--timeout-ms", "1"]),
@@ -3004,7 +3005,12 @@ if (process.argv.includes("--version")) {
   assert.deepEqual(result.evidence.claude.capabilities.effortLevels, fixtureClaudeCliEfforts);
   assert.equal(result.evidence.invocation.effort, "high");
   assert.equal(result.evidence.invocation.minimumEffort, "medium");
-  assert.equal(result.evidence.invocation.maximumTimeoutMs, 300_000);
+  assert.equal(result.evidence.invocation.maximumTimeoutMs, 600_000);
+  assert.equal(result.evidence.invocation.outcome, "completed");
+  assert.equal(result.evidence.invocation.reviewer, "claude-code");
+  assert.equal(result.evidence.invocation.actionableFindings, false);
+  assert.ok(Number.isSafeInteger(result.evidence.invocation.durationMs));
+  assert.ok(result.evidence.invocation.durationMs >= 0);
   assert.equal(result.evidence.invocation.maximumBudgetUsd, 10);
   assert.match(result.evidence.limitations.join(" "), /do not authenticate reviewer identity/);
   assert.match(result.evidence.limitations.join(" "), /cannot prove the provider honored/);
@@ -3047,25 +3053,25 @@ if (process.argv.includes("--version")) {
     const highEvidence = runFixtureCli({
       effort: "high",
       evidenceName: "cli-high-evidence",
-      timeoutMs: "300000",
+      timeoutMs: "600000",
     });
     assert.equal(highEvidence.invocation.effort, "high");
-    assert.equal(highEvidence.invocation.timeoutMs, 300_000);
+    assert.equal(highEvidence.invocation.timeoutMs, 600_000);
     assert.equal(highEvidence.verdict, "clean");
 
     await writeFakeClaude("cli-medium");
     const defaultEvidence = runFixtureCli({ evidenceName: "cli-default-evidence" });
     assert.equal(defaultEvidence.invocation.effort, "medium");
-    assert.equal(defaultEvidence.invocation.timeoutMs, 300_000);
+    assert.equal(defaultEvidence.invocation.timeoutMs, 600_000);
     assert.equal(defaultEvidence.verdict, "clean");
     await writeFakeClaude("clean");
   });
 
-  await t.test("default five-minute timeout remains a hard failure", async () => {
-    assert.equal(MAX_CLAUDE_REVIEW_TIMEOUT_MS, 300_000);
+  await t.test("default ten-minute timeout is classified without retry", async () => {
+    assert.equal(MAX_CLAUDE_REVIEW_TIMEOUT_MS, 600_000);
     await assert.rejects(
       runClaudeCurrentHeadReview({ issue: 150, timeoutMs: MAX_CLAUDE_REVIEW_TIMEOUT_MS + 1 }),
-      /review timeout must be an integer between 1 and 300000 milliseconds/,
+      /review timeout must be an integer between 1 and 600000 milliseconds/,
     );
     const defaultTimeouts = [];
     const timeoutRunner = (_command, args, options = {}) => {
@@ -3087,9 +3093,18 @@ if (process.argv.includes("--version")) {
         fetchBase: false,
         claudeRunner: timeoutRunner,
       }),
-      /timed out or was terminated after 300000ms/,
+      (error) => error instanceof ClaudeReviewExecutionError && error.outcome === "timed_out",
     );
-    assert.deepEqual(defaultTimeouts, [300_000]);
+    assert.deepEqual(defaultTimeouts, [600_000]);
+    const failure = claudeReviewCliFailure(new ClaudeReviewExecutionError("timed_out", 600_001, "fixture timeout"));
+    assert.deepEqual(JSON.parse(failure.output), {
+      ok: false,
+      reviewer: "claude-code",
+      outcome: "timed_out",
+      durationMs: 600_001,
+      actionableFindings: false,
+      message: "fixture timeout",
+    });
   });
 
   await t.test("run path rejects an effort omitted by captured CLI capabilities", async () => {
@@ -3463,7 +3478,9 @@ fi
     issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
     fetchBase: false,
     timeoutMs: 500,
-  }), /timed out or was terminated after 500ms/);
+  }), (error) => error instanceof ClaudeReviewExecutionError
+    && error.outcome === "timed_out"
+    && /timed out after 500ms/.test(error.message));
   git("reset", "--hard", headSha);
 
   await writeFakeClaude("advance");
