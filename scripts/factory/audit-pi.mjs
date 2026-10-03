@@ -10,19 +10,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolvePinnedCoreModulePath } from "../dev-loops.mjs";
 import { auditPiPackageClosures, resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
 import { checkUserPolicy } from "./pi-policy.mjs";
+import { EXPECTED_PI_PACKAGES } from "./pi-package-policy.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const EXPECTED_PACKAGES = new Map([
-  ["dev-loops", "1.0.2"],
-  ["@dev-loops/core", "1.0.2"],
-  ["pi-subagents", "0.70.0"],
-  ["@playwright/test", "1.60.0"],
-  ["@axe-core/playwright", "4.10.0"],
-  ["typebox", "1.3.9"],
-  ["pi-taskflow", "0.2.10"],
-  ["@input-output-hk/agent-review-pi", "0.6.0"],
-  ["@grafana/agento11y-pi", "0.25.0"],
-]);
 const DEV_LOOPS_RESOURCE_POLICY = Object.freeze({
   source: "npm:dev-loops@1.0.2",
   extensions: [],
@@ -215,7 +205,7 @@ async function inspectInstalledPackages(repoRoot) {
   const problems = [];
   try {
     const resolved = await resolveDevLoopsPackageRoot({ cwd: repoRoot, includeAllPinnedPackages: true });
-    for (const [name, expected] of EXPECTED_PACKAGES) {
+    for (const [name, expected] of EXPECTED_PI_PACKAGES) {
       const packageRoot = resolved.packageRoots.find((entry) => entry.name === name)?.packageRoot;
       if (!packageRoot) {
         problems.push(`${name}: exact package is not installed in this worktree's matching closure`);
@@ -537,7 +527,7 @@ export async function auditPi({
     const match = String(source).match(/^npm:(@[^/]+\/[^@]+|[^@]+)@(.+)$/u);
     return match ? [match[1], { version: match[2], entry }] : [String(source), { version: null, entry }];
   }));
-  for (const [name, expected] of EXPECTED_PACKAGES) {
+  for (const [name, expected] of EXPECTED_PI_PACKAGES) {
     if (configuredPackages.get(name)?.version !== expected) packageProblems.push(`${name}: expected exact pin ${expected}`);
   }
   const devLoopsEntry = configuredPackages.get("dev-loops")?.entry;

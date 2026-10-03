@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { expectedPiPackageVersion } from "./pi-package-policy.mjs";
 
 const REQUIRED_SOURCES = Object.freeze({
   manifest: "package.json",
@@ -30,20 +32,29 @@ function requireCapability(source, capability, relativePath) {
   }
 }
 
-export async function verifyPiSubagentsPackage(root, { expectedVersion = "0.70.0" } = {}) {
+export async function verifyPiSubagentsPackage(
+  root,
+  { expectedVersion = expectedPiPackageVersion("pi-subagents") } = {},
+) {
   if (!root) throw new Error("pi-subagents package root is required");
 
-  const entries = await Promise.all(Object.entries(REQUIRED_SOURCES).map(async ([key, relativePath]) => [
-    key,
-    await readRequiredSource(root, relativePath),
-  ]));
-  const sources = Object.fromEntries(entries);
-  const manifest = JSON.parse(sources.manifest);
+  const manifestSource = await readRequiredSource(root, REQUIRED_SOURCES.manifest);
+  const manifest = JSON.parse(manifestSource);
   if (manifest.name !== "pi-subagents" || manifest.version !== expectedVersion) {
     throw new Error(
       `unexpected pi-subagents package ${manifest.name ?? "<missing>"}@${manifest.version ?? "<missing>"}; expected pi-subagents@${expectedVersion}`,
     );
   }
+
+  const entries = await Promise.all(
+    Object.entries(REQUIRED_SOURCES)
+      .filter(([key]) => key !== "manifest")
+      .map(async ([key, relativePath]) => [
+        key,
+        await readRequiredSource(root, relativePath),
+      ]),
+  );
+  const sources = { manifest: manifestSource, ...Object.fromEntries(entries) };
 
   for (const [sourceKey, capability] of [
     ["waitTool", "remembered detached foreground descendant"],
@@ -74,8 +85,16 @@ export async function verifyPiSubagentsPackage(root, { expectedVersion = "0.70.0
   return { name: manifest.name, version: manifest.version };
 }
 
-const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
-if (invokedPath === fileURLToPath(import.meta.url)) {
+async function invokedDirectly() {
+  if (!process.argv[1]) return false;
+  try {
+    return await realpath(path.resolve(process.argv[1])) === await realpath(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (await invokedDirectly()) {
   const root = process.argv[2];
   try {
     const verified = await verifyPiSubagentsPackage(root);
