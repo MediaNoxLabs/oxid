@@ -7,7 +7,7 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/dioxus-wallet/src/app.rs`
 - Tracking: issues #2, #65, and #78
 - Implementation state: Dioxus owns a bounded root-plus-secondary route stack, four primary destinations, the elevated Scan action, explicit Back behavior, and separate truthful wallet and Passport Vault activity projections while every migrated page remains reachable
-- Amended by: ADR-0109 (Proposed)
+- Amended by: ADR-0109 (Proposed) and ADR-0119
 
 ## Context
 
