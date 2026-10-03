@@ -120,6 +120,9 @@ test("platform wrappers admit only inventory-owned flows and reuse build receipt
   }
   assert.match(ios, /run-ios-simulator\.sh ensure/u);
   assert.match(ios, /\.maestro-lane\.lock/u);
+  assert.match(ios, /maestro-ios-lane\.mjs acquire/u);
+  assert.match(ios, /--cleanup-stale-lane <owner-token>/u);
+  assert.match(ios, /factory-metrics phase=maestro-ios-lane result=/u);
   assert.match(ios, /OXID_IOS_DEVICE must be an explicit simulator UDID/u);
   assert.match(ios, /--udid "\$OXID_IOS_DEVICE"/u);
   assert.match(android, /\^emulator-\[0-9\]\+\$/u);

@@ -15,6 +15,8 @@ OXID_ANDROID_DEVICE=emulator-<port> \
 
 The wrappers reject unlisted flows, composition mismatches, and unsupported platforms. iOS is the canonical local lane. Its lock serializes receipt reuse, deployment, and Maestro against one explicit simulator. The Android wrapper stays selector-compatible, refuses anything except an `emulator-*` serial, and is deferred to the final platform pass. Never use a physical phone.
 
+The iOS lease records its PID, host, start time, worktree, flow, and a random owner token. A live local owner remains serialized; a demonstrably dead local PID is recovered automatically. Remote, malformed, or permission-ambiguous ownership fails closed and prints the exact token-bound cleanup command. Run that command only after checking the reported owner; it can remove only the current `.maestro-lane.lock` lease and refuses a changed token. Acquisition, waiting, recovery, ambiguity, cleanup, and release are exposed as `factory-metrics` outcomes.
+
 For the canonical 375-point iOS evidence lane, let the repository own the
 simulator lifecycle instead of supplying an ambient device:
 
