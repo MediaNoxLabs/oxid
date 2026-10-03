@@ -5329,10 +5329,13 @@ fn ReceiveSheet(
                         }
                         div {
                             class: "address-qr privacy-qr",
-                            role: "img",
-                            aria_label: "{qr_label}",
                             if let Some(svg) = qr {
-                                div { class: "address-qr__frame", dangerous_inner_html: "{svg}" }
+                                div {
+                                    class: "address-qr__frame",
+                                    role: "img",
+                                    aria_label: "{qr_label}",
+                                    dangerous_inner_html: "{svg}"
+                                }
                             } else if address_is_exportable {
                                 p { role: "alert", "This address could not be encoded as a QR code." }
                             } else {
