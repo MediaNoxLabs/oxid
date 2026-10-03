@@ -395,8 +395,8 @@ private object CustodyCoordinator {
 
     @Synchronized
     private fun initialize(activity: Activity, profileId: String, plaintext: ByteArray): String {
-        if (!validProfileId(profileId) || !validPlaintext(plaintext)) return json("invalid")
         try {
+            if (!validProfileId(profileId) || !validPlaintext(plaintext)) return json("invalid")
             when (recordState(activity, profileId)) {
                 RecordState.PRESENT -> return json("already_initialized")
                 RecordState.INVALID -> return json("invalid")
@@ -476,8 +476,8 @@ private object CustodyCoordinator {
     }
 
     private fun save(activity: Activity, profileId: String, plaintext: ByteArray): String {
-        if (!validProfileId(profileId) || !validPlaintext(plaintext)) return json("invalid")
         try {
+            if (!validProfileId(profileId) || !validPlaintext(plaintext)) return json("invalid")
             if (!active(profileId)) return json("locked")
             val key = key(profileId) ?: return json("not_initialized")
             val protection = protection(activity, profileId) ?: return json("invalid")
@@ -502,13 +502,13 @@ private object CustodyCoordinator {
 
     @Synchronized
     fun inspectControl(activity: Activity, profileId: String): String =
-        control("inspect", inspect(activity, profileId))
+        controlFromLegacy("inspect", inspect(activity, profileId))
 
     @Synchronized
     fun initializeControl(activity: Activity, profileId: String, source: ByteBuffer): String {
         val plaintext = readDirect(source)
             ?: return control("initialize", "invalid")
-        return control("initialize", initialize(activity, profileId, plaintext))
+        return controlFromLegacy("initialize", initialize(activity, profileId, plaintext))
     }
 
     @Synchronized
@@ -521,7 +521,10 @@ private object CustodyCoordinator {
 
     @Synchronized
     fun pendingLengthJson(): String {
-        val material = pendingMaterial ?: return "{}"
+        val material = pendingMaterial ?: return JSONObject().apply {
+            put("length", "0")
+            put("generation", "0")
+        }.toString()
         return JSONObject().apply {
             put("length", material.bytes.size.toString())
             put("generation", material.generation.toString())
@@ -571,12 +574,12 @@ private object CustodyCoordinator {
     @Synchronized
     fun saveControl(activity: Activity, profileId: String, source: ByteBuffer): String {
         val plaintext = readDirect(source) ?: return control("save", "invalid")
-        return control("save", save(activity, profileId, plaintext))
+        return controlFromLegacy("save", save(activity, profileId, plaintext))
     }
 
     @Synchronized
     fun lockControl(activity: Activity, profileId: String): String =
-        control("lock", lock(activity, profileId))
+        controlFromLegacy("lock", lock(activity, profileId))
 
     private enum class RecordState { MISSING, PRESENT, INVALID }
 
@@ -812,7 +815,7 @@ private object CustodyCoordinator {
         return body.takeIf { it.keys().asSequence().toSet() == keys }
     }
 
-    private fun control(operation: String, legacy: String): String {
+    private fun controlFromLegacy(operation: String, legacy: String): String {
         val body = runCatching { JSONObject(legacy) }.getOrNull()
             ?: return control(operation, "invalid")
         if (body.keys().asSequence().toSet().any { it !in setOf("status", "protection") } ||

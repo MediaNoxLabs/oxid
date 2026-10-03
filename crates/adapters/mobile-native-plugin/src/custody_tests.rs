@@ -93,6 +93,38 @@ fn load_and_unlock_require_protected_success_with_separate_bytes() {
 }
 
 #[test]
+fn material_control_is_validated_before_native_bytes_are_requested() {
+    for operation in [Operation::Load, Operation::Unlock] {
+        let success = control(
+            operation,
+            Status::Succeeded,
+            Some(Protection::OperatingSystem),
+        );
+        assert_eq!(validate_material_control(operation, &success), Ok(()));
+
+        for (status, error) in [
+            (Status::Locked, Error::Locked),
+            (Status::NotInitialized, Error::NotInitialized),
+            (Status::AuthorizationDenied, Error::AuthorizationDenied),
+            (Status::Unavailable, Error::Unavailable),
+        ] {
+            let failure = control(operation, status, None);
+            assert_eq!(validate_material_control(operation, &failure), Err(error));
+        }
+    }
+
+    let wrong_operation = control(
+        Operation::Save,
+        Status::Succeeded,
+        Some(Protection::OperatingSystem),
+    );
+    assert_eq!(
+        validate_material_control(Operation::Load, &wrong_operation),
+        Err(Error::Invalid)
+    );
+}
+
+#[test]
 fn failure_statuses_never_release_material_or_accept_protection() {
     for operation in [
         Operation::Load,

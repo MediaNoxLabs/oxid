@@ -165,6 +165,28 @@ pub fn decode_reply(
     control: &[u8],
     bytes: Option<CustodyBytes>,
 ) -> Result<Reply, Error> {
+    let control = parse_control(expected, control)?;
+    if control.status != Status::Succeeded && bytes.is_some() {
+        return Err(Error::Invalid);
+    }
+    decode_control(expected, control, bytes)
+}
+
+/// Validate that a load/unlock control authorizes exactly one subsequent byte
+/// transfer. Failure controls are decoded before callers inspect native pending
+/// metadata, so a denial or locked vault cannot collapse into a transport error.
+pub fn validate_material_control(expected: Operation, control: &[u8]) -> Result<(), Error> {
+    if !matches!(expected, Operation::Load | Operation::Unlock) {
+        return Err(Error::Invalid);
+    }
+    let parsed = parse_control(expected, control)?;
+    if parsed.status == Status::Succeeded {
+        return parsed.protection.map(|_| ()).ok_or(Error::Invalid);
+    }
+    decode_control(expected, parsed, None).map(|_| ())
+}
+
+fn parse_control(expected: Operation, control: &[u8]) -> Result<Control, Error> {
     if control.is_empty() || control.len() > MAX_CONTROL_BYTES {
         return Err(Error::Invalid);
     }
@@ -172,9 +194,14 @@ pub fn decode_reply(
     if control.version != 1 || control.operation != expected {
         return Err(Error::Invalid);
     }
-    if control.status != Status::Succeeded && bytes.is_some() {
-        return Err(Error::Invalid);
-    }
+    Ok(control)
+}
+
+fn decode_control(
+    expected: Operation,
+    control: Control,
+    bytes: Option<CustodyBytes>,
+) -> Result<Reply, Error> {
     match control.status {
         Status::Succeeded => {
             let protection = control.protection.ok_or(Error::Invalid)?;
