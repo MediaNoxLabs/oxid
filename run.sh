@@ -78,6 +78,7 @@ run_repository() {
   node --test tests/repository/managed-child-process-contract.test.mjs
   node --test tests/repository/supervised-delivery-contract.test.mjs
   node --test tests/repository/transport-trust-contract.test.mjs
+  node --test tests/repository/support-journal-adr-contract.test.mjs
   node --test tests/repository/wallet-approval-boundary-contract.test.mjs
   node --test tests/repository/identity-approval-boundary-contract.test.mjs
   ./scripts/check-transport-trust.sh
