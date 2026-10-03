@@ -33,12 +33,12 @@ eight canonical holder screenshots, two public developer-banner screenshots, one
 `target/mobile-visual-accessibility/ios-run-<head>-<started-at>/`. Raw per-device
 Maestro/XCTest logs and diagnostics are deleted after collection, including on
 failure. The receipt records duration, retry-independent outcome, public bytes,
-screenshot count, exact head, `holder-public` build profile, OS runtime, device type/UDID,
-viewport, and cleanup status. Every manifest artifact records its scenario route/state and its
-Lunar Aegis design reference or `no-match`.
+screenshot count, exact head, `holder-public` capture policy, OS runtime, device type/UDID,
+viewport, and cleanup status. Every manifest artifact records its actual `demo` or `dev` UI
+profile, route/state, and Lunar Aegis design reference or `no-match`.
 
 Run the separate larger-width pass with another disposable receipt-owned simulator; it uses an
-iPhone 17 Pro 402-point class and shares no simulator with the canonical lane:
+iPhone 17 Pro on the compatible iOS 26.4 runtime at 402-point class and shares no simulator with the canonical lane:
 
 ```sh
 ./bootstrap.sh -- ./scripts/test-ios-maestro-holder-evidence-large.sh

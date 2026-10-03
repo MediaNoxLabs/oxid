@@ -21,7 +21,7 @@ async function fixture({ entries, files = {}, cleanup = {}, outcomes = [] }) {
     + Object.values(files).reduce((total, content) => total + Buffer.byteLength(content), 0);
   const receipt = {
     schema: "oxid-ios-maestro-evidence-v3",
-    oxid: { head: "a".repeat(40), buildProfile: "holder-public" },
+    oxid: { head: "a".repeat(40), capturePolicy: "holder-public" },
     platform: {
       kind: "ios_simulator",
       viewport: "375-pt-class",
@@ -51,8 +51,8 @@ async function rejects(root, pattern) {
 
 test("validates retained public artifacts and bounded logs", async () => {
   const entries = [
-    { scenario: "home", artifact: "scenarios/home/screenshots/a.png", kind: "screenshot", route: "home", state: "public-safe", designReference: "no-match" },
-    { scenario: "home", artifact: "scenarios/home/maestro-tail.log", kind: "bounded-log", route: "home", state: "public-safe", designReference: "no-match" },
+    { scenario: "home", artifact: "scenarios/home/screenshots/a.png", kind: "screenshot", route: "home", state: "simulated-empty", designReference: "kI1o6I63AKA1Z0AIAwHI", uiProfile: "demo" },
+    { scenario: "home", artifact: "scenarios/home/maestro-tail.log", kind: "bounded-log", route: "home", state: "scenario-log", designReference: "no-match", uiProfile: "demo" },
   ];
   const root = await fixture({
     entries,
@@ -71,17 +71,17 @@ test("validates retained public artifacts and bounded logs", async () => {
 
 test("rejects dangling and escaping artifact paths", async () => {
   await rejects(await fixture({
-    entries: [{ scenario: "home", artifact: "scenarios/home/missing.png", kind: "screenshot", route: "home", state: "public-safe", designReference: "no-match" }],
+    entries: [{ scenario: "home", artifact: "scenarios/home/missing.png", kind: "screenshot", route: "home", state: "public-safe", designReference: "no-match", uiProfile: "demo" }],
   }), /dangling/u);
   await rejects(await fixture({
-    entries: [{ scenario: "home", artifact: "../outside.log", kind: "bounded-log", route: "home", state: "public-safe", designReference: "no-match" }],
+    entries: [{ scenario: "home", artifact: "../outside.log", kind: "bounded-log", route: "home", state: "public-safe", designReference: "no-match", uiProfile: "demo" }],
   }), /escapes|outside scenarios/u);
 });
 
 test("rejects unbounded logs and incomplete raw/private cleanup", async () => {
   const artifact = "scenarios/home/maestro-tail.log";
   await rejects(await fixture({
-    entries: [{ scenario: "home", artifact, kind: "bounded-log", route: "home", state: "public-safe", designReference: "no-match" }],
+    entries: [{ scenario: "home", artifact, kind: "bounded-log", route: "home", state: "public-safe", designReference: "no-match", uiProfile: "demo" }],
     files: { [artifact]: `${Array.from({ length: 201 }, (_, index) => `line-${index}`).join("\n")}\n` },
   }), /exceeds 200 lines/u);
   await rejects(await fixture({ entries: [], cleanup: { rawArtifactsRemoved: false } }), /cleanup receipt is incomplete/u);
@@ -94,8 +94,15 @@ test("rejects missing artifact provenance", async () => {
   }), /has no route/u);
 });
 
+test("rejects an unknown design reference and missing UI profile", async () => {
+  const artifact = "scenarios/home/screenshots/a.png";
+  const base = { scenario: "home", artifact, kind: "screenshot", route: "home", state: "empty" };
+  await rejects(await fixture({ entries: [{ ...base, designReference: "unknown-id", uiProfile: "demo" }], files: { [artifact]: "png" } }), /invalid design reference/u);
+  await rejects(await fixture({ entries: [{ ...base, designReference: "no-match" }], files: { [artifact]: "png" } }), /valid UI profile/u);
+});
+
 test("rejects repeated collection that reuses an artifact path", async () => {
-  const entry = { scenario: "home", artifact: "scenarios/home/screenshots/a.png", kind: "screenshot", route: "home", state: "public-safe", designReference: "no-match" };
+  const entry = { scenario: "home", artifact: "scenarios/home/screenshots/a.png", kind: "screenshot", route: "home", state: "public-safe", designReference: "no-match", uiProfile: "demo" };
   await rejects(await fixture({
     entries: [entry, entry],
     files: { [entry.artifact]: "png" },
