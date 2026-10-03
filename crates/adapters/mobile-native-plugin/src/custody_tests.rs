@@ -122,6 +122,15 @@ fn material_control_is_validated_before_native_bytes_are_requested() {
         validate_material_control(Operation::Load, &wrong_operation),
         Err(Error::Invalid)
     );
+    assert_eq!(
+        validate_material_control(Operation::Save, &wrong_operation),
+        Err(Error::Invalid)
+    );
+    let missing_protection = control(Operation::Load, Status::Succeeded, None);
+    assert_eq!(
+        validate_material_control(Operation::Load, &missing_protection),
+        Err(Error::Invalid)
+    );
 }
 
 #[test]

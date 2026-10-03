@@ -352,7 +352,13 @@ fn receive_android_custody(
         custody::Operation::Load => "load",
         _ => return Err(custody::Error::Invalid),
     };
-    let control = prepare().map_err(map_android_custody_bridge_error)?;
+    let control = match prepare() {
+        Ok(control) => control,
+        Err(error) => {
+            let _ = call_android_activity("oxidCustodyDiscardPending");
+            return Err(map_android_custody_bridge_error(error));
+        }
+    };
     if let Err(error) = custody::validate_material_control(operation, control.as_bytes()) {
         let _ = call_android_activity("oxidCustodyDiscardPending");
         return Err(error);
@@ -527,7 +533,13 @@ fn receive_ios_custody(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let plugin = OxidMobilePlugin::new().map_err(|_| custody::Error::Unavailable)?;
-    let control = prepare(&plugin).map_err(|_| custody::Error::Failed)?;
+    let control = match prepare(&plugin) {
+        Ok(control) => control,
+        Err(_) => {
+            let _ = custodyDiscardPending(&plugin);
+            return Err(custody::Error::Failed);
+        }
+    };
     let length = match custodyPendingLengthJson(&plugin)
         .map_err(|_| custody::Error::Failed)
         .and_then(|length| {
@@ -962,9 +974,21 @@ mod tests {
         assert!(android.contains("controlFromLegacy"));
         assert!(!android.contains("private fun control(operation: String, legacy: String)"));
         assert!(android.contains("put(\"length\", \"0\")"));
-        assert!(android.contains(
-            "try {\n            if (!validProfileId(profileId) || !validPlaintext(plaintext))"
+        assert_eq!(
+            android
+                .matches(
+                    "try {\n            if (!validProfileId(profileId) || !validPlaintext(plaintext))"
+                )
+                .count(),
+            2
+        );
+        assert!(include_str!("lib.rs").contains(
+            "Err(error) => {\n            let _ = call_android_activity(\"oxidCustodyDiscardPending\")"
         ));
+        assert!(
+            include_str!("lib.rs")
+                .contains("Err(_) => {\n            let _ = custodyDiscardPending(&plugin)")
+        );
         assert!(!android.contains("Base64.encodeToString(plaintext"));
         assert!(!activity.contains("oxidCustodyJson"));
         assert!(!storage.contains("initialize_custody_json"));
