@@ -270,6 +270,16 @@ may use a validated conventional issue branch as its temporary `--base`.
 The repository wrappers keep these forms separate and record the selected remote
 ref in `branch.<name>.oxidDeliveryBase` for pre-push verification.
 
+The bare issue target and normalized remote ref are equivalent only after a
+closed proof: the active repository and `origin` URL identify
+`MediaNoxLabs/oxid`, the configured fetch refspec maps that exact branch to
+`refs/remotes/origin/<target>`, and the issue-target and envelope-target refs
+resolve to the same 40-character commit OID. A conventional issue branch is a
+temporary stacked PR base, never a substitute delivery target. Any repository,
+remote, branch, refspec, or OID disagreement stops the worker before mutation;
+the agent must not request supervisor approval for the valid bare/origin spelling
+difference alone.
+
 ```bash
 node scripts/dev-loops.mjs doctor    # environment readiness
 node scripts/dev-loops.mjs gates     # resolve and print every configured angle
