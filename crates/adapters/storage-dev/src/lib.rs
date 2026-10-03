@@ -1217,6 +1217,7 @@ const fn map_backup_to_security_error(
         }
         WalletPortableBackupPortError::Conflict => WalletSecurityPortError::Conflict,
         WalletPortableBackupPortError::InvalidPackage
+        | WalletPortableBackupPortError::UnsupportedVersion
         | WalletPortableBackupPortError::AuthenticationFailed
         | WalletPortableBackupPortError::WrongProfile
         | WalletPortableBackupPortError::InvalidOperation => {

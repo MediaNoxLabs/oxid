@@ -23,8 +23,10 @@ version, algorithm identifiers, exact KDF tuple, salt, nonce, and ciphertext
 length, is authenticated associated data.
 
 The entry point's version allowlist and exact work-factor/algorithm matching
-reject unknown versions, wrong payload families, mismatched parameters, and
-invalid lengths before deriving a key. Payload-schema validation occurs only
+reject unknown legacy versions, wrong payload families, mismatched parameters,
+and invalid lengths before deriving a key. A structurally valid future version
+is reported as requiring a newer Oxid build without deriving a key or exposing
+backup contents; malformed headers remain invalid. Payload-schema validation occurs only
 after successful authentication and decryption. The decoder never allocates an
 Argon2 arena from arbitrary header values. A changed v6 header claiming v1/v4
 with unchanged strong parameters is invalid before derivation; changing both
@@ -42,7 +44,8 @@ secret safe. Keep recovery secrets, derived keys, and plaintext out of logs.
   64-byte BIP-39 root and raw development root. New exports never emit v1/v4.
 - There is no automatic expiry date for these legacy reads. Removing them
   requires a separately reviewed migration decision that does not strand
-  recovery files. Unknown future formats fail closed.
+  recovery files. Structurally valid future formats fail closed with update
+  guidance; malformed formats remain invalid.
 - Opening an old file does not modify it or silently strengthen it. Explicitly
   re-export with a v6-capable build and verify recovery before replacing an old
   backup. Older builds cannot read v6; retain access to a compatible build.
