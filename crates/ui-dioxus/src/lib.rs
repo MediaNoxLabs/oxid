@@ -2356,9 +2356,33 @@ fn credential_issuance_review_is_terminal(prepared: Option<&CredentialIssuanceVi
     prepared.is_some_and(|review| {
         matches!(
             review.state.as_str(),
-            "succeeded" | "refused" | "failed" | "outcome_unknown"
+            "succeeded" | "refused" | "failed" | "expired" | "outcome_unknown"
         )
     })
+}
+
+fn credential_issuance_terminal_heading(state: &str) -> &'static str {
+    match state {
+        "succeeded" => "Credential added to wallet",
+        "refused" => "Credential offer refused",
+        "expired" => "Credential offer expired",
+        "outcome_unknown" => "Check credential status",
+        "failed" => "Credential was not added",
+        _ => "Credential offer closed",
+    }
+}
+
+fn credential_issuance_terminal_note(state: &str) -> &'static str {
+    match state {
+        "succeeded" => "The credential is in the protected inventory below.",
+        "refused" => "Nothing was issued or stored. You can safely review another offer.",
+        "expired" => "Nothing was issued. Ask the issuer for a fresh offer.",
+        "outcome_unknown" => {
+            "Do not accept the offer again. Reopen Documents to check whether the credential was stored."
+        }
+        "failed" => "Nothing was stored. Review the error before trying a fresh offer.",
+        _ => "No further action is available for this one-time offer.",
+    }
 }
 
 fn retained_identity_review_route(
@@ -8967,6 +8991,10 @@ fn CredentialsPage(
                 .read()
                 .as_ref()
                 .is_some_and(|review| review.state == "succeeded");
+            let issuance_terminal_state = prepared_issuance
+                .read()
+                .as_ref()
+                .map(|review| review.state.clone());
             let issuance_action_label = credential_issuance_action_label(issuance_action());
             rsx! {
                 section { class: "page-heading",
@@ -8980,7 +9008,7 @@ fn CredentialsPage(
                         if issuance_succeeded {
                             "Credential added to wallet"
                         } else if issuance_terminal {
-                            "Credential offer closed"
+                            "{credential_issuance_terminal_heading(issuance_terminal_state.as_deref().unwrap_or_default())}"
                         } else {
                             "Accept a credential offer"
                         }
@@ -8989,7 +9017,7 @@ fn CredentialsPage(
                         if issuance_succeeded {
                             "The offer review is closed. Your credential is in the protected inventory below."
                         } else if issuance_terminal {
-                            "The offer review is closed. No further action is available for this one-time offer."
+                            "{credential_issuance_terminal_note(issuance_terminal_state.as_deref().unwrap_or_default())}"
                         } else {
                             "Preview an embedded offer before consent. The pre-authorized code, access token, nonce, and signed proof remain inside the protocol adapter."
                         }
@@ -9264,7 +9292,7 @@ fn CredentialsPage(
                                     if preview.state == "succeeded" {
                                         "Saved to your wallet"
                                     } else if credential_issuance_review_is_terminal(Some(&preview)) {
-                                        "Offer closed"
+                                        "{credential_issuance_terminal_heading(&preview.state)}"
                                     } else {
                                         "Credential offer preview"
                                     }
@@ -11053,6 +11081,7 @@ mod tests {
         let succeeded = review("succeeded");
         let refused = review("refused");
         let failed = review("failed");
+        let expired = review("expired");
         let unknown = review("outcome_unknown");
 
         assert!(credential_issuance_review_blocks_replacement(Some(
@@ -11070,8 +11099,26 @@ mod tests {
         assert!(credential_issuance_review_is_terminal(Some(&succeeded)));
         assert!(credential_issuance_review_is_terminal(Some(&refused)));
         assert!(credential_issuance_review_is_terminal(Some(&failed)));
+        assert!(credential_issuance_review_is_terminal(Some(&expired)));
         assert!(credential_issuance_review_is_terminal(Some(&unknown)));
         assert!(!credential_issuance_review_is_terminal(None));
+    }
+
+    #[test]
+    fn credential_issuance_terminal_states_have_distinct_safe_actions() {
+        assert_eq!(
+            credential_issuance_terminal_heading("refused"),
+            "Credential offer refused"
+        );
+        assert!(credential_issuance_terminal_note("expired").contains("fresh offer"));
+        assert!(
+            credential_issuance_terminal_note("outcome_unknown")
+                .contains("Do not accept the offer again")
+        );
+        assert_ne!(
+            credential_issuance_terminal_heading("failed"),
+            credential_issuance_terminal_heading("succeeded")
+        );
     }
 
     #[test]
