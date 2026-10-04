@@ -274,5 +274,6 @@ check_no_external_dependencies oxid-presentation-application
 check_no_external_dependencies oxid-passport-vault-application
 
 ./scripts/e2e/android-avd-process-ownership.test.sh
+./scripts/e2e/standalone-compose-ownership.test.sh
 
 echo "Architecture dependency rules passed."

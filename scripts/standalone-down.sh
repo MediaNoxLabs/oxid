@@ -4,6 +4,8 @@
 set -euo pipefail
 
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/standalone-compose-ownership.sh
+source "$repository_root/scripts/lib/standalone-compose-ownership.sh"
 state_directory="${OXID_STANDALONE_STATE_DIR:-${TMPDIR:-/tmp}/oxid-standalone}"
 environment_file="$state_directory/canonical-indexer.env"
 serve_marker="$state_directory/tailscale-serve-owned"
@@ -16,6 +18,11 @@ if [ ! -f "$owner_receipt" ] || ! [ -f "$compose_file" ]; then
   exit 1
 fi
 current_ids="$(docker ps -a --filter label=com.docker.compose.project=oxid-standalone --format '{{.ID}}' | sort | jq -Rsc 'split("\n") | map(select(length > 0))')"
+if ! oxid_validate_standalone_compose_ownership \
+  "$compose_file" "$(dirname -- "$compose_file")" "$current_ids"; then
+  echo "Standalone resources have mixed or foreign Compose ownership; preserving them." >&2
+  exit 1
+fi
 jq -e --arg session "$session_id" \
   --arg compose "$(shasum -a 256 "$compose_file" | awk '{print $1}')" \
   --argjson containers "$current_ids" \
