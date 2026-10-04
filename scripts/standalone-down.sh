@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-for required_command in docker git jq shasum; do
+for required_command in docker git jq ln openssl ps sed shasum stat; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     echo "Required command '$required_command' is missing." >&2
     exit 1
@@ -21,6 +21,15 @@ serve_marker="$state_directory/tailscale-serve-owned"
 compose_file="$state_directory/canonical-compose.yml"
 owner_receipt="$state_directory/owner-receipt.json"
 session_id="$(printf '%s' "$repository_root" | shasum -a 256 | awk '{print $1}')"
+lease_id="$(openssl rand -hex 16)"
+
+umask 077
+oxid_standalone_prepare_state_directory "$state_directory"
+release_startup_lease() {
+  oxid_standalone_release_lease "$state_directory" "$session_id" "$lease_id"
+}
+trap release_startup_lease EXIT
+oxid_standalone_acquire_lease "$state_directory" "$session_id" "$lease_id"
 
 if ! oxid_standalone_regular_file "$owner_receipt" || \
   ! oxid_standalone_regular_file "$compose_file"; then

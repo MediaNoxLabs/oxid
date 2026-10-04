@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-for required_command in docker openssl jq curl git; do
+for required_command in docker openssl jq curl git ln ps sed stat; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     echo "Required command '$required_command' is missing." >&2
     exit 1
@@ -20,8 +20,6 @@ environment_file="$state_directory/canonical-indexer.env"
 serve_marker="$state_directory/tailscale-serve-owned"
 source_compose_file="$repository_root/scripts/standalone-stack.yml"
 compose_file="$state_directory/canonical-compose.yml"
-lease_directory="$state_directory/startup-lease"
-lease_record="$lease_directory/owner.json"
 owner_receipt="$state_directory/owner-receipt.json"
 session_id="$(printf '%s' "$repository_root" | shasum -a 256 | awk '{print $1}')"
 lease_id="$(openssl rand -hex 16)"
@@ -42,33 +40,12 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 umask 077
-mkdir -p "$state_directory"
-chmod 700 "$state_directory"
-if mkdir "$lease_directory" 2>/dev/null; then
-  chmod 700 "$lease_directory"
-  jq -cn --arg session "$session_id" --arg lease "$lease_id" \
-    '{schema:"oxid-standalone-lease-v1",session:$session,lease:$lease}' >"$lease_record"
-  chmod 600 "$lease_record"
-elif [ -f "$lease_record" ] && jq -e \
-  '.schema == "oxid-standalone-lease-v1" and (.session | type == "string") and (.lease | type == "string")' \
-  "$lease_record" >/dev/null 2>&1; then
-  owner_prefix="$(jq -r '.session[0:12]' "$lease_record")"
-  jq -cn --arg owner "$owner_prefix" \
-    '{schema:"oxid-standalone-lease-v1",state:"contention",ownerPrefix:$owner}' >&2
-  exit 2
-else
-  echo "Standalone startup lease ownership is ambiguous; refusing mutation." >&2
-  exit 1
-fi
+oxid_standalone_prepare_state_directory "$state_directory"
 release_startup_lease() {
-  if [ -f "$lease_record" ] && jq -e --arg session "$session_id" --arg lease "$lease_id" \
-    '.schema == "oxid-standalone-lease-v1" and .session == $session and .lease == $lease' \
-    "$lease_record" >/dev/null 2>&1; then
-    rm -f -- "$lease_record"
-    rmdir -- "$lease_directory" 2>/dev/null || true
-  fi
+  oxid_standalone_release_lease "$state_directory" "$session_id" "$lease_id"
 }
 trap release_startup_lease EXIT
+oxid_standalone_acquire_lease "$state_directory" "$session_id" "$lease_id"
 
 current_ids="$(docker ps -a --filter label=com.docker.compose.project=oxid-standalone --format '{{.ID}}' | sort | jq -Rsc 'split("\n") | map(select(length > 0))')"
 current_count="$(jq -r 'length' <<<"$current_ids")"
@@ -96,7 +73,7 @@ if [ "$current_count" -eq 3 ]; then
   fi
   echo "Reusing the healthy candidate standalone stack without Compose mutation."
 elif [ "$current_count" -eq 0 ]; then
-  for stale_state_file in "$owner_receipt" "$environment_file" "$compose_file" "$serve_marker"; do
+  for stale_state_file in "$owner_receipt" "$environment_file" "$compose_file"; do
     if [ -L "$stale_state_file" ] || { [ -e "$stale_state_file" ] && [ ! -f "$stale_state_file" ]; }; then
       echo "Standalone stale state is not a regular owned file; refusing mutation." >&2
       exit 1
@@ -105,7 +82,7 @@ elif [ "$current_count" -eq 0 ]; then
   # No containers means these exact canonical files cannot describe a live
   # resource. Rotate generated credentials and ownership instead of carrying
   # stale authority across a Docker reset or host reboot.
-  rm -f -- "$owner_receipt" "$environment_file" "$compose_file" "$serve_marker"
+  rm -f -- "$owner_receipt" "$environment_file" "$compose_file"
   candidate="$(mktemp "$state_directory/.canonical-compose.XXXXXX")"
   cp "$source_compose_file" "$candidate"
   chmod 600 "$candidate"
