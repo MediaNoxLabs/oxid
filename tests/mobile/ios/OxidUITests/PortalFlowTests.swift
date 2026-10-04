@@ -344,18 +344,16 @@ final class PortalFlowTests: XCTestCase {
         try signalIssueErrorBoundary()
         scrollTo(issue, in: application)
         issue.tap()
-        let leave = application.buttons["Leave credential review"]
-        XCTAssertTrue(leave.waitForExistence(timeout: 40))
-        XCTAssertTrue(leave.isEnabled)
-        XCTAssertTrue(protocolUnavailableErrorStatus(in: application).exists)
-        XCTAssertEqual(consent.value as? String, "0")
-        XCTAssertFalse(issue.isEnabled)
-        XCTAssertTrue(application.staticTexts["Credential offer preview"].exists)
+        XCTAssertTrue(
+            protocolUnavailableErrorStatus(in: application).waitForExistence(timeout: 40)
+        )
+        XCTAssertFalse(application.buttons["Leave credential review"].exists)
+        XCTAssertFalse(consent.exists)
+        XCTAssertFalse(issue.exists)
+        XCTAssertFalse(application.staticTexts["Credential offer preview"].exists)
         XCTAssertFalse(application.buttons["Dismiss identity request"].exists)
         application.buttons["Wallet"].tap()
-        XCTAssertTrue(application.staticTexts["Credential offer preview"].waitForExistence(timeout: 10))
-        leave.tap()
-        XCTAssertTrue(leave.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(application.buttons["Receive"].waitForExistence(timeout: 10))
     }
 
     @MainActor
