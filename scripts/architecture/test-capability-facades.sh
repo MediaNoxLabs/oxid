@@ -124,6 +124,17 @@ git -C "$baseline_rise_repo" update-ref refs/remotes/origin/fix/issue-757 "$(git
 git -C "$baseline_rise_repo" branch --set-upstream-to=origin/fix/issue-757 >/dev/null
 expect_failure "$baseline_rise_repo" "a façade maximum increased from the comparison revision; use a temporary exception instead of raising the ratchet"
 
+missing_protected_ref_repo="$fixture_root/missing-protected-ref"
+init_fixture "$missing_protected_ref_repo"
+if output="$(GITHUB_BASE_REF=milestone-0.2.0 run_checker "$missing_protected_ref_repo" 2>&1)"; then
+  echo "Expected pull-request checker to reject an unavailable protected base ref." >&2
+  exit 1
+fi
+[[ "$output" == *"protected delivery ref 'refs/remotes/origin/milestone-0.2.0' is unavailable"* ]] || {
+  echo "Pull-request checker rejected missing protected ref for an unexpected reason: $output" >&2
+  exit 1
+}
+
 stale_exception_repo="$fixture_root/stale-exception"
 init_fixture "$stale_exception_repo"
 jq '

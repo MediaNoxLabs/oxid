@@ -136,9 +136,21 @@ jq -e '
 ' "$baseline" >/dev/null || fail "baseline schema is invalid."
 
 comparison_revision="HEAD"
+# Pull-request CI must have the protected base ref. A shallow checkout that
+# lacks it cannot prove that the ceiling has not risen.
+if [ -n "${GITHUB_BASE_REF:-}" ]; then
+  if [[ "$GITHUB_BASE_REF" != develop && ! "$GITHUB_BASE_REF" =~ ^milestone-[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    fail "unsupported protected delivery ref '$GITHUB_BASE_REF'."
+  fi
+  delivery_ref="refs/remotes/origin/$GITHUB_BASE_REF"
+  git -C "$repository_root" show-ref --verify --quiet "$delivery_ref" ||
+    fail "protected delivery ref '$delivery_ref' is unavailable; fetch full history before checking façade ratchets."
+  comparison_revision="$(git -C "$repository_root" merge-base HEAD "$delivery_ref")" ||
+    fail "could not resolve the capability façade comparison revision."
+fi
 # Compare with a protected delivery branch, never the issue branch's upstream.
 # The latter points at this same commit after push and silently forgives a rise.
-while IFS= read -r delivery_ref; do
+while [ -z "${GITHUB_BASE_REF:-}" ] && IFS= read -r delivery_ref; do
   candidate="$(git -C "$repository_root" merge-base HEAD "$delivery_ref")" ||
     fail "could not resolve the capability façade comparison revision."
   if [ "$comparison_revision" = HEAD ]; then
