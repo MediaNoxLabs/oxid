@@ -118,6 +118,39 @@ impl ProcessHarness {
         Self::spawn(command, "oxid.headless.v1")
     }
 
+    #[cfg(feature = "development-movement-approval-fixture")]
+    fn wallet_with_movement_approval(root: &Path) -> Self {
+        let mut command = Command::new(env!(
+            "CARGO_BIN_EXE_oxid-headless-development-movement-approval-fixture"
+        ));
+        command
+            .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
+            .env("OXID_PROFILE_STORE_PATH", root.join("profiles.json"))
+            .env(
+                "OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH",
+                root.join("private/account-checkpoints.json"),
+            )
+            .env(
+                "OXID_MIDNIGHT_DUST_CHECKPOINT_PATH",
+                root.join("private/dust-checkpoints.json"),
+            )
+            .env(
+                "OXID_MIDNIGHT_SHIELDED_CHECKPOINT_PATH",
+                root.join("private/shielded-checkpoints.json"),
+            )
+            .env(
+                "OXID_MIDNIGHT_SUBMISSION_JOURNAL_PATH",
+                root.join("private/submissions.json"),
+            )
+            .env("OXID_MIDNIGHT_NETWORK_ID", NETWORK)
+            .env("OXID_MIDNIGHT_INDEXER_WS_URL", INDEXER_WS)
+            .env("OXID_MIDNIGHT_INDEXER_HTTP_URL", INDEXER_HTTP)
+            .env("OXID_MIDNIGHT_NODE_WS_URL", NODE_WS)
+            .env("OXID_MIDNIGHT_PROOF_SERVER_URL", PROOF_SERVER)
+            .env("OXID_MIDNIGHT_UNSHIELDED_ADDRESS", PLACEHOLDER_ADDRESS);
+        Self::spawn(command, "oxid.headless.v1")
+    }
+
     fn faucet(root: &Path) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-standalone-faucet"));
         command
@@ -747,6 +780,7 @@ fn two_fresh_wallets_receive_fixed_night_and_generate_dust() {
 }
 
 #[test]
+#[cfg(feature = "development-movement-approval-fixture")]
 #[ignore = "requires an explicitly authorized local standalone stack"]
 fn two_fresh_wallets_complete_a_night_round_trip_and_reconcile_history() {
     assert_eq!(std::env::var(ENABLE_ENV).as_deref(), Ok("1"));
@@ -754,8 +788,8 @@ fn two_fresh_wallets_complete_a_night_round_trip_and_reconcile_history() {
     let mut faucet = ProcessHarness::faucet(&root.child("faucet"));
     let wallet_a_root = root.child("wallet-a");
     let wallet_b_root = root.child("wallet-b");
-    let mut wallet_a = ProcessHarness::wallet(&wallet_a_root);
-    let mut wallet_b = ProcessHarness::wallet(&wallet_b_root);
+    let mut wallet_a = ProcessHarness::wallet_with_movement_approval(&wallet_a_root);
+    let mut wallet_b = ProcessHarness::wallet_with_movement_approval(&wallet_b_root);
     let address_a = prepare_wallet(&mut wallet_a, "Standalone round-trip wallet A");
     let address_b = prepare_wallet(&mut wallet_b, "Standalone round-trip wallet B");
     assert_ne!(address_a, address_b, "wallet roots must remain independent");

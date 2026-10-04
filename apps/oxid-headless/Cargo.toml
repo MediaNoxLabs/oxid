@@ -11,6 +11,7 @@ publish = false
 [features]
 default = []
 development-did-approval-fixture = ["oxid-composition/development-did-approval"]
+development-movement-approval-fixture = ["oxid-composition/development-movement-approval"]
 standalone-faucet = ["oxid-composition/standalone-development"]
 
 [[bin]]
@@ -31,6 +32,13 @@ required-features = ["standalone-faucet"]
 name = "oxid-headless-development-did-approval-fixture"
 path = "tests/support/development_did_approval_fixture_main.rs"
 required-features = ["development-did-approval-fixture"]
+test = false
+bench = false
+
+[[bin]]
+name = "oxid-headless-development-movement-approval-fixture"
+path = "tests/support/development_movement_approval_fixture_main.rs"
+required-features = ["development-movement-approval-fixture"]
 test = false
 bench = false
 

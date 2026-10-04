@@ -6,6 +6,7 @@ import test from "node:test";
 
 const modulePath = "crates/wallet/application/src/approval.rs";
 const fixturePath = "crates/wallet/application/src/approval/tests.rs";
+const movementFixturePath = "crates/composition/src/development_movement_approval_fixture.rs";
 const unavailableImplementation = `impl TrustedWalletApprovalPort for UnavailableApproval {
     fn approve(&self, _: &WalletApprovalIntent) -> Result<(), TrustedWalletApprovalError> {
         Err(TrustedWalletApprovalError::Unavailable)
@@ -15,7 +16,8 @@ const unavailableImplementation = `impl TrustedWalletApprovalPort for Unavailabl
 function violations(files) {
   const failures = [];
   for (const [path, source] of files) {
-    if (path === fixturePath || path === "crates/composition/tests/direct_key_approval.rs"
+    if (path === fixturePath || path === movementFixturePath
+      || path === "crates/composition/tests/direct_key_approval.rs"
       || path === "apps/oxid-headless/tests/capability_contracts/support.rs") continue;
     if (path !== modulePath) {
       if (/\b(?:TrustedWalletApprovalPort|with_trusted_port)\b/u.test(source)) failures.push(path);
@@ -34,6 +36,18 @@ test("approval composition has no incoming injection or production approving por
   const paths = execFileSync("git", ["ls-files", "-z", "--", "*.rs"], { encoding: "utf8" }).split("\0").filter(Boolean);
   assert(paths.includes(modulePath));
   assert.deepEqual(violations(paths.map(path => [path, readFileSync(path, "utf8")])), []);
+});
+
+test("development movement authority stays a narrow compile-time fixture", () => {
+  const source = readFileSync(movementFixturePath, "utf8");
+  assert.match(source, /struct DevelopmentTransferOnlyApproval;/u);
+  assert.match(source, /WalletApprovalIntent::AuthorizeTransfer \{ \.\. \}/u);
+  assert.match(source, /WalletApprovalIntent::SubmitTransfer \{ \.\. \}/u);
+  assert.match(source, /_ => Err\(TrustedWalletApprovalError::Unavailable\)/u);
+  assert.doesNotMatch(source, /std::env|var_os|var\(|_\s*=>\s*Ok\(\(\)\)/u);
+
+  const composition = readFileSync("crates/composition/src/profile_environment.rs", "utf8");
+  assert.match(composition, /feature = "development-movement-approval"[\s\S]*mod development_movement_approval_fixture;/u);
 });
 
 test("guard rejects incoming injection, alias imports, and production auto approval", () => {

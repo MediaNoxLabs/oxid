@@ -12,6 +12,21 @@ use oxid_adapter_passport_vault::{
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_passport_vault_application::PassportVaultContractStateSourcePort;
 
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "headless-portal-local",
+    feature = "development-movement-approval",
+    not(any(target_os = "ios", target_os = "android"))
+))]
+#[path = "development_movement_approval_fixture.rs"]
+mod development_movement_approval_fixture;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "headless-portal-local",
+    feature = "development-movement-approval",
+    not(any(target_os = "ios", target_os = "android"))
+))]
+use self::development_movement_approval_fixture::development_movement_approval_service;
 #[cfg(not(target_arch = "wasm32"))]
 use super::environment::{
     HeadlessCompositionError, HeadlessEnvironmentPlan, HeadlessEnvironmentPolicy,
@@ -25,6 +40,13 @@ use super::environment::{
 use super::identity::HeadlessCredentialProfile;
 #[cfg(not(target_arch = "wasm32"))]
 use super::passport_vault::{with_native_passport_vault_calls, with_passport_vault_state_source};
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "headless-portal-local",
+    feature = "development-movement-approval",
+    not(any(target_os = "ios", target_os = "android"))
+))]
+use super::profile_headless::compose_headless_standalone_with_checkpoint_options_and_movement_approvals;
 #[cfg(all(
     not(target_arch = "wasm32"),
     not(target_os = "ios"),
@@ -109,6 +131,40 @@ pub fn compose_native_headless_process_with_development_did_approval_from_enviro
             ))
         }
         _ => Err(HeadlessCompositionError::DevelopmentDidApprovalFixtureUnavailable),
+    }
+}
+
+/// Builds the separately named local scenario fixture with authority limited
+/// to the two NIGHT transfer approval intents. Runtime input cannot enable this
+/// function in the ordinary headless executable.
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "headless-portal-local",
+    feature = "development-movement-approval",
+    not(any(target_os = "ios", target_os = "android"))
+))]
+pub fn compose_native_headless_process_with_development_movement_approval_from_environment()
+-> Result<ApplicationServices, HeadlessCompositionError> {
+    let plan = load_headless_environment_plan(HeadlessEnvironmentPolicy::NativeHeadlessProcess)?;
+    match (plan.midnight_config, plan.portal) {
+        (Some(HeadlessMidnightConfig::Standalone(config)), None)
+            if plan.passport_vault_deployment_height.is_none()
+                && plan.passport_vault_composer.is_none() =>
+        {
+            let approvals = development_movement_approval_service();
+            Ok(
+                compose_headless_standalone_with_checkpoint_options_and_movement_approvals(
+                    config,
+                    plan.checkpoints,
+                    plan.dust_checkpoints,
+                    plan.shielded_checkpoints,
+                    plan.submission_journal,
+                    plan.credential_presentation,
+                    approvals,
+                ),
+            )
+        }
+        _ => Err(HeadlessCompositionError::DevelopmentMovementApprovalFixtureUnavailable),
     }
 }
 

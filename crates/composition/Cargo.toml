@@ -10,6 +10,7 @@ publish = false
 
 [features]
 development-did-approval = ["oxid-identity-application/development-approval", "dep:oxid-foundation"]
+development-movement-approval = []
 default = []
 # Public standalone genesis custody for explicit development app profiles.
 # Normal composition does not compile the fixture authority.

@@ -134,6 +134,7 @@ pub enum HeadlessCompositionError {
     InvalidStandaloneDeploymentProfile,
     PublicStandaloneGenesisRequiresUndeployed,
     DevelopmentDidApprovalFixtureUnavailable,
+    DevelopmentMovementApprovalFixtureUnavailable,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -189,6 +190,9 @@ impl std::fmt::Display for HeadlessCompositionError {
             }
             Self::DevelopmentDidApprovalFixtureUnavailable => {
                 "development DID approval fixture supports only persistent simulated or Portal standalone profiles"
+            }
+            Self::DevelopmentMovementApprovalFixtureUnavailable => {
+                "development movement approval fixture supports only a standalone profile without Portal or Passport Vault overrides"
             }
         };
         formatter.write_str(message)
