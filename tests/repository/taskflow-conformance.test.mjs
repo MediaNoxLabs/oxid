@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import test from "node:test";
 
-test("synthetic Taskflow conformance matrix is pinned, fast, and headless", () => {
+const pinnedPackageInstalled = existsSync(path.resolve(
+  new URL("../..", import.meta.url).pathname,
+  ".pi/npm/node_modules/dev-loops/package.json",
+));
+
+test("synthetic Taskflow conformance matrix is pinned, fast, and headless", { skip: !pinnedPackageInstalled }, () => {
   const result = spawnSync(process.execPath, ["scripts/factory/taskflow-conformance.mjs", "--json", "--step-ms", "30"], {
     encoding: "utf8",
     timeout: 10_000,
@@ -29,7 +36,7 @@ test("synthetic Taskflow conformance matrix is pinned, fast, and headless", () =
   assert.match(report.matrix.find(({ property }) => property === "process-tree-cancellation-escalation").evidence, /descendantsReaped=true/u);
 });
 
-test("long-process mode labels supervisor heartbeats without claiming five-minute admission", () => {
+test("long-process mode labels supervisor heartbeats without claiming five-minute admission", { skip: !pinnedPackageInstalled }, () => {
   const result = spawnSync(process.execPath, [
     "scripts/factory/taskflow-conformance.mjs", "--json", "--long-process", "--step-ms", "40", "--heartbeat-ms", "10",
   ], { encoding: "utf8", timeout: 10_000 });
