@@ -5,12 +5,8 @@ set -euo pipefail
 
 failure_log="$(mktemp)"
 feature_graph_log="$(mktemp)"
-portal_compile_scratch=""
 cleanup() {
   rm -f "$failure_log" "$feature_graph_log"
-  if [[ -n "$portal_compile_scratch" && -d "$portal_compile_scratch" ]]; then
-    rm -rf -- "$portal_compile_scratch"
-  fi
 }
 trap cleanup EXIT
 
@@ -570,20 +566,8 @@ if ! rg -q 'standalone Portal requires repository virtual-device profile authori
   exit 1
 fi
 
-portal_compile_scratch="$(mktemp -d)"
-portal_compile_authority="$portal_compile_scratch/authority.json"
-portal_compile_manifest="$portal_compile_scratch/deployment.json"
-./scripts/e2e/write-portal-profile-authority.sh \
-  ios_simulator aarch64-apple-ios-sim "$portal_compile_authority"
-printf '%s\n' '{"schema":"oxid-portal-deployment-v3"}' >"$portal_compile_manifest"
-portal_compile_authority_sha256="$(shasum -a 256 "$portal_compile_authority" | awk '{print $1}')"
-portal_compile_manifest_sha256="$(shasum -a 256 "$portal_compile_manifest" | awk '{print $1}')"
 for conflicting_profile in standalone-tailnet standalone-native-custody; do
-  if OXID_BUILD_PORTAL_PROFILE_AUTHORITY_PATH="$portal_compile_authority" \
-    OXID_BUILD_PORTAL_PROFILE_AUTHORITY_SHA256="$portal_compile_authority_sha256" \
-    OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$portal_compile_manifest" \
-    OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$portal_compile_manifest_sha256" \
-    cargo check -p oxid-app --target aarch64-apple-ios-sim --no-default-features \
+  if cargo check -p oxid-app --no-default-features \
     --features "standalone-portal,$conflicting_profile" >"$failure_log" 2>&1; then
     echo "standalone-portal compiled with $conflicting_profile" >&2
     exit 1
@@ -594,8 +578,6 @@ for conflicting_profile in standalone-tailnet standalone-native-custody; do
     exit 1
   fi
 done
-rm -rf -- "$portal_compile_scratch"
-portal_compile_scratch=""
 
 # The adapter feature is intentionally inert on WASM: its mobile-only optional
 # HTTP dependencies and Portal module are not selected for the browser target.

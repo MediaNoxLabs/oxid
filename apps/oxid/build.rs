@@ -69,6 +69,12 @@ fn authorize_portal_profile() {
     let Some(profile) = active_portal_profile() else {
         return;
     };
+    if profile == portal_profile_authority::PortalProfile::Local
+        && (env::var_os("CARGO_FEATURE_STANDALONE_TAILNET").is_some()
+            || env::var_os("CARGO_FEATURE_STANDALONE_NATIVE_CUSTODY").is_some())
+    {
+        panic!("standalone-portal is incompatible with tailnet and native custody");
+    }
 
     let path = PathBuf::from(env::var_os(PORTAL_PROFILE_AUTHORITY_PATH_ENV).unwrap_or_else(|| {
         panic!("standalone Portal requires repository virtual-device profile authority via {PORTAL_PROFILE_AUTHORITY_PATH_ENV}")

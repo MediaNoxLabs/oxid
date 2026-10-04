@@ -1317,6 +1317,7 @@ fn runtime_cleanup_removes_sensitive_state_after_success() {
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&root);
+    let _test_cleanup = TestDiagnosticsCleanup(root.clone());
     {
         fs::create_dir_all(root.join("wallet/private")).expect("private root");
         let _cleanup = RuntimeCleanup(root.clone());
@@ -1333,7 +1334,7 @@ fn runtime_cleanup_retains_private_diagnostics_during_unwind() {
     use std::os::unix::fs::PermissionsExt as _;
 
     let root = std::env::temp_dir().join(format!(
-        "oxid-portal-runtime-cleanup-{}",
+        "oxid-portal-runtime-unwind-cleanup-{}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&root);
@@ -1353,6 +1354,15 @@ fn runtime_cleanup_retains_private_diagnostics_during_unwind() {
         }
     });
     assert!(result.is_err());
+    assert_eq!(
+        fs::metadata(&root)
+            .expect("retained private root")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700,
+        "retained diagnostics root must remain owner-private"
+    );
     assert!(
         root.join("wallet/private/credentials.enc").is_file(),
         "failed runtime must retain its encrypted private diagnostics"
