@@ -1303,7 +1303,25 @@ fn observation_proxy_reads_content_length_without_waiting_for_eof_and_drops_boun
 }
 
 #[test]
-fn runtime_cleanup_removes_encrypted_store_and_wrapping_key_during_unwind() {
+fn runtime_cleanup_removes_sensitive_state_after_success() {
+    let root = std::env::temp_dir().join(format!(
+        "oxid-portal-runtime-success-cleanup-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    {
+        fs::create_dir_all(root.join("wallet/private")).expect("private root");
+        let _cleanup = RuntimeCleanup(root.clone());
+        fs::write(root.join("wallet/private/credentials.enc"), b"ciphertext")
+            .expect("encrypted store");
+        fs::write(root.join("wallet/private/credentials.key"), b"wrapping key")
+            .expect("wrapping key");
+    }
+    assert!(!root.exists(), "successful runtime root must be removed");
+}
+
+#[test]
+fn runtime_cleanup_retains_private_diagnostics_during_unwind() {
     let root = std::env::temp_dir().join(format!(
         "oxid-portal-runtime-cleanup-{}",
         std::process::id()
@@ -1322,5 +1340,13 @@ fn runtime_cleanup_removes_encrypted_store_and_wrapping_key_during_unwind() {
         }
     });
     assert!(result.is_err());
-    assert!(!root.exists(), "sensitive runtime root must be removed");
+    assert!(
+        root.join("wallet/private/credentials.enc").is_file(),
+        "failed runtime must retain its encrypted private diagnostics"
+    );
+    assert!(
+        root.join("wallet/private/credentials.key").is_file(),
+        "failed runtime must retain its private wrapping key for owner inspection"
+    );
+    fs::remove_dir_all(&root).expect("remove retained test diagnostics");
 }
