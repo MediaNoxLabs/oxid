@@ -135,7 +135,6 @@ final class PortalFlowTests: XCTestCase {
     }
 
     private let credentialIssuanceTerminalStatus = "Credential issuance terminal error"
-    private let credentialIssuanceProtocolErrorStatus = "Credential issuance protocol error"
     private let protocolUnavailableCategory = "protocol unavailable"
 
     private enum ProtocolErrorDiagnosticValue: String {
@@ -163,14 +162,6 @@ final class PortalFlowTests: XCTestCase {
     @MainActor
     private func protocolUnavailableTerminalStatus(in application: XCUIApplication) -> XCUIElement {
         let identifier = "\(credentialIssuanceTerminalStatus): \(protocolUnavailableCategory)"
-        return application.descendants(matching: .any).matching(
-            NSPredicate(format: "label == %@", identifier)
-        ).firstMatch
-    }
-
-    @MainActor
-    private func protocolUnavailableErrorStatus(in application: XCUIApplication) -> XCUIElement {
-        let identifier = "\(credentialIssuanceProtocolErrorStatus): \(protocolUnavailableCategory)"
         return application.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@", identifier)
         ).firstMatch
@@ -344,14 +335,17 @@ final class PortalFlowTests: XCTestCase {
         try signalIssueErrorBoundary()
         scrollTo(issue, in: application)
         issue.tap()
-        let leave = application.buttons["Leave credential review"]
-        XCTAssertTrue(leave.waitForExistence(timeout: 40))
-        XCTAssertTrue(leave.isEnabled)
-        XCTAssertTrue(protocolUnavailableErrorStatus(in: application).exists)
-        XCTAssertEqual(consent.value as? String, "0")
-        XCTAssertFalse(issue.isEnabled)
-        XCTAssertTrue(application.staticTexts["Credential offer preview"].exists)
+        let terminal = protocolUnavailableTerminalStatus(in: application)
+        XCTAssertTrue(terminal.waitForExistence(timeout: 40))
+        XCTAssertTrue(
+            application.staticTexts["Credential offer preview"].waitForNonExistence(timeout: 20)
+        )
+        XCTAssertTrue(
+            application.buttons["Leave credential review"].waitForNonExistence(timeout: 20)
+        )
+        XCTAssertFalse(application.buttons["Accept and issue credential"].exists)
         XCTAssertFalse(application.buttons["Dismiss identity request"].exists)
+        XCTAssertTrue(terminal.exists)
     }
 
     @MainActor
