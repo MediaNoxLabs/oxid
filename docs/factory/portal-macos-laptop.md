@@ -97,9 +97,12 @@ line is:
 portal-macos-laptop-e2e: PASS evidence=target/portal-headless-e2e/evidence.json,target/portal-desktop-e2e/evidence.json
 ```
 
-The shared stack uses the canonical host-local state directory
-`${TMPDIR:-/tmp}/oxid-standalone`. Startup takes an atomic lease before reading
-or changing the fixed Compose project. A second worktree may reuse an exact
+The shared stack uses the durable canonical state directory
+`$(git rev-parse --path-format=absolute --git-common-dir)/oxid/standalone`.
+It survives the Nix launcher process and is shared by managed worktrees for the
+same checkout. `OXID_STANDALONE_STATE_DIR` remains an explicit absolute-path
+override for isolated tests. Startup takes an atomic lease before reading or
+changing the fixed Compose project. A second worktree may reuse an exact
 three-container stack whose canonical receipt matches, but it never runs
 `docker compose up` or rewrites that receipt. Partial or unreceipted resources
 fail closed. Only the worktree session recorded by the owner receipt may run

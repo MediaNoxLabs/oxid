@@ -3,18 +3,27 @@
 
 set -euo pipefail
 
+for required_command in docker git jq shasum; do
+  if ! command -v "$required_command" >/dev/null 2>&1; then
+    echo "Required command '$required_command' is missing." >&2
+    exit 1
+  fi
+done
+
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/standalone-compose-ownership.sh
 source "$repository_root/scripts/lib/standalone-compose-ownership.sh"
-temporary_root="${TMPDIR:-/tmp}"
-state_directory="${OXID_STANDALONE_STATE_DIR:-${temporary_root%/}/oxid-standalone}"
+# shellcheck source=lib/standalone-state.sh
+source "$repository_root/scripts/lib/standalone-state.sh"
+state_directory="$(oxid_standalone_state_directory "$repository_root")"
 environment_file="$state_directory/canonical-indexer.env"
 serve_marker="$state_directory/tailscale-serve-owned"
 compose_file="$state_directory/canonical-compose.yml"
 owner_receipt="$state_directory/owner-receipt.json"
 session_id="$(printf '%s' "$repository_root" | shasum -a 256 | awk '{print $1}')"
 
-if [ ! -f "$owner_receipt" ] || ! [ -f "$compose_file" ]; then
+if ! oxid_standalone_regular_file "$owner_receipt" || \
+  ! oxid_standalone_regular_file "$compose_file"; then
   echo "Standalone ownership is not proven; preserving resources." >&2
   exit 1
 fi
@@ -46,6 +55,10 @@ if [ -f "$serve_marker" ]; then
 fi
 
 compose_environment_file="$environment_file"
+if [ -L "$compose_environment_file" ]; then
+  echo "Standalone environment ownership is symlinked; preserving resources." >&2
+  exit 1
+fi
 if [ ! -f "$compose_environment_file" ]; then
   compose_environment_file=/dev/null
 fi

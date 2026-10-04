@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-for required_command in docker openssl jq curl; do
+for required_command in docker openssl jq curl git; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     echo "Required command '$required_command' is missing." >&2
     exit 1
@@ -13,8 +13,9 @@ done
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/standalone-compose-ownership.sh
 source "$repository_root/scripts/lib/standalone-compose-ownership.sh"
-temporary_root="${TMPDIR:-/tmp}"
-state_directory="${OXID_STANDALONE_STATE_DIR:-${temporary_root%/}/oxid-standalone}"
+# shellcheck source=lib/standalone-state.sh
+source "$repository_root/scripts/lib/standalone-state.sh"
+state_directory="$(oxid_standalone_state_directory "$repository_root")"
 environment_file="$state_directory/canonical-indexer.env"
 serve_marker="$state_directory/tailscale-serve-owned"
 source_compose_file="$repository_root/scripts/standalone-stack.yml"
@@ -72,7 +73,8 @@ trap release_startup_lease EXIT
 current_ids="$(docker ps -a --filter label=com.docker.compose.project=oxid-standalone --format '{{.ID}}' | sort | jq -Rsc 'split("\n") | map(select(length > 0))')"
 current_count="$(jq -r 'length' <<<"$current_ids")"
 if [ "$current_count" -eq 3 ]; then
-  if [ ! -f "$compose_file" ] || [ ! -f "$owner_receipt" ]; then
+  if ! oxid_standalone_regular_file "$compose_file" || \
+    ! oxid_standalone_regular_file "$owner_receipt"; then
     echo "Standalone resources exist without a matching canonical owner receipt; preserving them." >&2
     exit 1
   fi
@@ -98,6 +100,10 @@ elif [ "$current_count" -eq 0 ]; then
   cp "$source_compose_file" "$candidate"
   chmod 600 "$candidate"
   mv "$candidate" "$compose_file"
+  if [ -L "$environment_file" ]; then
+    echo "Standalone environment ownership is symlinked; preserving resources." >&2
+    exit 1
+  fi
   if [ ! -f "$environment_file" ]; then
     storage_password="$(openssl rand -hex 24)"
     pub_sub_password="$(openssl rand -hex 24)"

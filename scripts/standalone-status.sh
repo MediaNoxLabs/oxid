@@ -3,8 +3,17 @@
 
 set -euo pipefail
 
-temporary_root="${TMPDIR:-/tmp}"
-state_directory="${OXID_STANDALONE_STATE_DIR:-${temporary_root%/}/oxid-standalone}"
+for command_name in curl docker git jq; do
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "Required command '$command_name' is missing." >&2
+    exit 1
+  fi
+done
+
+repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/standalone-state.sh
+source "$repository_root/scripts/lib/standalone-state.sh"
+state_directory="$(oxid_standalone_state_directory "$repository_root")"
 compose_file="$state_directory/canonical-compose.yml"
 mode="${1:-local}"
 case "$mode" in
@@ -14,13 +23,6 @@ case "$mode" in
     exit 1
     ;;
 esac
-
-for command_name in curl docker jq; do
-  if ! command -v "$command_name" >/dev/null 2>&1; then
-    echo "Required command '$command_name' is missing." >&2
-    exit 1
-  fi
-done
 
 standalone_containers="$(docker ps -a \
   --filter label=com.docker.compose.project=oxid-standalone \
