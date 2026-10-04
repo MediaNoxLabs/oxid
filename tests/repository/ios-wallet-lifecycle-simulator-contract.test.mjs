@@ -69,7 +69,7 @@ test("development XCTest fixtures complete the protected recovery ceremony", asy
 
   assert.match(fixture, /Generate recovery phrase/u);
   assert.match(fixture, /New wallet recovery phrase/u);
-  assert.match(fixture, /I have securely saved or verified this recovery phrase\./u);
+  assert.match(fixture, /I saved this new recovery phrase outside the app\./u);
   assert.match(fixture, /Finish and open wallet/u);
   assert.match(fixture, /must not expose the retired protection bypass/u);
   for (const source of migrated) {
