@@ -7,6 +7,8 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 
 import { assertReviewActionAllowed, currentReviewControl } from "./review-control.mjs";
+import { verifyReleaseQualification } from "./verify-release-qualification.mjs";
+import { MILESTONE_BRANCH_PATTERN } from "../lib/delivery-target.mjs";
 
 const DEVELOP_BASE = "develop";
 const REPOSITORY = "MediaNoxLabs/oxid";
@@ -118,6 +120,10 @@ export function auditDevelopMerge(options, { cwd = process.cwd(), run = defaultR
   if (localBase !== pr.baseRefOid) throw new Error(`base changed during audit: GitHub ${pr.baseRefOid}, fetched ${localBase}`);
   run("git", ["merge-base", "--is-ancestor", localBase, pr.headRefOid], { cwd: root, label: "verify current-head freshness" });
   run("git", ["merge-tree", "--write-tree", localBase, pr.headRefOid], { cwd: root, label: "verify conflict-free merge tree" });
+
+  if (MILESTONE_BRANCH_PATTERN.test(pr.headRefName ?? "")) {
+    verifyReleaseQualification({ repo: options.repo, branch: pr.headRefName, sha: pr.headRefOid }, { cwd: root, run });
+  }
 
   const checks = ghJson(run, ["pr", "checks", String(options.pr), "--repo", options.repo, "--required", "--json", "bucket,name,state,workflow"], root, "read required checks");
   const checkResult = validateRequiredChecks(checks);

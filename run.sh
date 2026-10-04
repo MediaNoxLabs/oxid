@@ -49,6 +49,7 @@ run_repository() {
   node --test tests/repository/factory-metrics-contract.test.mjs
   node --test tests/repository/pi-factory-policy-contract.test.mjs
   node --test tests/repository/integration-delivery-contract.test.mjs
+  node --test tests/repository/release-qualification-contract.test.mjs
   node --test tests/repository/sccache-diagnostics-contract.test.mjs
   node --test tests/repository/streaming-delivery-contract.test.mjs
   node --test tests/repository/bootstrap-dev-loop-contract.test.mjs
