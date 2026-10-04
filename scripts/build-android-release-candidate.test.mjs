@@ -25,6 +25,15 @@ function cleanEnvironment(overrides = {}) {
   return { ...environment, ...overrides };
 }
 
+async function createFakeJdk17(rootDirectory) {
+  const home = path.join(rootDirectory, "jdk17");
+  const java = path.join(home, "bin", "java");
+  await mkdir(path.dirname(java), { recursive: true });
+  await writeFile(java, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await writeFile(path.join(home, "release"), 'JAVA_VERSION="17.0.12"\n');
+  return home;
+}
+
 test("release-candidate build is arm64-only, statically verified, and device-free", async () => {
   const [script, justfile, guide, nativePluginGradle] = await Promise.all([
     readFile(path.join(root, "scripts", "build-android-release-candidate.sh"), "utf8"),
@@ -73,13 +82,15 @@ test("release-candidate build is arm64-only, statically verified, and device-fre
   assert.match(script, /trap 'rmdir -- "\$lock_directory"' EXIT/);
   assert.match(script, /rustc_version="\$\("\$rust_toolchain_bin\/rustc" --version\)"/);
   assert.match(script, /cargo_version="\$\("\$rust_toolchain_bin\/cargo" --version\)"/);
-  assert.match(script, /java_home="\$\("\$java_command" -XshowSettings:properties -version/);
+  assert.match(script, /source "\$repository_root\/scripts\/lib\/android-java\.sh"/);
+  assert.match(script, /oxid_android_select_java/);
+  assert.match(script, /java_home="\$JAVA_HOME"/);
   assert.match(script, /JAVA_HOME="\$java_home"/);
   assert.match(script, /RUSTC="\$rust_toolchain_bin\/rustc"/);
   assert.match(script, /^  RUSTC_WRAPPER= \\$/m);
   assert.match(script, /^  RUSTC_WORKSPACE_WRAPPER= \\$/m);
   assert.match(script, /PATH="\$rust_toolchain_bin:\$java_home\/bin:/);
-  assert.match(script, /java:\$java/);
+  assert.match(script, /java:\$java,javaMajor:\$javaMajor/);
   assert.match(script, /rustProfile "android-release"/);
   assert.match(script, /gradleVariant "debug"/);
   assert.match(script, /signing "generated-debug"/);
@@ -128,24 +139,28 @@ test("release-candidate build rejects ambient Rust overrides without disclosing 
   t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
   const scriptsDirectory = path.join(temporaryRoot, "scripts");
   const scriptPath = path.join(scriptsDirectory, "build-android-release-candidate.sh");
-  await mkdir(scriptsDirectory, { recursive: true });
+  await mkdir(path.join(scriptsDirectory, "lib"), { recursive: true });
   await copyFile(path.join(root, "scripts", "build-android-release-candidate.sh"), scriptPath);
+  await copyFile(path.join(root, "scripts", "lib", "android-java.sh"), path.join(scriptsDirectory, "lib", "android-java.sh"));
   await chmod(scriptPath, 0o755);
+  await writeFile(path.join(temporaryRoot, ".gitignore"), "/jdk17/\n");
   await run("git", ["init", "-q"], temporaryRoot);
   await run("git", ["config", "user.email", "test@example.invalid"], temporaryRoot);
   await run("git", ["config", "user.name", "Test"], temporaryRoot);
-  await run("git", ["add", "scripts/build-android-release-candidate.sh"], temporaryRoot);
+  await run("git", ["add", "scripts/build-android-release-candidate.sh", "scripts/lib/android-java.sh", ".gitignore"], temporaryRoot);
   await run("git", ["commit", "-qm", "fixture"], temporaryRoot);
 
   for (const variable of rustOverrides) {
     const sentinel = `secret-${variable}`;
-    const result = await run(scriptPath, [], temporaryRoot, cleanEnvironment({ [variable]: sentinel }), false);
+    const result = await run("bash", [scriptPath], temporaryRoot, cleanEnvironment({ [variable]: sentinel }), false);
     assert.notEqual(result.code, 0, `${variable} must fail`);
     assert.match(result.stderr, new RegExp(variable));
     assert.doesNotMatch(`${result.stdout}${result.stderr}`, new RegExp(sentinel));
   }
 
-  const cleanResult = await run(scriptPath, [], temporaryRoot, cleanEnvironment(), false);
+  const cleanResult = await run("bash", [scriptPath], temporaryRoot, cleanEnvironment({
+    OXID_ANDROID_JAVA_HOME: await createFakeJdk17(temporaryRoot),
+  }), false);
   assert.doesNotMatch(`${cleanResult.stdout}${cleanResult.stderr}`, /ambient Rust override/);
 });
 
@@ -159,7 +174,7 @@ test("release-candidate build fails before invoking Nix when its worktree is dir
   const scriptPath = path.join(scriptsDirectory, "build-android-release-candidate.sh");
 
   await Promise.all([
-    mkdir(scriptsDirectory, { recursive: true }),
+    mkdir(path.join(scriptsDirectory, "lib"), { recursive: true }),
     mkdir(fakeBin, { recursive: true }),
     mkdir(path.join(sdk, "platforms", "android-34"), { recursive: true }),
     mkdir(path.join(sdk, "platforms", "android-35"), { recursive: true }),
@@ -167,6 +182,7 @@ test("release-candidate build fails before invoking Nix when its worktree is dir
     mkdir(path.join(sdk, "ndk", "27.0.12077973"), { recursive: true }),
   ]);
   await copyFile(path.join(root, "scripts", "build-android-release-candidate.sh"), scriptPath);
+  await copyFile(path.join(root, "scripts", "lib", "android-java.sh"), path.join(scriptsDirectory, "lib", "android-java.sh"));
   await chmod(scriptPath, 0o755);
   await writeFile(path.join(sdk, "platforms", "android-34", "source.properties"), "Pkg.Revision = 1\n");
   await writeFile(path.join(sdk, "platforms", "android-35", "source.properties"), "Pkg.Revision = 1\n");
@@ -179,12 +195,12 @@ test("release-candidate build fails before invoking Nix when its worktree is dir
   await run("git", ["init", "-q"], temporaryRoot);
   await run("git", ["config", "user.email", "test@example.invalid"], temporaryRoot);
   await run("git", ["config", "user.name", "Test"], temporaryRoot);
-  await writeFile(path.join(temporaryRoot, ".gitignore"), "/bin/\n/sdk/\n");
-  await run("git", ["add", "scripts/build-android-release-candidate.sh", ".gitignore"], temporaryRoot);
+  await writeFile(path.join(temporaryRoot, ".gitignore"), "/bin/\n/sdk/\n/jdk17/\n");
+  await run("git", ["add", "scripts/build-android-release-candidate.sh", "scripts/lib/android-java.sh", ".gitignore"], temporaryRoot);
   await run("git", ["commit", "-qm", "fixture"], temporaryRoot);
   await writeFile(path.join(temporaryRoot, "uncommitted-source-input"), "dirty\n");
 
-  const result = await run(scriptPath, [], temporaryRoot, {
+  const result = await run("bash", [scriptPath], temporaryRoot, {
     ...cleanEnvironment(),
     ANDROID_HOME: sdk,
     PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
@@ -194,9 +210,10 @@ test("release-candidate build fails before invoking Nix when its worktree is dir
   await assert.rejects(readFile(marker));
 
   await rm(path.join(temporaryRoot, "uncommitted-source-input"));
-  const ignoredOnlyResult = await run(scriptPath, [], temporaryRoot, {
+  const ignoredOnlyResult = await run("bash", [scriptPath], temporaryRoot, {
     ...cleanEnvironment(),
     ANDROID_HOME: sdk,
+    OXID_ANDROID_JAVA_HOME: await createFakeJdk17(temporaryRoot),
     PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
   }, false);
   assert.notEqual(ignoredOnlyResult.code, 0);

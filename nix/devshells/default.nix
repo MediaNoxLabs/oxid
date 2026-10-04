@@ -119,6 +119,7 @@
             gh
             jq
             just
+            jdk17
             lychee
             llvmPackages.llvm
             midnightDidPackages.compact-midnight
@@ -143,6 +144,8 @@
                     export RUST_SRC_PATH=${pkgs.rustPlatform.rustLibSrc}
                     export LLVM_COV=${pkgs.llvmPackages.llvm}/bin/llvm-cov
                     export LLVM_PROFDATA=${pkgs.llvmPackages.llvm}/bin/llvm-profdata
+                    export JAVA_HOME=${pkgs.jdk17.home}
+                    export PATH="$JAVA_HOME/bin:$PATH"
                     export COMPACT_DIRECTORY=${midnightDidPackages.compact-toolchain}
                     export OXID_PRESENTATION_ARTIFACTS_DIR=${self'.packages.presentation-compact-artifacts}
                     export OXID_PASSPORT_VAULT_ARTIFACTS_DIR=${self'.packages.passport-vault-compact-artifacts}
