@@ -59,7 +59,12 @@ struct RuntimeCleanup(PathBuf);
 
 impl Drop for RuntimeCleanup {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        // A failed live lane keeps its private, mode-0600 runtime diagnostics
+        // for owner inspection. Successful runs still remove protocol state
+        // before the bounded public evidence is admitted.
+        if !thread::panicking() {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 }
 

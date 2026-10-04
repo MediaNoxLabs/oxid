@@ -30,7 +30,7 @@ test("Portal iOS holder preparation follows the current DID detail contract", as
 });
 
 test("Portal acceptance uses only named development authority and bounded cleanup", async () => {
-  const [appManifest, profile, headless, lifecycle] = await Promise.all([
+  const [appManifest, profile, headless, lifecycle, liveFlow] = await Promise.all([
     readFile(new URL("apps/oxid/Cargo.toml", root), "utf8"),
     readFile(
       new URL("crates/composition/src/profile_mobile.rs", root),
@@ -38,6 +38,10 @@ test("Portal acceptance uses only named development authority and bounded cleanu
     ),
     readFile(new URL("scripts/e2e/portal-headless-e2e.sh", root), "utf8"),
     readFile(new URL("scripts/portal-consumer-lifecycle.sh", root), "utf8"),
+    readFile(
+      new URL("apps/oxid-headless/tests/portal_live_flow.rs", root),
+      "utf8",
+    ),
   ]);
 
   const localPortalFeature = appManifest.match(
@@ -70,4 +74,6 @@ test("Portal acceptance uses only named development authority and bounded cleanu
   );
   assert.match(lifecycle, /docker rm --force "\$id"/u);
   assert.match(lifecycle, /for attempt in 1 2/u);
+  assert.match(liveFlow, /if !thread::panicking\(\)/u);
+  assert.match(liveFlow, /remove_dir_all\(&self\.0\)/u);
 });
