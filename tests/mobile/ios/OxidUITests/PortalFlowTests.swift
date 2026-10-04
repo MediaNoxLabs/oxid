@@ -16,7 +16,19 @@ final class PortalFlowTests: XCTestCase {
 
     @MainActor
     private func assertSingleValidCredential(in application: XCUIApplication) {
-        let valid = application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid"))
+        let policy = "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
+        let valid = application.staticTexts.matching(NSPredicate(format: "label == %@", policy))
+        if !valid.element(boundBy: 0).exists {
+            let card = application.buttons["Open Digital Passport document details"]
+            XCTAssertTrue(card.waitForExistence(timeout: 15))
+            XCTAssertTrue(
+                application.buttons.matching(
+                    NSPredicate(format: "label == %@", "Open Digital Passport document details")
+                ).element(boundBy: 1).waitForNonExistence(timeout: 5)
+            )
+            scrollTo(card, in: application)
+            card.tap()
+        }
         XCTAssertTrue(valid.element(boundBy: 0).waitForExistence(timeout: 15))
         XCTAssertTrue(valid.element(boundBy: 1).waitForNonExistence(timeout: 5))
         XCTAssertEqual(valid.count, 1)
@@ -369,10 +381,7 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertTrue(application.staticTexts[
             "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
         ].waitForExistence(timeout: 20))
-        XCTAssertEqual(
-            application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid")).count,
-            1
-        )
+        assertSingleValidCredential(in: application)
         XCTAssertFalse(application.staticTexts["John"].exists)
         XCTAssertFalse(application.staticTexts["Doe"].exists)
     }
