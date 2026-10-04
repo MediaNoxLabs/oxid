@@ -63,4 +63,10 @@ test("Portal acceptance uses only named development authority and bounded cleanu
   assert.match(headless, /--features development-did-approval-fixture/u);
   assert.match(lifecycle, /timeout -k 5s 60s docker compose/u);
   assert.match(lifecycle, /compose_bounded down --volumes --remove-orphans/u);
+  assert.match(lifecycle, /force_remove_owned_project/u);
+  assert.match(
+    lifecycle,
+    /docker inspect --format '[^']*com\.docker\.compose\.project/u,
+  );
+  assert.match(lifecycle, /docker rm --force "\$id"/u);
 });

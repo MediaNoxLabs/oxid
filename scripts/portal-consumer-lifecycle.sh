@@ -159,6 +159,31 @@ compose_bounded() {
     -f "$COMPOSE_FILE" "$@"
 }
 
+# Docker Desktop can outlive Compose's container stop timeout while the client
+# waits on its engine. Callers enter here only after validating this session's
+# starting/owner receipt; every fallback target is then revalidated by its
+# Compose project label before an exact-ID removal.
+force_remove_owned_project() {
+  local id resource
+  for id in $(project_ids); do
+    [[ "$id" =~ ^[0-9a-f]{64}$ ]] || return 1
+    [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$id" 2>/dev/null)" = "$PROJECT" ] || return 1
+  done
+  for id in $(project_ids); do
+    timeout -k 5s 20s docker rm --force "$id" >>"$PRIVATE_LOG" 2>&1 || return 1
+  done
+  for resource in $(docker volume ls --filter "label=com.docker.compose.project=$PROJECT" --quiet); do
+    [ "$(docker volume inspect --format '{{index .Labels "com.docker.compose.project"}}' "$resource" 2>/dev/null)" = "$PROJECT" ] || return 1
+    timeout -k 5s 20s docker volume rm "$resource" >>"$PRIVATE_LOG" 2>&1 || return 1
+  done
+  for resource in $(docker network ls --filter "label=com.docker.compose.project=$PROJECT" --quiet --no-trunc); do
+    [[ "$resource" =~ ^[0-9a-f]{64}$ ]] || return 1
+    [ "$(docker network inspect --format '{{index .Labels "com.docker.compose.project"}}' "$resource" 2>/dev/null)" = "$PROJECT" ] || return 1
+    timeout -k 5s 20s docker network rm "$resource" >>"$PRIVATE_LOG" 2>&1 || return 1
+  done
+  [ -z "$(project_ids)" ]
+}
+
 receipt_valid() {
   private_regular_file "$RECEIPT" || return 1
   jq -e \
@@ -492,7 +517,9 @@ run_up() {
     if [ "$up_cleanup_running" -eq 1 ]; then return; fi
     up_cleanup_running=1
     starting_receipt_valid || return 1
-    compose_bounded down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 || true
+    compose_bounded down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 \
+      || force_remove_owned_project \
+      || true
     [ -z "$(project_ids)" ] || return 1
     lease_release_allowed=1
     rm -f -- "$ENV_FILE" "$RECEIPT" "$STARTING_RECEIPT" "$PRIVATE_LOG"
@@ -591,7 +618,9 @@ run_down() {
   lease_release_allowed=0
   receipt_valid || starting_receipt_valid || fail ownership
   [ -f "$ENV_FILE" ] && [ ! -L "$ENV_FILE" ] || fail private-state
-  compose_bounded down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 || fail cleanup
+  compose_bounded down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 \
+    || force_remove_owned_project \
+    || fail cleanup
   [ -z "$(project_ids)" ] || fail cleanup-incomplete
   lease_release_allowed=1
   rm -f -- "$ENV_FILE" "$RECEIPT" "$STARTING_RECEIPT" "$PRIVATE_LOG"
