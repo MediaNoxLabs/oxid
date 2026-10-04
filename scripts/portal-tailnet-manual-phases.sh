@@ -19,7 +19,7 @@ for command_name in git jq shasum; do command -v "$command_name" >/dev/null 2>&1
 umask 077; mkdir -p "$STATE"; chmod 700 "$STATE"; [ -d "$STATE" ] && [ ! -L "$STATE" ] || fail state
 head="$(git -C "$ROOT" rev-parse HEAD)"; tree="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
 sha() { shasum -a 256 "$1" | awk '{print $1}'; }
-private_file() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1")" = 600 ]; }
+private_file() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1")" = 600 ]; }
 write_receipt() { local out="$1" value="$2" tmp; tmp="$(mktemp "$STATE/.receipt.XXXXXX")"; printf '%s\n' "$value" >"$tmp"; chmod 600 "$tmp"; mv "$tmp" "$out"; }
 manifest_valid() { local p="$1"; [[ "$p" = /* ]] && [ -f "$p" ] && [ ! -L "$p" ] && jq -e '.schema == "oxid-portal-deployment-v3" and (.issuerOrigin|type == "string") and (.issuerDid|type == "string") and (.issuerMethod|type == "string") and (.issuerJubjubJwkSha256|test("^[0-9a-f]{64}$")) and (tostring|test("(?i)(token|secret|capability|privateKey|wallet_seed)")|not)' "$p" >/dev/null; }
 config_valid() { private_file "$CONFIGURE_RECEIPT" && jq -e --arg h "$head" --arg t "$tree" '.schema == "oxid-portal-manual-configure-v1" and .source == {head:$h,tree:$t} and .profile == "tailnet-android" and (.manifest.path|type == "string") and (.manifest.sha256|test("^[0-9a-f]{64}$"))' "$CONFIGURE_RECEIPT" >/dev/null && manifest_valid "$(jq -r '.manifest.path' "$CONFIGURE_RECEIPT")" && [ "$(sha "$(jq -r '.manifest.path' "$CONFIGURE_RECEIPT")")" = "$(jq -r '.manifest.sha256' "$CONFIGURE_RECEIPT")" ]; }

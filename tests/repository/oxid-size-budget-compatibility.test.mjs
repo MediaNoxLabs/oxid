@@ -44,7 +44,7 @@ test("only sanctioned size and ready wrapper routes use the compatibility adapte
   assert.equal(typeof resolveOxidCompatibilityRoute(["gate", "size-budget"]), "function");
   assert.equal(typeof resolveOxidCompatibilityRoute(["pr", "ready-for-review"]), "function");
   assert.equal(resolveOxidCompatibilityRoute(["loop", "startup"]), null);
-  assert.equal(resolveOxidCompatibilityRoute(["pr", "create"]), null);
+  assert.equal(typeof resolveOxidCompatibilityRoute(["pr", "create"]), "function");
   const sizeAdapter = await readFile(new URL("../../scripts/loop/oxid-size-budget.mjs", import.meta.url), "utf8");
   const readyAdapter = await readFile(new URL("../../scripts/github/ready-for-review.mjs", import.meta.url), "utf8");
   assert.doesNotMatch(sizeAdapter, /const packageRoot = \(await resolveDevLoopsPackageRoot\(\{ cwd: process\.cwd\(\) \}\)\)\.packageRoot/u);

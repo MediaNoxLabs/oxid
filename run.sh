@@ -85,6 +85,25 @@ run_repository() {
   node --test tests/repository/support-journal-store-contract.test.mjs
   node --test tests/repository/wallet-approval-boundary-contract.test.mjs
   node --test tests/repository/identity-approval-boundary-contract.test.mjs
+  node --test tests/repository/application-navigation-contract.test.mjs
+  node --test tests/repository/bootstrap-nix-discovery-contract.test.mjs
+  node --test tests/repository/coverage-policy-contract.test.mjs
+  node --test tests/repository/dev-loop-admission-contract.test.mjs
+  node --test tests/repository/edit-issue-contract.test.mjs
+  node --test tests/repository/ios-maestro-evidence-behavior.test.mjs
+  node --test tests/repository/ios-standalone-local-acceptance-contract.test.mjs
+  node --test tests/repository/maestro-ios-lane.test.mjs
+  node --test tests/repository/mobile-receive-sheet-contract.test.mjs
+  node --test tests/repository/oxid-size-budget-compatibility.test.mjs
+  node --test tests/repository/pi-observability-contract.test.mjs
+  node --test tests/repository/portal-ios-fixture-contract.test.mjs
+  node --test tests/repository/portal-manual-phases-command-contract.test.mjs
+  node --test tests/repository/portal-mobile-phase-parity-contract.test.mjs
+  node --test tests/repository/portal-services-lifecycle-command-contract.test.mjs
+  node --test tests/repository/taskflow-conformance.test.mjs
+  node --test tests/repository/ui-page-hierarchy-contract.test.mjs
+  node --test tests/repository/repository-test-inventory-contract.test.mjs
+  node scripts/ci/check-repository-test-inventory.mjs
   ./scripts/check-transport-trust.sh
 }
 
