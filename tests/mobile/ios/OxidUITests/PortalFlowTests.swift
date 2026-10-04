@@ -285,7 +285,7 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertTrue(confirmCreateDid.waitForExistence(timeout: 10))
         scrollTo(confirmCreateDid, in: application)
         confirmCreateDid.tap()
-        let didDetailTitle = application.staticTexts["Identity"]
+        let didDetailTitle = application.staticTexts["DID details"]
         XCTAssertTrue(didDetailTitle.waitForExistence(timeout: 30))
         XCTAssertTrue(application.staticTexts["Managed"].exists)
     }
