@@ -345,7 +345,7 @@ final class PortalFlowTests: XCTestCase {
         scrollTo(issue, in: application)
         issue.tap()
         XCTAssertTrue(
-            protocolUnavailableErrorStatus(in: application).waitForExistence(timeout: 40)
+            protocolUnavailableTerminalStatus(in: application).waitForExistence(timeout: 40)
         )
         XCTAssertFalse(application.buttons["Leave credential review"].exists)
         XCTAssertFalse(consent.exists)

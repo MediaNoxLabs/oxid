@@ -19,7 +19,7 @@ test("Portal iOS holder preparation follows the current DID detail contract", as
   assert.doesNotMatch(fixture, /staticTexts\["Identity"\]/u);
   assert.match(
     fixture,
-    /protocolUnavailableErrorStatus\(in: application\)\.waitForExistence/u,
+    /protocolUnavailableTerminalStatus\(in: application\)\.waitForExistence/u,
   );
   assert.match(
     fixture,
