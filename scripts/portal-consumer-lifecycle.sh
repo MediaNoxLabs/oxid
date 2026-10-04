@@ -36,7 +36,7 @@ fail() {
 }
 
 case "$OPERATION" in prerequisite|prepare|prepared-status|up|status|down|services-up|services-status|services-stop) ;; *) fail usage ;; esac
-for command_name in awk curl docker git jq nix openssl shasum; do
+for command_name in awk curl docker git jq nix openssl shasum timeout; do
   command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
 done
 [[ "$SOURCE" = /* && "$STATE" = /* ]] || fail paths
@@ -152,6 +152,11 @@ shared_midnight_ready() {
 
 compose() {
   docker compose --env-file "$ENV_FILE" -p "$PROJECT" -f "$COMPOSE_FILE" "$@"
+}
+
+compose_bounded() {
+  timeout -k 5s 60s docker compose --env-file "$ENV_FILE" -p "$PROJECT" \
+    -f "$COMPOSE_FILE" "$@"
 }
 
 receipt_valid() {
@@ -487,7 +492,7 @@ run_up() {
     if [ "$up_cleanup_running" -eq 1 ]; then return; fi
     up_cleanup_running=1
     starting_receipt_valid || return 1
-    compose down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 || true
+    compose_bounded down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 || true
     [ -z "$(project_ids)" ] || return 1
     lease_release_allowed=1
     rm -f -- "$ENV_FILE" "$RECEIPT" "$STARTING_RECEIPT" "$PRIVATE_LOG"
@@ -566,7 +571,7 @@ run_services_up() {
 run_services_stop() {
   receipt_valid || fail ownership
   [ "$(count_lines "$(project_ids)")" -eq 5 ] || fail project-shape
-  compose stop --timeout 30 smocker did-resolver did-manager issuer >>"$PRIVATE_LOG" 2>&1 || fail services-stop
+  compose_bounded stop --timeout 30 smocker did-resolver did-manager issuer >>"$PRIVATE_LOG" 2>&1 || fail services-stop
   run_services_status
 }
 
@@ -586,7 +591,7 @@ run_down() {
   lease_release_allowed=0
   receipt_valid || starting_receipt_valid || fail ownership
   [ -f "$ENV_FILE" ] && [ ! -L "$ENV_FILE" ] || fail private-state
-  compose down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 || fail cleanup
+  compose_bounded down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 || fail cleanup
   [ -z "$(project_ids)" ] || fail cleanup-incomplete
   lease_release_allowed=1
   rm -f -- "$ENV_FILE" "$RECEIPT" "$STARTING_RECEIPT" "$PRIVATE_LOG"

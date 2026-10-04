@@ -443,6 +443,7 @@ app_portal_members="$(awk '
 ' apps/oxid/Cargo.toml | sort)"
 expected_app_portal_members="$(printf '%s\n' \
   mobile \
+  oxid-composition/development-did-approval \
   oxid-composition/mobile-portal \
   standalone-development \
   standalone-local | sort)"

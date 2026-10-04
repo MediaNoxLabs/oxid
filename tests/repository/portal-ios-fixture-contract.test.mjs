@@ -28,3 +28,39 @@ test("Portal iOS holder preparation follows the current DID detail contract", as
   assert.doesNotMatch(fixture, /buttons\["Receive"\]\.waitForExistence/u);
   assert.match(dids, /aria_label: "Copy DID"/u);
 });
+
+test("Portal acceptance uses only named development authority and bounded cleanup", async () => {
+  const [appManifest, profile, headless, lifecycle] = await Promise.all([
+    readFile(new URL("apps/oxid/Cargo.toml", root), "utf8"),
+    readFile(
+      new URL("crates/composition/src/profile_mobile.rs", root),
+      "utf8",
+    ),
+    readFile(new URL("scripts/e2e/portal-headless-e2e.sh", root), "utf8"),
+    readFile(new URL("scripts/portal-consumer-lifecycle.sh", root), "utf8"),
+  ]);
+
+  const localPortalFeature = appManifest.match(
+    /^standalone-portal = \[(?<members>[\s\S]*?)^\]/mu,
+  );
+  const tailnetPortalFeature = appManifest.match(
+    /^standalone-portal-tailnet = \[(?<members>[\s\S]*?)^\]/mu,
+  );
+  assert.ok(localPortalFeature?.groups?.members);
+  assert.ok(tailnetPortalFeature?.groups?.members);
+  assert.match(
+    localPortalFeature.groups.members,
+    /oxid-composition\/development-did-approval/u,
+  );
+  assert.doesNotMatch(
+    tailnetPortalFeature.groups.members,
+    /development-did-approval/u,
+  );
+  assert.match(
+    profile,
+    /let did_approvals = Some\(super::profile_headless::development_did_approval_service\(\)\)/u,
+  );
+  assert.match(headless, /--features development-did-approval-fixture/u);
+  assert.match(lifecycle, /timeout -k 5s 60s docker compose/u);
+  assert.match(lifecycle, /compose_bounded down --volumes --remove-orphans/u);
+});

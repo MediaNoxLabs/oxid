@@ -72,7 +72,11 @@ struct ProcessHarness {
 
 impl ProcessHarness {
     fn spawn(root: &Path, manifest: &Path, digest: &str) -> Self {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
+        #[cfg(feature = "development-did-approval-fixture")]
+        let executable = env!("CARGO_BIN_EXE_oxid-headless-development-did-approval-fixture");
+        #[cfg(not(feature = "development-did-approval-fixture"))]
+        let executable = env!("CARGO_BIN_EXE_oxid-headless");
+        let mut command = Command::new(executable);
         command
             .env("OXID_PROFILE_STORE_PATH", root.join("profiles.json"))
             .env("OXID_DID_STORE_PATH", root.join("private/did-records.json"))
