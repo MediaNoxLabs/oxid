@@ -2,6 +2,11 @@
 
 This matrix is the privacy-safe, exact-head evidence map for the simulated first-run journey and holder shell. It is additive to Android CDP and iOS XCTest coverage, never authorizes product changes, and never substitutes a Maestro result for a protected, protocol, or finality outcome. Generated screenshots and logs remain below ignored `target/mobile-visual-accessibility/<platform>/`; recovery phrases and other private values are never captured.
 
+The current milestone checkpoint is recorded in
+[`milestone-0.2.0-assistive-navigation-evidence.md`](milestone-0.2.0-assistive-navigation-evidence.md).
+It keeps human VoiceOver/TalkBack, 200% text, larger-width, and receipt-owned
+Android evidence visibly separate from passing automated semantics.
+
 ## Evidence matrix
 
 | Scenario ID | Authority | Platform | Design reference/no-match | Artifact | Evidence layer | Known gap |
