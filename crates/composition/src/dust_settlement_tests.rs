@@ -592,7 +592,7 @@ fn registration_readiness_requires_a_synced_positive_dust_snapshot() {
 }
 
 #[test]
-fn one_authorization_drives_submission_reconciliation_and_refresh() {
+fn one_authorization_drives_submission_and_reuses_authoritative_dust_readiness() {
     let fake = Arc::new(FakeServices::new());
     let capability = capability(&fake);
 
@@ -608,14 +608,7 @@ fn one_authorization_drives_submission_reconciliation_and_refresh() {
     );
     assert_eq!(
         *fake.calls.lock().unwrap(),
-        [
-            "prepare",
-            "authorize",
-            "submit",
-            "status",
-            "reconcile",
-            "refresh"
-        ]
+        ["prepare", "authorize", "submit", "status", "reconcile"]
     );
 }
 
@@ -632,14 +625,7 @@ fn development_realm_converges_without_an_incoming_authorization_action() {
     );
     assert_eq!(
         *fake.calls.lock().unwrap(),
-        [
-            "prepare",
-            "authorize",
-            "submit",
-            "status",
-            "reconcile",
-            "refresh"
-        ]
+        ["prepare", "authorize", "submit", "status", "reconcile"]
     );
 
     let repeated = block_on(capability.refresh("profile_test".to_owned())).unwrap();
@@ -1292,6 +1278,7 @@ fn automatic_reconciler_continues_a_pending_settlement_without_another_realm_tic
 #[test]
 fn refresh_failure_retains_the_included_registration_for_retry() {
     let fake = Arc::new(FakeServices::new());
+    fake.selected.lock().unwrap().view.dust = WalletRealmFamilyView::Ready(dust_view("syncing"));
     *fake.sync_ready.lock().unwrap() = Err(());
     let capability = capability(&fake);
     block_on(capability.refresh("profile_test".to_owned())).unwrap();
