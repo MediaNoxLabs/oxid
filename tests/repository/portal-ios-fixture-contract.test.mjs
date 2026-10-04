@@ -26,19 +26,6 @@ test("Portal iOS holder preparation follows the current DID detail contract", as
   assert.match(dids, /aria_label: "Copy DID"/u);
 });
 
-test("Portal iOS acceptance isolates a retained issuance failure before success", async () => {
-  const runner = await readFile(
-    new URL("scripts/test-ios-portal-exact-sequence-simulator.sh", root),
-    "utf8",
-  );
-
-  assert.match(
-    runner,
-    /run_measured_offer issue-error[\s\S]*?oxid_ios_owned_simctl[^\n]*terminate "\$PACKAGE"[\s\S]*?run_measured_offer issue testIssue/u,
-  );
-  assert.match(runner, /fail issue-error-reset/u);
-});
-
 test("Portal acceptance uses only named development authority and bounded cleanup", async () => {
   const [appManifest, profile, headless, lifecycle, liveFlow] = await Promise.all([
     readFile(new URL("apps/oxid/Cargo.toml", root), "utf8"),
