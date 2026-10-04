@@ -24,6 +24,7 @@ today="$(date -u +%F)"
 temporary_directory="$(mktemp -d)"
 trap 'rm -rf "$temporary_directory"' EXIT
 baseline="$temporary_directory/capability-facades.json"
+prior_baseline="$temporary_directory/prior-capability-facades.json"
 baseline_entries="$temporary_directory/baseline-index-entry"
 source_roots_file="$temporary_directory/source-roots"
 crates_file="$temporary_directory/crates"
@@ -133,6 +134,24 @@ jq -e '
     (.temporaryExceptions | type == "array")
   ))
 ' "$baseline" >/dev/null || fail "baseline schema is invalid."
+
+comparison_revision="HEAD"
+if upstream="$(git -C "$repository_root" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)"; then
+  comparison_revision="$(git -C "$repository_root" merge-base HEAD "$upstream")" || fail "could not resolve the capability façade comparison revision."
+fi
+if git -C "$repository_root" cat-file -e "$comparison_revision:$baseline_path" 2>/dev/null; then
+  git -C "$repository_root" show "$comparison_revision:$baseline_path" >"$prior_baseline" || fail "could not read the prior capability façade baseline."
+  jq -e '
+    . as $current |
+    input as $prior |
+    [ $current.crates[] as $crate |
+      $prior.crates[]? | select(.name == $crate.name) as $previous |
+      $crate.facadeMaximumPhysicalLinesByPath | to_entries[] as $ceiling |
+      select($ceiling.value > $previous.facadeMaximumPhysicalLinesByPath[$ceiling.key])
+    ] | length == 0
+  ' "$baseline" "$prior_baseline" >/dev/null ||
+    fail "a façade maximum increased from the comparison revision; use a temporary exception instead of raising the ratchet."
+fi
 
 jq -r '.crates[].sourceRoot' "$baseline" >"$source_roots_file"
 source_roots=()
@@ -323,6 +342,7 @@ while IFS= read -r crate; do
   done <"$facade_files"
   allowed_total=$((maximum + exception_ceiling))
   [ "$facade_total" -le "$allowed_total" ] || fail "$name façade total $facade_total exceeds its allowed maximum $allowed_total."
+  [ "$facade_total" -ge "$maximum" ] || fail "$name façade total $facade_total is below its committed maximum $maximum; lower the ratchet in the same change."
 
   while IFS=$'\t' read -r encoded_path lines; do
     path="$(decode_path "$encoded_path")"

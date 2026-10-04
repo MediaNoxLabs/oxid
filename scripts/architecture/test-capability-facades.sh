@@ -96,6 +96,28 @@ printf 'one\ntwo\nthree' >"$unterminated_over_limit_repo/fixture/src/lib.rs"
 git -C "$unterminated_over_limit_repo" add fixture/src/lib.rs
 expect_failure "$unterminated_over_limit_repo" "façade 'fixture/src/lib.rs' has 3 lines; path maximum is 2"
 
+stale_headroom_repo="$fixture_root/stale-headroom"
+init_fixture "$stale_headroom_repo"
+jq '
+  .crates[0].facadeMaximumPhysicalLines = 5 |
+  .crates[0].facadeMaximumPhysicalLinesByPath["fixture/src/lib.rs"] = 3
+' "$stale_headroom_repo/scripts/architecture/capability-facades.json" >"$stale_headroom_repo/baseline.json"
+mv "$stale_headroom_repo/baseline.json" "$stale_headroom_repo/scripts/architecture/capability-facades.json"
+git -C "$stale_headroom_repo" add scripts/architecture/capability-facades.json
+expect_failure "$stale_headroom_repo" "façade total 4 is below its committed maximum 5; lower the ratchet in the same change"
+
+baseline_rise_repo="$fixture_root/baseline-rise"
+init_fixture "$baseline_rise_repo"
+git -C "$baseline_rise_repo" -c user.name=fixture -c user.email=fixture@example.test commit -qm baseline
+printf 'one\ntwo\nthree\n' >"$baseline_rise_repo/fixture/src/lib.rs"
+jq '
+  .crates[0].facadeMaximumPhysicalLines = 5 |
+  .crates[0].facadeMaximumPhysicalLinesByPath["fixture/src/lib.rs"] = 3
+' "$baseline_rise_repo/scripts/architecture/capability-facades.json" >"$baseline_rise_repo/baseline.json"
+mv "$baseline_rise_repo/baseline.json" "$baseline_rise_repo/scripts/architecture/capability-facades.json"
+git -C "$baseline_rise_repo" add fixture/src/lib.rs scripts/architecture/capability-facades.json
+expect_failure "$baseline_rise_repo" "a façade maximum increased from the comparison revision; use a temporary exception instead of raising the ratchet"
+
 empty_source_repo="$fixture_root/empty-source"
 init_fixture "$empty_source_repo"
 rm -rf "$empty_source_repo/fixture/src"
