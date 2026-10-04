@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { access, chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -50,24 +50,34 @@ test("standalone status is read-only and checks local plus Tailnet readiness", a
   assert.doesNotMatch(status, /\b(up|down|start|stop|reset|rm)\b/);
 });
 
-test("standalone lifecycle uses checkout-independent canonical state with an atomic verified lease", async () => {
-  const [up, down, status] = await Promise.all([
+test("standalone lifecycle uses durable Git-common state with an atomic verified lease", async () => {
+  const [up, down, status, state] = await Promise.all([
     text("scripts/standalone-up.sh"),
     text("scripts/standalone-down.sh"),
     text("scripts/standalone-status.sh"),
+    text("scripts/lib/standalone-state.sh"),
   ]);
-  for (const source of [up, down, status]) {
-    assert.match(source, /temporary_root="\$\{TMPDIR:-\/tmp\}"/);
-    assert.match(source, /OXID_STANDALONE_STATE_DIR:-\$\{temporary_root%\/\}\/oxid-standalone/);
+  for (const source of [up, down]) {
+    assert.match(source, /oxid_standalone_state_directory/);
+    assert.doesNotMatch(source, /temporary_root=.*TMPDIR/);
   }
+  assert.doesNotMatch(status, /oxid_standalone_state_directory|git -C/);
+  assert.match(state, /git -C "\$repository_root" rev-parse --git-common-dir/);
+  assert.match(state, /\$\{git_common_directory%\/\}\/oxid\/standalone/);
+  assert.match(state, /OXID_STANDALONE_STATE_DIR/);
+  assert.match(state, /must not be a symlink/);
+  assert.match(state, /pwd -P/);
   assert.match(up, /scripts\/standalone-stack\.yml/);
-  assert.match(up, /mkdir "\$lease_directory"/);
-  assert.match(up, /oxid-standalone-lease-v1/);
-  assert.match(up, /state:"contention"/);
-  assert.match(up, /ownerPrefix/);
+  assert.match(state, /oxid-standalone-lease-v2/);
+  assert.match(state, /ln -- "\$candidate" "\$lease_record"/);
+  assert.match(state, /state:"contention"/);
+  assert.match(state, /ownerPrefix/);
+  assert.match(up, /oxid_standalone_acquire_lease/);
+  assert.match(down, /oxid_standalone_acquire_lease/);
   assert.match(up, /canonical-compose\.yml/);
   assert.match(up, /canonical-indexer\.env/);
   assert.match(up, /Reusing the healthy candidate standalone stack without Compose mutation/);
+  assert.doesNotMatch(up, /rm -f --[^\n]*\$serve_marker/);
   assert.match(down, /owner-receipt\.json/);
   assert.match(down, /\.session == \$session/);
   assert.match(down, /ownership is not proven/);
@@ -93,8 +103,9 @@ test("standalone shutdown is receipt-scoped", async () => {
 
 test("two worktrees serialize startup, reuse without Compose mutation, and preserve exact cleanup ownership", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "oxid-standalone-worktrees-"));
+  const physicalTemporary = await realpath(temporary);
   const fakeBin = join(temporary, "bin");
-  const sharedState = join(temporary, "shared-state");
+  const sharedState = join(physicalTemporary, "shared-state");
   const dockerState = join(temporary, "docker-running");
   const dockerLedger = join(temporary, "docker-ledger");
   const worktreeA = join(temporary, "worktree-a");
@@ -120,11 +131,15 @@ test("two worktrees serialize startup, reuse without Compose mutation, and prese
         new URL("../../scripts/lib/standalone-compose-ownership.sh", import.meta.url),
         join(worktree, "scripts", "lib", "standalone-compose-ownership.sh"),
       );
+      await copyFile(
+        new URL("../../scripts/lib/standalone-state.sh", import.meta.url),
+        join(worktree, "scripts", "lib", "standalone-state.sh"),
+      );
       await chmod(join(worktree, "scripts", "standalone-up.sh"), 0o755);
       await chmod(join(worktree, "scripts", "standalone-down.sh"), 0o755);
     }
     await writeExecutable(join(fakeBin, "openssl"), `#!/usr/bin/env bash
-printf '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\\n'
+printf '%064d\\n' "$$"
 `);
     await writeExecutable(join(fakeBin, "curl"), `#!/usr/bin/env bash
 case "$*" in
@@ -160,7 +175,10 @@ case "\${1:-}" in
         sleep "\${FAKE_COMPOSE_SLEEP:-0}"
         : >"$FAKE_DOCKER_STATE"
         ;;
-      *' down --remove-orphans '*) rm -f "$FAKE_DOCKER_STATE" ;;
+      *' down --remove-orphans '*)
+        sleep "\${FAKE_COMPOSE_DOWN_SLEEP:-0}"
+        rm -f "$FAKE_DOCKER_STATE"
+        ;;
     esac
     ;;
 esac
@@ -215,7 +233,7 @@ esac
     });
     assert.equal(loser.status, 2);
     assert.match(loser.stderr, /"state":"contention"/);
-    assert.equal(await firstStatus, 0);
+    assert.equal(await firstStatus, 0, firstStderr);
 
     const reuse = spawnSync("bash", [join(worktreeB, "scripts", "standalone-up.sh"), "local"], {
       env: environment,
@@ -234,13 +252,66 @@ esac
     assert.match(wrongOwner.stderr, /ownership is not proven/);
     assert.doesNotMatch(await readFile(dockerLedger, "utf8"), /compose .* down --remove-orphans/);
 
-    const ownerDown = spawnSync("bash", [join(worktreeA, "scripts", "standalone-down.sh")], {
+    const ownerDown = spawn("bash", [join(worktreeA, "scripts", "standalone-down.sh")], {
+      env: { ...environment, FAKE_COMPOSE_DOWN_SLEEP: "3" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let ownerDownStderr = "";
+    ownerDown.stdout.resume();
+    ownerDown.stderr.on("data", (chunk) => { ownerDownStderr += chunk; });
+    const ownerDownStatus = new Promise((resolve, reject) => {
+      ownerDown.once("error", reject);
+      ownerDown.once("close", resolve);
+    });
+    let downLeaseObserved = false;
+    for (let attempt = 0; attempt < 500; attempt += 1) {
+      try {
+        await access(join(sharedState, "startup-lease", "owner.json"));
+        downLeaseObserved = true;
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    assert.equal(downLeaseObserved, true, "teardown must publish the shared lease");
+    const startDuringDown = spawnSync("bash", [join(worktreeB, "scripts", "standalone-up.sh"), "local"], {
       env: environment,
       encoding: "utf8",
     });
-    assert.equal(ownerDown.status, 0, ownerDown.stderr);
+    assert.equal(startDuringDown.status, 2, startDuringDown.stderr);
+    assert.match(startDuringDown.stderr, /"state":"contention"/);
+    assert.equal(await ownerDownStatus, 0, ownerDownStderr);
     ledger = await readFile(dockerLedger, "utf8");
     assert.equal(ledger.split("\\n").filter((line) => /compose .* down --remove-orphans/.test(line)).length, 1);
+
+    const staleLease = join(sharedState, "startup-lease", "owner.json");
+    await writeFile(staleLease, JSON.stringify({
+      schema: "oxid-standalone-lease-v2",
+      session: "stale-session",
+      lease: "stale-lease",
+      pid: 2_147_483_647,
+      processStart: "stale-process",
+    }), { mode: 0o600 });
+    const recovered = spawnSync("bash", [join(worktreeA, "scripts", "standalone-up.sh"), "local"], {
+      env: environment,
+      encoding: "utf8",
+    });
+    assert.equal(recovered.status, 0, recovered.stderr);
+    const recoveredDown = spawnSync("bash", [join(worktreeA, "scripts", "standalone-down.sh")], {
+      env: environment,
+      encoding: "utf8",
+    });
+    assert.equal(recoveredDown.status, 0, recoveredDown.stderr);
+
+    const unsafeState = join(physicalTemporary, "unsafe-state");
+    await mkdir(unsafeState, { mode: 0o755 });
+    await chmod(unsafeState, 0o755);
+    const unsafeOverride = spawnSync("bash", [join(worktreeA, "scripts", "standalone-up.sh"), "local"], {
+      env: { ...environment, OXID_STANDALONE_STATE_DIR: unsafeState },
+      encoding: "utf8",
+    });
+    assert.equal(unsafeOverride.status, 1);
+    assert.match(unsafeOverride.stderr, /mode 700; refusing permission mutation/);
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
