@@ -35,7 +35,7 @@ export function classifyOxidSizePath(filePath) {
   return TEST_PATH.test(normalized) ? "test" : "code";
 }
 
-function translateNativePath(filePath) {
+export function translateNativePath(filePath) {
   const category = classifyOxidSizePath(filePath);
   if (category === "code") return `${filePath}.js`;
   if (category === "test") return `${filePath}.test.js`;
@@ -43,7 +43,7 @@ function translateNativePath(filePath) {
   return filePath;
 }
 
-function translateTierPatterns(sizeConfig) {
+export function translateTierPatterns(sizeConfig) {
   const extend = (patterns = []) => [...new Set(patterns.flatMap((pattern) => [
     pattern,
     ...[".rs", ".kt", ".swift", ".sh"].filter((extension) => pattern.endsWith(extension)).map((extension) => `${pattern}.js`),
