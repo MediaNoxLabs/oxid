@@ -9,6 +9,13 @@
 ))]
 mod portal;
 
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "headless-portal-local",
+    feature = "development-movement-approval",
+    not(any(target_os = "ios", target_os = "android"))
+))]
+mod development_movement_approval_fixture;
 mod dust_settlement;
 mod environment;
 mod identity;

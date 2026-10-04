@@ -12,6 +12,13 @@ use oxid_adapter_passport_vault::{
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_passport_vault_application::PassportVaultContractStateSourcePort;
 
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "headless-portal-local",
+    feature = "development-movement-approval",
+    not(any(target_os = "ios", target_os = "android"))
+))]
+use super::development_movement_approval_fixture::development_movement_approval_service;
 #[cfg(not(target_arch = "wasm32"))]
 use super::environment::{
     HeadlessCompositionError, HeadlessEnvironmentPlan, HeadlessEnvironmentPolicy,
@@ -66,33 +73,6 @@ use super::profile_mobile::compose_development_portal_from_config;
 use super::profile_mobile::compose_development_portal_from_config_with_did_approvals;
 #[cfg(not(target_arch = "wasm32"))]
 use super::services::ApplicationServices;
-
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    feature = "headless-portal-local",
-    feature = "development-movement-approval",
-    not(any(target_os = "ios", target_os = "android"))
-))]
-struct DevelopmentTransferOnlyApproval;
-
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    feature = "headless-portal-local",
-    feature = "development-movement-approval",
-    not(any(target_os = "ios", target_os = "android"))
-))]
-impl oxid_wallet_application::TrustedWalletApprovalPort for DevelopmentTransferOnlyApproval {
-    fn approve(
-        &self,
-        intent: &oxid_wallet_application::WalletApprovalIntent,
-    ) -> Result<(), oxid_wallet_application::TrustedWalletApprovalError> {
-        match intent {
-            oxid_wallet_application::WalletApprovalIntent::AuthorizeTransfer { .. }
-            | oxid_wallet_application::WalletApprovalIntent::SubmitTransfer { .. } => Ok(()),
-            _ => Err(oxid_wallet_application::TrustedWalletApprovalError::Unavailable),
-        }
-    }
-}
 
 /// Selects deterministic simulation when no live variables are present, a
 /// read-only indexer when the three read values are present, or complete
@@ -157,18 +137,13 @@ pub fn compose_native_headless_process_with_development_did_approval_from_enviro
 ))]
 pub fn compose_native_headless_process_with_development_movement_approval_from_environment()
 -> Result<ApplicationServices, HeadlessCompositionError> {
-    use oxid_wallet_application::WalletApprovalService;
-
     let plan = load_headless_environment_plan(HeadlessEnvironmentPolicy::NativeHeadlessProcess)?;
     match (plan.midnight_config, plan.portal) {
         (Some(HeadlessMidnightConfig::Standalone(config)), None)
             if plan.passport_vault_deployment_height.is_none()
                 && plan.passport_vault_composer.is_none() =>
         {
-            let approvals = Arc::new(WalletApprovalService::with_trusted_port(
-                Arc::new(oxid_adapter_platform_system::SystemClock),
-                Arc::new(DevelopmentTransferOnlyApproval),
-            ));
+            let approvals = development_movement_approval_service();
             Ok(
                 compose_headless_standalone_with_checkpoint_options_and_movement_approvals(
                     config,
@@ -182,35 +157,6 @@ pub fn compose_native_headless_process_with_development_movement_approval_from_e
             )
         }
         _ => Err(HeadlessCompositionError::DevelopmentMovementApprovalFixtureUnavailable),
-    }
-}
-
-#[cfg(all(
-    test,
-    not(target_arch = "wasm32"),
-    feature = "headless-portal-local",
-    feature = "development-movement-approval",
-    not(any(target_os = "ios", target_os = "android"))
-))]
-mod development_movement_approval_tests {
-    use oxid_wallet_application::{
-        CanonicalApprovalDigest, TrustedWalletApprovalError, TrustedWalletApprovalPort,
-        WalletApprovalIntent, WalletProfileId,
-    };
-
-    use super::DevelopmentTransferOnlyApproval;
-
-    #[test]
-    fn fixture_rejects_unrelated_protected_operations() {
-        let intent = WalletApprovalIntent::SignData {
-            profile: WalletProfileId::parse("profile_test").unwrap(),
-            digest: CanonicalApprovalDigest::from_sha256([7; 32]),
-        };
-
-        assert_eq!(
-            DevelopmentTransferOnlyApproval.approve(&intent),
-            Err(TrustedWalletApprovalError::Unavailable)
-        );
     }
 }
 
