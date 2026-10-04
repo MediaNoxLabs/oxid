@@ -352,6 +352,13 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(ci, /^  repository_gate:$/m);
   assert.match(ci, /^  locked_nix_gate:$/m);
   assert.match(ci, /name: Basic gate \(policy, lint, compile\)[\s\S]*?timeout-minutes: 5/);
+  const basicJob = ci.slice(ci.indexOf("\n  basic:\n    name:"), ci.indexOf("\n  unit_linux:\n    name:"));
+  assert.match(basicJob, /name: Install repository gate tools[\s\S]*apt-get install --no-install-recommends --yes ripgrep/);
+  assert.ok(
+    basicJob.indexOf("name: Install repository gate tools") <
+      basicJob.indexOf("name: Run policy and harness contracts"),
+    "the repository-only Basic gate must provide rg before running strict contracts",
+  );
   assert.match(ci, /name: Unit tests \(Linux host\)[\s\S]*?timeout-minutes: 18/);
   assert.match(ci, /name: Headless integration tests \(Linux host\)[\s\S]*?timeout-minutes: 10/);
   assert.match(ci, /name: UI and application profiles \(Linux host\)[\s\S]*?timeout-minutes: 25/);
