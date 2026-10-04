@@ -105,7 +105,8 @@ DEVELOPER_DIR_SELECTED="$(
 readonly DEVELOPER_DIR_SELECTED
 selector_pair="$(
   oxid_ios_resolve_selectors "$DEVELOPER_DIR_SELECTED" \
-    "${OXID_IOS_RUNTIME_ID:-}" "${OXID_IOS_DEVICE_TYPE_ID:-}"
+    "${OXID_IOS_RUNTIME_ID:-com.apple.CoreSimulator.SimRuntime.iOS-17-5}" \
+    "${OXID_IOS_DEVICE_TYPE_ID:-com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation}"
 )" || fail selectors
 IFS=$'\t' read -r RUNTIME_ID DEVICE_TYPE_ID <<<"$selector_pair"
 readonly RUNTIME_ID DEVICE_TYPE_ID

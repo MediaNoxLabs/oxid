@@ -28,6 +28,8 @@ test("standalone iOS acceptance owns and cleans every mutated runtime resource",
   assert.match(script, /privateDiagnosticsRemoved:true/u);
   assert.match(script, /manualSyncUsed:false/u);
   assert.match(script, /fixedGrantNight:50000/u);
+  assert.match(script, /SimRuntime\.iOS-17-5/u);
+  assert.match(script, /SimDeviceType\.iPhone-SE-3rd-generation/u);
   assert.doesNotMatch(script, /simctl list devices booted/u);
 
   assert.match(swift, /requestFixedGrant\(for: address\)/u);
