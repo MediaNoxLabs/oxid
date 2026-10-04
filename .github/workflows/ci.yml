@@ -312,6 +312,8 @@ jobs:
         env:
           OXID_COVERAGE_BASE: ${{ github.event.pull_request.base.sha || inputs.comparison_base || github.event.before || 'origin/develop' }}
         run: nix develop .#ci-coverage --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh coverage --strict
+      - name: Verify exact-checkout enforced coverage verdict
+        run: node scripts/coverage/verify-manifest.mjs
 
   repository_gate:
     name: Repository gate (fmt, architecture, lint, tests, coverage)

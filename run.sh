@@ -236,7 +236,10 @@ run_headless_integration() {
 
 run_coverage() {
   require_command node
-  node scripts/coverage/run.mjs --base "${OXID_COVERAGE_BASE:-}"
+  local args=(node scripts/coverage/run.mjs --base "${OXID_COVERAGE_BASE:-}")
+  # Strict coverage is required evidence; measurement remains the explicit non-strict mode.
+  if $strict; then args+=(--enforce); fi
+  "${args[@]}"
 }
 
 require_command() {
