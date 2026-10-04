@@ -7,10 +7,18 @@ import test from "node:test";
 const root = new URL("../../", import.meta.url);
 
 test("standalone iOS acceptance owns and cleans every mutated runtime resource", async () => {
-  const [script, swift] = await Promise.all([
+  const [script, swift, fixture, onboarding] = await Promise.all([
     readFile(new URL("scripts/test-ios-standalone-local.sh", root), "utf8"),
     readFile(
       new URL("tests/mobile/ios/OxidUITests/StandaloneLocalAccountTests.swift", root),
+      "utf8",
+    ),
+    readFile(
+      new URL("tests/mobile/ios/OxidUITests/WalletOnboardingFixture.swift", root),
+      "utf8",
+    ),
+    readFile(
+      new URL("crates/ui-dioxus/src/wallet_onboarding.rs", root),
       "utf8",
     ),
   ]);
@@ -36,4 +44,11 @@ test("standalone iOS acceptance owns and cleans every mutated runtime resource",
   assert.match(swift, /Transfer confirmed/u);
   assert.match(swift, /staticTexts\["50000"\]/u);
   assert.doesNotMatch(swift, /buttons\["Sync now"\]\.tap/u);
+
+  assert.match(fixture, /descendants\(matching: \.any\)/u);
+  assert.doesNotMatch(fixture, /application\.switches/u);
+  assert.match(
+    onboarding,
+    /aria_label: "\{onboarding_acknowledgement\(intent\)\}"/u,
+  );
 });

@@ -246,6 +246,7 @@ pub(crate) fn WalletOnboarding(
                 label { class: "confirmation-row",
                     input {
                         r#type: "checkbox",
+                        aria_label: "{onboarding_acknowledgement(intent)}",
                         checked: acknowledged(),
                         disabled: busy,
                         oninput: move |event| acknowledged.set(event.checked()),
