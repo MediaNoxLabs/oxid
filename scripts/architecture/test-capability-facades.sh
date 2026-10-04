@@ -3,6 +3,10 @@
 
 set -euo pipefail
 
+# Fixture repositories have no CI base ref. Individual negative fixtures set
+# this explicitly when testing the pull-request fail-closed path.
+unset GITHUB_BASE_REF
+
 repository_root="$(git rev-parse --show-toplevel)"
 checker="$repository_root/scripts/check-capability-facades.sh"
 architecture_checker="$repository_root/scripts/check-architecture.sh"
