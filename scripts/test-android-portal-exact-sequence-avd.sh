@@ -16,6 +16,7 @@ readonly PRIVATE_STATE="$RUN_ROOT/private"
 readonly PRIVATE_LOG="$PRIVATE_STATE/journey.log"
 readonly EVIDENCE="$RUN_ROOT/evidence.json"
 readonly BUILD_RECEIPT="$PRIVATE_STATE/build-receipt.tsv"
+readonly EMULATOR_RECEIPT="$PRIVATE_STATE/emulator-owner.receipt"
 readonly PACKAGE="io.medianox.oxid"
 readonly TRIGGER="openid-credential-offer://standalone-portal-test-fetch"
 readonly CONTROL_ORIGIN="http://127.0.0.1:18095"
@@ -414,7 +415,9 @@ cleanup() {
   fi
 
   if [ -n "$emulator_pid" ]; then
-    if oxid_job_is_running "$emulator_pid"; then
+    if [ -f "$EMULATOR_RECEIPT" ]; then
+      if oxid_terminate_emulator_receipt "$EMULATOR_RECEIPT" "$emulator_pid" "$EMULATOR" "$avd" "$EMULATOR_PORT"; then emulator_cleanup=true; else cleanup_ok=false; fi
+    elif oxid_job_is_running "$emulator_pid"; then
       if oxid_terminate_emulator_job "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT"; then emulator_cleanup=true; else cleanup_ok=false; fi
     else
       wait "$emulator_pid" >/dev/null 2>&1 || emulator_status=$?
@@ -516,8 +519,15 @@ for ((_attempt = 0; _attempt < 50; _attempt++)); do
   run_deadline 2 sleep 0.1
 done
 oxid_emulator_job_owned "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT" || fail emulator-ownership
+for ((_attempt = 0; _attempt < 50; _attempt++)); do
+  oxid_emulator_owner_receipt_create "$EMULATOR_RECEIPT" "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT" && break
+  run_deadline 2 sleep 0.1
+done
+oxid_emulator_owner_receipt_matches "$EMULATOR_RECEIPT" "$emulator_pid" "$EMULATOR" "$avd" "$EMULATOR_PORT" \
+  || fail emulator-receipt
 for ((_attempt = 0; _attempt < 300; _attempt++)); do
-  oxid_emulator_job_owned "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT" || fail emulator-ownership-lost
+  oxid_emulator_owner_receipt_refresh "$EMULATOR_RECEIPT" "$emulator_pid" "$EMULATOR" "$avd" "$EMULATOR_PORT" \
+    || fail emulator-ownership-lost
   inventory="$(oxid_adb_inventory_snapshot "$ADB" 2>/dev/null || true)"
   if oxid_adb_inventory_is_exact_online "$inventory" "$SERIAL" \
     && [ "$(adb_text shell getprop sys.boot_completed 2>/dev/null)" = 1 ]; then emulator_online=1; break; fi
