@@ -46,7 +46,7 @@ test("development movement authority stays a narrow compile-time fixture", () =>
   assert.match(source, /_ => Err\(TrustedWalletApprovalError::Unavailable\)/u);
   assert.doesNotMatch(source, /std::env|var_os|var\(|_\s*=>\s*Ok\(\(\)\)/u);
 
-  const composition = readFileSync("crates/composition/src/lib.rs", "utf8");
+  const composition = readFileSync("crates/composition/src/profile_environment.rs", "utf8");
   assert.match(composition, /feature = "development-movement-approval"[\s\S]*mod development_movement_approval_fixture;/u);
 });
 

@@ -313,10 +313,11 @@
           ]
         },
         {
-          "name": "environment-selected-profile",
-          "modulePathPrefixes": [
-            "crates/composition/src/profile_environment"
-          ]
+      "name": "environment-selected-profile",
+      "modulePathPrefixes": [
+        "crates/composition/src/profile_environment",
+        "crates/composition/src/development_movement_approval_fixture"
+      ]
         },
         {
           "name": "in-memory-profile",

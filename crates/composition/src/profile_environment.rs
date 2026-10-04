@@ -18,7 +18,15 @@ use oxid_passport_vault_application::PassportVaultContractStateSourcePort;
     feature = "development-movement-approval",
     not(any(target_os = "ios", target_os = "android"))
 ))]
-use super::development_movement_approval_fixture::development_movement_approval_service;
+#[path = "development_movement_approval_fixture.rs"]
+mod development_movement_approval_fixture;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "headless-portal-local",
+    feature = "development-movement-approval",
+    not(any(target_os = "ios", target_os = "android"))
+))]
+use self::development_movement_approval_fixture::development_movement_approval_service;
 #[cfg(not(target_arch = "wasm32"))]
 use super::environment::{
     HeadlessCompositionError, HeadlessEnvironmentPlan, HeadlessEnvironmentPolicy,
