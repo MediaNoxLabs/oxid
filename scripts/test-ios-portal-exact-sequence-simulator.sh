@@ -736,6 +736,8 @@ run_measured_offer malformed testMalformed malformed '{"malformedRejected":true,
 run_measured_offer protocol-error testProtocolError unavailable '{"unavailableRejected":true,"warmIngress":true}' || fail protocol-error
 run_measured_offer protocol-timeout testProtocolTimeout timeout '{"timeoutRejected":true,"warmIngress":true}' || fail protocol-timeout
 run_measured_offer issue-error testIssueError normal '{"issueErrorEscapedSafely":true,"warmIngress":true}' || fail issue-error
+oxid_ios_owned_simctl "$DEVELOPER_DIR_SELECTED" "$RECEIPT" terminate "$PACKAGE" >>"$PRIVATE_LOG" 2>&1 \
+  || fail issue-error-reset
 run_measured_offer issue testIssue normal '{"claimsHidden":true,"exactBundleImported":true,"explicitConsent":true,"managedAuthenticationProof":true,"separateJubjubAssertionBinding":true,"strictFinalExchange":true,"warmIngress":true}' || fail issue
 capability_burned_before_network=true
 one_shot_ready_empty=true

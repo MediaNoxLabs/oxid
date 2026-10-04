@@ -21,12 +21,22 @@ test("Portal iOS holder preparation follows the current DID detail contract", as
     fixture,
     /staticTexts\["Credential offer preview"\]\.waitForNonExistence/u,
   );
-  assert.match(
-    fixture,
-    /XCTAssertFalse\(application\.buttons\["Leave credential review"\]\.exists\)/u,
-  );
+  assert.match(fixture, /let leave = application\.buttons\["Leave credential review"\]/u);
   assert.doesNotMatch(fixture, /buttons\["Receive"\]\.waitForExistence/u);
   assert.match(dids, /aria_label: "Copy DID"/u);
+});
+
+test("Portal iOS acceptance isolates a retained issuance failure before success", async () => {
+  const runner = await readFile(
+    new URL("scripts/test-ios-portal-exact-sequence-simulator.sh", root),
+    "utf8",
+  );
+
+  assert.match(
+    runner,
+    /run_measured_offer issue-error[\s\S]*?oxid_ios_owned_simctl[^\n]*terminate "\$PACKAGE"[\s\S]*?run_measured_offer issue testIssue/u,
+  );
+  assert.match(runner, /fail issue-error-reset/u);
 });
 
 test("Portal acceptance uses only named development authority and bounded cleanup", async () => {
