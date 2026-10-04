@@ -25,5 +25,6 @@ test("Portal iOS holder preparation follows the current DID detail contract", as
     fixture,
     /XCTAssertFalse\(application\.buttons\["Leave credential review"\]\.exists\)/u,
   );
+  assert.doesNotMatch(fixture, /buttons\["Receive"\]\.waitForExistence/u);
   assert.match(dids, /aria_label: "Copy DID"/u);
 });

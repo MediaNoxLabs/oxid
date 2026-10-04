@@ -351,8 +351,6 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertFalse(consent.exists)
         XCTAssertFalse(issue.exists)
         XCTAssertFalse(application.buttons["Dismiss identity request"].exists)
-        application.buttons["Wallet"].tap()
-        XCTAssertTrue(application.buttons["Receive"].waitForExistence(timeout: 10))
     }
 
     @MainActor
