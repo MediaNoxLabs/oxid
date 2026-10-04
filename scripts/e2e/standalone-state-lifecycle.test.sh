@@ -123,6 +123,19 @@ if OXID_STANDALONE_STATE_DIR=relative/state bash -c \
   echo "standalone-state-lifecycle: FAIL relative override admitted" >&2
   exit 1
 fi
+if OXID_STANDALONE_STATE_DIR=/ bash -c \
+  'source "$1"; oxid_standalone_state_directory "$2"' _ \
+  "$FIXTURE/scripts/lib/standalone-state.sh" "$FIXTURE" >/dev/null 2>&1; then
+  echo "standalone-state-lifecycle: FAIL root override admitted" >&2
+  exit 1
+fi
+ln -s "$SCRATCH/missing" "$SCRATCH/dangling"
+if OXID_STANDALONE_STATE_DIR="$SCRATCH/dangling/standalone" bash -c \
+  'source "$1"; oxid_standalone_state_directory "$2"' _ \
+  "$FIXTURE/scripts/lib/standalone-state.sh" "$FIXTURE" >/dev/null 2>&1; then
+  echo "standalone-state-lifecycle: FAIL dangling-symlink override admitted" >&2
+  exit 1
+fi
 
 : >"$MOCK_STATE/active"
 if TMPDIR="$LAUNCHER_TWO" "$FIXTURE/scripts/standalone-down.sh" >/dev/null 2>&1; then

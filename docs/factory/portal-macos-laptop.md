@@ -98,7 +98,7 @@ portal-macos-laptop-e2e: PASS evidence=target/portal-headless-e2e/evidence.json,
 ```
 
 The shared stack uses the durable canonical state directory
-`$(git rev-parse --path-format=absolute --git-common-dir)/oxid/standalone`.
+the physical path resolved from `$(git rev-parse --git-common-dir)/oxid/standalone`.
 It survives the Nix launcher process and is shared by managed worktrees for the
 same checkout. `OXID_STANDALONE_STATE_DIR` remains an explicit absolute-path
 override for isolated tests and packaged invocations outside a Git checkout;

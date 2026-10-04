@@ -25,6 +25,10 @@ oxid_standalone_state_directory() {
   while [ "$state_directory" != "/" ] && [ "${state_directory%/}" != "$state_directory" ]; do
     state_directory="${state_directory%/}"
   done
+  if [ "$state_directory" = "/" ]; then
+    echo "Standalone state directory must not be the filesystem root." >&2
+    return 1
+  fi
   case "$state_directory" in
     /*) ;;
     *)
@@ -38,6 +42,10 @@ oxid_standalone_state_directory() {
   fi
   local existing_parent="$state_directory" unresolved_suffix="" component physical_parent
   while [ ! -d "$existing_parent" ]; do
+    if [ -L "$existing_parent" ]; then
+      echo "Standalone state path must not contain dangling symlinks." >&2
+      return 1
+    fi
     if [ -e "$existing_parent" ]; then
       echo "Standalone state path must contain directories only." >&2
       return 1

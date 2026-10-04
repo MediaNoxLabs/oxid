@@ -45,15 +45,6 @@ jq -e --arg session "$session_id" \
     exit 1
   }
 
-if [ -f "$serve_marker" ]; then
-  if ! command -v tailscale >/dev/null 2>&1; then
-    echo "Tailscale Serve was configured by Oxid, but the CLI is unavailable." >&2
-    exit 1
-  fi
-  tailscale serve reset
-  rm -f "$serve_marker"
-fi
-
 compose_environment_file="$environment_file"
 if [ -L "$compose_environment_file" ]; then
   echo "Standalone environment ownership is symlinked; preserving resources." >&2
@@ -63,6 +54,16 @@ if [ ! -f "$compose_environment_file" ]; then
   compose_environment_file=/dev/null
 fi
 export OXID_STANDALONE_ENV_FILE="$compose_environment_file"
+
+if [ -f "$serve_marker" ]; then
+  if ! command -v tailscale >/dev/null 2>&1; then
+    echo "Tailscale Serve was configured by Oxid, but the CLI is unavailable." >&2
+    exit 1
+  fi
+  tailscale serve reset
+  rm -f "$serve_marker"
+fi
+
 docker compose -p oxid-standalone -f "$compose_file" down --remove-orphans
 rm -f -- "$owner_receipt" "$environment_file" "$compose_file"
 
