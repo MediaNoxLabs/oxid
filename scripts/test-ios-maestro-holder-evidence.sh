@@ -75,7 +75,12 @@ cleanup() {
   local status=$? finished_at duration artifact_bytes screenshot_count artifact_file artifact_size outcomes
   trap - EXIT INT TERM HUP
   set +e
-  collect_public_artifacts "${scenario:-cleanup}"
+  if [ -n "${scenario:-}" ] && [ -n "${ui_profile:-}" ]; then
+    collect_public_artifacts "$scenario" "$ui_profile"
+  elif [ -n "$DEVICE" ]; then
+    rm -rf -- "$ROOT/target/mobile-visual-accessibility/ios/$DEVICE"
+    raw_artifacts_removed=true
+  fi
   if [ "$owned" = 1 ]; then oxid_ios_delete_owned "$DEVELOPER_DIR" "$RECEIPT" >/dev/null && cleanup_ok=true; else cleanup_ok=true; fi
   finished_at="$(date +%s)"
   duration=$((finished_at - STARTED_AT))
