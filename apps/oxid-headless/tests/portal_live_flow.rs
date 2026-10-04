@@ -59,7 +59,12 @@ struct RuntimeCleanup(PathBuf);
 
 impl Drop for RuntimeCleanup {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        // A failed live lane keeps its private, mode-0600 runtime diagnostics
+        // for owner inspection. Successful runs still remove protocol state
+        // before the bounded public evidence is admitted.
+        if !thread::panicking() {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 }
 
@@ -72,7 +77,11 @@ struct ProcessHarness {
 
 impl ProcessHarness {
     fn spawn(root: &Path, manifest: &Path, digest: &str) -> Self {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
+        #[cfg(feature = "development-did-approval-fixture")]
+        let executable = env!("CARGO_BIN_EXE_oxid-headless-development-did-approval-fixture");
+        #[cfg(not(feature = "development-did-approval-fixture"))]
+        let executable = env!("CARGO_BIN_EXE_oxid-headless");
+        let mut command = Command::new(executable);
         command
             .env("OXID_PROFILE_STORE_PATH", root.join("profiles.json"))
             .env("OXID_DID_STORE_PATH", root.join("private/did-records.json"))

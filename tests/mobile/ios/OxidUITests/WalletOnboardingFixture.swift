@@ -28,9 +28,9 @@ enum WalletOnboardingFixture {
             "development custody must produce a reviewable recovery phrase within the bounded root-preparation budget"
         )
 
-        let acknowledgement = application.switches[
-            "I have securely saved or verified this recovery phrase."
-        ]
+        let acknowledgement = application.descendants(matching: .any)[
+            "I saved this new recovery phrase outside the app."
+        ].firstMatch
         XCTAssertTrue(acknowledgement.waitForExistence(timeout: 10))
         for _ in 0..<12 where !acknowledgement.isHittable {
             application.swipeUp()

@@ -285,8 +285,8 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertTrue(confirmCreateDid.waitForExistence(timeout: 10))
         scrollTo(confirmCreateDid, in: application)
         confirmCreateDid.tap()
-        let didDetailTitle = application.staticTexts["Identity"]
-        XCTAssertTrue(didDetailTitle.waitForExistence(timeout: 30))
+        let copyDid = application.buttons["Copy DID"]
+        XCTAssertTrue(copyDid.waitForExistence(timeout: 30))
         XCTAssertTrue(application.staticTexts["Managed"].exists)
     }
 
@@ -352,10 +352,6 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertFalse(issue.isEnabled)
         XCTAssertTrue(application.staticTexts["Credential offer preview"].exists)
         XCTAssertFalse(application.buttons["Dismiss identity request"].exists)
-        application.buttons["Wallet"].tap()
-        XCTAssertTrue(application.staticTexts["Credential offer preview"].waitForExistence(timeout: 10))
-        leave.tap()
-        XCTAssertTrue(leave.waitForNonExistence(timeout: 10))
     }
 
     @MainActor

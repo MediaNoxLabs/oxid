@@ -36,7 +36,7 @@ fail() {
 }
 
 case "$OPERATION" in prerequisite|prepare|prepared-status|up|status|down|services-up|services-status|services-stop) ;; *) fail usage ;; esac
-for command_name in awk curl docker git jq nix openssl shasum; do
+for command_name in awk curl docker git jq nix openssl shasum timeout; do
   command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
 done
 [[ "$SOURCE" = /* && "$STATE" = /* ]] || fail paths
@@ -152,6 +152,46 @@ shared_midnight_ready() {
 
 compose() {
   docker compose --env-file "$ENV_FILE" -p "$PROJECT" -f "$COMPOSE_FILE" "$@"
+}
+
+compose_bounded() {
+  timeout -k 5s 40s docker compose --env-file "$ENV_FILE" -p "$PROJECT" \
+    -f "$COMPOSE_FILE" "$@"
+}
+
+# Docker Desktop can outlive Compose's container stop timeout while the client
+# waits on its engine. Callers enter here only after validating this session's
+# starting/owner receipt; every target is then revalidated by its Compose
+# project label before an exact-ID removal.
+force_remove_owned_project() {
+  local attempt id removed resource
+  for id in $(project_ids); do
+    # `docker ps --quiet` emits the exact project-filtered short ID by default.
+    # Revalidate its project label before using it as a destructive target.
+    [[ "$id" =~ ^[0-9a-f]{12,64}$ ]] || return 1
+    [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$id" 2>/dev/null)" = "$PROJECT" ] || return 1
+  done
+  for id in $(project_ids); do
+    removed=0
+    for attempt in 1 2; do
+      if timeout -k 5s 30s docker rm --force "$id" >>"$PRIVATE_LOG" 2>&1; then
+        removed=1
+        break
+      fi
+      sleep 2
+    done
+    [ "$removed" -eq 1 ] || return 1
+  done
+  for resource in $(docker volume ls --filter "label=com.docker.compose.project=$PROJECT" --quiet); do
+    [ "$(docker volume inspect --format '{{index .Labels "com.docker.compose.project"}}' "$resource" 2>/dev/null)" = "$PROJECT" ] || return 1
+    timeout -k 5s 20s docker volume rm "$resource" >>"$PRIVATE_LOG" 2>&1 || return 1
+  done
+  for resource in $(docker network ls --filter "label=com.docker.compose.project=$PROJECT" --quiet --no-trunc); do
+    [[ "$resource" =~ ^[0-9a-f]{64}$ ]] || return 1
+    [ "$(docker network inspect --format '{{index .Labels "com.docker.compose.project"}}' "$resource" 2>/dev/null)" = "$PROJECT" ] || return 1
+    timeout -k 5s 20s docker network rm "$resource" >>"$PRIVATE_LOG" 2>&1 || return 1
+  done
+  [ -z "$(project_ids)" ]
 }
 
 receipt_valid() {
@@ -487,7 +527,7 @@ run_up() {
     if [ "$up_cleanup_running" -eq 1 ]; then return; fi
     up_cleanup_running=1
     starting_receipt_valid || return 1
-    compose down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 || true
+    force_remove_owned_project || true
     [ -z "$(project_ids)" ] || return 1
     lease_release_allowed=1
     rm -f -- "$ENV_FILE" "$RECEIPT" "$STARTING_RECEIPT" "$PRIVATE_LOG"
@@ -566,7 +606,7 @@ run_services_up() {
 run_services_stop() {
   receipt_valid || fail ownership
   [ "$(count_lines "$(project_ids)")" -eq 5 ] || fail project-shape
-  compose stop --timeout 30 smocker did-resolver did-manager issuer >>"$PRIVATE_LOG" 2>&1 || fail services-stop
+  compose_bounded stop --timeout 30 smocker did-resolver did-manager issuer >>"$PRIVATE_LOG" 2>&1 || fail services-stop
   run_services_status
 }
 
@@ -586,7 +626,7 @@ run_down() {
   lease_release_allowed=0
   receipt_valid || starting_receipt_valid || fail ownership
   [ -f "$ENV_FILE" ] && [ ! -L "$ENV_FILE" ] || fail private-state
-  compose down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 || fail cleanup
+  force_remove_owned_project || fail cleanup
   [ -z "$(project_ids)" ] || fail cleanup-incomplete
   lease_release_allowed=1
   rm -f -- "$ENV_FILE" "$RECEIPT" "$STARTING_RECEIPT" "$PRIVATE_LOG"

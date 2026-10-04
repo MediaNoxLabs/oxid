@@ -73,6 +73,7 @@ standalone-portal = [
   "mobile",
   "standalone-development",
   "standalone-local",
+  "oxid-composition/development-did-approval",
   "oxid-composition/mobile-portal",
 ]
 # Physical Android Portal profile using compile-time authenticated Tailscale

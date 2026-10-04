@@ -681,6 +681,15 @@ fn compose_mobile_public_genesis_portal_from_config(
     let public_network = public_standalone_network(&network_id)
         .ok_or(HeadlessCompositionError::PublicStandaloneGenesisRequiresUndeployed)?;
     let protection_profiles = Arc::clone(&profiles);
+    // The local Portal artifact is an explicitly authenticated simulator/QEMU
+    // fixture. Its accepted OID4VCI path therefore uses the same bounded
+    // development DID approval service as the named headless fixture. Normal,
+    // production, and physical Tailnet compositions do not enable this feature
+    // and continue to fail accepted signing effects closed.
+    #[cfg(feature = "development-did-approval")]
+    let did_approvals = Some(super::profile_headless::development_did_approval_service());
+    #[cfg(not(feature = "development-did-approval"))]
+    let did_approvals = None;
     Ok(compose_development_portal_with_security(
         config,
         portal,
@@ -697,7 +706,7 @@ fn compose_mobile_public_genesis_portal_from_config(
                 security,
             )) as Arc<dyn WalletProtectionPort>
         },
-        None,
+        did_approvals,
     ))
 }
 
