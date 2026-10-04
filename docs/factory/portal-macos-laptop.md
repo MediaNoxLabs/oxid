@@ -101,7 +101,12 @@ The shared stack uses the durable canonical state directory
 `$(git rev-parse --path-format=absolute --git-common-dir)/oxid/standalone`.
 It survives the Nix launcher process and is shared by managed worktrees for the
 same checkout. `OXID_STANDALONE_STATE_DIR` remains an explicit absolute-path
-override for isolated tests. Startup takes an atomic lease before reading or
+override for isolated tests and packaged invocations outside a Git checkout;
+the leaf must not be a symlink, and existing ancestors are resolved to their
+physical path before state is written. The generated indexer credentials, canonical Compose file, and owner
+receipt exist only while the owned stack is live. Exact teardown removes those
+files, and a later start with zero matching containers rotates stale canonical
+state left by a host reboot or Docker reset. Startup takes an atomic lease before reading or
 changing the fixed Compose project. A second worktree may reuse an exact
 three-container stack whose canonical receipt matches, but it never runs
 `docker compose up` or rewrites that receipt. Partial or unreceipted resources

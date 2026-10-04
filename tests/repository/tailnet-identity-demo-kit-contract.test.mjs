@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { access, chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -64,7 +64,8 @@ test("standalone lifecycle uses durable Git-common state with an atomic verified
   assert.match(state, /git -C "\$repository_root" rev-parse --path-format=absolute --git-common-dir/);
   assert.match(state, /\$\{git_common_directory%\/\}\/oxid\/standalone/);
   assert.match(state, /OXID_STANDALONE_STATE_DIR/);
-  assert.match(state, /must be a real directory, not a symlink/);
+  assert.match(state, /must not be a symlink/);
+  assert.match(state, /pwd -P/);
   assert.match(up, /scripts\/standalone-stack\.yml/);
   assert.match(up, /mkdir "\$lease_directory"/);
   assert.match(up, /oxid-standalone-lease-v1/);
@@ -98,8 +99,9 @@ test("standalone shutdown is receipt-scoped", async () => {
 
 test("two worktrees serialize startup, reuse without Compose mutation, and preserve exact cleanup ownership", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "oxid-standalone-worktrees-"));
+  const physicalTemporary = await realpath(temporary);
   const fakeBin = join(temporary, "bin");
-  const sharedState = join(temporary, "shared-state");
+  const sharedState = join(physicalTemporary, "shared-state");
   const dockerState = join(temporary, "docker-running");
   const dockerLedger = join(temporary, "docker-ledger");
   const worktreeA = join(temporary, "worktree-a");
@@ -224,7 +226,7 @@ esac
     });
     assert.equal(loser.status, 2);
     assert.match(loser.stderr, /"state":"contention"/);
-    assert.equal(await firstStatus, 0);
+    assert.equal(await firstStatus, 0, firstStderr);
 
     const reuse = spawnSync("bash", [join(worktreeB, "scripts", "standalone-up.sh"), "local"], {
       env: environment,

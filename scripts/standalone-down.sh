@@ -64,7 +64,7 @@ if [ ! -f "$compose_environment_file" ]; then
 fi
 export OXID_STANDALONE_ENV_FILE="$compose_environment_file"
 docker compose -p oxid-standalone -f "$compose_file" down --remove-orphans
-rm -f -- "$owner_receipt"
+rm -f -- "$owner_receipt" "$environment_file" "$compose_file"
 
 echo "Oxid standalone services and owned Tailscale Serve routes are stopped."
-echo "Canonical development configuration remains under $state_directory."
+echo "Generated standalone credentials and canonical ownership files were removed."

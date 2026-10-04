@@ -96,14 +96,20 @@ if [ "$current_count" -eq 3 ]; then
   fi
   echo "Reusing the healthy candidate standalone stack without Compose mutation."
 elif [ "$current_count" -eq 0 ]; then
+  for stale_state_file in "$owner_receipt" "$environment_file" "$compose_file"; do
+    if [ -L "$stale_state_file" ] || { [ -e "$stale_state_file" ] && [ ! -f "$stale_state_file" ]; }; then
+      echo "Standalone stale state is not a regular owned file; refusing mutation." >&2
+      exit 1
+    fi
+  done
+  # No containers means these exact canonical files cannot describe a live
+  # resource. Rotate generated credentials and ownership instead of carrying
+  # stale authority across a Docker reset or host reboot.
+  rm -f -- "$owner_receipt" "$environment_file" "$compose_file"
   candidate="$(mktemp "$state_directory/.canonical-compose.XXXXXX")"
   cp "$source_compose_file" "$candidate"
   chmod 600 "$candidate"
   mv "$candidate" "$compose_file"
-  if [ -L "$environment_file" ]; then
-    echo "Standalone environment ownership is symlinked; preserving resources." >&2
-    exit 1
-  fi
   if [ ! -f "$environment_file" ]; then
     storage_password="$(openssl rand -hex 24)"
     pub_sub_password="$(openssl rand -hex 24)"

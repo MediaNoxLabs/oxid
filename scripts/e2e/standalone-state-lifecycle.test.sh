@@ -55,6 +55,7 @@ case "$command_name" in
     esac
     ;;
   compose)
+    printf '%s\n' "$*" >>"$state/compose-invocations"
     compose_file=""
     operation=""
     while [ "$#" -gt 0 ]; do
@@ -102,8 +103,26 @@ rm -rf -- "$LAUNCHER_ONE"
 
 TMPDIR="$LAUNCHER_TWO" "$FIXTURE/scripts/standalone-down.sh" >/dev/null
 [ ! -e "$STATE_DIRECTORY/owner-receipt.json" ]
+[ ! -e "$STATE_DIRECTORY/canonical-indexer.env" ]
+[ ! -e "$STATE_DIRECTORY/canonical-compose.yml" ]
 [ ! -e "$MOCK_STATE/active" ]
 [ -f "$MOCK_STATE/foreign-project" ]
+grep -q -- '-p oxid-standalone' "$MOCK_STATE/compose-invocations"
+
+OVERRIDE_STATE="$SCRATCH/explicit-state"
+PHYSICAL_SCRATCH="$(cd -- "$SCRATCH" && pwd -P)"
+resolved_override="$(
+  OXID_STANDALONE_STATE_DIR="$OVERRIDE_STATE" bash -c \
+    'source "$1"; oxid_standalone_state_directory "$2"' _ \
+    "$FIXTURE/scripts/lib/standalone-state.sh" "$FIXTURE"
+)"
+[ "$resolved_override" = "$PHYSICAL_SCRATCH/explicit-state" ]
+if OXID_STANDALONE_STATE_DIR=relative/state bash -c \
+  'source "$1"; oxid_standalone_state_directory "$2"' _ \
+  "$FIXTURE/scripts/lib/standalone-state.sh" "$FIXTURE" >/dev/null 2>&1; then
+  echo "standalone-state-lifecycle: FAIL relative override admitted" >&2
+  exit 1
+fi
 
 : >"$MOCK_STATE/active"
 if TMPDIR="$LAUNCHER_TWO" "$FIXTURE/scripts/standalone-down.sh" >/dev/null 2>&1; then
@@ -119,6 +138,16 @@ if TMPDIR="$LAUNCHER_TWO" "$FIXTURE/scripts/standalone-down.sh" >/dev/null 2>&1;
   echo "standalone-state-lifecycle: FAIL symlinked state admitted" >&2
   exit 1
 fi
+
+rm "$STATE_DIRECTORY"
+mkdir -p "$STATE_DIRECTORY"
+ANCESTOR="$SCRATCH/ancestor"
+mkdir -p "$ANCESTOR/real"
+ln -s "$ANCESTOR/real" "$ANCESTOR/link"
+resolved_ancestor="$(OXID_STANDALONE_STATE_DIR="$ANCESTOR/link/standalone" bash -c \
+  'source "$1"; oxid_standalone_state_directory "$2"' _ \
+  "$FIXTURE/scripts/lib/standalone-state.sh" "$FIXTURE")"
+[ "$resolved_ancestor" = "$PHYSICAL_SCRATCH/ancestor/real/standalone" ]
 
 printf '%s\n' \
   'standalone-state-lifecycle: PASS durable Git state survived launcher exit and exact teardown preserved foreign projects'
