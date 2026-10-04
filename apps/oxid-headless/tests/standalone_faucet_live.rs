@@ -414,7 +414,7 @@ fn transfer_and_await_inclusion(
     );
     assert_eq!(
         authorized["ok"], true,
-        "transfer authorization must succeed"
+        "transfer authorization must succeed: {authorized}"
     );
     let submitted = wallet.request(
         "transfer-submit",
@@ -565,79 +565,125 @@ fn assert_submission_history(wallet: &mut ProcessHarness, transaction_id: &str) 
 }
 
 fn register_and_await_dust(wallet: &mut ProcessHarness) -> Duration {
-    let prepared = wallet.request(
-        "dust-registration-prepare",
-        "wallet.dust.registration.prepare",
-        json!({}),
-    );
-    assert_eq!(prepared["ok"], true, "{prepared}");
-    let registration = &prepared["result"]["registration"];
-    assert_eq!(
-        registration["registeredNight"]["atomicUnits"],
-        FIXED_GRANT.to_string()
-    );
-    let draft = registration["draftId"].as_str().expect("draft id");
-    let challenge = registration["authorizationChallenge"]
-        .as_str()
-        .expect("authorization challenge");
-    let authorized = wallet.request(
-        "dust-registration-authorize",
-        "wallet.dust.registration.authorize",
-        json!({
-            "draftId":draft,
-            "authorizationChallenge":challenge,
-            "confirmation":{
-                "title":"Authorize DUST registration",
-                "summary":"Register this wallet's eligible NIGHT with its protected DUST key",
-                "confirmed":true
-            }
-        }),
-    );
-    assert_eq!(authorized["ok"], true, "{authorized}");
-    let submitted = wallet.request(
-        "dust-registration-submit",
-        "wallet.dust.registration.submit",
-        json!({
-            "draftId":draft,
-            "confirmation":{
-                "title":"Submit DUST registration",
-                "summary":"Prove and submit the authorized DUST registration",
-                "confirmed":true
-            }
-        }),
-    );
-    assert_eq!(submitted["ok"], true, "{submitted}");
-
     let started = Instant::now();
+    let mut previous_progress = None;
     loop {
-        let response = wallet.request("dust-sync-start", "wallet.dust.sync.start", json!({}));
-        assert_eq!(response["ok"], true, "{response}");
-        loop {
-            let response = wallet.request("dust-sync-status", "wallet.dust.sync.status", json!({}));
-            assert_eq!(response["ok"], true, "{response}");
-            let sync = &response["result"]["dustSync"];
-            let amount = sync["balance"]["atomicUnits"]
+        let observed = wallet.request(
+            "dust-settlement-status",
+            "wallet.dust.registration.settlement",
+            json!({}),
+        );
+        assert_eq!(observed["ok"], true, "{observed}");
+        let settlement = &observed["result"]["dustRegistrationSettlement"];
+        let state = settlement["state"].as_str().expect("settlement state");
+        let dust_status =
+            wallet.request("dust-sync-progress", "wallet.dust.sync.status", json!({}));
+        let dust = &dust_status["result"]["dustSync"];
+        let realm_status =
+            wallet.request("realm-sync-progress", "wallet.realm.sync.status", json!({}));
+        let realm_dust = &realm_status["result"]["realmSync"]["dust"];
+        let progress = format!(
+            "state={state} observation={} dust={} ready={} sync={} cursor={}/{} balance={} realmSync={} realmBalance={}",
+            settlement["registration"]["observationRevision"],
+            settlement["registration"]["dustRevision"],
+            settlement["registration"]["dustReady"],
+            dust["state"],
+            dust["currentCursor"],
+            dust["targetCursor"],
+            dust["balance"]["atomicUnits"],
+            realm_dust["value"]["state"],
+            realm_dust["value"]["balance"]["atomicUnits"]
+        );
+        if previous_progress.as_deref() != Some(progress.as_str()) {
+            eprintln!("standalone-faucet-headless-e2e: DUST {progress}");
+            previous_progress = Some(progress);
+        }
+        if state == "ready" {
+            assert_eq!(
+                settlement["registration"]["dustReady"], true,
+                "{settlement}"
+            );
+            let dust = wallet.request("dust-sync-status", "wallet.dust.sync.status", json!({}));
+            assert_eq!(dust["ok"], true, "{dust}");
+            let amount = dust["result"]["dustSync"]["balance"]["atomicUnits"]
                 .as_str()
                 .and_then(|amount| amount.parse::<u128>().ok())
                 .unwrap_or_default();
-            if matches!(sync["state"].as_str(), Some("synced" | "cached")) {
-                if amount > 0 {
-                    return started.elapsed();
-                }
-                break;
-            }
-            assert_ne!(sync["state"], "stalled", "{response}");
             assert!(
-                started.elapsed() < DUST_DEADLINE,
-                "DUST was not ready within ten minutes"
+                amount > 0,
+                "ready settlement must expose non-zero DUST: {dust}"
             );
-            thread::sleep(Duration::from_secs(2));
+            return started.elapsed();
+        }
+
+        let advance = if settlement_state_is_retryable(state) {
+            Some((
+                "wallet.dust.registration.settlement.retry",
+                "dust-settlement-retry",
+            ))
+        } else if settlement_state_needs_reconciliation(state) {
+            // The selected-realm lifecycle owns eligibility discovery and
+            // automatic development authorization. Reconciliation is safe to
+            // repeat and never creates a second legacy registration draft.
+            Some(("wallet.connect", "dust-settlement-reconcile"))
+        } else {
+            // Submission, confirmation, and DUST observation are one admitted
+            // operation. Poll its shared projection without starting another
+            // expensive realm sync or resetting its progress.
+            None
+        };
+        if let Some((method, request_id)) = advance {
+            let advanced = wallet.request(request_id, method, json!({}));
+            if advanced["ok"] != true {
+                // A concurrent lifecycle tick may own the single-flight operation.
+                // Observe it again until the shared deadline instead of creating a
+                // competing legacy prepare/authorize/submit sequence.
+                assert!(
+                    matches!(
+                        advanced["error"]["code"].as_str(),
+                        Some("operation_not_admitted" | "state_unavailable" | "invalid_request")
+                    ),
+                    "unexpected settlement failure: {advanced}"
+                );
+            }
         }
         assert!(
             started.elapsed() < DUST_DEADLINE,
-            "DUST was not ready within ten minutes"
+            "automatic DUST settlement was not ready within ten minutes: {settlement}"
         );
         thread::sleep(Duration::from_secs(2));
+    }
+}
+
+fn settlement_state_is_retryable(state: &str) -> bool {
+    matches!(state, "offline" | "timed_out" | "degraded" | "suspended")
+}
+
+fn settlement_state_needs_reconciliation(state: &str) -> bool {
+    matches!(
+        state,
+        "unavailable" | "not_eligible" | "action_required" | "awaiting_authorization" | "cancelled"
+    )
+}
+
+#[test]
+fn automatic_dust_settlement_retries_only_recoverable_states() {
+    for state in ["offline", "timed_out", "degraded", "suspended"] {
+        assert!(settlement_state_is_retryable(state), "{state}");
+    }
+    for state in ["submitting", "confirming", "reconciling", "ready"] {
+        assert!(!settlement_state_is_retryable(state), "{state}");
+        assert!(!settlement_state_needs_reconciliation(state), "{state}");
+    }
+    for state in [
+        "unavailable",
+        "not_eligible",
+        "action_required",
+        "awaiting_authorization",
+        "cancelled",
+    ] {
+        assert!(!settlement_state_is_retryable(state), "{state}");
+        assert!(settlement_state_needs_reconciliation(state), "{state}");
     }
 }
 
