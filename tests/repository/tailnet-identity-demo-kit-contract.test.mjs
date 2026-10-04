@@ -57,7 +57,8 @@ test("standalone lifecycle uses checkout-independent canonical state with an ato
     text("scripts/standalone-status.sh"),
   ]);
   for (const source of [up, down, status]) {
-    assert.match(source, /OXID_STANDALONE_STATE_DIR:-\$\{TMPDIR:-\/tmp\}\/oxid-standalone/);
+    assert.match(source, /temporary_root="\$\{TMPDIR:-\/tmp\}"/);
+    assert.match(source, /OXID_STANDALONE_STATE_DIR:-\$\{temporary_root%\/\}\/oxid-standalone/);
   }
   assert.match(up, /scripts\/standalone-stack\.yml/);
   assert.match(up, /mkdir "\$lease_directory"/);

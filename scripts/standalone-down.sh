@@ -6,7 +6,8 @@ set -euo pipefail
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/standalone-compose-ownership.sh
 source "$repository_root/scripts/lib/standalone-compose-ownership.sh"
-state_directory="${OXID_STANDALONE_STATE_DIR:-${TMPDIR:-/tmp}/oxid-standalone}"
+temporary_root="${TMPDIR:-/tmp}"
+state_directory="${OXID_STANDALONE_STATE_DIR:-${temporary_root%/}/oxid-standalone}"
 environment_file="$state_directory/canonical-indexer.env"
 serve_marker="$state_directory/tailscale-serve-owned"
 compose_file="$state_directory/canonical-compose.yml"
