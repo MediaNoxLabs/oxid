@@ -145,6 +145,7 @@
         {
           "name": "identity-interactions",
           "modulePathPrefixes": [
+            "crates/ui-dioxus/src/identity_scan",
             "crates/ui-dioxus/src/identity_primitives"
           ]
         },

@@ -21,6 +21,7 @@ mod diagnostics;
 mod dids;
 mod header_menu;
 mod identity_primitives;
+mod identity_scan;
 mod labels;
 mod passport_vault;
 mod profile_guard;
@@ -59,6 +60,9 @@ use developer_notices::{
 pub use diagnostics::DiagnosticsUiServices;
 use dids::DidsPage;
 use identity_primitives::{IdentityEmptyState, IdentityReviewSheet};
+#[cfg(test)]
+use identity_scan::identity_scan_is_admitted;
+use identity_scan::{IdentityScanDependencies, IdentityScanSignals, start_identity_scan};
 #[cfg(feature = "ui-profile-dev")]
 pub use oxid_capabilities_application::CapabilityManifestContext;
 pub use passport_vault::{
@@ -4222,115 +4226,6 @@ fn PrimaryNavigationButton(
             span { class: "bottom-nav__label", "{destination.label()}" }
         }
     }
-}
-
-const fn identity_scan_is_admitted(scan_busy: bool, request_pending: bool) -> bool {
-    !scan_busy && !request_pending
-}
-
-struct IdentityScanDependencies {
-    services: WalletUiServices,
-    profile_id: String,
-    scanner: Arc<dyn QrScannerPort>,
-    router: Arc<dyn RouteIdentityRequestUseCase>,
-}
-
-struct IdentityScanSignals {
-    busy: Signal<bool>,
-    notice: Signal<Option<String>>,
-    pending_request: Signal<Option<PendingIdentityRequest>>,
-    pending_payment: Signal<Option<PendingPaymentRequest>>,
-    navigation: Signal<RouteStack>,
-    header_menu: Signal<HeaderMenu>,
-}
-
-fn start_identity_scan(dependencies: IdentityScanDependencies, signals: IdentityScanSignals) {
-    let IdentityScanDependencies {
-        services,
-        profile_id,
-        scanner,
-        router,
-    } = dependencies;
-    let IdentityScanSignals {
-        mut busy,
-        mut notice,
-        mut pending_request,
-        mut pending_payment,
-        mut navigation,
-        mut header_menu,
-    } = signals;
-    if !identity_scan_is_admitted(busy(), pending_request.read().is_some()) {
-        return;
-    }
-    busy.set(true);
-    notice.set(None);
-    header_menu.set(HeaderMenu::Closed);
-    spawn(async move {
-        match scanner.scan().await {
-            Ok(payload) => {
-                if !identity_scan_is_admitted(false, pending_request.read().is_some()) {
-                    busy.set(false);
-                    return;
-                }
-                let request_uri = payload.into_inner();
-                if is_public_recipient_candidate(&request_uri) {
-                    let account_services = services.clone();
-                    let account_profile_id = profile_id.clone();
-                    let account = run_ui_blocking(move || {
-                        account_services
-                            .get_wallet_account()
-                            .execute(WalletAccountQuery {
-                                profile_id: account_profile_id,
-                            })
-                    })
-                    .await;
-                    match account {
-                        Ok(Ok(account)) => match scanned_recipient_update(
-                            &account.network_id,
-                            request_uri,
-                        ) {
-                            Ok(update) => {
-                                pending_payment.set(Some(PendingPaymentRequest {
-                                    recipient: update.recipient,
-                                }));
-                                navigation.write().push(Route::Send);
-                                notice.set(Some(
-                                    "QR recognized as a public NIGHT payment request. Review the recipient and choose an amount; nothing has been sent."
-                                        .to_owned(),
-                                ));
-                            }
-                            Err(message) => notice.set(Some(message)),
-                        },
-                        Ok(Err(_)) | Err(_) => notice.set(Some(
-                            "The active wallet network could not be checked. Retry after Wallet is available; nothing was imported."
-                                .to_owned(),
-                        )),
-                    }
-                    busy.set(false);
-                    return;
-                }
-                match router.execute(RouteIdentityRequestCommand {
-                    request_uri: request_uri.clone(),
-                }) {
-                    Ok(kind) => {
-                        pending_request.set(Some(PendingIdentityRequest { kind, request_uri }));
-                        navigation.write().route_scanned_identity_request(kind);
-                        notice.set(Some(format!(
-                            "QR recognized as {}. Review the request before consent.",
-                            ui::identity_request_kind(kind)
-                        )));
-                    }
-                    Err(error) => {
-                        notice.set(Some(identity_request_routing_message(error)));
-                    }
-                }
-            }
-            Err(error) => {
-                notice.set(Some(qr_scan_message(error)));
-            }
-        }
-        busy.set(false);
-    });
 }
 
 fn load_profile_session(services: &WalletUiServices) -> ProfileSessionState {
