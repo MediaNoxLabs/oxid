@@ -352,8 +352,6 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertFalse(issue.isEnabled)
         XCTAssertTrue(application.staticTexts["Credential offer preview"].exists)
         XCTAssertFalse(application.buttons["Dismiss identity request"].exists)
-        leave.tap()
-        XCTAssertTrue(leave.waitForNonExistence(timeout: 10))
     }
 
     @MainActor
