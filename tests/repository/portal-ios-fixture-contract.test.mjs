@@ -15,7 +15,7 @@ test("Portal iOS holder preparation follows the current DID detail contract", as
     readFile(new URL("crates/ui-dioxus/src/dids.rs", root), "utf8"),
   ]);
 
-  assert.match(fixture, /staticTexts\["DID details"\]/u);
+  assert.match(fixture, /buttons\["Copy DID"\]/u);
   assert.doesNotMatch(fixture, /staticTexts\["Identity"\]/u);
-  assert.match(dids, /p \{ class: "eyebrow", "DID details" \}/u);
+  assert.match(dids, /aria_label: "Copy DID"/u);
 });
