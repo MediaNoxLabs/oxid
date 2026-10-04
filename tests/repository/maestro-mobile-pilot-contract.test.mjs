@@ -248,8 +248,9 @@ test("Maestro remains local, non-blocking, and additive to authoritative layers"
 });
 
 test("mobile visual accessibility evidence preserves the scoped matrix and privacy boundary", async () => {
-  const [matrix, inventory, iosRunner, androidRunner] = await Promise.all([
+  const [matrix, checkpoint, inventory, iosRunner, androidRunner] = await Promise.all([
     read("docs/factory/mobile-visual-accessibility-evidence.md"),
+    read("docs/factory/milestone-0.2.0-assistive-navigation-evidence.md"),
     read("tests/maestro/inventory.json").then(JSON.parse),
     read("scripts/test-ios-maestro-holder-evidence.sh"),
     read("scripts/test-android-maestro-semantic-evidence.sh"),
@@ -326,4 +327,21 @@ test("mobile visual accessibility evidence preserves the scoped matrix and priva
   assert.match(matrix, /target\/mobile-visual-accessibility\/<platform>/u);
   assert.match(matrix, /never capture a recovery phrase/iu);
   assert.match(matrix, /iOS Simulator.*Android Emulator/us);
+  assert.match(matrix, /milestone-0\.2\.0-assistive-navigation-evidence\.md/u);
+
+  assert.match(checkpoint, /a000ec06aeffd5ea2a86fe3ad9180b07dc4e97bf/u);
+  assert.match(checkpoint, /15\/15 Maestro scenarios/u);
+  assert.match(checkpoint, /608 seconds/u);
+  assert.match(checkpoint, /10 bounded public screenshots/u);
+  assert.match(checkpoint, /5,711,481 public bytes/u);
+  assert.match(checkpoint, /1\/1 test; 8\.608 seconds/u);
+  assert.match(checkpoint, /receiptOwnedSimulator=true/u);
+  assert.match(checkpoint, /privateDiagnosticsRemoved=true/u);
+  assert.match(checkpoint, /rawArtifactsRemoved=true/u);
+  assert.match(checkpoint, /not a claim that a human completed a VoiceOver or TalkBack\s+traversal/iu);
+  assert.match(checkpoint, /200% text/u);
+  assert.match(checkpoint, /receipt-owned larger-width run/u);
+  assert.match(checkpoint, /receipt-owned launcher that proves emulator identity/iu);
+  assert.match(checkpoint, /No physical or ambient Android target was used/u);
+  assert.match(checkpoint, /Rust, XCTest, and\s+CDP tests remain authoritative/u);
 });
