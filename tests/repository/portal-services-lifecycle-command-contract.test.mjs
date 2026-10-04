@@ -32,7 +32,8 @@ test("public Portal service commands bind manual state and wait for compose read
     await executable(join(bin, "git"), "#!/usr/bin/env bash\ncase \"$*\" in *'remote get-url origin'*) echo https://github.com/input-output-hk/lace-id-portal.git;; *'HEAD^{tree}'*) echo 2d845d2293603dfd8adce5362c8a9941e6ba78a9;; *'rev-parse HEAD'*) echo 25499870f84d77173c46e4af3021311decfb840b;; esac\n");
     await executable(join(bin, "jq"), "#!/usr/bin/env bash\ncase \" $* \" in *' -e '*) exit 0;; *' --arg state running'*) echo '{\"state\":\"running\"}';; *) echo '{\"state\":\"stopped\"}';; esac\n");
     await executable(join(bin, "docker"), "#!/usr/bin/env bash\nif [ \"$1\" = compose ]; then printf '%s\\n' \"$*\" >>\"$DOCKER_LOG\"; case \" $* \" in *' up '*) echo running >\"$DOCKER_STATE\";; esac; exit 0; fi\ncase \" $* \" in *' ps -a '*) printf 'one\\ntwo\\nthree\\nfour\\nfive\\n';; *' ps '*) [ \"$(cat \"$DOCKER_STATE\" 2>/dev/null)\" = running ] && printf 'one\\ntwo\\nthree\\nfour\\n' || true;; esac\n");
-    for (const command of ["curl", "openssl", "shasum"]) await executable(join(bin, command), "#!/usr/bin/env bash\nexit 0\n");
+    for (const command of ["curl", "openssl"]) await executable(join(bin, command), "#!/usr/bin/env bash\nexit 0\n");
+    await executable(join(bin, "shasum"), "#!/usr/bin/env bash\nprintf '%064d\\n' 0\n");
 
     const stopped = spawnSync("./scripts/e2e/portal-services-lifecycle.sh", ["services-status"], { cwd: root, env, encoding: "utf8" });
     assert.equal(stopped.status, 0, `${stopped.stderr}\n${stopped.stdout}`);
