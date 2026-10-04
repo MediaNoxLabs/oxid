@@ -371,6 +371,18 @@ fn main() {
     #[cfg(all(
         feature = "standalone-development",
         not(feature = "standalone-native-custody"),
+        feature = "ui-profile-demo",
+        not(feature = "standalone-tailnet"),
+        not(feature = "standalone-local"),
+        not(feature = "standalone-portal-tailnet"),
+        not(feature = "desktop-portal-test"),
+        not(target_arch = "wasm32")
+    ))]
+    let application = oxid_composition::compose_headless_with_development_did_approval();
+    #[cfg(all(
+        feature = "standalone-development",
+        not(feature = "standalone-native-custody"),
+        not(feature = "ui-profile-demo"),
         not(feature = "standalone-tailnet"),
         not(feature = "standalone-local"),
         not(feature = "standalone-portal-tailnet"),

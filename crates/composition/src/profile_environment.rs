@@ -37,7 +37,11 @@ use super::profile_headless::{
     compose_headless_standalone_with_checkpoint_options_and_presentation,
     compose_headless_with_presentation, compose_headless_with_submission_journal_and_presentation,
 };
-#[cfg(feature = "development-did-approval")]
+#[cfg(all(
+    feature = "development-did-approval",
+    not(target_arch = "wasm32"),
+    not(any(target_os = "ios", target_os = "android"))
+))]
 use super::profile_headless::{
     compose_headless_with_credential_profile_and_did_approvals, development_did_approval_service,
 };
