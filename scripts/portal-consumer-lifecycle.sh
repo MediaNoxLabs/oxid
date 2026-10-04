@@ -161,17 +161,14 @@ compose_bounded() {
 
 # Docker Desktop can outlive Compose's container stop timeout while the client
 # waits on its engine. Callers enter here only after validating this session's
-# starting/owner receipt; every fallback target is then revalidated by its
-# Compose project label before an exact-ID removal.
+# starting/owner receipt; every target is then revalidated by its Compose
+# project label before an exact-ID removal.
 force_remove_owned_project() {
   local attempt id removed resource
   for id in $(project_ids); do
     [[ "$id" =~ ^[0-9a-f]{64}$ ]] || return 1
     [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$id" 2>/dev/null)" = "$PROJECT" ] || return 1
   done
-  # Let Docker Desktop release the Compose operation after the bounded client
-  # is terminated, then retry each already-authenticated container exactly.
-  sleep 2
   for id in $(project_ids); do
     removed=0
     for attempt in 1 2; do
@@ -528,9 +525,7 @@ run_up() {
     if [ "$up_cleanup_running" -eq 1 ]; then return; fi
     up_cleanup_running=1
     starting_receipt_valid || return 1
-    compose_bounded down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 \
-      || force_remove_owned_project \
-      || true
+    force_remove_owned_project || true
     [ -z "$(project_ids)" ] || return 1
     lease_release_allowed=1
     rm -f -- "$ENV_FILE" "$RECEIPT" "$STARTING_RECEIPT" "$PRIVATE_LOG"
@@ -629,9 +624,7 @@ run_down() {
   lease_release_allowed=0
   receipt_valid || starting_receipt_valid || fail ownership
   [ -f "$ENV_FILE" ] && [ ! -L "$ENV_FILE" ] || fail private-state
-  compose_bounded down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 \
-    || force_remove_owned_project \
-    || fail cleanup
+  force_remove_owned_project || fail cleanup
   [ -z "$(project_ids)" ] || fail cleanup-incomplete
   lease_release_allowed=1
   rm -f -- "$ENV_FILE" "$RECEIPT" "$STARTING_RECEIPT" "$PRIVATE_LOG"
