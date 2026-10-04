@@ -143,6 +143,14 @@ impl HeadlessWallet {
         }
     }
 
+    pub(super) fn run_lifecycle_scheduler_with_runtime(
+        &self,
+        stop: &Receiver<()>,
+        runtime: Option<&tokio::runtime::Handle>,
+    ) {
+        with_runtime_context(runtime, || self.run_lifecycle_scheduler(stop));
+    }
+
     pub(super) fn execute_realm_lifecycle(
         &self,
         input: WalletRealmLifecycleInput,
@@ -196,6 +204,14 @@ impl HeadlessWallet {
     pub(super) fn monotonic_millis(&self) -> u64 {
         u64::try_from(self.started_at.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
+}
+
+fn with_runtime_context<T>(
+    runtime: Option<&tokio::runtime::Handle>,
+    operation: impl FnOnce() -> T,
+) -> T {
+    let _runtime_guard = runtime.map(tokio::runtime::Handle::enter);
+    operation()
 }
 
 fn execute_bounded(
@@ -373,6 +389,29 @@ mod tests {
     };
     use oxid_wallet_domain::{ChainAccountId, ChainTransactionId};
     use std::future::pending;
+
+    #[test]
+    fn scheduler_thread_inherits_the_process_tokio_runtime() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let _runtime_guard = runtime.enter();
+        let handle = tokio::runtime::Handle::try_current().expect("entered runtime");
+
+        let inherited = std::thread::scope(|scope| {
+            scope
+                .spawn(move || {
+                    with_runtime_context(Some(&handle), || {
+                        tokio::runtime::Handle::try_current().is_ok()
+                    })
+                })
+                .join()
+                .expect("scheduler thread")
+        });
+
+        assert!(inherited, "scheduler thread must enter the process runtime");
+    }
 
     fn initialized_wallet(name: &str) -> HeadlessWallet {
         let application = oxid_composition::compose_in_memory();
