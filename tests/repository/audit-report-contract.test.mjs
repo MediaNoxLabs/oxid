@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 
 import { assertSupported, validate } from "../../scripts/audit/lib/json-schema.mjs";
 import { checkReport, crossCheck, extractReportBlock, findingIdsInProse, findingsInProse } from "../../scripts/audit/check-audit-report.mjs";
+import { parseFrontmatter, validateAgentBudget } from "../../scripts/factory/audit-pi.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const AUDIT_DOCS = path.join(ROOT, "docs", "factory", "audit");
@@ -76,6 +77,28 @@ test("a citation naming an anchor no collector produced is rejected", () => {
     problems.some((problem) => /unknown evidence anchor "gate\.vibes"/u.test(problem)),
     JSON.stringify(problems),
   );
+});
+
+test("unavailable collector evidence cannot prove a verified-sound claim", () => {
+  const report = exampleReport();
+  report.verifiedSound[0].evidence = [{ anchor: "branch.protection" }];
+  const evidence = exampleEvidence();
+  evidence.collectors["branch.protection"] = {
+    status: "unavailable",
+    reason: "permission denied",
+    source: ["gh api"],
+  };
+  const problems = crossCheck(report, { evidence });
+  assert.ok(problems.some((problem) => /cites unavailable evidence anchor/u.test(problem)));
+});
+
+test("malformed supplied evidence is rejected before citations can be trusted", () => {
+  const evidence = exampleEvidence();
+  delete evidence.window;
+  const result = checkReport(exampleReport(), { evidence });
+  assert.equal(result.ok, false);
+  assert.ok(result.evidenceErrors.some((error) => /missing required property "window"/u.test(error.message)));
+  assert.deepEqual(result.crossErrors, []);
 });
 
 test("an anchor citation without a supplied evidence artifact is rejected", () => {
@@ -186,6 +209,12 @@ test("a must-fix finding that reaches no slate entry and blocks nothing is rejec
   assert.equal(problems.filter((problem) => /appears in no slate entry/u.test(problem)).length, 3);
 });
 
+test("every non-duplicate must-fix finding blocks the verdict even when slated", () => {
+  const report = exampleReport();
+  report.verdict.blocking = report.verdict.blocking.filter((id) => id !== "F-01");
+  assert.ok(crossCheck(report, {}).some((problem) => /must-fix finding F-01 is absent from verdict\.blocking/u.test(problem)));
+});
+
 test("duplicate finding ids are rejected", () => {
   const report = exampleReport();
   report.findings[1].id = report.findings[0].id;
@@ -250,6 +279,23 @@ test("a slate ordered by the rubric is accepted", () => {
   assert.deepEqual(crossCheck(report, { evidence: exampleEvidence() }), []);
 });
 
+test("a slate ordering that inverts expiry among equal entries is rejected", () => {
+  const report = exampleReport();
+  report.findings[0].expiry = "Protection remediation becomes more expensive after another train is created.";
+  report.findings[1].criterion = report.findings[0].criterion;
+  report.slate = [report.slate[1], report.slate[0]].map((entry, index) => ({ ...entry, rank: index + 1 }));
+  const problems = crossCheck(report, { evidence: exampleEvidence() });
+  assert.ok(problems.some((problem) => /loses on expiry/u.test(problem)), JSON.stringify(problems));
+});
+
+test("a slate ordering that inverts the final criterion-id tiebreaker is rejected", () => {
+  const report = exampleReport();
+  report.findings[1].criterion = "OXA-MIL-02";
+  report.slate = [report.slate[1], report.slate[0]].map((entry, index) => ({ ...entry, rank: index + 1 }));
+  const problems = crossCheck(report, { evidence: exampleEvidence() });
+  assert.ok(problems.some((problem) => /loses on criterion id/u.test(problem)), JSON.stringify(problems));
+});
+
 test("a slate entry cannot soften the highest severity of its findings", () => {
   const report = exampleReport();
   report.slate[0].severity = "defer";
@@ -280,6 +326,14 @@ test("delta mode without sinceAnchor or a delta section is rejected", () => {
   assert.match(errors, /missing required property "delta"/u);
 });
 
+test("delta mode requires a prior report for completeness validation", () => {
+  const report = exampleReport();
+  report.anchor.mode = "delta";
+  report.anchor.sinceAnchor = "2026-08-01T00:00:00Z";
+  report.delta = [];
+  assert.ok(crossCheck(report).some((problem) => /requires a prior report/u.test(problem)));
+});
+
 test("a withdrawn delta entry without a note is rejected", () => {
   const report = exampleReport();
   report.anchor.mode = "delta";
@@ -297,6 +351,43 @@ test("a delta omitting a prior finding is rejected", () => {
   const problems = crossCheck(report, { prior });
   assert.ok(problems.some((problem) => /omits prior finding F-02/u.test(problem)));
   assert.ok(problems.some((problem) => /omits prior finding F-03/u.test(problem)));
+});
+
+test("a still-present delta entry without a current finding is rejected", () => {
+  const report = exampleReport();
+  report.anchor.mode = "delta";
+  report.anchor.sinceAnchor = "2026-08-01T00:00:00Z";
+  report.delta = [{ priorId: "F-01", classification: "still-present" }];
+  assert.ok(validate(reportSchema, report).some((error) => /currentId/u.test(error.message)));
+});
+
+test("a delta current finding must exist", () => {
+  const report = exampleReport();
+  report.anchor.mode = "delta";
+  report.anchor.sinceAnchor = "2026-08-01T00:00:00Z";
+  report.delta = [{ priorId: "F-01", classification: "regressed", currentId: "F-99" }];
+  assert.ok(crossCheck(report, {}).some((problem) => /unknown current finding "F-99"/u.test(problem)));
+});
+
+test("conflicting duplicate delta classifications are rejected", () => {
+  const report = exampleReport();
+  report.anchor.mode = "delta";
+  report.anchor.sinceAnchor = "2026-08-01T00:00:00Z";
+  report.delta = [
+    { priorId: "F-01", classification: "fixed" },
+    { priorId: "F-01", classification: "regressed", currentId: "F-01" },
+  ];
+  assert.ok(crossCheck(report, { prior: exampleReport() }).some((problem) => /multiple classifications/u.test(problem)));
+});
+
+test("a malformed prior report is rejected before delta completeness trusts it", () => {
+  const report = exampleReport();
+  report.anchor.mode = "delta";
+  report.anchor.sinceAnchor = "2026-08-01T00:00:00Z";
+  report.delta = [];
+  const result = checkReport(report, { prior: {} });
+  assert.equal(result.ok, false);
+  assert.ok(result.crossErrors.some((problem) => /prior report does not conform/u.test(problem)));
 });
 
 test("supplying a prior report while not in delta mode is rejected", () => {
@@ -325,6 +416,12 @@ test("an unexpected top-level property is rejected", () => {
   // The output is a triaged slate, not a grade; the schema is closed so a
   // scoring field cannot be smuggled in.
   assert.ok(validate(reportSchema, report).some((error) => /unexpected property "score"/u.test(error.message)));
+});
+
+test("report window must match the supplied evidence artifact", () => {
+  const report = exampleReport();
+  report.anchor.window.until = "2026-09-10T00:00:00Z";
+  assert.ok(crossCheck(report, { evidence: exampleEvidence() }).some((problem) => /report window does not match/u.test(problem)));
 });
 
 test("report branch scope must match the supplied evidence artifact", () => {
@@ -366,6 +463,15 @@ test("finding ids are read from prose while ignoring the data block", () => {
     "```json audit-report-v1",
     '{ "findings": [{ "id": "F-42" }] }',
     "```",
+  ].join("\n");
+  assert.deepEqual([...findingIdsInProse(body)], ["F-01"]);
+});
+
+test("prior finding ids in a delta table are not treated as current findings", () => {
+  const body = [
+    "| 1 | `F-01` | ... |",
+    "## Delta since `previous`",
+    "| `F-09` | `fixed` | evidence | note |",
   ].join("\n");
   assert.deepEqual([...findingIdsInProse(body)], ["F-01"]);
 });
@@ -439,35 +545,16 @@ test("the charter and the skill cite the live subagent policy, not remembered fi
 });
 
 test("every audit agent contract satisfies the repository's own budget validator", () => {
-  // The contracts first shipped with `turnBudget`, the grammar the dev-loops
-  // 1.0.2 upgrade replaced with `toolBudget`, and CI caught it rather than
-  // review. Reuse the repository's validator verbatim so the two cannot drift.
-  const source = readFileSync(path.join(ROOT, "scripts", "factory", "audit-pi.mjs"), "utf8");
-  const extract = (name) => {
-    const start = source.indexOf(`function ${name}`);
-    assert.notEqual(start, -1, `audit-pi.mjs no longer defines ${name}`);
-    return source.slice(start, source.indexOf("\n}", start) + 2);
-  };
-  const frontmatterField = /^toolBudget: (\{.*\})$/mu;
-
+  // Import the live parser and validator: this test must fail when the
+  // repository's executable budget contract changes.
   for (const file of ["auditor.agent.md", "audit-consolidator.agent.md"]) {
     const text = readFileSync(path.join(ROOT, ".pi", "agents", file), "utf8");
-    const budget = text.match(frontmatterField);
-    assert.ok(budget, `${file} declares no toolBudget in the tracked grammar`);
-
-    const parsed = JSON.parse(budget[1]);
-    // Mirror the validator's bounds rather than restating chosen values, so a
-    // change to the bounds fails here instead of passing silently.
-    assert.ok(Number.isInteger(parsed.soft) && parsed.soft >= 1 && parsed.soft <= 64, `${file}: toolBudget.soft out of bounds`);
-    assert.ok(Number.isInteger(parsed.hard) && parsed.hard >= parsed.soft && parsed.hard <= 96, `${file}: toolBudget.hard out of bounds`);
-    assert.equal(parsed.block, "*", `${file}: toolBudget.block must be "*"`);
-
-    const timeout = Number(text.match(/^timeoutMs: (\d+)$/mu)?.[1]);
-    assert.ok(timeout >= 60_000 && timeout <= 3_600_000, `${file}: timeoutMs out of bounds`);
-
-    // No mutation tool may reach an auditor.
-    const tools = text.match(/^tools: (.*)$/mu)?.[1] ?? "";
-    assert.equal(tools.trim(), "read, grep, find, ls", `${file} grants tools beyond read-only inspection`);
+    const fields = parseFrontmatter(text, file);
+    assert.deepEqual(validateAgentBudget(file, fields), []);
+    assert.match(
+      validateAgentBudget(file, { ...fields, toolBudget: '{"soft":0,"hard":0,"block":"*"}' }).join("\n"),
+      /toolBudget\.soft/u,
+      "the imported validator must reject a known-bad budget",
+    );
   }
-  void extract;
 });
