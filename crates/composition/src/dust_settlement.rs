@@ -17,6 +17,11 @@ use std::{
 
 const OPERATION_DEADLINE: Duration = Duration::from_secs(30);
 const MAX_SETTLEMENT_RETRIES: u8 = 3;
+#[cfg(not(test))]
+const SETTLEMENT_CONTINUATION_INTERVAL: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const SETTLEMENT_CONTINUATION_INTERVAL: Duration = Duration::from_millis(5);
+const MAX_SETTLEMENT_CONTINUATION_ATTEMPTS: u16 = 120;
 
 #[derive(Clone)]
 struct RecoveryPersistenceJob {
@@ -320,8 +325,9 @@ use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationUseCase, ChainTransactionId,
     ExecuteWalletDustRegistrationOperation, GetSelectedWalletRealmSyncUseCase,
     GetWalletDustRegistrationStatusCommand, GetWalletDustRegistrationStatusUseCase,
-    PrepareWalletDustRegistrationCommand, PrepareWalletDustRegistrationUseCase,
-    ReconcileSelectedWalletRealmUseCase, ReconcileWalletDustRegistrationSubmissionCommand,
+    GetWalletDustSyncStatusUseCase, PrepareWalletDustRegistrationCommand,
+    PrepareWalletDustRegistrationUseCase, ReconcileSelectedWalletRealmUseCase,
+    ReconcileWalletDustRegistrationSubmissionCommand,
     ReconcileWalletDustRegistrationSubmissionUseCase, SelectedWalletRealmProjection,
     SelectedWalletRealmProjectionFuture, SelectedWalletRealmReconciliationFuture,
     SelectedWalletRealmSyncCommand, SensitiveOperationConfirmation,
@@ -335,8 +341,8 @@ use oxid_wallet_application::{
     WalletDustRegistrationRecoveryStoreError, WalletDustRegistrationRuntimeOperation,
     WalletDustRegistrationSettlementEvent, WalletDustRegistrationSettlementIdentity,
     WalletDustRegistrationSettlementProjection, WalletDustRegistrationSettlementReconciliation,
-    WalletRealmFamilyView, WalletRealmReconciliationTrigger, WalletSyncState,
-    WalletTransactionDraftId,
+    WalletDustSyncCommand, WalletDustSyncView, WalletRealmFamilyView,
+    WalletRealmReconciliationTrigger, WalletSyncState, WalletTransactionDraftId,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -384,6 +390,7 @@ impl WalletDustSettlementCapability {
     pub fn with_recovery_store(
         selected_realm: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
         sync_selected_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
+        dust_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
         prepare: Arc<dyn PrepareWalletDustRegistrationUseCase>,
         authorize: Arc<dyn AuthorizeWalletDustRegistrationUseCase>,
         submit: Arc<dyn SubmitWalletDustRegistrationUseCase>,
@@ -394,6 +401,7 @@ impl WalletDustSettlementCapability {
         Self::with_recovery_store_authority_and_deadline(
             selected_realm,
             sync_selected_realm,
+            dust_status,
             prepare,
             DustRegistrationAuthorization::Explicit(authorize),
             DustRegistrationSubmission::Explicit(submit),
@@ -411,6 +419,7 @@ impl WalletDustSettlementCapability {
     pub fn with_automatic_development_authority_and_recovery_store(
         selected_realm: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
         sync_selected_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
+        dust_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
         prepare: Arc<dyn PrepareWalletDustRegistrationUseCase>,
         authorize: Arc<dyn AuthorizeDevelopmentWalletDustRegistrationUseCase>,
         submit: Arc<dyn SubmitDevelopmentWalletDustRegistrationUseCase>,
@@ -421,6 +430,7 @@ impl WalletDustSettlementCapability {
         Self::with_recovery_store_authority_and_deadline(
             selected_realm,
             sync_selected_realm,
+            dust_status,
             prepare,
             DustRegistrationAuthorization::AutomaticDevelopment(authorize),
             DustRegistrationSubmission::AutomaticDevelopment(submit),
@@ -439,6 +449,7 @@ impl WalletDustSettlementCapability {
     pub fn with_recovery_store_and_deadline(
         selected_realm: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
         sync_selected_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
+        dust_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
         prepare: Arc<dyn PrepareWalletDustRegistrationUseCase>,
         authorize: Arc<dyn AuthorizeWalletDustRegistrationUseCase>,
         submit: Arc<dyn SubmitWalletDustRegistrationUseCase>,
@@ -450,6 +461,7 @@ impl WalletDustSettlementCapability {
         Self::with_recovery_store_authority_and_deadline(
             selected_realm,
             sync_selected_realm,
+            dust_status,
             prepare,
             DustRegistrationAuthorization::Explicit(authorize),
             DustRegistrationSubmission::Explicit(submit),
@@ -465,6 +477,7 @@ impl WalletDustSettlementCapability {
     fn with_recovery_store_authority_and_deadline(
         selected_realm: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
         sync_selected_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
+        dust_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
         prepare: Arc<dyn PrepareWalletDustRegistrationUseCase>,
         authorize: DustRegistrationAuthorization,
         submit: DustRegistrationSubmission,
@@ -520,9 +533,14 @@ impl WalletDustSettlementCapability {
                     .max(registration.dust_revision)
                     .max(registration.finality_revision)
             });
+        let recovered_observation_revision = restored
+            .as_ref()
+            .and_then(|runtime| runtime.coordinator().projection().registration.as_ref())
+            .map_or(0, |registration| registration.observation_revision);
         let executor = Arc::new(ComposedDustRegistrationExecutor {
             selected_realm: Arc::clone(&selected_realm),
             sync_selected_realm,
+            dust_status,
             prepare,
             authorize,
             submit,
@@ -530,6 +548,7 @@ impl WalletDustSettlementCapability {
             reconcile,
             retained: Mutex::new(RetainedSettlement {
                 operation_revision: recovered_revision,
+                chain_observation_revision: recovered_observation_revision,
                 ..RetainedSettlement::default()
             }),
             store: Arc::clone(&store),
@@ -824,6 +843,15 @@ pub struct AutomaticDustRealmReconciler {
     reconcile: Arc<dyn ReconcileSelectedWalletRealmUseCase>,
     get: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
     dust: Arc<WalletDustSettlementCapability>,
+    continuation_running: Arc<AtomicBool>,
+}
+
+struct DustSettlementContinuationGuard(Arc<AtomicBool>);
+
+impl Drop for DustSettlementContinuationGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 impl AutomaticDustRealmReconciler {
@@ -839,8 +867,57 @@ impl AutomaticDustRealmReconciler {
             reconcile,
             get,
             dust,
+            continuation_running: Arc::new(AtomicBool::new(false)),
         }
     }
+
+    fn continue_pending_settlement(
+        &self,
+        profile_id: String,
+        projection: &WalletDustRegistrationSettlementProjection,
+    ) {
+        if !settlement_needs_continuation(projection)
+            || tokio::runtime::Handle::try_current().is_err()
+            || self
+                .continuation_running
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        {
+            return;
+        }
+        let Some(identity) = projection.identity.clone() else {
+            self.continuation_running.store(false, Ordering::Release);
+            return;
+        };
+        let dust = Arc::clone(&self.dust);
+        let running = Arc::clone(&self.continuation_running);
+        tokio::spawn(async move {
+            let _guard = DustSettlementContinuationGuard(running);
+            for _ in 0..MAX_SETTLEMENT_CONTINUATION_ATTEMPTS {
+                tokio::time::sleep(SETTLEMENT_CONTINUATION_INTERVAL).await;
+                let Ok(current) = dust.projection() else {
+                    return;
+                };
+                if current.identity.as_ref() != Some(&identity)
+                    || !settlement_needs_continuation(&current)
+                {
+                    return;
+                }
+                match dust.refresh(profile_id.clone()).await {
+                    Ok(refreshed) if !settlement_needs_continuation(&refreshed) => return,
+                    Ok(_) | Err(_) => {}
+                }
+            }
+        });
+    }
+}
+
+fn settlement_needs_continuation(projection: &WalletDustRegistrationSettlementProjection) -> bool {
+    matches!(
+        projection.state,
+        oxid_wallet_application::WalletDustRegistrationSettlementState::Confirming
+            | oxid_wallet_application::WalletDustRegistrationSettlementState::Reconciling
+    )
 }
 
 impl SyncSelectedWalletRealmUseCase for AutomaticDustRealmReconciler {
@@ -851,7 +928,9 @@ impl SyncSelectedWalletRealmUseCase for AutomaticDustRealmReconciler {
         Box::pin(async move {
             let profile_id = command.profile_id.clone();
             let projection = self.sync.execute(command).await?;
-            let _ = self.dust.refresh(profile_id.clone()).await;
+            if let Ok(settlement) = self.dust.refresh(profile_id.clone()).await {
+                self.continue_pending_settlement(profile_id.clone(), &settlement);
+            }
             Ok(self
                 .get
                 .execute(SelectedWalletRealmSyncCommand { profile_id })
@@ -869,7 +948,9 @@ impl ReconcileSelectedWalletRealmUseCase for AutomaticDustRealmReconciler {
         Box::pin(async move {
             let profile_id = command.profile_id.clone();
             let mut reconciliation = self.reconcile.execute(command, trigger).await?;
-            let _ = self.dust.refresh(profile_id.clone()).await;
+            if let Ok(settlement) = self.dust.refresh(profile_id.clone()).await {
+                self.continue_pending_settlement(profile_id.clone(), &settlement);
+            }
             if let Ok(projection) = self
                 .get
                 .execute(SelectedWalletRealmSyncCommand { profile_id })
@@ -914,6 +995,7 @@ struct RetainedSettlement {
     finality_observed: bool,
     submission_uncertain: bool,
     operation_revision: u64,
+    chain_observation_revision: u64,
 }
 
 enum RecoveredSubmission {
@@ -924,6 +1006,7 @@ enum RecoveredSubmission {
 struct ComposedDustRegistrationExecutor {
     selected_realm: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
     sync_selected_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
+    dust_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
     prepare: Arc<dyn PrepareWalletDustRegistrationUseCase>,
     authorize: DustRegistrationAuthorization,
     submit: DustRegistrationSubmission,
@@ -952,6 +1035,7 @@ impl ComposedDustRegistrationExecutor {
             retained.confirmation = None;
             retained.finality_observed = false;
             retained.submission_uncertain = false;
+            retained.chain_observation_revision = 0;
         }
         retained.operation_revision = retained.operation_revision.max(selected.revision);
         retained.bound = Some(selected);
@@ -1039,6 +1123,31 @@ impl ComposedDustRegistrationExecutor {
             .map_err(|_| WalletDustRegistrationExecutorFailure::Unavailable)?;
         retained.operation_revision = retained.operation_revision.saturating_add(1);
         Ok(retained.operation_revision)
+    }
+
+    fn next_chain_observation_revision(
+        &self,
+    ) -> Result<u64, WalletDustRegistrationExecutorFailure> {
+        let mut retained = self
+            .retained
+            .lock()
+            .map_err(|_| WalletDustRegistrationExecutorFailure::Unavailable)?;
+        retained.operation_revision = retained.operation_revision.saturating_add(1);
+        retained.chain_observation_revision = retained.operation_revision;
+        Ok(retained.chain_observation_revision)
+    }
+
+    fn current_chain_observation_revision(
+        &self,
+    ) -> Result<u64, WalletDustRegistrationExecutorFailure> {
+        self.retained
+            .lock()
+            .map_err(|_| WalletDustRegistrationExecutorFailure::Unavailable)
+            .and_then(|retained| {
+                (retained.chain_observation_revision > 0)
+                    .then_some(retained.chain_observation_revision)
+                    .ok_or(WalletDustRegistrationExecutorFailure::Degraded)
+            })
     }
 
     fn recovery_record(
@@ -1404,7 +1513,7 @@ impl ComposedDustRegistrationExecutor {
             .await;
         let status = match status {
             Ok(status) if status.state == "included" && !finality_observed => {
-                let revision = self.next_revision()?;
+                let revision = self.next_chain_observation_revision()?;
                 self.retained
                     .lock()
                     .map_err(|_| WalletDustRegistrationExecutorFailure::Unavailable)?
@@ -1441,10 +1550,11 @@ impl ComposedDustRegistrationExecutor {
             }
             _ => WalletDustRegistrationSettlementReconciliation::Pending,
         };
+        let revision = self.next_chain_observation_revision()?;
         Ok(WalletDustRegistrationOperationCompletion::reconciled(
             identity,
             transaction_id,
-            self.next_revision()?,
+            revision,
             reconciliation,
         ))
     }
@@ -1456,6 +1566,19 @@ impl ComposedDustRegistrationExecutor {
     ) -> Result<WalletDustRegistrationOperationCompletion, WalletDustRegistrationExecutorFailure>
     {
         let previous = self.validate_bound(&identity)?;
+        let after_observation_revision = self.current_chain_observation_revision()?;
+        let current_dust = self.dust_status.execute(WalletDustSyncCommand {
+            profile_id: identity.profile.as_str().to_owned(),
+        });
+        if current_dust.as_ref().is_ok_and(dust_sync_is_ready) {
+            return Ok(WalletDustRegistrationOperationCompletion::dust_refreshed(
+                identity,
+                transaction_id,
+                self.next_revision()?,
+                after_observation_revision,
+                true,
+            ));
+        }
         let refreshed = self
             .sync_selected_realm
             .execute(SelectedWalletRealmSyncCommand {
@@ -1466,11 +1589,13 @@ impl ComposedDustRegistrationExecutor {
         if refreshed.identity != previous.identity || refreshed.generation != previous.generation {
             return Err(WalletDustRegistrationExecutorFailure::Degraded);
         }
-        let ready = matches!(
-            &refreshed.view.dust,
-            WalletRealmFamilyView::Ready(dust) if dust.state == "synced"
-        );
-        let after_observation_revision = refreshed.revision;
+        let ready = self
+            .dust_status
+            .execute(WalletDustSyncCommand {
+                profile_id: identity.profile.as_str().to_owned(),
+            })
+            .as_ref()
+            .is_ok_and(dust_sync_is_ready);
         self.bind(refreshed)
             .map_err(|_| WalletDustRegistrationExecutorFailure::Unavailable)?;
         Ok(WalletDustRegistrationOperationCompletion::dust_refreshed(
@@ -1481,6 +1606,24 @@ impl ComposedDustRegistrationExecutor {
             ready,
         ))
     }
+}
+
+#[cfg(test)]
+fn dust_registration_is_ready(selected: &SelectedWalletRealmProjection) -> bool {
+    matches!(
+        &selected.view.dust,
+        WalletRealmFamilyView::Ready(dust) if dust_sync_is_ready(dust)
+    )
+}
+
+fn dust_sync_is_ready(dust: &WalletDustSyncView) -> bool {
+    dust.state == "synced"
+        && dust.failure.is_none()
+        && dust
+            .balance_atomic_units
+            .as_deref()
+            .and_then(|balance| balance.parse::<u128>().ok())
+            .is_some_and(|balance| balance > 0)
 }
 
 impl ExecuteWalletDustRegistrationOperation for ComposedDustRegistrationExecutor {

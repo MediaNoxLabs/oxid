@@ -414,7 +414,7 @@ fn transfer_and_await_inclusion(
     );
     assert_eq!(
         authorized["ok"], true,
-        "transfer authorization must succeed"
+        "transfer authorization must succeed: {authorized}"
     );
     let submitted = wallet.request(
         "transfer-submit",
@@ -566,6 +566,7 @@ fn assert_submission_history(wallet: &mut ProcessHarness, transaction_id: &str) 
 
 fn register_and_await_dust(wallet: &mut ProcessHarness) -> Duration {
     let started = Instant::now();
+    let mut previous_progress = None;
     loop {
         let observed = wallet.request(
             "dust-settlement-status",
@@ -575,6 +576,28 @@ fn register_and_await_dust(wallet: &mut ProcessHarness) -> Duration {
         assert_eq!(observed["ok"], true, "{observed}");
         let settlement = &observed["result"]["dustRegistrationSettlement"];
         let state = settlement["state"].as_str().expect("settlement state");
+        let dust_status =
+            wallet.request("dust-sync-progress", "wallet.dust.sync.status", json!({}));
+        let dust = &dust_status["result"]["dustSync"];
+        let realm_status =
+            wallet.request("realm-sync-progress", "wallet.realm.sync.status", json!({}));
+        let realm_dust = &realm_status["result"]["realmSync"]["dust"];
+        let progress = format!(
+            "state={state} observation={} dust={} ready={} sync={} cursor={}/{} balance={} realmSync={} realmBalance={}",
+            settlement["registration"]["observationRevision"],
+            settlement["registration"]["dustRevision"],
+            settlement["registration"]["dustReady"],
+            dust["state"],
+            dust["currentCursor"],
+            dust["targetCursor"],
+            dust["balance"]["atomicUnits"],
+            realm_dust["value"]["state"],
+            realm_dust["value"]["balance"]["atomicUnits"]
+        );
+        if previous_progress.as_deref() != Some(progress.as_str()) {
+            eprintln!("standalone-faucet-headless-e2e: DUST {progress}");
+            previous_progress = Some(progress);
+        }
         if state == "ready" {
             assert_eq!(
                 settlement["registration"]["dustReady"], true,

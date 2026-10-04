@@ -8,16 +8,17 @@ use std::sync::{
 use futures::executor::block_on;
 use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationCommand, ChainNetworkId, GetSelectedWalletRealmSyncUseCase,
-    GetWalletDustRegistrationStatusCommand, InMemoryWalletDustRegistrationRecoveryStore,
-    PrepareWalletDustRegistrationCommand, ReconcileWalletDustRegistrationSubmissionCommand,
-    SelectedWalletRealmActionReadiness, SelectedWalletRealmIdentity,
-    SelectedWalletRealmObservation, SelectedWalletRealmProjectionFuture,
-    SelectedWalletRealmSyncError, SelectedWalletRealmSyncView, SubmitWalletDustRegistrationCommand,
-    WalletAccountSource, WalletAccountView, WalletAssetBalanceView,
-    WalletDustRegistrationAssetView, WalletDustRegistrationError, WalletDustRegistrationPortError,
-    WalletDustRegistrationPreviewView, WalletDustRegistrationPreviewViewFuture,
-    WalletDustRegistrationStatusViewFuture, WalletDustRegistrationSubmissionStatusView,
-    WalletDustRegistrationSubmissionView, WalletDustRegistrationSubmissionViewFuture,
+    GetWalletDustRegistrationStatusCommand, GetWalletDustSyncStatusUseCase,
+    InMemoryWalletDustRegistrationRecoveryStore, PrepareWalletDustRegistrationCommand,
+    ReconcileWalletDustRegistrationSubmissionCommand, SelectedWalletRealmActionReadiness,
+    SelectedWalletRealmIdentity, SelectedWalletRealmObservation,
+    SelectedWalletRealmProjectionFuture, SelectedWalletRealmSyncError, SelectedWalletRealmSyncView,
+    SubmitWalletDustRegistrationCommand, WalletAccountSource, WalletAccountView,
+    WalletAssetBalanceView, WalletDustRegistrationAssetView, WalletDustRegistrationError,
+    WalletDustRegistrationPortError, WalletDustRegistrationPreviewView,
+    WalletDustRegistrationPreviewViewFuture, WalletDustRegistrationStatusViewFuture,
+    WalletDustRegistrationSubmissionStatusView, WalletDustRegistrationSubmissionView,
+    WalletDustRegistrationSubmissionViewFuture, WalletDustSyncCommand, WalletDustSyncError,
     WalletDustSyncView, WalletProfileId, WalletRealmFamilyView, WalletShieldedSyncView,
     WalletSyncState, WalletSyncStatusView,
 };
@@ -75,6 +76,16 @@ impl GetSelectedWalletRealmSyncUseCase for FakeServices {
         _: SelectedWalletRealmSyncCommand,
     ) -> Result<SelectedWalletRealmProjection, SelectedWalletRealmSyncError> {
         Ok(self.selected.lock().unwrap().clone())
+    }
+}
+
+impl GetWalletDustSyncStatusUseCase for FakeServices {
+    fn execute(&self, _: WalletDustSyncCommand) -> Result<WalletDustSyncView, WalletDustSyncError> {
+        let selected = self.selected.lock().unwrap();
+        match &selected.view.dust {
+            WalletRealmFamilyView::Ready(dust) => Ok(dust.clone()),
+            _ => Ok(dust_view("syncing")),
+        }
     }
 }
 
@@ -291,6 +302,7 @@ fn automatic_capability(fake: &Arc<FakeServices>) -> WalletDustSettlementCapabil
         fake.clone(),
         fake.clone(),
         fake.clone(),
+        fake.clone(),
         Arc::new(InMemoryWalletDustRegistrationRecoveryStore::default()),
     )
     .unwrap()
@@ -308,6 +320,7 @@ fn capability_with_store(
         fake.clone(),
         fake.clone(),
         fake.clone(),
+        fake.clone(),
         store,
     )
     .unwrap()
@@ -318,6 +331,7 @@ fn capability_with_deadline(
     deadline: Duration,
 ) -> WalletDustSettlementCapability {
     WalletDustSettlementCapability::with_recovery_store_and_deadline(
+        fake.clone(),
         fake.clone(),
         fake.clone(),
         fake.clone(),
@@ -555,6 +569,26 @@ fn selected_projection(
             }),
         },
     }
+}
+
+#[test]
+fn registration_readiness_requires_a_synced_positive_dust_snapshot() {
+    let positive = selected_projection(1, 7, true);
+    assert!(dust_registration_is_ready(&positive));
+
+    let mut zero = positive.clone();
+    let WalletRealmFamilyView::Ready(dust) = &mut zero.view.dust else {
+        panic!("DUST fixture is ready");
+    };
+    dust.balance_atomic_units = Some("0".to_owned());
+    assert!(!dust_registration_is_ready(&zero));
+
+    let mut syncing = positive;
+    let WalletRealmFamilyView::Ready(dust) = &mut syncing.view.dust else {
+        panic!("DUST fixture is ready");
+    };
+    dust.state = "syncing".to_owned();
+    assert!(!dust_registration_is_ready(&syncing));
 }
 
 #[test]
@@ -1190,6 +1224,68 @@ fn pending_reconciliation_returns_a_stable_projection_without_hot_looping() {
             .filter(|call| **call == "reconcile")
             .count(),
         1
+    );
+}
+
+#[test]
+fn automatic_reconciler_continues_a_pending_settlement_without_another_realm_tick() {
+    let fake = Arc::new(FakeServices::new());
+    *fake.reconcile_state.lock().unwrap() = "broadcasting".to_owned();
+    let capability = Arc::new(automatic_capability(&fake));
+    let reconciler = AutomaticDustRealmReconciler::new(
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        Arc::clone(&capability),
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("test runtime builds");
+
+    runtime.block_on(async {
+        ReconcileSelectedWalletRealmUseCase::execute(
+            &reconciler,
+            SelectedWalletRealmSyncCommand {
+                profile_id: "profile_test".to_owned(),
+            },
+            WalletRealmReconciliationTrigger::Initial,
+        )
+        .await
+        .expect("initial reconciliation");
+        assert_eq!(
+            capability.projection().unwrap().state,
+            oxid_wallet_application::WalletDustRegistrationSettlementState::Confirming
+        );
+
+        *fake.reconcile_state.lock().unwrap() = "included".to_owned();
+        let continuation = tokio::time::timeout(Duration::from_millis(250), async {
+            loop {
+                if capability.projection().unwrap().state
+                    == oxid_wallet_application::WalletDustRegistrationSettlementState::Ready
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        assert!(
+            continuation.is_ok(),
+            "continuation reaches ready: projection={:?} calls={:?}",
+            capability.projection(),
+            fake.calls.lock().unwrap()
+        );
+    });
+
+    assert!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "reconcile")
+            .count()
+            >= 2
     );
 }
 

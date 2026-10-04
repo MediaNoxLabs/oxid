@@ -95,12 +95,21 @@ impl ApplicationNightGrant {
         let started = Instant::now();
         loop {
             let account =
-                futures::executor::block_on(self.application.sync_wallet_account().execute(
+                match futures::executor::block_on(self.application.sync_wallet_account().execute(
                     WalletAccountQuery {
                         profile_id: self.profile_id.clone(),
                     },
-                ))
-                .map_err(|_| GrantError::Unavailable)?;
+                )) {
+                    Ok(account) => account,
+                    Err(_)
+                        if maximum_balance.is_some()
+                            && started.elapsed() < INDEXER_OBSERVATION_DEADLINE =>
+                    {
+                        thread::sleep(INDEXER_OBSERVATION_INTERVAL);
+                        continue;
+                    }
+                    Err(_) => return Err(GrantError::Unavailable),
+                };
             let balance = night_balance(&account)?;
             let Some(maximum_balance) = maximum_balance else {
                 return Ok(balance);

@@ -1296,6 +1296,7 @@ where
         WalletDustSettlementCapability::with_automatic_development_authority_and_recovery_store(
             Arc::clone(&get_selected_wallet_realm_sync),
             Arc::clone(&raw_sync_selected_wallet_realm),
+            Arc::clone(&get_wallet_dust_sync_status),
             Arc::clone(&prepare_wallet_dust_registration),
             authorize_development_wallet_dust_registration,
             submit_development_wallet_dust_registration,
