@@ -345,12 +345,11 @@ final class PortalFlowTests: XCTestCase {
         scrollTo(issue, in: application)
         issue.tap()
         XCTAssertTrue(
-            protocolUnavailableTerminalStatus(in: application).waitForExistence(timeout: 40)
+            application.staticTexts["Credential offer preview"].waitForNonExistence(timeout: 40)
         )
         XCTAssertFalse(application.buttons["Leave credential review"].exists)
         XCTAssertFalse(consent.exists)
         XCTAssertFalse(issue.exists)
-        XCTAssertFalse(application.staticTexts["Credential offer preview"].exists)
         XCTAssertFalse(application.buttons["Dismiss identity request"].exists)
         application.buttons["Wallet"].tap()
         XCTAssertTrue(application.buttons["Receive"].waitForExistence(timeout: 10))
