@@ -127,6 +127,7 @@ async function runSynthetic(t, overrides = {}) {
       policy: await loadPolicy(),
       git,
       executeScope,
+      enforce: overrides.enforce ?? false,
       env: overrides.env ?? {},
       now: () => new Date("2026-09-01T00:00:00.000Z"),
     });
@@ -392,7 +393,14 @@ test("run.sh wires the repository contract once and delegates coverage to the ha
   assert.equal(runScript.match(/node --test tests\/repository\/coverage-contract\.test\.mjs/gu)?.length, 1);
   const coverageBlock = runScript.slice(runScript.indexOf("run_coverage()"), runScript.indexOf("require_command()"));
   assert.match(coverageBlock, /node scripts\/coverage\/run\.mjs/u);
+  assert.match(coverageBlock, /if \$strict; then args\+=\(--enforce\); fi/u);
   assert.doesNotMatch(coverageBlock, /cargo llvm-cov/u);
+});
+
+test("strict coverage makes policy enforcement explicit", async (t) => {
+  const result = await runSynthetic(t, { enforce: true });
+  assert.equal(result.manifest.evaluationMode, "enforce");
+  assert.equal(result.evaluation.status, "pass");
 });
 
 test("hosted coverage uses the same fetched comparison base as target planning", async () => {
