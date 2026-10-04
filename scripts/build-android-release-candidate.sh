@@ -8,6 +8,9 @@ set -euo pipefail
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
 
+# shellcheck source=scripts/lib/android-java.sh
+source "$repository_root/scripts/lib/android-java.sh"
+
 android_sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 build_tools_version="${OXID_ANDROID_BUILD_TOOLS_VERSION:-35.0.0}"
 ndk_version="${OXID_ANDROID_NDK_VERSION:-27.0.12077973}"
@@ -52,6 +55,8 @@ source_worktree_is_clean \
 head="$(git rev-parse HEAD)"
 tree="$(git rev-parse 'HEAD^{tree}')"
 
+oxid_android_select_java
+
 # A failed rerun must not leave a previous candidate or receipt looking current.
 # These are private, ignored outputs owned exclusively by this command.
 mkdir -p "$artifact_directory"
@@ -93,11 +98,9 @@ nixpkgs_revision="$(nix flake metadata --json | jq -er '.locks.nodes.root.inputs
 rust_toolchain_bin="$(dirname -- "$(rustup which cargo)")"
 rustc_version="$("$rust_toolchain_bin/rustc" --version)"
 cargo_version="$("$rust_toolchain_bin/cargo" --version)"
-java_command="$(command -v java)"
-java_home="$("$java_command" -XshowSettings:properties -version 2>&1 | awk -F= '$1 ~ /^[[:space:]]*java.home[[:space:]]*$/ { value=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); print value; exit }')"
-[ -n "$java_home" ] && [ -x "$java_home/bin/java" ] \
-  || fail "could not resolve the Java home used for the Gradle build"
+java_home="$JAVA_HOME"
 java_version="$("$java_home/bin/java" -version 2>&1 | head -n 1)"
+java_major="$OXID_ANDROID_JAVA_MAJOR"
 
 rustup target add aarch64-linux-android
 dioxus_output="$(nix build .#dioxus-cli --no-link --print-out-paths)"
@@ -175,7 +178,7 @@ jq -n \
   --arg head "$head" --arg tree "$tree" \
   --arg artifactSha256 "$artifact_sha256" --argjson artifactBytes "$artifact_bytes" \
   --arg nix "$nix_version" --arg nixpkgsRevision "$nixpkgs_revision" \
-  --arg rustc "$rustc_version" --arg cargo "$cargo_version" --arg java "$java_version" --arg gradle "$gradle_version" \
+  --arg rustc "$rustc_version" --arg cargo "$cargo_version" --arg java "$java_version" --arg javaMajor "$java_major" --arg gradle "$gradle_version" \
   --arg applicationCompileSdk "$application_compile_sdk" --arg applicationSdkPlatformRevision "$application_sdk_platform_revision" \
   --arg pluginCompileSdk "$plugin_compile_sdk" --arg pluginSdkPlatformRevision "$plugin_sdk_platform_revision" \
   --arg inspectionBuildTools "$build_tools_version" --arg ndk "$ndk_version" \
@@ -184,7 +187,7 @@ jq -n \
   --arg apkMinSdk "$apk_min_sdk" --arg apkTargetSdk "$apk_target_sdk" \
   --arg linkerFlags "$linker_flags" --arg rustProfile "android-release" \
   --arg gradleVariant "debug" --arg signing "generated-debug" \
-  '{schema:"oxid-android-release-candidate-receipt-v1",source:{head:$head,tree:$tree},artifact:{name:"oxid-app-arm64-v8a-release.apk",sha256:$artifactSha256,bytes:$artifactBytes,abis:$apkAbis},tools:{nix:$nix,nixpkgsRevision:$nixpkgsRevision,rustc:$rustc,cargo:$cargo,java:$java,gradle:$gradle,android:{platforms:{application:{api:$applicationCompileSdk,revision:$applicationSdkPlatformRevision},nativePlugin:{api:$pluginCompileSdk,revision:$pluginSdkPlatformRevision}},inspectionBuildTools:$inspectionBuildTools,ndk:$ndk}},apk:{package:$apkPackage,abis:$apkAbis,compileSdk:$apkCompileSdk,minSdk:$apkMinSdk,targetSdk:$apkTargetSdk},build:{dioxus:{release:true,rustProfile:$rustProfile},androidWrapper:{gradleVariant:$gradleVariant,signing:$signing,androidGradlePlugin:$androidGradlePlugin,buildToolsSelection:$packagingBuildToolsSelection},linkerFlags:$linkerFlags},checks:{androidVerify16k:"pass",zipalignPage16k:"pass",apkBadging:"pass"}}' \
+  '{schema:"oxid-android-release-candidate-receipt-v1",source:{head:$head,tree:$tree},artifact:{name:"oxid-app-arm64-v8a-release.apk",sha256:$artifactSha256,bytes:$artifactBytes,abis:$apkAbis},tools:{nix:$nix,nixpkgsRevision:$nixpkgsRevision,rustc:$rustc,cargo:$cargo,java:$java,javaMajor:$javaMajor,gradle:$gradle,android:{platforms:{application:{api:$applicationCompileSdk,revision:$applicationSdkPlatformRevision},nativePlugin:{api:$pluginCompileSdk,revision:$pluginSdkPlatformRevision}},inspectionBuildTools:$inspectionBuildTools,ndk:$ndk}},apk:{package:$apkPackage,abis:$apkAbis,compileSdk:$apkCompileSdk,minSdk:$apkMinSdk,targetSdk:$apkTargetSdk},build:{dioxus:{release:true,rustProfile:$rustProfile},androidWrapper:{gradleVariant:$gradleVariant,signing:$signing,androidGradlePlugin:$androidGradlePlugin,buildToolsSelection:$packagingBuildToolsSelection},linkerFlags:$linkerFlags},checks:{androidVerify16k:"pass",zipalignPage16k:"pass",apkBadging:"pass"}}' \
   >"$receipt.tmp"
 chmod 600 "$receipt.tmp"
 mv "$receipt.tmp" "$receipt"

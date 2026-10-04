@@ -3,6 +3,8 @@
 
 set -euo pipefail
 
+repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
 operation="${1:-${OXID_TARGET_OPERATION:-run}}"
 requested_operation="$operation"
 case "$operation" in
@@ -33,6 +35,12 @@ if [ -n "$prebuilt_apk" ] && [ "$operation" != "deploy" ]; then
   exit 1
 fi
 
+if [ "$operation" != "deploy" ]; then
+  # shellcheck source=scripts/lib/android-java.sh
+  source "$repository_root/scripts/lib/android-java.sh"
+  oxid_android_select_java
+fi
+
 required_commands=(node)
 if [ "${OXID_STANDALONE_NETWORK_PROFILE:-simulated}" = "tailnet" ]; then
   required_commands+=(shasum)
@@ -50,7 +58,6 @@ for command_name in "${required_commands[@]}"; do
   fi
 done
 
-repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 origin_policy="$repository_root/scripts/e2e/tailnet-origin-policy.mjs"
 cd "$repository_root"
 
@@ -648,6 +655,7 @@ elif [ "$operation" != "deploy" ]; then
   ANDROID_HOME="$android_sdk" \
   ANDROID_SDK_ROOT="$android_sdk" \
   ANDROID_NDK_HOME="$android_ndk" \
+  JAVA_HOME="$JAVA_HOME" \
   OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$portal_manifest_path" \
   OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$portal_manifest_sha256" \
   OXID_BUILD_PORTAL_PROFILE_AUTHORITY_PATH="$portal_profile_authority_path" \
@@ -657,7 +665,7 @@ elif [ "$operation" != "deploy" ]; then
   RUSTFLAGS="$android_rustflags" \
   GRADLE_OPTS="-Dorg.gradle.daemon=false" \
   KOTLIN_COMPILER_EXECUTION_STRATEGY=in-process \
-  PATH="$rust_toolchain_bin:$android_sdk/platform-tools:/usr/bin:$PATH" \
+  PATH="$rust_toolchain_bin:$JAVA_HOME/bin:$android_sdk/platform-tools:/usr/bin:$PATH" \
     "$dioxus_cli" build \
       --android \
       --package oxid-app \
@@ -671,7 +679,8 @@ elif [ "$operation" != "deploy" ]; then
     exit 1
   fi
   python3 "$repository_root/scripts/package-mobile-icons.py" android "$android_project"
-  ANDROID_HOME="$android_sdk" ANDROID_SDK_ROOT="$android_sdk" \
+  ANDROID_HOME="$android_sdk" ANDROID_SDK_ROOT="$android_sdk" JAVA_HOME="$JAVA_HOME" \
+    PATH="$JAVA_HOME/bin:$PATH" \
     "$android_project/gradlew" --project-dir "$android_project" --no-daemon :app:assembleDebug
   # Reject an unloadable Rust library before writing a receipt, installing the
   # APK, or spending emulator time. This also records the bounded ELF/hash
