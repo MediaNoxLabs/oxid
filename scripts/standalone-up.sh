@@ -11,7 +11,10 @@ for required_command in docker openssl jq curl; do
 done
 
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-state_directory="${OXID_STANDALONE_STATE_DIR:-${TMPDIR:-/tmp}/oxid-standalone}"
+# shellcheck source=lib/standalone-compose-ownership.sh
+source "$repository_root/scripts/lib/standalone-compose-ownership.sh"
+temporary_root="${TMPDIR:-/tmp}"
+state_directory="${OXID_STANDALONE_STATE_DIR:-${temporary_root%/}/oxid-standalone}"
 environment_file="$state_directory/canonical-indexer.env"
 serve_marker="$state_directory/tailscale-serve-owned"
 source_compose_file="$repository_root/scripts/standalone-stack.yml"
@@ -69,7 +72,16 @@ trap release_startup_lease EXIT
 current_ids="$(docker ps -a --filter label=com.docker.compose.project=oxid-standalone --format '{{.ID}}' | sort | jq -Rsc 'split("\n") | map(select(length > 0))')"
 current_count="$(jq -r 'length' <<<"$current_ids")"
 if [ "$current_count" -eq 3 ]; then
-  if [ ! -f "$compose_file" ] || [ ! -f "$owner_receipt" ] || ! jq -e \
+  if [ ! -f "$compose_file" ] || [ ! -f "$owner_receipt" ]; then
+    echo "Standalone resources exist without a matching canonical owner receipt; preserving them." >&2
+    exit 1
+  fi
+  if ! oxid_validate_standalone_compose_ownership \
+    "$compose_file" "$(dirname -- "$compose_file")" "$current_ids"; then
+    echo "Standalone resources have mixed or foreign Compose ownership; preserving them." >&2
+    exit 1
+  fi
+  if ! jq -e \
     --arg compose "$(shasum -a 256 "$compose_file" | awk '{print $1}')" \
     --argjson containers "$current_ids" \
     '.schema == "oxid-standalone-owner-v1"
@@ -110,6 +122,11 @@ elif [ "$current_count" -eq 0 ]; then
     echo "Standalone startup did not produce exactly three containers; preserving state for diagnosis." >&2
     exit 1
   }
+  if ! oxid_validate_standalone_compose_ownership \
+    "$compose_file" "$(dirname -- "$compose_file")" "$container_ids"; then
+    echo "Standalone startup produced mixed or foreign Compose ownership; preserving resources for diagnosis." >&2
+    exit 1
+  fi
   jq -cn --arg session "$session_id" \
     --arg compose "$(shasum -a 256 "$compose_file" | awk '{print $1}')" \
     --argjson containers "$container_ids" \

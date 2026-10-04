@@ -57,7 +57,8 @@ test("standalone lifecycle uses checkout-independent canonical state with an ato
     text("scripts/standalone-status.sh"),
   ]);
   for (const source of [up, down, status]) {
-    assert.match(source, /OXID_STANDALONE_STATE_DIR:-\$\{TMPDIR:-\/tmp\}\/oxid-standalone/);
+    assert.match(source, /temporary_root="\$\{TMPDIR:-\/tmp\}"/);
+    assert.match(source, /OXID_STANDALONE_STATE_DIR:-\$\{temporary_root%\/\}\/oxid-standalone/);
   }
   assert.match(up, /scripts\/standalone-stack\.yml/);
   assert.match(up, /mkdir "\$lease_directory"/);
@@ -108,11 +109,17 @@ test("two worktrees serialize startup, reuse without Compose mutation, and prese
       mkdir(fakeBin, { recursive: true }),
       mkdir(join(worktreeA, "scripts"), { recursive: true }),
       mkdir(join(worktreeB, "scripts"), { recursive: true }),
+      mkdir(join(worktreeA, "scripts", "lib"), { recursive: true }),
+      mkdir(join(worktreeB, "scripts", "lib"), { recursive: true }),
     ]);
     for (const worktree of [worktreeA, worktreeB]) {
       for (const file of ["standalone-up.sh", "standalone-down.sh", "standalone-stack.yml"]) {
         await copyFile(new URL(`../../scripts/${file}`, import.meta.url), join(worktree, "scripts", file));
       }
+      await copyFile(
+        new URL("../../scripts/lib/standalone-compose-ownership.sh", import.meta.url),
+        join(worktree, "scripts", "lib", "standalone-compose-ownership.sh"),
+      );
       await chmod(join(worktree, "scripts", "standalone-up.sh"), 0o755);
       await chmod(join(worktree, "scripts", "standalone-down.sh"), 0o755);
     }
@@ -129,6 +136,21 @@ esac
 printf '%s\\n' "$*" >>"$FAKE_DOCKER_LEDGER"
 case "\${1:-}" in
   info) exit 0 ;;
+  inspect)
+    case "\${4:-}" in
+      indexer-id) service=indexer ;;
+      node-id) service=node ;;
+      prover-id) service=proof-server ;;
+      *) exit 1 ;;
+    esac
+    case "\${3:-}" in
+      *compose.service*) printf '%s\n' "$service" ;;
+      *project.config_files*) printf '%s/canonical-compose.yml\n' "$OXID_STANDALONE_STATE_DIR" ;;
+      *project.working_dir*) printf '%s\n' "$OXID_STANDALONE_STATE_DIR" ;;
+      *compose.project*) printf 'oxid-standalone\n' ;;
+      *) exit 1 ;;
+    esac
+    ;;
   ps)
     if [ -f "$FAKE_DOCKER_STATE" ]; then printf 'node-id\\nindexer-id\\nprover-id\\n'; fi
     ;;

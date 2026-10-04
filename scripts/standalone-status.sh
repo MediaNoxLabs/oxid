@@ -3,7 +3,8 @@
 
 set -euo pipefail
 
-state_directory="${OXID_STANDALONE_STATE_DIR:-${TMPDIR:-/tmp}/oxid-standalone}"
+temporary_root="${TMPDIR:-/tmp}"
+state_directory="${OXID_STANDALONE_STATE_DIR:-${temporary_root%/}/oxid-standalone}"
 compose_file="$state_directory/canonical-compose.yml"
 mode="${1:-local}"
 case "$mode" in
