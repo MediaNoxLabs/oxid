@@ -75,6 +75,12 @@ fn authorize_portal_profile() {
     {
         panic!("standalone-portal is incompatible with tailnet and native custody");
     }
+    if profile == portal_profile_authority::PortalProfile::Local
+        && !env::var("CARGO_CFG_TARGET_OS")
+            .is_ok_and(|target| matches!(target.as_str(), "ios" | "android"))
+    {
+        panic!("standalone-portal is available only on iOS and Android");
+    }
 
     let path = PathBuf::from(env::var_os(PORTAL_PROFILE_AUTHORITY_PATH_ENV).unwrap_or_else(|| {
         panic!("standalone Portal requires repository virtual-device profile authority via {PORTAL_PROFILE_AUTHORITY_PATH_ENV}")

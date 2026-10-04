@@ -1338,9 +1338,9 @@ fn runtime_cleanup_retains_private_diagnostics_during_unwind() {
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&root);
+    let _test_cleanup = TestDiagnosticsCleanup(root.clone());
     fs::create_dir_all(&root).expect("private test root");
     fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).expect("owner-private test root");
-    let _test_cleanup = TestDiagnosticsCleanup(root.clone());
     let result = std::panic::catch_unwind({
         let root = root.clone();
         move || {
