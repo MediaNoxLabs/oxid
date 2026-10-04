@@ -136,8 +136,23 @@ jq -e '
 ' "$baseline" >/dev/null || fail "baseline schema is invalid."
 
 comparison_revision="HEAD"
-if upstream="$(git -C "$repository_root" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)"; then
-  comparison_revision="$(git -C "$repository_root" merge-base HEAD "$upstream")" || fail "could not resolve the capability façade comparison revision."
+# Compare with a protected delivery branch, never the issue branch's upstream.
+# The latter points at this same commit after push and silently forgives a rise.
+while IFS= read -r delivery_ref; do
+  candidate="$(git -C "$repository_root" merge-base HEAD "$delivery_ref")" ||
+    fail "could not resolve the capability façade comparison revision."
+  if [ "$comparison_revision" = HEAD ]; then
+    comparison_revision="$candidate"
+  elif git -C "$repository_root" merge-base --is-ancestor "$comparison_revision" "$candidate"; then
+    comparison_revision="$candidate"
+  elif ! git -C "$repository_root" merge-base --is-ancestor "$candidate" "$comparison_revision"; then
+    fail "protected delivery branches have ambiguous façade comparison revisions."
+  fi
+done < <(git -C "$repository_root" for-each-ref --format='%(refname)' refs/remotes/origin/develop 'refs/remotes/origin/milestone-*')
+if [ "$comparison_revision" != HEAD ] &&
+  [ "$comparison_revision" = "$(git -C "$repository_root" rev-parse HEAD)" ] &&
+  git -C "$repository_root" rev-parse -q --verify 'HEAD^' >/dev/null; then
+  comparison_revision="HEAD^"
 fi
 if git -C "$repository_root" cat-file -e "$comparison_revision:$baseline_path" 2>/dev/null; then
   git -C "$repository_root" show "$comparison_revision:$baseline_path" >"$prior_baseline" || fail "could not read the prior capability façade baseline."
@@ -296,7 +311,7 @@ while IFS= read -r crate; do
 
   jq -e 'all(.temporaryExceptions[];
     keys == ["expiresOn", "extraLineCeiling", "issue", "paths", "reason"] and
-    (.paths | type == "array" and length > 0) and
+    (.paths | type == "array" and length == 1) and
     all(.paths[]; type == "string" and length > 0) and
     (.extraLineCeiling | type == "number" and floor == . and . > 0) and
     (.issue | type == "string" and length > 0) and
@@ -328,6 +343,7 @@ while IFS= read -r crate; do
     done <"$exception_paths"
     ceiling="$(jq -r '.extraLineCeiling' "$exception_file")"
     [ "$exception_excess" -le "$ceiling" ] || fail "$name temporary exception needs $exception_excess extra lines across its exact paths; ceiling is $ceiling."
+    [ "$exception_excess" -eq "$ceiling" ] || fail "$name temporary exception has stale headroom: $exception_excess extra lines, ceiling $ceiling."
     exception_ceiling=$((exception_ceiling + ceiling))
   done <"$exception_records"
 
@@ -338,6 +354,7 @@ while IFS= read -r crate; do
     if ! jq -e --arg path "$facade" '[.temporaryExceptions[].paths[]] | index($path) != null' "$crate_file" >/dev/null; then
       path_maximum="$(jq -r --arg path "$facade" '.facadeMaximumPhysicalLinesByPath[$path]' "$crate_file")"
       [ "$lines" -le "$path_maximum" ] || fail "$name façade '$facade' has $lines lines; path maximum is $path_maximum."
+      [ "$lines" -ge "$path_maximum" ] || fail "$name façade '$facade' has $lines lines below path maximum $path_maximum; lower the ratchet."
     fi
   done <"$facade_files"
   allowed_total=$((maximum + exception_ceiling))
