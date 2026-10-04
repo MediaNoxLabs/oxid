@@ -113,9 +113,9 @@
       "facadeFiles": [
         "crates/ui-dioxus/src/lib.rs"
       ],
-      "facadeMaximumPhysicalLines": 12950,
+      "facadeMaximumPhysicalLines": 12263,
       "facadeMaximumPhysicalLinesByPath": {
-        "crates/ui-dioxus/src/lib.rs": 12950
+        "crates/ui-dioxus/src/lib.rs": 12263
       },
       "capabilityOwners": [
         {
@@ -263,7 +263,17 @@
         }
       ],
       "exclusions": [],
-      "temporaryExceptions": []
+      "temporaryExceptions": [
+        {
+          "paths": [
+            "crates/ui-dioxus/src/lib.rs"
+          ],
+          "extraLineCeiling": 640,
+          "issue": "#757",
+          "reason": "Preserves the verified post-decomposition ratchet while the remaining excess is removed.",
+          "expiresOn": "2027-01-31"
+        }
+      ]
     },
     {
       "name": "oxid-composition",
@@ -271,9 +281,9 @@
       "facadeFiles": [
         "crates/composition/src/lib.rs"
       ],
-      "facadeMaximumPhysicalLines": 55,
+      "facadeMaximumPhysicalLines": 53,
       "facadeMaximumPhysicalLinesByPath": {
-        "crates/composition/src/lib.rs": 55
+        "crates/composition/src/lib.rs": 53
       },
       "capabilityOwners": [
         {

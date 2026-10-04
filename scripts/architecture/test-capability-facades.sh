@@ -96,6 +96,56 @@ printf 'one\ntwo\nthree' >"$unterminated_over_limit_repo/fixture/src/lib.rs"
 git -C "$unterminated_over_limit_repo" add fixture/src/lib.rs
 expect_failure "$unterminated_over_limit_repo" "façade 'fixture/src/lib.rs' has 3 lines; path maximum is 2"
 
+stale_headroom_repo="$fixture_root/stale-headroom"
+init_fixture "$stale_headroom_repo"
+jq '
+  .crates[0].facadeMaximumPhysicalLines = 5 |
+  .crates[0].facadeMaximumPhysicalLinesByPath["fixture/src/lib.rs"] = 3
+' "$stale_headroom_repo/scripts/architecture/capability-facades.json" >"$stale_headroom_repo/baseline.json"
+mv "$stale_headroom_repo/baseline.json" "$stale_headroom_repo/scripts/architecture/capability-facades.json"
+git -C "$stale_headroom_repo" add scripts/architecture/capability-facades.json
+expect_failure "$stale_headroom_repo" "façade 'fixture/src/lib.rs' has 2 lines below path maximum 3; lower the ratchet"
+
+baseline_rise_repo="$fixture_root/baseline-rise"
+init_fixture "$baseline_rise_repo"
+git -C "$baseline_rise_repo" -c user.name=fixture -c user.email=fixture@example.test commit -qm baseline
+prior_head="$(git -C "$baseline_rise_repo" rev-parse HEAD)"
+printf 'one\ntwo\nthree\n' >"$baseline_rise_repo/fixture/src/lib.rs"
+jq '
+  .crates[0].facadeMaximumPhysicalLines = 5 |
+  .crates[0].facadeMaximumPhysicalLinesByPath["fixture/src/lib.rs"] = 3
+' "$baseline_rise_repo/scripts/architecture/capability-facades.json" >"$baseline_rise_repo/baseline.json"
+mv "$baseline_rise_repo/baseline.json" "$baseline_rise_repo/scripts/architecture/capability-facades.json"
+git -C "$baseline_rise_repo" add fixture/src/lib.rs scripts/architecture/capability-facades.json
+git -C "$baseline_rise_repo" -c user.name=fixture -c user.email=fixture@example.test commit -qm raised-ceiling
+git -C "$baseline_rise_repo" remote add origin "$baseline_rise_repo"
+git -C "$baseline_rise_repo" update-ref refs/remotes/origin/milestone-0.2.0 "$prior_head"
+git -C "$baseline_rise_repo" update-ref refs/remotes/origin/fix/issue-757 "$(git -C "$baseline_rise_repo" rev-parse HEAD)"
+git -C "$baseline_rise_repo" branch --set-upstream-to=origin/fix/issue-757 >/dev/null
+expect_failure "$baseline_rise_repo" "a façade maximum increased from the comparison revision; use a temporary exception instead of raising the ratchet"
+
+missing_protected_ref_repo="$fixture_root/missing-protected-ref"
+init_fixture "$missing_protected_ref_repo"
+if output="$(GITHUB_BASE_REF=milestone-0.2.0 run_checker "$missing_protected_ref_repo" 2>&1)"; then
+  echo "Expected pull-request checker to reject an unavailable protected base ref." >&2
+  exit 1
+fi
+[[ "$output" == *"protected delivery ref 'refs/remotes/origin/milestone-0.2.0' is unavailable"* ]] || {
+  echo "Pull-request checker rejected missing protected ref for an unexpected reason: $output" >&2
+  exit 1
+}
+
+stale_exception_repo="$fixture_root/stale-exception"
+init_fixture "$stale_exception_repo"
+jq '
+  .crates[0].facadeMaximumPhysicalLines = 3 |
+  .crates[0].facadeMaximumPhysicalLinesByPath["fixture/src/lib.rs"] = 1 |
+  .crates[0].temporaryExceptions = [{"paths": ["fixture/src/lib.rs"], "extraLineCeiling": 2, "issue": "#757", "reason": "fixture", "expiresOn": "2099-12-31"}]
+' "$stale_exception_repo/scripts/architecture/capability-facades.json" >"$stale_exception_repo/baseline.json"
+mv "$stale_exception_repo/baseline.json" "$stale_exception_repo/scripts/architecture/capability-facades.json"
+git -C "$stale_exception_repo" add scripts/architecture/capability-facades.json
+expect_failure "$stale_exception_repo" "temporary exception has stale headroom: 1 extra lines, ceiling 2"
+
 empty_source_repo="$fixture_root/empty-source"
 init_fixture "$empty_source_repo"
 rm -rf "$empty_source_repo/fixture/src"
@@ -114,8 +164,9 @@ expect_failure "$expired_repo" "expired temporary exception ending '2026-01-01'"
 
 path_scoped_repo="$fixture_root/path-scoped"
 init_fixture "$path_scoped_repo" "$fixtures/path-scoped-exception.json"
+printf 'one\ntwo\nthree\n' >"$path_scoped_repo/fixture/src/lib.rs"
 printf 'one\ntwo\nthree\n' >"$path_scoped_repo/fixture/src/shell.rs"
-git -C "$path_scoped_repo" add fixture/src/shell.rs
+git -C "$path_scoped_repo" add fixture/src/lib.rs fixture/src/shell.rs
 expect_failure "$path_scoped_repo" "façade 'fixture/src/shell.rs' has 3 lines; path maximum is 2"
 
 tracked_symlink_repo="$fixture_root/tracked-symlink"

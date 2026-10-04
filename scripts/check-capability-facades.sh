@@ -24,6 +24,7 @@ today="$(date -u +%F)"
 temporary_directory="$(mktemp -d)"
 trap 'rm -rf "$temporary_directory"' EXIT
 baseline="$temporary_directory/capability-facades.json"
+prior_baseline="$temporary_directory/prior-capability-facades.json"
 baseline_entries="$temporary_directory/baseline-index-entry"
 source_roots_file="$temporary_directory/source-roots"
 crates_file="$temporary_directory/crates"
@@ -133,6 +134,51 @@ jq -e '
     (.temporaryExceptions | type == "array")
   ))
 ' "$baseline" >/dev/null || fail "baseline schema is invalid."
+
+comparison_revision="HEAD"
+# Pull-request CI must have the protected base ref. A shallow checkout that
+# lacks it cannot prove that the ceiling has not risen.
+if [ -n "${GITHUB_BASE_REF:-}" ]; then
+  if [[ "$GITHUB_BASE_REF" != develop && ! "$GITHUB_BASE_REF" =~ ^milestone-[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    fail "unsupported protected delivery ref '$GITHUB_BASE_REF'."
+  fi
+  delivery_ref="refs/remotes/origin/$GITHUB_BASE_REF"
+  git -C "$repository_root" show-ref --verify --quiet "$delivery_ref" ||
+    fail "protected delivery ref '$delivery_ref' is unavailable; fetch full history before checking façade ratchets."
+  comparison_revision="$(git -C "$repository_root" merge-base HEAD "$delivery_ref")" ||
+    fail "could not resolve the capability façade comparison revision."
+fi
+# Compare with a protected delivery branch, never the issue branch's upstream.
+# The latter points at this same commit after push and silently forgives a rise.
+while [ -z "${GITHUB_BASE_REF:-}" ] && IFS= read -r delivery_ref; do
+  candidate="$(git -C "$repository_root" merge-base HEAD "$delivery_ref")" ||
+    fail "could not resolve the capability façade comparison revision."
+  if [ "$comparison_revision" = HEAD ]; then
+    comparison_revision="$candidate"
+  elif git -C "$repository_root" merge-base --is-ancestor "$comparison_revision" "$candidate"; then
+    comparison_revision="$candidate"
+  elif ! git -C "$repository_root" merge-base --is-ancestor "$candidate" "$comparison_revision"; then
+    fail "protected delivery branches have ambiguous façade comparison revisions."
+  fi
+done < <(git -C "$repository_root" for-each-ref --format='%(refname)' refs/remotes/origin/develop 'refs/remotes/origin/milestone-*')
+if [ "$comparison_revision" != HEAD ] &&
+  [ "$comparison_revision" = "$(git -C "$repository_root" rev-parse HEAD)" ] &&
+  git -C "$repository_root" rev-parse -q --verify 'HEAD^' >/dev/null; then
+  comparison_revision="HEAD^"
+fi
+if git -C "$repository_root" cat-file -e "$comparison_revision:$baseline_path" 2>/dev/null; then
+  git -C "$repository_root" show "$comparison_revision:$baseline_path" >"$prior_baseline" || fail "could not read the prior capability façade baseline."
+  jq -e '
+    . as $current |
+    input as $prior |
+    [ $current.crates[] as $crate |
+      $prior.crates[]? | select(.name == $crate.name) as $previous |
+      $crate.facadeMaximumPhysicalLinesByPath | to_entries[] as $ceiling |
+      select($ceiling.value > $previous.facadeMaximumPhysicalLinesByPath[$ceiling.key])
+    ] | length == 0
+  ' "$baseline" "$prior_baseline" >/dev/null ||
+    fail "a façade maximum increased from the comparison revision; use a temporary exception instead of raising the ratchet."
+fi
 
 jq -r '.crates[].sourceRoot' "$baseline" >"$source_roots_file"
 source_roots=()
@@ -277,7 +323,7 @@ while IFS= read -r crate; do
 
   jq -e 'all(.temporaryExceptions[];
     keys == ["expiresOn", "extraLineCeiling", "issue", "paths", "reason"] and
-    (.paths | type == "array" and length > 0) and
+    (.paths | type == "array" and length == 1) and
     all(.paths[]; type == "string" and length > 0) and
     (.extraLineCeiling | type == "number" and floor == . and . > 0) and
     (.issue | type == "string" and length > 0) and
@@ -309,6 +355,7 @@ while IFS= read -r crate; do
     done <"$exception_paths"
     ceiling="$(jq -r '.extraLineCeiling' "$exception_file")"
     [ "$exception_excess" -le "$ceiling" ] || fail "$name temporary exception needs $exception_excess extra lines across its exact paths; ceiling is $ceiling."
+    [ "$exception_excess" -eq "$ceiling" ] || fail "$name temporary exception has stale headroom: $exception_excess extra lines, ceiling $ceiling."
     exception_ceiling=$((exception_ceiling + ceiling))
   done <"$exception_records"
 
@@ -319,10 +366,12 @@ while IFS= read -r crate; do
     if ! jq -e --arg path "$facade" '[.temporaryExceptions[].paths[]] | index($path) != null' "$crate_file" >/dev/null; then
       path_maximum="$(jq -r --arg path "$facade" '.facadeMaximumPhysicalLinesByPath[$path]' "$crate_file")"
       [ "$lines" -le "$path_maximum" ] || fail "$name façade '$facade' has $lines lines; path maximum is $path_maximum."
+      [ "$lines" -ge "$path_maximum" ] || fail "$name façade '$facade' has $lines lines below path maximum $path_maximum; lower the ratchet."
     fi
   done <"$facade_files"
   allowed_total=$((maximum + exception_ceiling))
   [ "$facade_total" -le "$allowed_total" ] || fail "$name façade total $facade_total exceeds its allowed maximum $allowed_total."
+  [ "$facade_total" -ge "$maximum" ] || fail "$name façade total $facade_total is below its committed maximum $maximum; lower the ratchet in the same change."
 
   while IFS=$'\t' read -r encoded_path lines; do
     path="$(decode_path "$encoded_path")"
