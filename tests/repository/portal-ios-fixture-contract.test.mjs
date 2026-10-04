@@ -73,6 +73,7 @@ test("Portal acceptance uses only named development authority and bounded cleanu
     /docker inspect --format '[^']*com\.docker\.compose\.project/u,
   );
   assert.match(lifecycle, /docker rm --force "\$id"/u);
+  assert.match(lifecycle, /\^\[0-9a-f\]\{12,64\}\$/u);
   assert.match(lifecycle, /for attempt in 1 2/u);
   assert.match(liveFlow, /if !thread::panicking\(\)/u);
   assert.match(liveFlow, /remove_dir_all\(&self\.0\)/u);

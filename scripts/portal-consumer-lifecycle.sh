@@ -166,7 +166,9 @@ compose_bounded() {
 force_remove_owned_project() {
   local attempt id removed resource
   for id in $(project_ids); do
-    [[ "$id" =~ ^[0-9a-f]{64}$ ]] || return 1
+    # `docker ps --quiet` emits the exact project-filtered short ID by default.
+    # Revalidate its project label before using it as a destructive target.
+    [[ "$id" =~ ^[0-9a-f]{12,64}$ ]] || return 1
     [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$id" 2>/dev/null)" = "$PROJECT" ] || return 1
   done
   for id in $(project_ids); do
