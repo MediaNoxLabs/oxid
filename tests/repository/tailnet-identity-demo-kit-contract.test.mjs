@@ -50,16 +50,21 @@ test("standalone status is read-only and checks local plus Tailnet readiness", a
   assert.doesNotMatch(status, /\b(up|down|start|stop|reset|rm)\b/);
 });
 
-test("standalone lifecycle uses checkout-independent canonical state with an atomic verified lease", async () => {
-  const [up, down, status] = await Promise.all([
+test("standalone lifecycle uses durable Git-common state with an atomic verified lease", async () => {
+  const [up, down, status, state] = await Promise.all([
     text("scripts/standalone-up.sh"),
     text("scripts/standalone-down.sh"),
     text("scripts/standalone-status.sh"),
+    text("scripts/lib/standalone-state.sh"),
   ]);
   for (const source of [up, down, status]) {
-    assert.match(source, /temporary_root="\$\{TMPDIR:-\/tmp\}"/);
-    assert.match(source, /OXID_STANDALONE_STATE_DIR:-\$\{temporary_root%\/\}\/oxid-standalone/);
+    assert.match(source, /oxid_standalone_state_directory/);
+    assert.doesNotMatch(source, /TMPDIR/);
   }
+  assert.match(state, /git -C "\$repository_root" rev-parse --path-format=absolute --git-common-dir/);
+  assert.match(state, /\$\{git_common_directory%\/\}\/oxid\/standalone/);
+  assert.match(state, /OXID_STANDALONE_STATE_DIR/);
+  assert.match(state, /must be a real directory, not a symlink/);
   assert.match(up, /scripts\/standalone-stack\.yml/);
   assert.match(up, /mkdir "\$lease_directory"/);
   assert.match(up, /oxid-standalone-lease-v1/);
@@ -119,6 +124,10 @@ test("two worktrees serialize startup, reuse without Compose mutation, and prese
       await copyFile(
         new URL("../../scripts/lib/standalone-compose-ownership.sh", import.meta.url),
         join(worktree, "scripts", "lib", "standalone-compose-ownership.sh"),
+      );
+      await copyFile(
+        new URL("../../scripts/lib/standalone-state.sh", import.meta.url),
+        join(worktree, "scripts", "lib", "standalone-state.sh"),
       );
       await chmod(join(worktree, "scripts", "standalone-up.sh"), 0o755);
       await chmod(join(worktree, "scripts", "standalone-down.sh"), 0o755);
