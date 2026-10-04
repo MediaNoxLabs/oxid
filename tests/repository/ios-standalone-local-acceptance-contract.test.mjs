@@ -31,6 +31,10 @@ test("standalone iOS acceptance owns and cleans every mutated runtime resource",
   assert.match(script, /OXID_STANDALONE_STATE_DIR="\$STACK_STATE"/u);
   assert.match(script, /standalone-down\.sh/u);
   assert.match(script, /stop_faucet/u);
+  assert.match(
+    script,
+    /cargo build --locked -p oxid-headless --features standalone-faucet[\s\S]*--bin oxid-standalone-faucet-http/u,
+  );
   assert.match(script, /receiptOwnedSimulator:true/u);
   assert.match(script, /receiptOwnedStandaloneStack:true/u);
   assert.match(script, /privateDiagnosticsRemoved:true/u);
@@ -38,6 +42,9 @@ test("standalone iOS acceptance owns and cleans every mutated runtime resource",
   assert.match(script, /fixedGrantNight:50000/u);
   assert.match(script, /SimRuntime\.iOS-17-5/u);
   assert.match(script, /SimDeviceType\.iPhone-SE-3rd-generation/u);
+  assert.match(script, /exec nix develop --command "\$0" "\$@"/u);
+  assert.doesNotMatch(script, /command_name in [^\n]* timeout/u);
+  assert.match(script, /mkdir -p -- "\$ROOT\/target" \|\| fail target-directory/u);
   assert.doesNotMatch(script, /simctl list devices booted/u);
 
   assert.match(swift, /requestFixedGrant\(for: address\)/u);
