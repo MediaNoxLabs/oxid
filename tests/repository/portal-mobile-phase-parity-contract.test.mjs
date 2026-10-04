@@ -16,8 +16,15 @@ test("virtual mobile lanes discover capability and publish truthful state", asyn
   assert.match(ios, /oxid_ios_discover_developer_directory/u);
   assert.match(ios, /oxid_ios_resolve_selectors/u);
   assert.match(ios, /readonly PORTAL_ACCEPTANCE_TIMEOUT_SECONDS=9000/u);
-  assert.match(ios, /oxid_ios_supervise_acceptance "\$ROOT" ios-portal-exact-sequence "\$PORTAL_ACCEPTANCE_TIMEOUT_SECONDS"/u);
+  assert.match(
+    ios,
+    /oxid_ios_supervise_acceptance "\$ROOT" ios-portal-exact-sequence "\$PORTAL_ACCEPTANCE_TIMEOUT_SECONDS"/u,
+  );
   assert.match(ios, /oxid_ios_run_xctest "\$ROOT" "\$scenario_name" "\$XCTEST_SCENARIO_TIMEOUT_SECONDS"/u);
+  assert.match(
+    ios,
+    /export OXID_SKIP_PI_PROVISION=1[\s\S]*exec nix develop "\$ROOT" --command env \\\n    OXID_IOS_ACCEPTANCE_IN_NIX=1 "\$0" "\$@"/u,
+  );
   assert.match(android, /oxid_android_discover_avd/u);
   for (const harness of [ios, android]) {
     assert.match(

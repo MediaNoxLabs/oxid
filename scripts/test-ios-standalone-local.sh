@@ -12,6 +12,7 @@ readonly RUN_ROOT="$ROOT/target/ios-standalone-local-acceptance"
 readonly PRIVATE_STATE="$RUN_ROOT/private"
 readonly RECEIPT="$PRIVATE_STATE/simulator-receipt.json"
 readonly STACK_STATE="$PRIVATE_STATE/standalone-stack"
+readonly FAUCET_BUILD_LOG="$PRIVATE_STATE/faucet-build.log"
 readonly FAUCET_LOG="$PRIVATE_STATE/faucet.log"
 readonly EVIDENCE="$RUN_ROOT/evidence.json"
 readonly APP_BUNDLE="$ROOT/target/dx/oxid-app/debug/ios/OxidApp.app"
@@ -74,16 +75,16 @@ if ! command -v nix >/dev/null 2>&1 \
   && [ -x /nix/var/nix/profiles/default/bin/nix ]; then
   export PATH="/nix/var/nix/profiles/default/bin:$PATH"
 fi
-for command_name in curl docker git jq nix node python3 rustup shasum timeout; do
+for command_name in cargo curl docker git jq nix node python3 rustup shasum; do
   command -v "$command_name" >/dev/null 2>&1 || fail "missing-tool-$command_name"
 done
-if ! python3 -c 'from PIL import Image' >/dev/null 2>&1; then
-  if [ "${OXID_IOS_STANDALONE_IN_NIX:-0}" = 1 ]; then
-    fail python-pillow
-  fi
-  export OXID_IOS_STANDALONE_IN_NIX=1
-  exec nix develop --command "$0" "$@"
+if [ "${OXID_IOS_ACCEPTANCE_IN_NIX:-0}" != 1 ]; then
+  export OXID_SKIP_PI_PROVISION=1
+  exec nix develop "$ROOT" --command env \
+    OXID_IOS_ACCEPTANCE_IN_NIX=1 "$0" "$@"
 fi
+command -v timeout >/dev/null 2>&1 || fail timeout-capability
+python3 -c 'from PIL import Image' >/dev/null 2>&1 || fail python-pillow
 [ -x /usr/bin/xcodebuild ] && [ -x /usr/bin/xcrun ] && [ -x /usr/bin/plutil ] \
   || fail xcode-tools
 docker info >/dev/null 2>&1 || fail docker
@@ -94,10 +95,18 @@ readonly HEAD TREE
 [[ "$HEAD" =~ ^[0-9a-f]{40}$ && "$TREE" =~ ^[0-9a-f]{40}$ ]] || fail source-head
 git -C "$ROOT" verify-commit "$HEAD" >/dev/null 2>&1 || fail source-signature
 
+[ ! -L "$ROOT/target" ] || fail target-symlink
+mkdir -p -- "$ROOT/target" || fail target-directory
+[ -d "$ROOT/target" ] || fail target-directory
 [ ! -e "$RUN_ROOT" ] && [ ! -L "$RUN_ROOT" ] || fail occupied-evidence
 existing_stack="$(docker ps -a --filter label=com.docker.compose.project=oxid-standalone --quiet)"
 [ -z "$existing_stack" ] || fail occupied-standalone-stack
 mkdir -m 700 "$RUN_ROOT" "$PRIVATE_STATE" || fail private-state
+
+timeout -k 30s 1800s cargo build --manifest-path "$ROOT/Cargo.toml" --locked \
+  -p oxid-headless --features standalone-faucet \
+  --bin oxid-standalone-faucet-http >"$FAUCET_BUILD_LOG" 2>&1 \
+  || fail faucet-build
 
 DEVELOPER_DIR_SELECTED="$(
   oxid_ios_discover_developer_directory "${OXID_XCODE_DEVELOPER_DIR:-}"

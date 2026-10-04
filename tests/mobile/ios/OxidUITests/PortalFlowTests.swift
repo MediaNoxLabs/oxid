@@ -15,11 +15,30 @@ final class PortalFlowTests: XCTestCase {
     }
 
     @MainActor
-    private func assertSingleValidCredential(in application: XCUIApplication) {
-        let valid = application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid"))
+    private func assertSingleValidCredentialDetails(in application: XCUIApplication) {
+        let policy = "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
+        let valid = application.staticTexts.matching(NSPredicate(format: "label == %@", policy))
         XCTAssertTrue(valid.element(boundBy: 0).waitForExistence(timeout: 15))
         XCTAssertTrue(valid.element(boundBy: 1).waitForNonExistence(timeout: 5))
         XCTAssertEqual(valid.count, 1)
+        let badges = application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid"))
+        XCTAssertTrue(badges.element(boundBy: 0).waitForExistence(timeout: 15))
+        XCTAssertTrue(badges.element(boundBy: 1).waitForNonExistence(timeout: 5))
+        XCTAssertEqual(badges.count, 1)
+    }
+
+    @MainActor
+    private func openSingleValidCredentialDetails(in application: XCUIApplication) {
+        let card = application.buttons["Open Digital Passport document details"]
+        XCTAssertTrue(card.waitForExistence(timeout: 15))
+        XCTAssertTrue(
+            application.buttons.matching(
+                NSPredicate(format: "label == %@", "Open Digital Passport document details")
+            ).element(boundBy: 1).waitForNonExistence(timeout: 5)
+        )
+        scrollTo(card, in: application)
+        card.tap()
+        assertSingleValidCredentialDetails(in: application)
     }
 
     @MainActor
@@ -369,10 +388,7 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertTrue(application.staticTexts[
             "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
         ].waitForExistence(timeout: 20))
-        XCTAssertEqual(
-            application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid")).count,
-            1
-        )
+        assertSingleValidCredentialDetails(in: application)
         XCTAssertFalse(application.staticTexts["John"].exists)
         XCTAssertFalse(application.staticTexts["Doe"].exists)
     }
@@ -393,7 +409,7 @@ final class PortalFlowTests: XCTestCase {
         restoredStatePhase("wallet-ready")
         application.buttons["Documents"].tap()
         restoredStatePhase("documents-selected")
-        assertSingleValidCredential(in: application)
+        openSingleValidCredentialDetails(in: application)
         restoredStatePhase("restored-credential-visible")
         let marker = application.staticTexts["Credential reverification applied"]
         XCTAssertFalse(marker.exists)
@@ -409,7 +425,7 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 35), .completed)
         XCTAssertTrue(marker.waitForExistence(timeout: 35))
         restoredStatePhase("reverification-applied")
-        assertSingleValidCredential(in: application)
+        assertSingleValidCredentialDetails(in: application)
         XCTAssertTrue(application.staticTexts[
             "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
         ].exists)

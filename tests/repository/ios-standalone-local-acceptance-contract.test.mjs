@@ -7,8 +7,9 @@ import test from "node:test";
 const root = new URL("../../", import.meta.url);
 
 test("standalone iOS acceptance owns and cleans every mutated runtime resource", async () => {
-  const [script, swift, fixture, onboarding] = await Promise.all([
+  const [script, standalone, swift, fixture, onboarding] = await Promise.all([
     readFile(new URL("scripts/test-ios-standalone-local.sh", root), "utf8"),
+    readFile(new URL("scripts/standalone-up.sh", root), "utf8"),
     readFile(
       new URL("tests/mobile/ios/OxidUITests/StandaloneLocalAccountTests.swift", root),
       "utf8",
@@ -31,6 +32,11 @@ test("standalone iOS acceptance owns and cleans every mutated runtime resource",
   assert.match(script, /OXID_STANDALONE_STATE_DIR="\$STACK_STATE"/u);
   assert.match(script, /standalone-down\.sh/u);
   assert.match(script, /stop_faucet/u);
+  assert.match(
+    script,
+    /timeout -k 30s 1800s cargo build --manifest-path "\$ROOT\/Cargo.toml" --locked[\s\S]*-p oxid-headless --features standalone-faucet[\s\S]*--bin oxid-standalone-faucet-http >"\$FAUCET_BUILD_LOG"/u,
+  );
+  assert.match(script, /run-standalone-faucet-http\.sh" >"\$FAUCET_LOG"/u);
   assert.match(script, /receiptOwnedSimulator:true/u);
   assert.match(script, /receiptOwnedStandaloneStack:true/u);
   assert.match(script, /privateDiagnosticsRemoved:true/u);
@@ -38,7 +44,14 @@ test("standalone iOS acceptance owns and cleans every mutated runtime resource",
   assert.match(script, /fixedGrantNight:50000/u);
   assert.match(script, /SimRuntime\.iOS-17-5/u);
   assert.match(script, /SimDeviceType\.iPhone-SE-3rd-generation/u);
+  assert.match(
+    script,
+    /export OXID_SKIP_PI_PROVISION=1[\s\S]*exec nix develop "\$ROOT" --command env \\\n    OXID_IOS_ACCEPTANCE_IN_NIX=1 "\$0" "\$@"/u,
+  );
+  assert.doesNotMatch(script, /command_name in [^\n]* timeout/u);
+  assert.match(script, /mkdir -p -- "\$ROOT\/target" \|\| fail target-directory/u);
   assert.doesNotMatch(script, /simctl list devices booted/u);
+  assert.match(standalone, /for attempt in \{1\.\.120\}; do/u);
 
   assert.match(swift, /requestFixedGrant\(for: address\)/u);
   assert.match(swift, /Transfer confirmed/u);
