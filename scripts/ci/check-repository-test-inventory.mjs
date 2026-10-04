@@ -7,7 +7,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export function registeredRepositoryTests(runScript) {
-  return [...runScript.matchAll(/^\s*node --test (tests\/repository\/[^\s]+\.test\.mjs)\s*$/gmu)]
+  const repositoryTarget = runScript.match(/^run_repository\(\) \{\r?\n([\s\S]*?)^\}/mu);
+  if (!repositoryTarget) throw new Error("run.sh has no run_repository target");
+  return [...repositoryTarget[1].matchAll(/^\s*node --test (tests\/repository\/[^\s]+\.test\.mjs)\s*$/gmu)]
     .map((match) => match[1]);
 }
 

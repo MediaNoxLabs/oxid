@@ -30,3 +30,15 @@ test("repository inventory rejects an orphan and duplicate registration", () => 
     /duplicate registrations: tests\/repository\/registered\.test\.mjs; unregistered repository tests: tests\/repository\/orphan\.test\.mjs/u,
   );
 });
+
+test("a contract registered only in another target remains orphaned", () => {
+  const script = `run_repository() {\n  node --test tests/repository/registered.test.mjs\n}\nrun_ui() {\n  node --test tests/repository/ui-only.test.mjs\n}\n`;
+  assert.deepEqual(registeredRepositoryTests(script), ["tests/repository/registered.test.mjs"]);
+  assert.throws(
+    () => validateRepositoryTestInventory({
+      trackedTests: ["tests/repository/registered.test.mjs", "tests/repository/ui-only.test.mjs"],
+      registeredTests: registeredRepositoryTests(script),
+    }),
+    /unregistered repository tests: tests\/repository\/ui-only\.test\.mjs/u,
+  );
+});

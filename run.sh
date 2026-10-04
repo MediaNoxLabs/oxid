@@ -102,6 +102,7 @@ run_repository() {
   node --test tests/repository/portal-services-lifecycle-command-contract.test.mjs
   node --test tests/repository/taskflow-conformance.test.mjs
   node --test tests/repository/ui-page-hierarchy-contract.test.mjs
+  node --test tests/repository/ui-source-scan-contract.test.mjs
   node --test tests/repository/repository-test-inventory-contract.test.mjs
   node scripts/ci/check-repository-test-inventory.mjs
   ./scripts/check-transport-trust.sh
@@ -172,7 +173,9 @@ run_coverage_excluded_tests() {
 }
 
 run_ui() {
-  node --test tests/repository/ui-source-scan-contract.test.mjs
+  if [[ "${1:-}" != "--repository-contracts-covered" ]]; then
+    node --test tests/repository/ui-source-scan-contract.test.mjs
+  fi
   ./scripts/check-brand-packs.sh
   ./scripts/check-ui-css-classes.sh
   ./scripts/check-ui-design-tokens.sh
@@ -260,7 +263,7 @@ run_quality() {
 case "$target" in
   all)
     run_core --skip-workspace-tests
-    run_ui
+    run_ui --repository-contracts-covered
     run_ui_release
     run_headless
     run_coverage_excluded_tests
