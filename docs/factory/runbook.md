@@ -322,6 +322,22 @@ undetectable later. The check that matters is `gates` parsing.
   Concrete blocking findings stop delivery;
   recommendations are retained on the PR and tracked as follow-up issues.
 
+## Release-candidate qualification
+
+Before a human starts a `milestone-<x.y.z>` to `develop` promotion, deliberately dispatch the existing **Nightly** workflow from the frozen milestone branch (`gh workflow run nightly.yml --ref milestone-0.2.0`). This workflow is available for dispatch because it already exists on the repository default branch. A milestone dispatch runs the full hermetic `nix flake check` and a checksum-pinned Scorecard CLI scan of the event's immutable `github.sha`. The Scorecard JSON is retained as a SHA-named artifact; the existing default-branch Scorecard action continues publishing its separate routine results. Scheduled default-branch Nightly runs keep their Nix check and skip the release Scorecard job. Routine feature PRs do not inherit this expensive lane.
+
+After both jobs are green, verify the retained GitHub receipt before promotion:
+
+```bash
+MILESTONE_HEAD_SHA="$(gh api repos/MediaNoxLabs/oxid/git/ref/heads/milestone-0.2.0 --jq .object.sha)"
+node scripts/github/verify-release-qualification.mjs \
+  --repo MediaNoxLabs/oxid \
+  --branch milestone-0.2.0 \
+  --sha "$MILESTONE_HEAD_SHA"
+```
+
+The verifier first reads the current remote milestone tip, then accepts a successful `workflow_dispatch` run whose branch, immutable head SHA, both required job conclusions, and retained Scorecard artifact match. It checks the branch tip again before returning. The read-only develop-merge audit invokes this verifier for a milestone promotion PR. A later milestone update therefore invalidates the earlier receipt even if an old SHA is supplied; missing, failed, expired, scheduled, or default-branch evidence blocks promotion.
+
 ## Review budget and controlled debt
 
 The supervisor reserves each exact-head review with
