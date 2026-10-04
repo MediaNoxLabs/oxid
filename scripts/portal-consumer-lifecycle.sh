@@ -155,7 +155,7 @@ compose() {
 }
 
 compose_bounded() {
-  timeout -k 5s 60s docker compose --env-file "$ENV_FILE" -p "$PROJECT" \
+  timeout -k 5s 40s docker compose --env-file "$ENV_FILE" -p "$PROJECT" \
     -f "$COMPOSE_FILE" "$@"
 }
 
@@ -164,13 +164,24 @@ compose_bounded() {
 # starting/owner receipt; every fallback target is then revalidated by its
 # Compose project label before an exact-ID removal.
 force_remove_owned_project() {
-  local id resource
+  local attempt id removed resource
   for id in $(project_ids); do
     [[ "$id" =~ ^[0-9a-f]{64}$ ]] || return 1
     [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$id" 2>/dev/null)" = "$PROJECT" ] || return 1
   done
+  # Let Docker Desktop release the Compose operation after the bounded client
+  # is terminated, then retry each already-authenticated container exactly.
+  sleep 2
   for id in $(project_ids); do
-    timeout -k 5s 20s docker rm --force "$id" >>"$PRIVATE_LOG" 2>&1 || return 1
+    removed=0
+    for attempt in 1 2; do
+      if timeout -k 5s 30s docker rm --force "$id" >>"$PRIVATE_LOG" 2>&1; then
+        removed=1
+        break
+      fi
+      sleep 2
+    done
+    [ "$removed" -eq 1 ] || return 1
   done
   for resource in $(docker volume ls --filter "label=com.docker.compose.project=$PROJECT" --quiet); do
     [ "$(docker volume inspect --format '{{index .Labels "com.docker.compose.project"}}' "$resource" 2>/dev/null)" = "$PROJECT" ] || return 1
