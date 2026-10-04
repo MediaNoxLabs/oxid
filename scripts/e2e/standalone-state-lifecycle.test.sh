@@ -17,6 +17,7 @@ trap cleanup EXIT
 
 mkdir -p "$FIXTURE/scripts/lib" "$MOCK_BIN" "$MOCK_STATE" "$LAUNCHER_ONE" "$LAUNCHER_TWO"
 cp "$ROOT/scripts/standalone-up.sh" "$ROOT/scripts/standalone-down.sh" \
+  "$ROOT/scripts/standalone-status.sh" \
   "$ROOT/scripts/standalone-stack.yml" "$FIXTURE/scripts/"
 cp "$ROOT/scripts/lib/standalone-compose-ownership.sh" \
   "$ROOT/scripts/lib/standalone-state.sh" "$FIXTURE/scripts/lib/"
@@ -32,7 +33,13 @@ case "$command_name" in
   info) exit 0 ;;
   ps)
     if [ -f "$state/active" ]; then
-      printf '%s\n' indexer-id node-id proof-id
+      arguments="$*"
+      case "$arguments" in
+        *compose.service=indexer*) printf '%s\n' indexer-id ;;
+        *compose.service=node*) printf '%s\n' node-id ;;
+        *compose.service=proof-server*) printf '%s\n' proof-id ;;
+        *) printf '%s\n' indexer-id node-id proof-id ;;
+      esac
     fi
     ;;
   inspect)
@@ -45,6 +52,13 @@ case "$command_name" in
       esac
     done
     case "$format" in
+      *State.Status*)
+        case "$id" in
+          indexer-id|node-id) echo 'running healthy 0' ;;
+          proof-id) echo 'running none 0' ;;
+          *) exit 1 ;;
+        esac
+        ;;
       *compose.service*)
         case "$id" in indexer-id) echo indexer ;; node-id) echo node ;; proof-id) echo proof-server ;; *) exit 1 ;; esac
         ;;
@@ -99,8 +113,13 @@ TMPDIR="$LAUNCHER_ONE" "$FIXTURE/scripts/standalone-up.sh" local >/dev/null
 STATE_DIRECTORY="$FIXTURE/.git/oxid/standalone"
 [ -f "$STATE_DIRECTORY/owner-receipt.json" ]
 [ -f "$STATE_DIRECTORY/canonical-compose.yml" ]
+find "$STATE_DIRECTORY" -prune -perm 700 -print | grep -qx "$STATE_DIRECTORY"
+find "$STATE_DIRECTORY/canonical-indexer.env" -prune -perm 600 -print \
+  | grep -qx "$STATE_DIRECTORY/canonical-indexer.env"
 rm -rf -- "$LAUNCHER_ONE"
 
+TMPDIR="$LAUNCHER_TWO" "$FIXTURE/scripts/standalone-status.sh" local \
+  | grep -q 'oxid standalone (local): READY'
 TMPDIR="$LAUNCHER_TWO" "$FIXTURE/scripts/standalone-down.sh" >/dev/null
 [ ! -e "$STATE_DIRECTORY/owner-receipt.json" ]
 [ ! -e "$STATE_DIRECTORY/canonical-indexer.env" ]
