@@ -73,9 +73,17 @@ impl HeadlessWallet {
     /// Protocol responses are the only bytes written to `writer`. Callers must
     /// direct operational diagnostics to stderr.
     pub fn run<R: BufRead, W: Write>(&self, reader: R, writer: W) -> Result<(), HeadlessIoError> {
+        // Tokio's entered runtime is thread-local. The lifecycle scheduler is a
+        // scoped OS thread, so explicitly carry the current handle across that
+        // boundary before it polls or drops any live Midnight transport.
+        let runtime = tokio::runtime::Handle::try_current().ok();
         let (stop_sender, stop_receiver) = std::sync::mpsc::channel();
         std::thread::scope(|scope| {
-            let scheduler = scope.spawn(move || self.run_lifecycle_scheduler(&stop_receiver));
+            let scheduler = scope.spawn(move || {
+                with_runtime_context(runtime.as_ref(), || {
+                    self.run_lifecycle_scheduler(&stop_receiver);
+                });
+            });
             let result = self.run_requests(reader, writer);
             drop(stop_sender);
             let _ = scheduler.join();
@@ -343,5 +351,55 @@ impl HeadlessWallet {
             )),
             Err(error) => Err(wallet_profiles::read_profiles_error(id, error)),
         }
+    }
+}
+
+fn with_runtime_context<T>(
+    runtime: Option<&tokio::runtime::Handle>,
+    operation: impl FnOnce() -> T,
+) -> T {
+    let _runtime_guard = runtime.map(tokio::runtime::Handle::enter);
+    operation()
+}
+
+#[cfg(test)]
+mod runtime_context_tests {
+    use super::with_runtime_context;
+
+    #[test]
+    fn carries_the_current_tokio_runtime_to_a_scoped_scheduler_thread() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let _runtime_guard = runtime.enter();
+        let handle = tokio::runtime::Handle::try_current().expect("entered runtime");
+
+        let inherited = std::thread::scope(|scope| {
+            scope
+                .spawn(move || {
+                    with_runtime_context(Some(&handle), || {
+                        tokio::runtime::Handle::try_current().is_ok()
+                    })
+                })
+                .join()
+                .expect("scheduler thread")
+        });
+
+        assert!(inherited, "scheduler thread must enter the process runtime");
+    }
+
+    #[test]
+    fn remains_usable_without_a_tokio_runtime() {
+        let entered = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    with_runtime_context(None, || tokio::runtime::Handle::try_current().is_ok())
+                })
+                .join()
+                .expect("scheduler thread")
+        });
+
+        assert!(!entered, "in-memory callers do not require Tokio");
     }
 }
