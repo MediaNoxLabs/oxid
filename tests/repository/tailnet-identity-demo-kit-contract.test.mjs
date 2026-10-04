@@ -59,9 +59,9 @@ test("standalone lifecycle uses durable Git-common state with an atomic verified
   ]);
   for (const source of [up, down, status]) {
     assert.match(source, /oxid_standalone_state_directory/);
-    assert.doesNotMatch(source, /TMPDIR/);
+    assert.doesNotMatch(source, /temporary_root=.*TMPDIR/);
   }
-  assert.match(state, /git -C "\$repository_root" rev-parse --path-format=absolute --git-common-dir/);
+  assert.match(state, /git -C "\$repository_root" rev-parse --git-common-dir/);
   assert.match(state, /\$\{git_common_directory%\/\}\/oxid\/standalone/);
   assert.match(state, /OXID_STANDALONE_STATE_DIR/);
   assert.match(state, /must not be a symlink/);

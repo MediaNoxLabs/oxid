@@ -134,8 +134,16 @@ rm -f -- "$MOCK_STATE/active"
 
 mv "$STATE_DIRECTORY" "$STATE_DIRECTORY.real"
 ln -s "$STATE_DIRECTORY.real" "$STATE_DIRECTORY"
-if TMPDIR="$LAUNCHER_TWO" "$FIXTURE/scripts/standalone-down.sh" >/dev/null 2>&1; then
+if TMPDIR="$LAUNCHER_TWO" "$FIXTURE/scripts/standalone-down.sh" \
+  >/dev/null 2>"$SCRATCH/symlink-rejection.log"; then
   echo "standalone-state-lifecycle: FAIL symlinked state admitted" >&2
+  exit 1
+fi
+grep -q 'Standalone state directory must not be a symlink' "$SCRATCH/symlink-rejection.log"
+if OXID_STANDALONE_STATE_DIR="$STATE_DIRECTORY/" bash -c \
+  'source "$1"; oxid_standalone_state_directory "$2"' _ \
+  "$FIXTURE/scripts/lib/standalone-state.sh" "$FIXTURE" >/dev/null 2>&1; then
+  echo "standalone-state-lifecycle: FAIL trailing-slash symlink admitted" >&2
   exit 1
 fi
 

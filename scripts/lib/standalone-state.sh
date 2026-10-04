@@ -11,15 +11,20 @@ oxid_standalone_state_directory() {
   if [ -n "${OXID_STANDALONE_STATE_DIR:-}" ]; then
     state_directory="$OXID_STANDALONE_STATE_DIR"
   else
-    git_common_directory="$(
-      git -C "$repository_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null
-    )" || {
+    git_common_directory="$(git -C "$repository_root" rev-parse --git-common-dir 2>/dev/null)" || {
       echo "Cannot resolve durable standalone state outside a Git checkout; set OXID_STANDALONE_STATE_DIR to an absolute private directory." >&2
       return 1
     }
+    case "$git_common_directory" in
+      /*) ;;
+      *) git_common_directory="$repository_root/$git_common_directory" ;;
+    esac
     state_directory="${git_common_directory%/}/oxid/standalone"
   fi
 
+  while [ "$state_directory" != "/" ] && [ "${state_directory%/}" != "$state_directory" ]; do
+    state_directory="${state_directory%/}"
+  done
   case "$state_directory" in
     /*) ;;
     *)

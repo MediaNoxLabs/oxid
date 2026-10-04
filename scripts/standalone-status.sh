@@ -14,7 +14,6 @@ repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/standalone-state.sh
 source "$repository_root/scripts/lib/standalone-state.sh"
 state_directory="$(oxid_standalone_state_directory "$repository_root")"
-compose_file="$state_directory/canonical-compose.yml"
 mode="${1:-local}"
 case "$mode" in
   local|phone) ;;
