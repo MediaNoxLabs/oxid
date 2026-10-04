@@ -68,6 +68,14 @@ impl Drop for RuntimeCleanup {
     }
 }
 
+struct TestDiagnosticsCleanup(PathBuf);
+
+impl Drop for TestDiagnosticsCleanup {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 struct ProcessHarness {
     child: Option<Child>,
     input: ChildStdin,
@@ -1322,11 +1330,16 @@ fn runtime_cleanup_removes_sensitive_state_after_success() {
 
 #[test]
 fn runtime_cleanup_retains_private_diagnostics_during_unwind() {
+    use std::os::unix::fs::PermissionsExt as _;
+
     let root = std::env::temp_dir().join(format!(
         "oxid-portal-runtime-cleanup-{}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("private test root");
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).expect("owner-private test root");
+    let _test_cleanup = TestDiagnosticsCleanup(root.clone());
     let result = std::panic::catch_unwind({
         let root = root.clone();
         move || {
@@ -1348,5 +1361,4 @@ fn runtime_cleanup_retains_private_diagnostics_during_unwind() {
         root.join("wallet/private/credentials.key").is_file(),
         "failed runtime must retain its private wrapping key for owner inspection"
     );
-    fs::remove_dir_all(&root).expect("remove retained test diagnostics");
 }
