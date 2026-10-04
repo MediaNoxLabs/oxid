@@ -31,11 +31,24 @@ test("inventory validates the recovery native-presence scenario and renders only
   assert.match(unsupported, /physical iOS signing and deployment are unavailable/i);
 });
 
-test("inventory keeps standalone asset synchronization diagnostic and route-scoped", () => {
+test("inventory keeps standalone asset synchronization automatic, evidenced, and route-scoped", async () => {
   const inventory = loadInventory();
   const scenario = inventory.scenarios.find(({ id }) => id === "standalone-profile-asset-synchronization");
+  const synchronization = inventory.useCases.find(({ id }) => id === "synchronize-profile-scoped-midnight-assets");
   assert.equal(scenario.evidenceClass, "diagnostic");
   assert.equal(scenario.cadence, "on-demand");
+  assert.deepEqual(synchronization.interactionBudget, {
+    status: "active",
+    entryTapsMax: 0,
+    decisionScreensMax: 0,
+    authorizationPromptsMax: 0,
+    routineManualSyncActionsMax: 0,
+  });
+  assert.match(synchronization.outcome, /automatically reconciles.*relevant checkpoints/u);
+  assert.match(synchronization.outcome, /refresh controls remain in developer diagnostics only/u);
+  for (const sourceReference of synchronization.sourceReferences) {
+    await readFile(path.join(repoRoot, sourceReference), "utf8");
+  }
   assert.deepEqual(scenario.orderedUseCaseIds, [
     "select-compile-time-standalone-profile",
     "synchronize-profile-scoped-midnight-assets",
@@ -51,6 +64,30 @@ test("inventory keeps standalone asset synchronization diagnostic and route-scop
   assert.match(tailnet, /just android-phone/u);
   assert.match(tailnet, /not production or public-network acceptance/i);
   assert.doesNotMatch(tailnet, /stable public NIGHT, DUST, or shielded balances/i);
+  const manualSteps = scenario.manualSteps.join("\n");
+  assert.match(manualSteps, /Observe automatic public NIGHT, DUST, shielded, and activity reconciliation/u);
+  assert.match(manualSteps, /single contextual retry only if the aggregate state reports degraded recovery/u);
+  const ownerJourney = [
+    synchronization.outcome,
+    ...scenario.manualSteps,
+    ...scenario.expectedOutcomes,
+    scenario.testMapping.manual,
+    scenario.testMapping.planned,
+  ].join("\n");
+  assert.doesNotMatch(
+    ownerJourney,
+    /\b(?:tap|press|use|choose|select)\b[^.\n]{0,80}\b(?:Sync now|account sync|DUST sync|shielded sync)\b/iu,
+  );
+  assert.match(scenario.expectedOutcomes.join("\n"), /no routine manual synchronization/u);
+  assert.match(scenario.testMapping.manual, /no subsystem refresh control is part of the owner journey/u);
+  assert.doesNotMatch(scenario.testMapping.planned, /proves fixed standalone funding/u);
+  const iosAcceptance = await readFile(
+    path.join(repoRoot, "tests/mobile/ios/OxidUITests/StandaloneLocalAccountTests.swift"),
+    "utf8",
+  );
+  assert.match(iosAcceptance, /func testSynchronizesProtectedAccountFromLocalStandaloneStack\(\) async throws/u);
+  assert.match(iosAcceptance, /requestFixedGrant\(for: address\)/u);
+  assert.doesNotMatch(iosAcceptance, /buttons\["Sync now"\]/u);
 });
 
 test("inventory splits a bounded low-k proof from headless and rendered local diagnostics", async () => {
