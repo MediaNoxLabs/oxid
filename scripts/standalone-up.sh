@@ -128,7 +128,7 @@ else
 fi
 
 proof_server_ready=0
-for attempt in {1..60}; do
+for attempt in {1..120}; do
   if curl --fail --silent --max-time 2 \
     -o /dev/null http://127.0.0.1:6300/ 2>/dev/null; then
     proof_server_ready=1

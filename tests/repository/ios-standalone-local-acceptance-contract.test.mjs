@@ -7,8 +7,9 @@ import test from "node:test";
 const root = new URL("../../", import.meta.url);
 
 test("standalone iOS acceptance owns and cleans every mutated runtime resource", async () => {
-  const [script, swift, fixture, onboarding] = await Promise.all([
+  const [script, standalone, swift, fixture, onboarding] = await Promise.all([
     readFile(new URL("scripts/test-ios-standalone-local.sh", root), "utf8"),
+    readFile(new URL("scripts/standalone-up.sh", root), "utf8"),
     readFile(
       new URL("tests/mobile/ios/OxidUITests/StandaloneLocalAccountTests.swift", root),
       "utf8",
@@ -46,6 +47,7 @@ test("standalone iOS acceptance owns and cleans every mutated runtime resource",
   assert.doesNotMatch(script, /command_name in [^\n]* timeout/u);
   assert.match(script, /mkdir -p -- "\$ROOT\/target" \|\| fail target-directory/u);
   assert.doesNotMatch(script, /simctl list devices booted/u);
+  assert.match(standalone, /for attempt in \{1\.\.120\}; do/u);
 
   assert.match(swift, /requestFixedGrant\(for: address\)/u);
   assert.match(swift, /Transfer confirmed/u);
