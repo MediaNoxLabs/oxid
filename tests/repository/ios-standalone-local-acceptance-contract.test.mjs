@@ -46,6 +46,8 @@ test("standalone iOS acceptance owns and cleans every mutated runtime resource",
   assert.doesNotMatch(swift, /buttons\["Sync now"\]\.tap/u);
 
   assert.match(fixture, /descendants\(matching: \.any\)/u);
+  assert.match(fixture, /I saved this new recovery phrase outside the app\./u);
+  assert.doesNotMatch(fixture, /securely saved or verified/u);
   assert.doesNotMatch(fixture, /application\.switches/u);
   assert.match(
     onboarding,

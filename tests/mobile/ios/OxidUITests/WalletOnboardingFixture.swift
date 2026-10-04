@@ -29,7 +29,7 @@ enum WalletOnboardingFixture {
         )
 
         let acknowledgement = application.descendants(matching: .any)[
-            "I have securely saved or verified this recovery phrase."
+            "I saved this new recovery phrase outside the app."
         ].firstMatch
         XCTAssertTrue(acknowledgement.waitForExistence(timeout: 10))
         for _ in 0..<12 where !acknowledgement.isHittable {
