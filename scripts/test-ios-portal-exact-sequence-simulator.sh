@@ -132,6 +132,19 @@ fail() {
   exit 1
 }
 
+[ -z "$(git -C "$ROOT" status --porcelain)" ] || fail dirty-source
+if ! command -v nix >/dev/null 2>&1 \
+  && [ -x /nix/var/nix/profiles/default/bin/nix ]; then
+  export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+fi
+command -v nix >/dev/null 2>&1 || fail missing-tool
+if ! command -v timeout >/dev/null 2>&1; then
+  if [ "${OXID_IOS_PORTAL_IN_NIX:-0}" = 1 ]; then
+    fail timeout-capability
+  fi
+  export OXID_IOS_PORTAL_IN_NIX=1
+  exec nix develop --command "$0" "$@"
+fi
 [ ! -e "$RUN_ROOT" ] && [ ! -L "$RUN_ROOT" ] || fail occupied-evidence
 [ "$(uname -s)" = Darwin ] || fail platform
 [ -z "${OXID_IOS_DEVICE:-}" ] || fail existing-device-selector

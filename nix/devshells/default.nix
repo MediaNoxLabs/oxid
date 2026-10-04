@@ -114,6 +114,7 @@
             cargo-llvm-cov
             cargo-nextest
             clippy
+            coreutils
             dioxus-cli
             git
             gh
@@ -141,58 +142,58 @@
         buildInputs = linuxLibraries;
 
         shellHook = ''
-                    export RUST_SRC_PATH=${pkgs.rustPlatform.rustLibSrc}
-                    export LLVM_COV=${pkgs.llvmPackages.llvm}/bin/llvm-cov
-                    export LLVM_PROFDATA=${pkgs.llvmPackages.llvm}/bin/llvm-profdata
-                    export JAVA_HOME=${pkgs.jdk17.home}
-                    export PATH="$JAVA_HOME/bin:$PATH"
-                    export COMPACT_DIRECTORY=${midnightDidPackages.compact-toolchain}
-                    export OXID_PRESENTATION_ARTIFACTS_DIR=${self'.packages.presentation-compact-artifacts}
-                    export OXID_PASSPORT_VAULT_ARTIFACTS_DIR=${self'.packages.passport-vault-compact-artifacts}
-                    export OXID_PASSPORT_VAULT_COMPOSER=${self'.packages.passport-vault-call-composer}/bin/oxid-passport-vault-call-composer
-                    # Keep only runtime state in the Git common directory. PI_CODING_AGENT_DIR
-                    # remains user-scoped because it owns authentication and user policy;
-                    # sessions and pi-subagents lifecycle state are checkout-scoped instead.
-                    # This Git-common-dir path survives the per-entry nix-shell TMPDIR and
-                    # is private to the local checkout owner, while remaining shared by
-                    # its linked worktrees.
-                    pi_common_git_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
-                    pi_runtime_state_dir="$pi_common_git_dir/oxid-factory/pi-runtime-v1"
-                    export PI_CODING_AGENT_SESSION_DIR="$pi_runtime_state_dir/sessions"
-                    export PI_SUBAGENTS_TEMP_ROOT="$pi_runtime_state_dir/subagents"
-                    mkdir -p "$pi_runtime_state_dir" "$PI_CODING_AGENT_SESSION_DIR" "$PI_SUBAGENTS_TEMP_ROOT"
-                    chmod 700 "$pi_runtime_state_dir" "$PI_CODING_AGENT_SESSION_DIR" "$PI_SUBAGENTS_TEMP_ROOT"
-                    # Keep one bounded compiler cache across worktrees. Worktree targets
-                    # remain isolated for correctness and can be deleted after delivery.
-                    export RUSTC_WRAPPER=${pkgs.sccache}/bin/sccache
-                    export SCCACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/oxid-sccache"
-                    export SCCACHE_CACHE_SIZE="''${SCCACHE_CACHE_SIZE:-10G}"
-                    ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
-                      export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath linuxLibraries}:''${LD_LIBRARY_PATH:-}
-                    ''}
+          export RUST_SRC_PATH=${pkgs.rustPlatform.rustLibSrc}
+          export LLVM_COV=${pkgs.llvmPackages.llvm}/bin/llvm-cov
+          export LLVM_PROFDATA=${pkgs.llvmPackages.llvm}/bin/llvm-profdata
+          export JAVA_HOME=${pkgs.jdk17.home}
+          export PATH="$JAVA_HOME/bin:$PATH"
+          export COMPACT_DIRECTORY=${midnightDidPackages.compact-toolchain}
+          export OXID_PRESENTATION_ARTIFACTS_DIR=${self'.packages.presentation-compact-artifacts}
+          export OXID_PASSPORT_VAULT_ARTIFACTS_DIR=${self'.packages.passport-vault-compact-artifacts}
+          export OXID_PASSPORT_VAULT_COMPOSER=${self'.packages.passport-vault-call-composer}/bin/oxid-passport-vault-call-composer
+          # Keep only runtime state in the Git common directory. PI_CODING_AGENT_DIR
+          # remains user-scoped because it owns authentication and user policy;
+          # sessions and pi-subagents lifecycle state are checkout-scoped instead.
+          # This Git-common-dir path survives the per-entry nix-shell TMPDIR and
+          # is private to the local checkout owner, while remaining shared by
+          # its linked worktrees.
+          pi_common_git_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
+          pi_runtime_state_dir="$pi_common_git_dir/oxid-factory/pi-runtime-v1"
+          export PI_CODING_AGENT_SESSION_DIR="$pi_runtime_state_dir/sessions"
+          export PI_SUBAGENTS_TEMP_ROOT="$pi_runtime_state_dir/subagents"
+          mkdir -p "$pi_runtime_state_dir" "$PI_CODING_AGENT_SESSION_DIR" "$PI_SUBAGENTS_TEMP_ROOT"
+          chmod 700 "$pi_runtime_state_dir" "$PI_CODING_AGENT_SESSION_DIR" "$PI_SUBAGENTS_TEMP_ROOT"
+          # Keep one bounded compiler cache across worktrees. Worktree targets
+          # remain isolated for correctness and can be deleted after delivery.
+          export RUSTC_WRAPPER=${pkgs.sccache}/bin/sccache
+          export SCCACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/oxid-sccache"
+          export SCCACHE_CACHE_SIZE="''${SCCACHE_CACHE_SIZE:-10G}"
+          ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath linuxLibraries}:''${LD_LIBRARY_PATH:-}
+          ''}
 
-                    # Provision the exact project-local Pi package set. The review
-                    # package is hosted by GitHub Packages, so reuse an existing gh
-                    # token when the conventional GITHUB_TOKEN variable is absent.
-                    # CI never needs Pi tooling, and this block performs network package
-                    # installs, so continuous-integration shells skip it entirely.
-                    if [ -z "''${CI:-}" ] && [ -f .pi/settings.json ]; then
-                      if [ -z "''${GITHUB_TOKEN:-}" ]; then
-                        if [ -n "''${GH_TOKEN:-}" ]; then
-                          export GITHUB_TOKEN="''${GH_TOKEN}"
-                        elif [ -n "''${GH_TOKENS:-}" ]; then
-                          export GITHUB_TOKEN="''${GH_TOKENS}"
-                        fi
-                      fi
-                      # The helper publishes one content-addressed closure only after all
-                      # exact pins validate. It migrates a legacy real .pi/npm lazily,
-                      # then points this checkout at its matching factory-managed closure.
-                      node scripts/factory/provision-pi-packages.mjs || exit 1
-                      # Exact pins were reconciled above. Keep Pi startup itself offline
-                      # so it cannot race that authority or retry an unavailable optional
-                      # private package. Operators can explicitly unset this for package maintenance.
-                      export PI_OFFLINE="''${PI_OFFLINE:-1}"
-                    fi
+          # Provision the exact project-local Pi package set. The review
+          # package is hosted by GitHub Packages, so reuse an existing gh
+          # token when the conventional GITHUB_TOKEN variable is absent.
+          # CI never needs Pi tooling, and this block performs network package
+          # installs, so continuous-integration shells skip it entirely.
+          if [ -z "''${CI:-}" ] && [ -f .pi/settings.json ]; then
+            if [ -z "''${GITHUB_TOKEN:-}" ]; then
+              if [ -n "''${GH_TOKEN:-}" ]; then
+                export GITHUB_TOKEN="''${GH_TOKEN}"
+              elif [ -n "''${GH_TOKENS:-}" ]; then
+                export GITHUB_TOKEN="''${GH_TOKENS}"
+              fi
+            fi
+            # The helper publishes one content-addressed closure only after all
+            # exact pins validate. It migrates a legacy real .pi/npm lazily,
+            # then points this checkout at its matching factory-managed closure.
+            node scripts/factory/provision-pi-packages.mjs || exit 1
+            # Exact pins were reconciled above. Keep Pi startup itself offline
+            # so it cannot race that authority or retry an unavailable optional
+            # private package. Operators can explicitly unset this for package maintenance.
+            export PI_OFFLINE="''${PI_OFFLINE:-1}"
+          fi
         '';
       };
     };
