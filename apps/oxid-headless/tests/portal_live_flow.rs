@@ -68,6 +68,14 @@ impl Drop for RuntimeCleanup {
     }
 }
 
+struct TestDiagnosticsCleanup(PathBuf);
+
+impl Drop for TestDiagnosticsCleanup {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 struct ProcessHarness {
     child: Option<Child>,
     input: ChildStdin,
@@ -1303,12 +1311,36 @@ fn observation_proxy_reads_content_length_without_waiting_for_eof_and_drops_boun
 }
 
 #[test]
-fn runtime_cleanup_removes_encrypted_store_and_wrapping_key_during_unwind() {
+fn runtime_cleanup_removes_sensitive_state_after_success() {
     let root = std::env::temp_dir().join(format!(
-        "oxid-portal-runtime-cleanup-{}",
+        "oxid-portal-runtime-success-cleanup-{}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&root);
+    let _test_cleanup = TestDiagnosticsCleanup(root.clone());
+    {
+        fs::create_dir_all(root.join("wallet/private")).expect("private root");
+        let _cleanup = RuntimeCleanup(root.clone());
+        fs::write(root.join("wallet/private/credentials.enc"), b"ciphertext")
+            .expect("encrypted store");
+        fs::write(root.join("wallet/private/credentials.key"), b"wrapping key")
+            .expect("wrapping key");
+    }
+    assert!(!root.exists(), "successful runtime root must be removed");
+}
+
+#[test]
+fn runtime_cleanup_retains_private_diagnostics_during_unwind() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let root = std::env::temp_dir().join(format!(
+        "oxid-portal-runtime-unwind-cleanup-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    let _test_cleanup = TestDiagnosticsCleanup(root.clone());
+    fs::create_dir_all(&root).expect("private test root");
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).expect("owner-private test root");
     let result = std::panic::catch_unwind({
         let root = root.clone();
         move || {
@@ -1322,5 +1354,21 @@ fn runtime_cleanup_removes_encrypted_store_and_wrapping_key_during_unwind() {
         }
     });
     assert!(result.is_err());
-    assert!(!root.exists(), "sensitive runtime root must be removed");
+    assert_eq!(
+        fs::metadata(&root)
+            .expect("retained private root")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700,
+        "retained diagnostics root must remain owner-private"
+    );
+    assert!(
+        root.join("wallet/private/credentials.enc").is_file(),
+        "failed runtime must retain its encrypted private diagnostics"
+    );
+    assert!(
+        root.join("wallet/private/credentials.key").is_file(),
+        "failed runtime must retain its private wrapping key for owner inspection"
+    );
 }
