@@ -567,12 +567,14 @@ if ! rg -q 'standalone-portal is available only on iOS and Android' "$failure_lo
 fi
 
 for conflicting_profile in standalone-tailnet standalone-native-custody; do
-  if cargo check -p oxid-app --target aarch64-apple-ios --no-default-features \
+  if cargo check -p oxid-app --no-default-features \
     --features "standalone-portal,$conflicting_profile" >"$failure_log" 2>&1; then
     echo "standalone-portal compiled with $conflicting_profile" >&2
     exit 1
   fi
-  if ! rg -q 'standalone-portal is incompatible with tailnet and native custody' "$failure_log"; then
+  if ! rg -q \
+    'standalone-portal is incompatible with tailnet and native custody|mobile-portal is available only on iOS and Android' \
+    "$failure_log"; then
     echo "standalone-portal/$conflicting_profile failed for an unexpected reason" >&2
     sed -n '1,120p' "$failure_log" >&2
     exit 1
