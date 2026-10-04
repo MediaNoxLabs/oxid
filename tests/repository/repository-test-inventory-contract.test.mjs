@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -41,4 +44,28 @@ test("a contract registered only in another target remains orphaned", () => {
     }),
     /unregistered repository tests: tests\/repository\/ui-only\.test\.mjs/u,
   );
+});
+
+test("the authoritative repository entrypoint stops on a planted failing contract", async () => {
+  const runScript = await readFile(new URL("run.sh", root), "utf8");
+  const [first, second] = registeredRepositoryTests(runScript);
+  const temporary = await mkdtemp(join(tmpdir(), "oxid-repository-failure-"));
+  try {
+    await copyFile(new URL("run.sh", root), join(temporary, "run.sh"));
+    for (const file of [first, second]) await mkdir(dirname(join(temporary, file)), { recursive: true });
+    await writeFile(join(temporary, first), "import test from 'node:test'; test('planted repository failure', () => { throw new Error('planted failure'); });\n");
+    await writeFile(join(temporary, second), "import test from 'node:test'; test('later test ran', () => {});\n");
+    const env = { ...process.env };
+    delete env.NODE_TEST_CONTEXT;
+    const result = spawnSync("bash", ["run.sh", "repository", "--strict"], {
+      cwd: temporary,
+      encoding: "utf8",
+      env,
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stdout + result.stderr, /planted repository failure/u);
+    assert.doesNotMatch(result.stdout + result.stderr, /later test ran/u);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
 });
