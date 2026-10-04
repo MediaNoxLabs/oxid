@@ -591,6 +591,54 @@ where
         + 'static,
     F: FnOnce(Arc<S>) -> Arc<dyn WalletProtectionPort>,
 {
+    compose_with_adapters_and_credential_profile_and_approvals(
+        repository,
+        security,
+        midnight,
+        credential_presentation,
+        credential_profile,
+        protection_for_security,
+        None,
+        did_approvals,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn compose_with_adapters_and_credential_profile_and_approvals<R, S, M, F>(
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    credential_presentation: CredentialPresentationComposition,
+    credential_profile: HeadlessCredentialProfile,
+    protection_for_security: F,
+    approvals: Option<Arc<oxid_wallet_application::WalletApprovalService>>,
+    did_approvals: Option<Arc<oxid_identity_application::DidApprovalService>>,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository
+        + WalletProfileAssociationRepository
+        + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
+        + 'static,
+    S: WalletProtectionPort
+        + WalletKeyOperationPort
+        + WalletJubjubChallengeSigningPort
+        + WalletPortableBackupPort
+        + PortableCustodyVaultPort
+        + 'static,
+    M: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletAccountDerivationPort
+        + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
+        + WalletShieldedSyncPort
+        + WalletTransactionPort
+        + MidnightPublicCallContextSource
+        + MidnightDiagnosticAttachPort
+        + NativeMidnightCompositionCapability
+        + 'static,
+    F: FnOnce(Arc<S>) -> Arc<dyn WalletProtectionPort>,
+{
     let key_operations: Arc<dyn WalletKeyOperationPort> = security.clone();
     let challenge_signing: Arc<dyn WalletJubjubChallengeSigningPort> = security.clone();
     let did_lifecycle = Arc::new(StandaloneDidLifecycle::with_jubjub_challenge_signing(
@@ -660,7 +708,7 @@ where
         },
         headless_passport_vault_repository(),
         protection_for_security,
-        None,
+        approvals,
         did_approvals,
     )
 }

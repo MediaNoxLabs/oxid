@@ -28,6 +28,12 @@ use super::passport_vault::{
 use super::services::ApplicationServices;
 #[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
 use super::standalone_genesis::{public_profile_protection, public_standalone_network};
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "headless-portal-local",
+    feature = "development-movement-approval"
+))]
+use super::wiring::compose_with_adapters_and_credential_profile_and_approvals;
 use super::wiring::{
     compose_with_adapters, compose_with_adapters_and_credential_profile_and_did_approvals,
     compose_with_adapters_and_presentation, compose_with_adapters_and_protection,
@@ -279,6 +285,54 @@ pub(super) fn compose_headless_standalone_with_checkpoint_options_and_presentati
             security,
             midnight,
             credential_presentation,
+        ),
+        passport_vault_state_source,
+    )
+}
+
+/// Wires the live standalone adapters to an explicit trusted approval service.
+///
+/// This entry point exists only for separately compiled development fixtures;
+/// ordinary headless and mobile composition never call it.
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "headless-portal-local",
+    feature = "development-movement-approval"
+))]
+pub(super) fn compose_headless_standalone_with_checkpoint_options_and_movement_approvals(
+    config: MidnightStandaloneConfig,
+    account_checkpoints: Option<MidnightAccountCheckpointConfig>,
+    dust_checkpoints: Option<MidnightDustCheckpointConfig>,
+    shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
+    submission_journal: Option<MidnightSubmissionJournalConfig>,
+    credential_presentation: CredentialPresentationComposition,
+    approvals: Arc<oxid_wallet_application::WalletApprovalService>,
+) -> ApplicationServices {
+    let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
+    let clock = Arc::new(SystemClock);
+    let (security, profiles) = development_security_and_profiles(&clock);
+    let midnight = Arc::new(
+        protected_standalone_midnight_wallet_with_checkpoint_options(
+            config,
+            account_checkpoints,
+            dust_checkpoints,
+            shielded_checkpoints,
+            submission_journal,
+            Arc::clone(&clock),
+            Arc::clone(&security),
+        )
+        .with_profile_association_repository(profiles.clone()),
+    );
+    with_passport_vault_state_source(
+        compose_with_adapters_and_credential_profile_and_approvals(
+            profiles,
+            security,
+            midnight,
+            credential_presentation,
+            HeadlessCredentialProfile::Standalone,
+            |security| security,
+            Some(approvals),
+            None,
         ),
         passport_vault_state_source,
     )
