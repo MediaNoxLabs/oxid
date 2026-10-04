@@ -138,12 +138,10 @@ if ! command -v nix >/dev/null 2>&1 \
   export PATH="/nix/var/nix/profiles/default/bin:$PATH"
 fi
 command -v nix >/dev/null 2>&1 || fail missing-tool
-if ! command -v timeout >/dev/null 2>&1; then
-  if [ "${OXID_IOS_PORTAL_IN_NIX:-0}" = 1 ]; then
-    fail timeout-capability
-  fi
-  export OXID_IOS_PORTAL_IN_NIX=1
-  exec nix develop --command "$0" "$@"
+if [ "${OXID_IOS_ACCEPTANCE_IN_NIX:-0}" != 1 ]; then
+  export OXID_SKIP_PI_PROVISION=1
+  exec nix develop "$ROOT" --command env \
+    OXID_IOS_ACCEPTANCE_IN_NIX=1 "$0" "$@"
 fi
 [ ! -e "$RUN_ROOT" ] && [ ! -L "$RUN_ROOT" ] || fail occupied-evidence
 [ "$(uname -s)" = Darwin ] || fail platform

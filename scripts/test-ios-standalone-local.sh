@@ -12,6 +12,7 @@ readonly RUN_ROOT="$ROOT/target/ios-standalone-local-acceptance"
 readonly PRIVATE_STATE="$RUN_ROOT/private"
 readonly RECEIPT="$PRIVATE_STATE/simulator-receipt.json"
 readonly STACK_STATE="$PRIVATE_STATE/standalone-stack"
+readonly FAUCET_BUILD_LOG="$PRIVATE_STATE/faucet-build.log"
 readonly FAUCET_LOG="$PRIVATE_STATE/faucet.log"
 readonly EVIDENCE="$RUN_ROOT/evidence.json"
 readonly APP_BUNDLE="$ROOT/target/dx/oxid-app/debug/ios/OxidApp.app"
@@ -77,13 +78,13 @@ fi
 for command_name in cargo curl docker git jq nix node python3 rustup shasum; do
   command -v "$command_name" >/dev/null 2>&1 || fail "missing-tool-$command_name"
 done
-if ! python3 -c 'from PIL import Image' >/dev/null 2>&1; then
-  if [ "${OXID_IOS_STANDALONE_IN_NIX:-0}" = 1 ]; then
-    fail python-pillow
-  fi
-  export OXID_IOS_STANDALONE_IN_NIX=1
-  exec nix develop --command "$0" "$@"
+if [ "${OXID_IOS_ACCEPTANCE_IN_NIX:-0}" != 1 ]; then
+  export OXID_SKIP_PI_PROVISION=1
+  exec nix develop "$ROOT" --command env \
+    OXID_IOS_ACCEPTANCE_IN_NIX=1 "$0" "$@"
 fi
+command -v timeout >/dev/null 2>&1 || fail timeout-capability
+python3 -c 'from PIL import Image' >/dev/null 2>&1 || fail python-pillow
 [ -x /usr/bin/xcodebuild ] && [ -x /usr/bin/xcrun ] && [ -x /usr/bin/plutil ] \
   || fail xcode-tools
 docker info >/dev/null 2>&1 || fail docker
@@ -101,6 +102,11 @@ mkdir -p -- "$ROOT/target" || fail target-directory
 existing_stack="$(docker ps -a --filter label=com.docker.compose.project=oxid-standalone --quiet)"
 [ -z "$existing_stack" ] || fail occupied-standalone-stack
 mkdir -m 700 "$RUN_ROOT" "$PRIVATE_STATE" || fail private-state
+
+timeout -k 30s 1800s cargo build --manifest-path "$ROOT/Cargo.toml" --locked \
+  -p oxid-headless --features standalone-faucet \
+  --bin oxid-standalone-faucet-http >"$FAUCET_BUILD_LOG" 2>&1 \
+  || fail faucet-build
 
 DEVELOPER_DIR_SELECTED="$(
   oxid_ios_discover_developer_directory "${OXID_XCODE_DEVELOPER_DIR:-}"
@@ -129,9 +135,6 @@ stack_owned=1
 OXID_STANDALONE_STATE_DIR="$STACK_STATE" "$ROOT/scripts/standalone-up.sh" local \
   || fail standalone-up
 
-cargo build --locked -p oxid-headless --features standalone-faucet \
-  --bin oxid-standalone-faucet-http >"$FAUCET_LOG" 2>&1 \
-  || fail faucet-build
 "$ROOT/scripts/run-standalone-faucet-http.sh" >"$FAUCET_LOG" 2>&1 &
 faucet_pid=$!
 faucet_ready=0

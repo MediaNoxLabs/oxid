@@ -34,8 +34,9 @@ test("standalone iOS acceptance owns and cleans every mutated runtime resource",
   assert.match(script, /stop_faucet/u);
   assert.match(
     script,
-    /cargo build --locked -p oxid-headless --features standalone-faucet[\s\S]*--bin oxid-standalone-faucet-http/u,
+    /timeout -k 30s 1800s cargo build --manifest-path "\$ROOT\/Cargo.toml" --locked[\s\S]*-p oxid-headless --features standalone-faucet[\s\S]*--bin oxid-standalone-faucet-http >"\$FAUCET_BUILD_LOG"/u,
   );
+  assert.match(script, /run-standalone-faucet-http\.sh" >"\$FAUCET_LOG"/u);
   assert.match(script, /receiptOwnedSimulator:true/u);
   assert.match(script, /receiptOwnedStandaloneStack:true/u);
   assert.match(script, /privateDiagnosticsRemoved:true/u);
@@ -43,7 +44,10 @@ test("standalone iOS acceptance owns and cleans every mutated runtime resource",
   assert.match(script, /fixedGrantNight:50000/u);
   assert.match(script, /SimRuntime\.iOS-17-5/u);
   assert.match(script, /SimDeviceType\.iPhone-SE-3rd-generation/u);
-  assert.match(script, /exec nix develop --command "\$0" "\$@"/u);
+  assert.match(
+    script,
+    /export OXID_SKIP_PI_PROVISION=1[\s\S]*exec nix develop "\$ROOT" --command env \\\n    OXID_IOS_ACCEPTANCE_IN_NIX=1 "\$0" "\$@"/u,
+  );
   assert.doesNotMatch(script, /command_name in [^\n]* timeout/u);
   assert.match(script, /mkdir -p -- "\$ROOT\/target" \|\| fail target-directory/u);
   assert.doesNotMatch(script, /simctl list devices booted/u);

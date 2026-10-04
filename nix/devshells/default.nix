@@ -114,7 +114,6 @@
             cargo-llvm-cov
             cargo-nextest
             clippy
-            coreutils
             dioxus-cli
             git
             gh
@@ -137,7 +136,10 @@
             rustfmt
             sccache
           ]
-          ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.xcodegen ];
+          ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
+            pkgs.coreutils
+            pkgs.xcodegen
+          ];
 
         buildInputs = linuxLibraries;
 
@@ -177,7 +179,7 @@
           # token when the conventional GITHUB_TOKEN variable is absent.
           # CI never needs Pi tooling, and this block performs network package
           # installs, so continuous-integration shells skip it entirely.
-          if [ -z "''${CI:-}" ] && [ -f .pi/settings.json ]; then
+          if [ -z "''${CI:-}" ] && [ "''${OXID_SKIP_PI_PROVISION:-0}" != 1 ] && [ -f .pi/settings.json ]; then
             if [ -z "''${GITHUB_TOKEN:-}" ]; then
               if [ -n "''${GH_TOKEN:-}" ]; then
                 export GITHUB_TOKEN="''${GH_TOKEN}"
