@@ -541,12 +541,14 @@ fn main() {
                 ),
             ),
             oxid_ui_dioxus::PassportVaultUiServices::new(
-                application.list_passport_vault_locks(),
-                application.list_passport_vault_activity(),
-                application.create_passport_vault_lock(),
-                application.deposit_passport_vault_lock(),
-                application.claim_passport_vault_lock(),
-                application.withdraw_passport_vault_lock(),
+                oxid_ui_dioxus::PassportVaultLockUiServices::new(
+                    application.list_passport_vault_locks(),
+                    application.list_passport_vault_activity(),
+                    application.create_passport_vault_lock(),
+                    application.deposit_passport_vault_lock(),
+                    application.claim_passport_vault_lock(),
+                    application.withdraw_passport_vault_lock(),
+                ),
                 application.passport_vault_state_persistence(),
                 oxid_ui_dioxus::PassportVaultContractCallUiServices::new(
                     application.read_passport_vault_contract_state(),

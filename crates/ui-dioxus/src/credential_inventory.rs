@@ -17,7 +17,7 @@ pub(super) fn CredentialInventoryCard(
     };
     let issued = credential.issued_at_ms.map_or_else(
         || "Issue date not supplied".to_owned(),
-        |timestamp| ui::format_epoch_millis(timestamp),
+        ui::format_epoch_millis,
     );
     rsx! {
         button {
