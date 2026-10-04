@@ -21,7 +21,14 @@ test("Portal iOS holder preparation follows the current DID detail contract", as
     fixture,
     /staticTexts\["Credential offer preview"\]\.waitForNonExistence/u,
   );
-  assert.match(fixture, /let leave = application\.buttons\["Leave credential review"\]/u);
+  assert.match(
+    fixture,
+    /staticTexts\["Credential offer preview"\]\.waitForNonExistence/u,
+  );
+  assert.match(
+    fixture,
+    /buttons\["Leave credential review"\]\.waitForNonExistence/u,
+  );
   assert.doesNotMatch(fixture, /buttons\["Receive"\]\.waitForExistence/u);
   assert.match(dids, /aria_label: "Copy DID"/u);
 });

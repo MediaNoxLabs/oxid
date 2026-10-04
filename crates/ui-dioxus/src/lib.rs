@@ -224,6 +224,8 @@ const CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS: &str =
     "Credential issuance terminal error: protocol unavailable";
 const CREDENTIAL_ISSUANCE_PROTOCOL_ERROR_STATUS: &str =
     "Credential issuance protocol error: protocol unavailable";
+const IMPORTED_CREDENTIAL_OFFER_NOTICE: &str =
+    "Imported credential offer loaded. Preview it before accepting.";
 const NATIVE_SHIELDED_NIGHT_TOKEN_TYPE: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";
 #[cfg(not(target_arch = "wasm32"))]
@@ -7888,10 +7890,20 @@ fn credential_issuance_protocol_error_for_message(message: &str) -> bool {
         })
 }
 
+fn clear_imported_credential_offer_notice(notice: &mut Option<String>) {
+    if notice.as_deref() == Some(IMPORTED_CREDENTIAL_OFFER_NOTICE) {
+        *notice = None;
+    }
+}
+
 fn credential_issuance_error_proves_no_retained_session(error: &CredentialIssuanceError) -> bool {
     matches!(
         error,
-        CredentialIssuanceError::NotFound | CredentialIssuanceError::Unavailable
+        CredentialIssuanceError::NotFound
+            | CredentialIssuanceError::Unavailable
+            | CredentialIssuanceError::Protocol(
+                oxid_protocol_application::IssuanceProtocolError::InvalidOffer
+            )
     )
 }
 
@@ -8968,14 +8980,12 @@ fn CredentialsPage(
             offer_draft.write().import(request_uri);
             prepared_issuance.set(None);
             issuance_consent.set(false);
-            issuance_notice.set(Some(
-                "Imported credential offer loaded. Preview it before accepting.".to_owned(),
-            ));
+            issuance_notice.set(Some(IMPORTED_CREDENTIAL_OFFER_NOTICE.to_owned()));
         } else if offer_draft.read().has_imported_offer() {
             offer_draft.write().clear_imported();
             prepared_issuance.set(None);
             issuance_consent.set(false);
-            issuance_notice.set(None);
+            clear_imported_credential_offer_notice(&mut issuance_notice.write());
         }
     });
     let profile_id = active_profile.id.clone();
@@ -10770,6 +10780,9 @@ mod tests {
         for error in [
             CredentialIssuanceError::NotFound,
             CredentialIssuanceError::Unavailable,
+            CredentialIssuanceError::Protocol(
+                oxid_protocol_application::IssuanceProtocolError::InvalidOffer,
+            ),
         ] {
             assert!(credential_issuance_cleanup_allows_release(&Err(error)));
         }
@@ -10839,6 +10852,9 @@ mod tests {
         for cleanup_error in [
             CredentialIssuanceError::NotFound,
             CredentialIssuanceError::Unavailable,
+            CredentialIssuanceError::Protocol(
+                oxid_protocol_application::IssuanceProtocolError::InvalidOffer,
+            ),
         ] {
             for imported in [true, false] {
                 let mut pending = imported.then(|| PendingIdentityRequest {
@@ -12842,6 +12858,24 @@ mod tests {
         clear_credential_issuance_review_admission_value(&mut pending, &mut manual_review_lock);
         assert!(pending.is_none());
         assert!(!manual_review_lock);
+    }
+
+    #[test]
+    fn imported_offer_cleanup_preserves_newer_sanitized_feedback() {
+        let mut imported = Some(IMPORTED_CREDENTIAL_OFFER_NOTICE.to_owned());
+        clear_imported_credential_offer_notice(&mut imported);
+        assert!(imported.is_none());
+
+        let mut terminal = Some(
+            CredentialIssuanceTerminalError::ProtocolUnavailable
+                .message()
+                .to_owned(),
+        );
+        clear_imported_credential_offer_notice(&mut terminal);
+        assert_eq!(
+            terminal.as_deref(),
+            Some(CredentialIssuanceTerminalError::ProtocolUnavailable.message())
+        );
     }
 
     #[test]
