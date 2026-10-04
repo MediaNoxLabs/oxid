@@ -26,6 +26,12 @@ export function validateReleaseQualification(run, { branch, sha }) {
       failures.push(`${name} is not a successful completed job`);
     }
   }
+  const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
+  const matchingArtifacts = artifacts.filter((artifact) => artifact?.name === `scorecard-${sha}`);
+  if (matchingArtifacts.length !== 1 || matchingArtifacts[0].expired !== false
+    || !Number.isSafeInteger(matchingArtifacts[0].size_in_bytes) || matchingArtifacts[0].size_in_bytes <= 0) {
+    failures.push("exact-head Scorecard result artifact is missing, empty, or expired");
+  }
   return { ok: failures.length === 0, failures };
 }
 
@@ -63,15 +69,27 @@ export function verifyReleaseQualification(options, { cwd = process.cwd(), run =
     "-f", "event=workflow_dispatch", "-f", `branch=${options.branch}`, "-f", "per_page=100",
   ], { cwd, run }).workflow_runs;
   if (!Array.isArray(workflowRuns)) throw new Error("GitHub qualification evidence is unavailable: workflow runs response is malformed");
-  const candidate = workflowRuns.find((item) => item?.head_sha === options.sha);
-  if (!candidate) throw new Error(`release qualification is missing for ${options.branch}@${options.sha}`);
-  const jobs = ghJson(["api", "--method", "GET", `repos/${options.repo}/actions/runs/${candidate.id}/jobs`, "-f", "per_page=100"], { cwd, run }).jobs;
-  const result = validateReleaseQualification({ ...candidate, jobs }, options);
-  if (!result.ok) throw new Error(`release qualification is invalid: ${result.failures.join("; ")}`);
-  if (currentHead() !== options.sha) {
-    throw new Error(`milestone ${options.branch} moved while qualification evidence was checked`);
+  const candidates = workflowRuns.filter((item) => item?.head_sha === options.sha);
+  if (candidates.length === 0) throw new Error(`release qualification is missing for ${options.branch}@${options.sha}`);
+  const failures = [];
+  for (const candidate of candidates) {
+    if (candidate.status !== "completed" || candidate.conclusion !== "success") {
+      failures.push(`run ${candidate.id} did not complete successfully`);
+      continue;
+    }
+    const jobs = ghJson(["api", "--method", "GET", `repos/${options.repo}/actions/runs/${candidate.id}/jobs`, "-f", "per_page=100"], { cwd, run }).jobs;
+    const artifacts = ghJson(["api", "--method", "GET", `repos/${options.repo}/actions/runs/${candidate.id}/artifacts`, "-f", "per_page=100"], { cwd, run }).artifacts;
+    const result = validateReleaseQualification({ ...candidate, jobs, artifacts }, options);
+    if (!result.ok) {
+      failures.push(`run ${candidate.id}: ${result.failures.join("; ")}`);
+      continue;
+    }
+    if (currentHead() !== options.sha) {
+      throw new Error(`milestone ${options.branch} moved while qualification evidence was checked`);
+    }
+    return { ok: true, branch: options.branch, sha: options.sha, runUrl: candidate.html_url, runId: candidate.id };
   }
-  return { ok: true, branch: options.branch, sha: options.sha, runUrl: candidate.html_url, runId: candidate.id };
+  throw new Error(`release qualification is invalid: ${failures.join("; ")}`);
 }
 
 export function runCli(argv = process.argv.slice(2), runtime = {}) {

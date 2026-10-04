@@ -210,6 +210,7 @@ storage ceiling before any new layer becomes required.
 | PR or push to `main` | `release` | every deterministic public hosted lane, in parallel |
 | manual workflow | selected `feature`, `integration`, or `release` | impacted, public-full, or public-full respectively; extra hosted targets may be named |
 | nightly schedule | release backstop | complete hermetic Nix suite |
+| manual Nightly dispatch from a frozen `milestone-<x.y.z>` | release qualification | full hermetic Nix suite plus checksum-pinned Scorecard CLI at the exact milestone SHA; the develop promotion audit requires both green jobs and the retained SHA-named Scorecard result |
 
 Milestone trains are the only agent-mergeable targets. `develop` remains the
 human-controlled engineering baseline and maps to the internal `integration`

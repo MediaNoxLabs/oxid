@@ -53,9 +53,11 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/milestone-')
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
+      checks: read
       contents: read
-      id-token: write
-      security-events: write
+      issues: read
+      pull-requests: read
     steps:
       - name: Checkout selected milestone source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -63,14 +65,34 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Run Scorecard
-        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
-        with:
-          results_file: results.sarif
-          results_format: sarif
-          publish_results: true
+      - name: Install checksum-pinned Scorecard CLI
+        env:
+          SCORECARD_SHA256: 83b90a05c1540ef1390db1cd5711e5fd04be9c1d8537fb84d39d02092d6a8dff
+        run: |
+          curl --fail --location --retry 3 --retry-all-errors \
+            https://github.com/ossf/scorecard/releases/download/v5.5.0/scorecard_5.5.0_linux_amd64.tar.gz \
+            --output "$RUNNER_TEMP/scorecard.tar.gz"
+          printf '%s  %s\n' "$SCORECARD_SHA256" "$RUNNER_TEMP/scorecard.tar.gz" | sha256sum --check -
+          mkdir -p "$RUNNER_TEMP/scorecard-bin"
+          tar -xzf "$RUNNER_TEMP/scorecard.tar.gz" -C "$RUNNER_TEMP/scorecard-bin" scorecard
 
-      - name: Upload Scorecard SARIF
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+      - name: Analyze the exact milestone commit
+        env:
+          GITHUB_AUTH_TOKEN: ${{ github.token }}
+        run: |
+          "$RUNNER_TEMP/scorecard-bin/scorecard" \
+            --repo=github.com/MediaNoxLabs/oxid \
+            --commit="$GITHUB_SHA" \
+            --format=json \
+            --output="$RUNNER_TEMP/scorecard.json"
+          jq -e --arg sha "$GITHUB_SHA" '.repo.commit == $sha and (.checks | length > 0)' \
+            "$RUNNER_TEMP/scorecard.json" >/dev/null
+          echo "Scorecard source: \`${GITHUB_REF_NAME}@${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain Scorecard result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          sarif_file: results.sarif
+          name: scorecard-${{ github.sha }}
+          path: ${{ runner.temp }}/scorecard.json
+          if-no-files-found: error
+          retention-days: 90

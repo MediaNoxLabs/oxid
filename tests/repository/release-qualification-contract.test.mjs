@@ -16,6 +16,7 @@ const completedRun = (overrides = {}) => ({
     { name: "Hermetic nix flake check (full sandboxed test suite)", status: "completed", conclusion: "success" },
     { name: "Scorecard analysis", status: "completed", conclusion: "success" },
   ],
+  artifacts: [{ name: `scorecard-${sha}`, expired: false, size_in_bytes: 512 }],
   ...overrides,
 });
 
@@ -31,6 +32,8 @@ test("release qualification requires both completed checks at the exact mileston
     completedRun({ event: "schedule" }),
     completedRun({ conclusion: "failure" }),
     completedRun({ jobs: [{ name: "Hermetic nix flake check (full sandboxed test suite)", status: "completed", conclusion: "success" }] }),
+    completedRun({ artifacts: [] }),
+    completedRun({ artifacts: [{ name: `scorecard-${sha}`, expired: true, size_in_bytes: 512 }] }),
   ]) {
     assert.equal(validateReleaseQualification(run, { branch: "milestone-0.2.0", sha }).ok, false);
   }
@@ -71,10 +74,33 @@ test("the verifier rejects a branch move during evidence lookup", () => {
     if (args[3]?.endsWith("/actions/runs/12/jobs")) {
       return JSON.stringify({ jobs: completedRun().jobs });
     }
+    if (args[3]?.endsWith("/actions/runs/12/artifacts")) {
+      return JSON.stringify({ artifacts: completedRun().artifacts });
+    }
     throw new Error(`unexpected GitHub request: ${args.join(" ")}`);
   };
   assert.throws(() => verifyReleaseQualification({ repo: "MediaNoxLabs/oxid", branch: "milestone-0.2.0", sha }, { run }), /moved while qualification evidence was checked/);
   assert.equal(refReads, 2);
+});
+
+test("an older successful dispatch remains valid after a failed retry at the same SHA", () => {
+  const run = (_command, args) => {
+    if (args[3]?.endsWith("/git/ref/heads/milestone-0.2.0")) {
+      return JSON.stringify({ object: { sha } });
+    }
+    if (args[3]?.endsWith("/actions/workflows/nightly.yml/runs")) {
+      return JSON.stringify({ workflow_runs: [
+        { ...completedRun({ conclusion: "failure" }), id: 13 },
+        { ...completedRun(), id: 12, html_url: "https://example.test/run/12" },
+      ] });
+    }
+    if (args[3]?.endsWith("/actions/runs/12/jobs")) return JSON.stringify({ jobs: completedRun().jobs });
+    if (args[3]?.endsWith("/actions/runs/12/artifacts")) return JSON.stringify({ artifacts: completedRun().artifacts });
+    throw new Error(`unexpected GitHub request: ${args.join(" ")}`);
+  };
+  assert.deepEqual(verifyReleaseQualification({ repo: "MediaNoxLabs/oxid", branch: "milestone-0.2.0", sha }, { run }), {
+    ok: true, branch: "milestone-0.2.0", sha, runUrl: "https://example.test/run/12", runId: 12,
+  });
 });
 
 test("existing dispatchable Nightly workflow qualifies the selected source SHA", async () => {
@@ -84,7 +110,14 @@ test("existing dispatchable Nightly workflow qualifies the selected source SHA",
   assert.match(workflow, /if: github\.event_name == 'workflow_dispatch' && startsWith\(github\.ref, 'refs\/heads\/milestone-'\)/);
   assert.equal((workflow.match(/ref: \$\{\{ github\.sha \}\}/g) ?? []).length, 2);
   assert.match(workflow, /nix flake check --print-build-logs/);
-  assert.match(workflow, /ossf\/scorecard-action@[0-9a-f]{40}/);
+  assert.match(workflow, /scorecard_5\.5\.0_linux_amd64\.tar\.gz/);
+  assert.match(workflow, /83b90a05c1540ef1390db1cd5711e5fd04be9c1d8537fb84d39d02092d6a8dff/);
+  assert.match(workflow, /--commit="\$GITHUB_SHA"/);
+  assert.match(workflow, /jq -e --arg sha "\$GITHUB_SHA"/);
+  assert.match(workflow, /name: scorecard-\$\{\{ github\.sha \}\}/);
+  assert.doesNotMatch(workflow, /ossf\/scorecard-action@/);
+  assert.match(workflow, /^    name: Hermetic nix flake check \(full sandboxed test suite\)$/m);
+  assert.match(workflow, /^    name: Scorecard analysis$/m);
 });
 
 test("the develop promotion audit requires exact-head qualification for milestone sources", async () => {
