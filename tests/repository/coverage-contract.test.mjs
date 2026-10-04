@@ -13,6 +13,7 @@ import {
   runCoverage,
   validatePolicy,
 } from "../../scripts/coverage/run.mjs";
+import { verifyEnforcedManifest } from "../../scripts/coverage/verify-manifest.mjs";
 
 const repoRoot = path.resolve(new URL("../..", import.meta.url).pathname);
 const policyPath = path.join(repoRoot, "scripts/coverage/policy.json");
@@ -401,7 +402,50 @@ test("strict coverage makes policy enforcement explicit", async (t) => {
   const result = await runSynthetic(t, { enforce: true });
   assert.equal(result.manifest.evaluationMode, "enforce");
   assert.equal(result.evaluation.status, "pass");
+  assert.doesNotThrow(() => verifyEnforcedManifest({ ...result.manifest, mode: "coverage" }, HEAD));
+  assert.throws(() => verifyEnforcedManifest(result.manifest, HEAD), /not a real coverage run/u);
+  assert.throws(() => verifyEnforcedManifest({ ...result.manifest, mode: "coverage", evaluationMode: "measurement" }, HEAD), /not enforced/u);
+  assert.throws(() => verifyEnforcedManifest({ ...result.manifest, mode: "coverage" }, BASE), /source HEAD/u);
 });
+
+test("strict coverage rejects a package-floor violation and retains its computed verdict", async (t) => withTemp(t, async (stateRoot) => {
+  await assert.rejects(runCoverage({
+    repoRoot, stateRoot, base: "origin/develop", policy: await loadPolicy(),
+    git: fakeGit(), enforce: true,
+    executeScope: async ({ rawReportPath, scope, policy, packageInventory }) => {
+      const raw = llvmScopeReport(scope.id, policy, packageInventory);
+      if (scope.id === "workspace-aggregate") {
+        const foundation = raw.data[0].files.find((file) => file.filename.endsWith("/crates/foundation/src/lib.rs"));
+        foundation.summary.lines.covered = 60;
+        foundation.summary.lines.percent = 60;
+        raw.data[0].totals.lines.covered -= 40;
+      }
+      await writeFile(rawReportPath, `${JSON.stringify(raw)}\n`);
+    },
+  }), /coverage policy enforcement failed/u);
+  const manifest = JSON.parse(await readFile(path.join(stateRoot, "coverage", HEAD, "reports/manifest.json"), "utf8"));
+  assert.equal(manifest.evaluationMode, "enforce");
+  assert.equal(manifest.evaluation.status, "fail");
+}));
+
+test("strict coverage rejects an uncovered changed line and retains its computed verdict", async (t) => withTemp(t, async (stateRoot) => {
+  const git = fakeGit({ diff: () => "diff --git a/crates/foundation/src/lib.rs b/crates/foundation/src/lib.rs\n@@ -9,0 +10,1 @@\n+uncovered\n" });
+  await assert.rejects(runCoverage({
+    repoRoot, stateRoot, base: "origin/develop", policy: await loadPolicy(), git, enforce: true,
+    executeScope: async ({ rawReportPath, scope, policy, packageInventory }) => {
+      const raw = llvmScopeReport(scope.id, policy, packageInventory);
+      if (scope.id === "workspace-aggregate") {
+        const foundation = raw.data[0].files.find((file) => file.filename.endsWith("/crates/foundation/src/lib.rs"));
+        foundation.segments = [[10, 1, 0, true, true, false], [11, 1, 0, false, false, false]];
+      }
+      await writeFile(rawReportPath, `${JSON.stringify(raw)}\n`);
+    },
+  }), /coverage policy enforcement failed/u);
+  const manifest = JSON.parse(await readFile(path.join(stateRoot, "coverage", HEAD, "reports/manifest.json"), "utf8"));
+  assert.equal(manifest.evaluationMode, "enforce");
+  assert.equal(manifest.changedLines.status, "fail");
+  assert.equal(manifest.evaluation.status, "fail");
+}));
 
 test("hosted coverage uses the same fetched comparison base as target planning", async () => {
   const workflow = await readFile(path.join(repoRoot, ".github/workflows/ci.yml"), "utf8");
@@ -423,4 +467,5 @@ test("hosted coverage uses the same fetched comparison base as target planning",
   assert.match(coverageJob, /needs: plan/u);
   assert.ok(coverageJob.includes(`OXID_COVERAGE_BASE: ${comparisonBase}`));
   assert.match(coverageJob, /\.\/run\.sh coverage --strict/u);
+  assert.match(coverageJob, /node scripts\/coverage\/verify-manifest\.mjs/u);
 });
