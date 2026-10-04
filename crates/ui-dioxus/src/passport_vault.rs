@@ -39,7 +39,17 @@ pub struct PassportVaultUiServices {
     pub(super) contract_calls: PassportVaultContractCallUiServices,
 }
 
-impl PassportVaultUiServices {
+/// Lock inventory and mutation capabilities consumed by the Vault page.
+pub struct PassportVaultLockUiServices {
+    list: Arc<dyn ListPassportVaultLocksUseCase>,
+    activity: Arc<dyn ListPassportVaultActivityUseCase>,
+    create: Arc<dyn CreatePassportVaultLockUseCase>,
+    deposit: Arc<dyn DepositPassportVaultLockUseCase>,
+    claim: Arc<dyn ClaimPassportVaultLockUseCase>,
+    withdraw: Arc<dyn WithdrawPassportVaultLockUseCase>,
+}
+
+impl PassportVaultLockUiServices {
     #[must_use]
     pub fn new(
         list: Arc<dyn ListPassportVaultLocksUseCase>,
@@ -48,8 +58,6 @@ impl PassportVaultUiServices {
         deposit: Arc<dyn DepositPassportVaultLockUseCase>,
         claim: Arc<dyn ClaimPassportVaultLockUseCase>,
         withdraw: Arc<dyn WithdrawPassportVaultLockUseCase>,
-        state_persistence: impl Into<String>,
-        contract_calls: PassportVaultContractCallUiServices,
     ) -> Self {
         Self {
             list,
@@ -58,6 +66,24 @@ impl PassportVaultUiServices {
             deposit,
             claim,
             withdraw,
+        }
+    }
+}
+
+impl PassportVaultUiServices {
+    #[must_use]
+    pub fn new(
+        locks: PassportVaultLockUiServices,
+        state_persistence: impl Into<String>,
+        contract_calls: PassportVaultContractCallUiServices,
+    ) -> Self {
+        Self {
+            list: locks.list,
+            activity: locks.activity,
+            create: locks.create,
+            deposit: locks.deposit,
+            claim: locks.claim,
+            withdraw: locks.withdraw,
             state_persistence: state_persistence.into(),
             contract_calls,
         }

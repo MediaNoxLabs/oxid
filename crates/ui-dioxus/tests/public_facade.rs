@@ -7,12 +7,13 @@ use oxid_ui_dioxus::{
     CredentialIssuanceUiServices, CredentialPresentationUiServices, CredentialUiServices,
     DiagnosticsUiServices, DidUiServices, IdentityIngressUiServices, IdentityUiServices,
     PassportVaultContractCallRecoveryUiServices, PassportVaultContractCallUiServices,
-    PassportVaultUiServices, SecurityCopySnapshot, SelfIssuedAuthenticationUiServices,
-    WalletAccountUiServices, WalletBackupUiServices, WalletDustSettlementUiServices,
-    WalletDustSyncUiServices, WalletOperationalUiServices, WalletProfileUiServices,
-    WalletRealmSyncUiServices, WalletSecurityUiServices, WalletShieldedSyncUiServices,
-    WalletTransactionPreparationUiServices, WalletTransactionRecoveryUiServices,
-    WalletTransactionUiServices, WalletUiServices, security_copy_snapshot,
+    PassportVaultLockUiServices, PassportVaultUiServices, SecurityCopySnapshot,
+    SelfIssuedAuthenticationUiServices, WalletAccountUiServices, WalletBackupUiServices,
+    WalletDustSettlementUiServices, WalletDustSyncUiServices, WalletOperationalUiServices,
+    WalletProfileUiServices, WalletRealmSyncUiServices, WalletSecurityUiServices,
+    WalletShieldedSyncUiServices, WalletTransactionPreparationUiServices,
+    WalletTransactionRecoveryUiServices, WalletTransactionUiServices, WalletUiServices,
+    security_copy_snapshot,
 };
 
 fn assert_public_path<Item>(_item: Item) {}
@@ -26,6 +27,7 @@ fn service_facade_type_and_constructor_paths_remain_at_the_crate_root() {
     assert_public_type::<WalletUiServices>();
     assert_public_type::<DiagnosticsUiServices>();
     assert_public_type::<PassportVaultUiServices>();
+    assert_public_type::<PassportVaultLockUiServices>();
     assert_public_type::<PassportVaultContractCallRecoveryUiServices>();
     assert_public_type::<PassportVaultContractCallUiServices>();
     assert_public_type::<WalletOperationalUiServices>();
@@ -52,8 +54,9 @@ fn service_facade_type_and_constructor_paths_remain_at_the_crate_root() {
 
     assert_public_path(WalletUiServices::new);
     assert_public_path(DiagnosticsUiServices::new);
-    let _: fn(_, _, _, _, _, _, String, _) -> PassportVaultUiServices =
+    let _: fn(PassportVaultLockUiServices, String, _) -> PassportVaultUiServices =
         PassportVaultUiServices::new;
+    assert_public_path(PassportVaultLockUiServices::new);
     assert_public_path(PassportVaultContractCallRecoveryUiServices::new);
     let _: fn(_, _, _, _, _, String, _) -> PassportVaultContractCallUiServices =
         PassportVaultContractCallUiServices::new;
