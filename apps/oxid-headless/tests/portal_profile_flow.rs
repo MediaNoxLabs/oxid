@@ -31,6 +31,7 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const STARTUP_DIAGNOSTIC_LIMIT: usize = 512;
 const ISSUER_METHOD: &str = "did:midnight:undeployed:a4c9483a0c7cdd808056a93334ab97207b38b4363d1da5cbfb78ad256cd689f0#issuer-key-1";
 const ISSUER_X: &str = "r3S3KuAV2Y2wviagxqTsKNuUFmqHlVjfWwQvZaV_pQA";
 const ISSUER_Y: &str = "b8GewrvMw5hldx4dBHZSAqBhYb_p7bVdcVqC2FU08mM";
@@ -56,6 +57,29 @@ const PORTAL_STANDALONE_EXCLUDED_ENV: [&str; 10] = [
     "OXID_PASSPORT_VAULT_STORE_PATH",
     "OXID_PRESENTATION_ARTIFACTS_DIR",
 ];
+
+fn bounded_startup_diagnostic(stderr: &[u8]) -> String {
+    let diagnostic = String::from_utf8_lossy(stderr);
+    let mut bounded = String::with_capacity(STARTUP_DIAGNOSTIC_LIMIT);
+    let mut truncated = false;
+
+    for character in diagnostic.chars() {
+        if bounded.len() + character.len_utf8() > STARTUP_DIAGNOSTIC_LIMIT {
+            truncated = true;
+            break;
+        }
+        bounded.push(if character.is_control() {
+            ' '
+        } else {
+            character
+        });
+    }
+
+    if truncated {
+        bounded.push_str(" [truncated]");
+    }
+    bounded
+}
 
 fn configure_canonical_standalone(command: &mut Command, store: &TestStore) {
     for key in PORTAL_STANDALONE_EXCLUDED_ENV {
@@ -1059,7 +1083,11 @@ fn portal_startup_accepts_only_the_exact_local_standalone_bundle() {
     let output = accepted
         .output()
         .expect("canonical headless startup result");
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "canonical startup failed: {}",
+        bounded_startup_diagnostic(&output.stderr)
+    );
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
 

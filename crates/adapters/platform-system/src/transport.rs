@@ -6,14 +6,13 @@ use std::{error::Error, fmt, net::IpAddr, sync::Arc};
 
 use reqwest::{Certificate, ClientBuilder};
 use rustls::{ClientConfig, RootCertStore};
-use rustls_platform_verifier_07::ConfigVerifierExt as _;
 use tokio_tungstenite::Connector;
 use url::Url;
 
 /// The only TLS trust modes admitted by the native application.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransportTrustPolicy {
-    /// Use the operating system trust policy for normal public services.
+    /// Use reviewed public WebPKI roots for normal public services.
     PlatformTrust,
     /// Use the reviewed Mozilla/WebPKI bundle for Tailnet demo routes.
     BundledPublicRoots,
@@ -47,8 +46,19 @@ impl Error for TransportTrustError {}
 pub fn http_client_builder_for(endpoint: &Url) -> Result<ClientBuilder, TransportTrustError> {
     ensure_crypto_provider();
     match classify(endpoint, &["http", "https"])? {
-        TransportTrustPolicy::PlatformTrust | TransportTrustPolicy::DevelopmentLoopback => {
-            Ok(reqwest::Client::builder())
+        // Native CA discovery is not available in every supported execution
+        // environment, notably hermetic release builds. The reviewed public
+        // root bundle gives ordinary authenticated HTTPS the same portable,
+        // explicit construction contract as Tailnet HTTPS.
+        TransportTrustPolicy::PlatformTrust => {
+            http_client_builder_with_roots(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter())
+        }
+        // A plaintext loopback client never performs TLS. Supplying an
+        // explicit empty root set keeps construction independent of host CA
+        // discovery (which is deliberately absent in hermetic Nix builds) and
+        // also makes any accidental HTTPS reuse fail closed.
+        TransportTrustPolicy::DevelopmentLoopback => {
+            Ok(reqwest::Client::builder().tls_certs_only(std::iter::empty::<Certificate>()))
         }
         TransportTrustPolicy::BundledPublicRoots => {
             http_client_builder_with_roots(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter())
@@ -63,9 +73,8 @@ pub fn websocket_connector_for(endpoint: &Url) -> Result<Option<Connector>, Tran
     match classify(endpoint, &["ws", "wss"])? {
         TransportTrustPolicy::DevelopmentLoopback => Ok(None),
         TransportTrustPolicy::PlatformTrust => {
-            let config = ClientConfig::with_platform_verifier()
-                .map_err(|_| TransportTrustError::TlsConfigurationUnavailable)?;
-            Ok(Some(Connector::Rustls(Arc::new(config))))
+            websocket_connector_with_roots(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned())
+                .map(Some)
         }
         TransportTrustPolicy::BundledPublicRoots => {
             websocket_connector_with_roots(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned())
@@ -506,12 +515,40 @@ mod tests {
 
     #[test]
     fn constructs_each_supported_native_transport() {
-        assert!(http_client_builder_for(&url("http://localhost:8080/")).is_ok());
-        assert!(
-            http_client_builder_for(&url("https://wallet.example-tailnet.ts.net:8443/")).is_ok()
-        );
+        http_client_builder_for(&url("http://localhost:8080/"))
+            .expect("loopback HTTP trust should configure")
+            .build()
+            .expect("loopback HTTP client should build");
+        http_client_builder_for(&url("https://wallet.example-tailnet.ts.net:8443/"))
+            .expect("Tailnet HTTPS trust should configure")
+            .build()
+            .expect("Tailnet HTTPS client should build");
+        http_client_builder_for(&url("https://issuer.example/"))
+            .expect("public HTTPS trust should configure")
+            .build()
+            .expect("public HTTPS client should build");
         assert!(websocket_connector_for(&url("ws://127.0.0.1:9944/")).is_ok());
+        assert!(websocket_connector_for(&url("wss://issuer.example/")).is_ok());
         assert!(websocket_connector_for(&url("wss://wallet.example-tailnet.ts.net:8443/")).is_ok());
+    }
+
+    #[test]
+    fn loopback_http_policy_cannot_be_reused_for_https() {
+        ensure_crypto_provider();
+        let (server, _trusted) = fixture(CertificateCase::Valid);
+        let (port, handle) = spawn_tls_server(ServerProtocol::Http, server);
+        let client = http_client_builder_for(&url("http://localhost:8080/"))
+            .expect("loopback HTTP trust should configure")
+            .build()
+            .expect("loopback HTTP client should build");
+
+        let result = runtime().block_on(client.get(format!("https://localhost:{port}/")).send());
+
+        assert!(
+            result.is_err(),
+            "loopback HTTP policy unexpectedly trusted HTTPS"
+        );
+        handle.join().expect("test HTTP TLS server should stop");
     }
 
     #[test]

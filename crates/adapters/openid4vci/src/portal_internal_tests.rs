@@ -609,6 +609,7 @@ async fn whole_request_timeout_is_payload_free_and_not_retried() {
     });
     let mut client = protocol(&origin);
     client.client = Client::builder()
+        .tls_certs_only(std::iter::empty::<reqwest::Certificate>())
         .no_proxy()
         .redirect(Policy::none())
         .retry(reqwest::retry::never())
