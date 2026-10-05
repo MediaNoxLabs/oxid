@@ -57,11 +57,23 @@ const PORTAL_STANDALONE_EXCLUDED_ENV: [&str; 10] = [
     "OXID_PRESENTATION_ARTIFACTS_DIR",
 ];
 
-fn configure_canonical_standalone(command: &mut Command) {
+fn configure_canonical_standalone(command: &mut Command, store: &TestStore) {
     for key in PORTAL_STANDALONE_EXCLUDED_ENV {
         command.env_remove(key);
     }
     command
+        .env(
+            "OXID_DID_STORE_PATH",
+            store.root.join("private/did-records.json"),
+        )
+        .env(
+            "OXID_CREDENTIAL_STORE_PATH",
+            store.root.join("private/credentials.enc"),
+        )
+        .env(
+            "OXID_CREDENTIAL_KEY_PATH",
+            store.root.join("private/credentials.key"),
+        )
         .env("OXID_MIDNIGHT_NETWORK_ID", "undeployed")
         .env("OXID_MIDNIGHT_INDEXER_WS_URL", INDEXER_WS)
         .env("OXID_MIDNIGHT_INDEXER_HTTP_URL", INDEXER_HTTP)
@@ -156,7 +168,7 @@ impl ProcessHarness {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        configure_canonical_standalone(&mut command);
+        configure_canonical_standalone(&mut command, store);
         let mut child = command.spawn().expect("headless wallet should start");
         Self {
             input: child.stdin.take().expect("stdin"),
@@ -1043,7 +1055,7 @@ fn portal_startup_accepts_only_the_exact_local_standalone_bundle() {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    configure_canonical_standalone(&mut accepted);
+    configure_canonical_standalone(&mut accepted, &store);
     let output = accepted
         .output()
         .expect("canonical headless startup result");
@@ -1073,7 +1085,7 @@ fn portal_startup_accepts_only_the_exact_local_standalone_bundle() {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        configure_canonical_standalone(&mut command);
+        configure_canonical_standalone(&mut command, &store);
         command.env(key, value);
         let output = command.output().expect("headless startup result");
         assert!(!output.status.success(), "noncanonical {key} must fail");
@@ -1101,7 +1113,7 @@ fn portal_startup_accepts_only_the_exact_local_standalone_bundle() {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        configure_canonical_standalone(&mut command);
+        configure_canonical_standalone(&mut command, &store);
         command.env_remove(removed);
         let output = command.output().expect("headless startup result");
         assert!(!output.status.success(), "partial bundle missing {removed}");
@@ -1136,7 +1148,7 @@ fn portal_startup_accepts_only_the_exact_local_standalone_bundle() {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        configure_canonical_standalone(&mut command);
+        configure_canonical_standalone(&mut command, &store);
         command.env(extra, marker);
         let output = command.output().expect("headless startup result");
         assert!(!output.status.success(), "extra setting {extra} must fail");
