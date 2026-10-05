@@ -44,6 +44,20 @@ Run all safe `authority=maestro` iOS scenarios serially through the receipt-owne
 ./bootstrap.sh -- ./scripts/test-ios-maestro-holder-evidence.sh
 ```
 
+For a bounded repair loop, run exactly one inventory-owned journey in a fresh
+receipt-owned simulator:
+
+```sh
+just ios-maestro-focused demo home-receive-send-blocked
+```
+
+The focused runner validates the scenario and its declared `demo` or `dev`
+composition before it touches Xcode, reuses the receipt-bound application
+artifact and exclusive iOS Maestro lane, then deletes the exact simulator, raw
+Maestro output, and private diagnostics. Its bounded receipt is explicitly
+`diagnostic-only` with `releaseEvidence: false`; it cannot replace the complete
+exact-head holder evidence command above.
+
 Run the larger iOS width as a separate receipt-owned simulator pass. Its receipt pins the same exact head, `holder-public` capture policy, iPhone 17 Pro device type, iOS 26.4 runtime, 402-point class viewport, and each artifact's route, state, actual `demo` or `dev` UI profile, and Lunar Aegis design reference or `no-match`; it never reuses an ambient simulator.
 
 ```sh

@@ -362,6 +362,10 @@ ios-native-custody-smoke:
 ios-wallet-lifecycle-simulator:
     @timeout -k 30s 1800s ./scripts/test-ios-wallet-lifecycle-simulator.sh
 
+# Run one inventory-owned iOS Maestro journey as non-release diagnostic evidence.
+ios-maestro-focused composition flow:
+    @timeout -k 30s 1800s ./scripts/test-ios-maestro-focused.sh --composition "{{composition}}" --flow "{{flow}}"
+
 android-run:
     ./scripts/run-android-emulator.sh
 
