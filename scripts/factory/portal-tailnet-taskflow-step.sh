@@ -10,6 +10,8 @@ readonly REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && p
 # shellcheck source=../lib/nix-path.sh
 source "$REPOSITORY_ROOT/scripts/lib/nix-path.sh"
 oxid_admit_daemon_nix_path
+# shellcheck source=../lib/docker-engine-health.sh
+source "$REPOSITORY_ROOT/scripts/lib/docker-engine-health.sh"
 
 readonly OPERATION="${1:-}"
 readonly MODE="${2:-}"
@@ -26,7 +28,7 @@ case "$OPERATION" in
     for command_name in docker git jq nix node openssl shasum; do
       command -v "$command_name" >/dev/null 2>&1 || fail "missing-$command_name"
     done
-    docker info >/dev/null 2>&1 || fail docker-daemon
+    oxid_require_docker_engine >/dev/null || fail docker-engine
     [ -x "$REPOSITORY_ROOT/scripts/test-android-portal-tailnet-physical.sh" ] || fail lifecycle-entrypoint
     [ -f "$REPOSITORY_ROOT/.pi/taskflows/flows/demos/portal-tailnet-prepare.json" ] || fail flow-definition
     [ -z "$(git -C "$REPOSITORY_ROOT" status --porcelain --untracked-files=no)" ] || fail tracked-tree-dirty

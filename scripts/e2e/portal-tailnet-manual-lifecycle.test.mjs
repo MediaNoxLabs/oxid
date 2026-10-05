@@ -74,7 +74,7 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
   assert.match(consumerLifecycle, /stale-starting-receipt/);
   assert.match(consumerLifecycle, /receipt_valid \|\| starting_receipt_valid \|\| fail ownership/);
   assert.match(consumerLifecycle, /docker pull "\$SMOCKER_IMAGE"/);
-  assert.match(consumerLifecycle, /docker image inspect "\$SMOCKER_IMAGE"/);
+  assert.match(consumerLifecycle, /oxid_docker_read image inspect "\$SMOCKER_IMAGE"/);
   assert.match(consumerLifecycle, /--out-link "\$gc_root"/);
   assert.match(consumerLifecycle, /current_digest="sha256:\$\(shasum -a 256 "\$output"/);
   assert.match(consumerLifecycle, /gc_root" = "\$prepared_directory\/nix-\$key"/);

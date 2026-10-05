@@ -30,6 +30,9 @@ readonly EXTERNAL_PREPARED_RECEIPT="${PORTAL_CONSUMER_PREPARED_RECEIPT:-}"
 readonly TAILNET_MOCK_STATE="${PORTAL_TAILNET_MOCK_STATE_DIR:-}"
 readonly TAILNET_MOCK_TRANSFORM="$REPOSITORY_ROOT/scripts/e2e/tailnet-mock-transform.mjs"
 
+# shellcheck source=lib/docker-engine-health.sh
+source "$REPOSITORY_ROOT/scripts/lib/docker-engine-health.sh"
+
 fail() {
   printf 'portal-consumer-lifecycle: FAIL phase=%s\n' "$1" >&2
   exit 1
@@ -50,11 +53,11 @@ done
 umask 077
 
 project_ids() {
-  docker ps -a --filter "label=com.docker.compose.project=$PROJECT" --quiet 2>/dev/null | sort
+  oxid_docker_read ps -a --filter "label=com.docker.compose.project=$PROJECT" --quiet 2>/dev/null | sort
 }
 
 running_ids() {
-  docker ps --filter "label=com.docker.compose.project=$PROJECT" --quiet 2>/dev/null | sort
+  oxid_docker_read ps --filter "label=com.docker.compose.project=$PROJECT" --quiet 2>/dev/null | sort
 }
 
 count_lines() {
@@ -135,10 +138,10 @@ release_prepare_lock() {
 
 shared_midnight_ready() {
   local all running labels
-  all="$(docker ps -a --filter 'label=com.docker.compose.project=oxid-standalone' --quiet 2>/dev/null | sort)" || return 1
-  running="$(docker ps --filter 'label=com.docker.compose.project=oxid-standalone' --quiet 2>/dev/null | sort)" || return 1
+  all="$(oxid_docker_read ps -a --filter 'label=com.docker.compose.project=oxid-standalone' --quiet 2>/dev/null | sort)" || return 1
+  running="$(oxid_docker_read ps --filter 'label=com.docker.compose.project=oxid-standalone' --quiet 2>/dev/null | sort)" || return 1
   [ "$(count_lines "$all")" -eq 3 ] && [ "$all" = "$running" ] || return 1
-  labels="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' $all 2>/dev/null | sort)" || return 1
+  labels="$(oxid_docker_read inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' $all 2>/dev/null | sort)" || return 1
   [ "$labels" = $'indexer\nnode\nproof-server' ] || return 1
   curl --fail --silent --max-time 5 http://127.0.0.1:9944/health >/dev/null 2>&1 || return 1
   curl --fail --silent --max-time 5 -H 'content-type: application/json' \
@@ -258,7 +261,7 @@ prepared_image_valid() {
   [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
   current_digest="sha256:$(shasum -a 256 "$output" | awk '{print $1}')" || return 1
   [ "$digest" = "$current_digest" ] || return 1
-  current_id="$(docker image inspect --format '{{.Id}}' "$tag" 2>/dev/null)" || return 1
+  current_id="$(oxid_docker_read image inspect --format '{{.Id}}' "$tag" 2>/dev/null)" || return 1
   [ "$current_id" = "$image_id" ]
 }
 
@@ -297,7 +300,7 @@ prepared_receipt_valid() {
       return 1
     fi
   done
-  docker image inspect "$SMOCKER_IMAGE" >/dev/null 2>&1 || return 1
+  oxid_docker_read image inspect "$SMOCKER_IMAGE" >/dev/null 2>&1 || return 1
 }
 
 tailnet_mock_state_valid() {
@@ -328,9 +331,9 @@ build_image() {
   [ -L "$gc_root" ] && [ "$(readlink "$gc_root")" = "$output" ] || return 1
   docker load <"$output" >>"$PRIVATE_LOG" 2>&1 || return 1
   case "$attribute" in
-    midnight-did-resolver-image) image_id="$(docker image inspect --format '{{.Id}}' midnight-did-resolver:0.1.0 2>/dev/null)" ;;
-    did-manager-image) image_id="$(docker image inspect --format '{{.Id}}' laceid-did-manager:0.1.0 2>/dev/null)" ;;
-    issuer-image) image_id="$(docker image inspect --format '{{.Id}}' laceid-issuer:0.1.0 2>/dev/null)" ;;
+    midnight-did-resolver-image) image_id="$(oxid_docker_read image inspect --format '{{.Id}}' midnight-did-resolver:0.1.0 2>/dev/null)" ;;
+    did-manager-image) image_id="$(oxid_docker_read image inspect --format '{{.Id}}' laceid-did-manager:0.1.0 2>/dev/null)" ;;
+    issuer-image) image_id="$(oxid_docker_read image inspect --format '{{.Id}}' laceid-issuer:0.1.0 2>/dev/null)" ;;
     *) return 1 ;;
   esac
   [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
@@ -474,7 +477,7 @@ run_up() {
   chmod 600 "$PRIVATE_LOG"
   local resolver_image did_manager_image issuer_image wallet_seed env_candidate receipt_candidate mock_state
   if [ -n "$EXTERNAL_PREPARED_RECEIPT" ]; then
-    docker image inspect "$SMOCKER_IMAGE" >/dev/null 2>&1 || fail artifacts-not-prepared
+    oxid_docker_read image inspect "$SMOCKER_IMAGE" >/dev/null 2>&1 || fail artifacts-not-prepared
   else
     docker pull "$SMOCKER_IMAGE" >>"$PRIVATE_LOG" 2>&1 || fail smocker
   fi
@@ -638,6 +641,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 acquire_lease
 initialize_state
+oxid_require_docker_engine >/dev/null || fail docker-engine
 case "$OPERATION" in
   prerequisite) run_prerequisite ;;
   prepare) run_prepare ;;
