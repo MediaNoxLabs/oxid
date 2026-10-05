@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-for command_name in curl docker jq; do
+for command_name in curl docker git jq shasum; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Required command '$command_name' is missing." >&2
     exit 1
@@ -19,12 +19,43 @@ case "$mode" in
     ;;
 esac
 
+repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/standalone-compose-ownership.sh
+source "$repository_root/scripts/lib/standalone-compose-ownership.sh"
+# shellcheck source=lib/standalone-state.sh
+source "$repository_root/scripts/lib/standalone-state.sh"
+state_directory="$(oxid_standalone_state_directory "$repository_root")"
+compose_file="$state_directory/canonical-compose.yml"
+owner_receipt="$state_directory/owner-receipt.json"
+
+if ! oxid_standalone_regular_file "$compose_file" || ! oxid_standalone_regular_file "$owner_receipt"; then
+  echo "Standalone ownership is not proven by a durable receipt; refusing label-only readiness." >&2
+  exit 1
+fi
+
 standalone_containers="$(docker ps -a \
   --filter label=com.docker.compose.project=oxid-standalone \
   --format '{{.ID}}')"
 standalone_container_count="$(awk 'NF { count++ } END { print count + 0 }' <<<"$standalone_containers")"
 if [ "$standalone_container_count" -ne 3 ]; then
   echo "Oxid standalone has $standalone_container_count containers; expected exactly three." >&2
+  exit 1
+fi
+current_ids="$(printf '%s\n' "$standalone_containers" | sort | jq -Rsc 'split("\n") | map(select(length > 0))')"
+if ! oxid_validate_standalone_compose_ownership \
+  "$compose_file" "$(dirname -- "$compose_file")" "$current_ids"; then
+  echo "Standalone resources are not proven by the durable Compose receipt; refusing label-only readiness." >&2
+  exit 1
+fi
+if ! jq -e \
+  --arg compose "$(shasum -a 256 "$compose_file" | awk '{print $1}')" \
+  --argjson containers "$current_ids" \
+  '.schema == "oxid-standalone-owner-v1"
+    and (.session | type == "string")
+    and .composeSha256 == $compose
+    and .containerIds == $containers' \
+  "$owner_receipt" >/dev/null 2>&1; then
+  echo "Standalone resources are not proven by the durable owner receipt; refusing label-only readiness." >&2
   exit 1
 fi
 

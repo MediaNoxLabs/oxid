@@ -61,17 +61,22 @@ test("standalone lifecycle uses durable Git-common state with an atomic verified
     assert.match(source, /oxid_standalone_state_directory/);
     assert.doesNotMatch(source, /temporary_root=.*TMPDIR/);
   }
-  assert.doesNotMatch(status, /oxid_standalone_state_directory|git -C/);
-  assert.match(state, /git -C "\$repository_root" rev-parse --git-common-dir/);
+  assert.match(status, /oxid_standalone_state_directory/);
+  assert.match(status, /durable receipt/);
+  assert.match(state, /git -C "\$repository_root" rev-parse --show-toplevel/);
+  assert.match(state, /git -C "\$git_top_level" rev-parse --git-common-dir/);
   assert.match(state, /\$\{git_common_directory%\/\}\/oxid\/standalone/);
   assert.match(state, /OXID_STANDALONE_STATE_DIR/);
   assert.match(state, /must not be a symlink/);
   assert.match(state, /pwd -P/);
   assert.match(up, /scripts\/standalone-stack\.yml/);
+  assert.match(state, /oxid-standalone-lease-v3/);
   assert.match(state, /oxid-standalone-lease-v2/);
   assert.match(state, /ln -- "\$candidate" "\$lease_record"/);
   assert.match(state, /state:"contention"/);
   assert.match(state, /ownerPrefix/);
+  assert.match(state, /proc:/);
+  assert.match(state, /oxid_standalone_cleanup_lease_artifacts/);
   assert.match(up, /oxid_standalone_acquire_lease/);
   assert.match(down, /oxid_standalone_acquire_lease/);
   assert.match(up, /canonical-compose\.yml/);
@@ -84,6 +89,7 @@ test("standalone lifecycle uses durable Git-common state with an atomic verified
   assert.match(status, /nodeHeight/);
   assert.match(status, /indexerHeight/);
   assert.match(status, /catchingUp/);
+  assert.match(status, /containerIds == \$containers/);
 });
 
 test("standalone shutdown is receipt-scoped", async () => {

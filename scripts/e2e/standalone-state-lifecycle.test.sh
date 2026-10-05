@@ -109,6 +109,16 @@ export MOCK_DOCKER_STATE="$MOCK_STATE"
 export PATH="$MOCK_BIN:$PATH"
 : >"$MOCK_STATE/foreign-project"
 
+# A same-name project with only public labels is never enough for readiness.
+: >"$MOCK_STATE/active"
+if TMPDIR="$LAUNCHER_ONE" "$FIXTURE/scripts/standalone-status.sh" local \
+  >/dev/null 2>"$SCRATCH/foreign-status.log"; then
+  echo "standalone-state-lifecycle: FAIL foreign label-only status admitted" >&2
+  exit 1
+fi
+grep -q 'durable receipt' "$SCRATCH/foreign-status.log"
+rm -f -- "$MOCK_STATE/active"
+
 TMPDIR="$LAUNCHER_ONE" "$FIXTURE/scripts/standalone-up.sh" local >/dev/null
 STATE_DIRECTORY="$FIXTURE/.git/oxid/standalone"
 [ -f "$STATE_DIRECTORY/owner-receipt.json" ]
@@ -136,6 +146,15 @@ resolved_override="$(
     "$FIXTURE/scripts/lib/standalone-state.sh" "$FIXTURE"
 )"
 [ "$resolved_override" = "$PHYSICAL_SCRATCH/explicit-state" ]
+mkdir -p "$FIXTURE/nested"
+mkdir -p "$SCRATCH/nested-tmp"
+if TMPDIR="$SCRATCH/nested-tmp" bash -c 'source "$1"; oxid_standalone_state_directory "$2"' _ \
+  "$FIXTURE/scripts/lib/standalone-state.sh" "$FIXTURE/nested" \
+  >/dev/null 2>"$SCRATCH/nested-topology.log"; then
+  echo "standalone-state-lifecycle: FAIL nested launcher selected enclosing Git state" >&2
+  exit 1
+fi
+grep -q 'not the checkout Git top level' "$SCRATCH/nested-topology.log"
 if OXID_STANDALONE_STATE_DIR=relative/state bash -c \
   'source "$1"; oxid_standalone_state_directory "$2"' _ \
   "$FIXTURE/scripts/lib/standalone-state.sh" "$FIXTURE" >/dev/null 2>&1; then
@@ -181,6 +200,37 @@ fi
 
 rm "$STATE_DIRECTORY"
 mkdir -p "$STATE_DIRECTORY"
+legacy_tmp="$SCRATCH/legacy-tmp"
+mkdir -p "$legacy_tmp/oxid-standalone"
+legacy_resolution="$(TMPDIR="$legacy_tmp" bash -c 'source "$1"; oxid_standalone_state_directory "$2"' _ \
+  "$FIXTURE/scripts/lib/standalone-state.sh" "$FIXTURE" \
+  2>"$SCRATCH/legacy-state.log")"
+[ "$legacy_resolution" = "$PHYSICAL_SCRATCH/repository/.git/oxid/standalone" ]
+grep -q 'Legacy standalone state detected' "$SCRATCH/legacy-state.log"
+rm -rf -- "$legacy_tmp"
+
+stale_candidate="$STATE_DIRECTORY/.startup-lease-candidate-old"
+stale_quarantine="$STATE_DIRECTORY/.startup-lease-stale-old"
+live_candidate="$STATE_DIRECTORY/.startup-lease-candidate-live"
+printf 'stale\n' >"$stale_candidate"
+printf 'stale\n' >"$stale_quarantine"
+printf 'live\n' >"$live_candidate"
+touch -t 202001010000 "$stale_candidate" "$stale_quarantine"
+bash -c 'source "$1"; oxid_standalone_cleanup_lease_artifacts "$2"' _ \
+  "$FIXTURE/scripts/lib/standalone-state.sh" "$STATE_DIRECTORY"
+[ ! -e "$stale_candidate" ]
+[ ! -e "$stale_quarantine" ]
+[ -f "$live_candidate" ]
+
+process_identity="$(bash -c 'source "$1"; oxid_standalone_process_start "$$"' _ \
+  "$FIXTURE/scripts/lib/standalone-state.sh")"
+[ -n "$process_identity" ]
+case "$process_identity" in proc:*|lstart:*) ;; *) exit 1 ;; esac
+synthetic_proc_start="$(bash -c 'source "$1"; oxid_standalone_process_start_from_proc_stat "$2"' _ \
+  "$FIXTURE/scripts/lib/standalone-state.sh" \
+  '42 (worker name ) with spaces) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 424242 20')"
+[ "$synthetic_proc_start" = 424242 ]
+
 ANCESTOR="$SCRATCH/ancestor"
 mkdir -p "$ANCESTOR/real"
 ln -s "$ANCESTOR/real" "$ANCESTOR/link"
@@ -190,4 +240,4 @@ resolved_ancestor="$(OXID_STANDALONE_STATE_DIR="$ANCESTOR/link/standalone" bash 
 [ "$resolved_ancestor" = "$PHYSICAL_SCRATCH/ancestor/real/standalone" ]
 
 printf '%s\n' \
-  'standalone-state-lifecycle: PASS durable Git state survived launcher exit and exact teardown preserved foreign projects'
+  'standalone-state-lifecycle: PASS durable Git state rejected foreign labels and nested topology, detected legacy state, and bounded stale lease cleanup'
