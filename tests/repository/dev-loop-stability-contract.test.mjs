@@ -23,6 +23,7 @@ import {
   verifyExactPiPackageManifests,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
+import { applyRepositoryAcceptance } from "../../scripts/lib/handoff-required-reads.mjs";
 import { normalizeDevLoopsArgs, resolveOxidCompatibilityRoute, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
 import { editPrBody, parseEditPrArgs } from "../../scripts/github/edit-pr.mjs";
 import { watchOxidPrCiStatus } from "../../scripts/github/watch-oxid-ci.mjs";
@@ -70,6 +71,36 @@ import registerDevLoopPreflight, { runDevLoopPreflight } from "../../scripts/lib
 import { runPiChildSmoke } from "../../scripts/factory/smoke-pi-child.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
+function normalizePinnedAcceptance(template) {
+  const upstreamCriterion = template.criteria.find(({ id }) => id === "verify-green");
+  assert.ok(upstreamCriterion, "pinned core must retain the verify-green acceptance criterion");
+  assert.match(upstreamCriterion.must, /(?:npm|bun) run verify/u, "pinned core verification wording drifted");
+  return applyRepositoryAcceptance({
+    acceptance: { criteria: structuredClone(template.criteria) },
+  });
+}
+
+test("production acceptance normalization is bound to the installed pinned core wording", async (t) => {
+  let packageRoot;
+  try {
+    packageRoot = (await resolveDevLoopsPackageRoot({ cwd: repoRoot })).packageRoot;
+  } catch (error) {
+    t.skip(`exact local dev-loops package material unavailable: ${error.message}`);
+    return;
+  }
+  const corePath = await resolvePinnedCoreModulePath(packageRoot);
+  const core = await import(pathToFileURL(corePath).href);
+  const template = core.lookupAcceptanceTemplate("local_implementation", "default");
+  const normalized = normalizePinnedAcceptance(template);
+  const repositoryCriterion = normalized.acceptance.criteria.find(({ id }) => id === "verify-green");
+  assert.doesNotMatch(repositoryCriterion.must, /(?:npm|bun) run verify/u);
+  assert.match(repositoryCriterion.must, /Oxid target plan/u);
+
+  assert.throws(() => normalizePinnedAcceptance({
+    criteria: [{ ...template.criteria.find(({ id }) => id === "verify-green"), must: "Run every upstream validation suite." }],
+  }), /pinned core verification wording drifted/);
+});
 const read = (relativePath) => readFile(path.join(repoRoot, relativePath), "utf8");
 const legacyTools = new Set(["search", "execute", "agent", "todo"]);
 const supportedTools = [
