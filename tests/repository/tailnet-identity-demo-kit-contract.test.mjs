@@ -9,6 +9,84 @@ import test from "node:test";
 
 const root = new URL("../../", import.meta.url);
 const text = (relative) => readFile(new URL(relative, root), "utf8");
+const LEASE_PUBLICATION_TIMEOUT_MS = 30_000;
+const CHILD_TERMINATION_GRACE_MS = 1_000;
+const CHILD_DIAGNOSTIC_LIMIT_BYTES = 512;
+
+function superviseExactChild(child) {
+  let outcome;
+  const completion = new Promise((resolve) => {
+    const settle = (value) => {
+      if (outcome === undefined) {
+        outcome = value;
+        resolve(value);
+      }
+    };
+    child.once("error", (error) => settle({ kind: "spawn-error", code: error.code ?? "unknown" }));
+    child.once("close", (code, signal) => settle({ kind: "close", code, signal }));
+  });
+  return { completion, outcome: () => outcome };
+}
+
+function boundedDiagnostics(stream) {
+  let bytes = Buffer.alloc(0);
+  stream?.on("data", (chunk) => {
+    bytes = Buffer.concat([bytes, Buffer.from(chunk)]);
+    if (bytes.length > CHILD_DIAGNOSTIC_LIMIT_BYTES) {
+      bytes = bytes.subarray(bytes.length - CHILD_DIAGNOSTIC_LIMIT_BYTES);
+    }
+  });
+  return () => bytes.toString("utf8");
+}
+
+async function terminateExactChild(child, supervision) {
+  if (supervision.outcome() !== undefined) return supervision.completion;
+  child.kill("SIGTERM");
+  const closed = await Promise.race([
+    supervision.completion.then(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), CHILD_TERMINATION_GRACE_MS)),
+  ]);
+  if (!closed && supervision.outcome() === undefined) child.kill("SIGKILL");
+  return supervision.completion;
+}
+
+async function waitForLeaseOrExit(leasePath, supervision) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < LEASE_PUBLICATION_TIMEOUT_MS) {
+    try {
+      await access(leasePath);
+      return { state: "ready", elapsedMs: Date.now() - startedAt };
+    } catch {
+      const outcome = supervision.outcome();
+      if (outcome !== undefined) return { state: "exited", elapsedMs: Date.now() - startedAt, outcome };
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  return { state: "timeout", elapsedMs: Date.now() - startedAt };
+}
+
+test("lease fixture supervision reaps bounded failure modes with bounded diagnostics", async (t) => {
+  const cases = [
+    { name: "early exit", command: [process.execPath, ["-e", "process.exit(17)"]] },
+    { name: "signal exit", command: [process.execPath, ["-e", "process.kill(process.pid, 'SIGTERM')"]] },
+    { name: "spawn error", command: ["/oxid/definitely-missing-command", []] },
+    { name: "ignores SIGTERM", command: [process.execPath, ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"]] },
+  ];
+  for (const fixture of cases) {
+    await t.test(fixture.name, async () => {
+      const child = spawn(fixture.command[0], fixture.command[1], { stdio: ["ignore", "ignore", "pipe"] });
+      const diagnostics = boundedDiagnostics(child.stderr);
+      const supervision = superviseExactChild(child);
+      if (fixture.name === "ignores SIGTERM") await new Promise((resolve) => setTimeout(resolve, 100));
+      const outcome = fixture.name === "ignores SIGTERM"
+        ? await terminateExactChild(child, supervision)
+        : await supervision.completion;
+      assert.ok(outcome.kind === "spawn-error" || outcome.kind === "close");
+      if (fixture.name === "ignores SIGTERM") assert.equal(outcome.signal, "SIGKILL");
+      assert.ok(Buffer.byteLength(diagnostics()) <= CHILD_DIAGNOSTIC_LIMIT_BYTES);
+    });
+  }
+});
 
 test("root demo entrypoints are strict thin wrappers over one canonical lifecycle", async () => {
   for (const operation of ["start", "status", "stop"]) {
@@ -107,7 +185,7 @@ test("standalone shutdown is receipt-scoped", async () => {
   );
 });
 
-test("two worktrees serialize startup, reuse without Compose mutation, and preserve exact cleanup ownership", async () => {
+test("two worktrees serialize startup, reuse without Compose mutation, and preserve exact cleanup ownership", async (t) => {
   const temporary = await mkdtemp(join(tmpdir(), "oxid-standalone-worktrees-"));
   const physicalTemporary = await realpath(temporary);
   const fakeBin = join(temporary, "bin");
@@ -116,6 +194,8 @@ test("two worktrees serialize startup, reuse without Compose mutation, and prese
   const dockerLedger = join(temporary, "docker-ledger");
   const worktreeA = join(temporary, "worktree-a");
   const worktreeB = join(temporary, "worktree-b");
+  let first;
+  let firstSupervision;
   const writeExecutable = async (path, source) => {
     await writeFile(path, source, "utf8");
     await chmod(path, 0o755);
@@ -197,49 +277,36 @@ esac
       FAKE_DOCKER_STATE: dockerState,
       FAKE_DOCKER_LEDGER: dockerLedger,
     };
-    const first = spawn("bash", [join(worktreeA, "scripts", "standalone-up.sh"), "local"], {
+    first = spawn("bash", [join(worktreeA, "scripts", "standalone-up.sh"), "local"], {
       env: { ...environment, FAKE_COMPOSE_SLEEP: "3" },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    let firstStderr = "";
+    const firstDiagnostics = boundedDiagnostics(first.stderr);
     first.stdout.resume();
-    first.stderr.on("data", (chunk) => { firstStderr += chunk; });
-    const firstStatus = new Promise((resolve, reject) => {
-      first.once("error", reject);
-      first.once("close", resolve);
-    });
-    let leaseObserved = false;
+    firstSupervision = superviseExactChild(first);
     // A copied shell entrypoint can take several seconds to start through the
-    // macOS/Nix toolchain on a cold host. Keep the lease wait bounded, but do
-    // not confuse process-start latency with failed mutual exclusion.
-    const leaseDeadline = Date.now() + 10_000;
-    while (Date.now() < leaseDeadline) {
-      try {
-        await access(join(sharedState, "startup-lease", "owner.json"));
-        leaseObserved = true;
-        break;
-      } catch {
-        if (first.exitCode !== null || first.signalCode !== null) break;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+    // macOS/Nix toolchain on a cold host. Distinguish a live scheduled child
+    // from an early failure while retaining a finite reviewed bound.
+    const lease = await waitForLeaseOrExit(
+      join(sharedState, "startup-lease", "owner.json"),
+      firstSupervision,
+    );
+    if (lease.state === "exited") {
+      assert.fail(`the first worktree exited before publishing its lease (${JSON.stringify(lease.outcome)}): ${firstDiagnostics()}`);
     }
-    if (!leaseObserved && (first.exitCode !== null || first.signalCode !== null)) {
-      const status = await firstStatus;
-      const outcome = first.signalCode === null ? `status ${status}` : `signal ${first.signalCode}`;
-      assert.fail(`the first worktree exited before publishing its lease (${outcome}): ${firstStderr.slice(-500)}`);
+    if (lease.state === "timeout") {
+      await terminateExactChild(first, firstSupervision);
+      assert.fail(`the first worktree remained live without publishing its lease after ${lease.elapsedMs}ms`);
     }
-    if (!leaseObserved) {
-      first.kill("SIGTERM");
-      await firstStatus;
-      assert.fail("the first worktree did not publish its lease within 10 seconds");
-    }
+    t.diagnostic(`factory-metrics phase=standalone-lease result=ready duration_ms=${lease.elapsedMs}`);
     const loser = spawnSync("bash", [join(worktreeB, "scripts", "standalone-up.sh"), "local"], {
       env: environment,
       encoding: "utf8",
     });
     assert.equal(loser.status, 2);
     assert.match(loser.stderr, /"state":"contention"/);
-    assert.equal(await firstStatus, 0, firstStderr);
+    const firstOutcome = await firstSupervision.completion;
+    assert.deepEqual(firstOutcome, { kind: "close", code: 0, signal: null }, firstDiagnostics());
 
     const reuse = spawnSync("bash", [join(worktreeB, "scripts", "standalone-up.sh"), "local"], {
       env: environment,
@@ -319,6 +386,9 @@ esac
     assert.equal(unsafeOverride.status, 1);
     assert.match(unsafeOverride.stderr, /mode 700; refusing permission mutation/);
   } finally {
+    if (first && firstSupervision && firstSupervision.outcome() === undefined) {
+      await terminateExactChild(first, firstSupervision);
+    }
     await rm(temporary, { recursive: true, force: true });
   }
 });
