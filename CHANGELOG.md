@@ -9,6 +9,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Plaintext loopback HTTP clients no longer depend on platform CA discovery in
+  hermetic builds, and their explicit empty trust store prevents accidental
+  reuse for HTTPS.
+- Authenticated public HTTP and WebSocket routes now use the reviewed portable
+  WebPKI root bundle, so their client construction is independent of host CA
+  discovery in hermetic builds.
 - Exact-head Claude reviews now select and attest a bounded reasoning effort.
   High-risk attestations require at least `medium` effort.
   Their default deadline is five minutes, reduced from fifteen to keep the
