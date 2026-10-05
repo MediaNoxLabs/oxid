@@ -24,6 +24,7 @@ import { formatErrors, validate } from "./lib/json-schema.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA_PATH = path.join(HERE, "..", "..", "docs", "factory", "audit", "audit-report-v1.schema.json");
+const EVIDENCE_SCHEMA_PATH = path.join(HERE, "..", "..", "docs", "factory", "audit", "audit-evidence-v1.schema.json");
 const FENCE = /^```json audit-report-v1\s*$/mu;
 
 export function extractReportBlock(markdown) {
@@ -46,7 +47,8 @@ export function extractReportBlock(markdown) {
 /** Finding ids referenced by a rendered markdown table, for prose/data agreement. */
 export function findingIdsInProse(markdown) {
   const withoutBlock = markdown.replace(/^```json audit-report-v1[\s\S]*?^```\s*$/mu, "");
-  return new Set(Array.from(withoutBlock.matchAll(/`(F-[0-9]{2,3})`/gu), (m) => m[1]));
+  const currentReport = withoutBlock.split(/^## Delta since\b/mu, 1)[0];
+  return new Set(Array.from(currentReport.matchAll(/`(F-[0-9]{2,3})`/gu), (m) => m[1]));
 }
 
 /** Parse the fixed findings table into the fields duplicated from report.json. */
@@ -80,6 +82,11 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
   // evidence; a citation naming an anchor no collector produced is worse than
   // no citation, because it reads as verified.
   const anchors = evidence ? collectAnchorKeys(evidence) : null;
+  const unavailableAnchors = new Set(
+    Object.entries(evidence?.collectors ?? {})
+      .filter(([, collector]) => collector?.status === "unavailable")
+      .map(([key]) => key),
+  );
   const cited = [
     ...findings.map((finding) => [`finding ${finding.id}`, finding.evidence]),
     ...(report.verifiedSound ?? []).map((entry, index) => [`verifiedSound[${index}]`, entry.evidence]),
@@ -91,6 +98,8 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
         complain(`${owner} cites evidence anchor "${citation.anchor}" but no evidence artifact was supplied`);
       } else if (citation.anchor && !anchors.has(citation.anchor)) {
         complain(`${owner} cites unknown evidence anchor "${citation.anchor}"`);
+      } else if (citation.anchor && owner.startsWith("verifiedSound[") && unavailableAnchors.has(citation.anchor)) {
+        complain(`${owner} cites unavailable evidence anchor "${citation.anchor}" as verified sound`);
       }
       if (citation.line !== undefined && citation.lines !== undefined) {
         complain(`${owner} citation sets both line and lines`);
@@ -104,6 +113,9 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
   if (evidence) {
     if (report.anchor?.defaultBranch !== evidence.defaultBranch) {
       complain(`report default branch ${JSON.stringify(report.anchor?.defaultBranch)} does not match evidence ${JSON.stringify(evidence.defaultBranch)}`);
+    }
+    if (JSON.stringify(report.anchor?.window) !== JSON.stringify(evidence.window)) {
+      complain("report window does not match the supplied evidence artifact");
     }
     const scope = (branches) => (branches ?? [])
       .map(({ name, sha, role }) => ({ name, sha, role }))
@@ -135,6 +147,9 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
   const blocking = new Set(report.verdict?.blocking ?? []);
   for (const finding of findings) {
     if (finding.severity !== "must-fix") continue;
+    if (!blocking.has(finding.id) && !finding.duplicateOf) {
+      complain(`must-fix finding ${finding.id} is absent from verdict.blocking`);
+    }
     if (!slated.has(finding.id) && !blocking.has(finding.id) && !finding.duplicateOf) {
       complain(`must-fix finding ${finding.id} appears in no slate entry, blocks nothing, and duplicates no open issue`);
     }
@@ -185,7 +200,9 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
     const radius = members.length > 0
       ? Math.min(...members.map((finding) => RADIUS[finding.radius] ?? 9))
       : 9;
-    return [SEVERITY[effectiveSeverity(entry)] ?? 9, radius, COST[entry.cost] ?? 9];
+    const expiry = members.some((finding) => finding.expiry) ? 0 : 1;
+    const criterion = members.map((finding) => finding.criterion).sort()[0] ?? "~";
+    return [SEVERITY[effectiveSeverity(entry)] ?? 9, radius, COST[entry.cost] ?? 9, expiry, criterion];
   };
   const nonResidual = slate.filter((entry) => entry.residual !== true);
   const ranks = nonResidual.map((entry) => entry.rank);
@@ -205,12 +222,11 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
     const previous = ranked[index - 1];
     const current = ranked[index];
     const [pk, ck] = [rankKey(previous), rankKey(current)];
-    // A lower key must not sort after a higher one. An expiry on the later
-    // entry cannot justify it either: ranking rule 4 only breaks ties that
-    // rules 1-3 left equal.
+    // A lower key must not sort after a higher one. Each later key only
+    // breaks ties left by every earlier ranking rule.
     const comparison = pk.findIndex((value, position) => value !== ck[position]);
     if (comparison !== -1 && pk[comparison] > ck[comparison]) {
-      const axis = ["severity", "blast radius", "cost"][comparison];
+      const axis = ["severity", "blast radius", "cost", "expiry", "criterion id"][comparison];
       complain(
         `slate rank ${previous.rank} sorts above rank ${current.rank} but loses on ${axis}`
         + ` (${previous.severity}/${previous.cost} vs ${current.severity}/${current.cost}), which inverts the rubric`,
@@ -220,10 +236,22 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
 
   // Delta completeness: every prior finding is classified. Silently dropping
   // one is non-conforming.
+  if (report.anchor?.mode === "delta" && !prior) {
+    complain("delta report requires a prior report so every prior finding can be classified");
+  }
+  const delta = report.delta ?? [];
+  const classifications = new Map();
+  for (const entry of delta) {
+    const count = (classifications.get(entry.priorId) ?? 0) + 1;
+    classifications.set(entry.priorId, count);
+    if (count === 2) complain(`delta prior finding ${entry.priorId} has multiple classifications`);
+    if (["still-present", "regressed"].includes(entry.classification) && !ids.has(entry.currentId)) {
+      complain(`delta ${entry.priorId} references unknown current finding "${entry.currentId}"`);
+    }
+  }
   if (prior) {
-    const classified = new Set((report.delta ?? []).map((entry) => entry.priorId));
     for (const finding of prior.findings ?? []) {
-      if (!classified.has(finding.id)) {
+      if (!classifications.has(finding.id)) {
         complain(`delta omits prior finding ${finding.id}; every prior finding must be classified`);
       }
     }
@@ -237,8 +265,16 @@ export function crossCheck(report, { evidence = null, prior = null } = {}) {
 
 export function checkReport(source, { evidence = null, prior = null, markdown = null } = {}) {
   const schema = JSON.parse(readFileSync(SCHEMA_PATH, "utf8"));
+  const evidenceSchema = JSON.parse(readFileSync(EVIDENCE_SCHEMA_PATH, "utf8"));
   const schemaErrors = validate(schema, source);
-  const crossErrors = schemaErrors.length === 0 ? crossCheck(source, { evidence, prior }) : [];
+  const evidenceErrors = evidence ? validate(evidenceSchema, evidence) : [];
+  const priorSchemaErrors = prior ? validate(schema, prior) : [];
+  const crossErrors = schemaErrors.length === 0
+    ? [
+      ...priorSchemaErrors.map((error) => `prior report does not conform at ${error.path || "$"}: ${error.message}`),
+      ...(evidenceErrors.length === 0 && priorSchemaErrors.length === 0 ? crossCheck(source, { evidence, prior }) : []),
+    ]
+    : [];
 
   const proseErrors = [];
   if (markdown && schemaErrors.length === 0) {
@@ -265,8 +301,9 @@ export function checkReport(source, { evidence = null, prior = null, markdown = 
   }
 
   return {
-    ok: schemaErrors.length === 0 && crossErrors.length === 0 && proseErrors.length === 0,
+    ok: schemaErrors.length === 0 && evidenceErrors.length === 0 && crossErrors.length === 0 && proseErrors.length === 0,
     schemaErrors,
+    evidenceErrors,
     crossErrors,
     proseErrors,
   };
@@ -326,6 +363,9 @@ function main(argv) {
 
   if (result.schemaErrors.length > 0) {
     process.stderr.write(`Report does not conform to audit-report-v1:\n${formatErrors(result.schemaErrors)}\n`);
+  }
+  if (result.evidenceErrors.length > 0) {
+    process.stderr.write(`Evidence does not conform to audit-evidence-v1:\n${formatErrors(result.evidenceErrors)}\n`);
   }
   for (const problem of [...result.crossErrors, ...result.proseErrors]) {
     process.stderr.write(`  ${problem}\n`);

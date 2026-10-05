@@ -6,6 +6,10 @@
     "mode": "full",
     "recordedAt": "2026-09-09T00:00:00Z",
     "defaultBranch": "develop",
+    "window": {
+      "since": null,
+      "until": null
+    },
     "branches": [
       {
         "name": "milestone-0.2.0",
