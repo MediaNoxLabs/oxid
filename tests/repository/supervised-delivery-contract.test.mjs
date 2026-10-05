@@ -15,6 +15,10 @@ import {
   runLocalGate,
   verifyLocalGate,
 } from "../../scripts/loop/local-gate.mjs";
+import {
+  buildCargoGateValidationArtifact,
+  parseGateValidationArgs,
+} from "../../scripts/loop/gate-validation.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -104,6 +108,8 @@ test("the production-ready Pi contract has one non-delegating implementation chi
   assert.match(agent, /never silently creates another phase child/u);
   assert.match(agent, /exactly one post-commit\s+canonical, change-relevant L0 receipt/u);
   assert.match(agent, /non-Rust\nplan runs `\.\/run\.sh repository --strict`; a Rust plan runs `\.\/run\.sh basic/u);
+  assert.match(agent, /scripts\/loop\/gate-validation\.mjs --repo <owner\/name>/u);
+  assert.match(agent, /Never substitute `npm run verify`/u);
 });
 
 test("the production-ready sequence runs one canonical non-Rust receipt and reuses it", async (t) => {
@@ -206,6 +212,104 @@ test("production-ready runs the Rust-safe basic target and fails closed for an i
       }),
     }),
     /available, well-formed target plan/u,
+  );
+});
+
+test("the package-facing gate adapter reuses the Cargo receipt without npm or Bun", async (t) => {
+  const { root, head } = await gateFixture(t);
+  await runLocalGate({
+    cwd: root,
+    deliveryBase: "origin/develop",
+    gateId: "production-ready",
+    assertCapabilities: () => {},
+    runChild: async () => 0,
+    resolvePlan: targetPlan(false),
+  });
+  const verifyReceipt = (options) => verifyLocalGate({
+    ...options,
+    resolvePlan: targetPlan(false),
+  });
+  const { artifact, artifactPath } = await buildCargoGateValidationArtifact({
+    repo: "MediaNoxLabs/oxid",
+    pr: 814,
+    gate: "draft_gate",
+    headSha: head,
+    deliveryBase: "origin/develop",
+    tmpRoot: "tmp-test",
+  }, {
+    repoRoot: root,
+    verifyReceipt,
+    now: () => new Date("2026-10-06T00:00:00.000Z"),
+  });
+
+  assert.equal(artifact.allPassed, true);
+  assert.equal(artifact.headSha, head);
+  assert.equal(artifact.depState.status, "n-a");
+  assert.equal(artifact.suites.length, 1);
+  assert.equal(artifact.suites[0].name, "oxid-production-ready");
+  assert.match(artifact.suites[0].command, /local-gate\.mjs verify/u);
+  assert.doesNotMatch(artifact.suites[0].command, /(?:npm|bun)/u);
+  assert.equal((await stat(artifactPath)).mode & 0o777, 0o600);
+  await rm(path.join(root, "tmp-test"), { recursive: true, force: true });
+
+  git(root, ["update-ref", "refs/remotes/origin/milestone-0.2.0", head]);
+  await assert.rejects(
+    buildCargoGateValidationArtifact({
+      repo: "MediaNoxLabs/oxid",
+      pr: 814,
+      gate: "draft_gate",
+      headSha: head,
+      deliveryBase: "origin/milestone-0.2.0",
+      tmpRoot: "tmp-test",
+    }, { repoRoot: root, verifyReceipt }),
+    /deliveryBase does not match current delivery state/u,
+  );
+});
+
+test("the package-facing gate adapter rejects missing, stale, and unsafe evidence", async (t) => {
+  const { root, head } = await gateFixture(t);
+  const input = {
+    repo: "MediaNoxLabs/oxid",
+    pr: 814,
+    gate: "draft_gate",
+    headSha: head,
+    deliveryBase: "origin/develop",
+    tmpRoot: "tmp-test",
+  };
+  await assert.rejects(
+    buildCargoGateValidationArtifact(input, {
+      repoRoot: root,
+      verifyReceipt: (options) => verifyLocalGate({ ...options, resolvePlan: targetPlan(false) }),
+    }),
+    /no local gate receipt exists/u,
+  );
+  await assert.rejects(
+    buildCargoGateValidationArtifact({ ...input, headSha: "a".repeat(40) }, {
+      repoRoot: root,
+      verifyReceipt: async () => { throw new Error("must not inspect receipt for a stale head"); },
+    }),
+    /does not match the checked-out exact head/u,
+  );
+  await assert.rejects(
+    buildCargoGateValidationArtifact(input, {
+      repoRoot: root,
+      verifyReceipt: async () => ({ ok: false, action: "failed", receipt: { headSha: head } }),
+    }),
+    /did not verify at the requested head/u,
+  );
+  await assert.rejects(
+    buildCargoGateValidationArtifact({ ...input, tmpRoot: "../outside" }, {
+      repoRoot: root,
+      verifyReceipt: async () => ({ ok: true, action: "verified", receipt: { headSha: head } }),
+    }),
+    /remain inside the repository/u,
+  );
+  assert.throws(
+    () => parseGateValidationArgs([
+      "--repo", "MediaNoxLabs/oxid", "--pr", "814", "--gate", "draft_gate",
+      "--head-sha", head, "--delivery-base", "develop",
+    ]),
+    /origin\/develop/u,
   );
 });
 
