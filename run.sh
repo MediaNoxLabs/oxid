@@ -61,6 +61,7 @@ run_repository() {
   node --test tests/repository/host-mobile-admission-contract.test.mjs
   node --test tests/repository/sanctioned-command-wrappers-contract.test.mjs
   node --test tests/repository/maestro-mobile-pilot-contract.test.mjs
+  node --test tests/repository/ios-maestro-focused-contract.test.mjs
   node --test scripts/app-artifact-receipt.test.mjs
   node --test scripts/e2e/android-emulator-owner-receipt.test.mjs
   node --test scripts/android-verify-16k.test.mjs
@@ -79,6 +80,7 @@ run_repository() {
   node --test tests/repository/coverage-contract.test.mjs
   node --test tests/repository/worktree-lifecycle-contract.test.mjs
   node --test tests/repository/managed-child-process-contract.test.mjs
+  node --test tests/repository/docker-engine-health-contract.test.mjs
   node --test tests/repository/supervised-delivery-contract.test.mjs
   node --test tests/repository/transport-trust-contract.test.mjs
   node --test tests/repository/support-journal-adr-contract.test.mjs
