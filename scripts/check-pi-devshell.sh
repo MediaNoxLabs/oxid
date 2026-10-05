@@ -107,6 +107,17 @@ process.stdout.write(subagents.packageRoot);
 
 node scripts/factory/verify-pi-subagents-package.mjs "$subagent_package_root"
 
+if timeout -k 5s 60s node scripts/factory/smoke-pi-child.mjs; then
+  :
+else
+  child_smoke_status=$?
+  if [[ "$child_smoke_status" -eq 124 || "$child_smoke_status" -eq 137 ]]; then
+    echo "Pi read-only child startup exceeded the 60-second smoke deadline." >&2
+  fi
+  echo "Pi direct developer or /dev-loop local implementation child startup failed." >&2
+  exit 1
+fi
+
 review_package_json="$review_package_root/package.json"
 if [[ ! -f "$review_package_json" ]]; then
   echo "missing exact project @input-output-hk/agent-review-pi@0.6.0" >&2

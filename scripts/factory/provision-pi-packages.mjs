@@ -5,11 +5,11 @@ import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
-import { ensureSharedPiPackageStore } from "../lib/dev-loop-runtime.mjs";
+import { enforceExactPiPackageManifests, ensureSharedPiPackageStore } from "../lib/dev-loop-runtime.mjs";
 
 const execFileAsync = promisify(execFile);
 
-async function installIntoStage({ root, configuration, pins }) {
+async function installIntoStage({ root, store, configuration, pins }) {
   await mkdir(`${root}/.pi`, { recursive: true, mode: 0o700 });
   await writeFile(`${root}/.pi/settings.json`, `${JSON.stringify({ packages: configuration })}\n`, { mode: 0o600 });
   for (const pin of pins) {
@@ -18,6 +18,9 @@ async function installIntoStage({ root, configuration, pins }) {
       env: { ...process.env, PI_OFFLINE: "" },
       maxBuffer: 8 * 1024 * 1024,
     });
+    // `pi install` writes caret ranges. Restore every reviewed direct pin after
+    // each install so the next npm reconciliation cannot float an earlier one.
+    await enforceExactPiPackageManifests({ store, pins });
   }
 }
 
