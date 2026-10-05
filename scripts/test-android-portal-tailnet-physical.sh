@@ -13,6 +13,8 @@ readonly REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd 
 # shellcheck source=lib/nix-path.sh
 source "$REPOSITORY_ROOT/scripts/lib/nix-path.sh"
 oxid_admit_daemon_nix_path
+# shellcheck source=lib/docker-engine-health.sh
+source "$REPOSITORY_ROOT/scripts/lib/docker-engine-health.sh"
 
 readonly OPERATION="${1:-automated}"
 case "$OPERATION" in automated|manual-prepare|manual-prepared-status|manual-doctor|manual-start|manual-status|manual-reset|manual-stop) ;; *)
@@ -251,6 +253,7 @@ manual_prepare() {
   for command_name in docker git jq nix openssl shasum; do
     command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
   done
+  oxid_require_docker_engine >/dev/null || fail docker-engine
   umask 077
   mkdir -p "$MANUAL_PREPARED_ROOT"
   chmod 700 "$MANUAL_PREPARED_ROOT"
@@ -294,12 +297,12 @@ manual_doctor() {
     || manual_doctor_fail oxid-dirty "commit-or-stash-tracked-changes"
   [ ! -e "$STATE" ] && [ ! -L "$STATE" ] \
     || manual_doctor_fail manual-session-active "just-portal-tailnet-manual-status-or-stop"
+  oxid_require_docker_engine >/dev/null \
+    || manual_doctor_fail docker-engine "start-or-restart-docker-desktop"
   manual_prepared_valid \
     || manual_doctor_fail artifacts-not-prepared "just-portal-tailnet-manual-prepare"
-  docker info >/dev/null 2>&1 \
-    || manual_doctor_fail docker "start-docker-desktop"
-  portal_containers="$(docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet 2>/dev/null)" \
-    || manual_doctor_fail docker "start-docker-desktop"
+  portal_containers="$(oxid_docker_read ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet 2>/dev/null)" \
+    || manual_doctor_fail docker-engine "restart-docker-desktop"
   [ -z "$portal_containers" ] \
     || manual_doctor_fail portal-session-conflict "review-and-cleanup-owned-portal-receipt"
   "$REPOSITORY_ROOT/scripts/standalone-status.sh" phone >/dev/null 2>&1 \
