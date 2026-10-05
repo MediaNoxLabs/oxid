@@ -142,6 +142,7 @@ test("Tailnet entrypoints admit ambient or canonical daemon-profile Nix and fail
 
   const missingResult = runHelper("/usr/bin:/bin", path.join(temporary, "missing"));
   assert.notEqual(missingResult.status, 0);
+  assert.equal(missingResult.stdout.trim(), "/usr/bin:/bin");
 
   const [lifecycle, taskflow] = await Promise.all([
     readFile(lifecyclePath, "utf8"),
