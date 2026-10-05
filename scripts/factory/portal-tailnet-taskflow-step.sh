@@ -6,6 +6,11 @@ export LC_ALL=C
 CDPATH=
 
 readonly REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+
+# shellcheck source=../lib/nix-path.sh
+source "$REPOSITORY_ROOT/scripts/lib/nix-path.sh"
+oxid_admit_daemon_nix_path
+
 readonly OPERATION="${1:-}"
 readonly MODE="${2:-}"
 

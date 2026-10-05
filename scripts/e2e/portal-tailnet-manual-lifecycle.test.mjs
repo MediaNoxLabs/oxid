@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { access, readFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const lifecyclePath = path.join(root, "scripts", "test-android-portal-tailnet-physical.sh");
 const consumerLifecyclePath = path.join(root, "scripts", "portal-consumer-lifecycle.sh");
+const nixPathHelper = path.join(root, "scripts", "lib", "nix-path.sh");
 const pinnedPackageClosure = path.join(root, ".pi", "npm", "node_modules", "dev-loops", "package.json");
 
 async function pathExists(file) {
@@ -62,6 +64,8 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
   assert.match(lifecycle, /manual_doctor_fail portal-session-conflict "review-and-cleanup-owned-portal-receipt"/);
   assert.match(lifecycle, /manual_doctor_fail standalone-tailnet "just-standalone-phone-up"/);
   assert.match(lifecycle, /awk curl docker git jq nix node ps shasum tailscale/);
+  assert.match(lifecycle, /source "\$REPOSITORY_ROOT\/scripts\/lib\/nix-path\.sh"/);
+  assert.match(lifecycle, /oxid_admit_daemon_nix_path/);
   assert.match(lifecycle, /PORTAL_CONSUMER_PREPARED_RECEIPT="\$prepared_receipt_for_support"/);
   assert.match(consumerLifecycle, /\[\.images\[\]\.durationSeconds\] \| add \/\/ 0/);
   assert.match(consumerLifecycle, /fail preparation-busy/);
@@ -105,6 +109,50 @@ test("manual Tailnet Portal lifecycle is a bounded, receipt-supervised owner dem
   assert.match(lifecycle, /manual_mock_state_valid/);
   assert.match(lifecycle, /manual_cleanup/);
   assert.doesNotMatch(lifecycle, /manual.*evidence/i);
+});
+
+test("Tailnet entrypoints admit ambient or canonical daemon-profile Nix and fail closed later", async (t) => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "oxid-tailnet-nix-"));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+  const ambient = path.join(temporary, "ambient");
+  const daemon = path.join(temporary, "daemon");
+  await Promise.all([mkdir(ambient), mkdir(daemon)]);
+  for (const directory of [ambient, daemon]) {
+    const executable = path.join(directory, "nix");
+    await writeFile(executable, "#!/bin/bash\nexit 0\n", { mode: 0o755 });
+    await chmod(executable, 0o755);
+  }
+
+  const runHelper = (initialPath, daemonPath) => spawnSync("/bin/bash", ["-c", [
+    `source ${JSON.stringify(nixPathHelper)}`,
+    `PATH=${JSON.stringify(initialPath)}`,
+    "export PATH",
+    `oxid_admit_daemon_nix_path ${JSON.stringify(daemonPath)}`,
+    'printf "%s\\n" "$PATH"',
+    "command -v nix >/dev/null 2>&1",
+  ].join("\n")], { encoding: "utf8" });
+
+  const ambientResult = runHelper(`${ambient}:/usr/bin:/bin`, daemon);
+  assert.equal(ambientResult.status, 0, ambientResult.stderr);
+  assert.equal(ambientResult.stdout.trim(), `${ambient}:/usr/bin:/bin`);
+
+  const daemonResult = runHelper("/usr/bin:/bin", daemon);
+  assert.equal(daemonResult.status, 0, daemonResult.stderr);
+  assert.equal(daemonResult.stdout.trim(), `${daemon}:/usr/bin:/bin`);
+
+  const missingResult = runHelper("/usr/bin:/bin", path.join(temporary, "missing"));
+  assert.notEqual(missingResult.status, 0);
+  assert.equal(missingResult.stdout.trim(), "/usr/bin:/bin");
+
+  const [lifecycle, taskflow] = await Promise.all([
+    readFile(lifecyclePath, "utf8"),
+    readFile(path.join(root, "scripts", "factory", "portal-tailnet-taskflow-step.sh"), "utf8"),
+  ]);
+  for (const entrypoint of [lifecycle, taskflow]) {
+    assert.match(entrypoint, /source "\$REPOSITORY_ROOT\/scripts\/lib\/nix-path\.sh"/);
+    assert.match(entrypoint, /oxid_admit_daemon_nix_path/);
+    assert.match(entrypoint, /command -v "\$command_name"/);
+  }
 });
 
 test("manual lifecycle is included in repository contracts exactly once", async () => {

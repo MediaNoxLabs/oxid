@@ -9,6 +9,11 @@ readonly PORTAL_REMOTE="https://github.com/input-output-hk/lace-id-portal.git"
 readonly PORTAL_COMMIT="25499870f84d77173c46e4af3021311decfb840b"
 readonly PORTAL_TREE="2d845d2293603dfd8adce5362c8a9941e6ba78a9"
 readonly REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+
+# shellcheck source=lib/nix-path.sh
+source "$REPOSITORY_ROOT/scripts/lib/nix-path.sh"
+oxid_admit_daemon_nix_path
+
 readonly OPERATION="${1:-automated}"
 case "$OPERATION" in automated|manual-prepare|manual-prepared-status|manual-doctor|manual-start|manual-status|manual-reset|manual-stop) ;; *)
   printf '%s\n' 'android-portal-tailnet: FAIL phase=usage' >&2
