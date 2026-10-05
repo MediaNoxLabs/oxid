@@ -5604,7 +5604,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "oxid-adapter-backup-complete"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-adapter-backup-portable",
  "oxid-adapter-storage-credential-json",
@@ -5627,7 +5627,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-backup-document-mobile"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "futures",
@@ -5641,7 +5641,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-backup-portable"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -5658,7 +5658,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-custody-software"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bip32",
  "bip39",
@@ -5676,7 +5676,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-deployment-profile"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -5695,7 +5695,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-diagnostics-encrypted"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chacha20poly1305",
  "getrandom 0.3.4",
@@ -5709,14 +5709,14 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-diagnostics-memory"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-diagnostics-application",
 ]
 
 [[package]]
 name = "oxid-adapter-did-midnight"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "futures",
  "midnight-serialize",
@@ -5738,7 +5738,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-identity-ingress"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-adapter-mobile-native",
  "oxid-adapter-platform-system",
@@ -5754,7 +5754,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-midnight"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bech32",
@@ -5792,7 +5792,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-mobile-native"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "jni 0.22.4",
  "manganis",
@@ -5805,7 +5805,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-openid4vci"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -5838,7 +5838,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-openid4vp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "futures",
@@ -5860,7 +5860,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-passport-vault"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "futures",
  "hex",
@@ -5894,7 +5894,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-platform-system"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "getrandom 0.3.4",
  "oxid-adapter-mobile-native",
@@ -5914,7 +5914,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-siopv2"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -5939,7 +5939,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-storage-credential-json"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
@@ -5954,7 +5954,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-storage-dev"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bip32",
  "ed25519-dalek",
@@ -5977,7 +5977,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-storage-identity-json"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "directories",
  "oxid-adapter-store-atomic",
@@ -5989,7 +5989,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-storage-json"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "directories",
  "jni 0.21.1",
@@ -6004,7 +6004,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-storage-memory"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-credential-application",
  "oxid-credential-domain",
@@ -6017,7 +6017,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-storage-mobile"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -6035,11 +6035,11 @@ dependencies = [
 
 [[package]]
 name = "oxid-adapter-store-atomic"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "oxid-adapter-vc-midnight"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "ciborium",
@@ -6071,7 +6071,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dioxus",
  "getrandom 0.2.17",
@@ -6085,7 +6085,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-brand-build"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -6093,11 +6093,11 @@ dependencies = [
 
 [[package]]
 name = "oxid-capabilities-application"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "oxid-composition"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "futures",
  "hex",
@@ -6147,7 +6147,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-credential-application"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-credential-domain",
  "oxid-foundation",
@@ -6155,22 +6155,22 @@ dependencies = [
 
 [[package]]
 name = "oxid-credential-domain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-foundation",
 ]
 
 [[package]]
 name = "oxid-diagnostics-application"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "oxid-foundation"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "oxid-headless"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -6204,7 +6204,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-identity-application"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-foundation",
  "oxid-identity-domain",
@@ -6213,14 +6213,14 @@ dependencies = [
 
 [[package]]
 name = "oxid-identity-domain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-foundation",
 ]
 
 [[package]]
 name = "oxid-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-capabilities-application",
  "serde",
@@ -6230,7 +6230,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-passport-vault-application"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-foundation",
  "oxid-passport-vault-domain",
@@ -6239,18 +6239,18 @@ dependencies = [
 
 [[package]]
 name = "oxid-passport-vault-domain"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "oxid-platform-ports"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-foundation",
 ]
 
 [[package]]
 name = "oxid-presentation-application"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-foundation",
  "oxid-presentation-domain",
@@ -6258,14 +6258,14 @@ dependencies = [
 
 [[package]]
 name = "oxid-presentation-domain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-foundation",
 ]
 
 [[package]]
 name = "oxid-protocol-application"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-foundation",
  "oxid-protocol-domain",
@@ -6273,14 +6273,14 @@ dependencies = [
 
 [[package]]
 name = "oxid-protocol-domain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-foundation",
 ]
 
 [[package]]
 name = "oxid-ui-dioxus"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bech32",
  "dioxus",
@@ -6304,7 +6304,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-wallet-application"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-foundation",
  "oxid-platform-ports",
@@ -6313,7 +6313,7 @@ dependencies = [
 
 [[package]]
 name = "oxid-wallet-domain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oxid-foundation",
 ]

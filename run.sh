@@ -104,6 +104,7 @@ run_repository() {
   node --test tests/repository/taskflow-conformance.test.mjs
   node --test tests/repository/ui-page-hierarchy-contract.test.mjs
   node --test tests/repository/ui-source-scan-contract.test.mjs
+  node --test tests/repository/release-version-contract.test.mjs
   node --test tests/repository/repository-test-inventory-contract.test.mjs
   node scripts/ci/check-repository-test-inventory.mjs
   ./scripts/check-transport-trust.sh

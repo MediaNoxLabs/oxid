@@ -24,7 +24,7 @@
       };
       oxidApp = pkgs.rustPlatform.buildRustPackage {
         pname = "oxid";
-        version = "0.1.0";
+        version = "0.2.0";
         src = pkgs.lib.cleanSource ../..;
 
         cargoLock = {
@@ -59,7 +59,7 @@
       };
       brandCheck = pkgs.rustPlatform.buildRustPackage {
         pname = "oxid-brand-check";
-        version = "0.1.0";
+        version = "0.2.0";
         src = pkgs.lib.cleanSource ../..;
 
         cargoLock = {
@@ -120,7 +120,7 @@
 
         headless = pkgs.rustPlatform.buildRustPackage {
           pname = "oxid-headless";
-          version = "0.1.0";
+          version = "0.2.0";
           src = pkgs.lib.cleanSource ../..;
 
           cargoLock = {
