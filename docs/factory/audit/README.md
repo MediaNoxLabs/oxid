@@ -23,7 +23,7 @@ for: accumulated debt, systemic drift, and gates that stopped working.
 | [report-template.md](report-template.md) | The Discussion body an audit publishes, including its machine-readable block. |
 | [audit-evidence-v1.schema.json](audit-evidence-v1.schema.json) | Closed contract for mechanically collected facts. |
 | [audit-report-v1.schema.json](audit-report-v1.schema.json) | Closed contract for a published audit report. |
-| [examples/](examples/) | A conforming report and evidence artifact, drawn from the first milestone audit. Worked reference, and the fixtures the validator is tested against. |
+| [examples/](examples/) | Fully synthetic conforming report and evidence artifacts. They are validator fixtures and make no claim about current repository state. |
 
 ## The triad
 
@@ -212,7 +212,7 @@ node scripts/audit/collect.mjs --type milestone --branch milestone-0.2.0 \
 
 # Layer 3: validate a rendered report before publishing it.
 node scripts/audit/check-audit-report.mjs \
-  tmp/audit/milestone/<anchor>/report.json \
+  tmp/audit/milestone/<anchor>/report.md \
   --evidence tmp/audit/milestone/<anchor>/evidence.json
 ```
 

@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   assertIssueTarget,
+  assertNormalizedDeliveryBase,
   deliveryTargetFromIssueBody,
   extractDeliveryTargetOption,
   parseDeliveryTarget,
@@ -67,6 +68,46 @@ test("CLI delivery target is singular, stripped, and issue-bound", () => {
   assert.throws(() => extractDeliveryTargetOption(["--delivery-base", "develop", "--delivery-base", "milestone-0.4.0"]), /only once/);
   assert.equal(assertIssueTarget("## Delivery target\n\nmilestone-0.4.0", "origin/milestone-0.4.0").kind, "milestone");
   assert.throws(() => assertIssueTarget("## Delivery target\n\ndevelop", "milestone-0.4.0"), /does not match/);
+});
+
+test("bare issue targets and origin refs normalize only with exact repository proof", () => {
+  const oid = "a".repeat(40);
+  const proof = {
+    repository: "MediaNoxLabs/oxid",
+    remoteName: "origin",
+    originUrl: "git@github.com:MediaNoxLabs/oxid.git",
+    fetchRefspecs: ["+refs/heads/*:refs/remotes/origin/*"],
+    resolvedRef: "origin/milestone-0.4.0",
+    issueTargetOid: oid,
+    envelopeTargetOid: oid,
+  };
+  assert.equal(
+    assertNormalizedDeliveryBase("milestone-0.4.0", "origin/milestone-0.4.0", proof).branch,
+    "milestone-0.4.0",
+  );
+  assert.equal(assertNormalizedDeliveryBase("develop", "origin/develop", {
+    ...proof,
+    originUrl: "https://github.com/MediaNoxLabs/oxid.git",
+    resolvedRef: "origin/develop",
+  }).branch, "develop");
+
+  for (const invalid of [
+    { repository: "other/oxid" },
+    { originUrl: "https://github.com/other/oxid.git" },
+    { remoteName: "upstream" },
+    { fetchRefspecs: ["+refs/heads/main:refs/remotes/origin/main"] },
+    { resolvedRef: "origin/develop" },
+    { envelopeTargetOid: "b".repeat(40) },
+  ]) {
+    assert.throws(
+      () => assertNormalizedDeliveryBase("milestone-0.4.0", "origin/milestone-0.4.0", { ...proof, ...invalid }),
+      /delivery target|repository|origin fetch mapping|resolved delivery ref|OIDs/u,
+    );
+  }
+  assert.throws(
+    () => assertNormalizedDeliveryBase("develop", "origin/milestone-0.4.0", proof),
+    /does not match envelope target/u,
+  );
 });
 
 test("a stacked PR keeps its conventional parent while retaining its delivery target", () => {

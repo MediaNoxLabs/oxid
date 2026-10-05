@@ -28,6 +28,7 @@
         "mode",
         "recordedAt",
         "defaultBranch",
+        "window",
         "branches"
       ],
       "properties": {
@@ -46,6 +47,16 @@
           "description": "Collected, never assumed. Closing-keyword behaviour depends on it and it has changed before.",
           "type": "string",
           "minLength": 1
+        },
+        "window": {
+          "description": "Effective hosted-fact bounds copied from the evidence artifact.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["since", "until"],
+          "properties": {
+            "since": { "type": ["string", "null"], "format": "date-time" },
+            "until": { "type": ["string", "null"], "format": "date-time" }
+          }
         },
         "branches": {
           "type": "array",
@@ -174,6 +185,11 @@
           "classification": {
             "enum": ["fixed", "still-present", "regressed", "withdrawn"]
           },
+          "currentId": {
+            "description": "Current finding ID required when the prior finding remains or regresses.",
+            "type": "string",
+            "pattern": "^F-[0-9]{2,3}$"
+          },
           "evidence": { "$ref": "#/$defs/evidenceList" },
           "note": {
             "description": "Required for withdrawn: whether the finding was wrong or its criterion changed.",
@@ -188,6 +204,13 @@
               "required": ["classification"]
             },
             "then": { "required": ["note"] }
+          },
+          {
+            "if": {
+              "properties": { "classification": { "enum": ["still-present", "regressed"] } },
+              "required": ["classification"]
+            },
+            "then": { "required": ["currentId"] }
           }
         ]
       }

@@ -164,7 +164,7 @@ function stripYamlComment(value, file) {
   return value;
 }
 
-function parseFrontmatter(source, file) {
+export function parseFrontmatter(source, file) {
   const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u);
   if (!match) throw new Error(`${file}: missing YAML frontmatter`);
   const result = {};
@@ -185,7 +185,7 @@ function parseFrontmatter(source, file) {
   return result;
 }
 
-function validateAgentBudget(file, fields) {
+export function validateAgentBudget(file, fields) {
   const problems = [];
   const timeoutMs = Number(fields.timeoutMs);
   if (!Number.isInteger(timeoutMs) || timeoutMs < 60_000 || timeoutMs > 3_600_000) {

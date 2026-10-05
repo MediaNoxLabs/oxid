@@ -55,7 +55,14 @@ Do not invoke a package `cli/index.mjs` directly. Do not use user-home, global n
    the structured fail-closed validation error. Do not infer or invoke a second
    `loop validate-envelope` route: no such public subcommand exists. Before
    consuming other fields, stop if `deliveryProfile` does not equal the
-   requested/default profile or `deliveryBase` does not equal the issue target.
+   requested/default profile. Compare the issue's bare Delivery target with the
+   envelope's normalized `origin/<target>` form, not as literal strings: they
+   are equivalent only when the configured repository is `MediaNoxLabs/oxid`,
+   the remote is `origin`, its GitHub URL and fetch refspec map the exact branch
+   to `refs/remotes/origin/<target>`, and both forms resolve to the same OID.
+   This also preserves a conventional issue branch only as a temporary stacked
+   PR base; it never replaces the envelope's immutable delivery target. Stop on
+   any repository, remote, branch, refspec, or OID disagreement.
 5. Read the envelope as the first artifact.
 6. Load every absolute path listed in `requiredReads` (in order). The repository
    wrapper has already resolved and verified each entry. Inspect

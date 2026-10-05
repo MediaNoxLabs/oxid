@@ -288,6 +288,22 @@ test("coverage.policyDrift reports an unenforced floor and a documented figure t
   assert.deepEqual(result.facts.documentedClaims, [{ path: "CONTRIBUTING.md", line: 1, claimedPercent: 80 }]);
 });
 
+test("coverage.policyDrift reads nested workspace, package, critical, and changed-line floors", () => {
+  const root = sandbox();
+  plant(root, "scripts/coverage/policy.json", JSON.stringify({
+    workspaceFloorPercent: 70,
+    packageFloorsPercent: { core: 75, critical: 80 },
+    changedLines: { floorPercent: 90 },
+  }));
+  const result = collectCoveragePolicyDrift({ root });
+  assert.deepEqual(result.facts.scopes, [
+    { scope: "workspace", hasFloor: true, floorPercent: 70 },
+    { scope: "package.core", hasFloor: true, floorPercent: 75 },
+    { scope: "package.critical", hasFloor: true, floorPercent: 80 },
+    { scope: "changedLines", hasFloor: true, floorPercent: 90 },
+  ]);
+});
+
 test("coverage.policyDrift records enforcement when the flag reaches the runner", () => {
   const root = sandbox();
   plant(root, "scripts/coverage/policy.json", JSON.stringify({ workspaceFloorPercent: 70 }));
@@ -458,6 +474,25 @@ test("adr.collisions flags an accepted record depending on a proposed one", () =
   ]);
 });
 
+test("adr.collisions parses every unique ADR identifier in an amendment field", () => {
+  const run = stubRunner({
+    "git ls-tree -r --name-only refs/remotes/origin/develop": "docs/adr/0025-old.md\ndocs/adr/0106-proposed.md\ndocs/adr/0107-proposed.md\ndocs/adr/0108-proposed.md",
+    "git cat-file --batch": catFileBatch({
+      "refs/remotes/origin/develop:docs/adr/0025-old.md": "Status: Accepted\n\nAmended by: ADR-0106, ADR-0107; then ADR-0106 and ADR-0108\n\nUnrelated ADR-0999 prose.\n",
+      "refs/remotes/origin/develop:docs/adr/0106-proposed.md": "Status: Proposed\n",
+      "refs/remotes/origin/develop:docs/adr/0107-proposed.md": "Status: Proposed\n",
+      "refs/remotes/origin/develop:docs/adr/0108-proposed.md": "Status: Proposed\n",
+    }),
+  });
+  const result = collectAdrCollisions({
+    branches: ["refs/remotes/origin/develop"], run });
+  assert.deepEqual(result.facts.statusBlindBacklinks, [
+    { from: "docs/adr/0025-old.md", fromStatus: "Accepted", to: "docs/adr/0106-proposed.md", toStatus: "Proposed" },
+    { from: "docs/adr/0025-old.md", fromStatus: "Accepted", to: "docs/adr/0107-proposed.md", toStatus: "Proposed" },
+    { from: "docs/adr/0025-old.md", fromStatus: "Accepted", to: "docs/adr/0108-proposed.md", toStatus: "Proposed" },
+  ]);
+});
+
 test("adr.collisions reports a clean corpus as clean", () => {
   const run = stubRunner({
     "git ls-tree -r --name-only refs/remotes/origin/develop": "docs/adr/0025-old.md\ndocs/adr/0106-new.md",
@@ -502,6 +537,19 @@ test("branch.protection distinguishes an unprotected train from a protected defa
   assert.deepEqual(develop.requiredChecks, ["basic", "quality"]);
 });
 
+test("branch.protection degrades when a ruleset lookup is unavailable", () => {
+  const failure = new Error("rules unavailable");
+  failure.stderr = "rules unavailable";
+  const run = stubRunner({
+    "gh api repos/o/r --jq .delete_branch_on_merge": "true",
+    "gh api repos/o/r/branches/develop/protection": JSON.stringify({}),
+    "gh api repos/o/r/rules/branches/develop": failure,
+  });
+  const result = collectBranchProtection({ repository: "o/r", branches: ["develop"], run });
+  assert.equal(result.status, "degraded");
+  assert.match(result.reason, /rules unavailable/u);
+});
+
 test("branch.protection is unavailable when no branch could be queried", () => {
   const failure = new Error("network down");
   failure.stderr = "network down";
@@ -524,12 +572,44 @@ test("mainline.divergence reports paths modified on both sides", () => {
   });
   const result = collectMainlineDivergence({ branches: ["a", "b"], run });
   assert.equal(result.status, "ok");
-  assert.equal(result.facts.mergeBase, "5ba38b9b00000000000000000000000000000000");
   const [pair] = result.facts.pairs;
+  assert.equal(pair.mergeBase, "5ba38b9b00000000000000000000000000000000");
   assert.equal(pair.changedFiles, 3, "changed files is the symmetric union of both branch tips");
   assert.equal(pair.leftOnlyCommits, 12);
   assert.equal(pair.rightOnlyCommits, 20);
   assert.deepEqual(pair.bothSidesModified, ["shared.rs"], "a path touched on both sides auto-merges silently");
+});
+
+test("mainline.divergence records each pair's merge base", () => {
+  const run = stubRunner({
+    "git merge-base a b": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "git merge-base a c": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "git merge-base b c": "cccccccccccccccccccccccccccccccccccccccc",
+    "git rev-list --count": "1",
+    "git diff --name-only": "shared.rs",
+  });
+  const result = collectMainlineDivergence({ branches: ["a", "b", "c"], run });
+  assert.equal(result.status, "ok");
+  assert.deepEqual(result.facts.pairs.map((pair) => pair.mergeBase), [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "cccccccccccccccccccccccccccccccccccccccc",
+  ]);
+});
+
+test("mainline.divergence degrades instead of treating a failed diff as no paths", () => {
+  const failure = new Error("diff unavailable");
+  failure.stderr = "diff unavailable";
+  const run = stubRunner({
+    "git merge-base a b": "5ba38b9b00000000000000000000000000000000",
+    "git rev-list --count": "1",
+    "git diff --name-only 5ba38b9b00000000000000000000000000000000..a": failure,
+    "git diff --name-only 5ba38b9b00000000000000000000000000000000..b": "shared.rs",
+  });
+  const result = collectMainlineDivergence({ branches: ["a", "b"], run });
+  assert.equal(result.status, "unavailable");
+  assert.match(result.reason, /cannot list changed paths/u);
+  assert.equal(result.facts, undefined);
 });
 
 test("invalid audit window bounds fail before any collector runs", () => {
@@ -564,6 +644,51 @@ test("collection refuses to emit evidence without a collected default branch", (
   assert.throws(
     () => collect({ repository: "o/r", primary: "develop", root: sandbox(), run: stubRunner({ "gh api": failure }) }),
     /refusing to emit schema-invalid audit evidence/u,
+  );
+});
+
+test("collection refuses file-backed evidence from dirty or non-primary checkouts", () => {
+  const base = {
+    "gh api repos/o/r --jq .default_branch": "develop",
+    "git rev-parse refs/remotes/origin/develop": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  };
+  assert.throws(() => collect({
+    repository: "o/r", primary: "develop", root: sandbox(),
+    run: stubRunner({ ...base, "git status --porcelain": " M scripts/audit/collect.mjs" }),
+  }), /dirty checkout/u);
+  assert.throws(() => collect({
+    repository: "o/r", primary: "develop", root: sandbox(),
+    run: stubRunner({ ...base, "git status --porcelain": "", "git rev-parse HEAD": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }),
+  }), /does not match the recorded primary commit/u);
+});
+
+test("collection records bounded and unbounded windows in the evidence anchor", () => {
+  const primarySha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const run = stubRunner({
+    "gh api repos/o/r --jq .default_branch": "develop",
+    "git rev-parse refs/remotes/origin/develop": primarySha,
+    "git status --porcelain": "",
+    "git rev-parse HEAD": primarySha,
+  });
+  const common = { repository: "o/r", primary: "develop", root: sandbox(), run };
+  assert.deepEqual(collect(common).window, { since: null, until: null });
+  assert.deepEqual(collect({
+    ...common,
+    since: "2026-09-01T00:00:00Z",
+    until: "2026-09-30T23:59:59Z",
+  }).window, { since: "2026-09-01T00:00:00Z", until: "2026-09-30T23:59:59Z" });
+});
+
+test("collection refuses evidence when any requested branch ref is unresolved", () => {
+  assert.throws(
+    () => collect({
+      repository: "o/r",
+      primary: "develop",
+      comparisons: ["milestone-0.2.0"],
+      root: sandbox(),
+      run: stubRunner({ "gh api": "develop" }),
+    }),
+    /could not resolve requested branch ref/u,
   );
 });
 
@@ -635,6 +760,27 @@ test("issue.closureGap applies both bounds of a historical audit window", () => 
     run,
   });
   assert.deepEqual(result.facts.map((entry) => entry.issue), [95]);
+});
+
+test("issue.closureGap degrades when either listing reaches its result limit", () => {
+  const merged = Array.from({ length: 500 }, (_, index) => ({
+    number: index + 1,
+    body: "",
+    baseRefName: "develop",
+    mergedAt: "2026-09-05T00:00:00Z",
+  }));
+  const open = Array.from({ length: 800 }, (_, index) => ({ number: index + 1 }));
+  const result = collectIssueClosureGap({
+    repository: "o/r",
+    defaultBranch: "develop",
+    run: stubRunner({
+      "gh pr list": JSON.stringify(merged),
+      "gh issue list": JSON.stringify(open),
+    }),
+  });
+  assert.equal(result.status, "degraded");
+  assert.match(result.reason, /500-item limit/u);
+  assert.match(result.reason, /800-item limit/u);
 });
 
 // --- determinism -------------------------------------------------------------
