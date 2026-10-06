@@ -54,6 +54,7 @@ run_repository() {
   node --test tests/repository/bootstrap-dev-loop-contract.test.mjs
   node --test tests/repository/dev-loop-stability-contract.test.mjs
   node --test tests/repository/desktop-test-profile-contract.test.mjs
+  node --test tests/repository/passport-vault-conformance-contract.test.mjs
   node --test scripts/app-artifact-receipt.test.mjs
   node --test tests/repository/tailnet-identity-demo-kit-contract.test.mjs
   node --test tests/repository/demo-inventory-contract.test.mjs
