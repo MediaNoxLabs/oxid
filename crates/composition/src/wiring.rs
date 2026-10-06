@@ -94,7 +94,7 @@ use oxid_identity_application::{
     ListDidRecordsUseCase, PublishDidUseCase, ResolveDidUseCase,
     SelfIssuedAuthenticationFlowService, SignCredentialIssuancePayloadUseCase,
     SignCredentialPresentationBundleUseCase, SignDidPayloadUseCase,
-    SignSelfIssuedAuthenticationPayloadUseCase, UnavailableDidLifecycle, UpdateDidUseCase,
+    SignSelfIssuedAuthenticationPayloadUseCase, UpdateDidUseCase,
 };
 use oxid_passport_vault_application::{
     AuthorizePassportVaultCallUseCase, CancelPassportVaultCallSubmissionUseCase,
