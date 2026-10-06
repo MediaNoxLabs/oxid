@@ -27,9 +27,9 @@ mod publication;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use call::{
-    MidnightDidBootstrapCall, MidnightDidCallComposerConfigError, MidnightDidCallContext,
-    MidnightDidCallOperation, NativeMidnightDidCallComposer, NativeMidnightDidCallPlan,
-    NativeMidnightDidCallRequest,
+    MidnightDidBootstrapCall, MidnightDidCallComposerConfigError, MidnightDidCallCompositionFuture,
+    MidnightDidCallCompositionPort, MidnightDidCallContext, MidnightDidCallOperation,
+    NativeMidnightDidCallComposer, NativeMidnightDidCallPlan, NativeMidnightDidCallRequest,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use compact_artifacts::{

@@ -10,8 +10,8 @@
 use std::{error::Error, fmt, future::Future, io, pin::Pin, sync::Arc};
 
 use oxid_adapter_did_midnight::{
-    MidnightDidBootstrapCall, MidnightDidBootstrapCircuit, MidnightDidCallContext,
-    MidnightDidCompactArtifacts, NativeMidnightDidCallComposer,
+    MidnightDidBootstrapCall, MidnightDidBootstrapCircuit, MidnightDidCallCompositionPort,
+    MidnightDidCallContext, MidnightDidCompactArtifacts, NativeMidnightDidCallComposer,
     NativeMidnightDidDeploymentComposer, NativeMidnightDidDeploymentRequest,
     NativeMidnightDidMaintenanceComposer, NativeMidnightDidMaintenanceRequest,
 };
@@ -103,7 +103,7 @@ where
     let custody: Arc<dyn WalletDerivedSecretUsePort> = security.clone();
     let keys: Arc<dyn WalletKeyOperationPort> = security;
     let calls = match NativeMidnightDidCallComposer::new(executable, Arc::clone(&custody), keys) {
-        Ok(calls) => Arc::new(calls),
+        Ok(calls) => Arc::new(calls) as Arc<dyn MidnightDidCallCompositionPort>,
         Err(_) => return services,
     };
     let funding: Arc<dyn MidnightContractCallFundingPort> = midnight.clone();
@@ -249,7 +249,7 @@ impl DidDeploymentContextSource for NodeAnchoredDidDeploymentContextSource {
 struct NativeDidDeploymentEffects {
     deployment: Arc<NativeMidnightDidDeploymentComposer>,
     maintenance: Arc<NativeMidnightDidMaintenanceComposer>,
-    calls: Arc<NativeMidnightDidCallComposer>,
+    calls: Arc<dyn MidnightDidCallCompositionPort>,
     contexts: Arc<dyn DidDeploymentContextSource>,
     artifacts: Option<MidnightDidCompactArtifacts>,
 }
@@ -258,7 +258,7 @@ impl NativeDidDeploymentEffects {
     fn new(
         deployment: Arc<NativeMidnightDidDeploymentComposer>,
         maintenance: Arc<NativeMidnightDidMaintenanceComposer>,
-        calls: Arc<NativeMidnightDidCallComposer>,
+        calls: Arc<dyn MidnightDidCallCompositionPort>,
         contexts: Arc<dyn DidDeploymentContextSource>,
     ) -> Self {
         let artifacts = std::env::var_os("OXID_MIDNIGHT_DID_ARTIFACTS_DIR")
@@ -311,14 +311,17 @@ impl DidDeploymentEffectComposer for NativeDidDeploymentEffects {
                 _ => None,
             };
             if let Some(call) = call {
-                let plan = self.calls.compose_bootstrap(
-                    profile_id,
-                    account_index,
-                    controller_index(operation)?,
-                    operation.operation_id().as_str(),
-                    context,
-                    call,
-                )?;
+                let plan = self
+                    .calls
+                    .compose_bootstrap_call(
+                        profile_id,
+                        account_index,
+                        controller_index(operation)?,
+                        operation.operation_id().as_str().to_owned(),
+                        context,
+                        call,
+                    )
+                    .await?;
                 return Ok(DidDeploymentEffectPlan {
                     did: None,
                     profile_id: operation.profile_id().as_str().to_owned(),
@@ -385,7 +388,7 @@ impl NativeDidDeploymentService {
     pub(super) fn new(
         deployment: Arc<NativeMidnightDidDeploymentComposer>,
         maintenance: Arc<NativeMidnightDidMaintenanceComposer>,
-        calls: Arc<NativeMidnightDidCallComposer>,
+        calls: Arc<dyn MidnightDidCallCompositionPort>,
         contexts: Arc<dyn DidDeploymentContextSource>,
         funding: Arc<dyn MidnightContractCallFundingPort>,
         submission: Arc<dyn MidnightContractCallSubmissionPort>,

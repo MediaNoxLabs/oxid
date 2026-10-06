@@ -6,8 +6,10 @@
 
 use std::{
     fmt, fs,
+    future::Future,
     io::{Cursor, Read, Write},
     path::{Path, PathBuf},
+    pin::Pin,
     process::{Command, ExitStatus, Stdio},
     sync::Arc,
     thread,
@@ -193,6 +195,27 @@ pub struct NativeMidnightDidCallRequest {
 pub struct NativeMidnightDidCallPlan {
     pub planning_fingerprint: [u8; 32],
     pub transaction: Zeroizing<Vec<u8>>,
+}
+
+pub type MidnightDidCallCompositionFuture<'a> = Pin<
+    Box<dyn Future<Output = Result<NativeMidnightDidCallPlan, DidLifecyclePortError>> + Send + 'a>,
+>;
+
+/// Target-neutral boundary for composing one generated Compact holder-DID
+/// call. Desktop/headless adapters may invoke an authenticated child process;
+/// mobile adapters may use a native Rust Ledger8 implementation. Funding,
+/// proving, submission, and reconciliation remain outside this port.
+pub trait MidnightDidCallCompositionPort: Send + Sync {
+    #[allow(clippy::too_many_arguments)]
+    fn compose_bootstrap_call<'a>(
+        &'a self,
+        profile_id: WalletProfileId,
+        account_index: u32,
+        controller_index: u32,
+        operation_scope: String,
+        context: MidnightDidCallContext,
+        call: MidnightDidBootstrapCall,
+    ) -> MidnightDidCallCompositionFuture<'a>;
 }
 
 pub struct NativeMidnightDidCallComposer {
@@ -467,6 +490,29 @@ impl NativeMidnightDidCallComposer {
                 })
             }
         }
+    }
+}
+
+impl MidnightDidCallCompositionPort for NativeMidnightDidCallComposer {
+    fn compose_bootstrap_call<'a>(
+        &'a self,
+        profile_id: WalletProfileId,
+        account_index: u32,
+        controller_index: u32,
+        operation_scope: String,
+        context: MidnightDidCallContext,
+        call: MidnightDidBootstrapCall,
+    ) -> MidnightDidCallCompositionFuture<'a> {
+        Box::pin(async move {
+            self.compose_bootstrap(
+                profile_id,
+                account_index,
+                controller_index,
+                &operation_scope,
+                context,
+                call,
+            )
+        })
     }
 }
 
