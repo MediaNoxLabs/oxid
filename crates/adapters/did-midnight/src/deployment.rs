@@ -11,7 +11,8 @@ use std::{fmt, sync::Arc};
 
 use midnight_base_crypto::{
     fab::AlignedValue,
-    hash::HashOutput,
+    hash::{HashOutput, PersistentHashWriter},
+    repr::BinaryHashRepr,
     signatures::{SigningKey, VerifyingKey},
     time::Timestamp,
 };
@@ -27,7 +28,7 @@ use midnight_storage::{
     arena::Sp,
     storage::{Array, HashMap as LedgerHashMap},
 };
-use midnight_transient_crypto::commitment::PedersenRandomness;
+use midnight_transient_crypto::{commitment::PedersenRandomness, fab::ValueReprAlignedValue};
 use oxid_foundation::UnixTimestampMillis;
 use oxid_identity_application::DidLifecyclePortError;
 use oxid_identity_domain::{MidnightDid, MidnightNetwork};
@@ -205,15 +206,15 @@ impl NativeMidnightDidDeploymentComposer {
         let controller_path = did_controller_path(request.account_index, request.controller_index)?;
         let maintenance_path = maintenance_path(request.account_index)?;
 
-        let mut controller_commitment = None;
+        let mut controller_public_key = None;
         self.custody
             .use_derived_secret(&request.profile_id, &controller_path, &mut |secret| {
-                controller_commitment = Some(controller_public_key_for(secret));
+                controller_public_key = Some(controller_public_key_for(secret));
                 Ok(())
             })
             .map_err(map_security_error)?;
-        let controller_commitment =
-            controller_commitment.ok_or(DidLifecyclePortError::ProtectionUnavailable)?;
+        let controller_public_key =
+            controller_public_key.ok_or(DidLifecyclePortError::ProtectionUnavailable)?;
 
         let mut maintenance_key = None;
         self.custody
@@ -228,7 +229,7 @@ impl NativeMidnightDidDeploymentComposer {
             maintenance_key.ok_or(DidLifecyclePortError::ProtectionUnavailable)?;
 
         let deploy = compose_deploy(
-            controller_commitment,
+            controller_public_key,
             request.created_at.value(),
             request.nonce,
             vec![maintenance_key],
@@ -272,13 +273,16 @@ impl NativeMidnightDidDeploymentComposer {
 }
 
 fn controller_public_key_for(secret: &[u8; 32]) -> [u8; 32] {
-    let mut domain = [0u8; 32];
-    let tag = b"did:controller:pk";
-    domain[..tag.len()].copy_from_slice(tag);
-    let mut hasher = Sha256::new();
-    hasher.update(domain);
-    hasher.update(secret);
-    hasher.finalize().into()
+    // `midnight-did` 0.4.0 calls Compact's persistentHash over a fixed vector
+    // containing this domain and the 32-byte controller secret. Reproduce the
+    // same FAB value-only encoding instead of treating the controller as a
+    // Jubjub signing key.
+    let domain = AlignedValue::from(*b"did:controller:pk\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0");
+    let secret = AlignedValue::from(*secret);
+    let input = AlignedValue::concat([&domain, &secret]);
+    let mut writer = PersistentHashWriter::default();
+    ValueReprAlignedValue(input).binary_repr(&mut writer);
+    writer.finalize().0
 }
 
 fn did_controller_path(
@@ -328,12 +332,15 @@ fn compose_initial_state(
     timestamp_ms: u64,
     committee: Vec<VerifyingKey>,
 ) -> ContractState<DefaultDB> {
+    // This is the generated Compact `Ledger` schema for midnight-did 0.4.0.
+    // Keep the immutable and mutable arrays explicit so schema drift fails the
+    // conformance tests instead of silently writing values into stale slots.
     let constants = state_array(vec![
         cell(AlignedValue::from(1_u32)),
-        cell(AlignedValue::from(HashOutput(controller_public_key))),
+        cell(AlignedValue::from(controller_public_key)),
+        cell(AlignedValue::from([0_u8; 32])),
     ]);
     let mutable = state_array(vec![
-        cell(AlignedValue::from(HashOutput([0_u8; 32]))),
         empty_map(),
         cell(AlignedValue::from(0_u64)),
         cell(AlignedValue::from(timestamp_ms)),
@@ -341,6 +348,7 @@ fn compose_initial_state(
         cell(AlignedValue::from(false)),
         cell(AlignedValue::from(true)),
         cell(AlignedValue::from(0_u64)),
+        empty_map(),
         empty_map(),
         empty_map(),
         empty_map(),

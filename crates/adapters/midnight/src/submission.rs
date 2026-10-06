@@ -3,7 +3,7 @@
 //! Bounded standalone completion of an authorized Midnight transfer.
 
 use std::{
-    fmt,
+    fmt, io,
     net::IpAddr,
     sync::{
         Arc, Mutex,
@@ -32,7 +32,7 @@ use midnight_storage::{
 use midnight_transient_crypto::{
     commitment::PedersenRandomness,
     curve::Fr,
-    proofs::{Proof, ProofPreimage, ProvingKeyMaterial, ProvingProvider},
+    proofs::{Proof, ProofPreimage, ProvingKeyMaterial, ProvingProvider, WrappedIr},
 };
 use oxid_adapter_platform_system::{http_client_builder_for, websocket_connector_for};
 use oxid_platform_ports::ClockPort;
@@ -92,6 +92,12 @@ const MAX_RECONCILIATION_BLOCKS: usize = 2_048;
 
 type UnprovenTransaction =
     Transaction<Signature, ProofPreimageMarker, PedersenRandomness, DefaultDB>;
+
+/// Explicit source of authenticated public proving material for application
+/// circuits that are not built into the standalone proof server.
+pub trait MidnightRemoteProvingMaterialSource: Send + Sync {
+    fn resolve_key(&self, key_location: &str) -> io::Result<Option<ProvingKeyMaterial>>;
+}
 
 /// Validated public routes for the complete standalone transaction path.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -298,6 +304,7 @@ pub(crate) struct LiveMidnightTransactionCompleter<C> {
     local_proving_gate: Arc<Mutex<()>>,
     dust_checkpoints: Arc<dyn MidnightDustCheckpointStore>,
     clock: Arc<C>,
+    remote_proving_material: Option<Arc<dyn MidnightRemoteProvingMaterialSource>>,
 }
 
 impl<C> LiveMidnightTransactionCompleter<C> {
@@ -307,6 +314,7 @@ impl<C> LiveMidnightTransactionCompleter<C> {
             local_proving_gate: Arc::new(Mutex::new(())),
             dust_checkpoints: Arc::new(UnavailableMidnightDustCheckpointStore),
             clock,
+            remote_proving_material: None,
         }
     }
 
@@ -320,7 +328,16 @@ impl<C> LiveMidnightTransactionCompleter<C> {
             local_proving_gate: Arc::new(Mutex::new(())),
             dust_checkpoints,
             clock,
+            remote_proving_material: None,
         }
+    }
+
+    pub(crate) fn with_remote_proving_material(
+        mut self,
+        source: Arc<dyn MidnightRemoteProvingMaterialSource>,
+    ) -> Self {
+        self.remote_proving_material = Some(source);
+        self
     }
 }
 
@@ -488,6 +505,7 @@ where
             &dust_key,
             self.dust_checkpoints.as_ref(),
             self.clock.as_ref(),
+            self.remote_proving_material.as_ref(),
         ))
     }
 }
@@ -498,6 +516,7 @@ async fn complete_live<C>(
     dust_key: &DustSecretKey,
     checkpoints: &dyn MidnightDustCheckpointStore,
     clock: &C,
+    remote_proving_material: Option<&Arc<dyn MidnightRemoteProvingMaterialSource>>,
 ) -> Result<MidnightCompletionOutcome, WalletTransactionPortError>
 where
     C: ClockPort,
@@ -578,7 +597,7 @@ where
             outcome.transaction
         }
         MidnightProvingMode::Remote { proof_server_url } => {
-            prove_via_http(balanced, proof_server_url).await?
+            prove_via_http(balanced, proof_server_url, remote_proving_material.cloned()).await?
         }
     };
     ensure_submission_active(&cancellation)?;
@@ -1315,13 +1334,47 @@ fn balance_dust(
 struct HttpDustProvingProvider {
     client: reqwest::Client,
     endpoint: String,
+    remote_proving_material: Option<Arc<dyn MidnightRemoteProvingMaterialSource>>,
 }
 
 impl ProvingProvider for HttpDustProvingProvider {
-    async fn check(&self, _: &ProofPreimage) -> Result<Vec<Option<usize>>, anyhow::Error> {
-        Err(anyhow::anyhow!(
-            "standalone DUST prover does not support contract proof checks"
-        ))
+    async fn check(&self, preimage: &ProofPreimage) -> Result<Vec<Option<usize>>, anyhow::Error> {
+        let ir = if Self::is_builtin_key(preimage.key_location.0.as_ref()) {
+            None
+        } else {
+            Some(WrappedIr(
+                self.resolve_external_material(preimage)?.ir_source,
+            ))
+        };
+        let payload = (ProofPreimageVersioned::V2(Arc::new(preimage.clone())), ir);
+        let mut body = Vec::new();
+        midnight_serialize::tagged_serialize(&payload, &mut body)?;
+        if body.len() > MAX_PROOF_REQUEST_BYTES {
+            return Err(anyhow::anyhow!(
+                "proof check request exceeds the configured limit"
+            ));
+        }
+        let response = self
+            .client
+            .post(format!("{}/check", self.endpoint.trim_end_matches('/')))
+            .body(body)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!("proof server rejected the check request"));
+        }
+        let body = bounded_response(response, MAX_PROOF_RESPONSE_BYTES)
+            .await
+            .map_err(|_| anyhow::anyhow!("proof check response exceeds the configured limit"))?;
+        let skips: Vec<Option<u64>> = midnight_serialize::tagged_deserialize(&body[..])?;
+        skips
+            .into_iter()
+            .map(|skip| {
+                skip.map(usize::try_from)
+                    .transpose()
+                    .map_err(|_| anyhow::anyhow!("proof check response is out of range"))
+            })
+            .collect()
     }
 
     async fn prove(
@@ -1329,9 +1382,15 @@ impl ProvingProvider for HttpDustProvingProvider {
         preimage: &ProofPreimage,
         overwrite_binding_input: Option<Fr>,
     ) -> Result<Proof, anyhow::Error> {
+        let builtin = Self::is_builtin_key(preimage.key_location.0.as_ref());
+        let material = if builtin {
+            None
+        } else {
+            Some(self.resolve_external_material(preimage)?)
+        };
         let payload = (
             ProofPreimageVersioned::V2(Arc::new(preimage.clone())),
-            Option::<ProvingKeyMaterial>::None,
+            material,
             overwrite_binding_input,
         );
         let mut body = Vec::new();
@@ -1367,9 +1426,33 @@ impl ProvingProvider for HttpDustProvingProvider {
     }
 }
 
+impl HttpDustProvingProvider {
+    fn is_builtin_key(location: &str) -> bool {
+        matches!(
+            location,
+            "midnight/zswap/spend"
+                | "midnight/zswap/output"
+                | "midnight/zswap/sign"
+                | "midnight/dust/spend"
+        )
+    }
+
+    fn resolve_external_material(
+        &self,
+        preimage: &ProofPreimage,
+    ) -> Result<ProvingKeyMaterial, anyhow::Error> {
+        self.remote_proving_material
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("external proving material is unavailable"))?
+            .resolve_key(preimage.key_location.0.as_ref())?
+            .ok_or_else(|| anyhow::anyhow!("external proving material is unavailable"))
+    }
+}
+
 async fn prove_via_http(
     transaction: UnprovenTransaction,
     endpoint: &str,
+    remote_proving_material: Option<Arc<dyn MidnightRemoteProvingMaterialSource>>,
 ) -> Result<
     Transaction<
         Signature,
@@ -1394,6 +1477,7 @@ async fn prove_via_http(
     let provider = HttpDustProvingProvider {
         client,
         endpoint: endpoint.to_owned(),
+        remote_proving_material,
     };
     let proved = timeout(
         PROOF_TIMEOUT,
@@ -2618,6 +2702,27 @@ mod tests {
             )),
             Err(MidnightChainIdentityError::InvalidNodeEndpoint)
         );
+    }
+
+    #[test]
+    fn remote_prover_keeps_builtin_and_application_circuits_separate() {
+        for location in [
+            "midnight/zswap/spend",
+            "midnight/zswap/output",
+            "midnight/zswap/sign",
+            "midnight/dust/spend",
+        ] {
+            assert!(HttpDustProvingProvider::is_builtin_key(location));
+        }
+        for location in [
+            "setVerificationMethod",
+            "setSchnorrJubjubVerificationMethod",
+            "setVerificationMethodRelation",
+            "midnight/did/setVerificationMethod",
+            "",
+        ] {
+            assert!(!HttpDustProvingProvider::is_builtin_key(location));
+        }
     }
 
     #[test]

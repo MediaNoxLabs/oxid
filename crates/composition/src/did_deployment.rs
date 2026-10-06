@@ -7,7 +7,7 @@
 //! fail-closed until the post-deploy verification methods and relationships are
 //! independently resolvable.
 
-use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
+use std::{error::Error, fmt, future::Future, io, pin::Pin, sync::Arc};
 
 use oxid_adapter_did_midnight::{
     MidnightDidBootstrapCall, MidnightDidBootstrapCircuit, MidnightDidCallContext,
@@ -18,7 +18,8 @@ use oxid_adapter_did_midnight::{
 use oxid_adapter_midnight::{
     MidnightContractCallFundingPort, MidnightContractCallFundingRequest,
     MidnightContractCallSubmissionPort, MidnightContractCallSubmissionRequest,
-    MidnightContractCallSubmissionState, MidnightPublicCallContextSource, MidnightStandaloneConfig,
+    MidnightContractCallSubmissionState, MidnightPublicCallContextSource,
+    MidnightRemoteProvingMaterialSource, MidnightStandaloneConfig,
 };
 use oxid_adapter_passport_vault::{
     NodeAnchoredPassportVaultStateSource, PassportVaultCallChainContextSource,
@@ -46,6 +47,39 @@ use zeroize::Zeroizing;
 
 const DEPLOYMENT_TTL_MILLIS: u64 = 60 * 60 * 1_000;
 const DID_CALL_COMPOSER_ENV: &str = "OXID_MIDNIGHT_DID_CALL_COMPOSER";
+
+struct NativeDidProvingMaterialSource {
+    artifacts: MidnightDidCompactArtifacts,
+}
+
+impl MidnightRemoteProvingMaterialSource for NativeDidProvingMaterialSource {
+    fn resolve_key(
+        &self,
+        key_location: &str,
+    ) -> io::Result<Option<midnight_transient_crypto::proofs::ProvingKeyMaterial>> {
+        let circuit = match key_location {
+            "setVerificationMethod" => MidnightDidBootstrapCircuit::VerificationMethod,
+            "setSchnorrJubjubVerificationMethod" => {
+                MidnightDidBootstrapCircuit::SchnorrJubjubVerificationMethod
+            }
+            "setVerificationMethodRelation" => {
+                MidnightDidBootstrapCircuit::VerificationMethodRelation
+            }
+            _ => return Ok(None),
+        };
+        self.artifacts
+            .proving_key_material(circuit)
+            .map(Some)
+            .map_err(|_| io::Error::other("DID proving artifact authentication failed"))
+    }
+}
+
+pub(super) fn native_did_proving_material() -> Option<Arc<dyn MidnightRemoteProvingMaterialSource>>
+{
+    let artifacts = std::env::var_os("OXID_MIDNIGHT_DID_ARTIFACTS_DIR")
+        .and_then(|root| MidnightDidCompactArtifacts::load(root).ok())?;
+    Some(Arc::new(NativeDidProvingMaterialSource { artifacts }))
+}
 
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub(super) fn with_native_did_deployment<K, M>(
@@ -175,8 +209,12 @@ impl DidDeploymentContextSource for NodeAnchoredDidDeploymentContextSource {
                 .read(&address)
                 .await
                 .map_err(map_contract_state_error)?;
+            // The submission receipt identifies the enclosing Substrate extrinsic,
+            // while the indexer exposes the embedded Midnight transaction hash.
+            // Those are intentionally different hash domains. Bind the indexed
+            // contract action to the receipt's exact finalized block and contract
+            // address before composing the next effect.
             if snapshot.contract_address_hex != address
-                || snapshot.transaction_hash_hex != receipt.transaction_hash_hex()
                 || snapshot.action_block_hash_hex != receipt.block_hash_hex()
                 || snapshot.action_block_height != receipt.block_height()
             {
@@ -757,9 +795,14 @@ fn required_holder_methods_resolve(resolution: &oxid_identity_domain::DidResolut
     let relationship_contains = |relationship, ids: &[&str]| {
         document.relationships().iter().any(|entry| {
             entry.relationship() == relationship
-                && ids
-                    .iter()
-                    .any(|id| entry.method_ids().iter().any(|candidate| candidate == id))
+                && ids.iter().any(|id| {
+                    entry.method_ids().iter().any(|candidate| {
+                        candidate == id
+                            || candidate.strip_prefix('#').is_some_and(|fragment| {
+                                *id == format!("{}#{fragment}", document.id().as_str())
+                            })
+                    })
+                })
         })
     };
     !ed25519.is_empty()

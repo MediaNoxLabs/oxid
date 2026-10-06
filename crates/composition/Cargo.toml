@@ -85,6 +85,7 @@ oxid-platform-ports.workspace = true
 oxid-protocol-application.workspace = true
 oxid-wallet-application.workspace = true
 oxid-wallet-domain.workspace = true
+midnight-transient-crypto.workspace = true
 oxid-capabilities-application.workspace = true
 futures.workspace = true
 hex.workspace = true

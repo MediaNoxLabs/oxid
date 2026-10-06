@@ -6121,6 +6121,7 @@ dependencies = [
  "midnight-onchain-runtime",
  "midnight-serialize",
  "midnight-storage",
+ "midnight-transient-crypto",
  "midnight-zswap",
  "oxid-adapter-backup-complete",
  "oxid-adapter-backup-document-mobile",

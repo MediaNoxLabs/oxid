@@ -16,11 +16,15 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
+use midnight_transient_crypto::proofs::ProvingKeyMaterial;
+
 const EXPECTED_SCHEMA: &str = "midnight-did-zk-artifacts";
 const EXPECTED_VERSION: &str = "0.4.0";
 const EXPECTED_GIT_SHA: &str = "cf00aacb3e1bb300e87bc4dd11ec0897fab6e233";
 const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
 const MAX_VERIFIER_KEY_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_PROVER_KEY_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_ZKIR_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MidnightDidBootstrapCircuit {
@@ -83,7 +87,11 @@ impl MidnightDidCompactArtifacts {
                 .find(|entry| entry.id == circuit.id())
                 .ok_or(MidnightDidCompactArtifactError::ArtifactMismatch)?;
             validate_relative_path(&entry.files.verifier)?;
+            validate_relative_path(&entry.files.prover)?;
+            validate_relative_path(&entry.files.zkir)?;
             validate_lower_hex_32(&entry.sha256.verifier)?;
+            validate_lower_hex_32(&entry.sha256.prover)?;
+            validate_lower_hex_32(&entry.sha256.zkir)?;
         }
         Ok(Self { root, manifest })
     }
@@ -114,6 +122,62 @@ impl MidnightDidCompactArtifacts {
                 .map_err(|_| MidnightDidCompactArtifactError::ArtifactUnavailable)?,
         );
         if hex::encode(Sha256::digest(bytes.as_slice())) != entry.sha256.verifier {
+            return Err(MidnightDidCompactArtifactError::ArtifactMismatch);
+        }
+        Ok(bytes)
+    }
+
+    /// Returns the authenticated public proving closure for one admitted DID
+    /// bootstrap circuit. Callers select circuits through the closed enum;
+    /// manifest paths never become an ambient filesystem resolver.
+    pub fn proving_key_material(
+        &self,
+        circuit: MidnightDidBootstrapCircuit,
+    ) -> Result<ProvingKeyMaterial, MidnightDidCompactArtifactError> {
+        let entry = self
+            .manifest
+            .circuits
+            .iter()
+            .find(|entry| entry.id == circuit.id())
+            .ok_or(MidnightDidCompactArtifactError::ArtifactMismatch)?;
+        Ok(ProvingKeyMaterial {
+            prover_key: self.authenticated_file(
+                &entry.files.prover,
+                &entry.sha256.prover,
+                MAX_PROVER_KEY_BYTES,
+            )?,
+            verifier_key: self.authenticated_file(
+                &entry.files.verifier,
+                &entry.sha256.verifier,
+                MAX_VERIFIER_KEY_BYTES,
+            )?,
+            ir_source: self.authenticated_file(
+                &entry.files.zkir,
+                &entry.sha256.zkir,
+                MAX_ZKIR_BYTES,
+            )?,
+        })
+    }
+
+    fn authenticated_file(
+        &self,
+        relative: &str,
+        expected_sha256: &str,
+        maximum_bytes: u64,
+    ) -> Result<Vec<u8>, MidnightDidCompactArtifactError> {
+        let canonical = fs::canonicalize(self.root.join(relative))
+            .map_err(|_| MidnightDidCompactArtifactError::ArtifactUnavailable)?;
+        if !canonical.starts_with(&self.root) {
+            return Err(MidnightDidCompactArtifactError::ArtifactMismatch);
+        }
+        let metadata = fs::metadata(&canonical)
+            .map_err(|_| MidnightDidCompactArtifactError::ArtifactUnavailable)?;
+        if !metadata.is_file() || metadata.len() == 0 || metadata.len() > maximum_bytes {
+            return Err(MidnightDidCompactArtifactError::ArtifactMismatch);
+        }
+        let bytes = fs::read(canonical)
+            .map_err(|_| MidnightDidCompactArtifactError::ArtifactUnavailable)?;
+        if hex::encode(Sha256::digest(&bytes)) != expected_sha256 {
             return Err(MidnightDidCompactArtifactError::ArtifactMismatch);
         }
         Ok(bytes)
@@ -184,12 +248,16 @@ struct CircuitManifest {
 
 #[derive(Clone, Debug, Deserialize)]
 struct CircuitFiles {
+    prover: String,
     verifier: String,
+    zkir: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 struct CircuitDigests {
+    prover: String,
     verifier: String,
+    zkir: String,
 }
 
 #[cfg(test)]
@@ -221,6 +289,12 @@ mod tests {
                     .expect("verifier key")
                     .is_empty()
             );
+            let material = artifacts
+                .proving_key_material(circuit)
+                .expect("proving key material");
+            assert!(!material.prover_key.is_empty());
+            assert!(!material.verifier_key.is_empty());
+            assert!(!material.ir_source.is_empty());
         }
     }
 }

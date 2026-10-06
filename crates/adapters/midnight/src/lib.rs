@@ -56,8 +56,8 @@ pub use shielded_checkpoint::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use submission::{
-    MidnightChainIdentityError, MidnightProvingMode, MidnightStandaloneConfig,
-    MidnightStandaloneConfigError, authenticate_midnight_chain_identity,
+    MidnightChainIdentityError, MidnightProvingMode, MidnightRemoteProvingMaterialSource,
+    MidnightStandaloneConfig, MidnightStandaloneConfigError, authenticate_midnight_chain_identity,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use submission_journal::{
@@ -1720,6 +1720,37 @@ where
     C: ClockPort + 'static,
     K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort + 'static,
 {
+    protected_standalone_midnight_wallet_with_checkpoint_options_and_proving_material(
+        config,
+        account_checkpoints,
+        dust_checkpoints,
+        shielded_checkpoints,
+        submission_journal,
+        None,
+        clock,
+        keys,
+    )
+}
+
+/// Wires standalone checkpoints plus an explicit authenticated source for
+/// non-built-in application circuit proving material.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn protected_standalone_midnight_wallet_with_checkpoint_options_and_proving_material<C, K>(
+    config: MidnightStandaloneConfig,
+    account_checkpoints: Option<MidnightAccountCheckpointConfig>,
+    dust_checkpoints: Option<MidnightDustCheckpointConfig>,
+    shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
+    submission_journal: Option<MidnightSubmissionJournalConfig>,
+    remote_proving_material: Option<Arc<dyn MidnightRemoteProvingMaterialSource>>,
+    clock: Arc<C>,
+    keys: Arc<K>,
+) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
+where
+    C: ClockPort + 'static,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort + 'static,
+{
     let indexer = config.indexer().clone();
     let default_network = indexer.network_id().clone();
     let source = account_checkpoints.map_or_else(
@@ -1777,15 +1808,19 @@ where
     let reconciler = Arc::new(submission::LiveMidnightSubmissionReconciler::new(
         config.clone(),
     ));
+    let completer = submission::LiveMidnightTransactionCompleter::new_with_dust_store(
+        config, dust_store, clock,
+    );
+    let completer = if let Some(source) = remote_proving_material {
+        completer.with_remote_proving_material(source)
+    } else {
+        completer
+    };
     MidnightWalletAdapter::with_default_network_deriver_and_completer(
         source,
         default_network,
         ProtectedMidnightAccountDeriver::new(keys),
-        Arc::new(
-            submission::LiveMidnightTransactionCompleter::new_with_dust_store(
-                config, dust_store, clock,
-            ),
-        ),
+        Arc::new(completer),
     )
     .with_dust_sync(dust_sync)
     .with_shielded_sync(shielded_sync)

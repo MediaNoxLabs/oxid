@@ -411,11 +411,10 @@ fn live_resolution(
         .map_err(|_| DidResolutionPortError::InvalidResponse)?,
     )
     .map_err(|_| DidResolutionPortError::InvalidResponse)?;
-    let authentication_id = authentication.id().to_owned();
     let mut methods = vec![authentication];
     let mut relationships = vec![VerificationRelationshipEntry::new(
         VerificationRelationship::Authentication,
-        vec![authentication_id],
+        vec!["#authentication-1".to_owned()],
     )];
     if complete {
         let holder_binding = VerificationMethod::new(
@@ -431,11 +430,10 @@ fn live_resolution(
             .map_err(|_| DidResolutionPortError::InvalidResponse)?,
         )
         .map_err(|_| DidResolutionPortError::InvalidResponse)?;
-        let holder_binding_id = holder_binding.id().to_owned();
         methods.push(holder_binding);
         relationships.push(VerificationRelationshipEntry::new(
             VerificationRelationship::AssertionMethod,
-            vec![holder_binding_id],
+            vec!["#holder-binding-1".to_owned()],
         ));
     }
     let document = DidDocument::new(DidDocumentParts {
