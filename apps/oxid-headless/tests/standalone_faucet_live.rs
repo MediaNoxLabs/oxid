@@ -18,6 +18,8 @@ const ENABLE_ENV: &str = "OXID_ENABLE_LIVE_STANDALONE_FAUCET_E2E";
 const NETWORK: &str = "undeployed";
 const FIXED_GRANT: u128 = 50_000_000_000;
 const DUST_DEADLINE: Duration = Duration::from_secs(10 * 60);
+const DID_DEPLOYMENT_DEADLINE: Duration = Duration::from_secs(15 * 60);
+const FAUCET_RETRY_DEADLINE: Duration = Duration::from_secs(5 * 60);
 const TRANSFER_A_TO_B: u128 = 10_000_000_000;
 const TRANSFER_B_TO_A: u128 = 4_000_000_000;
 const INDEXER_WS: &str = "ws://127.0.0.1:8088/api/v4/graphql/ws";
@@ -93,6 +95,7 @@ impl ProcessHarness {
         command
             .env_remove("OXID_MIDNIGHT_PROVING_CACHE_DIR")
             .env("OXID_PROFILE_STORE_PATH", root.join("profiles.json"))
+            .env("OXID_DID_STORE_PATH", root.join("private/did-records.json"))
             .env(
                 "OXID_MIDNIGHT_ACCOUNT_CHECKPOINT_PATH",
                 root.join("private/account-checkpoints.json"),
@@ -200,6 +203,18 @@ impl ProcessHarness {
             .read_to_string(&mut stderr)
             .expect("child stderr");
         assert!(stderr.is_empty(), "unexpected child stderr: {stderr}");
+    }
+
+    fn terminate_and_read_stderr(&mut self) -> String {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let mut stderr = String::new();
+        self.error
+            .read_to_string(&mut stderr)
+            .expect("child stderr after failure");
+        stderr
     }
 }
 
@@ -777,6 +792,90 @@ fn two_fresh_wallets_receive_fixed_night_and_generate_dust() {
     wallet_a.finish("system.quit");
     wallet_b.finish("system.quit");
     faucet.finish("faucet.shutdown");
+}
+
+#[test]
+#[ignore = "requires an explicitly authorized local standalone stack and live DID resolver"]
+fn funded_wallet_deploys_and_resolves_a_native_holder_did() {
+    assert_eq!(std::env::var(ENABLE_ENV).as_deref(), Ok("1"));
+    assert!(std::env::var_os("OXID_MIDNIGHT_DID_CALL_COMPOSER").is_some());
+    assert!(std::env::var_os("OXID_MIDNIGHT_DID_ARTIFACTS_DIR").is_some());
+    assert!(std::env::var_os("OXID_MIDNIGHT_DID_RESOLVER_URL").is_some());
+
+    let root = StateRoot::new();
+    let mut faucet = ProcessHarness::faucet(&root.child("faucet"));
+    let wallet_root = root.child("wallet");
+    let mut wallet = ProcessHarness::wallet(&wallet_root);
+    let address = prepare_wallet(&mut wallet, "Native DID holder");
+    let funding_started = Instant::now();
+    loop {
+        let funded = faucet.request(
+            "native-did-holder",
+            "faucet.fund",
+            json!({"requestId":"native-did-holder","recipientAddress":address}),
+        );
+        if funded["ok"] == true {
+            break;
+        }
+        assert!(
+            funding_started.elapsed() < FAUCET_RETRY_DEADLINE,
+            "standalone funding did not reconcile: {funded}"
+        );
+        thread::sleep(Duration::from_secs(2));
+    }
+    await_night(&mut wallet);
+    let dust = register_and_await_dust(&mut wallet);
+    assert!(dust <= DUST_DEADLINE);
+
+    let started = Instant::now();
+    let deployment = loop {
+        let deployment = wallet.request(
+            "did-deploy",
+            "did.deploy",
+            json!({"network":NETWORK,"accountIndex":0}),
+        );
+        if deployment["ok"] != true {
+            let stderr = wallet.terminate_and_read_stderr();
+            let progress = fs::read_to_string(wallet_root.join("private/did-deployments.json"))
+                .unwrap_or_else(|error| format!("unavailable: {error}"));
+            panic!(
+                "native DID deployment failed: {deployment}; progress={progress}; stderr={stderr}"
+            );
+        }
+        if deployment["result"]["deployment"]["state"] == "ready" {
+            break deployment;
+        }
+        assert!(
+            started.elapsed() < DID_DEPLOYMENT_DEADLINE,
+            "native DID deployment did not become ready: {deployment}"
+        );
+        thread::sleep(Duration::from_secs(2));
+    };
+    let snapshot = &deployment["result"]["deployment"];
+    assert_eq!(snapshot["effect"], "resolve_document");
+    assert_eq!(snapshot["containsSecrets"], false);
+    assert_eq!(
+        snapshot["receipts"]
+            .as_array()
+            .expect("deployment receipts")
+            .len(),
+        8
+    );
+    let did = snapshot["did"].as_str().expect("deployed DID");
+    let resolved = wallet.request("did-resolve", "did.resolve", json!({"did":did}));
+    assert_eq!(resolved["ok"], true, "{resolved}");
+    assert_eq!(resolved["result"]["didRecord"]["document"]["id"], did);
+    assert_eq!(resolved["result"]["didRecord"]["source"], "live");
+    assert!(!deployment.to_string().contains("mnemonic"));
+    assert!(!deployment.to_string().contains("seed"));
+
+    wallet.finish("system.quit");
+    faucet.finish("faucet.shutdown");
+    root.cleanup();
+    println!(
+        "standalone-native-did-e2e: PASS receipts=8 durationSeconds={}",
+        started.elapsed().as_secs()
+    );
 }
 
 #[test]
