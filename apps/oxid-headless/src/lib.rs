@@ -3,11 +3,9 @@
 #![forbid(unsafe_code)]
 #![recursion_limit = "256"]
 
-//! Versioned incoming adapter organized according to
-//! [ADR-0104](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0104-regrow-incoming-adapters-behind-capability-facades.md).
-//! `protocol` owns the envelope and stream errors; `parameters`, `projections`,
-//! and `errors` own wire translation; capability modules own application-port
-//! invocation; this root owns transport, stable re-exports, and dispatch.
+//! Versioned incoming adapter organized according to ADR-0104.
+//! `protocol` owns the envelope and stream errors; translation and capability
+//! modules own their ports; this root owns transport, re-exports, and dispatch.
 
 mod accounts;
 mod dids;

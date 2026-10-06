@@ -7,9 +7,9 @@
       "facadeFiles": [
         "apps/oxid-headless/src/lib.rs"
       ],
-      "facadeMaximumPhysicalLines": 350,
+      "facadeMaximumPhysicalLines": 349,
       "facadeMaximumPhysicalLinesByPath": {
-        "apps/oxid-headless/src/lib.rs": 350
+        "apps/oxid-headless/src/lib.rs": 349
       },
       "capabilityOwners": [
         {
@@ -299,12 +299,18 @@
             "crates/composition/src/environment"
           ]
         },
-        {
-          "name": "identity-composition",
-          "modulePathPrefixes": [
-            "crates/composition/src/identity"
-          ]
-        },
+      {
+        "name": "identity-composition",
+        "modulePathPrefixes": [
+          "crates/composition/src/identity"
+        ]
+      },
+      {
+        "name": "did-deployment",
+        "modulePathPrefixes": [
+          "crates/composition/src/did_deployment"
+        ]
+      },
         {
           "name": "passport-vault-bridge",
           "modulePathPrefixes": [

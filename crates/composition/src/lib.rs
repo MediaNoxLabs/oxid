@@ -3,18 +3,17 @@
 #![forbid(unsafe_code)]
 
 #[cfg(not(target_arch = "wasm32"))]
-#[cfg(any(
-    not(any(target_os = "ios", target_os = "android")),
-    feature = "mobile-portal"
-))]
-mod portal;
-
-#[cfg(not(target_arch = "wasm32"))]
 mod did_deployment;
 mod dust_settlement;
 mod environment;
 mod identity;
 mod passport_vault;
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(
+    not(any(target_os = "ios", target_os = "android")),
+    feature = "mobile-portal"
+))]
+mod portal;
 mod profile_environment;
 mod profile_headless;
 mod profile_in_memory;
@@ -48,7 +47,6 @@ pub use proof_benchmark::*;
 pub use services::{ApplicationServices, WalletOnboardingCapability, WalletRootRecoveryCapability};
 #[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
 pub use standalone_genesis::public_standalone_profile_name;
-
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod standalone_funding_tests;
 #[cfg(test)]
