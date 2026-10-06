@@ -444,7 +444,7 @@ try {
 
     await openIdentities();
     await clickButton("Create a DID");
-    await clickButton("Create DID");
+    await clickButton("Create off-chain demo identity");
     await waitFor(
       "document.body.textContent.includes('DID details') && Boolean(document.querySelector('.did-detail-hero'))",
       "managed DID for complete backup",
@@ -737,8 +737,8 @@ try {
     await openIdentities();
     await waitForButton("Create a DID");
     await clickButton("Create a DID");
-    await waitForButton("Create DID");
-    await clickButton("Create DID");
+    await waitForButton("Create off-chain demo identity");
+    await clickButton("Create off-chain demo identity");
     await waitFor(
       "document.body.textContent.includes('DID details') && Boolean(document.querySelector('.did-detail-hero'))",
       "created managed standalone DID",
