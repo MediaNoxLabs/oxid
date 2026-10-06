@@ -150,6 +150,7 @@
           export JAVA_HOME=${pkgs.jdk17.home}
           export PATH="$JAVA_HOME/bin:$PATH"
           export COMPACT_DIRECTORY=${midnightDidPackages.compact-toolchain}
+          export OXID_MIDNIGHT_DID_ARTIFACTS_DIR=${self'.packages.midnight-did-compact-artifacts}
           export OXID_PRESENTATION_ARTIFACTS_DIR=${self'.packages.presentation-compact-artifacts}
           export OXID_PASSPORT_VAULT_ARTIFACTS_DIR=${self'.packages.passport-vault-compact-artifacts}
           export OXID_PASSPORT_VAULT_COMPOSER=${self'.packages.passport-vault-call-composer}/bin/oxid-passport-vault-call-composer

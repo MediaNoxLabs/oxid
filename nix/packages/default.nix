@@ -5,6 +5,7 @@
     { pkgs, self', ... }:
     let
       midnightDidPackages = inputs.midnight-did-toolchain.packages.${pkgs.stdenv.hostPlatform.system};
+      midnightDidCompactArtifacts = pkgs.callPackage ./midnight-did-compact-artifacts.nix { };
       presentationCompactArtifacts = pkgs.callPackage ./presentation-compact-artifacts.nix {
         compactMidnight = midnightDidPackages.compact-midnight;
         compactToolchain = midnightDidPackages.compact-toolchain;
@@ -155,6 +156,8 @@
 
         presentation-compact-artifacts = presentationCompactArtifacts;
 
+        midnight-did-compact-artifacts = midnightDidCompactArtifacts;
+
         passport-vault-compact-artifacts = passportVaultCompactArtifacts;
 
         passport-vault-call-composer = passportVaultCallComposer;
@@ -179,6 +182,7 @@
           doCheck = true;
         });
         presentation-compact-artifacts = presentationCompactArtifacts;
+        midnight-did-compact-artifacts = midnightDidCompactArtifacts;
         passport-vault-compact-artifacts = passportVaultCompactArtifacts;
         passport-vault-call-composer = passportVaultCallComposer;
         brand-packs =
