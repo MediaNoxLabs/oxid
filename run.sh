@@ -52,6 +52,7 @@ run_repository() {
   node --test tests/repository/sccache-diagnostics-contract.test.mjs
   node --test tests/repository/streaming-delivery-contract.test.mjs
   node --test tests/repository/bootstrap-dev-loop-contract.test.mjs
+  node --test tests/repository/claude-capability-grammar.test.mjs
   node --test tests/repository/dev-loop-stability-contract.test.mjs
   node --test tests/repository/desktop-test-profile-contract.test.mjs
   node --test scripts/app-artifact-receipt.test.mjs

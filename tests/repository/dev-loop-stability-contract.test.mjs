@@ -40,15 +40,11 @@ import {
 import { preflightGh } from "../../scripts/github/preflight-gh.mjs";
 import { GH_REST_MAX_BUFFER_BYTES, GITHUB_REST_HEADERS, runGhCommand } from "../../scripts/github/rest-client.mjs";
 import {
-  assertClaudeAuthHelpCapabilities,
   assertAttestedReviewEffort,
   assertClaudeEffortCapability,
-  assertClaudeHelpCapabilities,
-  assertMinimumClaudeVersion,
   assertClaudeReviewMaxBudgetUsd,
   CLAUDE_REVIEW_EFFORTS,
   DEFAULT_CLAUDE_REVIEW_EFFORT,
-  MAXIMUM_EXCLUSIVE_CLAUDE_VERSION,
   MAXIMUM_CLAUDE_REVIEW_BUDGET_USD,
   buildClaudeInvocation,
   claudeReviewCliFailure,
@@ -57,7 +53,6 @@ import {
   MAX_CLAUDE_REVIEW_TIMEOUT_MS,
   MAX_REVIEW_DIFF_BYTES,
   parseClaudeReviewResult,
-  parseClaudeVersion,
   probeClaudeCliCapabilities,
   runCli as runClaudeReviewCli,
   runClaudeCurrentHeadReview,
@@ -94,11 +89,6 @@ const fixtureClaudeHelp = [
   "  --no-session-persistence",
   '  --permission-mode <mode> (choices: "acceptEdits", "dontAsk", "plan")',
   "  --system-prompt <prompt>",
-].join("\n");
-// Captured verbatim from the installed Claude Code 2.1.228 general help.
-const capturedClaudeEffortEntry = [
-  "  --effort <level>                      Effort level for the current session",
-  "                                        (low, medium, high, xhigh, max)",
 ].join("\n");
 const fixtureClaudeAuthHelp = "Usage: claude auth status [options]\n  --json Output as JSON (default)\n";
 const fixtureClaudeCliEfforts = ["low", "medium", "high", "xhigh", "max"];
@@ -2313,6 +2303,8 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.deepEqual(CLAUDE_REVIEW_EFFORTS, ["medium", "high", "xhigh", "max"]);
   assert.equal(assertAttestedReviewEffort("medium"), "medium");
   assert.throws(() => assertAttestedReviewEffort("low"), /must be one of: medium, high, xhigh, max/);
+  assert.equal(assertClaudeEffortCapability("medium", fixtureClaudeCliEfforts), "medium");
+  assert.throws(() => assertClaudeEffortCapability("max", ["low", "medium"]), /does not document the selected review effort: max/u);
   assert.throws(() => buildClaudeInvocation({ effort: "unbounded" }), /must be one of/);
   assert.throws(() => buildClaudeInvocation({ effort: "low" }), /must be one of/);
   assert.match(new ClaudeReviewEvidenceVersionError(4).message, /upgrade the review wrapper/);
@@ -2324,217 +2316,6 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.throws(() => assertClaudeReviewMaxBudgetUsd(Number.POSITIVE_INFINITY), /positive and no more than 10 USD/);
   const stringBudgetInvocation = buildClaudeInvocation({ maxBudgetUsd: "10" });
   assert.equal(stringBudgetInvocation.args[stringBudgetInvocation.args.indexOf("--max-budget-usd") + 1], "10");
-  assert.deepEqual(parseClaudeVersion("2.1.228 (Claude Code)"), [2, 1, 228]);
-  assert.deepEqual(assertMinimumClaudeVersion([2, 1, 228]), [2, 1, 228]);
-  assert.throws(() => assertMinimumClaudeVersion([2, 1, 227]), /unsupported; require >= 2\.1\.228 and < 2\.2\.0/);
-  assert.throws(() => assertMinimumClaudeVersion(MAXIMUM_EXCLUSIVE_CLAUDE_VERSION), /unsupported.*< 2\.2\.0/);
-  const capabilities = assertClaudeHelpCapabilities(fixtureClaudeHelp, [2, 1, 228]);
-  assert.equal(capabilities.emptyToolsDisabled, true);
-  assert.equal(capabilities.emptyToolsBasis, "captured-help-and-bounded-version-contract");
-  assert.equal(capabilities.permissionMode, "dontAsk");
-  assert.equal(assertClaudeAuthHelpCapabilities(fixtureClaudeAuthHelp).jsonOutput, true);
-  const wrappedToolsReference = fixtureClaudeHelp.replace(
-    "  --safe-mode",
-    "  --restricted                          Restricted mode\n                                        unless --tools names them.\n  --safe-mode",
-  );
-  assert.equal(
-    assertClaudeHelpCapabilities(wrappedToolsReference, [2, 1, 263]).emptyToolsDisabled,
-    true,
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(
-      fixtureClaudeHelp.replace(
-        '  --tools <tools...> Specify tools. Use "" to disable all tools.',
-        "                                        unless --tools names them.",
-      ),
-      [2, 1, 263],
-    ),
-    /required review flags: --tools/,
-  );
-  assert.throws(() => assertClaudeHelpCapabilities("  --safe-mode\n  --toolsfoo\n", [2, 1, 228]), /required review flags/);
-  assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace(/^\s*--effort.*\n/m, ""), [2, 1, 228]),
-    /required review flags: --effort/,
-  );
-  const duplicateEffortHelp = fixtureClaudeHelp.replace(
-    "  --effort <level> (low, medium, high, xhigh, max)",
-    "  --effort <level> (low, high)\n  --effort <level> (low, medium, high, xhigh, max)",
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(duplicateEffortHelp, [2, 1, 228]),
-    /multiple --effort option blocks/,
-  );
-  const splitAliasHelp = fixtureClaudeHelp.replace("  --effort", "  -E,\n  --effort");
-  assert.deepEqual(
-    assertClaudeHelpCapabilities(splitAliasHelp, [2, 1, 228]).effortLevels,
-    fixtureClaudeCliEfforts,
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("  --safe-mode", "  -s, --safe-mode"), [2, 1, 228]),
-    /required review flags: --safe-mode/,
-  );
-  const crlfIndentedHelp = fixtureClaudeHelp
-    .replace("  --safe-mode", "    --safe-mode")
-    .replaceAll("\n", "\r\n");
-  assert.equal(assertClaudeHelpCapabilities(crlfIndentedHelp, [2, 1, 228]).emptyToolsDisabled, true);
-  assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("--tools", "--TOOLS"), [2, 1, 228]),
-    /required review flags: --tools/,
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace('Use "" to disable all tools.', "Use defaults."), [2, 1, 228]),
-    /no-tools form/,
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace('"dontAsk", ', ""), [2, 1, 228]),
-    /dontAsk permission mode/,
-  );
-  const reducedEfforts = assertClaudeHelpCapabilities(fixtureClaudeHelp.replace(", max", ""), [2, 1, 228]);
-  assert.deepEqual(reducedEfforts.effortLevels, ["low", "medium", "high", "xhigh"]);
-  assert.equal(assertClaudeEffortCapability("medium", reducedEfforts.effortLevels), "medium");
-  assert.throws(
-    () => assertClaudeEffortCapability("max", reducedEfforts.effortLevels),
-    /does not document the selected review effort: max/,
-  );
-  const noDefaultEfforts = assertClaudeHelpCapabilities(
-    fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "(low, high)"),
-    [2, 1, 228],
-  );
-  assert.deepEqual(noDefaultEfforts.effortLevels, ["low", "high"]);
-  assert.equal(assertClaudeEffortCapability("high", noDefaultEfforts.effortLevels), "high");
-  assert.throws(
-    () => assertClaudeEffortCapability("medium", noDefaultEfforts.effortLevels),
-    /does not document the selected review effort: medium/,
-  );
-  const reorderedEfforts = assertClaudeHelpCapabilities(
-    fixtureClaudeHelp.replace(
-      "(low, medium, high, xhigh, max)",
-      '(default: medium) (choices: "max", "low", "xhigh", "medium", "high", "none")',
-    ),
-    [2, 1, 228],
-  );
-  assert.deepEqual(reorderedEfforts.effortLevels, ["max", "low", "xhigh", "medium", "high"]);
-  const futureEffortHelp = fixtureClaudeHelp.replace(
-    "(low, medium, high, xhigh, max)",
-    "(low, medium, high, xhigh, max, ultra)",
-  );
-  assert.deepEqual(
-    assertClaudeHelpCapabilities(futureEffortHelp, [2, 1, 228]).effortLevels,
-    fixtureClaudeCliEfforts,
-  );
-  const describedEffortHelp = fixtureClaudeHelp.replace(
-    "(low, medium, high, xhigh, max)",
-    "(low, medium, high, xhigh, max) Effort level for the session",
-  );
-  assert.deepEqual(
-    assertClaudeHelpCapabilities(describedEffortHelp, [2, 1, 228]).effortLevels,
-    fixtureClaudeCliEfforts,
-  );
-  const aliasedMixedHelp = fixtureClaudeHelp.replace(
-    "  --effort <level> (low, medium, high, xhigh, max)",
-    '  -E, --effort <level> (choices: "low", "medium", "high", "xhigh", "max", default: "medium")',
-  );
-  assert.deepEqual(
-    assertClaudeHelpCapabilities(aliasedMixedHelp, [2, 1, 228]).effortLevels,
-    fixtureClaudeCliEfforts,
-  );
-  const capturedEntryHelp = fixtureClaudeHelp.replace(
-    "  --effort <level> (low, medium, high, xhigh, max)",
-    capturedClaudeEffortEntry,
-  );
-  assert.deepEqual(
-    assertClaudeHelpCapabilities(capturedEntryHelp, [2, 1, 228]).effortLevels,
-    fixtureClaudeCliEfforts,
-  );
-  assert.equal(
-    assertClaudeHelpCapabilities(capturedEntryHelp, [2, 1, 228]).effortHelpEntry,
-    capturedClaudeEffortEntry,
-  );
-  const wrappedChoicesHelp = fixtureClaudeHelp.replace(
-    "  --effort <level> (low, medium, high, xhigh, max)",
-    '  --effort <level> (choices: "low", "medium",\n      "high", "xhigh", "max")',
-  );
-  assert.deepEqual(
-    assertClaudeHelpCapabilities(wrappedChoicesHelp, [2, 1, 228]).effortLevels,
-    fixtureClaudeCliEfforts,
-  );
-  const followingAliasHelp = fixtureClaudeHelp.replace(
-    "\n  --safe-mode",
-    "\n  -ef, --environment <id> (foreign, modes)\n  --safe-mode",
-  );
-  const followingAliasCapabilities = assertClaudeHelpCapabilities(followingAliasHelp, [2, 1, 228]);
-  assert.deepEqual(followingAliasCapabilities.effortLevels, fixtureClaudeCliEfforts);
-  assert.doesNotMatch(followingAliasCapabilities.effortHelpEntry, /--environment/);
-  const followingShortOnlyHelp = fixtureClaudeHelp
-    .replace("(low, medium, high, xhigh, max)", "levels follow")
-    .replace("\n  --safe-mode", "\n  -v <mode> (low, medium, high, xhigh, max)\n  --safe-mode");
-  assert.throws(
-    () => assertClaudeHelpCapabilities(followingShortOnlyHelp, [2, 1, 228]),
-    /recognizable review effort choice list/,
-  );
-  const unrelatedLatencyHelp = fixtureClaudeHelp.replace(
-    "(low, medium, high, xhigh, max)",
-    "Effort profile (low, high) latency",
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(unrelatedLatencyHelp, [2, 1, 228]),
-    /recognizable review effort choice list/,
-  );
-  const commaProseHelp = fixtureClaudeHelp.replace(
-    "(low, medium, high, xhigh, max)",
-    "(level for the session, see docs)",
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(commaProseHelp, [2, 1, 228]),
-    /recognizable review effort choice list/,
-  );
-  const enumerationBeforeDefault = fixtureClaudeHelp.replace(
-    "(low, medium, high, xhigh, max)",
-    '(low, medium, high, xhigh, max) (default: "medium")',
-  );
-  assert.deepEqual(
-    assertClaudeHelpCapabilities(enumerationBeforeDefault, [2, 1, 228]).effortLevels,
-    fixtureClaudeCliEfforts,
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("low", "Low"), [2, 1, 228]),
-    /unsupported casing/,
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "with a bounded level"), [2, 1, 228]),
-    /recognizable review effort choice list/,
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "(medium)"), [2, 1, 228]),
-    /recognizable review effort choice list/,
-  );
-  const effortLastHelp = [
-    ...fixtureClaudeHelp.split("\n").filter((line) => !line.includes("--effort")),
-    "  --effort <level> (default: medium)",
-    "",
-    "Examples: unrelated modes (low, medium, high, xhigh, max)",
-  ].join("\n");
-  assert.throws(
-    () => assertClaudeHelpCapabilities(effortLastHelp, [2, 1, 228]),
-    /recognizable review effort choice list/,
-  );
-  const conflictingEffortHelp = fixtureClaudeHelp.replace(
-    "(low, medium, high, xhigh, max)",
-    "(low, medium, high) (low, medium, xhigh, max)",
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(conflictingEffortHelp, [2, 1, 228]),
-    /multiple conflicting review effort choice lists/,
-  );
-  const explicitConflictHelp = fixtureClaudeHelp.replace(
-    "(low, medium, high, xhigh, max)",
-    '(choices: "low", "medium", "high", "xhigh", "max") (low, medium)',
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(explicitConflictHelp, [2, 1, 228]),
-    /multiple conflicting review effort choice lists/,
-  );
-  assert.throws(() => assertClaudeAuthHelpCapabilities("Usage: claude auth status\n"), /default JSON output/);
   const calls = [];
   const capabilityProbe = probeClaudeCliCapabilities({
     claudeCommand: "fixture-claude",
@@ -3320,5 +3101,6 @@ test("upstream-only gaps are linked and speculative local patches are forbidden"
 
 test("repository verification runs this stability contract", async () => {
   const run = await read("run.sh");
+  assert.match(run, /node --test tests\/repository\/claude-capability-grammar\.test\.mjs/);
   assert.match(run, /node --test tests\/repository\/dev-loop-stability-contract\.test\.mjs/);
 });
