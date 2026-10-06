@@ -302,10 +302,11 @@ function milestoneAuditRun({
   issueTarget = "milestone-0.4.0",
   localBase = "a".repeat(40),
   reReadBase = localBase,
+  autoMergeRequest = null,
   requiredChecks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
   selectedChecks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
 } = {}) {
-  const pr = milestonePr();
+  const pr = milestonePr({ autoMergeRequest });
   let baseReads = 0;
   const control = freezeReview(
     authorizeReview(initialReviewControl(pr.headRefOid), { headSha: pr.headRefOid }),
@@ -358,6 +359,24 @@ test("milestone audit binds issue target, base, selected required checks, triage
   }) }), /pull request checks are not green/);
 });
 
+test("GitHub auto-merge availability cannot bypass the exact-head audit", () => {
+  const options = { repo: "MediaNoxLabs/oxid", pr: 42, execute: false };
+  const autoMergeRequest = {
+    enabledAt: "2026-10-07T00:00:00Z",
+    mergeMethod: "SQUASH",
+  };
+  assert.throws(() => auditMilestoneMerge(options, {
+    cwd: "/repo",
+    run: milestoneAuditRun({
+      autoMergeRequest,
+      selectedChecks: [
+        ...CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
+        { name: "UI and application profiles (Linux host)", bucket: "pending", state: "QUEUED", workflow: "CI" },
+      ],
+    }),
+  }), /pull request checks are not green/);
+});
+
 test("milestone merge implementation pins squash execution to the audited head", async () => {
   const source = await readFile(new URL("../../scripts/github/merge-milestone-pr.mjs", import.meta.url), "utf8");
   assert.match(source, /--required/);
@@ -371,4 +390,6 @@ test("milestone merge implementation pins squash execution to the audited head",
   assert.match(source, /assertIssueTarget/);
   assert.match(source, /closeout-pr/);
   assert.match(source, /result\.headSha/);
+  assert.match(source, /autoMergeRequest/);
+  assert.doesNotMatch(source, /--auto/);
 });

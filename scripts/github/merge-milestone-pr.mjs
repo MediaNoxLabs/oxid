@@ -145,7 +145,10 @@ function ghJson(run, args, cwd, label) {
 
 export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaultRun } = {}) {
   const root = run("git", ["rev-parse", "--show-toplevel"], { cwd, label: "resolve repository root" }).trim();
-  const fields = "state,baseRefName,baseRefOid,headRefName,headRefOid,isDraft,isCrossRepository,mergeable,mergeStateStatus,title,body";
+  // Observe GitHub auto-merge state for audit evidence, but never treat it as
+  // authorization. Only the repository-selected exact-head checks below can
+  // authorize execution through this facade.
+  const fields = "state,baseRefName,baseRefOid,headRefName,headRefOid,isDraft,isCrossRepository,mergeable,mergeStateStatus,autoMergeRequest,title,body";
   const pr = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", fields], root, "read pull request facts");
   const eligibility = validateMilestonePr(pr);
   if (!eligibility.ok) throw new Error(`automated milestone merge denied: ${eligibility.failures.join("; ")}`);
