@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use oxid_diagnostics_application::{DiagnosticCode, DiagnosticSeverity};
 use oxid_identity_application::{
     CreateDidCommand, DeactivateDidCommand, DidRecordQuery, ListDidRecordsQuery, ResolveDidCommand,
     SignDidPayloadCommand, UpdateDidCommand,
@@ -29,6 +30,7 @@ impl HeadlessWallet {
                 ));
             }
         };
+        let is_offchain = params.did.starts_with("did:midnight:offchain:");
         let profile_id = match self.active_profile_id(request.id.clone()) {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
@@ -39,11 +41,27 @@ impl HeadlessWallet {
                 did: params.did,
             },
         )) {
-            Ok(record) => Dispatch::continue_with(Response::success(
-                request.id,
-                json!({ "didRecord": did_record_value(&record) }),
-            )),
-            Err(error) => Dispatch::continue_with(did_error(request.id, error)),
+            Ok(record) => {
+                if is_offchain {
+                    self.record_diagnostic(
+                        DiagnosticCode::IdentityOffchainDidResolutionSucceeded,
+                        DiagnosticSeverity::Info,
+                    );
+                }
+                Dispatch::continue_with(Response::success(
+                    request.id,
+                    json!({ "didRecord": did_record_value(&record) }),
+                ))
+            }
+            Err(error) => {
+                if is_offchain {
+                    self.record_diagnostic(
+                        DiagnosticCode::IdentityOffchainDidResolutionFailed,
+                        DiagnosticSeverity::Warning,
+                    );
+                }
+                Dispatch::continue_with(did_error(request.id, error))
+            }
         }
     }
 
@@ -58,6 +76,7 @@ impl HeadlessWallet {
                 ));
             }
         };
+        let is_offchain = params.network == "offchain";
         let profile_id = match self.active_profile_id(request.id.clone()) {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
@@ -66,11 +85,27 @@ impl HeadlessWallet {
             profile_id,
             network: params.network,
         }) {
-            Ok(record) => Dispatch::continue_with(Response::success(
-                request.id,
-                json!({ "didRecord": did_record_value(&record) }),
-            )),
-            Err(error) => Dispatch::continue_with(did_error(request.id, error)),
+            Ok(record) => {
+                if is_offchain {
+                    self.record_diagnostic(
+                        DiagnosticCode::IdentityOffchainDidCreationSucceeded,
+                        DiagnosticSeverity::Info,
+                    );
+                }
+                Dispatch::continue_with(Response::success(
+                    request.id,
+                    json!({ "didRecord": did_record_value(&record) }),
+                ))
+            }
+            Err(error) => {
+                if is_offchain {
+                    self.record_diagnostic(
+                        DiagnosticCode::IdentityOffchainDidCreationFailed,
+                        DiagnosticSeverity::Warning,
+                    );
+                }
+                Dispatch::continue_with(did_error(request.id, error))
+            }
         }
     }
 

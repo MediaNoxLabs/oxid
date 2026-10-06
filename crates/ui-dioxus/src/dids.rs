@@ -273,6 +273,7 @@ pub(super) fn DidsPage(
                                 }
                                 did_creation_notice.set(None);
                                 let service = create_services.create_did();
+                                let diagnostic_events = create_services.diagnostic_events();
                                 let profile_id = create_profile.clone();
                                 let records = create_records.clone();
                                 spawn(async move {
@@ -285,6 +286,10 @@ pub(super) fn DidsPage(
                                     .await;
                                     match result {
                                         Ok(Ok(record)) => {
+                                            diagnostic_events.record(
+                                                DiagnosticCode::IdentityOffchainDidCreationSucceeded,
+                                                DiagnosticSeverity::Info,
+                                            );
                                             let created_did = record.document.id.clone();
                                             let mut updated = records;
                                             updated.retain(|existing| existing.document.id != record.document.id);
@@ -296,10 +301,18 @@ pub(super) fn DidsPage(
                                             journey.set(DidJourney::Detail(created_did));
                                         }
                                         Ok(Err(error)) => {
+                                            diagnostic_events.record(
+                                                DiagnosticCode::IdentityOffchainDidCreationFailed,
+                                                DiagnosticSeverity::Warning,
+                                            );
                                             did_creation.set(DidCreationState::Failed);
                                             did_creation_notice.set(Some(did_operation_message(error)));
                                         }
                                         Err(error) => {
+                                            diagnostic_events.record(
+                                                DiagnosticCode::IdentityOffchainDidCreationFailed,
+                                                DiagnosticSeverity::Warning,
+                                            );
                                             did_creation.set(DidCreationState::Failed);
                                             did_creation_notice.set(Some(error.to_string()));
                                         }
@@ -614,8 +627,10 @@ pub(super) fn DidsPage(
                         onclick: move |_| {
                             state.set(DidPageState::Ready { records: retained_records.clone(), resolving: true, operation_error: None });
                             let service = resolve_services.resolve_did();
+                            let diagnostic_events = resolve_services.diagnostic_events();
                             let profile_id = resolve_profile.clone();
                             let did = did_input.read().trim().to_owned();
+                            let is_offchain = did.starts_with("did:midnight:offchain:");
                             let mut records = retained_records.clone();
                             spawn(async move {
                                 match run_ui_future(async move {
@@ -624,6 +639,12 @@ pub(super) fn DidsPage(
                                 .await
                                 {
                                     Ok(Ok(record)) => {
+                                        if is_offchain {
+                                            diagnostic_events.record(
+                                                DiagnosticCode::IdentityOffchainDidResolutionSucceeded,
+                                                DiagnosticSeverity::Info,
+                                            );
+                                        }
                                         let resolved_did = record.document.id.clone();
                                         records.retain(|existing| existing.document.id != record.document.id);
                                         records.push(record);
@@ -631,8 +652,24 @@ pub(super) fn DidsPage(
                                         state.set(DidPageState::Ready { records, resolving: false, operation_error: None });
                                         journey.set(DidJourney::Detail(resolved_did));
                                     }
-                                    Ok(Err(error)) => state.set(DidPageState::Ready { records, resolving: false, operation_error: Some(did_operation_message(error)) }),
-                                    Err(error) => state.set(DidPageState::Ready { records, resolving: false, operation_error: Some(error.to_string()) }),
+                                    Ok(Err(error)) => {
+                                        if is_offchain {
+                                            diagnostic_events.record(
+                                                DiagnosticCode::IdentityOffchainDidResolutionFailed,
+                                                DiagnosticSeverity::Warning,
+                                            );
+                                        }
+                                        state.set(DidPageState::Ready { records, resolving: false, operation_error: Some(did_operation_message(error)) });
+                                    }
+                                    Err(error) => {
+                                        if is_offchain {
+                                            diagnostic_events.record(
+                                                DiagnosticCode::IdentityOffchainDidResolutionFailed,
+                                                DiagnosticSeverity::Warning,
+                                            );
+                                        }
+                                        state.set(DidPageState::Ready { records, resolving: false, operation_error: Some(error.to_string()) });
+                                    }
                                 }
                             });
                         },

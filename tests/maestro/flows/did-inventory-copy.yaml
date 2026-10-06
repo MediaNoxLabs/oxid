@@ -22,12 +22,18 @@ name: DID inventory and public identifier copy
 - tapOn: "Create a DID"
 - scrollUntilVisible:
     element:
-      text: "Create DID"
+      text: "Create off-chain demo identity"
     direction: DOWN
     speed: 40
     timeout: 20000
-- tapOn: "Create DID"
+- tapOn: "Create off-chain demo identity"
 - assertVisible: "DID details"
+- scrollUntilVisible:
+    element:
+      text: "Resolved locally from the self-contained public state above.*"
+    direction: DOWN
+    speed: 40
+    timeout: 20000
 - assertVisible: "Copy DID"
 - tapOn: "Copy DID"
 - assertVisible: "DID copied to the clipboard."

@@ -74,12 +74,12 @@
       "useCaseId": "did-inventory-and-creation",
       "scenarioId": "did-inventory-copy",
       "state": "ready",
-      "flowSha256": "c07bd616b46ea4786c75222f3b3eb78bd60b827a178178e6c99dff9b24c93125",
+      "flowSha256": "0f4c7651d388c687ed2c64f5098ab056037151ddc53346456ef08f0eaf9b7e5a",
       "observed": {"entryTaps": 1, "decisionScreens": 2, "authorizationPrompts": 1, "routineManualSyncActions": 0},
       "countedActions": [
         {"kind": "entry-tap", "label": "Manage identities"},
         {"kind": "decision-screen", "label": "Choose Create a DID"},
-        {"kind": "decision-screen", "label": "Confirm Create DID"},
+        {"kind": "decision-screen", "label": "Confirm Create off-chain demo identity"},
         {"kind": "authorization-prompt", "label": "Create DID invokes protected custody"}
       ]
     },
