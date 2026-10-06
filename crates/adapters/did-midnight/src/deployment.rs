@@ -29,7 +29,6 @@ use midnight_storage::{
     storage::{Array, HashMap as LedgerHashMap},
 };
 use midnight_transient_crypto::{commitment::PedersenRandomness, fab::ValueReprAlignedValue};
-use oxid_foundation::UnixTimestampMillis;
 use oxid_identity_application::DidLifecyclePortError;
 use oxid_identity_domain::{MidnightDid, MidnightNetwork};
 use oxid_wallet_application::{
@@ -67,8 +66,8 @@ pub struct NativeMidnightDidDeploymentRequest {
     network_id: String,
     account_index: u32,
     controller_index: u32,
-    created_at: UnixTimestampMillis,
-    expires_at: UnixTimestampMillis,
+    created_at_millis: u64,
+    expires_at_millis: u64,
     nonce: [u8; 32],
     composition_seed: [u8; 32],
 }
@@ -82,8 +81,8 @@ impl fmt::Debug for NativeMidnightDidDeploymentRequest {
             .field("network_id", &self.network_id)
             .field("account_index", &self.account_index)
             .field("controller_index", &self.controller_index)
-            .field("created_at", &self.created_at)
-            .field("expires_at", &self.expires_at)
+            .field("created_at_millis", &self.created_at_millis)
+            .field("expires_at_millis", &self.expires_at_millis)
             .field("nonce", &"[PUBLIC RANDOM INPUT]")
             .field("composition_seed", &"[PUBLIC RANDOM INPUT]")
             .finish()
@@ -98,8 +97,8 @@ impl NativeMidnightDidDeploymentRequest {
         network_id: impl Into<String>,
         account_index: u32,
         controller_index: u32,
-        created_at: UnixTimestampMillis,
-        expires_at: UnixTimestampMillis,
+        created_at_millis: u64,
+        expires_at_millis: u64,
         nonce: [u8; 32],
         composition_seed: [u8; 32],
     ) -> Result<Self, DidLifecyclePortError> {
@@ -107,9 +106,9 @@ impl NativeMidnightDidDeploymentRequest {
         if matches!(network, MidnightNetwork::Offchain)
             || network_id != network.as_str()
             || network_id.is_empty()
-            || created_at.value() == 0
-            || expires_at.value() <= created_at.value()
-            || expires_at.value() / 1_000 <= created_at.value() / 1_000
+            || created_at_millis == 0
+            || expires_at_millis <= created_at_millis
+            || expires_at_millis / 1_000 <= created_at_millis / 1_000
             || account_index > WalletHdPathComponent::MAX_INDEX
             || controller_index > WalletHdPathComponent::MAX_INDEX
         {
@@ -121,8 +120,8 @@ impl NativeMidnightDidDeploymentRequest {
             network_id,
             account_index,
             controller_index,
-            created_at,
-            expires_at,
+            created_at_millis,
+            expires_at_millis,
             nonce,
             composition_seed,
         })
@@ -230,7 +229,7 @@ impl NativeMidnightDidDeploymentComposer {
 
         let deploy = compose_deploy(
             controller_public_key,
-            request.created_at.value(),
+            request.created_at_millis,
             request.nonce,
             vec![maintenance_key],
         );
@@ -243,7 +242,7 @@ impl NativeMidnightDidDeploymentComposer {
         .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
 
         let mut rng = StdRng::from_seed(request.composition_seed);
-        let ttl = Timestamp::from_secs(request.expires_at.value() / 1_000);
+        let ttl = Timestamp::from_secs(request.expires_at_millis / 1_000);
         let intent = Intent::empty(&mut rng, ttl).add_deploy(deploy);
         let mut intents = LedgerHashMap::new();
         intents = intents.insert(DEPLOY_SEGMENT, intent);
@@ -265,7 +264,7 @@ impl NativeMidnightDidDeploymentComposer {
             profile_id: request.profile_id.as_str().to_owned(),
             network_id: request.network_id.clone(),
             did,
-            expires_at_seconds: request.expires_at.value() / 1_000,
+            expires_at_seconds: request.expires_at_millis / 1_000,
             planning_fingerprint,
             transaction: encoded,
         })
@@ -447,8 +446,8 @@ mod tests {
             "undeployed",
             2,
             4,
-            UnixTimestampMillis::new(1_777_840_000_000),
-            UnixTimestampMillis::new(1_777_843_600_000),
+            1_777_840_000_000,
+            1_777_843_600_000,
             [0x99; 32],
             [0x42; 32],
         )
@@ -498,8 +497,8 @@ mod tests {
             "offchain",
             0,
             0,
-            UnixTimestampMillis::new(1_000),
-            UnixTimestampMillis::new(3_000),
+            1_000,
+            3_000,
             [1; 32],
             [2; 32],
         );

@@ -28,20 +28,17 @@ use oxid_foundation::UnixTimestampMillis;
 use oxid_identity_application::{
     DeployDidCommand, DeployDidFuture, DeployDidUseCase, DidDeploymentEffect, DidDeploymentFailure,
     DidDeploymentOperation, DidDeploymentOperationError, DidDeploymentOperationId,
-    DidDeploymentOperationRepository, DidDeploymentState, DidDeploymentUseCaseError,
-    DidResolutionPort, DidResolutionPortError,
-};
-use oxid_identity_domain::{
-    DidResolutionSource, IdentityProfileId, JwkCurve, MidnightNetwork, VerificationRelationship,
+    DidDeploymentOperationRepository, DidDeploymentState, DidDeploymentUseCaseError, DidResolution,
+    DidResolutionPort, DidResolutionPortError, DidResolutionSource, IdentityProfileId, JwkCurve,
+    MidnightDid, MidnightNetwork, VerificationRelationship,
 };
 use oxid_passport_vault_application::{
     PassportVaultContractStateSourceError, PassportVaultContractStateSourcePort,
 };
 use oxid_platform_ports::{ClockPort, RandomPort};
 use oxid_wallet_application::{
-    WalletDerivedSecretUsePort, WalletKeyOperationPort, WalletTransactionPortError,
+    WalletDerivedSecretUsePort, WalletKeyOperationPort, WalletProfileId, WalletTransactionPortError,
 };
-use oxid_wallet_domain::WalletProfileId;
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
@@ -139,7 +136,7 @@ pub(super) struct NativeDidDeploymentService {
 }
 
 struct DidDeploymentEffectPlan {
-    did: Option<oxid_identity_domain::MidnightDid>,
+    did: Option<MidnightDid>,
     profile_id: String,
     network_id: String,
     expires_at_seconds: u64,
@@ -367,7 +364,7 @@ impl DidDeploymentEffectComposer for NativeDidDeploymentEffects {
                     .verifier_key(circuit)
                     .map_err(|_| NativeDidDeploymentError::Unavailable)?,
                 counter,
-                request_expires_at(operation)?,
+                request_expires_at(operation)?.value(),
                 effect_recipe(operation, b"maintenance"),
             )?;
             let plan = self.maintenance.compose(&request)?;
@@ -691,8 +688,8 @@ fn deployment_request(
         operation.network().as_str(),
         account_index,
         controller_index(operation)?,
-        operation.created_at(),
-        request_expires_at(operation)?,
+        operation.created_at().value(),
+        request_expires_at(operation)?.value(),
         nonce,
         composition_seed,
     )
@@ -711,9 +708,7 @@ fn controller_index(operation: &DidDeploymentOperation) -> Result<u32, NativeDid
     ) & oxid_wallet_application::WalletHdPathComponent::MAX_INDEX)
 }
 
-fn did_contract_address(
-    did: &oxid_identity_domain::MidnightDid,
-) -> Result<[u8; 32], NativeDidDeploymentError> {
+fn did_contract_address(did: &MidnightDid) -> Result<[u8; 32], NativeDidDeploymentError> {
     let encoded = did
         .as_str()
         .rsplit(':')
@@ -778,7 +773,7 @@ const fn map_contract_state_error(
     }
 }
 
-fn required_holder_methods_resolve(resolution: &oxid_identity_domain::DidResolution) -> bool {
+fn required_holder_methods_resolve(resolution: &DidResolution) -> bool {
     let document = resolution.document();
     let ed25519 = document
         .verification_methods()

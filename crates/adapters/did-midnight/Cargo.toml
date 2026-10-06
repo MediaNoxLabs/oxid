@@ -26,7 +26,6 @@ midnight-onchain-state.workspace = true
 midnight-serialize.workspace = true
 midnight-storage.workspace = true
 midnight-transient-crypto.workspace = true
-oxid-foundation.workspace = true
 oxid-identity-application.workspace = true
 oxid-identity-domain.workspace = true
 oxid-adapter-platform-system.workspace = true

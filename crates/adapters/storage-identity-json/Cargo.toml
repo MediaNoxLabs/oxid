@@ -11,11 +11,13 @@ publish = false
 [dependencies]
 oxid-adapter-store-atomic.workspace = true
 directories.workspace = true
-oxid-foundation.workspace = true
 oxid-identity-application.workspace = true
 oxid-identity-domain.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+oxid-foundation.workspace = true
 
 [lints]
 workspace = true

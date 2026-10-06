@@ -5,9 +5,10 @@
 use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 
 use oxid_foundation::OpaqueIdError;
-use oxid_identity_domain::{
-    DidDocument, DidPublicationState, DidRecord, DidResolution, IdentityProfileId, MidnightDid,
-    MidnightDidError,
+pub use oxid_identity_domain::{
+    DidDocument, DidPublicationState, DidRecord, DidResolution, DidResolutionSource,
+    IdentityProfileId, JwkCurve, MidnightDid, MidnightDidError, MidnightNetwork,
+    VerificationRelationship,
 };
 
 mod approval;

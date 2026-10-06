@@ -20,7 +20,6 @@ use midnight_onchain_state::state::EntryPointBuf;
 use midnight_serialize::tagged_deserialize;
 use midnight_storage::{DefaultDB, storage::HashMap as LedgerHashMap};
 use midnight_transient_crypto::{commitment::PedersenRandomness, proofs::VerifierKey};
-use oxid_foundation::UnixTimestampMillis;
 use oxid_identity_application::DidLifecyclePortError;
 use oxid_wallet_application::{
     WalletDerivedSecretUsePort, WalletHdPath, WalletHdPathComponent, WalletSecurityPortError,
@@ -55,7 +54,7 @@ pub struct NativeMidnightDidMaintenanceRequest {
     entry_point: String,
     verifier_key: Zeroizing<Vec<u8>>,
     maintenance_counter: u32,
-    expires_at: UnixTimestampMillis,
+    expires_at_millis: u64,
     composition_seed: [u8; 32],
 }
 
@@ -70,7 +69,7 @@ impl fmt::Debug for NativeMidnightDidMaintenanceRequest {
             .field("entry_point", &self.entry_point)
             .field("verifier_key_bytes", &self.verifier_key.len())
             .field("maintenance_counter", &self.maintenance_counter)
-            .field("expires_at", &self.expires_at)
+            .field("expires_at_millis", &self.expires_at_millis)
             .field("composition_seed", &"[PUBLIC RANDOM INPUT]")
             .finish()
     }
@@ -86,7 +85,7 @@ impl NativeMidnightDidMaintenanceRequest {
         entry_point: impl Into<String>,
         verifier_key: Zeroizing<Vec<u8>>,
         maintenance_counter: u32,
-        expires_at: UnixTimestampMillis,
+        expires_at_millis: u64,
         composition_seed: [u8; 32],
     ) -> Result<Self, DidLifecyclePortError> {
         let network_id = network_id.into();
@@ -100,7 +99,7 @@ impl NativeMidnightDidMaintenanceRequest {
             || entry_point.bytes().any(|byte| byte.is_ascii_control())
             || verifier_key.is_empty()
             || verifier_key.len() > MAX_VERIFIER_KEY_BYTES
-            || expires_at.value() < 1_000
+            || expires_at_millis < 1_000
         {
             return Err(DidLifecyclePortError::InvalidOperation);
         }
@@ -112,7 +111,7 @@ impl NativeMidnightDidMaintenanceRequest {
             entry_point,
             verifier_key,
             maintenance_counter,
-            expires_at,
+            expires_at_millis,
             composition_seed,
         })
     }
@@ -222,7 +221,7 @@ impl NativeMidnightDidMaintenanceComposer {
         let mut intent_rng = StdRng::from_seed(request.composition_seed);
         let intent = Intent::empty(
             &mut intent_rng,
-            Timestamp::from_secs(request.expires_at.value() / 1_000),
+            Timestamp::from_secs(request.expires_at_millis / 1_000),
         )
         .add_maintenance_update(signed);
         let mut intents = LedgerHashMap::new();
@@ -243,7 +242,7 @@ impl NativeMidnightDidMaintenanceComposer {
         Ok(NativeMidnightDidMaintenancePlan {
             profile_id: request.profile_id.as_str().to_owned(),
             network_id: request.network_id.clone(),
-            expires_at_seconds: request.expires_at.value() / 1_000,
+            expires_at_seconds: request.expires_at_millis / 1_000,
             planning_fingerprint,
             transaction: encoded,
         })
@@ -297,7 +296,7 @@ mod tests {
             "setVerificationMethod",
             Zeroizing::new(verifier_key),
             0,
-            UnixTimestampMillis::new(1_777_843_600_000),
+            1_777_843_600_000,
             [0x42; 32],
         )
     }
@@ -334,7 +333,7 @@ mod tests {
             "setVerificationMethod",
             Zeroizing::new(vec![1]),
             0,
-            UnixTimestampMillis::new(1_000),
+            1_000,
             [1; 32],
         );
         assert_eq!(invalid, Err(DidLifecyclePortError::InvalidOperation));

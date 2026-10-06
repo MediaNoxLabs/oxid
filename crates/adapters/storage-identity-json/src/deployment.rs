@@ -7,7 +7,6 @@ use std::{
 };
 
 use oxid_adapter_store_atomic as store_atomic;
-use oxid_foundation::UnixTimestampMillis;
 use oxid_identity_application::{
     DidDeploymentEffect, DidDeploymentFailure, DidDeploymentOperation, DidDeploymentOperationError,
     DidDeploymentOperationId, DidDeploymentOperationParts, DidDeploymentOperationRepository,
@@ -241,8 +240,8 @@ impl From<&DidDeploymentOperation> for StoredOperation {
             transaction_hash_hex: parts.transaction_hash_hex,
             block_hash_hex: parts.block_hash_hex,
             block_height: parts.block_height,
-            created_at_millis: parts.created_at.value(),
-            updated_at_millis: parts.updated_at.value(),
+            created_at_millis: parts.created_at_millis,
+            updated_at_millis: parts.updated_at_millis,
         }
     }
 }
@@ -283,8 +282,8 @@ impl StoredOperation {
             transaction_hash_hex: self.transaction_hash_hex.clone(),
             block_hash_hex: self.block_hash_hex.clone(),
             block_height: self.block_height,
-            created_at: UnixTimestampMillis::new(self.created_at_millis),
-            updated_at: UnixTimestampMillis::new(self.updated_at_millis),
+            created_at_millis: self.created_at_millis,
+            updated_at_millis: self.updated_at_millis,
         })
     }
 }
@@ -389,6 +388,7 @@ mod tests {
     };
 
     use super::*;
+    use oxid_foundation::UnixTimestampMillis;
 
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 

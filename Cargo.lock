@@ -5735,7 +5735,6 @@ dependencies = [
  "midnight-transient-crypto",
  "oxid-adapter-platform-system",
  "oxid-adapter-storage-dev",
- "oxid-foundation",
  "oxid-identity-application",
  "oxid-identity-domain",
  "oxid-wallet-application",

@@ -237,8 +237,8 @@ pub struct DidDeploymentOperationParts {
     pub transaction_hash_hex: Option<String>,
     pub block_hash_hex: Option<String>,
     pub block_height: Option<u64>,
-    pub created_at: UnixTimestampMillis,
-    pub updated_at: UnixTimestampMillis,
+    pub created_at_millis: u64,
+    pub updated_at_millis: u64,
 }
 
 impl DidDeploymentOperation {
@@ -287,8 +287,8 @@ impl DidDeploymentOperation {
             transaction_hash_hex: parts.transaction_hash_hex,
             block_hash_hex: parts.block_hash_hex,
             block_height: parts.block_height,
-            created_at: parts.created_at,
-            updated_at: parts.updated_at,
+            created_at: UnixTimestampMillis::new(parts.created_at_millis),
+            updated_at: UnixTimestampMillis::new(parts.updated_at_millis),
         };
         operation.validate()?;
         Ok(operation)
@@ -310,8 +310,8 @@ impl DidDeploymentOperation {
             transaction_hash_hex: self.transaction_hash_hex.clone(),
             block_hash_hex: self.block_hash_hex.clone(),
             block_height: self.block_height,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
+            created_at_millis: self.created_at.value(),
+            updated_at_millis: self.updated_at.value(),
         }
     }
 

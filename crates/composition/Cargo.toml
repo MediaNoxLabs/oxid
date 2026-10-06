@@ -78,13 +78,11 @@ oxid-adapter-vc-midnight.workspace = true
 oxid-credential-application.workspace = true
 oxid-diagnostics-application.workspace = true
 oxid-identity-application.workspace = true
-oxid-identity-domain.workspace = true
 oxid-presentation-application.workspace = true
 oxid-passport-vault-application.workspace = true
 oxid-platform-ports.workspace = true
 oxid-protocol-application.workspace = true
 oxid-wallet-application.workspace = true
-oxid-wallet-domain.workspace = true
 midnight-transient-crypto.workspace = true
 oxid-capabilities-application.workspace = true
 futures.workspace = true
@@ -100,6 +98,7 @@ oxid-adapter-backup-document-mobile.workspace = true
 oxid-adapter-storage-mobile.workspace = true
 
 [dev-dependencies]
+oxid-identity-domain.workspace = true
 oxid-identity-application = { workspace = true, features = ["development-approval"] }
 oxid-foundation.workspace = true
 oxid-wallet-domain.workspace = true
