@@ -124,6 +124,7 @@
             llvmPackages.llvm
             midnightDidPackages.compact-midnight
             midnightDidPackages.compact-toolchain
+            nix
             nixfmt
             nodejs_24
             openssl
