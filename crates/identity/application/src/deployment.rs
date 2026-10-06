@@ -51,9 +51,126 @@ impl DidDeploymentState {
     }
 }
 
+/// Ordered ledger effects required before a holder DID is usable.
+///
+/// This cursor is persisted independently from the user-visible phase so a
+/// process restart can resume the exact effect without replaying a confirmed
+/// transaction. `ResolveDocument` is the only non-transactional step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DidDeploymentEffect {
+    DeployContract,
+    InstallVerificationMethodVerifier,
+    InstallJubjubVerifier,
+    InstallRelationshipVerifier,
+    AddAuthenticationMethod,
+    AddAuthenticationRelationship,
+    AddAssertionMethod,
+    AddAssertionRelationship,
+    ResolveDocument,
+}
+
+impl DidDeploymentEffect {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DeployContract => "deploy_contract",
+            Self::InstallVerificationMethodVerifier => "install_verification_method_verifier",
+            Self::InstallJubjubVerifier => "install_jubjub_verifier",
+            Self::InstallRelationshipVerifier => "install_relationship_verifier",
+            Self::AddAuthenticationMethod => "add_authentication_method",
+            Self::AddAuthenticationRelationship => "add_authentication_relationship",
+            Self::AddAssertionMethod => "add_assertion_method",
+            Self::AddAssertionRelationship => "add_assertion_relationship",
+            Self::ResolveDocument => "resolve_document",
+        }
+    }
+
+    #[must_use]
+    pub const fn next(self) -> Option<Self> {
+        match self {
+            Self::DeployContract => Some(Self::InstallVerificationMethodVerifier),
+            Self::InstallVerificationMethodVerifier => Some(Self::InstallJubjubVerifier),
+            Self::InstallJubjubVerifier => Some(Self::InstallRelationshipVerifier),
+            Self::InstallRelationshipVerifier => Some(Self::AddAuthenticationMethod),
+            Self::AddAuthenticationMethod => Some(Self::AddAuthenticationRelationship),
+            Self::AddAuthenticationRelationship => Some(Self::AddAssertionMethod),
+            Self::AddAssertionMethod => Some(Self::AddAssertionRelationship),
+            Self::AddAssertionRelationship => Some(Self::ResolveDocument),
+            Self::ResolveDocument => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_transaction(self) -> bool {
+        !matches!(self, Self::ResolveDocument)
+    }
+}
+
+/// Immutable inclusion evidence for one completed ledger effect.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DidDeploymentReceipt {
+    effect: DidDeploymentEffect,
+    submission_id: String,
+    transaction_hash_hex: String,
+    block_hash_hex: String,
+    block_height: u64,
+}
+
+impl DidDeploymentReceipt {
+    pub fn restore(
+        effect: DidDeploymentEffect,
+        submission_id: String,
+        transaction_hash_hex: String,
+        block_hash_hex: String,
+        block_height: u64,
+    ) -> Result<Self, DidDeploymentOperationError> {
+        if !effect.is_transaction()
+            || submission_id.is_empty()
+            || submission_id.len() > 256
+            || !is_lower_hex_32(&transaction_hash_hex)
+            || !is_lower_hex_32(&block_hash_hex)
+        {
+            return Err(DidDeploymentOperationError::InvalidData);
+        }
+        Ok(Self {
+            effect,
+            submission_id,
+            transaction_hash_hex,
+            block_hash_hex,
+            block_height,
+        })
+    }
+
+    #[must_use]
+    pub const fn effect(&self) -> DidDeploymentEffect {
+        self.effect
+    }
+
+    #[must_use]
+    pub fn submission_id(&self) -> &str {
+        &self.submission_id
+    }
+
+    #[must_use]
+    pub fn transaction_hash_hex(&self) -> &str {
+        &self.transaction_hash_hex
+    }
+
+    #[must_use]
+    pub fn block_hash_hex(&self) -> &str {
+        &self.block_hash_hex
+    }
+
+    #[must_use]
+    pub const fn block_height(&self) -> u64 {
+        self.block_height
+    }
+}
+
 /// Bounded, secret-free reason why an operation paused for a retry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DidDeploymentFailure {
+    CompositionUnavailable,
     ProtectionLocked,
     AccountUnavailable,
     FundingUnavailable,
@@ -69,6 +186,7 @@ impl DidDeploymentFailure {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::CompositionUnavailable => "composition_unavailable",
             Self::ProtectionLocked => "protection_locked",
             Self::AccountUnavailable => "account_unavailable",
             Self::FundingUnavailable => "funding_unavailable",
@@ -91,8 +209,10 @@ pub struct DidDeploymentOperation {
     state: DidDeploymentState,
     resume_from: Option<DidDeploymentState>,
     failure: Option<DidDeploymentFailure>,
+    effect: DidDeploymentEffect,
     did: Option<MidnightDid>,
     submission_id: Option<String>,
+    receipts: Vec<DidDeploymentReceipt>,
     transaction_hash_hex: Option<String>,
     block_hash_hex: Option<String>,
     block_height: Option<u64>,
@@ -110,8 +230,10 @@ pub struct DidDeploymentOperationParts {
     pub state: DidDeploymentState,
     pub resume_from: Option<DidDeploymentState>,
     pub failure: Option<DidDeploymentFailure>,
+    pub effect: DidDeploymentEffect,
     pub did: Option<MidnightDid>,
     pub submission_id: Option<String>,
+    pub receipts: Vec<DidDeploymentReceipt>,
     pub transaction_hash_hex: Option<String>,
     pub block_hash_hex: Option<String>,
     pub block_height: Option<u64>,
@@ -136,8 +258,10 @@ impl DidDeploymentOperation {
             state: DidDeploymentState::Composing,
             resume_from: None,
             failure: None,
+            effect: DidDeploymentEffect::DeployContract,
             did: None,
             submission_id: None,
+            receipts: Vec::new(),
             transaction_hash_hex: None,
             block_hash_hex: None,
             block_height: None,
@@ -156,8 +280,10 @@ impl DidDeploymentOperation {
             state: parts.state,
             resume_from: parts.resume_from,
             failure: parts.failure,
+            effect: parts.effect,
             did: parts.did,
             submission_id: parts.submission_id,
+            receipts: parts.receipts,
             transaction_hash_hex: parts.transaction_hash_hex,
             block_hash_hex: parts.block_hash_hex,
             block_height: parts.block_height,
@@ -177,8 +303,10 @@ impl DidDeploymentOperation {
             state: self.state,
             resume_from: self.resume_from,
             failure: self.failure,
+            effect: self.effect,
             did: self.did.clone(),
             submission_id: self.submission_id.clone(),
+            receipts: self.receipts.clone(),
             transaction_hash_hex: self.transaction_hash_hex.clone(),
             block_hash_hex: self.block_hash_hex.clone(),
             block_height: self.block_height,
@@ -218,6 +346,11 @@ impl DidDeploymentOperation {
     }
 
     #[must_use]
+    pub const fn effect(&self) -> DidDeploymentEffect {
+        self.effect
+    }
+
+    #[must_use]
     pub const fn did(&self) -> Option<&MidnightDid> {
         self.did.as_ref()
     }
@@ -225,6 +358,11 @@ impl DidDeploymentOperation {
     #[must_use]
     pub fn submission_id(&self) -> Option<&str> {
         self.submission_id.as_deref()
+    }
+
+    #[must_use]
+    pub fn receipts(&self) -> &[DidDeploymentReceipt] {
+        &self.receipts
     }
 
     #[must_use]
@@ -258,7 +396,9 @@ impl DidDeploymentOperation {
         submission_id: String,
         now: UnixTimestampMillis,
     ) -> Result<Self, DidDeploymentOperationError> {
-        if did.network() != self.network
+        if self.effect != DidDeploymentEffect::DeployContract
+            || self.state != DidDeploymentState::Composing
+            || did.network() != self.network
             || submission_id.is_empty()
             || submission_id.len() > 256
             || self.did.as_ref().is_some_and(|current| current != &did)
@@ -270,6 +410,28 @@ impl DidDeploymentOperation {
             return Err(DidDeploymentOperationError::InvalidData);
         }
         self.did = Some(did);
+        self.submission_id = Some(submission_id);
+        self.transition(DidDeploymentState::Funding, now)
+    }
+
+    /// Records deterministic composition of the current post-deploy effect.
+    /// Transaction bytes and witnesses remain adapter-private and are
+    /// regenerated from the operation/effect recipe after a restart.
+    pub fn prepared_effect(
+        mut self,
+        submission_id: String,
+        now: UnixTimestampMillis,
+    ) -> Result<Self, DidDeploymentOperationError> {
+        if self.state != DidDeploymentState::Composing
+            || !self.effect.is_transaction()
+            || self.effect == DidDeploymentEffect::DeployContract
+            || self.did.is_none()
+            || self.submission_id.is_some()
+            || submission_id.is_empty()
+            || submission_id.len() > 256
+        {
+            return Err(DidDeploymentOperationError::InvalidData);
+        }
         self.submission_id = Some(submission_id);
         self.transition(DidDeploymentState::Funding, now)
     }
@@ -347,13 +509,35 @@ impl DidDeploymentOperation {
             DidDeploymentState::Confirming | DidDeploymentState::OutcomeUnknown
         ) || !is_lower_hex_32(&transaction_hash_hex)
             || !is_lower_hex_32(&block_hash_hex)
+            || !self.effect.is_transaction()
+            || self.receipts.len() >= 8
         {
             return Err(DidDeploymentOperationError::InvalidData);
         }
+        let submission_id = self
+            .submission_id
+            .take()
+            .ok_or(DidDeploymentOperationError::InvalidData)?;
+        self.receipts.push(DidDeploymentReceipt {
+            effect: self.effect,
+            submission_id,
+            transaction_hash_hex: transaction_hash_hex.clone(),
+            block_hash_hex: block_hash_hex.clone(),
+            block_height,
+        });
         self.transaction_hash_hex = Some(transaction_hash_hex);
         self.block_hash_hex = Some(block_hash_hex);
         self.block_height = Some(block_height);
-        self.transition(DidDeploymentState::Resolving, now)
+        self.effect = self
+            .effect
+            .next()
+            .ok_or(DidDeploymentOperationError::InvalidTransition)?;
+        let next_state = if self.effect == DidDeploymentEffect::ResolveDocument {
+            DidDeploymentState::Resolving
+        } else {
+            DidDeploymentState::Composing
+        };
+        self.transition(next_state, now)
     }
 
     fn validate(&self) -> Result<(), DidDeploymentOperationError> {
@@ -376,32 +560,54 @@ impl DidDeploymentOperation {
                 .block_hash_hex
                 .as_ref()
                 .is_some_and(|value| !is_lower_hex_32(value))
+            || self.receipts.len() > 8
+            || !valid_receipt_prefix(&self.receipts, self.effect)
         {
             return Err(DidDeploymentOperationError::Integrity);
         }
-        let composed = self.did.is_some() && self.submission_id.is_some();
+        let active_transaction = self.did.is_some() && self.submission_id.is_some();
         let inclusion = self.transaction_hash_hex.is_some()
             && self.block_hash_hex.is_some()
             && self.block_height.is_some();
         let valid = match self.state {
-            DidDeploymentState::Composing => {
-                !composed && !inclusion && self.resume_from.is_none() && self.failure.is_none()
-            }
+            DidDeploymentState::Composing => match self.effect {
+                DidDeploymentEffect::DeployContract => {
+                    self.did.is_none()
+                        && self.submission_id.is_none()
+                        && self.receipts.is_empty()
+                        && !inclusion
+                        && self.resume_from.is_none()
+                        && self.failure.is_none()
+                }
+                DidDeploymentEffect::ResolveDocument => false,
+                _ => {
+                    self.did.is_some()
+                        && self.submission_id.is_none()
+                        && inclusion
+                        && self.resume_from.is_none()
+                        && self.failure.is_none()
+                }
+            },
             DidDeploymentState::Funding
             | DidDeploymentState::Proving
             | DidDeploymentState::Submitting
             | DidDeploymentState::Confirming => {
-                composed && !inclusion && self.resume_from.is_none() && self.failure.is_none()
+                active_transaction && self.resume_from.is_none() && self.failure.is_none()
             }
             DidDeploymentState::Resolving | DidDeploymentState::Ready => {
-                composed && inclusion && self.resume_from.is_none() && self.failure.is_none()
+                self.effect == DidDeploymentEffect::ResolveDocument
+                    && self.did.is_some()
+                    && self.submission_id.is_none()
+                    && inclusion
+                    && self.receipts.len() == 8
+                    && self.resume_from.is_none()
+                    && self.failure.is_none()
             }
             DidDeploymentState::RetryableFailure => {
                 self.resume_from.is_some() && self.failure.is_some()
             }
             DidDeploymentState::OutcomeUnknown => {
-                composed
-                    && !inclusion
+                active_transaction
                     && self.resume_from == Some(DidDeploymentState::Confirming)
                     && self.failure.is_none()
             }
@@ -427,12 +633,41 @@ fn valid_transition(
         | (DidDeploymentState::Funding, DidDeploymentState::Proving)
         | (DidDeploymentState::Proving, DidDeploymentState::Submitting)
         | (DidDeploymentState::Submitting, DidDeploymentState::Confirming)
+        | (DidDeploymentState::Confirming, DidDeploymentState::Composing)
         | (DidDeploymentState::Confirming, DidDeploymentState::Resolving)
         | (DidDeploymentState::Resolving, DidDeploymentState::Ready) => true,
         (DidDeploymentState::RetryableFailure, resumed) => resume_from == Some(resumed),
         (DidDeploymentState::OutcomeUnknown, DidDeploymentState::Confirming) => true,
         _ => false,
     }
+}
+
+fn valid_receipt_prefix(receipts: &[DidDeploymentReceipt], current: DidDeploymentEffect) -> bool {
+    const EFFECTS: [DidDeploymentEffect; 8] = [
+        DidDeploymentEffect::DeployContract,
+        DidDeploymentEffect::InstallVerificationMethodVerifier,
+        DidDeploymentEffect::InstallJubjubVerifier,
+        DidDeploymentEffect::InstallRelationshipVerifier,
+        DidDeploymentEffect::AddAuthenticationMethod,
+        DidDeploymentEffect::AddAuthenticationRelationship,
+        DidDeploymentEffect::AddAssertionMethod,
+        DidDeploymentEffect::AddAssertionRelationship,
+    ];
+    receipts
+        .iter()
+        .zip(EFFECTS)
+        .all(|(receipt, expected)| receipt.effect == expected)
+        && EFFECTS
+            .get(receipts.len())
+            .copied()
+            .unwrap_or(DidDeploymentEffect::ResolveDocument)
+            == current
+        && receipts.iter().all(|receipt| {
+            !receipt.submission_id.is_empty()
+                && receipt.submission_id.len() <= 256
+                && is_lower_hex_32(&receipt.transaction_hash_hex)
+                && is_lower_hex_32(&receipt.block_hash_hex)
+        })
 }
 
 fn is_lower_hex_32(value: &str) -> bool {
@@ -599,6 +834,39 @@ mod tests {
         MidnightDid::parse(format!("did:midnight:undeployed:{}", "a".repeat(64))).expect("did")
     }
 
+    fn complete_remaining_effects(
+        mut operation: DidDeploymentOperation,
+        mut now: u64,
+    ) -> DidDeploymentOperation {
+        while operation.effect() != DidDeploymentEffect::ResolveDocument {
+            let ordinal = operation.receipts().len() + 1;
+            operation = operation
+                .prepared_effect(format!("draft-{ordinal}"), UnixTimestampMillis::new(now))
+                .expect("prepare effect");
+            now += 1;
+            for state in [
+                DidDeploymentState::Proving,
+                DidDeploymentState::Submitting,
+                DidDeploymentState::Confirming,
+            ] {
+                operation = operation
+                    .transition(state, UnixTimestampMillis::new(now))
+                    .expect("advance effect");
+                now += 1;
+            }
+            operation = operation
+                .included(
+                    format!("{ordinal:064x}"),
+                    format!("{:064x}", ordinal + 16),
+                    u64::try_from(ordinal).expect("ordinal"),
+                    UnixTimestampMillis::new(now),
+                )
+                .expect("include effect");
+            now += 1;
+        }
+        operation
+    }
+
     #[test]
     fn accepts_the_canonical_happy_path() {
         let mut operation = operation()
@@ -620,13 +888,16 @@ mod tests {
                 42,
                 UnixTimestampMillis::new(6_000),
             )
-            .expect("included")
-            .transition(DidDeploymentState::Ready, UnixTimestampMillis::new(7_000))
+            .expect("included");
+        operation = complete_remaining_effects(operation, 7_000)
+            .transition(DidDeploymentState::Ready, UnixTimestampMillis::new(10_000))
             .expect("ready");
 
         assert_eq!(operation.state(), DidDeploymentState::Ready);
         assert_eq!(operation.did(), Some(&did()));
-        assert_eq!(operation.block_height(), Some(42));
+        assert_eq!(operation.receipts()[0].block_height(), 42);
+        assert_eq!(operation.block_height(), Some(8));
+        assert_eq!(operation.receipts().len(), 8);
     }
 
     #[test]
@@ -721,15 +992,16 @@ mod tests {
                 )
                 .is_err()
         );
-        let ready = operation
+        let included = operation
             .included(
                 "1".repeat(64),
                 "2".repeat(64),
                 42,
                 UnixTimestampMillis::new(6_000),
             )
-            .expect("included")
-            .transition(DidDeploymentState::Ready, UnixTimestampMillis::new(7_000))
+            .expect("included");
+        let ready = complete_remaining_effects(included, 7_000)
+            .transition(DidDeploymentState::Ready, UnixTimestampMillis::new(10_000))
             .expect("ready");
         assert!(
             ready

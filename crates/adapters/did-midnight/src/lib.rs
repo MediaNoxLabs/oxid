@@ -9,6 +9,8 @@ use oxid_identity_application::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
+mod compact_artifacts;
+#[cfg(not(target_arch = "wasm32"))]
 mod deployment;
 mod lifecycle;
 mod offchain;
@@ -21,6 +23,10 @@ mod maintenance;
 ))]
 mod publication;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use compact_artifacts::{
+    MidnightDidBootstrapCircuit, MidnightDidCompactArtifactError, MidnightDidCompactArtifacts,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use deployment::{
     NativeMidnightDidDeploymentComposer, NativeMidnightDidDeploymentPlan,

@@ -9,14 +9,14 @@ use std::{
 use oxid_adapter_store_atomic as store_atomic;
 use oxid_foundation::UnixTimestampMillis;
 use oxid_identity_application::{
-    DidDeploymentFailure, DidDeploymentOperation, DidDeploymentOperationError,
+    DidDeploymentEffect, DidDeploymentFailure, DidDeploymentOperation, DidDeploymentOperationError,
     DidDeploymentOperationId, DidDeploymentOperationParts, DidDeploymentOperationRepository,
-    DidDeploymentState,
+    DidDeploymentReceipt, DidDeploymentState,
 };
 use oxid_identity_domain::{IdentityProfileId, MidnightDid, MidnightNetwork};
 use serde::{Deserialize, Serialize};
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 const MAX_OPERATIONS: usize = 128;
 const MAX_STORE_BYTES: usize = 512 * 1_024;
 
@@ -187,13 +187,25 @@ struct StoredOperation {
     state: String,
     resume_from: Option<String>,
     failure: Option<String>,
+    effect: String,
     did: Option<String>,
     submission_id: Option<String>,
+    receipts: Vec<StoredReceipt>,
     transaction_hash_hex: Option<String>,
     block_hash_hex: Option<String>,
     block_height: Option<u64>,
     created_at_millis: u64,
     updated_at_millis: u64,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StoredReceipt {
+    effect: String,
+    submission_id: String,
+    transaction_hash_hex: String,
+    block_hash_hex: String,
+    block_height: u64,
 }
 
 impl From<&DidDeploymentOperation> for StoredOperation {
@@ -212,8 +224,20 @@ impl From<&DidDeploymentOperation> for StoredOperation {
                 .failure
                 .map(DidDeploymentFailure::as_str)
                 .map(str::to_owned),
+            effect: parts.effect.as_str().to_owned(),
             did: parts.did.map(|did| did.as_str().to_owned()),
             submission_id: parts.submission_id,
+            receipts: parts
+                .receipts
+                .into_iter()
+                .map(|receipt| StoredReceipt {
+                    effect: receipt.effect().as_str().to_owned(),
+                    submission_id: receipt.submission_id().to_owned(),
+                    transaction_hash_hex: receipt.transaction_hash_hex().to_owned(),
+                    block_hash_hex: receipt.block_hash_hex().to_owned(),
+                    block_height: receipt.block_height(),
+                })
+                .collect(),
             transaction_hash_hex: parts.transaction_hash_hex,
             block_hash_hex: parts.block_hash_hex,
             block_height: parts.block_height,
@@ -234,6 +258,7 @@ impl StoredOperation {
             state: parse_state(&self.state)?,
             resume_from: self.resume_from.as_deref().map(parse_state).transpose()?,
             failure: self.failure.as_deref().map(parse_failure).transpose()?,
+            effect: parse_effect(&self.effect)?,
             did: self
                 .did
                 .as_ref()
@@ -241,6 +266,20 @@ impl StoredOperation {
                 .transpose()
                 .map_err(|_| DidDeploymentOperationError::Integrity)?,
             submission_id: self.submission_id.clone(),
+            receipts: self
+                .receipts
+                .iter()
+                .map(|receipt| {
+                    DidDeploymentReceipt::restore(
+                        parse_effect(&receipt.effect)?,
+                        receipt.submission_id.clone(),
+                        receipt.transaction_hash_hex.clone(),
+                        receipt.block_hash_hex.clone(),
+                        receipt.block_height,
+                    )
+                    .map_err(|_| DidDeploymentOperationError::Integrity)
+                })
+                .collect::<Result<Vec<_>, _>>()?,
             transaction_hash_hex: self.transaction_hash_hex.clone(),
             block_hash_hex: self.block_hash_hex.clone(),
             block_height: self.block_height,
@@ -302,8 +341,26 @@ fn parse_state(value: &str) -> Result<DidDeploymentState, DidDeploymentOperation
     }
 }
 
+fn parse_effect(value: &str) -> Result<DidDeploymentEffect, DidDeploymentOperationError> {
+    match value {
+        "deploy_contract" => Ok(DidDeploymentEffect::DeployContract),
+        "install_verification_method_verifier" => {
+            Ok(DidDeploymentEffect::InstallVerificationMethodVerifier)
+        }
+        "install_jubjub_verifier" => Ok(DidDeploymentEffect::InstallJubjubVerifier),
+        "install_relationship_verifier" => Ok(DidDeploymentEffect::InstallRelationshipVerifier),
+        "add_authentication_method" => Ok(DidDeploymentEffect::AddAuthenticationMethod),
+        "add_authentication_relationship" => Ok(DidDeploymentEffect::AddAuthenticationRelationship),
+        "add_assertion_method" => Ok(DidDeploymentEffect::AddAssertionMethod),
+        "add_assertion_relationship" => Ok(DidDeploymentEffect::AddAssertionRelationship),
+        "resolve_document" => Ok(DidDeploymentEffect::ResolveDocument),
+        _ => Err(DidDeploymentOperationError::Integrity),
+    }
+}
+
 fn parse_failure(value: &str) -> Result<DidDeploymentFailure, DidDeploymentOperationError> {
     match value {
+        "composition_unavailable" => Ok(DidDeploymentFailure::CompositionUnavailable),
         "protection_locked" => Ok(DidDeploymentFailure::ProtectionLocked),
         "account_unavailable" => Ok(DidDeploymentFailure::AccountUnavailable),
         "funding_unavailable" => Ok(DidDeploymentFailure::FundingUnavailable),

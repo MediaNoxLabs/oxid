@@ -27,6 +27,7 @@ use oxid_identity_domain::{
 use oxid_platform_ports::{PlatformError, RandomPort};
 use oxid_wallet_application::{WalletDerivedSecretUsePort, WalletHdPath, WalletSecurityPortError};
 use oxid_wallet_domain::WalletProfileId;
+use zeroize::Zeroizing;
 
 use super::*;
 
@@ -47,6 +48,8 @@ impl RandomPort for FixedRandom {
     }
 }
 
+struct AllEffectsComposer;
+
 struct TestCustody;
 
 impl WalletDerivedSecretUsePort for TestCustody {
@@ -57,6 +60,26 @@ impl WalletDerivedSecretUsePort for TestCustody {
         operation: &mut dyn FnMut(&[u8; 32]) -> Result<(), WalletSecurityPortError>,
     ) -> Result<(), WalletSecurityPortError> {
         operation(&[7; 32])
+    }
+}
+
+impl DidDeploymentEffectComposer for AllEffectsComposer {
+    fn compose(
+        &self,
+        operation: &DidDeploymentOperation,
+        _: u32,
+    ) -> Result<DidDeploymentEffectPlan, NativeDidDeploymentError> {
+        let did = (operation.effect() == DidDeploymentEffect::DeployContract).then(|| {
+            MidnightDid::parse(format!("did:midnight:undeployed:{}", "a".repeat(64))).expect("did")
+        });
+        Ok(DidDeploymentEffectPlan {
+            did,
+            profile_id: operation.profile_id().as_str().to_owned(),
+            network_id: operation.network().as_str().to_owned(),
+            expires_at_seconds: 3_700,
+            planning_fingerprint: Sha256::digest(operation.effect().as_str()).into(),
+            transaction: Zeroizing::new(vec![1, 2, 3]),
+        })
     }
 }
 
@@ -221,8 +244,17 @@ impl MidnightContractCallSubmissionPort for UnknownThenIncludedSubmission {
         &self,
         _: MidnightContractCallSubmissionRequest,
     ) -> Result<MidnightContractCallSubmissionOutcome, WalletTransactionPortError> {
-        self.submissions.fetch_add(1, Ordering::SeqCst);
-        Err(WalletTransactionPortError::SubmissionOutcomeUnknown)
+        let attempt = self.submissions.fetch_add(1, Ordering::SeqCst);
+        if attempt == 0 {
+            return Err(WalletTransactionPortError::SubmissionOutcomeUnknown);
+        }
+        Ok(MidnightContractCallSubmissionOutcome {
+            transaction_hash: [1; 32],
+            block_hash: [2; 32],
+            block_height: 42,
+            fee_specks: 3,
+            mode: MidnightContractCallSubmissionMode::Live,
+        })
     }
 
     fn contract_call_submission_status(
@@ -341,10 +373,8 @@ fn service(
     submissions: Arc<IncludedSubmission>,
     operations: Arc<MemoryOperations>,
 ) -> NativeDidDeploymentService {
-    NativeDidDeploymentService::new(
-        Arc::new(NativeMidnightDidDeploymentComposer::new(Arc::new(
-            TestCustody,
-        ))),
+    NativeDidDeploymentService::with_effects(
+        Arc::new(AllEffectsComposer),
         Arc::new(PassthroughFunding),
         submissions,
         resolver,
@@ -360,6 +390,65 @@ fn command() -> DeployDidCommand {
         network: MidnightNetwork::Undeployed,
         account_index: 0,
     }
+}
+
+#[test]
+fn native_effect_composer_authenticates_and_composes_the_first_maintenance_update() {
+    if std::env::var_os("OXID_MIDNIGHT_DID_ARTIFACTS_DIR").is_none() {
+        return;
+    }
+    let custody: Arc<dyn WalletDerivedSecretUsePort> = Arc::new(TestCustody);
+    let effects = NativeDidDeploymentEffects::new(
+        Arc::new(NativeMidnightDidDeploymentComposer::new(Arc::clone(
+            &custody,
+        ))),
+        Arc::new(NativeMidnightDidMaintenanceComposer::new(custody)),
+    );
+    let operation = DidDeploymentOperation::new(
+        DidDeploymentOperationId::parse("deployment-native-effects").expect("operation id"),
+        command().profile_id,
+        MidnightNetwork::Undeployed,
+        UnixTimestampMillis::new(10_000),
+    )
+    .expect("operation");
+    let deploy = effects.compose(&operation, 0).expect("deployment plan");
+    let submission_id = effect_submission_id(&operation);
+    let operation = operation
+        .composed(
+            deploy.did.expect("deployment DID"),
+            submission_id,
+            UnixTimestampMillis::new(10_000),
+        )
+        .expect("composed")
+        .transition(
+            DidDeploymentState::Proving,
+            UnixTimestampMillis::new(10_000),
+        )
+        .expect("proving")
+        .transition(
+            DidDeploymentState::Submitting,
+            UnixTimestampMillis::new(10_000),
+        )
+        .expect("submitting")
+        .transition(
+            DidDeploymentState::Confirming,
+            UnixTimestampMillis::new(10_000),
+        )
+        .expect("confirming")
+        .included(
+            "1".repeat(64),
+            "2".repeat(64),
+            42,
+            UnixTimestampMillis::new(10_000),
+        )
+        .expect("included deploy");
+    assert_eq!(
+        operation.effect(),
+        DidDeploymentEffect::InstallVerificationMethodVerifier
+    );
+    let maintenance = effects.compose(&operation, 0).expect("maintenance plan");
+    assert!(maintenance.did.is_none());
+    assert!(!maintenance.transaction.is_empty());
 }
 
 #[test]
@@ -380,7 +469,7 @@ fn deployment_reaches_ready_and_repeated_requests_do_not_resubmit() {
 
     assert_eq!(first.state(), DidDeploymentState::Ready);
     assert_eq!(second.operation_id(), first.operation_id());
-    assert_eq!(submissions.submissions.load(Ordering::SeqCst), 1);
+    assert_eq!(submissions.submissions.load(Ordering::SeqCst), 8);
 }
 
 #[test]
@@ -412,10 +501,8 @@ fn outcome_unknown_reconciles_without_a_second_submission() {
         submissions: AtomicUsize::new(0),
     });
     let operations = Arc::new(MemoryOperations::default());
-    let service = NativeDidDeploymentService::new(
-        Arc::new(NativeMidnightDidDeploymentComposer::new(Arc::new(
-            TestCustody,
-        ))),
+    let service = NativeDidDeploymentService::with_effects(
+        Arc::new(AllEffectsComposer),
         Arc::new(PassthroughFunding),
         submissions.clone(),
         Arc::new(LiveResolver { complete: true }),
@@ -432,5 +519,5 @@ fn outcome_unknown_reconciles_without_a_second_submission() {
     assert_eq!(unknown.state(), DidDeploymentState::OutcomeUnknown);
     assert_eq!(reconciled.state(), DidDeploymentState::Ready);
     assert_eq!(reconciled.operation_id(), unknown.operation_id());
-    assert_eq!(submissions.submissions.load(Ordering::SeqCst), 1);
+    assert_eq!(submissions.submissions.load(Ordering::SeqCst), 8);
 }

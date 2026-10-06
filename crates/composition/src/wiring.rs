@@ -24,7 +24,9 @@ use oxid_adapter_backup_portable::PortableCustodyVaultPort;
 use oxid_adapter_custody_software::Bip39WalletMnemonic;
 use oxid_adapter_diagnostics_memory::InMemoryDiagnosticStore;
 #[cfg(not(target_arch = "wasm32"))]
-use oxid_adapter_did_midnight::NativeMidnightDidDeploymentComposer;
+use oxid_adapter_did_midnight::{
+    NativeMidnightDidDeploymentComposer, NativeMidnightDidMaintenanceComposer,
+};
 use oxid_adapter_did_midnight::{StandaloneDidLifecycle, StandaloneDidResolver};
 use oxid_adapter_identity_ingress::StrictIdentityRequestRouter;
 #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -960,7 +962,10 @@ where
         midnight.clone();
     #[cfg(not(target_arch = "wasm32"))]
     let deploy_did: Arc<dyn DeployDidUseCase> = Arc::new(NativeDidDeploymentService::new(
-        Arc::new(NativeMidnightDidDeploymentComposer::new(
+        Arc::new(NativeMidnightDidDeploymentComposer::new(Arc::clone(
+            &did_deployment_custody,
+        ))),
+        Arc::new(NativeMidnightDidMaintenanceComposer::new(
             did_deployment_custody,
         )),
         Arc::clone(&midnight_contract_call_funding),
