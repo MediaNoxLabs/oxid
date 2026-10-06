@@ -100,6 +100,25 @@ pub struct DidDeploymentOperation {
     updated_at: UnixTimestampMillis,
 }
 
+/// Complete safe snapshot used by persistence adapters. It deliberately omits
+/// composition randomness, transaction bytes, proofs, and controller material.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DidDeploymentOperationParts {
+    pub operation_id: DidDeploymentOperationId,
+    pub profile_id: IdentityProfileId,
+    pub network: MidnightNetwork,
+    pub state: DidDeploymentState,
+    pub resume_from: Option<DidDeploymentState>,
+    pub failure: Option<DidDeploymentFailure>,
+    pub did: Option<MidnightDid>,
+    pub submission_id: Option<String>,
+    pub transaction_hash_hex: Option<String>,
+    pub block_hash_hex: Option<String>,
+    pub block_height: Option<u64>,
+    pub created_at: UnixTimestampMillis,
+    pub updated_at: UnixTimestampMillis,
+}
+
 impl DidDeploymentOperation {
     pub fn new(
         operation_id: DidDeploymentOperationId,
@@ -125,6 +144,47 @@ impl DidDeploymentOperation {
             created_at: now,
             updated_at: now,
         })
+    }
+
+    pub fn restore(
+        parts: DidDeploymentOperationParts,
+    ) -> Result<Self, DidDeploymentOperationError> {
+        let operation = Self {
+            operation_id: parts.operation_id,
+            profile_id: parts.profile_id,
+            network: parts.network,
+            state: parts.state,
+            resume_from: parts.resume_from,
+            failure: parts.failure,
+            did: parts.did,
+            submission_id: parts.submission_id,
+            transaction_hash_hex: parts.transaction_hash_hex,
+            block_hash_hex: parts.block_hash_hex,
+            block_height: parts.block_height,
+            created_at: parts.created_at,
+            updated_at: parts.updated_at,
+        };
+        operation.validate()?;
+        Ok(operation)
+    }
+
+    #[must_use]
+    pub fn to_parts(&self) -> DidDeploymentOperationParts {
+        DidDeploymentOperationParts {
+            operation_id: self.operation_id.clone(),
+            profile_id: self.profile_id.clone(),
+            network: self.network,
+            state: self.state,
+            resume_from: self.resume_from,
+            failure: self.failure,
+            did: self.did.clone(),
+            submission_id: self.submission_id.clone(),
+            transaction_hash_hex: self.transaction_hash_hex.clone(),
+            block_hash_hex: self.block_hash_hex.clone(),
+            block_height: self.block_height,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
     }
 
     #[must_use]
@@ -294,6 +354,63 @@ impl DidDeploymentOperation {
         self.block_hash_hex = Some(block_hash_hex);
         self.block_height = Some(block_height);
         self.transition(DidDeploymentState::Resolving, now)
+    }
+
+    fn validate(&self) -> Result<(), DidDeploymentOperationError> {
+        if self.network == MidnightNetwork::Offchain
+            || self.created_at.value() == 0
+            || self.updated_at.value() < self.created_at.value()
+            || self
+                .did
+                .as_ref()
+                .is_some_and(|did| did.network() != self.network)
+            || self
+                .submission_id
+                .as_ref()
+                .is_some_and(|value| value.is_empty() || value.len() > 256)
+            || self
+                .transaction_hash_hex
+                .as_ref()
+                .is_some_and(|value| !is_lower_hex_32(value))
+            || self
+                .block_hash_hex
+                .as_ref()
+                .is_some_and(|value| !is_lower_hex_32(value))
+        {
+            return Err(DidDeploymentOperationError::Integrity);
+        }
+        let composed = self.did.is_some() && self.submission_id.is_some();
+        let inclusion = self.transaction_hash_hex.is_some()
+            && self.block_hash_hex.is_some()
+            && self.block_height.is_some();
+        let valid = match self.state {
+            DidDeploymentState::Composing => {
+                !composed && !inclusion && self.resume_from.is_none() && self.failure.is_none()
+            }
+            DidDeploymentState::Funding
+            | DidDeploymentState::Proving
+            | DidDeploymentState::Submitting
+            | DidDeploymentState::Confirming => {
+                composed && !inclusion && self.resume_from.is_none() && self.failure.is_none()
+            }
+            DidDeploymentState::Resolving | DidDeploymentState::Ready => {
+                composed && inclusion && self.resume_from.is_none() && self.failure.is_none()
+            }
+            DidDeploymentState::RetryableFailure => {
+                self.resume_from.is_some() && self.failure.is_some()
+            }
+            DidDeploymentState::OutcomeUnknown => {
+                composed
+                    && !inclusion
+                    && self.resume_from == Some(DidDeploymentState::Confirming)
+                    && self.failure.is_none()
+            }
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(DidDeploymentOperationError::Integrity)
+        }
     }
 }
 

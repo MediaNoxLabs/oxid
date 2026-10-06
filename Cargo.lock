@@ -5994,6 +5994,7 @@ version = "0.2.0"
 dependencies = [
  "directories",
  "oxid-adapter-store-atomic",
+ "oxid-foundation",
  "oxid-identity-application",
  "oxid-identity-domain",
  "serde",
