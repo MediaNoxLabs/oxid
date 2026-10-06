@@ -35,6 +35,10 @@ pub const MAX_DIAGNOSTIC_CAPACITY: usize = 1_024;
 pub enum DiagnosticCode {
     HeadlessRequestRejected,
     HeadlessMethodNotFound,
+    IdentityOffchainDidCreationSucceeded,
+    IdentityOffchainDidCreationFailed,
+    IdentityOffchainDidResolutionSucceeded,
+    IdentityOffchainDidResolutionFailed,
     MidnightDustSyncFailed,
     MidnightDustSyncWorkerPanicked,
     MidnightDustSyncWorkerSpawnFailed,
@@ -58,6 +62,14 @@ impl DiagnosticCode {
         match self {
             Self::HeadlessRequestRejected => "headless.request.rejected",
             Self::HeadlessMethodNotFound => "headless.method.not_found",
+            Self::IdentityOffchainDidCreationSucceeded => {
+                "identity.did.offchain.creation.succeeded"
+            }
+            Self::IdentityOffchainDidCreationFailed => "identity.did.offchain.creation.failed",
+            Self::IdentityOffchainDidResolutionSucceeded => {
+                "identity.did.offchain.resolution.succeeded"
+            }
+            Self::IdentityOffchainDidResolutionFailed => "identity.did.offchain.resolution.failed",
             Self::MidnightDustSyncFailed => "midnight.dust.sync.failed",
             Self::MidnightDustSyncWorkerPanicked => "midnight.dust.sync.worker_panicked",
             Self::MidnightDustSyncWorkerSpawnFailed => "midnight.dust.sync.worker_spawn_failed",

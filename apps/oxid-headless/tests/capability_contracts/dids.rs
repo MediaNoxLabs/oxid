@@ -288,6 +288,65 @@ fn creates_and_resolves_an_offchain_demo_identity_without_network_configuration(
     );
     assert_eq!(resolved[0]["ok"], true, "unexpected response: {resolved:?}");
     assert_eq!(resolved[0]["result"]["didRecord"]["document"]["id"], did);
+
+    let rejected = execute_with_wallet(
+        &wallet,
+        &json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "offchain-resolve-rejected",
+            "method": "did.resolve",
+            "params": { "did": "did:midnight:offchain:invalid:document" },
+        })
+        .to_string(),
+    );
+    assert_eq!(rejected[0]["ok"], false);
+
+    let diagnostics = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"offchain-diagnostics","method":"system.diagnostics.snapshot","params":{}}"#,
+    );
+    let recent = diagnostics[0]["result"]["diagnostics"]["recent"]
+        .as_array()
+        .expect("diagnostic events");
+    assert_eq!(recent.len(), 3);
+    assert_eq!(
+        recent[0]["code"],
+        "identity.did.offchain.creation.succeeded"
+    );
+    assert_eq!(
+        recent[1]["code"],
+        "identity.did.offchain.resolution.succeeded"
+    );
+    assert_eq!(recent[2]["code"], "identity.did.offchain.resolution.failed");
+    assert_eq!(
+        diagnostics[0]["result"]["diagnostics"]["payloadsRetained"],
+        false
+    );
+    assert!(!diagnostics[0].to_string().contains(did));
+
+    let locked_wallet =
+        HeadlessWallet::new(oxid_composition::compose_in_memory_with_development_did_approval());
+    let locked_profile = execute_with_wallet(
+        &locked_wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"locked-profile","method":"wallet.profile.create","params":{"displayName":"Locked identity"}}"#,
+    );
+    let locked_profile_id = locked_profile[0]["result"]["profile"]["id"]
+        .as_str()
+        .expect("locked profile id");
+    let locked = execute_with_wallet(
+        &locked_wallet,
+        &format!(
+            "{}\n{}\n{}",
+            json!({"protocol": PROTOCOL_VERSION, "id": "locked-select", "method": "wallet.profile.select", "params": {"profileId": locked_profile_id}}),
+            json!({"protocol": PROTOCOL_VERSION, "id": "locked-create", "method": "did.create", "params": {"network": "offchain"}}),
+            json!({"protocol": PROTOCOL_VERSION, "id": "locked-diagnostics", "method": "system.diagnostics.snapshot", "params": {}}),
+        ),
+    );
+    assert_eq!(locked[1]["ok"], false);
+    assert_eq!(
+        locked[2]["result"]["diagnostics"]["recent"][0]["code"],
+        "identity.did.offchain.creation.failed"
+    );
 }
 
 #[test]

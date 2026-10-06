@@ -2,7 +2,7 @@
   "schema": "oxid-maestro-inventory-v1",
   "privacy": {
     "composition": ["demo", "dev"],
-    "network": "simulated-or-undeployed-only",
+    "network": "simulated-undeployed-or-offchain-only",
     "selectorPolicy": "static-privacy-safe-accessibility-labels-only",
     "publicCaptures": ["canonical-holder-evidence", "developer-profile-banner"],
     "failureArtifacts": "private-and-deleted"

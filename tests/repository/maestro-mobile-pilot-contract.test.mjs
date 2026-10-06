@@ -119,7 +119,7 @@ test("Maestro inventory is closed, classified, and references every runnable flo
   const inventory = JSON.parse(await read("tests/maestro/inventory.json"));
   assert.equal(inventory.schema, "oxid-maestro-inventory-v1");
   assert.deepEqual(inventory.privacy.composition, ["demo", "dev"]);
-  assert.equal(inventory.privacy.network, "simulated-or-undeployed-only");
+  assert.equal(inventory.privacy.network, "simulated-undeployed-or-offchain-only");
   assert.deepEqual(inventory.privacy.publicCaptures, ["canonical-holder-evidence", "developer-profile-banner"]);
   assert.equal(inventory.privacy.failureArtifacts, "private-and-deleted");
 
