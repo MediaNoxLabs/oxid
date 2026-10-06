@@ -5727,6 +5727,7 @@ dependencies = [
  "futures",
  "hex",
  "midnight-base-crypto",
+ "midnight-coin-structure",
  "midnight-ledger",
  "midnight-onchain-state",
  "midnight-serialize",

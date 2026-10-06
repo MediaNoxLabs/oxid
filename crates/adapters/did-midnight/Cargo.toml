@@ -20,6 +20,7 @@ blake2.workspace = true
 futures.workspace = true
 hex.workspace = true
 midnight-base-crypto.workspace = true
+midnight-coin-structure.workspace = true
 midnight-ledger.workspace = true
 midnight-onchain-state.workspace = true
 midnight-serialize.workspace = true

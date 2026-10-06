@@ -12,6 +12,8 @@ use oxid_identity_application::{
 mod deployment;
 mod lifecycle;
 mod offchain;
+#[cfg(not(target_arch = "wasm32"))]
+mod maintenance;
 
 #[cfg(all(
     feature = "tailnet-test-did-publication",
@@ -28,6 +30,11 @@ pub use lifecycle::StandaloneDidLifecycle;
 pub use offchain::{
     OFFCHAIN_STATE_ENCODING, OffchainDidError, OffchainDidState, OffchainService,
     OffchainVerificationMethod, create_long_form_offchain_did, resolve_long_form_offchain_did,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use maintenance::{
+    NativeMidnightDidMaintenanceComposer, NativeMidnightDidMaintenancePlan,
+    NativeMidnightDidMaintenanceRequest,
 };
 use oxid_identity_domain::{
     DID_CONTEXT, DidDocument, DidDocumentMetadata, DidDocumentParts, DidResolution,
