@@ -20,9 +20,9 @@ use oxid_diagnostics_application::{
     ClearDiagnosticsUseCase, DiagnosticEventSinkPort, GetDiagnosticSnapshotUseCase,
 };
 use oxid_identity_application::{
-    CreateDidUseCase, DeactivateDidUseCase, ForgetDidUseCase, GetDidRecordUseCase,
-    ListDidRecordsUseCase, PublishDidUseCase, ResolveDidUseCase, SignDidPayloadUseCase,
-    UpdateDidUseCase,
+    CreateDidUseCase, DeactivateDidUseCase, DeployDidUseCase, ForgetDidUseCase,
+    GetDidRecordUseCase, ListDidRecordsUseCase, PublishDidUseCase, ResolveDidUseCase,
+    SignDidPayloadUseCase, UpdateDidUseCase,
 };
 use oxid_passport_vault_application::{
     AuthorizePassportVaultCallUseCase, CancelPassportVaultCallSubmissionUseCase,
@@ -161,6 +161,7 @@ pub struct ApplicationServices {
     pub(super) list_wallet_transfer_submissions: Arc<dyn ListWalletTransferSubmissionsUseCase>,
     pub(super) reconcile_wallet_transfer_submission:
         Arc<dyn ReconcileWalletTransferSubmissionUseCase>,
+    pub(super) deploy_did: Arc<dyn DeployDidUseCase>,
     pub(super) create_did: Arc<dyn CreateDidUseCase>,
     pub(super) resolve_did: Arc<dyn ResolveDidUseCase>,
     pub(super) list_did_records: Arc<dyn ListDidRecordsUseCase>,
@@ -696,6 +697,11 @@ impl ApplicationServices {
         &self,
     ) -> Arc<dyn ReconcileWalletTransferSubmissionUseCase> {
         Arc::clone(&self.reconcile_wallet_transfer_submission)
+    }
+
+    #[must_use]
+    pub fn deploy_did(&self) -> Arc<dyn DeployDidUseCase> {
+        Arc::clone(&self.deploy_did)
     }
 
     #[must_use]

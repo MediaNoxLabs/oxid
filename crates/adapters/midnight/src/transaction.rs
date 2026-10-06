@@ -112,6 +112,13 @@ impl MidnightContractCallFundingRequest {
             transaction,
         }
     }
+
+    /// Transfers the opaque transaction only to a funding adapter. Incoming
+    /// application surfaces never receive this value.
+    #[must_use]
+    pub fn into_transaction(self) -> Zeroizing<Vec<u8>> {
+        self.transaction
+    }
 }
 
 /// A funded unproven transaction retained by the Passport Vault adapter. Only
@@ -134,6 +141,19 @@ impl std::fmt::Debug for FundedMidnightContractCall {
 }
 
 impl FundedMidnightContractCall {
+    #[must_use]
+    pub fn new(
+        transaction: Zeroizing<Vec<u8>>,
+        funded_night_atomic_units: u128,
+        funding_input_count: u16,
+    ) -> Self {
+        Self {
+            transaction,
+            funded_night_atomic_units,
+            funding_input_count,
+        }
+    }
+
     #[must_use]
     pub fn into_transaction(self) -> Zeroizing<Vec<u8>> {
         self.transaction

@@ -23,6 +23,8 @@ use oxid_adapter_backup_document_mobile::NativePortableWalletBackupDocuments;
 use oxid_adapter_backup_portable::PortableCustodyVaultPort;
 use oxid_adapter_custody_software::Bip39WalletMnemonic;
 use oxid_adapter_diagnostics_memory::InMemoryDiagnosticStore;
+#[cfg(not(target_arch = "wasm32"))]
+use oxid_adapter_did_midnight::NativeMidnightDidDeploymentComposer;
 use oxid_adapter_did_midnight::{StandaloneDidLifecycle, StandaloneDidResolver};
 use oxid_adapter_identity_ingress::StrictIdentityRequestRouter;
 #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -42,6 +44,10 @@ use oxid_adapter_storage_dev::DevelopmentWalletOnboardingAuthorization;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_storage_mobile::NativeMobileWalletOnboardingAuthorization;
 
+#[cfg(not(target_arch = "wasm32"))]
+use super::did_deployment::NativeDidDeploymentService;
+#[cfg(not(target_arch = "wasm32"))]
+use super::identity::headless_did_deployment_repository;
 use super::identity::{
     CredentialIssuanceComposition, CredentialPresentationComposition, HeadlessCredentialProfile,
     IdentityAdapters, SelfIssuedAuthenticationComposition, headless_credential_repository,
@@ -86,13 +92,16 @@ use oxid_diagnostics_application::{
     ClearDiagnosticsUseCase, DiagnosticEventSinkPort, DiagnosticsService,
     GetDiagnosticSnapshotUseCase,
 };
+#[cfg(target_arch = "wasm32")]
+use oxid_identity_application::UnavailableDidDeployment;
 use oxid_identity_application::{
     CreateDidUseCase, CredentialIssuanceFlowService, CredentialPresentationFlowService,
-    DeactivateDidUseCase, DidJubjubChallengeSigningPort, DidLifecyclePort, DidPublicationService,
-    DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase, ListDidRecordsUseCase,
-    PublishDidUseCase, ResolveDidUseCase, SelfIssuedAuthenticationFlowService,
-    SignCredentialIssuancePayloadUseCase, SignCredentialPresentationBundleUseCase,
-    SignDidPayloadUseCase, SignSelfIssuedAuthenticationPayloadUseCase, UpdateDidUseCase,
+    DeactivateDidUseCase, DeployDidUseCase, DidJubjubChallengeSigningPort, DidLifecyclePort,
+    DidPublicationService, DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase,
+    ListDidRecordsUseCase, PublishDidUseCase, ResolveDidUseCase,
+    SelfIssuedAuthenticationFlowService, SignCredentialIssuancePayloadUseCase,
+    SignCredentialPresentationBundleUseCase, SignDidPayloadUseCase,
+    SignSelfIssuedAuthenticationPayloadUseCase, UnavailableDidLifecycle, UpdateDidUseCase,
 };
 use oxid_passport_vault_application::{
     AuthorizePassportVaultCallUseCase, CancelPassportVaultCallSubmissionUseCase,
@@ -249,15 +258,16 @@ use oxid_wallet_application::{
     SubmitWalletTransferUseCase, SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase,
     UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
     WalletAccountReadPort, WalletAccountService, WalletBackupReceiptRepository,
-    WalletBackupReceiptService, WalletDustRegistrationRecoveryStoreProvider,
-    WalletDustRegistrationService, WalletDustSyncPort, WalletDustSyncService,
-    WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
-    WalletNetworkSelectionObserver, WalletNetworkService, WalletOnboardingService,
-    WalletPortableBackupPort, WalletPortableBackupService, WalletProfileAssociationRepository,
-    WalletProfileRepository, WalletProtectionPort, WalletProtectionService, WalletRealmFacetState,
-    WalletRealmLifecycleService, WalletRealmReconciliationState, WalletRootRecoveryPort,
-    WalletRootRecoveryService, WalletShieldedSyncPort, WalletShieldedSyncService,
-    WalletTransactionPort, WalletTransactionService,
+    WalletBackupReceiptService, WalletDerivedSecretUsePort,
+    WalletDustRegistrationRecoveryStoreProvider, WalletDustRegistrationService, WalletDustSyncPort,
+    WalletDustSyncService, WalletJubjubChallengeSigningPort, WalletKeyOperationPort,
+    WalletKeyService, WalletNetworkPort, WalletNetworkSelectionObserver, WalletNetworkService,
+    WalletOnboardingService, WalletPortableBackupPort, WalletPortableBackupService,
+    WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
+    WalletProtectionService, WalletRealmFacetState, WalletRealmLifecycleService,
+    WalletRealmReconciliationState, WalletRootRecoveryPort, WalletRootRecoveryService,
+    WalletShieldedSyncPort, WalletShieldedSyncService, WalletTransactionPort,
+    WalletTransactionService,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -413,6 +423,7 @@ where
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -446,6 +457,7 @@ where
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -487,6 +499,7 @@ where
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -529,6 +542,7 @@ where
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -574,6 +588,7 @@ where
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -622,6 +637,7 @@ where
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -729,6 +745,7 @@ where
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -777,6 +794,7 @@ where
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -926,6 +944,8 @@ where
         approvals.clone(),
     ));
     let portable_backup = Arc::new(WalletPortableBackupService::new(Arc::clone(&security)));
+    #[cfg(not(target_arch = "wasm32"))]
+    let did_deployment_custody: Arc<dyn WalletDerivedSecretUsePort> = security.clone();
     let sensitive_keys = Arc::new(oxid_wallet_application::WalletSensitiveKeyService::new(
         security.clone(),
         approvals.clone(),
@@ -938,6 +958,20 @@ where
     #[cfg(not(target_arch = "wasm32"))]
     let midnight_contract_call_submission: Arc<dyn MidnightContractCallSubmissionPort> =
         midnight.clone();
+    #[cfg(not(target_arch = "wasm32"))]
+    let deploy_did: Arc<dyn DeployDidUseCase> = Arc::new(NativeDidDeploymentService::new(
+        Arc::new(NativeMidnightDidDeploymentComposer::new(
+            did_deployment_custody,
+        )),
+        Arc::clone(&midnight_contract_call_funding),
+        Arc::clone(&midnight_contract_call_submission),
+        Arc::clone(&did_resolver),
+        headless_did_deployment_repository(),
+        clock.clone(),
+        random.clone(),
+    ));
+    #[cfg(target_arch = "wasm32")]
+    let deploy_did: Arc<dyn DeployDidUseCase> = Arc::new(UnavailableDidDeployment);
     let selected_realm_runtime = Arc::new(Mutex::new(SelectedWalletRealmRuntime::default()));
     let selected_realm_selection_gate = Arc::new(Mutex::new(()));
     let selected_realm_sync = Arc::new(
@@ -1549,6 +1583,7 @@ where
         cancel_wallet_transfer_submission,
         list_wallet_transfer_submissions,
         reconcile_wallet_transfer_submission,
+        deploy_did,
         create_did,
         resolve_did,
         list_did_records,

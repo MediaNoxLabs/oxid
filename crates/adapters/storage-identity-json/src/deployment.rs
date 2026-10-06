@@ -140,6 +140,26 @@ impl DidDeploymentOperationRepository for JsonDidDeploymentOperationRepository {
             _ => Err(DidDeploymentOperationError::Integrity),
         }
     }
+
+    fn latest(
+        &self,
+        profile_id: &IdentityProfileId,
+        network: MidnightNetwork,
+    ) -> Result<Option<DidDeploymentOperation>, DidDeploymentOperationError> {
+        let _guard = self
+            .access
+            .lock()
+            .map_err(|_| DidDeploymentOperationError::Unavailable)?;
+        self.load()?
+            .operations
+            .iter()
+            .filter(|candidate| {
+                candidate.profile_id == profile_id.as_str() && candidate.network == network.as_str()
+            })
+            .max_by_key(|candidate| candidate.updated_at_millis)
+            .map(StoredOperation::to_domain)
+            .transpose()
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -393,6 +413,13 @@ mod tests {
                 .repository
                 .active(operation.profile_id(), MidnightNetwork::Undeployed)
                 .expect("active"),
+            Some(operation.clone())
+        );
+        assert_eq!(
+            store
+                .repository
+                .latest(operation.profile_id(), MidnightNetwork::Undeployed)
+                .expect("latest"),
             Some(operation)
         );
     }

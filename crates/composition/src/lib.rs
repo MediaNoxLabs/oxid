@@ -9,6 +9,8 @@
 ))]
 mod portal;
 
+#[cfg(not(target_arch = "wasm32"))]
+mod did_deployment;
 mod dust_settlement;
 mod environment;
 mod identity;

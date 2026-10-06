@@ -6148,6 +6148,7 @@ dependencies = [
  "oxid-diagnostics-application",
  "oxid-foundation",
  "oxid-identity-application",
+ "oxid-identity-domain",
  "oxid-passport-vault-application",
  "oxid-platform-ports",
  "oxid-presentation-application",

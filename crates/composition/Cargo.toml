@@ -9,7 +9,7 @@ repository.workspace = true
 publish = false
 
 [features]
-development-did-approval = ["oxid-identity-application/development-approval", "dep:oxid-foundation"]
+development-did-approval = ["oxid-identity-application/development-approval"]
 development-movement-approval = []
 default = []
 # Public standalone genesis custody for explicit development app profiles.
@@ -54,7 +54,7 @@ android-jni-exception-recovery-test = [
 ]
 
 [dependencies]
-oxid-foundation = { workspace = true, optional = true }
+oxid-foundation.workspace = true
 oxid-adapter-backup-complete.workspace = true
 oxid-adapter-backup-portable.workspace = true
 oxid-adapter-custody-software.workspace = true
@@ -78,12 +78,17 @@ oxid-adapter-vc-midnight.workspace = true
 oxid-credential-application.workspace = true
 oxid-diagnostics-application.workspace = true
 oxid-identity-application.workspace = true
+oxid-identity-domain.workspace = true
 oxid-presentation-application.workspace = true
 oxid-passport-vault-application.workspace = true
 oxid-platform-ports.workspace = true
 oxid-protocol-application.workspace = true
 oxid-wallet-application.workspace = true
+oxid-wallet-domain.workspace = true
 oxid-capabilities-application.workspace = true
+futures.workspace = true
+hex.workspace = true
+sha2.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 
 # Native device adapters are available only to iOS/Android composition paths.

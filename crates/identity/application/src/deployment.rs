@@ -6,7 +6,7 @@
 //! controller witnesses, proofs, and composition randomness remain in native
 //! adapters; the application retains only safe progress and inclusion evidence.
 
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, future::Future, pin::Pin};
 
 use oxid_foundation::{UnixTimestampMillis, opaque_id_type};
 use oxid_identity_domain::{IdentityProfileId, MidnightDid, MidnightNetwork};
@@ -484,6 +484,101 @@ pub trait DidDeploymentOperationRepository: Send + Sync {
         profile_id: &IdentityProfileId,
         network: MidnightNetwork,
     ) -> Result<Option<DidDeploymentOperation>, DidDeploymentOperationError>;
+
+    /// Returns the newest retained operation, including a terminal ready
+    /// deployment. Callers use this to make repeated deployment requests
+    /// idempotent after an application restart.
+    fn latest(
+        &self,
+        profile_id: &IdentityProfileId,
+        network: MidnightNetwork,
+    ) -> Result<Option<DidDeploymentOperation>, DidDeploymentOperationError>;
+}
+
+pub struct UnavailableDidDeploymentOperationRepository;
+
+impl DidDeploymentOperationRepository for UnavailableDidDeploymentOperationRepository {
+    fn upsert(&self, _: DidDeploymentOperation) -> Result<(), DidDeploymentOperationError> {
+        Err(DidDeploymentOperationError::Unavailable)
+    }
+
+    fn get(
+        &self,
+        _: &DidDeploymentOperationId,
+    ) -> Result<DidDeploymentOperation, DidDeploymentOperationError> {
+        Err(DidDeploymentOperationError::Unavailable)
+    }
+
+    fn active(
+        &self,
+        _: &IdentityProfileId,
+        _: MidnightNetwork,
+    ) -> Result<Option<DidDeploymentOperation>, DidDeploymentOperationError> {
+        Err(DidDeploymentOperationError::Unavailable)
+    }
+
+    fn latest(
+        &self,
+        _: &IdentityProfileId,
+        _: MidnightNetwork,
+    ) -> Result<Option<DidDeploymentOperation>, DidDeploymentOperationError> {
+        Err(DidDeploymentOperationError::Unavailable)
+    }
+}
+
+/// Required inputs for deploying the active profile's DID to Midnight.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeployDidCommand {
+    pub profile_id: IdentityProfileId,
+    pub network: MidnightNetwork,
+    pub account_index: u32,
+}
+
+pub type DeployDidFuture<'a> = Pin<
+    Box<dyn Future<Output = Result<DidDeploymentOperation, DidDeploymentUseCaseError>> + Send + 'a>,
+>;
+
+/// Native ledger-backed DID deployment boundary. The returned operation is a
+/// durable progress snapshot and never contains a secret or transaction body.
+pub trait DeployDidUseCase: Send + Sync {
+    fn execute<'a>(&'a self, command: DeployDidCommand) -> DeployDidFuture<'a>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DidDeploymentUseCaseError {
+    Unavailable,
+    InvalidRequest,
+    Integrity,
+    Persistence,
+    Composition,
+    Transaction,
+    Resolution,
+}
+
+impl fmt::Display for DidDeploymentUseCaseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Unavailable => "ledger-backed DID deployment is unavailable",
+            Self::InvalidRequest => "ledger-backed DID deployment request is invalid",
+            Self::Integrity => "ledger-backed DID deployment state failed integrity validation",
+            Self::Persistence => "ledger-backed DID deployment progress could not be persisted",
+            Self::Composition => "ledger-backed DID deployment could not be composed",
+            Self::Transaction => "ledger-backed DID deployment transaction failed",
+            Self::Resolution => "deployed DID could not be verified by live resolution",
+        })
+    }
+}
+
+impl Error for DidDeploymentUseCaseError {}
+
+/// Explicit fail-closed capability for targets without native Midnight
+/// transaction support.
+pub struct UnavailableDidDeployment;
+
+impl DeployDidUseCase for UnavailableDidDeployment {
+    fn execute<'a>(&'a self, _: DeployDidCommand) -> DeployDidFuture<'a> {
+        Box::pin(async { Err(DidDeploymentUseCaseError::Unavailable) })
+    }
 }
 
 #[cfg(test)]
