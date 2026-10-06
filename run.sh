@@ -103,6 +103,7 @@ run_repository() {
   node --test tests/repository/portal-manual-phases-command-contract.test.mjs
   node --test tests/repository/portal-mobile-phase-parity-contract.test.mjs
   node --test tests/repository/portal-services-lifecycle-command-contract.test.mjs
+  node --test tests/repository/midnight-integration-compatibility-contract.test.mjs
   node --test tests/repository/taskflow-conformance.test.mjs
   node --test tests/repository/ui-page-hierarchy-contract.test.mjs
   node --test tests/repository/ui-source-scan-contract.test.mjs

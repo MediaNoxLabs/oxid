@@ -12,6 +12,7 @@ readonly PROJECT="oxid-portal-consumer"
 readonly SMOCKER_IMAGE="ghcr.io/smocker-dev/smocker@sha256:b4106c3aec1d58df09b6b94a89eba801298cbe5303f3c9236d105dbcaaaf4ab2"
 readonly REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly COMPOSE_FILE="$REPOSITORY_ROOT/scripts/portal-consumer-stack.yml"
+readonly COMPATIBILITY_AUDIT="$REPOSITORY_ROOT/scripts/check-midnight-integration-compatibility.mjs"
 readonly OPERATION="${1:-}"
 readonly SOURCE="${PORTAL_INTEGRATION_CHECKOUT:-}"
 readonly STATE="${OXID_PORTAL_CONSUMER_STATE_DIR:-}"
@@ -22,6 +23,7 @@ readonly PRIVATE_LOG="$STATE/private.log"
 readonly PREPARED_RECEIPT="$STATE/prepared-receipt.json"
 readonly PREPARE_CHECKPOINT="$STATE/prepare-checkpoint.json"
 readonly PREPARE_LOCK="$STATE/prepare.lock"
+readonly PREPARED_RECEIPT_SCHEMA="oxid-portal-consumer-prepared-v2"
 readonly LEASE_DIR="${OXID_PORTAL_CONSUMER_LEASE_DIR:-${TMPDIR:-/tmp}/oxid-portal-consumer-lease}"
 readonly LEASE_RECORD="$LEASE_DIR/owner.json"
 readonly SESSION_ID="${OXID_PORTAL_CONSUMER_SESSION_ID:-$(printf '%s' "$STATE" | shasum -a 256 | awk '{print $1}')}"
@@ -39,16 +41,28 @@ fail() {
 }
 
 case "$OPERATION" in prerequisite|prepare|prepared-status|up|status|down|services-up|services-status|services-stop) ;; *) fail usage ;; esac
-for command_name in awk curl docker git jq nix openssl shasum timeout; do
+for command_name in awk curl docker git jq nix node openssl shasum timeout; do
   command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
 done
-[[ "$SOURCE" = /* && "$STATE" = /* ]] || fail paths
-[ -d "$SOURCE" ] && [ ! -L "$SOURCE" ] || fail source
-[ "$(git -C "$SOURCE" remote get-url origin 2>/dev/null)" = "$PORTAL_REMOTE" ] || fail source
-[ "$(git -C "$SOURCE" rev-parse HEAD 2>/dev/null)" = "$PORTAL_COMMIT" ] || fail source
-[ "$(git -C "$SOURCE" rev-parse 'HEAD^{tree}' 2>/dev/null)" = "$PORTAL_TREE" ] || fail source
-[ -z "$(git -C "$SOURCE" status --porcelain --untracked-files=all 2>/dev/null)" ] || fail source
-[ -f "$COMPOSE_FILE" ] || fail compose
+[[ "$STATE" = /* ]] || fail paths
+if [ "$OPERATION" = down ]; then
+  # Cleanup is authorized by the private lease and immutable ownership receipt.
+  # It must remain available when a later checkout intentionally changes pins.
+  COMPATIBILITY_MANIFEST_SHA256=""
+else
+  [[ "$SOURCE" = /* ]] || fail paths
+  [ -d "$SOURCE" ] && [ ! -L "$SOURCE" ] || fail source
+  [ "$(git -C "$SOURCE" remote get-url origin 2>/dev/null)" = "$PORTAL_REMOTE" ] || fail source
+  [ "$(git -C "$SOURCE" rev-parse HEAD 2>/dev/null)" = "$PORTAL_COMMIT" ] || fail source
+  [ "$(git -C "$SOURCE" rev-parse 'HEAD^{tree}' 2>/dev/null)" = "$PORTAL_TREE" ] || fail source
+  [ -z "$(git -C "$SOURCE" status --porcelain --untracked-files=all 2>/dev/null)" ] || fail source
+  [ -f "$COMPOSE_FILE" ] || fail compose
+  [ -f "$COMPATIBILITY_AUDIT" ] || fail compatibility-audit
+  compatibility_result="$(node "$COMPATIBILITY_AUDIT" --portal-source "$SOURCE")" || fail compatibility
+  COMPATIBILITY_MANIFEST_SHA256="$(jq -r '.manifestSha256 // empty' <<<"$compatibility_result")"
+  [[ "$COMPATIBILITY_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]] || fail compatibility
+fi
+readonly COMPATIBILITY_MANIFEST_SHA256
 
 umask 077
 
@@ -202,10 +216,12 @@ receipt_valid() {
   jq -e \
     --arg commit "$PORTAL_COMMIT" \
     --arg tree "$PORTAL_TREE" \
+    --arg compatibility "$COMPATIBILITY_MANIFEST_SHA256" \
     --arg compose "$(shasum -a 256 "$COMPOSE_FILE" | awk '{print $1}')" \
     --argjson ids "$(printf '%s\n' "$(project_ids)" | jq -Rsc 'split("\n") | map(select(length > 0)) | sort')" \
     '.schema == "oxid-portal-consumer-owner-v1"
       and .source == {commit:$commit,tree:$tree}
+      and .compatibilityManifestSha256 == $compatibility
       and .composeSha256 == $compose
       and .project == "oxid-portal-consumer"
       and .containerIds == $ids
@@ -218,10 +234,40 @@ starting_receipt_valid() {
   jq -e \
     --arg commit "$PORTAL_COMMIT" \
     --arg tree "$PORTAL_TREE" \
+    --arg compatibility "$COMPATIBILITY_MANIFEST_SHA256" \
     --arg compose "$(shasum -a 256 "$COMPOSE_FILE" | awk '{print $1}')" '
       .schema == "oxid-portal-consumer-starting-v1"
       and .source == {commit:$commit,tree:$tree}
+      and .compatibilityManifestSha256 == $compatibility
       and .composeSha256 == $compose
+      and .project == "oxid-portal-consumer"
+      and (.startedAtEpoch | type == "number" and . >= 0)
+    ' "$STARTING_RECEIPT" >/dev/null
+}
+
+cleanup_receipt_valid() {
+  private_regular_file "$RECEIPT" || return 1
+  jq -e \
+    --argjson ids "$(printf '%s\n' "$(project_ids)" | jq -Rsc 'split("\n") | map(select(length > 0)) | sort')" '
+      .schema == "oxid-portal-consumer-owner-v1"
+      and (.source.commit | type == "string" and test("^[0-9a-f]{40}$"))
+      and (.source.tree | type == "string" and test("^[0-9a-f]{40}$"))
+      and (.compatibilityManifestSha256 | type == "string" and test("^[0-9a-f]{64}$"))
+      and (.composeSha256 | type == "string" and test("^[0-9a-f]{64}$"))
+      and .project == "oxid-portal-consumer"
+      and .containerIds == $ids
+      and (.images | keys | sort == ["didManager","issuer","resolver"])
+    ' "$RECEIPT" >/dev/null
+}
+
+cleanup_starting_receipt_valid() {
+  private_regular_file "$STARTING_RECEIPT" || return 1
+  jq -e '
+      .schema == "oxid-portal-consumer-starting-v1"
+      and (.source.commit | type == "string" and test("^[0-9a-f]{40}$"))
+      and (.source.tree | type == "string" and test("^[0-9a-f]{40}$"))
+      and (.compatibilityManifestSha256 | type == "string" and test("^[0-9a-f]{64}$"))
+      and (.composeSha256 | type == "string" and test("^[0-9a-f]{64}$"))
       and .project == "oxid-portal-consumer"
       and (.startedAtEpoch | type == "number" and . >= 0)
     ' "$STARTING_RECEIPT" >/dev/null
@@ -270,10 +316,11 @@ prepared_receipt_metadata_valid() {
   private_regular_file "$prepared" || return 1
   host_system="$(nix eval --raw --impure --expr builtins.currentSystem 2>/dev/null)" || return 1
   jq -e \
-    --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" \
-    --arg status "$status" --arg host "$host_system" '
-      .schema == "oxid-portal-consumer-prepared-v1"
+    --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" --arg compatibility "$COMPATIBILITY_MANIFEST_SHA256" \
+    --arg status "$status" --arg host "$host_system" --arg schema "$PREPARED_RECEIPT_SCHEMA" '
+      .schema == $schema
       and .source == {commit:$commit,tree:$tree}
+      and .compatibilityManifestSha256 == $compatibility
       and .status == $status
       and .hostSystem == $host
       and (.startedAtEpoch | type == "number" and . >= 0)
@@ -303,6 +350,16 @@ prepared_receipt_valid() {
   oxid_docker_read image inspect "$SMOCKER_IMAGE" >/dev/null 2>&1 || return 1
 }
 
+discard_legacy_prepared_state() {
+  local prepared
+  for prepared in "$PREPARED_RECEIPT" "$PREPARE_CHECKPOINT"; do
+    if private_regular_file "$prepared" \
+      && jq -e '.schema == "oxid-portal-consumer-prepared-v1"' "$prepared" >/dev/null 2>&1; then
+      rm -f -- "$prepared"
+    fi
+  done
+}
+
 tailnet_mock_state_valid() {
   [ -n "$TAILNET_MOCK_STATE" ] || return 0
   [[ "$TAILNET_MOCK_STATE" = /* ]] || return 1
@@ -315,7 +372,7 @@ tailnet_mock_state_valid() {
 emit_status() {
   local state="$1"
   if [ "$state" = running ] && receipt_valid; then
-    jq -c '{schema:"oxid-portal-consumer-status-v1",state:"running",source:.source,images:.images}' "$RECEIPT"
+    jq -c '{schema:"oxid-portal-consumer-status-v1",state:"running",source:.source,compatibilityManifestSha256:.compatibilityManifestSha256,images:.images}' "$RECEIPT"
   else
     jq -cn --arg state "$state" --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" \
       '{schema:"oxid-portal-consumer-status-v1",state:$state,source:{commit:$commit,tree:$tree}}'
@@ -353,6 +410,7 @@ emit_prepared_status() {
       schema:"oxid-portal-consumer-prepare-status-v1",
       state:"prepared",
       source:.source,
+      compatibilityManifestSha256:.compatibilityManifestSha256,
       metrics:.metrics,
       images:(.images | with_entries(.value = {
         id:.value.id,
@@ -372,6 +430,7 @@ run_prepare() {
   trap 'exit 130' INT
   trap 'exit 143' TERM
   [ "$(count_lines "$(project_ids)")" -eq 0 ] || fail occupied-project
+  discard_legacy_prepared_state
   if prepared_receipt_valid "$PREPARED_RECEIPT" complete; then
     emit_prepared_status
     release_prepare_lock
@@ -400,7 +459,9 @@ run_prepare() {
     jq -cn \
       --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" \
       --arg host "$host_system" --argjson started "$started_at" \
-      '{schema:"oxid-portal-consumer-prepared-v1",status:"partial",source:{commit:$commit,tree:$tree},hostSystem:$host,startedAtEpoch:$started,images:{}}' \
+      --arg compatibility "$COMPATIBILITY_MANIFEST_SHA256" \
+      --arg schema "$PREPARED_RECEIPT_SCHEMA" \
+      '{schema:$schema,status:"partial",source:{commit:$commit,tree:$tree},compatibilityManifestSha256:$compatibility,hostSystem:$host,startedAtEpoch:$started,images:{}}' \
       >"$checkpoint_candidate"
     chmod 600 "$checkpoint_candidate"
     mv "$checkpoint_candidate" "$PREPARE_CHECKPOINT"
@@ -518,9 +579,10 @@ run_up() {
   receipt_candidate="$(mktemp "$STATE/.starting-receipt.XXXXXX")"
   jq -cn \
     --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" \
+    --arg compatibility "$COMPATIBILITY_MANIFEST_SHA256" \
     --arg compose "$(shasum -a 256 "$COMPOSE_FILE" | awk '{print $1}')" \
     --argjson started "$(date +%s)" \
-    '{schema:"oxid-portal-consumer-starting-v1",source:{commit:$commit,tree:$tree},composeSha256:$compose,project:"oxid-portal-consumer",startedAtEpoch:$started}' \
+    '{schema:"oxid-portal-consumer-starting-v1",source:{commit:$commit,tree:$tree},compatibilityManifestSha256:$compatibility,composeSha256:$compose,project:"oxid-portal-consumer",startedAtEpoch:$started}' \
     >"$receipt_candidate"
   chmod 600 "$receipt_candidate"
   mv "$receipt_candidate" "$STARTING_RECEIPT"
@@ -553,10 +615,11 @@ run_up() {
   receipt_candidate="$(mktemp "$STATE/.owner-receipt.XXXXXX")"
   jq -cn \
     --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" \
+    --arg compatibility "$COMPATIBILITY_MANIFEST_SHA256" \
     --arg compose "$(shasum -a 256 "$COMPOSE_FILE" | awk '{print $1}')" \
     --arg resolver "$resolver_image" --arg didManager "$did_manager_image" --arg issuer "$issuer_image" \
     --argjson ids "$(printf '%s\n' "$ids" | jq -Rsc 'split("\n") | map(select(length > 0)) | sort')" \
-    '{schema:"oxid-portal-consumer-owner-v1",source:{commit:$commit,tree:$tree},composeSha256:$compose,project:"oxid-portal-consumer",containerIds:$ids,images:{resolver:$resolver,didManager:$didManager,issuer:$issuer}}' \
+    '{schema:"oxid-portal-consumer-owner-v1",source:{commit:$commit,tree:$tree},compatibilityManifestSha256:$compatibility,composeSha256:$compose,project:"oxid-portal-consumer",containerIds:$ids,images:{resolver:$resolver,didManager:$didManager,issuer:$issuer}}' \
     >"$receipt_candidate"
   chmod 600 "$receipt_candidate"
   mv "$receipt_candidate" "$RECEIPT"
@@ -620,14 +683,14 @@ run_down() {
     [ "$lease_reused" -eq 0 ] || fail stale-lease
     [ ! -e "$RECEIPT" ] && [ ! -L "$RECEIPT" ] || fail stale-receipt
     if [ -e "$STARTING_RECEIPT" ] || [ -L "$STARTING_RECEIPT" ]; then
-      starting_receipt_valid || fail ownership
+      cleanup_starting_receipt_valid || fail ownership
     fi
     rm -f -- "$ENV_FILE" "$STARTING_RECEIPT" "$PRIVATE_LOG"
     emit_status stopped
     return
   fi
   lease_release_allowed=0
-  receipt_valid || starting_receipt_valid || fail ownership
+  cleanup_receipt_valid || cleanup_starting_receipt_valid || fail ownership
   [ -f "$ENV_FILE" ] && [ ! -L "$ENV_FILE" ] || fail private-state
   force_remove_owned_project || fail cleanup
   [ -z "$(project_ids)" ] || fail cleanup-incomplete

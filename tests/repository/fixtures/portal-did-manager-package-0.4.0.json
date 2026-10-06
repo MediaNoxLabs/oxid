@@ -1,0 +1,33 @@
+{
+  "name": "@input-output-hk/did-manager-bridge",
+  "version": "0.0.1",
+  "private": true,
+  "description": "One-shot TS subprocess bridge that performs the on-chain Midnight DID deploy (createDID + Jubjub VM registration) on behalf of the Rust did-manager. Reads a JSON BridgeRequest on stdin, prints a JSON DeployResult/DeriveAddressResult on stdout. Runs via tsx (no build step); the five @midnight-ntwrk/midnight-did* tarballs are populated into ./libs/ by the Nix packages.did-manager-bridge derivation. The wallet-sdk-* family is declared directly here (it does NOT resolve as a transitive of midnight-did-api — see the change design's spike findings).",
+  "license": "ISC",
+  "type": "module",
+  "engines": {
+    "node": ">=24",
+    "npm": ">=11"
+  },
+  "scripts": {
+    "start": "tsx bridge.ts",
+    "test": "node --import tsx --test bridge.test.ts"
+  },
+  "dependencies": {
+    "tsx": "^4.21.0",
+    "@midnight-ntwrk/midnight-did": "file:libs/midnight-ntwrk-midnight-did-0.4.0.tgz",
+    "@midnight-ntwrk/midnight-did-api": "file:libs/midnight-ntwrk-midnight-did-api-0.4.0.tgz",
+    "@midnight-ntwrk/midnight-did-contract": "file:libs/midnight-ntwrk-midnight-did-contract-0.4.0.tgz",
+    "@midnight-ntwrk/midnight-did-domain": "file:libs/midnight-ntwrk-midnight-did-domain-0.4.0.tgz",
+    "@midnight-ntwrk/midnight-did-jubjub-schnorr": "file:libs/midnight-ntwrk-midnight-did-jubjub-schnorr-0.4.0.tgz",
+    "@midnight-ntwrk/wallet-sdk-address-format": "3.1.0",
+    "@midnight-ntwrk/wallet-sdk-dust-wallet": "3.0.0",
+    "@midnight-ntwrk/wallet-sdk-facade": "3.0.0",
+    "@midnight-ntwrk/wallet-sdk-hd": "3.0.0",
+    "@midnight-ntwrk/wallet-sdk-shielded": "2.1.0",
+    "@midnight-ntwrk/wallet-sdk-unshielded-wallet": "2.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.29"
+  }
+}

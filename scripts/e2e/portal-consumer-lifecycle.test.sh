@@ -17,9 +17,9 @@ fail() {
 [ -f "$LIFECYCLE" ] || fail lifecycle
 [ -x "$SERVICES_LIFECYCLE" ] || fail services-lifecycle-wrapper
 for mapping in \
-  "midnight-did-resolver-image) image_id=\"\$(docker image inspect --format '{{.Id}}' midnight-did-resolver:0.1.0" \
-  "did-manager-image) image_id=\"\$(docker image inspect --format '{{.Id}}' laceid-did-manager:0.1.0" \
-  "issuer-image) image_id=\"\$(docker image inspect --format '{{.Id}}' laceid-issuer:0.1.0"; do
+  "midnight-did-resolver-image) image_id=\"\$(oxid_docker_read image inspect --format '{{.Id}}' midnight-did-resolver:0.1.0" \
+  "did-manager-image) image_id=\"\$(oxid_docker_read image inspect --format '{{.Id}}' laceid-did-manager:0.1.0" \
+  "issuer-image) image_id=\"\$(oxid_docker_read image inspect --format '{{.Id}}' laceid-issuer:0.1.0"; do
   grep -qF "$mapping" "$LIFECYCLE" || fail image-tag
 done
 if grep -qE '(midnight-did-resolver|laceid-did-manager|laceid-issuer):local' "$LIFECYCLE"; then
@@ -37,7 +37,7 @@ for tailnet_contract in \
 
 for preparation_contract in \
   'prerequisite|prepare|prepared-status|up|status|down|services-up|services-status|services-stop' \
-  'oxid-portal-consumer-prepared-v1' \
+  'oxid-portal-consumer-prepared-v2' \
   'prepare-checkpoint.json' \
   'prepared-receipt.json' \
   'midnight-did-resolver-image did-manager-image issuer-image' \
@@ -53,7 +53,7 @@ for services_contract in \
   'run_services_status()' \
   'run_services_stop()' \
   'compose up -d --wait --wait-timeout 600 smocker did-resolver did-manager issuer' \
-  'compose stop --timeout 30 smocker did-resolver did-manager issuer' \
+  'compose_bounded stop --timeout 30 smocker did-resolver did-manager issuer' \
   'oxid-portal-consumer-services-status-v1'; do
   grep -qF -- "$services_contract" "$LIFECYCLE" || fail services-lifecycle
 done
@@ -93,10 +93,17 @@ fake_bin="$temporary/bin"
 fake_source="$temporary/portal"
 lease="$temporary/lease"
 mkdir -p "$fake_bin" "$fake_source"
+mkdir -p "$fake_source/sidecar/did-manager-bridge"
+cp "$ROOT/tests/repository/fixtures/portal-did-manager-package-0.4.0.json" \
+  "$fake_source/sidecar/did-manager-bridge/package.json"
+cp "$ROOT/tests/repository/fixtures/portal-flake-lock-midnight-did-0.4.0.json" \
+  "$fake_source/flake.lock"
 
 cat >"$fake_bin/git" <<'FAKE_GIT'
 #!/usr/bin/env bash
 case "$*" in
+  *"show HEAD:sidecar/did-manager-bridge/package.json"*) printf '%s' "$(cat "$(dirname "$0")/../portal/sidecar/did-manager-bridge/package.json")" ;;
+  *"show HEAD:flake.lock"*) cat "$(dirname "$0")/../portal/flake.lock" ;;
   *"remote get-url origin"*) printf '%s\n' 'https://github.com/input-output-hk/lace-id-portal.git' ;;
   *"rev-parse HEAD^{tree}"*) printf '%s\n' '2d845d2293603dfd8adce5362c8a9941e6ba78a9' ;;
   *"rev-parse HEAD"*) printf '%s\n' '25499870f84d77173c46e4af3021311decfb840b' ;;
@@ -117,7 +124,16 @@ cat >"$fake_bin/nix" <<'FAKE_NIX'
 #!/usr/bin/env bash
 exit 1
 FAKE_NIX
-chmod +x "$fake_bin/git" "$fake_bin/docker" "$fake_bin/nix"
+cat >"$fake_bin/timeout" <<'FAKE_TIMEOUT'
+#!/usr/bin/env bash
+if [ "${1:-}" = -k ]; then
+  shift 3
+else
+  shift
+fi
+exec "$@"
+FAKE_TIMEOUT
+chmod +x "$fake_bin/git" "$fake_bin/docker" "$fake_bin/nix" "$fake_bin/timeout"
 
 session_a="$(printf 'a%.0s' {1..64})"
 session_b="$(printf 'b%.0s' {1..64})"
@@ -138,7 +154,10 @@ for _ in {1..100}; do
   [ -f "$lease/owner.json" ] && break
   sleep 0.02
 done
-[ -f "$lease/owner.json" ] || fail lease-first-admission
+if [ ! -f "$lease/owner.json" ]; then
+  cat "$temporary/winner.err" >&2
+  fail lease-first-admission
+fi
 
 set +e
 env PATH="$fake_bin:$PATH" \
