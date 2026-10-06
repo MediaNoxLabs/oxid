@@ -13,12 +13,14 @@ use oxid_identity_domain::{
 mod approval;
 mod credential_issuance;
 mod credential_presentation;
+mod deployment;
 mod lifecycle;
 mod self_issued_authentication;
 
 pub use approval::*;
 pub use credential_issuance::*;
 pub use credential_presentation::*;
+pub use deployment::*;
 pub use lifecycle::*;
 pub use self_issued_authentication::*;
 
