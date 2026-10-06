@@ -6,6 +6,10 @@
     let
       midnightDidPackages = inputs.midnight-did-toolchain.packages.${pkgs.stdenv.hostPlatform.system};
       midnightDidCompactArtifacts = pkgs.callPackage ./midnight-did-compact-artifacts.nix { };
+      midnightDidCallComposer = pkgs.callPackage ./midnight-did-call-composer.nix {
+        inherit midnightDidCompactArtifacts;
+        midnightDidNpmArtifacts = midnightDidPackages.npm-artifacts;
+      };
       presentationCompactArtifacts = pkgs.callPackage ./presentation-compact-artifacts.nix {
         compactMidnight = midnightDidPackages.compact-midnight;
         compactToolchain = midnightDidPackages.compact-toolchain;
@@ -42,6 +46,7 @@
         cargoTestFlags = [ "--workspace" ];
         OXID_PASSPORT_VAULT_ARTIFACTS_DIR = passportVaultCompactArtifacts;
         OXID_PASSPORT_VAULT_COMPOSER = "${passportVaultCallComposer}/bin/oxid-passport-vault-call-composer";
+        OXID_MIDNIGHT_DID_CALL_COMPOSER = "${midnightDidCallComposer}/bin/oxid-midnight-did-call-composer";
 
         nativeBuildInputs = [ pkgs.pkg-config ] ++ linuxNativeBuildInputs;
         buildInputs = [ pkgs.openssl ] ++ linuxBuildInputs;
@@ -158,6 +163,8 @@
 
         midnight-did-compact-artifacts = midnightDidCompactArtifacts;
 
+        midnight-did-call-composer = midnightDidCallComposer;
+
         passport-vault-compact-artifacts = passportVaultCompactArtifacts;
 
         passport-vault-call-composer = passportVaultCallComposer;
@@ -183,6 +190,7 @@
         });
         presentation-compact-artifacts = presentationCompactArtifacts;
         midnight-did-compact-artifacts = midnightDidCompactArtifacts;
+        midnight-did-call-composer = midnightDidCallComposer;
         passport-vault-compact-artifacts = passportVaultCompactArtifacts;
         passport-vault-call-composer = passportVaultCallComposer;
         brand-packs =
