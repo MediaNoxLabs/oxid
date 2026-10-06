@@ -110,7 +110,11 @@ the expiring Nix `TMPDIR`. The smoke rejects missing or misdirected runtime
 state and an incompatible Pi version with actionable diagnostics before native
 dispatch. Its package check is structural: the independently tested
 `scripts/factory/verify-pi-subagents-package.mjs` checks the exact manifest,
-compiled artifacts, schema fields, and headless-attention symbols. The separate
+compiled artifacts, schema fields, and headless-attention symbols. Before child
+launch it also derives every `@earendil-works/pi-*` peer from that installed
+manifest and requires the corresponding project setting to retain the exact
+Nix-pinned Pi version; a missing, added, floating, or incompatible peer fails
+closed. The separate
 bounded issue-#863 print-mode run supplies behavioral evidence; the structural
 smoke does not claim to simulate a live supervisor exchange.
 

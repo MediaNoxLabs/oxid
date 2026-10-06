@@ -105,7 +105,8 @@ if (!subagents) throw new Error(`project Pi settings do not pin ${expectedName}`
 process.stdout.write(subagents.packageRoot);
 ')"
 
-node scripts/factory/verify-pi-subagents-package.mjs "$subagent_package_root"
+node scripts/factory/verify-pi-subagents-package.mjs \
+  "$subagent_package_root" "$repo_root/.pi/settings.json" "$pi_version"
 
 agent_hashes_before="$(git hash-object .pi/agents/*.agent.md)"
 if timeout -k 5s 60s node scripts/factory/smoke-pi-child.mjs; then
