@@ -6442,9 +6442,10 @@ fn account_placeholder_recovery_required(
             WalletAccountError::Port(WalletAccountPortError::ProtectionNotInitialized),
         ) => Some(true),
         ("Locked", WalletAccountError::Port(WalletAccountPortError::ProtectionLocked))
-        | ("Uninitialized", WalletAccountError::Port(WalletAccountPortError::NotFound)) => {
-            Some(false)
-        }
+        | (
+            "Uninitialized" | "Unlocked",
+            WalletAccountError::Port(WalletAccountPortError::NotFound),
+        ) => Some(false),
         _ => None,
     }
 }
@@ -12018,6 +12019,13 @@ mod tests {
                 &WalletAccountError::Port(WalletAccountPortError::ProtectionNotInitialized),
             ),
             Some(true)
+        );
+        assert_eq!(
+            account_placeholder_recovery_required(
+                "Unlocked",
+                &WalletAccountError::Port(WalletAccountPortError::NotFound),
+            ),
+            Some(false)
         );
         assert_eq!(
             account_placeholder_recovery_required(
