@@ -8,6 +8,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -26,10 +27,14 @@ export const BUNDLE_FILES = Object.freeze([
   "scripts/lib/delivery-target.mjs",
   ".github/contribution-policy.json",
 ]);
+const MAX_PUBLISHED_BUNDLES = 64;
+const MAX_STAGING_ATTEMPTS = 16;
+const MAX_LOCK_QUARANTINES = 16;
 
 function sourceBundleIdentity(repoRoot, sourceDir) {
   try {
     const hash = createHash("sha256");
+    hash.update("oxid:git-hook-bundle:v2\0");
     for (const name of HOOK_NAMES) {
       hash.update(`hook\0${name}\0`);
       hash.update(readFileSync(path.join(sourceDir, name)));
@@ -129,7 +134,8 @@ function dispatcherIsBound(contents) {
 }
 
 function isManagedSelectionPath(layout, selected) {
-  return path.dirname(selected) === path.resolve(layout.bundlesDir)
+  return typeof selected === "string"
+    && path.dirname(selected) === path.resolve(layout.bundlesDir)
     && /^[0-9a-f]{64}$/u.test(path.basename(selected));
 }
 
@@ -162,7 +168,9 @@ function inspectBundleDirectory(layout, installedDir, { compareSource = true } =
   return {
     ok: !dispatchers.some((dispatcher) => dispatcher.stale) && !bundle.some((entry) => entry.stale),
     structurallyValid: true,
-    reason: "hook bundle content differs from this checkout",
+    reason: dispatchers.some((dispatcher) => dispatcher.stale) || bundle.some((entry) => entry.stale)
+      ? "hook bundle content differs from this checkout"
+      : null,
     dispatchers,
     bundle,
     bundleDir,
@@ -185,6 +193,30 @@ function quarantine(candidate, suffix) {
   return quarantined;
 }
 
+function countOwnedEntries(directory, pattern) {
+  try {
+    return readdirSync(directory).filter((entry) => pattern.test(entry)).length;
+  } catch (error) {
+    if (error.code === "ENOENT") return 0;
+    throw error;
+  }
+}
+
+function requireStoreCapacity(layout) {
+  const published = countOwnedEntries(layout.bundlesDir, /^[0-9a-f]{64}$/u);
+  const staging = countOwnedEntries(layout.stagingDir, /^[0-9a-f]{64}\.[0-9]+\.[0-9a-f-]+$/u);
+  const quarantines = countOwnedEntries(layout.hookRoot, /^selection\.lock\.stale\.[0-9]+\.[0-9]+$/u);
+  if (published >= MAX_PUBLISHED_BUNDLES && !isRealDirectory(layout.installedDir)) {
+    throw new Error(`Git hook bundle store reached its ${MAX_PUBLISHED_BUNDLES}-bundle safety bound`);
+  }
+  if (staging >= MAX_STAGING_ATTEMPTS) {
+    throw new Error(`Git hook staging store reached its ${MAX_STAGING_ATTEMPTS}-attempt safety bound`);
+  }
+  if (quarantines >= MAX_LOCK_QUARANTINES) {
+    throw new Error(`Git hook lock quarantine reached its ${MAX_LOCK_QUARANTINES}-entry safety bound`);
+  }
+}
+
 function acquireSelectionLock(layout, { timeoutMillis = 5_000 } = {}) {
   mkdirSync(layout.hookRoot, { recursive: true, mode: 0o700 });
   const token = randomUUID();
@@ -200,11 +232,14 @@ function acquireSelectionLock(layout, { timeoutMillis = 5_000 } = {}) {
     try {
       renameSync(candidate, layout.lockDir);
       return { token, release() {
-        const owner = JSON.parse(readFileSync(path.join(layout.lockDir, "owner.json"), "utf8"));
-        if (owner.token !== token || owner.pid !== process.pid) {
-          throw new Error("refusing to release a Git hook selection lock owned by another process");
+        try {
+          const owner = JSON.parse(readFileSync(path.join(layout.lockDir, "owner.json"), "utf8"));
+          if (owner.token !== token || owner.pid !== process.pid) return false;
+          rmSync(layout.lockDir, { recursive: true });
+          return true;
+        } catch {
+          return false;
         }
-        rmSync(layout.lockDir, { recursive: true });
       } };
     } catch (error) {
       rmSync(candidate, { recursive: true, force: true });
@@ -257,7 +292,7 @@ function publishBundle(layout) {
     if (isRealDirectory(layout.installedDir)) {
       const existing = inspectBundleDirectory(layout, layout.installedDir);
       if (existing.ok) return;
-      quarantine(layout.installedDir, "corrupt");
+      throw new Error("published Git hook bundle is corrupt; refusing to replace an actively selected immutable directory");
     }
     try {
       renameSync(staging, layout.installedDir);
@@ -288,27 +323,27 @@ export function inspectManagedHookBundle(repository) {
   }
   const inspected = inspectBundleDirectory(layout, selected);
   if (!inspected.structurallyValid) {
-    return { ok: false, managed: false, configured, ...inspected, ...layout };
+    return { ...layout, ...inspected, ok: false, managed: false, configured };
   }
   if (!inspected.ok || selected !== path.resolve(layout.installedDir)) {
     return {
+      ...layout,
+      ...inspected,
       ok: false,
       managed: true,
       stale: true,
       configured,
-      ...inspected,
       reason: "canonical repository-managed hook bundle is stale; run the explicit bootstrap repair",
-      ...layout,
     };
   }
   return {
+    ...layout,
+    ...inspected,
     ok: true,
     managed: true,
     stale: false,
     configured,
-    ...inspected,
     preMergeCommitRequired: false,
-    ...layout,
   };
 }
 
@@ -358,12 +393,13 @@ export function applyGitHooks(repository, { execute = false } = {}) {
   const existing = config(repository, "core.hooksPath");
   const existingPath = configuredHookPath(layout, existing);
   const legacyPath = path.resolve(layout.hookRoot);
-  if (existing && existingPath !== legacyPath && !isManagedSelectionPath(layout, existingPath)) {
+  if (existing && (!existingPath || (existingPath !== legacyPath && !isManagedSelectionPath(layout, existingPath)))) {
     throw new Error(`core.hooksPath already points to ${existing}; refusing to replace another hook manager`);
   }
   const lock = acquireSelectionLock(layout);
   let checked;
   try {
+    requireStoreCapacity(layout);
     publishBundle(layout);
     git(repository, ["config", "--local", "core.hooksPath", layout.installedDir]);
     git(repository, ["config", "--local", "commit.gpgSign", "true"]);

@@ -107,8 +107,10 @@ test("canonical factory bundle is recognized without inventing a pre-merge dispa
   assert.equal(staleResult.ok, false);
   assert.equal(staleResult.stale, true);
   assert.match(staleResult.reason, /explicit bootstrap repair/u);
-  applyGitHooks(repository, { execute: true });
-  assert.equal(inspectManagedHookBundle(repository).ok, true);
+  assert.throws(
+    () => applyGitHooks(repository, { execute: true }),
+    /refusing to replace an actively selected immutable directory/u,
+  );
 });
 
 test("consumer suppresses only pinned false warnings while canonical hooks remain valid", async (t) => {
@@ -182,7 +184,7 @@ function runHookInstaller(repository) {
     const child = spawn(
       process.execPath,
       [path.join(repoRoot, "scripts/git-hooks/configure.mjs"), "apply", "--execute", "--json"],
-      { cwd: repository, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      { cwd: repository, stdio: ["ignore", "pipe", "pipe"] },
     );
     let stdout = "";
     let stderr = "";
@@ -207,13 +209,14 @@ test("concurrent installers publish and select one complete content-addressed bu
 test("an interrupted staging directory and dead selection owner cannot become active", async (t) => {
   const repository = await fixture(t);
   const layout = hookLayout(repository);
-  const interrupted = path.join(layout.stagingDir, `${layout.identity}.999999.interrupted`);
+  const deadPid = 2_147_483_647;
+  const interrupted = path.join(layout.stagingDir, `${layout.identity}.${deadPid}.interrupted`);
   await mkdir(interrupted, { recursive: true });
   await writeFile(path.join(interrupted, "pre-commit"), "partial\n");
   await mkdir(layout.lockDir, { recursive: true });
   await writeFile(path.join(layout.lockDir, "owner.json"), `${JSON.stringify({
     schemaVersion: 1,
-    pid: 999999,
+    pid: deadPid,
     token: "interrupted",
     startedAt: "2000-01-01T00:00:00.000Z",
   })}\n`);
@@ -223,6 +226,23 @@ test("an interrupted staging directory and dead selection owner cannot become ac
   assert.equal(git(repository, ["config", "--local", "core.hooksPath"]), installed.installedDir);
   assert.equal((await readFile(path.join(interrupted, "pre-commit"), "utf8")), "partial\n");
   assert.ok((await readdir(layout.hookRoot)).some((name) => name.startsWith("selection.lock.stale.")));
+});
+
+test("owned interrupted state is bounded without deleting unrelated paths", async (t) => {
+  const repository = await fixture(t);
+  const layout = hookLayout(repository);
+  await mkdir(layout.stagingDir, { recursive: true });
+  for (let index = 0; index < 16; index += 1) {
+    await mkdir(path.join(layout.stagingDir, `${layout.identity}.${index + 10}.00000000-0000-4000-8000-${String(index).padStart(12, "0")}`));
+  }
+  const unrelated = path.join(layout.stagingDir, "operator-notes");
+  await mkdir(unrelated);
+
+  assert.throws(
+    () => applyGitHooks(repository, { execute: true }),
+    /staging store reached its 16-attempt safety bound/u,
+  );
+  assert.equal((await stat(unrelated)).isDirectory(), true);
 });
 
 function runGitHubWebFlowKeyCheck(keyring) {
