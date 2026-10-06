@@ -9,13 +9,15 @@ use oxid_identity_application::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
+mod call;
+#[cfg(not(target_arch = "wasm32"))]
 mod compact_artifacts;
 #[cfg(not(target_arch = "wasm32"))]
 mod deployment;
 mod lifecycle;
-mod offchain;
 #[cfg(not(target_arch = "wasm32"))]
 mod maintenance;
+mod offchain;
 
 #[cfg(all(
     feature = "tailnet-test-did-publication",
@@ -23,6 +25,11 @@ mod maintenance;
 ))]
 mod publication;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use call::{
+    MidnightDidCallComposerConfigError, MidnightDidCallContext, MidnightDidCallOperation,
+    NativeMidnightDidCallComposer, NativeMidnightDidCallPlan, NativeMidnightDidCallRequest,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use compact_artifacts::{
     MidnightDidBootstrapCircuit, MidnightDidCompactArtifactError, MidnightDidCompactArtifacts,
@@ -33,14 +40,14 @@ pub use deployment::{
     NativeMidnightDidDeploymentRequest,
 };
 pub use lifecycle::StandaloneDidLifecycle;
-pub use offchain::{
-    OFFCHAIN_STATE_ENCODING, OffchainDidError, OffchainDidState, OffchainService,
-    OffchainVerificationMethod, create_long_form_offchain_did, resolve_long_form_offchain_did,
-};
 #[cfg(not(target_arch = "wasm32"))]
 pub use maintenance::{
     NativeMidnightDidMaintenanceComposer, NativeMidnightDidMaintenancePlan,
     NativeMidnightDidMaintenanceRequest,
+};
+pub use offchain::{
+    OFFCHAIN_STATE_ENCODING, OffchainDidError, OffchainDidState, OffchainService,
+    OffchainVerificationMethod, create_long_form_offchain_did, resolve_long_form_offchain_did,
 };
 use oxid_identity_domain::{
     DID_CONTEXT, DidDocument, DidDocumentMetadata, DidDocumentParts, DidResolution,

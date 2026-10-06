@@ -16,9 +16,6 @@ const COMPACT_RUNTIME_URL = import.meta.resolve("@midnight-ntwrk/compact-runtime
 const HEX_32 = /^[0-9a-f]{64}$/u;
 const NETWORK_ID = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const METHOD_ID = /^#[A-Za-z0-9._~-]{1,64}$/u;
-const BASE64URL_32 = /^[A-Za-z0-9_-]{43}$/u;
-const DECIMAL = /^(?:0|[1-9][0-9]*)$/u;
-const MAX_FIELD = (1n << 256n) - 1n;
 const MAX_CONTRACT_STATE_HEX = 32 * 1024 * 1024;
 const MAX_ZSWAP_STATE_HEX = 4 * 1024 * 1024;
 const MAX_LEDGER_PARAMETERS_HEX = 1024 * 1024;
@@ -65,11 +62,10 @@ function boundedHex(value, maximum, nullable = false) {
   return value;
 }
 
-function decimal(value) {
-  if (typeof value !== "string" || !DECIMAL.test(value)) throw invalidRequest();
-  const parsed = BigInt(value);
-  if (parsed > MAX_FIELD) throw invalidRequest();
-  return parsed;
+function littleEndianBigInt(value) {
+  const hex = hex32(value, true);
+  const bigEndian = Buffer.from(hex, "hex").reverse().toString("hex");
+  return BigInt(`0x${bigEndian}`);
 }
 
 function parseOperation(value) {
@@ -78,21 +74,24 @@ function parseOperation(value) {
   if (!METHOD_ID.test(operation.methodId)) throw invalidRequest();
   if (operation.kind === "add_authentication_method") {
     const key = object(operation.publicKey);
-    exact(key, ["x"]);
-    if (!BASE64URL_32.test(key.x)) throw invalidRequest();
+    exact(key, ["xHex"]);
+    const x = Buffer.from(hex32(key.xHex), "hex").toString("base64url");
     return {
       kind: operation.kind,
       circuitId: "setVerificationMethod",
-      args: [{ id: operation.methodId, typ: 1, publicKeyJwk: { kty: 3, crv: 0, x: key.x, y: "" } }, 1],
+      args: [{ id: operation.methodId, typ: 1, publicKeyJwk: { kty: 3, crv: 0, x, y: "" } }, 1],
     };
   }
   if (operation.kind === "add_assertion_method") {
     const key = object(operation.publicKey);
-    exact(key, ["x", "y"]);
+    exact(key, ["xHex", "yHex"]);
     return {
       kind: operation.kind,
       circuitId: "setSchnorrJubjubVerificationMethod",
-      args: [{ id: operation.methodId, publicKey: { x: decimal(key.x), y: decimal(key.y) } }, 1],
+      args: [{
+        id: operation.methodId,
+        publicKey: { x: littleEndianBigInt(key.xHex), y: littleEndianBigInt(key.yHex) },
+      }, 1],
     };
   }
   if (operation.publicKey !== null) throw invalidRequest();
