@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
   lstatSync,
@@ -9,6 +10,7 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -24,6 +26,25 @@ export const BUNDLE_FILES = Object.freeze([
   "scripts/lib/delivery-target.mjs",
   ".github/contribution-policy.json",
 ]);
+
+function sourceBundleIdentity(repoRoot, sourceDir) {
+  try {
+    const hash = createHash("sha256");
+    for (const name of HOOK_NAMES) {
+      hash.update(`hook\0${name}\0`);
+      hash.update(readFileSync(path.join(sourceDir, name)));
+      hash.update("\0");
+    }
+    for (const relative of BUNDLE_FILES) {
+      hash.update(`policy\0${relative}\0`);
+      hash.update(readFileSync(path.join(repoRoot, relative)));
+      hash.update("\0");
+    }
+    return hash.digest("hex");
+  } catch {
+    return null;
+  }
+}
 
 function git(repository, args) {
   return execFileSync("git", args, {
@@ -44,12 +65,22 @@ function config(repository, key) {
 export function hookLayout(repository) {
   const repoRoot = git(repository, ["rev-parse", "--show-toplevel"]);
   const commonDir = git(repository, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  const sourceDir = path.join(repoRoot, ".githooks");
+  const hookRoot = path.join(commonDir, "oxid-factory", "hooks");
+  const identity = sourceBundleIdentity(repoRoot, sourceDir);
+  const bundlesDir = path.join(hookRoot, "bundles");
+  const installedDir = path.join(bundlesDir, identity ?? "unavailable");
   return {
     repoRoot,
     commonDir,
-    sourceDir: path.join(repoRoot, ".githooks"),
-    installedDir: path.join(commonDir, "oxid-factory", "hooks"),
-    bundleDir: path.join(commonDir, "oxid-factory", "hooks", "policy-root"),
+    sourceDir,
+    hookRoot,
+    bundlesDir,
+    stagingDir: path.join(hookRoot, "staging"),
+    lockDir: path.join(hookRoot, "selection.lock"),
+    identity,
+    installedDir,
+    bundleDir: path.join(installedDir, "policy-root"),
   };
 }
 
@@ -97,6 +128,149 @@ function dispatcherIsBound(contents) {
     && /exec node "\$hook_dir\/policy-root\/scripts\/git-hooks\/local-policy\.mjs"/u.test(contents);
 }
 
+function isManagedSelectionPath(layout, selected) {
+  return path.dirname(selected) === path.resolve(layout.bundlesDir)
+    && /^[0-9a-f]{64}$/u.test(path.basename(selected));
+}
+
+function inspectBundleDirectory(layout, installedDir, { compareSource = true } = {}) {
+  const bundleDir = path.join(installedDir, "policy-root");
+  if (!isRealDirectory(installedDir) || !isRealDirectory(bundleDir)) {
+    return { ok: false, structurallyValid: false, reason: "hook bundle directory or policy root is missing or symlinked" };
+  }
+  const dispatchers = HOOK_NAMES.map((name) => {
+    const installed = path.join(installedDir, name);
+    if (!isExecutableRegularFile(installed)) return { name, valid: false, reason: "missing, non-executable, or symlinked dispatcher" };
+    const contents = readFileSync(installed, "utf8");
+    if (!dispatcherIsBound(contents)) return { name, valid: false, reason: "dispatcher is not bound to policy-root" };
+    return {
+      name,
+      valid: true,
+      stale: compareSource && !hasSameContents(path.join(layout.sourceDir, name), installed),
+    };
+  });
+  const invalid = dispatchers.find((dispatcher) => !dispatcher.valid);
+  if (invalid) return { ok: false, structurallyValid: false, reason: `${invalid.name} is ${invalid.reason}`, dispatchers };
+  const invalidBundle = BUNDLE_FILES.find((relative) => !isRegularFile(path.join(bundleDir, relative)));
+  if (invalidBundle) {
+    return { ok: false, structurallyValid: false, reason: `${invalidBundle} is missing, non-regular, or symlinked`, dispatchers };
+  }
+  const bundle = BUNDLE_FILES.map((relative) => ({
+    relative,
+    stale: compareSource && !hasSameContents(path.join(layout.repoRoot, relative), path.join(bundleDir, relative)),
+  }));
+  return {
+    ok: !dispatchers.some((dispatcher) => dispatcher.stale) && !bundle.some((entry) => entry.stale),
+    structurallyValid: true,
+    reason: "hook bundle content differs from this checkout",
+    dispatchers,
+    bundle,
+    bundleDir,
+  };
+}
+
+function processIsLive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code !== "ESRCH";
+  }
+}
+
+function quarantine(candidate, suffix) {
+  const quarantined = `${candidate}.${suffix}.${Date.now()}.${process.pid}`;
+  renameSync(candidate, quarantined);
+  return quarantined;
+}
+
+function acquireSelectionLock(layout, { timeoutMillis = 5_000 } = {}) {
+  mkdirSync(layout.hookRoot, { recursive: true, mode: 0o700 });
+  const token = randomUUID();
+  const started = Date.now();
+  while (true) {
+    const candidate = `${layout.lockDir}.candidate.${process.pid}.${randomUUID()}`;
+    mkdirSync(candidate, { mode: 0o700 });
+    writeFileSync(
+      path.join(candidate, "owner.json"),
+      `${JSON.stringify({ schemaVersion: 1, pid: process.pid, token, startedAt: new Date().toISOString() })}\n`,
+      { flag: "wx", mode: 0o600 },
+    );
+    try {
+      renameSync(candidate, layout.lockDir);
+      return { token, release() {
+        const owner = JSON.parse(readFileSync(path.join(layout.lockDir, "owner.json"), "utf8"));
+        if (owner.token !== token || owner.pid !== process.pid) {
+          throw new Error("refusing to release a Git hook selection lock owned by another process");
+        }
+        rmSync(layout.lockDir, { recursive: true });
+      } };
+    } catch (error) {
+      rmSync(candidate, { recursive: true, force: true });
+      if (error.code !== "EEXIST" && error.code !== "ENOTEMPTY") throw error;
+      let owner;
+      try {
+        owner = JSON.parse(readFileSync(path.join(layout.lockDir, "owner.json"), "utf8"));
+      } catch {
+        owner = null;
+      }
+      if (!owner || !processIsLive(owner.pid)) {
+        try {
+          quarantine(layout.lockDir, "stale");
+          continue;
+        } catch (quarantineError) {
+          if (quarantineError.code === "ENOENT") continue;
+          throw quarantineError;
+        }
+      }
+      if (Date.now() - started >= timeoutMillis) {
+        throw new Error(`Git hook selection lock is held by live process ${owner.pid}`);
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
+}
+
+function publishBundle(layout) {
+  mkdirSync(layout.bundlesDir, { recursive: true, mode: 0o700 });
+  mkdirSync(layout.stagingDir, { recursive: true, mode: 0o700 });
+  const staging = path.join(layout.stagingDir, `${layout.identity}.${process.pid}.${randomUUID()}`);
+  mkdirSync(staging, { mode: 0o700 });
+  try {
+    for (const name of HOOK_NAMES) {
+      const destination = path.join(staging, name);
+      writeFileSync(destination, readFileSync(path.join(layout.sourceDir, name)), { flag: "wx", mode: 0o700 });
+      chmodSync(destination, 0o700);
+    }
+    for (const relative of BUNDLE_FILES) {
+      const destination = path.join(staging, "policy-root", relative);
+      mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+      writeFileSync(destination, readFileSync(path.join(layout.repoRoot, relative)), {
+        flag: "wx",
+        mode: relative.endsWith(".mjs") ? 0o700 : 0o600,
+      });
+      chmodSync(destination, relative.endsWith(".mjs") ? 0o700 : 0o600);
+    }
+    const staged = inspectBundleDirectory(layout, staging);
+    if (!staged.ok) throw new Error(`staged Git hook bundle is invalid: ${staged.reason}`);
+    if (isRealDirectory(layout.installedDir)) {
+      const existing = inspectBundleDirectory(layout, layout.installedDir);
+      if (existing.ok) return;
+      quarantine(layout.installedDir, "corrupt");
+    }
+    try {
+      renameSync(staging, layout.installedDir);
+    } catch (error) {
+      if (error.code !== "EEXIST" && error.code !== "ENOTEMPTY") throw error;
+      const winner = inspectBundleDirectory(layout, layout.installedDir);
+      if (!winner.ok) throw new Error(`concurrently published Git hook bundle is invalid: ${winner.reason}`);
+    }
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+}
+
 /**
  * Inspect only the repository-owned Git-common bundle. A configured path that
  * merely has a similar name, is symlinked, or has an absent dispatcher is not
@@ -105,38 +279,25 @@ function dispatcherIsBound(contents) {
 export function inspectManagedHookBundle(repository) {
   const layout = hookLayout(repository);
   const configured = config(repository, "core.hooksPath");
-  if (configuredHookPath(layout, configured) !== path.resolve(layout.installedDir)) {
+  if (!layout.identity) {
+    return { ok: false, managed: false, configured, reason: "repository hook policy sources are unavailable", ...layout };
+  }
+  const selected = configuredHookPath(layout, configured);
+  if (!selected || !isManagedSelectionPath(layout, selected)) {
     return { ok: false, managed: false, configured, reason: "core.hooksPath is not the canonical repository-managed hook directory", ...layout };
   }
-  if (!isRealDirectory(layout.installedDir) || !isRealDirectory(layout.bundleDir)) {
-    return { ok: false, managed: false, configured, reason: "canonical hook directory or policy root is missing or symlinked", ...layout };
+  const inspected = inspectBundleDirectory(layout, selected);
+  if (!inspected.structurallyValid) {
+    return { ok: false, managed: false, configured, ...inspected, ...layout };
   }
-  const dispatchers = HOOK_NAMES.map((name) => {
-    const installed = path.join(layout.installedDir, name);
-    if (!isExecutableRegularFile(installed)) return { name, valid: false, reason: "missing, non-executable, or symlinked dispatcher" };
-    const contents = readFileSync(installed, "utf8");
-    if (!dispatcherIsBound(contents)) return { name, valid: false, reason: "dispatcher is not bound to policy-root" };
-    return { name, valid: true, stale: !hasSameContents(path.join(layout.sourceDir, name), installed) };
-  });
-  const invalid = dispatchers.find((dispatcher) => !dispatcher.valid);
-  if (invalid) return { ok: false, managed: false, configured, reason: `${invalid.name} is ${invalid.reason}`, dispatchers, ...layout };
-  const invalidBundle = BUNDLE_FILES.find((relative) => !isRegularFile(path.join(layout.bundleDir, relative)));
-  if (invalidBundle) {
-    return { ok: false, managed: false, configured, reason: `${invalidBundle} is missing, non-regular, or symlinked`, dispatchers, ...layout };
-  }
-  const bundle = BUNDLE_FILES.map((relative) => ({
-    relative,
-    stale: !hasSameContents(path.join(layout.repoRoot, relative), path.join(layout.bundleDir, relative)),
-  }));
-  if (dispatchers.some((dispatcher) => dispatcher.stale) || bundle.some((entry) => entry.stale)) {
+  if (!inspected.ok || selected !== path.resolve(layout.installedDir)) {
     return {
       ok: false,
       managed: true,
       stale: true,
       configured,
+      ...inspected,
       reason: "canonical repository-managed hook bundle is stale; run the explicit bootstrap repair",
-      dispatchers,
-      bundle,
       ...layout,
     };
   }
@@ -145,8 +306,7 @@ export function inspectManagedHookBundle(repository) {
     managed: true,
     stale: false,
     configured,
-    dispatchers,
-    bundle,
+    ...inspected,
     preMergeCommitRequired: false,
     ...layout,
   };
@@ -192,34 +352,27 @@ export function checkGitHooks(repository) {
 export function applyGitHooks(repository, { execute = false } = {}) {
   if (!execute) throw new Error("Refusing to modify repository-local Git configuration without --execute");
   const layout = hookLayout(repository);
+  if (!layout.identity) throw new Error("repository hook policy sources are unavailable");
   const identityErrors = requiredIdentity(repository);
   if (identityErrors.length) throw new Error(identityErrors.join("; "));
   const existing = config(repository, "core.hooksPath");
-  if (existing && configuredHookPath(layout, existing) !== path.resolve(layout.installedDir)) {
+  const existingPath = configuredHookPath(layout, existing);
+  const legacyPath = path.resolve(layout.hookRoot);
+  if (existing && existingPath !== legacyPath && !isManagedSelectionPath(layout, existingPath)) {
     throw new Error(`core.hooksPath already points to ${existing}; refusing to replace another hook manager`);
   }
-  mkdirSync(layout.installedDir, { recursive: true, mode: 0o700 });
-  for (const name of HOOK_NAMES) {
-    const contents = readFileSync(path.join(layout.sourceDir, name));
-    const temporary = path.join(layout.installedDir, `.${name}.${process.pid}.tmp`);
-    writeFileSync(temporary, contents, { flag: "wx", mode: 0o700 });
-    renameSync(temporary, path.join(layout.installedDir, name));
-    chmodSync(path.join(layout.installedDir, name), 0o700);
+  const lock = acquireSelectionLock(layout);
+  let checked;
+  try {
+    publishBundle(layout);
+    git(repository, ["config", "--local", "core.hooksPath", layout.installedDir]);
+    git(repository, ["config", "--local", "commit.gpgSign", "true"]);
+    git(repository, ["config", "--local", "gpg.format", "openpgp"]);
+    checked = checkGitHooks(repository);
+    if (!checked.ok) throw new Error(checked.errors.join("; "));
+  } finally {
+    lock.release();
   }
-  for (const relative of BUNDLE_FILES) {
-    const destination = path.join(layout.bundleDir, relative);
-    mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
-    const contents = readFileSync(path.join(layout.repoRoot, relative));
-    const temporary = `${destination}.${process.pid}.tmp`;
-    writeFileSync(temporary, contents, { flag: "wx", mode: 0o600 });
-    renameSync(temporary, destination);
-    chmodSync(destination, relative.endsWith(".mjs") ? 0o700 : 0o600);
-  }
-  git(repository, ["config", "--local", "core.hooksPath", layout.installedDir]);
-  git(repository, ["config", "--local", "commit.gpgSign", "true"]);
-  git(repository, ["config", "--local", "gpg.format", "openpgp"]);
-  const checked = checkGitHooks(repository);
-  if (!checked.ok) throw new Error(checked.errors.join("; "));
   return checked;
 }
 
@@ -229,8 +382,9 @@ function usage() {
     "  node scripts/git-hooks/configure.mjs check [--json]",
     "  node scripts/git-hooks/configure.mjs apply --execute [--json]",
     "",
-    "Installation writes only repository-local Git configuration and",
-    "<git-common-dir>/oxid-factory/hooks. It never modifies identity, keys,",
+    "Installation atomically selects one content-addressed bundle through",
+    "repository-local Git configuration and <git-common-dir>/oxid-factory/hooks.",
+    "It never modifies identity, keys,",
     "credentials, global Git configuration, or GitHub state.",
   ].join("\n");
 }
