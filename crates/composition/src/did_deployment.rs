@@ -7,17 +7,21 @@
 //! fail-closed until the post-deploy verification methods and relationships are
 //! independently resolvable.
 
-use std::{error::Error, fmt, sync::Arc};
+use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 
 use oxid_adapter_did_midnight::{
-    MidnightDidBootstrapCircuit, MidnightDidCompactArtifacts, NativeMidnightDidDeploymentComposer,
-    NativeMidnightDidDeploymentRequest, NativeMidnightDidMaintenanceComposer,
-    NativeMidnightDidMaintenanceRequest,
+    MidnightDidBootstrapCall, MidnightDidBootstrapCircuit, MidnightDidCallContext,
+    MidnightDidCompactArtifacts, NativeMidnightDidCallComposer,
+    NativeMidnightDidDeploymentComposer, NativeMidnightDidDeploymentRequest,
+    NativeMidnightDidMaintenanceComposer, NativeMidnightDidMaintenanceRequest,
 };
 use oxid_adapter_midnight::{
     MidnightContractCallFundingPort, MidnightContractCallFundingRequest,
     MidnightContractCallSubmissionPort, MidnightContractCallSubmissionRequest,
-    MidnightContractCallSubmissionState,
+    MidnightContractCallSubmissionState, MidnightPublicCallContextSource, MidnightStandaloneConfig,
+};
+use oxid_adapter_passport_vault::{
+    NodeAnchoredPassportVaultStateSource, PassportVaultCallChainContextSource,
 };
 use oxid_foundation::UnixTimestampMillis;
 use oxid_identity_application::{
@@ -29,13 +33,66 @@ use oxid_identity_application::{
 use oxid_identity_domain::{
     DidResolutionSource, IdentityProfileId, JwkCurve, MidnightNetwork, VerificationRelationship,
 };
+use oxid_passport_vault_application::{
+    PassportVaultContractStateSourceError, PassportVaultContractStateSourcePort,
+};
 use oxid_platform_ports::{ClockPort, RandomPort};
-use oxid_wallet_application::WalletTransactionPortError;
+use oxid_wallet_application::{
+    WalletDerivedSecretUsePort, WalletKeyOperationPort, WalletTransactionPortError,
+};
 use oxid_wallet_domain::WalletProfileId;
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 const DEPLOYMENT_TTL_MILLIS: u64 = 60 * 60 * 1_000;
+const DID_CALL_COMPOSER_ENV: &str = "OXID_MIDNIGHT_DID_CALL_COMPOSER";
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+pub(super) fn with_native_did_deployment<K, M>(
+    mut services: super::services::ApplicationServices,
+    config: &MidnightStandaloneConfig,
+    security: Arc<K>,
+    midnight: Arc<M>,
+) -> super::services::ApplicationServices
+where
+    K: WalletDerivedSecretUsePort + WalletKeyOperationPort + 'static,
+    M: MidnightPublicCallContextSource
+        + MidnightContractCallFundingPort
+        + MidnightContractCallSubmissionPort
+        + 'static,
+{
+    let Some(executable) = std::env::var_os(DID_CALL_COMPOSER_ENV) else {
+        return services;
+    };
+    let wallet: Arc<dyn MidnightPublicCallContextSource> = midnight.clone();
+    let contexts = match NodeAnchoredDidDeploymentContextSource::new(config, wallet) {
+        Ok(contexts) => Arc::new(contexts) as Arc<dyn DidDeploymentContextSource>,
+        Err(_) => return services,
+    };
+    let custody: Arc<dyn WalletDerivedSecretUsePort> = security.clone();
+    let keys: Arc<dyn WalletKeyOperationPort> = security;
+    let calls = match NativeMidnightDidCallComposer::new(executable, Arc::clone(&custody), keys) {
+        Ok(calls) => Arc::new(calls),
+        Err(_) => return services,
+    };
+    let funding: Arc<dyn MidnightContractCallFundingPort> = midnight.clone();
+    let submission: Arc<dyn MidnightContractCallSubmissionPort> = midnight;
+    services.deploy_did = Arc::new(NativeDidDeploymentService::new(
+        Arc::new(NativeMidnightDidDeploymentComposer::new(Arc::clone(
+            &custody,
+        ))),
+        Arc::new(NativeMidnightDidMaintenanceComposer::new(custody)),
+        calls,
+        contexts,
+        funding,
+        submission,
+        Arc::clone(&services.did_resolution_port),
+        super::identity::headless_did_deployment_repository(),
+        Arc::new(oxid_adapter_platform_system::SystemClock),
+        Arc::new(oxid_adapter_platform_system::OsRandom),
+    ));
+    services
+}
 
 pub(super) struct NativeDidDeploymentService {
     effects: Arc<dyn DidDeploymentEffectComposer>,
@@ -56,17 +113,109 @@ struct DidDeploymentEffectPlan {
     transaction: Zeroizing<Vec<u8>>,
 }
 
+type DidDeploymentEffectFuture<'a> = Pin<
+    Box<dyn Future<Output = Result<DidDeploymentEffectPlan, NativeDidDeploymentError>> + Send + 'a>,
+>;
+
 trait DidDeploymentEffectComposer: Send + Sync {
-    fn compose(
-        &self,
-        operation: &DidDeploymentOperation,
+    fn compose<'a>(
+        &'a self,
+        operation: &'a DidDeploymentOperation,
         account_index: u32,
-    ) -> Result<DidDeploymentEffectPlan, NativeDidDeploymentError>;
+    ) -> DidDeploymentEffectFuture<'a>;
+}
+
+type DidDeploymentContextFuture<'a> = Pin<
+    Box<dyn Future<Output = Result<MidnightDidCallContext, NativeDidDeploymentError>> + Send + 'a>,
+>;
+
+pub(super) trait DidDeploymentContextSource: Send + Sync {
+    fn context<'a>(
+        &'a self,
+        operation: &'a DidDeploymentOperation,
+    ) -> DidDeploymentContextFuture<'a>;
+}
+
+struct NodeAnchoredDidDeploymentContextSource {
+    chain: Arc<NodeAnchoredPassportVaultStateSource>,
+    wallet: Arc<dyn MidnightPublicCallContextSource>,
+}
+
+impl NodeAnchoredDidDeploymentContextSource {
+    fn new(
+        config: &MidnightStandaloneConfig,
+        wallet: Arc<dyn MidnightPublicCallContextSource>,
+    ) -> Result<Self, NativeDidDeploymentError> {
+        let chain = NodeAnchoredPassportVaultStateSource::new(
+            config.indexer_http_url(),
+            config.node_websocket_url(),
+        )
+        .map_err(|_| NativeDidDeploymentError::Unavailable)?;
+        Ok(Self {
+            chain: Arc::new(chain),
+            wallet,
+        })
+    }
+}
+
+impl DidDeploymentContextSource for NodeAnchoredDidDeploymentContextSource {
+    fn context<'a>(
+        &'a self,
+        operation: &'a DidDeploymentOperation,
+    ) -> DidDeploymentContextFuture<'a> {
+        Box::pin(async move {
+            let did = operation.did().ok_or(NativeDidDeploymentError::Integrity)?;
+            let address = hex::encode(did_contract_address(did)?);
+            let receipt = operation
+                .receipts()
+                .last()
+                .ok_or(NativeDidDeploymentError::Integrity)?;
+            let snapshot = self
+                .chain
+                .read(&address)
+                .await
+                .map_err(map_contract_state_error)?;
+            if snapshot.contract_address_hex != address
+                || snapshot.transaction_hash_hex != receipt.transaction_hash_hex()
+                || snapshot.action_block_hash_hex != receipt.block_hash_hex()
+                || snapshot.action_block_height != receipt.block_height()
+            {
+                return Err(NativeDidDeploymentError::IndexerPending);
+            }
+            let chain = self
+                .chain
+                .chain_context(&snapshot)
+                .map_err(|_| NativeDidDeploymentError::IndexerPending)?;
+            let wallet = self
+                .wallet
+                .public_call_context(operation.profile_id().as_str())
+                .map_err(|_| NativeDidDeploymentError::Unavailable)?;
+            if wallet.network_id().as_str() != operation.network().as_str() {
+                return Err(NativeDidDeploymentError::Integrity);
+            }
+            let timestamp_millis = snapshot
+                .finalized_head_time_seconds
+                .checked_mul(1_000)
+                .ok_or(NativeDidDeploymentError::Integrity)?;
+            Ok(MidnightDidCallContext {
+                contract_state: snapshot.serialized_contract_state,
+                contract_address: did_contract_address(did)?,
+                zswap_chain_state: Some(chain.zswap_chain_state().to_vec()),
+                ledger_parameters: Some(chain.ledger_parameters().to_vec()),
+                network_id: wallet.network_id().as_str().to_owned(),
+                timestamp_millis,
+                coin_public_key: wallet.coin_public_key(),
+                encryption_public_key: wallet.encryption_public_key(),
+            })
+        })
+    }
 }
 
 struct NativeDidDeploymentEffects {
     deployment: Arc<NativeMidnightDidDeploymentComposer>,
     maintenance: Arc<NativeMidnightDidMaintenanceComposer>,
+    calls: Arc<NativeMidnightDidCallComposer>,
+    contexts: Arc<dyn DidDeploymentContextSource>,
     artifacts: Option<MidnightDidCompactArtifacts>,
 }
 
@@ -74,83 +223,124 @@ impl NativeDidDeploymentEffects {
     fn new(
         deployment: Arc<NativeMidnightDidDeploymentComposer>,
         maintenance: Arc<NativeMidnightDidMaintenanceComposer>,
+        calls: Arc<NativeMidnightDidCallComposer>,
+        contexts: Arc<dyn DidDeploymentContextSource>,
     ) -> Self {
         let artifacts = std::env::var_os("OXID_MIDNIGHT_DID_ARTIFACTS_DIR")
             .and_then(|root| MidnightDidCompactArtifacts::load(root).ok());
         Self {
             deployment,
             maintenance,
+            calls,
+            contexts,
             artifacts,
         }
     }
 }
 
 impl DidDeploymentEffectComposer for NativeDidDeploymentEffects {
-    fn compose(
-        &self,
-        operation: &DidDeploymentOperation,
+    fn compose<'a>(
+        &'a self,
+        operation: &'a DidDeploymentOperation,
         account_index: u32,
-    ) -> Result<DidDeploymentEffectPlan, NativeDidDeploymentError> {
-        if operation.effect() == DidDeploymentEffect::DeployContract {
-            let request = deployment_request(operation, account_index)?;
-            let plan = self.deployment.compose(&request)?;
-            return Ok(DidDeploymentEffectPlan {
-                did: Some(plan.did().clone()),
+    ) -> DidDeploymentEffectFuture<'a> {
+        Box::pin(async move {
+            if operation.effect() == DidDeploymentEffect::DeployContract {
+                let request = deployment_request(operation, account_index)?;
+                let plan = self.deployment.compose(&request)?;
+                return Ok(DidDeploymentEffectPlan {
+                    did: Some(plan.did().clone()),
+                    profile_id: plan.profile_id().to_owned(),
+                    network_id: plan.network_id().to_owned(),
+                    expires_at_seconds: plan.expires_at_seconds(),
+                    planning_fingerprint: plan.planning_fingerprint(),
+                    transaction: plan.into_transaction(),
+                });
+            }
+            let context = self.contexts.context(operation).await?;
+            let profile_id = WalletProfileId::parse(operation.profile_id().as_str().to_owned())
+                .map_err(|_| NativeDidDeploymentError::InvalidRequest)?;
+            let call = match operation.effect() {
+                DidDeploymentEffect::AddAuthenticationMethod => {
+                    Some(MidnightDidBootstrapCall::AddAuthenticationMethod)
+                }
+                DidDeploymentEffect::AddAuthenticationRelationship => {
+                    Some(MidnightDidBootstrapCall::AddAuthenticationRelationship)
+                }
+                DidDeploymentEffect::AddAssertionMethod => {
+                    Some(MidnightDidBootstrapCall::AddAssertionMethod)
+                }
+                DidDeploymentEffect::AddAssertionRelationship => {
+                    Some(MidnightDidBootstrapCall::AddAssertionRelationship)
+                }
+                _ => None,
+            };
+            if let Some(call) = call {
+                let plan = self.calls.compose_bootstrap(
+                    profile_id,
+                    account_index,
+                    controller_index(operation)?,
+                    operation.operation_id().as_str(),
+                    context,
+                    call,
+                )?;
+                return Ok(DidDeploymentEffectPlan {
+                    did: None,
+                    profile_id: operation.profile_id().as_str().to_owned(),
+                    network_id: operation.network().as_str().to_owned(),
+                    expires_at_seconds: request_expires_at(operation)?.value() / 1_000,
+                    planning_fingerprint: plan.planning_fingerprint,
+                    transaction: plan.transaction,
+                });
+            }
+            let (circuit, counter) = match operation.effect() {
+                DidDeploymentEffect::InstallVerificationMethodVerifier => {
+                    (MidnightDidBootstrapCircuit::VerificationMethod, 0)
+                }
+                DidDeploymentEffect::InstallJubjubVerifier => (
+                    MidnightDidBootstrapCircuit::SchnorrJubjubVerificationMethod,
+                    1,
+                ),
+                DidDeploymentEffect::InstallRelationshipVerifier => {
+                    (MidnightDidBootstrapCircuit::VerificationMethodRelation, 2)
+                }
+                DidDeploymentEffect::ResolveDocument => {
+                    return Err(NativeDidDeploymentError::Unavailable);
+                }
+                DidDeploymentEffect::AddAuthenticationMethod
+                | DidDeploymentEffect::AddAuthenticationRelationship
+                | DidDeploymentEffect::AddAssertionMethod
+                | DidDeploymentEffect::AddAssertionRelationship => unreachable!(),
+                DidDeploymentEffect::DeployContract => unreachable!(),
+            };
+            let artifacts = self
+                .artifacts
+                .as_ref()
+                .ok_or(NativeDidDeploymentError::Unavailable)?;
+            let did = operation.did().ok_or(NativeDidDeploymentError::Integrity)?;
+            let address = did_contract_address(did)?;
+            let request = NativeMidnightDidMaintenanceRequest::new(
+                profile_id,
+                operation.network().as_str(),
+                account_index,
+                address,
+                circuit.id(),
+                artifacts
+                    .verifier_key(circuit)
+                    .map_err(|_| NativeDidDeploymentError::Unavailable)?,
+                counter,
+                request_expires_at(operation)?,
+                effect_recipe(operation, b"maintenance"),
+            )?;
+            let plan = self.maintenance.compose(&request)?;
+            Ok(DidDeploymentEffectPlan {
+                did: None,
                 profile_id: plan.profile_id().to_owned(),
                 network_id: plan.network_id().to_owned(),
                 expires_at_seconds: plan.expires_at_seconds(),
                 planning_fingerprint: plan.planning_fingerprint(),
                 transaction: plan.into_transaction(),
-            });
-        }
-        let (circuit, counter) = match operation.effect() {
-            DidDeploymentEffect::InstallVerificationMethodVerifier => {
-                (MidnightDidBootstrapCircuit::VerificationMethod, 0)
-            }
-            DidDeploymentEffect::InstallJubjubVerifier => (
-                MidnightDidBootstrapCircuit::SchnorrJubjubVerificationMethod,
-                1,
-            ),
-            DidDeploymentEffect::InstallRelationshipVerifier => {
-                (MidnightDidBootstrapCircuit::VerificationMethodRelation, 2)
-            }
-            DidDeploymentEffect::AddAuthenticationMethod
-            | DidDeploymentEffect::AddAuthenticationRelationship
-            | DidDeploymentEffect::AddAssertionMethod
-            | DidDeploymentEffect::AddAssertionRelationship
-            | DidDeploymentEffect::ResolveDocument => {
-                return Err(NativeDidDeploymentError::Unavailable);
-            }
-            DidDeploymentEffect::DeployContract => unreachable!(),
-        };
-        let artifacts = self
-            .artifacts
-            .as_ref()
-            .ok_or(NativeDidDeploymentError::Unavailable)?;
-        let did = operation.did().ok_or(NativeDidDeploymentError::Integrity)?;
-        let address = did_contract_address(did)?;
-        let request = NativeMidnightDidMaintenanceRequest::new(
-            WalletProfileId::parse(operation.profile_id().as_str().to_owned())
-                .map_err(|_| NativeDidDeploymentError::InvalidRequest)?,
-            operation.network().as_str(),
-            account_index,
-            address,
-            circuit.id(),
-            artifacts
-                .verifier_key(circuit)
-                .map_err(|_| NativeDidDeploymentError::Unavailable)?,
-            counter,
-            request_expires_at(operation)?,
-            effect_recipe(operation, b"maintenance"),
-        )?;
-        let plan = self.maintenance.compose(&request)?;
-        Ok(DidDeploymentEffectPlan {
-            did: None,
-            profile_id: plan.profile_id().to_owned(),
-            network_id: plan.network_id().to_owned(),
-            expires_at_seconds: plan.expires_at_seconds(),
-            planning_fingerprint: plan.planning_fingerprint(),
-            transaction: plan.into_transaction(),
+            })
         })
     }
 }
@@ -160,6 +350,8 @@ impl NativeDidDeploymentService {
     pub(super) fn new(
         deployment: Arc<NativeMidnightDidDeploymentComposer>,
         maintenance: Arc<NativeMidnightDidMaintenanceComposer>,
+        calls: Arc<NativeMidnightDidCallComposer>,
+        contexts: Arc<dyn DidDeploymentContextSource>,
         funding: Arc<dyn MidnightContractCallFundingPort>,
         submission: Arc<dyn MidnightContractCallSubmissionPort>,
         resolver: Arc<dyn DidResolutionPort>,
@@ -168,7 +360,12 @@ impl NativeDidDeploymentService {
         random: Arc<dyn RandomPort>,
     ) -> Self {
         Self {
-            effects: Arc::new(NativeDidDeploymentEffects::new(deployment, maintenance)),
+            effects: Arc::new(NativeDidDeploymentEffects::new(
+                deployment,
+                maintenance,
+                calls,
+                contexts,
+            )),
             funding,
             submission,
             resolver,
@@ -246,8 +443,9 @@ impl NativeDidDeploymentService {
                 | DidDeploymentState::Confirming => {}
             }
 
-            let plan = match self.effects.compose(&operation, account_index) {
+            let plan = match self.effects.compose(&operation, account_index).await {
                 Ok(plan) => plan,
+                Err(NativeDidDeploymentError::IndexerPending) => return Ok(operation),
                 Err(NativeDidDeploymentError::Unavailable) => {
                     return self.pause(operation, DidDeploymentFailure::CompositionUnavailable);
                 }
@@ -448,25 +646,31 @@ fn deployment_request(
     let id = operation.operation_id().as_str().as_bytes();
     let nonce = derive_public_recipe(b"oxid:did-deploy:nonce:v1", id);
     let composition_seed = derive_public_recipe(b"oxid:did-deploy:rng:v1", id);
-    let controller_digest = derive_public_recipe(b"oxid:did-controller:index:v1", id);
-    let controller_index = u32::from_be_bytes(
-        controller_digest[..4]
-            .try_into()
-            .map_err(|_| NativeDidDeploymentError::Integrity)?,
-    ) & oxid_wallet_application::WalletHdPathComponent::MAX_INDEX;
     NativeMidnightDidDeploymentRequest::new(
         WalletProfileId::parse(operation.profile_id().as_str().to_owned())
             .map_err(|_| NativeDidDeploymentError::InvalidRequest)?,
         operation.network(),
         operation.network().as_str(),
         account_index,
-        controller_index,
+        controller_index(operation)?,
         operation.created_at(),
         request_expires_at(operation)?,
         nonce,
         composition_seed,
     )
     .map_err(|_| NativeDidDeploymentError::Lifecycle)
+}
+
+fn controller_index(operation: &DidDeploymentOperation) -> Result<u32, NativeDidDeploymentError> {
+    let digest = derive_public_recipe(
+        b"oxid:did-controller:index:v1",
+        operation.operation_id().as_str().as_bytes(),
+    );
+    Ok(u32::from_be_bytes(
+        digest[..4]
+            .try_into()
+            .map_err(|_| NativeDidDeploymentError::Integrity)?,
+    ) & oxid_wallet_application::WalletHdPathComponent::MAX_INDEX)
 }
 
 fn did_contract_address(
@@ -516,6 +720,24 @@ fn derive_public_recipe(domain: &[u8], operation_id: &[u8]) -> [u8; 32] {
     hasher.update(domain);
     hasher.update(operation_id);
     hasher.finalize().into()
+}
+
+const fn map_contract_state_error(
+    error: PassportVaultContractStateSourceError,
+) -> NativeDidDeploymentError {
+    match error {
+        PassportVaultContractStateSourceError::NotFound
+        | PassportVaultContractStateSourceError::Unavailable => {
+            NativeDidDeploymentError::IndexerPending
+        }
+        PassportVaultContractStateSourceError::InvalidConfiguration
+        | PassportVaultContractStateSourceError::InvalidAddress
+        | PassportVaultContractStateSourceError::CapacityExceeded
+        | PassportVaultContractStateSourceError::InvalidResponse
+        | PassportVaultContractStateSourceError::FinalityMismatch => {
+            NativeDidDeploymentError::Integrity
+        }
+    }
 }
 
 fn required_holder_methods_resolve(resolution: &oxid_identity_domain::DidResolution) -> bool {
@@ -568,6 +790,7 @@ fn map_transaction_failure(error: WalletTransactionPortError) -> DidDeploymentFa
 #[derive(Debug)]
 pub(super) enum NativeDidDeploymentError {
     Unavailable,
+    IndexerPending,
     InvalidRequest,
     Integrity,
     Operation,
@@ -580,6 +803,7 @@ impl fmt::Display for NativeDidDeploymentError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Unavailable => "native DID deployment dependencies are unavailable",
+            Self::IndexerPending => "native DID deployment is waiting for indexed finality",
             Self::InvalidRequest => "native DID deployment request is invalid",
             Self::Integrity => "native DID deployment state failed integrity validation",
             Self::Operation => "native DID deployment operation persistence failed",
@@ -614,6 +838,7 @@ impl From<NativeDidDeploymentError> for DidDeploymentUseCaseError {
     fn from(error: NativeDidDeploymentError) -> Self {
         match error {
             NativeDidDeploymentError::Unavailable => Self::Unavailable,
+            NativeDidDeploymentError::IndexerPending => Self::Unavailable,
             NativeDidDeploymentError::InvalidRequest => Self::InvalidRequest,
             NativeDidDeploymentError::Integrity => Self::Integrity,
             NativeDidDeploymentError::Operation => Self::Persistence,

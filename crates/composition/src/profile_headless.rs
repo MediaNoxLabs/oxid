@@ -17,6 +17,8 @@ use oxid_adapter_midnight::{
     protected_standalone_midnight_wallet_with_dust_checkpoints,
 };
 
+#[cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "android")))]
+use super::did_deployment::with_native_did_deployment;
 #[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
 use super::environment::HeadlessCompositionError;
 use super::identity::{CredentialPresentationComposition, HeadlessCredentialProfile};
@@ -438,6 +440,8 @@ where
 {
     let network_id = config.indexer().network_id().as_str().to_owned();
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let did_config = config.clone();
     let midnight = Arc::new(
         protected_standalone_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))
             .with_profile_association_repository(profiles.clone()),
@@ -448,10 +452,19 @@ where
         Arc::clone(&midnight),
         protection_for_security,
     );
-    with_passport_vault_state_source(
-        with_wallet_onboarding(services, profiles, security, midnight, network_id),
+    let services = with_passport_vault_state_source(
+        with_wallet_onboarding(
+            services,
+            profiles,
+            Arc::clone(&security),
+            Arc::clone(&midnight),
+            network_id,
+        ),
         passport_vault_state_source,
-    )
+    );
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let services = with_native_did_deployment(services, &did_config, security, midnight);
+    services
 }
 
 /// Wires the explicit compile-time mobile development profile to the public

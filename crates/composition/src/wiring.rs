@@ -23,10 +23,6 @@ use oxid_adapter_backup_document_mobile::NativePortableWalletBackupDocuments;
 use oxid_adapter_backup_portable::PortableCustodyVaultPort;
 use oxid_adapter_custody_software::Bip39WalletMnemonic;
 use oxid_adapter_diagnostics_memory::InMemoryDiagnosticStore;
-#[cfg(not(target_arch = "wasm32"))]
-use oxid_adapter_did_midnight::{
-    NativeMidnightDidDeploymentComposer, NativeMidnightDidMaintenanceComposer,
-};
 use oxid_adapter_did_midnight::{StandaloneDidLifecycle, StandaloneDidResolver};
 use oxid_adapter_identity_ingress::StrictIdentityRequestRouter;
 #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -46,10 +42,6 @@ use oxid_adapter_storage_dev::DevelopmentWalletOnboardingAuthorization;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_storage_mobile::NativeMobileWalletOnboardingAuthorization;
 
-#[cfg(not(target_arch = "wasm32"))]
-use super::did_deployment::NativeDidDeploymentService;
-#[cfg(not(target_arch = "wasm32"))]
-use super::identity::headless_did_deployment_repository;
 use super::identity::{
     CredentialIssuanceComposition, CredentialPresentationComposition, HeadlessCredentialProfile,
     IdentityAdapters, SelfIssuedAuthenticationComposition, headless_credential_repository,
@@ -94,7 +86,6 @@ use oxid_diagnostics_application::{
     ClearDiagnosticsUseCase, DiagnosticEventSinkPort, DiagnosticsService,
     GetDiagnosticSnapshotUseCase,
 };
-#[cfg(target_arch = "wasm32")]
 use oxid_identity_application::UnavailableDidDeployment;
 use oxid_identity_application::{
     CreateDidUseCase, CredentialIssuanceFlowService, CredentialPresentationFlowService,
@@ -946,8 +937,6 @@ where
         approvals.clone(),
     ));
     let portable_backup = Arc::new(WalletPortableBackupService::new(Arc::clone(&security)));
-    #[cfg(not(target_arch = "wasm32"))]
-    let did_deployment_custody: Arc<dyn WalletDerivedSecretUsePort> = security.clone();
     let sensitive_keys = Arc::new(oxid_wallet_application::WalletSensitiveKeyService::new(
         security.clone(),
         approvals.clone(),
@@ -960,22 +949,6 @@ where
     #[cfg(not(target_arch = "wasm32"))]
     let midnight_contract_call_submission: Arc<dyn MidnightContractCallSubmissionPort> =
         midnight.clone();
-    #[cfg(not(target_arch = "wasm32"))]
-    let deploy_did: Arc<dyn DeployDidUseCase> = Arc::new(NativeDidDeploymentService::new(
-        Arc::new(NativeMidnightDidDeploymentComposer::new(Arc::clone(
-            &did_deployment_custody,
-        ))),
-        Arc::new(NativeMidnightDidMaintenanceComposer::new(
-            did_deployment_custody,
-        )),
-        Arc::clone(&midnight_contract_call_funding),
-        Arc::clone(&midnight_contract_call_submission),
-        Arc::clone(&did_resolver),
-        headless_did_deployment_repository(),
-        clock.clone(),
-        random.clone(),
-    ));
-    #[cfg(target_arch = "wasm32")]
     let deploy_did: Arc<dyn DeployDidUseCase> = Arc::new(UnavailableDidDeployment);
     let selected_realm_runtime = Arc::new(Mutex::new(SelectedWalletRealmRuntime::default()));
     let selected_realm_selection_gate = Arc::new(Mutex::new(()));
@@ -1028,7 +1001,7 @@ where
     let credential_presentation_authority = did_approvals
         .as_ref()
         .map(|_| Arc::new(CredentialPresentationFlowService::new(clock.clone())));
-    let identity = DidService::from_ports(did_repository, did_resolver, did_lifecycle);
+    let identity = DidService::from_ports(did_repository, Arc::clone(&did_resolver), did_lifecycle);
     let identity = match did_approvals {
         Some(approvals) => identity.with_approvals(
             approvals,
@@ -1589,6 +1562,7 @@ where
         list_wallet_transfer_submissions,
         reconcile_wallet_transfer_submission,
         deploy_did,
+        did_resolution_port: Arc::clone(&did_resolver),
         create_did,
         resolve_did,
         list_did_records,

@@ -162,6 +162,7 @@ pub struct ApplicationServices {
     pub(super) reconcile_wallet_transfer_submission:
         Arc<dyn ReconcileWalletTransferSubmissionUseCase>,
     pub(super) deploy_did: Arc<dyn DeployDidUseCase>,
+    pub(super) did_resolution_port: Arc<dyn oxid_identity_application::DidResolutionPort>,
     pub(super) create_did: Arc<dyn CreateDidUseCase>,
     pub(super) resolve_did: Arc<dyn ResolveDidUseCase>,
     pub(super) list_did_records: Arc<dyn ListDidRecordsUseCase>,

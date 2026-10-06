@@ -16,14 +16,18 @@ use std::{
 
 use midnight_base_crypto::schnorr::Signature;
 use midnight_ledger::structure::{ProofPreimageMarker, Transaction};
-use midnight_serialize::tagged_deserialize;
+use midnight_serialize::{Deserializable as _, tagged_deserialize};
 use midnight_storage::DefaultDB;
-use midnight_transient_crypto::commitment::PedersenRandomness;
+use midnight_transient_crypto::{commitment::PedersenRandomness, curve::EmbeddedGroupAffine};
 use oxid_identity_application::DidLifecyclePortError;
 use oxid_wallet_application::{
-    WalletDerivedSecretUsePort, WalletHdPath, WalletHdPathComponent, WalletSecurityPortError,
+    GenerateProtectedKeyRequest, WalletDerivedSecretUsePort, WalletHdPath, WalletHdPathComponent,
+    WalletKeyOperationPort, WalletSecurityPortError,
 };
-use oxid_wallet_domain::WalletProfileId;
+use oxid_wallet_domain::{
+    PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyDescriptor, WalletKeyLabel, WalletKeyPurpose,
+    WalletProfileId,
+};
 use serde::{Deserialize, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, Zeroizing};
@@ -120,6 +124,14 @@ pub enum MidnightDidCallOperation {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MidnightDidBootstrapCall {
+    AddAuthenticationMethod,
+    AddAuthenticationRelationship,
+    AddAssertionMethod,
+    AddAssertionRelationship,
+}
+
 impl MidnightDidCallOperation {
     fn kind(&self) -> &'static str {
         match self {
@@ -186,12 +198,14 @@ pub struct NativeMidnightDidCallPlan {
 pub struct NativeMidnightDidCallComposer {
     executable: PathBuf,
     custody: Arc<dyn WalletDerivedSecretUsePort>,
+    keys: Arc<dyn WalletKeyOperationPort>,
 }
 
 impl NativeMidnightDidCallComposer {
     pub fn new(
         executable: impl AsRef<Path>,
         custody: Arc<dyn WalletDerivedSecretUsePort>,
+        keys: Arc<dyn WalletKeyOperationPort>,
     ) -> Result<Self, MidnightDidCallComposerConfigError> {
         let executable = executable.as_ref();
         if !executable.is_absolute() {
@@ -213,7 +227,143 @@ impl NativeMidnightDidCallComposer {
         Ok(Self {
             executable: canonical,
             custody,
+            keys,
         })
+    }
+
+    pub fn compose_bootstrap(
+        &self,
+        profile_id: WalletProfileId,
+        account_index: u32,
+        controller_index: u32,
+        operation_scope: &str,
+        context: MidnightDidCallContext,
+        call: MidnightDidBootstrapCall,
+    ) -> Result<NativeMidnightDidCallPlan, DidLifecyclePortError> {
+        if operation_scope.is_empty() || operation_scope.len() > 256 {
+            return Err(DidLifecyclePortError::InvalidOperation);
+        }
+        let authentication = matches!(
+            call,
+            MidnightDidBootstrapCall::AddAuthenticationMethod
+                | MidnightDidBootstrapCall::AddAuthenticationRelationship
+        )
+        .then(|| {
+            self.bootstrap_key(
+                &profile_id,
+                operation_scope,
+                "authentication",
+                WalletKeyAlgorithm::Ed25519,
+                WalletKeyPurpose::Authentication,
+                PublicKeyEncoding::Ed25519Compressed,
+            )
+        })
+        .transpose()?;
+        let assertion = matches!(
+            call,
+            MidnightDidBootstrapCall::AddAssertionMethod
+                | MidnightDidBootstrapCall::AddAssertionRelationship
+        )
+        .then(|| {
+            self.bootstrap_key(
+                &profile_id,
+                operation_scope,
+                "holder binding",
+                WalletKeyAlgorithm::Jubjub,
+                WalletKeyPurpose::Assertion,
+                PublicKeyEncoding::JubjubCompressed,
+            )
+        })
+        .transpose()?;
+        let operation = match call {
+            MidnightDidBootstrapCall::AddAuthenticationMethod => {
+                let descriptor = authentication.ok_or(DidLifecyclePortError::InvalidOperation)?;
+                let x = descriptor
+                    .public_key()
+                    .bytes()
+                    .try_into()
+                    .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+                MidnightDidCallOperation::AddAuthenticationMethod {
+                    method_id: "#key-auth".to_owned(),
+                    x,
+                }
+            }
+            MidnightDidBootstrapCall::AddAuthenticationRelationship => {
+                MidnightDidCallOperation::AddAuthenticationRelationship {
+                    method_id: "#key-auth".to_owned(),
+                }
+            }
+            MidnightDidBootstrapCall::AddAssertionMethod => {
+                let descriptor = assertion.ok_or(DidLifecyclePortError::InvalidOperation)?;
+                let (x, y) = jubjub_coordinates(&descriptor)?;
+                MidnightDidCallOperation::AddAssertionMethod {
+                    method_id: "#key-assert".to_owned(),
+                    x,
+                    y,
+                }
+            }
+            MidnightDidBootstrapCall::AddAssertionRelationship => {
+                MidnightDidCallOperation::AddAssertionRelationship {
+                    method_id: "#key-assert".to_owned(),
+                }
+            }
+        };
+        self.compose(&NativeMidnightDidCallRequest {
+            profile_id,
+            account_index,
+            controller_index,
+            context,
+            operation,
+        })
+    }
+
+    fn bootstrap_key(
+        &self,
+        profile_id: &WalletProfileId,
+        operation_scope: &str,
+        role: &str,
+        algorithm: WalletKeyAlgorithm,
+        purpose: WalletKeyPurpose,
+        encoding: PublicKeyEncoding,
+    ) -> Result<WalletKeyDescriptor, DidLifecyclePortError> {
+        let digest = Sha256::digest(operation_scope.as_bytes());
+        let label = WalletKeyLabel::parse(format!(
+            "Midnight DID {role} {}",
+            &hex::encode(digest)[..16]
+        ))
+        .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+        let matches = self
+            .keys
+            .list(profile_id)
+            .map_err(map_security_error)?
+            .into_iter()
+            .filter(|descriptor| descriptor.label() == &label)
+            .collect::<Vec<_>>();
+        if matches.len() > 1 {
+            return Err(DidLifecyclePortError::Conflict);
+        }
+        let descriptor = if let Some(descriptor) = matches.into_iter().next() {
+            descriptor
+        } else {
+            self.keys
+                .generate(
+                    profile_id,
+                    GenerateProtectedKeyRequest {
+                        label,
+                        algorithm,
+                        purpose,
+                    },
+                )
+                .map_err(map_security_error)?
+        };
+        if descriptor.algorithm() != algorithm
+            || descriptor.purpose() != purpose
+            || descriptor.public_key().encoding() != encoding
+            || descriptor.public_key().bytes().len() != 32
+        {
+            return Err(DidLifecyclePortError::InvalidOperation);
+        }
+        Ok(descriptor)
     }
 
     pub fn compose(
@@ -336,6 +486,30 @@ fn controller_path(
         component(controller_index, false)?,
     ])
     .map_err(|_| DidLifecyclePortError::InvalidOperation)
+}
+
+fn jubjub_coordinates(
+    descriptor: &WalletKeyDescriptor,
+) -> Result<([u8; 32], [u8; 32]), DidLifecyclePortError> {
+    let mut encoded = descriptor.public_key().bytes();
+    let point = EmbeddedGroupAffine::deserialize(&mut encoded, 0)
+        .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+    if !encoded.is_empty() || point.is_identity() {
+        return Err(DidLifecyclePortError::InvalidOperation);
+    }
+    let x = point
+        .x()
+        .ok_or(DidLifecyclePortError::InvalidOperation)?
+        .as_le_bytes()
+        .try_into()
+        .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+    let y = point
+        .y()
+        .ok_or(DidLifecyclePortError::InvalidOperation)?
+        .as_le_bytes()
+        .try_into()
+        .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+    Ok((x, y))
 }
 
 struct SecretHex<'a>(&'a [u8; 32]);
@@ -642,6 +816,40 @@ mod tests {
 
     struct UnreachableCustody;
 
+    impl WalletKeyOperationPort for UnreachableCustody {
+        fn generate(
+            &self,
+            _: &WalletProfileId,
+            _: GenerateProtectedKeyRequest,
+        ) -> Result<WalletKeyDescriptor, WalletSecurityPortError> {
+            panic!("invalid public input must not generate a key")
+        }
+
+        fn list(
+            &self,
+            _: &WalletProfileId,
+        ) -> Result<Vec<WalletKeyDescriptor>, WalletSecurityPortError> {
+            panic!("invalid public input must not list keys")
+        }
+
+        fn sign(
+            &self,
+            _: &WalletProfileId,
+            _: &oxid_wallet_domain::WalletKeyReference,
+            _: &[u8],
+        ) -> Result<oxid_wallet_domain::WalletSignature, WalletSecurityPortError> {
+            panic!("invalid public input must not sign")
+        }
+
+        fn delete(
+            &self,
+            _: &WalletProfileId,
+            _: &oxid_wallet_domain::WalletKeyReference,
+        ) -> Result<(), WalletSecurityPortError> {
+            panic!("invalid public input must not delete")
+        }
+    }
+
     impl WalletDerivedSecretUsePort for UnreachableCustody {
         fn use_derived_secret(
             &self,
@@ -669,8 +877,12 @@ mod tests {
     #[test]
     fn requires_an_absolute_regular_executable() {
         assert_eq!(
-            NativeMidnightDidCallComposer::new("relative/composer", Arc::new(UnreachableCustody))
-                .err(),
+            NativeMidnightDidCallComposer::new(
+                "relative/composer",
+                Arc::new(UnreachableCustody),
+                Arc::new(UnreachableCustody),
+            )
+            .err(),
             Some(MidnightDidCallComposerConfigError::PathNotAbsolute)
         );
     }
@@ -678,8 +890,12 @@ mod tests {
     #[test]
     fn rejects_invalid_public_material_before_custody() {
         let executable = std::env::current_exe().expect("current executable");
-        let composer = NativeMidnightDidCallComposer::new(executable, Arc::new(UnreachableCustody))
-            .expect("composer configuration");
+        let composer = NativeMidnightDidCallComposer::new(
+            executable,
+            Arc::new(UnreachableCustody),
+            Arc::new(UnreachableCustody),
+        )
+        .expect("composer configuration");
         let request = NativeMidnightDidCallRequest {
             profile_id: WalletProfileId::parse("profile-1".to_owned()).expect("profile"),
             account_index: 0,

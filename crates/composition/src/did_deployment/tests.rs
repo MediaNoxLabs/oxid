@@ -25,8 +25,13 @@ use oxid_identity_domain::{
     VerificationRelationshipEntry,
 };
 use oxid_platform_ports::{PlatformError, RandomPort};
-use oxid_wallet_application::{WalletDerivedSecretUsePort, WalletHdPath, WalletSecurityPortError};
-use oxid_wallet_domain::WalletProfileId;
+use oxid_wallet_application::{
+    GenerateProtectedKeyRequest, WalletDerivedSecretUsePort, WalletHdPath, WalletKeyOperationPort,
+    WalletSecurityPortError,
+};
+use oxid_wallet_domain::{
+    WalletKeyDescriptor, WalletKeyReference, WalletProfileId, WalletSignature,
+};
 use zeroize::Zeroizing;
 
 use super::*;
@@ -50,6 +55,8 @@ impl RandomPort for FixedRandom {
 
 struct AllEffectsComposer;
 
+struct IndexerPendingAfterDeploy;
+
 struct TestCustody;
 
 impl WalletDerivedSecretUsePort for TestCustody {
@@ -63,22 +70,103 @@ impl WalletDerivedSecretUsePort for TestCustody {
     }
 }
 
-impl DidDeploymentEffectComposer for AllEffectsComposer {
-    fn compose(
+impl WalletKeyOperationPort for TestCustody {
+    fn generate(
         &self,
-        operation: &DidDeploymentOperation,
+        _: &WalletProfileId,
+        _: GenerateProtectedKeyRequest,
+    ) -> Result<WalletKeyDescriptor, WalletSecurityPortError> {
+        Err(WalletSecurityPortError::Unavailable)
+    }
+
+    fn list(
+        &self,
+        _: &WalletProfileId,
+    ) -> Result<Vec<WalletKeyDescriptor>, WalletSecurityPortError> {
+        Ok(Vec::new())
+    }
+
+    fn sign(
+        &self,
+        _: &WalletProfileId,
+        _: &WalletKeyReference,
+        _: &[u8],
+    ) -> Result<WalletSignature, WalletSecurityPortError> {
+        Err(WalletSecurityPortError::Unavailable)
+    }
+
+    fn delete(
+        &self,
+        _: &WalletProfileId,
+        _: &WalletKeyReference,
+    ) -> Result<(), WalletSecurityPortError> {
+        Err(WalletSecurityPortError::Unavailable)
+    }
+}
+
+struct ReadyContextSource;
+
+impl DidDeploymentContextSource for ReadyContextSource {
+    fn context<'a>(&'a self, _: &'a DidDeploymentOperation) -> DidDeploymentContextFuture<'a> {
+        Box::pin(async {
+            Ok(MidnightDidCallContext {
+                contract_state: vec![1],
+                contract_address: [2; 32],
+                zswap_chain_state: Some(vec![3]),
+                ledger_parameters: Some(vec![4]),
+                network_id: "undeployed".to_owned(),
+                timestamp_millis: 10_000,
+                coin_public_key: [5; 32],
+                encryption_public_key: [6; 32],
+            })
+        })
+    }
+}
+
+impl DidDeploymentEffectComposer for AllEffectsComposer {
+    fn compose<'a>(
+        &'a self,
+        operation: &'a DidDeploymentOperation,
         _: u32,
-    ) -> Result<DidDeploymentEffectPlan, NativeDidDeploymentError> {
-        let did = (operation.effect() == DidDeploymentEffect::DeployContract).then(|| {
-            MidnightDid::parse(format!("did:midnight:undeployed:{}", "a".repeat(64))).expect("did")
-        });
-        Ok(DidDeploymentEffectPlan {
-            did,
-            profile_id: operation.profile_id().as_str().to_owned(),
-            network_id: operation.network().as_str().to_owned(),
-            expires_at_seconds: 3_700,
-            planning_fingerprint: Sha256::digest(operation.effect().as_str()).into(),
-            transaction: Zeroizing::new(vec![1, 2, 3]),
+    ) -> DidDeploymentEffectFuture<'a> {
+        Box::pin(async move {
+            let did = (operation.effect() == DidDeploymentEffect::DeployContract).then(|| {
+                MidnightDid::parse(format!("did:midnight:undeployed:{}", "a".repeat(64)))
+                    .expect("did")
+            });
+            Ok(DidDeploymentEffectPlan {
+                did,
+                profile_id: operation.profile_id().as_str().to_owned(),
+                network_id: operation.network().as_str().to_owned(),
+                expires_at_seconds: 3_700,
+                planning_fingerprint: Sha256::digest(operation.effect().as_str()).into(),
+                transaction: Zeroizing::new(vec![1, 2, 3]),
+            })
+        })
+    }
+}
+
+impl DidDeploymentEffectComposer for IndexerPendingAfterDeploy {
+    fn compose<'a>(
+        &'a self,
+        operation: &'a DidDeploymentOperation,
+        _: u32,
+    ) -> DidDeploymentEffectFuture<'a> {
+        Box::pin(async move {
+            if operation.effect() != DidDeploymentEffect::DeployContract {
+                return Err(NativeDidDeploymentError::IndexerPending);
+            }
+            Ok(DidDeploymentEffectPlan {
+                did: Some(
+                    MidnightDid::parse(format!("did:midnight:undeployed:{}", "a".repeat(64)))
+                        .expect("did"),
+                ),
+                profile_id: operation.profile_id().as_str().to_owned(),
+                network_id: operation.network().as_str().to_owned(),
+                expires_at_seconds: 3_700,
+                planning_fingerprint: Sha256::digest(operation.effect().as_str()).into(),
+                transaction: Zeroizing::new(vec![1, 2, 3]),
+            })
         })
     }
 }
@@ -398,11 +486,18 @@ fn native_effect_composer_authenticates_and_composes_the_first_maintenance_updat
         return;
     }
     let custody: Arc<dyn WalletDerivedSecretUsePort> = Arc::new(TestCustody);
+    let keys: Arc<dyn WalletKeyOperationPort> = Arc::new(TestCustody);
+    let executable = std::env::current_exe().expect("current executable");
     let effects = NativeDidDeploymentEffects::new(
         Arc::new(NativeMidnightDidDeploymentComposer::new(Arc::clone(
             &custody,
         ))),
         Arc::new(NativeMidnightDidMaintenanceComposer::new(custody)),
+        Arc::new(
+            NativeMidnightDidCallComposer::new(executable, Arc::new(TestCustody), keys)
+                .expect("call composer"),
+        ),
+        Arc::new(ReadyContextSource),
     );
     let operation = DidDeploymentOperation::new(
         DidDeploymentOperationId::parse("deployment-native-effects").expect("operation id"),
@@ -411,7 +506,8 @@ fn native_effect_composer_authenticates_and_composes_the_first_maintenance_updat
         UnixTimestampMillis::new(10_000),
     )
     .expect("operation");
-    let deploy = effects.compose(&operation, 0).expect("deployment plan");
+    let deploy =
+        futures::executor::block_on(effects.compose(&operation, 0)).expect("deployment plan");
     let submission_id = effect_submission_id(&operation);
     let operation = operation
         .composed(
@@ -446,7 +542,8 @@ fn native_effect_composer_authenticates_and_composes_the_first_maintenance_updat
         operation.effect(),
         DidDeploymentEffect::InstallVerificationMethodVerifier
     );
-    let maintenance = effects.compose(&operation, 0).expect("maintenance plan");
+    let maintenance =
+        futures::executor::block_on(effects.compose(&operation, 0)).expect("maintenance plan");
     assert!(maintenance.did.is_none());
     assert!(!maintenance.transaction.is_empty());
 }
@@ -470,6 +567,34 @@ fn deployment_reaches_ready_and_repeated_requests_do_not_resubmit() {
     assert_eq!(first.state(), DidDeploymentState::Ready);
     assert_eq!(second.operation_id(), first.operation_id());
     assert_eq!(submissions.submissions.load(Ordering::SeqCst), 8);
+}
+
+#[test]
+fn indexed_receipt_barrier_prevents_the_next_transaction_from_being_composed() {
+    let submissions = Arc::new(IncludedSubmission {
+        submissions: AtomicUsize::new(0),
+    });
+    let operations = Arc::new(MemoryOperations::default());
+    let service = NativeDidDeploymentService::with_effects(
+        Arc::new(IndexerPendingAfterDeploy),
+        Arc::new(PassthroughFunding),
+        Arc::clone(&submissions) as Arc<dyn MidnightContractCallSubmissionPort>,
+        Arc::new(LiveResolver { complete: true }),
+        operations,
+        Arc::new(FixedClock),
+        Arc::new(FixedRandom),
+    );
+
+    let operation =
+        futures::executor::block_on(service.execute(command())).expect("durable deployment");
+
+    assert_eq!(
+        operation.effect(),
+        DidDeploymentEffect::InstallVerificationMethodVerifier
+    );
+    assert_eq!(operation.state(), DidDeploymentState::Composing);
+    assert_eq!(submissions.submissions.load(Ordering::SeqCst), 1);
+    assert_eq!(operation.receipts().len(), 1);
 }
 
 #[test]
