@@ -8,9 +8,6 @@ import { join } from "node:path";
 import test from "node:test";
 
 const root = new URL("../../", import.meta.url).pathname;
-const manualRoot = join(root, "target/portal-tailnet-manual");
-const state = join(manualRoot, "runtime/portal-consumer");
-const source = join(manualRoot, "prepared/portal-source");
 
 async function executable(path, contents) {
   await writeFile(path, contents);
@@ -19,6 +16,9 @@ async function executable(path, contents) {
 
 test("public Portal service commands bind manual state and wait for compose readiness", async () => {
   const bin = await mkdtemp(join(tmpdir(), "oxid-portal-services-bin-"));
+  const manualRoot = join(bin, "manual-root");
+  const state = join(manualRoot, "runtime/portal-consumer");
+  const source = join(manualRoot, "prepared/portal-source");
   const dockerState = join(bin, "docker-state");
   const dockerLog = join(bin, "docker.log");
   const env = {
@@ -27,8 +27,9 @@ test("public Portal service commands bind manual state and wait for compose read
     DOCKER_STATE: dockerState,
     DOCKER_LOG: dockerLog,
     OXID_PORTAL_CONSUMER_LEASE_DIR: join(bin, "lease"),
+    PORTAL_INTEGRATION_CHECKOUT: source,
+    OXID_PORTAL_CONSUMER_STATE_DIR: state,
   };
-  assert.equal(spawnSync("test", ["!", "-e", manualRoot], { cwd: root }).status, 0, "test requires isolated manual state");
   try {
     await mkdir(source, { recursive: true, mode: 0o700 });
     await mkdir(join(source, "sidecar/did-manager-bridge"), { recursive: true, mode: 0o700 });
@@ -69,17 +70,24 @@ test("public Portal service commands bind manual state and wait for compose read
       images: { resolver: "resolver", didManager: "manager", issuer: "issuer" },
     }), { mode: 0o600 });
 
-    const stopped = spawnSync("./scripts/e2e/portal-services-lifecycle.sh", ["services-status"], { cwd: root, env, encoding: "utf8" });
+    const stopped = spawnSync("./scripts/portal-consumer-lifecycle.sh", ["services-status"], { cwd: root, env, encoding: "utf8" });
     assert.equal(stopped.status, 0, `${stopped.stderr}\n${stopped.stdout}`);
     assert.match(stopped.stdout, /"state":"stopped"/u);
-    const started = spawnSync("./scripts/e2e/portal-services-lifecycle.sh", ["services-up"], { cwd: root, env, encoding: "utf8" });
+    const started = spawnSync("./scripts/portal-consumer-lifecycle.sh", ["services-up"], { cwd: root, env, encoding: "utf8" });
     assert.equal(started.status, 0, `${started.stderr}\n${started.stdout}`);
     assert.match(started.stdout, /"state":"running"/u);
     assert.match(await readFile(dockerLog, "utf8"), /up -d --wait --wait-timeout 600 smocker did-resolver did-manager issuer/u);
   } finally {
-    await rm(manualRoot, { recursive: true, force: true });
     await rm(bin, { recursive: true, force: true });
   }
+});
+
+test("the public wrapper remains pinned to operator-owned canonical state", async () => {
+  const wrapper = await readFile(join(root, "scripts/e2e/portal-services-lifecycle.sh"), "utf8");
+  assert.match(wrapper, /readonly MANUAL_ROOT="\$ROOT\/target\/portal-tailnet-manual"/u);
+  assert.match(wrapper, /PORTAL_INTEGRATION_CHECKOUT="\$MANUAL_ROOT\/prepared\/portal-source"/u);
+  assert.match(wrapper, /OXID_PORTAL_CONSUMER_STATE_DIR="\$MANUAL_ROOT\/runtime\/portal-consumer"/u);
+  assert.doesNotMatch(wrapper, /OXID_PORTAL_(?:CONTRACT_)?TEST/u);
 });
 
 test("manual supervisor treats the receipt-owned stopped service state as non-fatal", async () => {
