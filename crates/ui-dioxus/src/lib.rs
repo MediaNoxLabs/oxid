@@ -6445,6 +6445,7 @@ fn account_placeholder_recovery_required(
         | ("Uninitialized", WalletAccountError::Port(WalletAccountPortError::NotFound)) => {
             Some(false)
         }
+        ("Unlocked", WalletAccountError::Port(WalletAccountPortError::NotFound)) => Some(false),
         _ => None,
     }
 }
@@ -11995,39 +11996,38 @@ mod tests {
         );
         assert_eq!(grouped_address_preview("mn_addr_short"), "mn_a ddr_ shor t");
     }
-
     #[test]
     fn account_read_distinguishes_empty_locked_and_orphaned_custody() {
-        assert_eq!(
-            account_placeholder_recovery_required(
+        let cases = [
+            (
                 "Uninitialized",
-                &WalletAccountError::Port(WalletAccountPortError::NotFound),
+                WalletAccountPortError::NotFound,
+                Some(false),
             ),
-            Some(false)
-        );
-        assert_eq!(
-            account_placeholder_recovery_required(
+            (
                 "Locked",
-                &WalletAccountError::Port(WalletAccountPortError::ProtectionLocked),
+                WalletAccountPortError::ProtectionLocked,
+                Some(false),
             ),
-            Some(false)
-        );
-        assert_eq!(
-            account_placeholder_recovery_required(
+            ("Unlocked", WalletAccountPortError::NotFound, Some(false)),
+            (
                 "Uninitialized",
-                &WalletAccountError::Port(WalletAccountPortError::ProtectionNotInitialized),
+                WalletAccountPortError::ProtectionNotInitialized,
+                Some(true),
             ),
-            Some(true)
-        );
-        assert_eq!(
-            account_placeholder_recovery_required(
+            (
                 "Unlocked",
-                &WalletAccountError::Port(WalletAccountPortError::ProtectionNotInitialized),
+                WalletAccountPortError::ProtectionNotInitialized,
+                None,
             ),
-            None
-        );
+        ];
+        for (state, error, expected) in cases {
+            assert_eq!(
+                account_placeholder_recovery_required(state, &WalletAccountError::Port(error)),
+                expected
+            );
+        }
     }
-
     #[test]
     fn complete_recovery_feedback_reports_only_bounded_counts() {
         let summary = CompleteWalletRecoverySummary {
