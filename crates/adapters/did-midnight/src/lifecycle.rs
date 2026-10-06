@@ -17,11 +17,16 @@ use oxid_identity_domain::{
     DID_CONTEXT, DidDocument, DidDocumentMetadata, DidDocumentParts, DidResolution,
     DidResolutionMetadata, DidResolutionSource, IdentityProfileId, JWK_CONTEXT, JwkCurve,
     JwkKeyType, MidnightDid, MidnightNetwork, PublicJwk, Service, ServiceEndpointValue,
-    VerificationMethod, VerificationRelationshipEntry,
+    VerificationMethod, VerificationRelationship, VerificationRelationshipEntry,
 };
 use oxid_wallet_application::{
     GenerateProtectedKeyRequest, WalletJubjubChallengeSigningPort, WalletKeyOperationPort,
     WalletSecurityPortError,
+};
+
+use crate::offchain::{
+    OffchainDidState, OffchainVerificationMethod, create_long_form_offchain_did,
+    resolve_long_form_offchain_did,
 };
 use oxid_wallet_domain::{
     PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyDescriptor, WalletKeyLabel, WalletKeyPurpose,
@@ -246,9 +251,13 @@ impl DidLifecyclePort for StandaloneDidLifecycle {
         profile_id: &IdentityProfileId,
         network: MidnightNetwork,
     ) -> Result<DidResolution, DidLifecyclePortError> {
-        if network != MidnightNetwork::Undeployed {
+        let offchain = if network == MidnightNetwork::Offchain {
+            true
+        } else if network == MidnightNetwork::Undeployed {
+            false
+        } else {
             return Err(DidLifecyclePortError::UnsupportedNetwork);
-        }
+        };
 
         let authentication = self.generate(
             profile_id,
@@ -285,40 +294,91 @@ impl DidLifecyclePort for StandaloneDidLifecycle {
             }
         };
 
-        let did = did_from_public_keys(profile_id, &authentication, &assertion)?;
-        let authentication_method = verification_method(&did, "auth-1", &authentication)?;
-        let assertion_method = verification_method(&did, "assertion-1", &assertion)?;
-        let presentation_method = verification_method(&did, "holder-jubjub-1", &presentation)?;
-        let document = DidDocument::new(DidDocumentParts {
-            contexts: vec![DID_CONTEXT.to_owned(), JWK_CONTEXT.to_owned()],
-            id: did.clone(),
-            controllers: vec![did.clone()],
-            also_known_as: Vec::new(),
-            verification_methods: vec![
-                authentication_method.clone(),
-                assertion_method.clone(),
-                presentation_method.clone(),
-            ],
-            relationships: vec![
-                VerificationRelationshipEntry::new(
-                    oxid_identity_domain::VerificationRelationship::Authentication,
-                    vec![authentication_method.id().to_owned()],
-                ),
-                VerificationRelationshipEntry::new(
-                    oxid_identity_domain::VerificationRelationship::AssertionMethod,
-                    vec![
-                        assertion_method.id().to_owned(),
-                        presentation_method.id().to_owned(),
-                    ],
-                ),
-                VerificationRelationshipEntry::new(
-                    oxid_identity_domain::VerificationRelationship::CapabilityInvocation,
-                    vec![authentication_method.id().to_owned()],
-                ),
-            ],
-            services: Vec::new(),
-        })
-        .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+        let resolution = if offchain {
+            let state = OffchainDidState::new(
+                Vec::new(),
+                vec![
+                    OffchainVerificationMethod::new(
+                        "#auth-1",
+                        public_jwk(&authentication)?,
+                        [
+                            VerificationRelationship::Authentication,
+                            VerificationRelationship::CapabilityInvocation,
+                        ],
+                    ),
+                    OffchainVerificationMethod::new(
+                        "#assertion-1",
+                        public_jwk(&assertion)?,
+                        [VerificationRelationship::AssertionMethod],
+                    ),
+                    OffchainVerificationMethod::new(
+                        "#holder-jubjub-1",
+                        public_jwk(&presentation)?,
+                        [VerificationRelationship::AssertionMethod],
+                    ),
+                ]
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| DidLifecyclePortError::InvalidOperation)?,
+                Vec::new(),
+            )
+            .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+            let did = create_long_form_offchain_did(&state)
+                .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+            resolve_long_form_offchain_did(&did)
+                .map_err(|_| DidLifecyclePortError::InvalidOperation)?
+        } else {
+            let did = did_from_public_keys(profile_id, &authentication, &assertion)?;
+            let authentication_method = verification_method(&did, "auth-1", &authentication)?;
+            let assertion_method = verification_method(&did, "assertion-1", &assertion)?;
+            let presentation_method = verification_method(&did, "holder-jubjub-1", &presentation)?;
+            let document = DidDocument::new(DidDocumentParts {
+                contexts: vec![DID_CONTEXT.to_owned(), JWK_CONTEXT.to_owned()],
+                id: did.clone(),
+                controllers: vec![did.clone()],
+                also_known_as: Vec::new(),
+                verification_methods: vec![
+                    authentication_method,
+                    assertion_method,
+                    presentation_method,
+                ],
+                relationships: vec![
+                    VerificationRelationshipEntry::new(
+                        VerificationRelationship::Authentication,
+                        vec![format!("{}#auth-1", did.as_str())],
+                    ),
+                    VerificationRelationshipEntry::new(
+                        VerificationRelationship::AssertionMethod,
+                        vec![
+                            format!("{}#assertion-1", did.as_str()),
+                            format!("{}#holder-jubjub-1", did.as_str()),
+                        ],
+                    ),
+                    VerificationRelationshipEntry::new(
+                        VerificationRelationship::CapabilityInvocation,
+                        vec![format!("{}#auth-1", did.as_str())],
+                    ),
+                ],
+                services: Vec::new(),
+            })
+            .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+            DidResolution::new(
+                document,
+                DidDocumentMetadata {
+                    deactivated: Some(false),
+                    version_id: Some("standalone-1".to_owned()),
+                    ..DidDocumentMetadata::default()
+                },
+                DidResolutionMetadata {
+                    content_type: Some("application/did+ld+json".to_owned()),
+                },
+                DidResolutionSource::Standalone,
+            )
+        };
+        let did = resolution.document().id().clone();
+        let authentication_method = &resolution.document().verification_methods()[0];
+        let assertion_method = &resolution.document().verification_methods()[1];
+        let presentation_method = &resolution.document().verification_methods()[2];
 
         let key = (profile_id.as_str().to_owned(), did.as_str().to_owned());
         let mut methods = BTreeMap::new();
@@ -351,18 +411,7 @@ impl DidLifecyclePort for StandaloneDidLifecycle {
             return Err(DidLifecyclePortError::Conflict);
         }
 
-        Ok(DidResolution::new(
-            document,
-            DidDocumentMetadata {
-                deactivated: Some(false),
-                version_id: Some("standalone-1".to_owned()),
-                ..DidDocumentMetadata::default()
-            },
-            DidResolutionMetadata {
-                content_type: Some("application/did+ld+json".to_owned()),
-            },
-            DidResolutionSource::Standalone,
-        ))
+        Ok(resolution)
     }
 
     fn update(
@@ -371,6 +420,9 @@ impl DidLifecyclePort for StandaloneDidLifecycle {
         current: &DidResolution,
         operation: DidUpdate,
     ) -> Result<DidResolution, DidLifecyclePortError> {
+        if current.document().id().network() == MidnightNetwork::Offchain {
+            return Err(DidLifecyclePortError::UnsupportedNetwork);
+        }
         ensure_active(current)?;
         self.rebind_document(profile_id, current)?;
         let did = current.document().id();
@@ -601,6 +653,9 @@ impl DidLifecyclePort for StandaloneDidLifecycle {
         profile_id: &IdentityProfileId,
         current: &DidResolution,
     ) -> Result<DidResolution, DidLifecyclePortError> {
+        if current.document().id().network() == MidnightNetwork::Offchain {
+            return Err(DidLifecyclePortError::UnsupportedNetwork);
+        }
         ensure_active(current)?;
         self.rebind_document(profile_id, current)?;
         let key = (
@@ -911,6 +966,7 @@ mod tests {
     use midnight_transient_crypto::curve::{EmbeddedFr, Fr};
     use oxid_adapter_platform_system::{OsRandom, SystemClock};
     use oxid_adapter_storage_dev::DevelopmentWalletSecurity;
+    use oxid_identity_application::DidResolutionPort;
     use oxid_identity_domain::VerificationRelationship;
     use oxid_wallet_application::{
         WalletPortableBackupPort, WalletProtectionPort, WalletRecoverySecret,
@@ -947,6 +1003,37 @@ mod tests {
             StandaloneDidLifecycle::with_jubjub_challenge_signing(keys, challenge_signing),
             profile,
         )
+    }
+
+    #[test]
+    fn creates_and_resolves_self_contained_offchain_did_without_ledger_mutation() {
+        let (_, lifecycle, profile) = setup();
+        let resolution = lifecycle
+            .create(&profile, MidnightNetwork::Offchain)
+            .expect("create off-chain DID");
+        let did = resolution.document().id();
+        assert!(did.as_str().starts_with("did:midnight:offchain:"));
+        assert_eq!(did.as_str().split(':').count(), 5);
+        let resolved = futures::executor::block_on(crate::StandaloneDidResolver.resolve(did))
+            .expect("resolve embedded public state");
+        assert_eq!(resolved.document(), resolution.document());
+        assert_eq!(
+            lifecycle.update(
+                &profile,
+                &resolution,
+                DidUpdate::AddAlsoKnownAs {
+                    value: "https://example.test/alice".to_owned(),
+                },
+            ),
+            Err(DidLifecyclePortError::UnsupportedNetwork)
+        );
+        assert_eq!(
+            lifecycle.deactivate(&profile, &resolution),
+            Err(DidLifecyclePortError::UnsupportedNetwork)
+        );
+        lifecycle
+            .sign(&profile, &resolution, "#auth-1", b"offline demo")
+            .expect("managed off-chain key signs");
     }
 
     #[test]

@@ -5718,6 +5718,8 @@ dependencies = [
 name = "oxid-adapter-did-midnight"
 version = "0.2.0"
 dependencies = [
+ "base64 0.22.1",
+ "blake2",
  "futures",
  "midnight-serialize",
  "midnight-transient-crypto",

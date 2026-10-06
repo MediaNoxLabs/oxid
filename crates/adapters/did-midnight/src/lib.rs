@@ -9,6 +9,7 @@ use oxid_identity_application::{
 };
 
 mod lifecycle;
+mod offchain;
 
 #[cfg(all(
     feature = "tailnet-test-did-publication",
@@ -17,11 +18,15 @@ mod lifecycle;
 mod publication;
 
 pub use lifecycle::StandaloneDidLifecycle;
+pub use offchain::{
+    OFFCHAIN_STATE_ENCODING, OffchainDidError, OffchainDidState, OffchainService,
+    OffchainVerificationMethod, create_long_form_offchain_did, resolve_long_form_offchain_did,
+};
 use oxid_identity_domain::{
     DID_CONTEXT, DidDocument, DidDocumentMetadata, DidDocumentParts, DidResolution,
     DidResolutionMetadata, DidResolutionSource, JWK_CONTEXT, JwkCurve, JwkKeyType, MidnightDid,
-    PublicJwk, Service, ServiceEndpointValue, VerificationMethod, VerificationRelationship,
-    VerificationRelationshipEntry,
+    MidnightNetwork, PublicJwk, Service, ServiceEndpointValue, VerificationMethod,
+    VerificationRelationship, VerificationRelationshipEntry,
 };
 #[cfg(all(
     feature = "tailnet-test-did-publication",
@@ -48,24 +53,31 @@ pub struct StandaloneDidResolver;
 
 impl DidResolutionPort for StandaloneDidResolver {
     fn resolve<'a>(&'a self, did: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
-        let result = match did.as_str() {
-            STANDALONE_FIXTURE_DID => standalone_resolution_for(
-                STANDALONE_FIXTURE_DID,
-                "#authentication-1",
-                "4A3l3ITUWOFUgNTdtN9BS3HEIpnEhewcfd_rEb3iSEo",
-            ),
-            STANDALONE_PASSPORT_ISSUER_DID => standalone_resolution_for(
-                STANDALONE_PASSPORT_ISSUER_DID,
-                "#assertion-1",
-                "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
-            ),
-            STANDALONE_COMPACT_PASSPORT_ISSUER_DID => standalone_compact_issuer_resolution(),
-            _ => Err(DidResolutionPortError::NotFound),
+        let result = if did.network() == MidnightNetwork::Offchain {
+            resolve_long_form_offchain_did(did).map_err(|_| DidResolutionPortError::InvalidResponse)
+        } else {
+            match did.as_str() {
+                STANDALONE_FIXTURE_DID => standalone_resolution_for(
+                    STANDALONE_FIXTURE_DID,
+                    "#authentication-1",
+                    "4A3l3ITUWOFUgNTdtN9BS3HEIpnEhewcfd_rEb3iSEo",
+                ),
+                STANDALONE_PASSPORT_ISSUER_DID => standalone_resolution_for(
+                    STANDALONE_PASSPORT_ISSUER_DID,
+                    "#assertion-1",
+                    "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+                ),
+                STANDALONE_COMPACT_PASSPORT_ISSUER_DID => standalone_compact_issuer_resolution(),
+                _ => Err(DidResolutionPortError::NotFound),
+            }
         };
         Box::pin(async move { result })
     }
 
     fn refresh_availability(&self, did: &MidnightDid) -> DidRefreshAvailability {
+        if did.network() == MidnightNetwork::Offchain {
+            return DidRefreshAvailability::NotApplicable;
+        }
         match did.as_str() {
             STANDALONE_FIXTURE_DID
             | STANDALONE_PASSPORT_ISSUER_DID

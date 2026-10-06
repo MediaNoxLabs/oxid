@@ -358,7 +358,7 @@ async fn run_driver() {
         ("Documents", "open-documents"),
         ("Manage identities", "manage-identities"),
         ("Create a DID", "open-create-did"),
-        ("Create DID", "create-did"),
+        ("Create off-chain demo identity", "create-did"),
     ] {
         if let Err(failure) = click_when_visible(label, failure).await {
             write_failure(&root, failure);

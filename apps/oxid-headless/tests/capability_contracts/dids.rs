@@ -233,6 +233,64 @@ fn exercises_the_complete_standalone_did_lifecycle_without_key_handles() {
 }
 
 #[test]
+fn creates_and_resolves_an_offchain_demo_identity_without_network_configuration() {
+    let wallet =
+        HeadlessWallet::new(oxid_composition::compose_in_memory_with_development_did_approval());
+    let created = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"profile","method":"wallet.profile.create","params":{"displayName":"Offline identity"}}"#,
+    );
+    let profile = created[0]["result"]["profile"]["id"]
+        .as_str()
+        .expect("profile id");
+    let setup = format!(
+        "{}\n{}\n{}",
+        json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "select",
+            "method": "wallet.profile.select",
+            "params": { "profileId": profile },
+        }),
+        json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "security",
+            "method": "wallet.security.initialize",
+            "params": {},
+        }),
+        json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "offchain-create",
+            "method": "did.create",
+            "params": { "network": "offchain" },
+        }),
+    );
+    let responses = execute_with_wallet(&wallet, &setup);
+    assert_eq!(
+        responses[2]["ok"], true,
+        "unexpected response: {responses:?}"
+    );
+    let did = responses[2]["result"]["didRecord"]["document"]["id"]
+        .as_str()
+        .expect("off-chain DID");
+    assert!(did.starts_with("did:midnight:offchain:"));
+    assert_eq!(did.split(':').count(), 5);
+    assert!(!responses[2].to_string().contains("private"));
+
+    let resolved = execute_with_wallet(
+        &wallet,
+        &json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "offchain-resolve",
+            "method": "did.resolve",
+            "params": { "did": did },
+        })
+        .to_string(),
+    );
+    assert_eq!(resolved[0]["ok"], true, "unexpected response: {resolved:?}");
+    assert_eq!(resolved[0]["result"]["didRecord"]["document"]["id"], did);
+}
+
+#[test]
 fn default_headless_did_commands_report_approval_unavailable_and_reject_json_authority() {
     let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
     let created = execute_with_wallet(

@@ -260,10 +260,10 @@ pub(super) fn DidsPage(
                         "data-testid": "identity-did-create",
                     p { class: "card-eyebrow", "Managed identity" }
                     h2 { "Create your identity" }
-                    p { class: "form-hint", "The wallet creates protected authentication, assertion, and holder-binding methods. Only the public DID document leaves protected custody." }
+                    p { class: "form-hint", "This off-chain demo identity carries its public DID document in the identifier. It is self-contained, not published to Midnight, and private keys remain in protected custody." }
                     if creation == DidCreationState::Ready {
                         button {
-                            class: "primary-action", r#type: "button", disabled: resolving || selected_network().is_none(),
+                            class: "primary-action", r#type: "button", disabled: resolving,
                             onclick: move |_| {
                                 {
                                     let mut creation = did_creation.write();
@@ -272,11 +272,6 @@ pub(super) fn DidsPage(
                                     }
                                 }
                                 did_creation_notice.set(None);
-                                let Some(network) = selected_network() else {
-                                    did_creation.set(DidCreationState::Failed);
-                                    did_creation_notice.set(Some("The selected Midnight network is unavailable.".to_owned()));
-                                    return;
-                                };
                                 let service = create_services.create_did();
                                 let profile_id = create_profile.clone();
                                 let records = create_records.clone();
@@ -284,7 +279,7 @@ pub(super) fn DidsPage(
                                     let result = run_ui_blocking(move || {
                                         service.execute(CreateDidCommand {
                                             profile_id,
-                                            network,
+                                            network: "offchain".to_owned(),
                                         })
                                     })
                                     .await;
@@ -311,7 +306,7 @@ pub(super) fn DidsPage(
                                     }
                                 });
                             },
-                            "Create DID"
+                            "Create off-chain demo identity"
                         }
                     } else if creation == DidCreationState::Creating {
                         p {
@@ -754,6 +749,7 @@ pub(super) fn DidsPage(
                             let updated = record.document_metadata.updated.clone().unwrap_or_else(|| "No update timestamp".to_owned());
                             let is_managed = !record.managed_method_ids.is_empty();
                             let is_deactivated = record.document_metadata.deactivated == Some(true);
+                            let is_offchain = record.document.network == "offchain";
                             rsx! {
                                 div { class: "did-journey-header",
                                     button {
@@ -805,10 +801,13 @@ pub(super) fn DidsPage(
                                         div { dt { "Methods" } dd { "{record.document.verification_methods.len()}" } }
                                         div { dt { "Services" } dd { "{record.document.services.len()}" } }
                                     }
-                                    DidRefreshControl {
-                                        availability: record.refresh_availability,
-                                        resolving,
-                                        on_refresh: move |_| {
+                                    if is_offchain {
+                                        p { class: "form-hint", "Resolved locally from the self-contained public state above. The public DID document travels with this identifier; no Midnight network is contacted." }
+                                    } else {
+                                        DidRefreshControl {
+                                            availability: record.refresh_availability,
+                                            resolving,
+                                            on_refresh: move |_| {
                                             let service = refresh_services.resolve_did();
                                             let profile_id = refresh_profile.clone();
                                             let did = refresh_did.clone();
@@ -829,6 +828,7 @@ pub(super) fn DidsPage(
                                                     Err(error) => state.set(DidPageState::Ready { records: next, resolving: false, operation_error: Some(error.to_string()) }),
                                                 }
                                             });
+                                            }
                                         }
                                     }
                                     if let Some(error) = operation_error.clone() {
@@ -895,7 +895,7 @@ pub(super) fn DidsPage(
                                         }
                                     }
                                 }
-                                if is_managed {
+                                if is_managed && !is_offchain {
                                     ManagedDidControls {
                                         profile_id: profile_id.clone(),
                                         record: record.clone(),
@@ -913,7 +913,10 @@ pub(super) fn DidsPage(
                                         }
                                     }
                                 }
-                                if let Some(service) = publication_service.clone() && is_managed && !is_deactivated {
+                                if is_managed && is_offchain {
+                                    p { class: "form-hint", "Off-chain identities cannot be updated or deactivated in place. Create a new identity when its public state must change." }
+                                }
+                                if let Some(service) = publication_service.clone() && is_managed && !is_deactivated && !is_offchain {
                                     details { class: "did-development-tools",
                                         summary { "Development sharing" }
                                         p { class: "form-hint", "Share this public DID document with the configured test issuer. Private keys and credentials stay in the wallet." }
@@ -954,7 +957,7 @@ pub(super) fn DidsPage(
                                 }
                                 details { class: "did-danger-zone",
                                     summary { "Remove from this profile" }
-                                    p { class: "form-hint", "This removes the saved record from this profile. It does not remove the public DID document from Midnight." }
+                                    p { class: "form-hint", if is_offchain { "This removes the saved record from this profile. Copies of the self-contained public identifier remain resolvable." } else { "This removes the saved record from this profile. It does not remove the public DID document from Midnight." } }
                                     button {
                                         class: "danger-action", r#type: "button",
                                         aria_label: "Forget saved DID {did}",
@@ -1117,7 +1120,7 @@ mod tests {
         assert!(source.contains("did-detail-hero"));
         assert!(source.contains("DID document details"));
         assert!(source.contains("Refresh from Midnight"));
-        assert!(source.contains("Create DID"));
+        assert!(source.contains("Create off-chain demo identity"));
         assert!(source.contains("Resolve DID"));
         assert!(source.contains("Create a DID"));
         assert!(source.contains("Resolve a DID"));

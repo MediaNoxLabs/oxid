@@ -359,7 +359,7 @@ try {
     await click("Documents");
     await click("Manage identities");
     await click("Create a DID");
-    await click("Create DID");
+    await click("Create off-chain demo identity");
     await waitFor(
       'Boolean(document.querySelector(".did-detail-hero")) || Array.from(document.querySelectorAll(".field-error")).some((element) => element.textContent.trim() === "protected DID key operation is unavailable")',
       "managed DID terminal state",
