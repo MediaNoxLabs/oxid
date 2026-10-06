@@ -8,6 +8,8 @@ use oxid_identity_application::{
     DidRefreshAvailability, DidResolutionPort, DidResolutionPortError, DidResolutionPortFuture,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+mod deployment;
 mod lifecycle;
 mod offchain;
 
@@ -17,6 +19,11 @@ mod offchain;
 ))]
 mod publication;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use deployment::{
+    NativeMidnightDidDeploymentComposer, NativeMidnightDidDeploymentPlan,
+    NativeMidnightDidDeploymentRequest,
+};
 pub use lifecycle::StandaloneDidLifecycle;
 pub use offchain::{
     OFFCHAIN_STATE_ENCODING, OffchainDidError, OffchainDidState, OffchainService,
