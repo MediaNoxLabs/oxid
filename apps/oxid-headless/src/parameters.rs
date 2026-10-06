@@ -342,6 +342,15 @@ pub(super) struct CreateDidParams {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct DeployDidParams {
+    #[serde(default = "undeployed_network")]
+    pub(super) network: String,
+    #[serde(default)]
+    pub(super) account_index: u32,
+}
+
+#[derive(Deserialize)]
 #[serde(
     tag = "operation",
     rename_all = "camelCase",

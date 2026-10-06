@@ -5,8 +5,8 @@ use oxid_credential_application::{
     CredentialVerificationError,
 };
 use oxid_identity_application::{
-    DidLifecyclePortError, DidOperationError, DidPublicationPortError, DidRecordRepositoryError,
-    DidResolutionPortError,
+    DidDeploymentUseCaseError, DidLifecyclePortError, DidOperationError, DidPublicationPortError,
+    DidRecordRepositoryError, DidResolutionPortError,
 };
 use oxid_passport_vault_application::{
     PassportVaultCallError, PassportVaultCallPortError, PassportVaultContractStateError,
@@ -27,6 +27,43 @@ use oxid_wallet_application::{
 };
 
 use crate::protocol::{Dispatch, Response};
+
+pub(super) fn did_deployment_error(
+    id: Option<String>,
+    error: DidDeploymentUseCaseError,
+) -> Response {
+    let (code, message) = match error {
+        DidDeploymentUseCaseError::Unavailable => (
+            "capability_unavailable",
+            "native ledger-backed DID deployment is not composed for this target",
+        ),
+        DidDeploymentUseCaseError::InvalidRequest => (
+            "invalid_argument",
+            "ledger-backed DID deployment request is invalid",
+        ),
+        DidDeploymentUseCaseError::Integrity => (
+            "integrity_failure",
+            "ledger-backed DID deployment state failed integrity validation",
+        ),
+        DidDeploymentUseCaseError::Persistence => (
+            "persistence_unavailable",
+            "ledger-backed DID deployment progress could not be persisted",
+        ),
+        DidDeploymentUseCaseError::Composition => (
+            "composition_unavailable",
+            "ledger-backed DID deployment could not be composed",
+        ),
+        DidDeploymentUseCaseError::Transaction => (
+            "transaction_failed",
+            "ledger-backed DID deployment transaction failed",
+        ),
+        DidDeploymentUseCaseError::Resolution => (
+            "resolution_failed",
+            "deployed DID could not be verified by live resolution",
+        ),
+    };
+    Response::error(id, code, message)
+}
 
 pub(super) fn identity_request_routing_error(
     id: Option<String>,

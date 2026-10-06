@@ -7,7 +7,7 @@ use oxid_credential_application::{
     CredentialDisclosurePlanView, CredentialDisclosureView, CredentialView,
 };
 use oxid_diagnostics_application::DiagnosticSnapshotView;
-use oxid_identity_application::DidRecordView;
+use oxid_identity_application::{DidDeploymentOperation, DidRecordView};
 use oxid_passport_vault_application::{
     PassportVaultCallPreviewView, PassportVaultCallSubmissionStatusView,
     PassportVaultCallSubmissionView, PassportVaultLockView, PassportVaultView,
@@ -433,6 +433,33 @@ pub(super) fn did_record_value(record: &DidRecordView) -> Value {
         },
         "contentType": record.content_type,
         "source": record.source,
+    })
+}
+
+pub(super) fn did_deployment_value(operation: &DidDeploymentOperation) -> Value {
+    json!({
+        "operationId": operation.operation_id().as_str(),
+        "profileId": operation.profile_id().as_str(),
+        "network": operation.network().as_str(),
+        "state": operation.state().as_str(),
+        "effect": operation.effect().as_str(),
+        "failure": operation.failure().map(|failure| failure.as_str()),
+        "resumeFrom": operation.resume_from().map(|state| state.as_str()),
+        "did": operation.did().map(|did| did.as_str()),
+        "submissionId": operation.submission_id(),
+        "transactionHashHex": operation.transaction_hash_hex(),
+        "blockHashHex": operation.block_hash_hex(),
+        "blockHeight": operation.block_height(),
+        "receipts": operation.receipts().iter().map(|receipt| json!({
+            "effect": receipt.effect().as_str(),
+            "submissionId": receipt.submission_id(),
+            "transactionHashHex": receipt.transaction_hash_hex(),
+            "blockHashHex": receipt.block_hash_hex(),
+            "blockHeight": receipt.block_height(),
+        })).collect::<Vec<_>>(),
+        "createdAtMillis": operation.created_at().value(),
+        "updatedAtMillis": operation.updated_at().value(),
+        "containsSecrets": false,
     })
 }
 
