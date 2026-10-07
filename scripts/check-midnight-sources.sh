@@ -8,9 +8,14 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
+readonly ledger_revision="b85f5d8e503fd1d7a1b128bbc1d7156baf823a65"
+readonly ledger_source="git+https://github.com/MediaNoxLabs/midnight-ledger.git?rev=${ledger_revision}"
+readonly proofs_revision="083c82824dc5979fd7d509229e6f6b362d5b1ebf"
+readonly proofs_source="git+https://github.com/MediaNoxLabs/midnight-zk?rev=${proofs_revision}"
+
 metadata_file="$(mktemp)"
 trap 'rm -f "$metadata_file"' EXIT
-cargo metadata --no-deps --format-version 1 >"$metadata_file"
+cargo metadata --locked --format-version 1 >"$metadata_file"
 
 dependency_count=0
 while IFS=$'\t' read -r package source path; do
@@ -22,9 +27,12 @@ while IFS=$'\t' read -r package source path; do
       midnight-serialize|midnight-base-crypto|midnight-coin-structure|\
       midnight-onchain-state|midnight-storage|midnight-transient-crypto|\
       midnight-proof-server)
-      expected_source="git+https://github.com/midnightntwrk/midnight-ledger.git?rev="
+      expected_source="$ledger_source"
       ;;
-    midnight-proofs|midnight-circuits|midnight-zk-stdlib|midnight-curves)
+    midnight-proofs)
+      expected_source="$proofs_source"
+      ;;
+    midnight-circuits|midnight-zk-stdlib|midnight-curves)
       expected_source="git+https://github.com/midnightntwrk/midnight-zk.git?rev="
       ;;
     *)
@@ -37,12 +45,12 @@ while IFS=$'\t' read -r package source path; do
     exit 1
   fi
 
-  if [[ "$source" != "$expected_source"* ]]; then
-    echo "$package must use $expected_source<full-commit-sha>." >&2
+  if [[ "$source" != "$expected_source" ]]; then
+    echo "$package must use the reviewed immutable source $expected_source." >&2
     exit 1
   fi
 
-  revision="${source#"$expected_source"}"
+  revision="${source#*?rev=}"
   revision="${revision%%#*}"
   revision="${revision%%&*}"
   if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
@@ -51,7 +59,8 @@ while IFS=$'\t' read -r package source path; do
   fi
 done < <(
   jq -r '
-    .packages[].dependencies[]
+    [.workspace_members[] as $member | .packages[] | select(.id == $member) | .dependencies[]]
+    | .[]
     | select(.name as $name | [
         "midnight-ledger",
         "midnight-zswap",
@@ -74,8 +83,61 @@ done < <(
   ' "$metadata_file"
 )
 
+ledger_graph_count="$(jq -r --arg source "$ledger_source" '
+  [.packages[]
+   | select(.name | test("^midnight-(ledger(?:-static)?|zswap|zkir|onchain-.+|storage.*|serialize.*|transient-crypto|base-crypto(?:-derive)?|coin-structure)$"))
+   | select(.source | startswith($source))]
+  | length
+' "$metadata_file")"
+if [ "$ledger_graph_count" = "0" ]; then
+  echo "The locked graph contains no packages from the reviewed Ledger8 source." >&2
+  exit 1
+fi
+
+unexpected_ledger_sources="$(jq -r --arg source "$ledger_source" '
+  .packages[]
+  | select(.name | test("^midnight-(ledger(?:-static)?|zswap|zkir|onchain-.+|storage.*|serialize.*|transient-crypto|base-crypto(?:-derive)?|coin-structure)$"))
+  | select((.source | startswith($source)) | not)
+  | "\(.name) \(.version) \(.source // "path")"
+' "$metadata_file")"
+if [ -n "$unexpected_ledger_sources" ]; then
+  echo "Locked Ledger-family packages must all resolve from $ledger_source:" >&2
+  echo "$unexpected_ledger_sources" >&2
+  exit 1
+fi
+
+duplicate_ledger_packages="$(jq -r '
+  [.packages[]
+   | select(.name | test("^midnight-(ledger(?:-static)?|zswap|zkir|onchain-.+|storage.*|serialize.*|transient-crypto|base-crypto(?:-derive)?|coin-structure)$"))]
+  | group_by(.name)
+  | .[]
+  | select(length > 1)
+  | map("\(.name) \(.version) \(.source // "path")")
+  | join("; ")
+' "$metadata_file")"
+if [ -n "$duplicate_ledger_packages" ]; then
+  echo "Locked graph contains duplicate Ledger-family packages: $duplicate_ledger_packages" >&2
+  exit 1
+fi
+
+if ! jq -e --arg source "$proofs_source" '
+  [.packages[] | select(.name == "midnight-proofs" and (.source | startswith($source)))]
+  | length == 1
+' "$metadata_file" >/dev/null; then
+  echo "midnight-proofs must resolve once from the exact patch declared by the selected Ledger8 workspace." >&2
+  exit 1
+fi
+
+if ! jq -e '
+  [.packages[] | select(.name == "midnight-ledger" or .name == "midnight-zswap")]
+  | all(.version == "8.2.0-rc.1")
+' "$metadata_file" >/dev/null; then
+  echo "Ledger9 is out of scope: midnight-ledger and midnight-zswap must remain on 8.2.0-rc.1." >&2
+  exit 1
+fi
+
 if [ "$dependency_count" = "0" ]; then
   echo "Midnight Git source rules passed (no direct Midnight Cargo packages present)."
 else
-  echo "Midnight Git source rules passed for $dependency_count direct dependencies."
+  echo "Midnight Git source rules passed for $dependency_count direct dependencies and $ledger_graph_count locked Ledger8 packages."
 fi

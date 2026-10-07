@@ -5,7 +5,7 @@
 - Date: 2026-08-18
 - Blueprint source: Sections 3–8, 12–13, 16–18, and 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/tx/balance.rs`, `tx/prove.rs`, and the shielded wallet state
-- Canonical source: `midnight-ledger` commit `d9414884db9da9e9b1f6f3a7f742d79a5732f817`
+- Canonical source: `midnight-ledger` commit `b85f5d8e503fd1d7a1b128bbc1d7156baf823a65`
 - Tracking: issues #2, #59, #91, and #93
 - Amends: ADR-0026 through ADR-0029, ADR-0033 through ADR-0035, and ADR-0077
 - Implementation state: canonical Zswap planning, exact safe previews,

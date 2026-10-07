@@ -8,7 +8,7 @@
 
 - `midnight-onchain-runtime 3.1.0` is a direct dependency from the same official
   `midnight-ledger` HTTPS Git source and full revision
-  `d9414884db9da9e9b1f6f3a7f742d79a5732f817` as every other direct Midnight
+  `b85f5d8e503fd1d7a1b128bbc1d7156baf823a65` as every other direct Midnight
   package.
 - `midnight-ledger 8.2.0-rc.1` now enables its `proving` feature. That feature
   resolves the published crates `midnight-proofs 0.7.3`,

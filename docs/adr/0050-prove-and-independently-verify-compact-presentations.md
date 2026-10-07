@@ -7,7 +7,7 @@
 - Blueprint: §§3–7, 9–13, 16–18, 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, Digital Passport presentation path
 - Reference package: `midnight-verifiable-credentials` commit `39b1354212620b396e914b29603e6a38f2656546`
-- Ledger runtime: `midnight-ledger` commit `d9414884db9da9e9b1f6f3a7f742d79a5732f817`
+- Ledger runtime: `midnight-ledger` commit `b85f5d8e503fd1d7a1b128bbc1d7156baf823a65`
 - Related: ADR-0010, ADR-0013, ADR-0015, ADR-0020, ADR-0022, ADR-0028, ADR-0043 through ADR-0049, issues #27–29
 - Implementation state: exact generated-runtime/Rust `ProofPreimage` parity, a self-contained authenticated Nix artifact closure, native checked proving and independent verification, the bounded portable envelope, and explicit standalone headless protocol wiring are implemented; mobile packaging remains fail-closed pending the resource and native-custody gates below
 - Amended by: ADR-0083
