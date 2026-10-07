@@ -614,7 +614,7 @@ test("every hosted target has one explicit budget matching the authoritative mat
     "headless-linux": 10 * 60_000,
     "ui-linux": 20 * 60_000,
     "ui-release-linux": 25 * 60_000,
-    "coverage-linux": 25 * 60_000,
+    "coverage-linux": 40 * 60_000,
     quality: 20 * 60_000,
     "nix-package": 45 * 60_000,
     "compact-artifacts": 30 * 60_000,

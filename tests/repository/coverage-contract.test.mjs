@@ -465,8 +465,8 @@ test("hosted coverage supplies a fetched, non-empty source comparison base", asy
   );
   assert.match(coverageJob, /\.\/run\.sh coverage --strict/u);
   assert.match(coverageJob, /node scripts\/coverage\/verify-manifest\.mjs/u);
-  assert.match(coverageJob, /timeout-minutes: 27/u);
-  assert.match(coverageJob, /name: Measure the non-UI workspace once\n        timeout-minutes: 25/u);
+  assert.match(coverageJob, /timeout-minutes: 42/u);
+  assert.match(coverageJob, /name: Measure the non-UI workspace once\n        timeout-minutes: 40/u);
   assert.match(coverageJob, /name: Upload immutable coverage-policy evidence\n        if: always\(\)/u);
   assert.match(coverageJob, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/u);
   assert.match(coverageJob, /name: coverage-policy-evidence-\$\{\{ github\.sha \}\}/u);
