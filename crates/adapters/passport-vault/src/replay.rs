@@ -715,13 +715,35 @@ mod tests {
         address: [u8; 32],
         guaranteed: bool,
     ) -> (Vec<u8>, [u8; 32], CanonicalMidnightOperation) {
-        let program: Vec<Op<ResultModeVerify, DefaultDB>> = midnight_onchain_runtime::Cell_write!(
-            [midnight_onchain_runtime::ops::key!(11u8)],
-            false,
-            u32,
-            1u32
-        )
-        .into();
+        // Ledger8 b85 rejects `Op::Idx` paths outside 1..=16 while decoding.
+        // `Cell_write!` emits an empty traversal for a one-key root write, so
+        // spell out the equivalent root mutation without a no-op `Idx`.
+        let field = midnight_onchain_runtime::ops::key!(11u8);
+        let program = vec![
+            Op::Push {
+                storage: false,
+                value: StateValue::Cell(Sp::new(
+                    field.try_into().expect("a literal key is an aligned value"),
+                )),
+            },
+            Op::Push {
+                storage: true,
+                value: StateValue::Cell(Sp::new(1u32.into())),
+            },
+            Op::Ins {
+                cached: false,
+                n: 1,
+            },
+            Op::Ins { cached: true, n: 0 },
+        ];
+        serialized_audit_field_call_with_program(address, guaranteed, program)
+    }
+
+    fn serialized_audit_field_call_with_program(
+        address: [u8; 32],
+        guaranteed: bool,
+        program: Vec<Op<ResultModeVerify, DefaultDB>>,
+    ) -> (Vec<u8>, [u8; 32], CanonicalMidnightOperation) {
         let transcript = Transcript {
             gas: Default::default(),
             effects: Default::default(),
@@ -904,6 +926,38 @@ mod tests {
         observation.raw_transaction.push(0);
         assert_eq!(
             replay_canonical_passport_vault_history(address, &[observation]),
+            Err(PassportVaultReplayError::InvalidTransaction)
+        );
+    }
+
+    #[test]
+    fn rejects_a_transcript_with_the_pre_b85_empty_index_path() {
+        let (deployment, _, address) = deployment_observation();
+        let program: Vec<Op<ResultModeVerify, DefaultDB>> = midnight_onchain_runtime::Cell_write!(
+            [midnight_onchain_runtime::ops::key!(11u8)],
+            false,
+            u32,
+            1u32
+        )
+        .into();
+        assert!(matches!(
+            program.first(),
+            Some(Op::Idx { path, .. }) if path.is_empty()
+        ));
+        let (raw_transaction, transaction_hash, operation) =
+            serialized_audit_field_call_with_program(address, false, program);
+        let call = CanonicalMidnightTransaction {
+            raw_transaction,
+            transaction_hash,
+            block_hash: [10; 32],
+            block_height: 43,
+            extrinsic_index: 2,
+            block_context: block_context(43),
+            all_applied: true,
+            applied_operations: vec![operation],
+        };
+        assert_eq!(
+            replay_canonical_passport_vault_history(address, &[deployment, call]),
             Err(PassportVaultReplayError::InvalidTransaction)
         );
     }
