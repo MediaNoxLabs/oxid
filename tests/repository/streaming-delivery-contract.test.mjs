@@ -135,6 +135,7 @@ function milestonePr(overrides = {}) {
     headRefOid: "b".repeat(40),
     isDraft: false,
     isCrossRepository: false,
+    autoMergeRequest: null,
     mergeable: "MERGEABLE",
     mergeStateStatus: "CLEAN",
     title: "feat(wallet): stream one increment",
@@ -377,13 +378,15 @@ test("closing PR evidence resolves bounded references before trusting merge stat
 
 function milestoneAuditRun({
   reReadHead = "b".repeat(40),
+  reReadAutoMergeRequest = null,
   issueTarget = "milestone-0.4.0",
   localBase = "a".repeat(40),
   reReadBase = localBase,
+  autoMergeRequest = null,
   requiredChecks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
   selectedChecks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
 } = {}) {
-  const pr = milestonePr();
+  const pr = milestonePr({ autoMergeRequest });
   let baseReads = 0;
   const control = freezeReview(
     authorizeReview(initialReviewControl(pr.headRefOid), { headSha: pr.headRefOid }),
@@ -397,7 +400,10 @@ function milestoneAuditRun({
     if (command !== "gh") throw new Error(`unexpected command ${command}`);
     if (args[0] === "pr" && args[1] === "view" && args.at(-1).includes("state,")) return JSON.stringify(pr);
     if (args[0] === "pr" && args[1] === "view") return JSON.stringify({
-      baseRefName: pr.baseRefName, baseRefOid: pr.baseRefOid, headRefOid: reReadHead,
+      baseRefName: pr.baseRefName,
+      baseRefOid: pr.baseRefOid,
+      headRefOid: reReadHead,
+      autoMergeRequest: reReadAutoMergeRequest,
     });
     if (args[0] === "issue" && args[1] === "view") return JSON.stringify({
       state: "OPEN",
@@ -436,6 +442,26 @@ test("milestone audit binds issue target, base, selected required checks, triage
   }) }), /pull request checks are not green/);
 });
 
+test("GitHub auto-merge availability cannot bypass the exact-head audit", () => {
+  const options = { repo: "MediaNoxLabs/oxid", pr: 42, execute: false };
+  const autoMergeRequest = {
+    enabledAt: "2026-10-07T00:00:00Z",
+    mergeMethod: "SQUASH",
+  };
+  assert.match(
+    validateMilestonePr(milestonePr({ autoMergeRequest })).failures.join("; "),
+    /GitHub auto-merge is active/u,
+  );
+  assert.throws(() => auditMilestoneMerge(options, {
+    cwd: "/repo",
+    run: milestoneAuditRun({ autoMergeRequest }),
+  }), /GitHub auto-merge is active/u);
+  assert.throws(() => auditMilestoneMerge(options, {
+    cwd: "/repo",
+    run: milestoneAuditRun({ reReadAutoMergeRequest: autoMergeRequest }),
+  }), /GitHub auto-merge became active during the merge audit/u);
+});
+
 test("milestone merge implementation pins squash execution to the audited head", async () => {
   const source = await readFile(new URL("../../scripts/github/merge-milestone-pr.mjs", import.meta.url), "utf8");
   assert.match(source, /--required/);
@@ -449,4 +475,6 @@ test("milestone merge implementation pins squash execution to the audited head",
   assert.match(source, /assertIssueTarget/);
   assert.match(source, /closeout-pr/);
   assert.match(source, /result\.headSha/);
+  assert.match(source, /autoMergeRequest/);
+  assert.doesNotMatch(source, /["'`]--auto["'`]/u);
 });
