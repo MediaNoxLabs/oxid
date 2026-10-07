@@ -10,6 +10,7 @@ import {
   readFile,
   realpath,
   rm,
+  stat,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -54,6 +55,17 @@ const EXCEPTION_KEYS = Object.freeze([
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const MAX_FAILURE_SUMMARY_ENTRIES = 20;
 const MAX_FAILURE_SUMMARY_RANGES = 20;
+const REQUIRED_COVERAGE_FIXTURES = Object.freeze([
+  Object.freeze({
+    environment: "OXID_MIDNIGHT_DID_ARTIFACTS_DIR",
+    kind: "directory",
+    sentinel: "manifest.json",
+  }),
+  Object.freeze({
+    environment: "OXID_MIDNIGHT_DID_CALL_COMPOSER",
+    kind: "executable",
+  }),
+]);
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -966,6 +978,36 @@ function coverageJobs(env) {
   return raw;
 }
 
+export async function assertCoverageFixtureEnvironment(env) {
+  for (const fixture of REQUIRED_COVERAGE_FIXTURES) {
+    const configured = env[fixture.environment];
+    if (typeof configured !== "string" || configured.length === 0 || !path.isAbsolute(configured)) {
+      throw new Error(`coverage fixture ${fixture.environment} must be an absolute path`);
+    }
+    let fixturePath;
+    let metadata;
+    try {
+      fixturePath = await realpath(configured);
+      metadata = await stat(fixturePath);
+    } catch {
+      throw new Error(`coverage fixture ${fixture.environment} is unavailable`);
+    }
+    if (fixture.kind === "directory") {
+      if (!metadata.isDirectory()) {
+        throw new Error(`coverage fixture ${fixture.environment} must be a directory`);
+      }
+      try {
+        const sentinel = await stat(path.join(fixturePath, fixture.sentinel));
+        if (!sentinel.isFile() || sentinel.size === 0) throw new Error("invalid sentinel");
+      } catch {
+        throw new Error(`coverage fixture ${fixture.environment} has no authenticated manifest`);
+      }
+    } else if (!metadata.isFile() || (metadata.mode & 0o111) === 0) {
+      throw new Error(`coverage fixture ${fixture.environment} must be executable`);
+    }
+  }
+}
+
 async function writePrivateFile(filePath, contents) {
   await writeFile(filePath, contents, { flag: "wx", mode: 0o600 });
   await chmod(filePath, 0o600);
@@ -1018,6 +1060,7 @@ export async function runCoverage({
   const packageInventory = await discoverWorkspacePackageInventory(repoRoot);
   const generatedAt = now();
   validatePolicy(policy, packageInventory, { now: generatedAt });
+  if (!suppliedExecutor && !dryRun) await assertCoverageFixtureEnvironment(env);
   const jobs = coverageJobs(env);
   const source = initialSourceState(git, base);
   const lockPath = path.join(stateRoot, ".oxid-coverage.lock");

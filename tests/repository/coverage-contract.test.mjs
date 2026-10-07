@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
   acquireCoverageLock,
+  assertCoverageFixtureEnvironment,
   discoverWorkspacePackages,
   formatCoverageFailureSummary,
   normalizeLlvmReport,
@@ -177,6 +178,24 @@ test("an atomic lock refuses both active and stale ownership", async (t) => with
     acquireCoverageLock(lockPath, { pid: process.pid, sourceHead: HEAD }),
     /coverage lock already exists/u,
   );
+}));
+
+test("real coverage requires the pinned native DID fixtures", async (t) => withTemp(t, async (directory) => {
+  await assert.rejects(
+    assertCoverageFixtureEnvironment({}),
+    /OXID_MIDNIGHT_DID_ARTIFACTS_DIR must be an absolute path/u,
+  );
+
+  const artifacts = path.join(directory, "did-artifacts");
+  const composer = path.join(directory, "did-call-composer");
+  await mkdir(artifacts);
+  await writeFile(path.join(artifacts, "manifest.json"), "{}\n", { mode: 0o600 });
+  await writeFile(composer, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+
+  await assert.doesNotReject(assertCoverageFixtureEnvironment({
+    OXID_MIDNIGHT_DID_ARTIFACTS_DIR: artifacts,
+    OXID_MIDNIGHT_DID_CALL_COMPOSER: composer,
+  }));
 }));
 
 test("dirty source and unavailable or non-ancestor bases fail closed", async (t) => {

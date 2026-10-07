@@ -85,6 +85,11 @@
           ${ciRustShellHook}
           export LLVM_COV=${pkgs.llvmPackages.llvm}/bin/llvm-cov
           export LLVM_PROFDATA=${pkgs.llvmPackages.llvm}/bin/llvm-profdata
+          # Coverage must exercise the same pinned native DID paths as the
+          # developer shell. Without these inputs the artifact-backed tests
+          # return early while still reporting success.
+          export OXID_MIDNIGHT_DID_ARTIFACTS_DIR=${self'.packages.midnight-did-compact-artifacts}
+          export OXID_MIDNIGHT_DID_CALL_COMPOSER=${self'.packages.midnight-did-call-composer}/bin/oxid-midnight-did-call-composer
         '';
       };
 
