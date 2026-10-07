@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
   copyFile,
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   stat,
   symlink,
@@ -21,6 +22,7 @@ import {
   applyGitHooks,
   BUNDLE_FILES,
   checkGitHooks,
+  hookLayout,
   HOOK_NAMES,
   inspectManagedHookBundle,
 } from "../../scripts/git-hooks/configure.mjs";
@@ -92,7 +94,7 @@ test("canonical factory bundle is recognized without inventing a pre-merge dispa
   applyGitHooks(repository, { execute: true });
   const initial = inspectManagedHookBundle(repository);
   assert.equal(initial.ok, true);
-  git(repository, ["config", "--local", "core.hooksPath", path.join(initial.installedDir, "..", "hooks")]);
+  git(repository, ["config", "--local", "core.hooksPath", path.join(initial.installedDir, "..", initial.identity)]);
   assert.equal(inspectManagedHookBundle(repository).ok, true);
   assert.equal(checkGitHooks(repository).ok, true);
   applyGitHooks(repository, { execute: true });
@@ -105,8 +107,10 @@ test("canonical factory bundle is recognized without inventing a pre-merge dispa
   assert.equal(staleResult.ok, false);
   assert.equal(staleResult.stale, true);
   assert.match(staleResult.reason, /explicit bootstrap repair/u);
-  applyGitHooks(repository, { execute: true });
-  assert.equal(inspectManagedHookBundle(repository).ok, true);
+  assert.throws(
+    () => applyGitHooks(repository, { execute: true }),
+    /refusing to replace an actively selected immutable directory/u,
+  );
 });
 
 test("consumer suppresses only pinned false warnings while canonical hooks remain valid", async (t) => {
@@ -173,6 +177,72 @@ test("installer preserves a foreign hook manager", async (t) => {
   git(repository, ["config", "--local", "core.hooksPath", "/private/other-hooks"]);
   assert.throws(() => applyGitHooks(repository, { execute: true }), /refusing to replace another hook manager/u);
   assert.equal(git(repository, ["config", "--local", "core.hooksPath"]), "/private/other-hooks");
+});
+
+function runHookInstaller(repository) {
+  return new Promise((resolve) => {
+    const child = spawn(
+      process.execPath,
+      [path.join(repoRoot, "scripts/git-hooks/configure.mjs"), "apply", "--execute", "--json"],
+      { cwd: repository, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+test("concurrent installers publish and select one complete content-addressed bundle", async (t) => {
+  const repository = await fixture(t);
+  const [first, second] = await Promise.all([runHookInstaller(repository), runHookInstaller(repository)]);
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(second.status, 0, second.stderr);
+
+  const installed = checkGitHooks(repository);
+  assert.equal(installed.ok, true, installed.errors.join("; "));
+  assert.equal(git(repository, ["config", "--local", "core.hooksPath"]), installed.installedDir);
+  assert.deepEqual(await readdir(installed.bundlesDir), [installed.identity]);
+});
+
+test("an interrupted staging directory and dead selection owner cannot become active", async (t) => {
+  const repository = await fixture(t);
+  const layout = hookLayout(repository);
+  const deadPid = 2_147_483_647;
+  const interrupted = path.join(layout.stagingDir, `${layout.identity}.${deadPid}.interrupted`);
+  await mkdir(interrupted, { recursive: true });
+  await writeFile(path.join(interrupted, "pre-commit"), "partial\n");
+  await mkdir(layout.lockDir, { recursive: true });
+  await writeFile(path.join(layout.lockDir, "owner.json"), `${JSON.stringify({
+    schemaVersion: 1,
+    pid: deadPid,
+    token: "interrupted",
+    startedAt: "2000-01-01T00:00:00.000Z",
+  })}\n`);
+
+  const installed = applyGitHooks(repository, { execute: true });
+  assert.equal(installed.ok, true, installed.errors.join("; "));
+  assert.equal(git(repository, ["config", "--local", "core.hooksPath"]), installed.installedDir);
+  assert.equal((await readFile(path.join(interrupted, "pre-commit"), "utf8")), "partial\n");
+  assert.ok((await readdir(layout.hookRoot)).some((name) => name.startsWith("selection.lock.stale.")));
+});
+
+test("owned interrupted state is bounded without deleting unrelated paths", async (t) => {
+  const repository = await fixture(t);
+  const layout = hookLayout(repository);
+  await mkdir(layout.stagingDir, { recursive: true });
+  for (let index = 0; index < 16; index += 1) {
+    await mkdir(path.join(layout.stagingDir, `${layout.identity}.${index + 10}.00000000-0000-4000-8000-${String(index).padStart(12, "0")}`));
+  }
+  const unrelated = path.join(layout.stagingDir, "operator-notes");
+  await mkdir(unrelated);
+
+  assert.throws(
+    () => applyGitHooks(repository, { execute: true }),
+    /staging store reached its 16-attempt safety bound/u,
+  );
+  assert.equal((await stat(unrelated)).isDirectory(), true);
 });
 
 function runGitHubWebFlowKeyCheck(keyring) {
