@@ -105,7 +105,20 @@ if (!subagents) throw new Error(`project Pi settings do not pin ${expectedName}`
 process.stdout.write(subagents.packageRoot);
 ')"
 
-node scripts/factory/verify-pi-subagents-package.mjs "$subagent_package_root"
+node scripts/factory/verify-pi-subagents-package.mjs \
+  "$subagent_package_root" "$repo_root/.pi/settings.json" "$pi_version"
+
+agent_hashes_before="$(git hash-object .pi/agents/*.agent.md)"
+if timeout -k 5s 60s node scripts/factory/smoke-pi-child.mjs; then
+  :
+else
+  child_smoke_status=$?
+  if [[ "$child_smoke_status" -eq 124 || "$child_smoke_status" -eq 137 ]]; then
+    echo "Pi read-only child startup exceeded the 60-second smoke deadline." >&2
+  fi
+  echo "Pi direct developer or /dev-loop local implementation child startup failed." >&2
+  exit 1
+fi
 
 agent_hashes_before="$(git hash-object .pi/agents/*.agent.md)"
 if timeout -k 5s 60s node scripts/factory/smoke-pi-child.mjs; then

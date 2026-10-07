@@ -29,7 +29,10 @@ import {
   inspectDevLoopDispatch,
   resolveSupervisorModelRoute,
 } from "../../scripts/lib/dev-loop-model-routing.mjs";
-import { verifyPiSubagentsPackage } from "../../scripts/factory/verify-pi-subagents-package.mjs";
+import {
+  verifyPiSdkPeerPins,
+  verifyPiSubagentsPackage,
+} from "../../scripts/factory/verify-pi-subagents-package.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -89,7 +92,7 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(smoke, /PI_CODING_AGENT_SESSION_DIR/u);
   assert.match(smoke, /PI_SUBAGENTS_TEMP_ROOT/u);
   assert.match(smoke, /owner-private runtime state/u);
-  assert.match(smoke, /node scripts\/factory\/verify-pi-subagents-package\.mjs "\$subagent_package_root"/u);
+  assert.match(smoke, /verify-pi-subagents-package\.mjs[\s\\]+\n\s+"\$subagent_package_root" "\$repo_root\/\.pi\/settings\.json" "\$pi_version"/u);
   assert.match(smoke, /skill:taskflow/u);
   assert.match(smoke, /unsafe inherited taskflow resources are active/u);
   assert.match(smoke, /Pi startup modified tracked project agent shadows/u);
@@ -125,9 +128,24 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.doesNotMatch(dockerSandboxLauncher, /\/sandbox(?:\/|")/u);
 });
 
-async function writePiSubagentsFixture(root, { version = "0.70.0", omit = null, removeCapability = null } = {}) {
+const piSdkPeers = {
+  "@earendil-works/pi-agent-core": "*",
+  "@earendil-works/pi-ai": ">=0.80.0",
+  "@earendil-works/pi-coding-agent": "*",
+  "@earendil-works/pi-tui": "*",
+};
+
+function piProjectSettings(overrides = {}) {
+  return {
+    packages: Object.keys({ ...piSdkPeers, ...overrides }).map((name) => `npm:${name}@${overrides[name] ?? "0.85.1"}`),
+  };
+}
+
+async function writePiSubagentsFixture(root, {
+  version = "0.70.0", omit = null, removeCapability = null, peers = piSdkPeers,
+} = {}) {
   const files = {
-    "package.json": JSON.stringify({ name: "pi-subagents", version }),
+    "package.json": JSON.stringify({ name: "pi-subagents", version, peerDependencies: peers }),
     "src/shared/types.d.ts": [
       "asyncByDefault?", "forceTopLevelAsync?", "maxSubagentDepth?",
       "maxSubagentSpawnsPerSession?", "maxSubagentSpawnsPerRun?",
@@ -154,7 +172,35 @@ test("pi-subagents compiled capability verifier accepts the reviewed package sur
   const root = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-subagents-valid-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await writePiSubagentsFixture(root);
-  assert.deepEqual(await verifyPiSubagentsPackage(root), { name: "pi-subagents", version: "0.70.0" });
+  assert.deepEqual(await verifyPiSubagentsPackage(root, { projectSettings: piProjectSettings() }), {
+    name: "pi-subagents", version: "0.70.0",
+  });
+});
+
+test("pi-subagents peer metadata stays bound to exact project Pi SDK pins", () => {
+  assert.doesNotThrow(() => verifyPiSdkPeerPins({ peerDependencies: piSdkPeers }, piProjectSettings()));
+  assert.throws(
+    () => verifyPiSdkPeerPins({ peerDependencies: piSdkPeers }, {
+      packages: piProjectSettings().packages.filter((source) => !source.includes("pi-tui")),
+    }),
+    /missing @earendil-works\/pi-tui@0\.85\.1/u,
+  );
+  assert.throws(
+    () => verifyPiSdkPeerPins({
+      peerDependencies: { ...piSdkPeers, "@earendil-works/pi-new-peer": "*" },
+    }, piProjectSettings()),
+    /missing @earendil-works\/pi-new-peer@0\.85\.1/u,
+  );
+  assert.throws(
+    () => verifyPiSdkPeerPins({ peerDependencies: { ...piSdkPeers, "@earendil-works/pi-ai": ">=0.86.0" } }, piProjectSettings()),
+    /incompatible @earendil-works\/pi-ai peer range >=0\.86\.0 for 0\.85\.1/u,
+  );
+  assert.throws(
+    () => verifyPiSdkPeerPins({ peerDependencies: piSdkPeers }, piProjectSettings({
+      "@earendil-works/pi-ai": "^0.85.1",
+    })),
+    /non-exact @earendil-works\/pi-ai@\^0\.85\.1/u,
+  );
 });
 
 test("pi-subagents compiled capability verifier reports missing artifacts and capabilities", async (t) => {
@@ -166,12 +212,12 @@ test("pi-subagents compiled capability verifier reports missing artifacts and ca
   ]));
   await writePiSubagentsFixture(missingArtifact, { omit: "src/runs/background/auto-drain.js" });
   await assert.rejects(
-    verifyPiSubagentsPackage(missingArtifact),
+    verifyPiSubagentsPackage(missingArtifact, { projectSettings: piProjectSettings() }),
     /missing required compiled artifact src\/runs\/background\/auto-drain\.js/u,
   );
   await writePiSubagentsFixture(missingCapability, { removeCapability: "attentionRunsForSession" });
   await assert.rejects(
-    verifyPiSubagentsPackage(missingCapability),
+    verifyPiSubagentsPackage(missingCapability, { projectSettings: piProjectSettings() }),
     /subagent-wait\.js lacks required capability attentionRunsForSession/u,
   );
 });
