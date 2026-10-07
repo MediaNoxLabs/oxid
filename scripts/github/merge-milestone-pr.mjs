@@ -199,7 +199,10 @@ export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaul
   run(process.execPath, [path.join(root, "scripts", "dev-loops.mjs"), "gates"], { cwd: root, label: "validate repository dev-loop policy" });
   run("git", ["fetch", "--no-tags", "origin", eligibility.target.branch, pr.headRefOid], { cwd: root, label: "re-read milestone and PR head" });
   const currentBase = run("git", ["rev-parse", `refs/remotes/origin/${eligibility.target.branch}`], { cwd: root, label: "re-read fetched milestone" }).trim();
-  const current = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", "baseRefName,headRefOid"], root, "re-read pull request head");
+  const current = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", "baseRefName,headRefOid,autoMergeRequest"], root, "re-read pull request head");
+  if (current?.autoMergeRequest != null) {
+    throw new Error("GitHub auto-merge became active during the merge audit");
+  }
   if (currentBase !== localBase || current?.baseRefName !== eligibility.target.branch || current?.headRefOid !== pr.headRefOid) {
     throw new Error("pull request head or milestone base changed during the merge audit");
   }

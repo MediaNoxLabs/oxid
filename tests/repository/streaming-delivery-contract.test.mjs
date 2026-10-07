@@ -300,6 +300,7 @@ test("follow-up debt audit accepts closed items only with delivery evidence", ()
 
 function milestoneAuditRun({
   reReadHead = "b".repeat(40),
+  reReadAutoMergeRequest = null,
   issueTarget = "milestone-0.4.0",
   localBase = "a".repeat(40),
   reReadBase = localBase,
@@ -321,7 +322,10 @@ function milestoneAuditRun({
     if (command !== "gh") throw new Error(`unexpected command ${command}`);
     if (args[0] === "pr" && args[1] === "view" && args.at(-1).includes("state,")) return JSON.stringify(pr);
     if (args[0] === "pr" && args[1] === "view") return JSON.stringify({
-      baseRefName: pr.baseRefName, baseRefOid: pr.baseRefOid, headRefOid: reReadHead,
+      baseRefName: pr.baseRefName,
+      baseRefOid: pr.baseRefOid,
+      headRefOid: reReadHead,
+      autoMergeRequest: reReadAutoMergeRequest,
     });
     if (args[0] === "issue" && args[1] === "view") return JSON.stringify({
       state: "OPEN",
@@ -374,6 +378,10 @@ test("GitHub auto-merge availability cannot bypass the exact-head audit", () => 
     cwd: "/repo",
     run: milestoneAuditRun({ autoMergeRequest }),
   }), /GitHub auto-merge is active/u);
+  assert.throws(() => auditMilestoneMerge(options, {
+    cwd: "/repo",
+    run: milestoneAuditRun({ reReadAutoMergeRequest: autoMergeRequest }),
+  }), /GitHub auto-merge became active during the merge audit/u);
 });
 
 test("milestone merge implementation pins squash execution to the audited head", async () => {
