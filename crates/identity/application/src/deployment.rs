@@ -416,7 +416,8 @@ impl DidDeploymentOperation {
 
     /// Records deterministic composition of the current post-deploy effect.
     /// Transaction bytes and witnesses remain adapter-private and are
-    /// regenerated from the operation/effect recipe after a restart.
+    /// regenerated from the public operation/effect recipe plus protected
+    /// custody material after a restart.
     pub fn prepared_effect(
         mut self,
         submission_id: String,

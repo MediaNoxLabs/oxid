@@ -682,8 +682,8 @@ fn deployment_request(
     account_index: u32,
 ) -> Result<NativeMidnightDidDeploymentRequest, NativeDidDeploymentError> {
     let id = operation.operation_id().as_str().as_bytes();
-    let nonce = derive_public_recipe(b"oxid:did-deploy:nonce:v1", id);
-    let composition_seed = derive_public_recipe(b"oxid:did-deploy:rng:v1", id);
+    let nonce_recipe = derive_public_recipe(b"oxid:did-deploy:nonce:v1", id);
+    let intent_recipe = derive_public_recipe(b"oxid:did-deploy:rng:v1", id);
     NativeMidnightDidDeploymentRequest::new(
         WalletProfileId::parse(operation.profile_id().as_str().to_owned())
             .map_err(|_| NativeDidDeploymentError::InvalidRequest)?,
@@ -693,8 +693,8 @@ fn deployment_request(
         controller_index(operation)?,
         operation.created_at().value(),
         request_expires_at(operation)?.value(),
-        nonce,
-        composition_seed,
+        nonce_recipe,
+        intent_recipe,
     )
     .map_err(|_| NativeDidDeploymentError::Lifecycle)
 }
