@@ -65,6 +65,61 @@ pub(super) fn did_deployment_error(
     Response::error(id, code, message)
 }
 
+#[cfg(test)]
+mod did_deployment_tests {
+    use super::*;
+
+    #[test]
+    fn every_deployment_failure_has_a_closed_public_error() {
+        let cases = [
+            (
+                DidDeploymentUseCaseError::Unavailable,
+                "capability_unavailable",
+                "native ledger-backed DID deployment is not composed for this target",
+            ),
+            (
+                DidDeploymentUseCaseError::InvalidRequest,
+                "invalid_argument",
+                "ledger-backed DID deployment request is invalid",
+            ),
+            (
+                DidDeploymentUseCaseError::Integrity,
+                "integrity_failure",
+                "ledger-backed DID deployment state failed integrity validation",
+            ),
+            (
+                DidDeploymentUseCaseError::Persistence,
+                "persistence_unavailable",
+                "ledger-backed DID deployment progress could not be persisted",
+            ),
+            (
+                DidDeploymentUseCaseError::Composition,
+                "composition_unavailable",
+                "ledger-backed DID deployment could not be composed",
+            ),
+            (
+                DidDeploymentUseCaseError::Transaction,
+                "transaction_failed",
+                "ledger-backed DID deployment transaction failed",
+            ),
+            (
+                DidDeploymentUseCaseError::Resolution,
+                "resolution_failed",
+                "deployed DID could not be verified by live resolution",
+            ),
+        ];
+
+        for (error, code, message) in cases {
+            let response =
+                serde_json::to_value(did_deployment_error(Some("deployment".to_owned()), error))
+                    .expect("serializable response");
+            assert_eq!(response["id"], "deployment");
+            assert_eq!(response["error"]["code"], code);
+            assert_eq!(response["error"]["message"], message);
+        }
+    }
+}
+
 pub(super) fn identity_request_routing_error(
     id: Option<String>,
     error: IdentityRequestRoutingError,
