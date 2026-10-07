@@ -42,9 +42,20 @@ adb devices -l
 xcrun simctl list devices
 ```
 
-Do not launch heavy work when swap used exceeds 20 GiB, telemetry is
-unavailable, or the resource monitor has a recent unresolved alert. First
-clean only resources whose ownership is proven; otherwise stop and report.
+Use `node scripts/factory/resource-admission.mjs --lane <headless|factory>`
+before a new managed-worktree admission. It records a private mode-0600 receipt
+under the Git-common factory state. Missing or contradictory telemetry, a recent
+unresolved alert, available memory at or below 2 GiB, unhealthy pressure, swap
+growth of at least 1 GiB in 120 seconds, or disk below its documented floor
+blocks admission. Stable swap above 20 GiB is instead **degraded**: only one
+explicit `headless` or `factory` lane is admitted; simulator, host-mobile,
+platform-build, Docker-heavy, and concurrent heavy lanes remain blocked.
+
+Never clean, signal, stop, or restart an unowned workload to change this result.
+Recovery is to wait for pressure to settle or clean only receipt-owned resources.
+Rollback is the existing conservative policy: treat every swap value above 20
+GiB as a block. First clean only resources whose ownership is proven; otherwise
+stop and report.
 
 ## Supervision and pressure stops
 

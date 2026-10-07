@@ -810,6 +810,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires Nix-packaged Passport Vault Compact artifacts; run `just passport-vault-conformance`"]
     fn packaged_artifacts_authenticate_and_resolve_only_wallet_circuits_when_configured() {
         let Some(root) = std::env::var_os("OXID_PASSPORT_VAULT_ARTIFACTS_DIR") else {
             return;

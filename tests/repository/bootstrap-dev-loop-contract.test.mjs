@@ -1,45 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { parseBootstrapDevLoopInvocation, resolveBootstrapDevLoopCwd } from "../../scripts/loop/bootstrap-dev-loop.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const bootstrapSource = await readFile(path.join(repoRoot, "bootstrap.sh"), "utf8");
 const main = "/fixture/oxid";
 const canonical = `${main}/tmp/worktrees/dev-loops/issue-305`;
-const codexRoot = "/fixture/.codex/worktrees";
-const codex = `${codexRoot}/issue-305-wallet/oxid`;
+const validIssueBody = (deliveryTarget = "develop") => `## Implementation surface\n\n- scripts/example.mjs\n\n## AC / DoD matrix\n\n| Acceptance criterion | Completion evidence |\n| --- | --- |\n| AC-1: canonical worktree is selected | contract test asserts the exact selected path |\n\n## Verification\n\n- node --test tests/repository/bootstrap-dev-loop-contract.test.mjs\n\n## Size\n\nS\n\n## Delivery target\n\n${deliveryTarget}\n\n## Non-goals\n\n- remote mutation\n`;
 const issue = JSON.stringify({
   title: "feat(wallet): enter the canonical worktree",
-  body: "## Delivery target\n\ndevelop\n",
+  body: validIssueBody(),
 });
 
-function gitFixture(current, {
-  includeCodex = false,
-  dirtyCodex = false,
-  codexDeliveryBase = "origin/develop",
-  codexBaseIsAncestor = true,
-} = {}) {
+function gitFixture(current) {
   return (program, args) => {
     if (program === "gh") return issue;
     assert.equal(program, "git");
     const repository = args[1];
     const gitArgs = args.slice(2);
     if (gitArgs.join(" ") === "rev-parse --show-toplevel") return `${current}\n`;
-    if (gitArgs.join(" ") === "remote get-url origin") return "https://github.com/MediaNoxLabs/oxid.git\n";
-    if (gitArgs.join(" ") === "worktree list --porcelain") {
-      return `worktree ${main}\n\nworktree ${canonical}\n\n${includeCodex ? `worktree ${codex}\n\n` : ""}`;
-    }
-    if ((repository === canonical || repository === codex) && gitArgs.join(" ") === "branch --show-current") return "feat/issue-305\n";
-    if (repository === codex && gitArgs.join(" ") === "status --porcelain") return dirtyCodex ? "?? dirty\n" : "";
-    if (repository === main && gitArgs.join(" ") === "config --get branch.feat/issue-305.oxidDeliveryBase") return `${codexDeliveryBase}\n`;
-    if (repository === codex && gitArgs.join(" ") === `merge-base --is-ancestor ${codexDeliveryBase} HEAD`) {
-      if (!codexBaseIsAncestor) throw new Error("not an ancestor");
-      return "";
-    }
+    if (gitArgs.join(" ") === "worktree list --porcelain") return `worktree ${main}\n\nworktree ${canonical}\n\n`;
+    if (repository === canonical && gitArgs.join(" ") === "branch --show-current") return "feat/issue-305\n";
     throw new Error(`unexpected command: ${program} ${args.join(" ")}`);
   };
 }
@@ -47,13 +35,11 @@ function gitFixture(current, {
 test("primary exact /dev-loop print enters the canonical issue worktree before Pi", async () => {
   const calls = [];
   const recorded = [];
-  const admissions = [];
   const cwd = await resolveBootstrapDevLoopCwd(["--print", "/dev-loop production-ready issue 305"], {
     repoRoot: main,
     run: gitFixture(main),
     ensureWorktree: async (args, options) => { calls.push({ args, options }); return 0; },
     recordDeliveryBase: (...args) => recorded.push(args),
-    recordAdmission: (record) => admissions.push(record),
   });
   assert.equal(cwd, canonical);
   assert.deepEqual(calls, [{
@@ -61,11 +47,89 @@ test("primary exact /dev-loop print enters the canonical issue worktree before P
     options: { cwd: main },
   }]);
   assert.deepEqual(recorded, [[main, "feat/issue-305", "origin/develop"]]);
-  assert.deepEqual(admissions, [{
-    schema: "oxid-dev-loop-admission-v1", issue: 305, repository: "MediaNoxLabs/oxid",
-    branch: "feat/issue-305", deliveryBase: "origin/develop",
-    calls: { commands: 7, ensureWorktree: 1, recordDeliveryBase: 1 },
-  }]);
+});
+
+test("primary bootstrap delegates to the canonical flake before starting its devshell", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "oxid-bootstrap-dev-loop-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const primary = path.join(root, "primary");
+  const worktree = path.join(primary, "tmp", "worktrees", "dev-loops", "issue-305");
+  const bin = path.join(root, "bin");
+  const pins = path.join(root, "nix-pins");
+  await Promise.all([
+    mkdir(worktree, { recursive: true }),
+    mkdir(bin, { recursive: true }),
+  ]);
+  await Promise.all([
+    writeFile(path.join(primary, "bootstrap.sh"), bootstrapSource, { mode: 0o755 }),
+    writeFile(path.join(worktree, "bootstrap.sh"), bootstrapSource, { mode: 0o755 }),
+    writeFile(path.join(primary, ".fixture-flake-pin"), "primary-stale\n"),
+    writeFile(path.join(worktree, ".fixture-flake-pin"), "canonical-current\n"),
+    writeFile(path.join(bin, "node"), `#!/bin/bash
+printf '%s\\n' "$CANONICAL_WORKTREE"
+`, { mode: 0o755 }),
+    writeFile(path.join(bin, "nix"), `#!/bin/bash
+[ "$1" = develop ] || exit 90
+[[ " $* " == *" /nix/var/nix/profiles/default/bin "* ]] || exit 91
+printf '%s\\n' "$(cat .fixture-flake-pin)" >> "$NIX_PINS"
+`, { mode: 0o755 }),
+  ]);
+  await Promise.all([chmod(path.join(primary, "bootstrap.sh"), 0o755), chmod(path.join(worktree, "bootstrap.sh"), 0o755)]);
+
+  const result = spawnSync(path.join(primary, "bootstrap.sh"), ["--pi", "--print", "/dev-loop production-ready issue 305"], {
+    cwd: primary,
+    encoding: "utf8",
+    env: {
+      PATH: `${bin}:/usr/bin:/bin`,
+      CANONICAL_WORKTREE: worktree,
+      NIX_PINS: pins,
+      OXID_BOOTSTRAP_NIX_PROFILE_BIN: "/nix/var/nix/profiles/default/bin",
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(await readFile(pins, "utf8"), "canonical-current\n");
+});
+
+test("ordinary Pi startup remains Nix-only and does not require a host Node binary", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "oxid-bootstrap-ordinary-pi-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const primary = path.join(root, "primary");
+  const bin = path.join(root, "bin");
+  const pins = path.join(root, "nix-pins");
+  await Promise.all([mkdir(primary, { recursive: true }), mkdir(bin, { recursive: true })]);
+  await Promise.all([
+    writeFile(path.join(primary, "bootstrap.sh"), bootstrapSource, { mode: 0o755 }),
+    writeFile(path.join(primary, ".fixture-flake-pin"), "primary-current\n"),
+    writeFile(path.join(bin, "nix"), `#!/bin/bash
+[ "$1" = develop ] || exit 90
+printf '%s\\n' "$(cat .fixture-flake-pin)" >> "$NIX_PINS"
+`, { mode: 0o755 }),
+  ]);
+  await chmod(path.join(primary, "bootstrap.sh"), 0o755);
+
+  const result = spawnSync(path.join(primary, "bootstrap.sh"), ["--pi", "--print", "explain this checkout"], {
+    cwd: primary,
+    encoding: "utf8",
+    env: {
+      PATH: `${bin}:/usr/bin:/bin`,
+      NIX_PINS: pins,
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(await readFile(pins, "utf8"), "primary-current\n");
+});
+
+test("incomplete factory issue contracts stop before ensure-worktree", async () => {
+  let ensured = false;
+  await assert.rejects(resolveBootstrapDevLoopCwd(["--print", "/dev-loop production-ready issue 305"], {
+    repoRoot: main,
+    run: (program, args) => program === "gh"
+      ? JSON.stringify({ title: "fix(harness): incomplete", body: "## Delivery target\n\ndevelop\n" })
+      : gitFixture(main)(program, args),
+    ensureWorktree: async () => { ensured = true; return 0; },
+    recordDeliveryBase: () => { throw new Error("must not record delivery base"); },
+  }), /factory issue contract is incomplete/u);
+  assert.equal(ensured, false);
 });
 
 test("linked canonical /dev-loop print stays in that worktree", async () => {
@@ -78,60 +142,6 @@ test("linked canonical /dev-loop print stays in that worktree", async () => {
   });
   assert.equal(cwd, canonical);
   assert.equal(ensured, false);
-});
-
-test("verified Codex Desktop /dev-loop print stays in its registered issue worktree", async () => {
-  let ensured = false;
-  const recorded = [];
-  const cwd = await resolveBootstrapDevLoopCwd(["--print", "/dev-loop production-ready issue 305"], {
-    repoRoot: codex,
-    run: gitFixture(codex, { includeCodex: true }),
-    ensureWorktree: async () => { ensured = true; return 0; },
-    recordDeliveryBase: (...args) => recorded.push(args),
-    codexWorktreesRoot: codexRoot,
-  });
-  assert.equal(cwd, codex);
-  assert.equal(ensured, false);
-  assert.deepEqual(recorded, [[main, "feat/issue-305", "origin/develop"]]);
-});
-
-test("dirty Codex Desktop worktrees remain outside dev-loop admission", async () => {
-  await assert.rejects(resolveBootstrapDevLoopCwd(["--print", "/dev-loop production-ready issue 305"], {
-    repoRoot: codex,
-    run: gitFixture(codex, { includeCodex: true, dirtyCodex: true }),
-    recordDeliveryBase: () => {},
-    codexWorktreesRoot: codexRoot,
-  }), /refusing \/dev-loop dispatch from non-canonical linked worktree/);
-});
-
-test("stale or mismatched Codex Desktop delivery bases remain outside admission", async () => {
-  for (const options of [
-    { includeCodex: true, codexDeliveryBase: "origin/milestone-9.9.9" },
-    { includeCodex: true, codexBaseIsAncestor: false },
-  ]) {
-    await assert.rejects(resolveBootstrapDevLoopCwd(["--print", "/dev-loop production-ready issue 305"], {
-      repoRoot: codex,
-      run: gitFixture(codex, options),
-      recordDeliveryBase: () => {},
-      codexWorktreesRoot: codexRoot,
-    }), /refusing \/dev-loop dispatch from non-canonical linked worktree/);
-  }
-});
-
-test("bootstrap reads issue metadata from the exact origin repository", async () => {
-  let issueRepo;
-  await resolveBootstrapDevLoopCwd(["--print", "/dev-loop production-ready issue 305"], {
-    repoRoot: canonical,
-    run: (program, args) => {
-      if (program === "gh") {
-        issueRepo = args[args.indexOf("--repo") + 1];
-        return issue;
-      }
-      return gitFixture(canonical)(program, args);
-    },
-    recordDeliveryBase: () => {},
-  });
-  assert.equal(issueRepo, "MediaNoxLabs/oxid");
 });
 
 test("ordinary Pi prompts are unchanged and malformed or ambiguous dev-loop commands never dispatch", async () => {
@@ -152,7 +162,7 @@ test("ordinary Pi prompts are unchanged and malformed or ambiguous dev-loop comm
   await assert.rejects(resolveBootstrapDevLoopCwd(["--print", "/dev-loop production-ready issue 305"], {
     repoRoot: main,
     run: (program, args) => program === "gh"
-      ? JSON.stringify({ title: "feat(wallet): ambiguous target", body: "## Delivery target\n\ndevelop\nmilestone-1.2.3\n" })
+      ? JSON.stringify({ title: "feat(wallet): ambiguous target", body: validIssueBody("develop\nmilestone-1.2.3") })
       : gitFixture(main)(program, args),
     ensureWorktree: async () => { dispatched = true; return 0; },
     recordDeliveryBase: () => { dispatched = true; },
@@ -161,10 +171,7 @@ test("ordinary Pi prompts are unchanged and malformed or ambiguous dev-loop comm
   assert.deepEqual(parseBootstrapDevLoopInvocation(["--print", "/dev-loop prototype issue 305"]), { profile: "prototype", issue: 305 });
 });
 
-test("dev-loop conductor starts fresh and disables managed subagent worktree wrapping", async () => {
+test("dev-loop conductor disables managed subagent worktree wrapping", async () => {
   const agent = await readFile(path.join(repoRoot, ".pi", "agents", "dev-loop.agent.md"), "utf8");
-  assert.match(agent, /^defaultContext: fresh$/m);
   assert.match(agent, /^worktree: false$/m);
-  const bootstrap = await readFile(path.join(repoRoot, "bootstrap.sh"), "utf8");
-  assert.match(bootstrap, /node "\$repo_root\/scripts\/loop\/prepare-dev-loop-admission\.mjs" prepare -- "\$@"/u);
 });

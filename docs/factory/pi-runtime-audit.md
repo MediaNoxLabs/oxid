@@ -2,7 +2,10 @@
 
 # Pi runtime and package audit
 
-Audit date: 2026-09-09. Tracking issues: [#194](https://github.com/MediaNoxLabs/oxid/issues/194) and [#195](https://github.com/MediaNoxLabs/oxid/issues/195).
+Audit date: 2026-09-09; compatibility refresh: 2026-09-30. Tracking issues:
+[#194](https://github.com/MediaNoxLabs/oxid/issues/194),
+[#195](https://github.com/MediaNoxLabs/oxid/issues/195), and
+[#863](https://github.com/MediaNoxLabs/oxid/issues/863).
 
 ## Outcome
 
@@ -45,7 +48,7 @@ the startup audit rejects formats outside that tracked contract.
 | --- | --- | --- |
 | Devshell Pi | Nix-pinned; `./bootstrap.sh --check` passed | healthy |
 | Direct host Pi | outside Nix | unsupported path; use `./bootstrap.sh --pi` |
-| Project packages | `dev-loops@1.0.2` plus its separately pinned `@dev-loops/core@1.0.2` runtime (CLI/skills/agents; mutating extension filtered), `pi-subagents@0.70.0` plus its exact `pi-coding-agent@0.85.1` child-session peer, `agent-review-pi@0.6.0` plus exact peers | exact pins installed |
+| Project packages | `dev-loops@1.0.2` plus its exact `@dev-loops/core@1.0.2` runtime (CLI/skills/agents; mutating extension filtered), `pi-subagents@0.70.0`, `agent-review-pi@0.6.0` plus exact peers | exact pins installed |
 | npm production audit | 0 reported vulnerabilities | healthy at audit time |
 | Common Pi package store | one shared store per Git common checkout | healthy |
 | Registered worktrees | above the active green limit | red; exact counts remain private operational telemetry |
@@ -65,13 +68,21 @@ The owner-aware reconciliation of remaining dirty/unmerged state is tracked by
 
 | Package | Pin | Available at audit | Decision |
 | --- | --- | --- | --- |
-| `pi-coding-agent` | `0.85.1` via locked Nix | `0.85.1` | required compatible runtime for `pi-subagents@0.70.0` native detached children |
-| `dev-loops` | `1.0.2` | `1.0.2` | major update in [#303](https://github.com/MediaNoxLabs/oxid/issues/303) |
-| `@dev-loops/core` | `1.0.2` | `1.0.3` | pin the wrapper's runtime companion explicitly; do not let the declared caret range make one closure identity resolve to different bytes over time |
-| `pi-subagents` | `0.70.0` | `0.73.1` | latest verified Pi-0.85-compatible detached/headless release; 0.70.1 fails its detached runner on Pi 0.85.1 and 0.71+ requires `pi-ai >=0.86.1` |
+| `pi-coding-agent` | `0.85.1` via locked Nix | `0.87.1` in nixpkgs unstable | retain until the [0.86/0.87 extension and session API changes](https://github.com/earendil-works/pi/blob/v0.87.1/packages/coding-agent/CHANGELOG.md) are audited |
+| `dev-loops` | `1.0.2` | `1.0.4` | retain; the [1.0.4 changelog](https://github.com/mfittko/dev-loops/blob/v1.0.4/CHANGELOG.md) adds a pre-PR review and broader default fan-out, so it needs a measured policy review rather than an incidental patch upgrade |
+| `@dev-loops/core` | `1.0.2` | `1.0.4` | retain exact parity with the reviewed `dev-loops` pin |
+| `@playwright/test` | `1.60.0` | `1.63.0` | retain until the paired dev-loops/browser contract is upgraded |
+| `@axe-core/playwright` | `4.10.0` | `4.13.0` | retain until the paired dev-loops/browser contract is upgraded |
+| `pi-subagents` | `0.70.0` | `0.73.1` | latest verified Pi-0.85-compatible detached/headless release; the [upstream changelog](https://github.com/nicobailon/pi-subagents/blob/v0.70.0/CHANGELOG.md) records the relevant lifecycle fixes, while an exact local 0.70.1 smoke fails its detached runner on Pi 0.85.1 and 0.71+ requires `pi-ai >=0.86.1` |
 | `agent-review-pi` | `0.6.0` | `0.6.0` | adopted with exact peers by [#301](https://github.com/MediaNoxLabs/oxid/issues/301) |
 | `pi-taskflow` | `0.2.10` | `0.3.0-beta.1.2` | peer only; runtime resources disabled |
-| `typebox` | `1.3.9` | `1.3.28` | minimum compatible exact peer; retain |
+| `typebox` | `1.3.9` | `1.3.34` | minimum compatible exact peer; retain |
+| `@stixxert/pi-docker-sandbox` | `1.1.6` | `1.1.6` at adoption | opt-in private Docker deploy target; extension disabled in ordinary sessions by ADR-0112 |
+
+Every reviewed `dev-loops` / `@dev-loops/core` upgrade must run the repository
+acceptance-compatibility contract. It reads the installed exact core pin and
+fails if the upstream `verify-green` wording no longer maps to Oxid's selected
+target plan; a synthetic repository-only fixture is not sufficient evidence.
 
 The `dev-loops@1.0.2` Pi extension is deliberately filtered while its exact
 CLI, skills, and agent sources remain installed. Its `session_start` handler
@@ -81,15 +92,19 @@ the extension would erase runtime/tool budgets and delivery-profile handoff
 rules immediately before model dispatch. A real offline Pi RPC startup must
 leave every tracked agent hash unchanged.
 
+ADR-0112 applies the same explicit-resource rule to
+`@stixxert/pi-docker-sandbox@1.1.6`: the exact package is part of the immutable
+closure, but its extension loads only through
+`scripts/factory/pi-docker-sandbox.sh`. The normal factory surface is unchanged.
+The launcher uses host Pi with a read-only workspace and a disposable private
+Docker daemon; it does not enable the package's full `sandbox/` execution
+backend. A supervised generic-shell probe proved that backend lacks Oxid's
+pinned Nix/Pi/Rust toolchain and linked-worktree Git metadata, so admitting it
+requires a separate measured Nix-template and sandbox-local-clone gate.
+
 `pi-coding-agent@0.85.1` is locked through the Nix input and is the supported
 entrypoint for `pi-subagents@0.70.0`: its native child launcher receives the
 package context that the former standalone Nix `0.84.0` executable lacked.
-The same exact runtime is also installed in the repository package closure.
-This is not a second executable authority: it supplies the peer module that a
-fresh isolated workflow child imports from `pi-subagents`; Node ESM resolution
-does not inherit the Nix entrypoint's private module tree or ambient
-`NODE_PATH`. The factory contract keeps the closure peer and Nix entrypoint at
-the same version and fails closed on drift.
 The devshell leaves `PI_CODING_AGENT_DIR` user-scoped so the existing Codex
 authentication and bounded user policy remain available. It roots
 `PI_CODING_AGENT_SESSION_DIR` and `PI_SUBAGENTS_TEMP_ROOT` at owner-private
@@ -98,13 +113,22 @@ sessions plus detached lifecycle/results survive exiting and re-entering
 `nix develop` and are shared only by that checkout's linked worktrees, never by
 the expiring Nix `TMPDIR`. The smoke rejects missing or misdirected runtime
 state and an incompatible Pi version with actionable diagnostics before native
-dispatch.
+dispatch. Its package check is structural: the independently tested
+`scripts/factory/verify-pi-subagents-package.mjs` checks the exact manifest,
+compiled artifacts, schema fields, and headless-attention symbols. Before child
+launch it also derives every `@earendil-works/pi-*` peer from that installed
+manifest and requires the corresponding project setting to retain the exact
+Nix-pinned Pi version; a missing, added, floating, or incompatible peer fails
+closed. The separate
+bounded issue-#863 print-mode run supplies behavioral evidence; the structural
+smoke does not claim to simulate a live supervisor exchange.
 
-The `pi-subagents` releases between the prior pin and 0.67.0 contain fixes directly
-related to recovered/detached runs, budget/timeout terminal classification,
-smaller child context, exact model failures, and Codex priority propagation.
-Issue #455 adopts that local, recoverable upgrade directly with one focused
-smoke rather than a separate migration canary. `agent-review-pi@0.6.0` is small
+The `pi-subagents` releases through 0.70.0 contain fixes directly related to
+recovered/detached runs, budget/timeout terminal classification, smaller child
+context, exact model failures, Codex priority propagation, and headless-parent
+attention propagation. Issues #455 and #863 adopt those local, recoverable
+upgrades directly with focused smokes rather than migration canaries.
+`agent-review-pi@0.6.0` is small
 enough to verify here: its exact peer
 closure reports zero npm vulnerabilities, its 13 native tools register, and its
 corrected bundled skill loads through Pi RPC. The former compatibility loader
@@ -157,13 +181,11 @@ longer proved that concrete private values stayed absent.
 Issue [#301](https://github.com/MediaNoxLabs/oxid/issues/301) therefore applies
 a local fail-closed mitigation: project settings suppress inherited taskflow
 extensions and skills, `/dev-loop` requires direct bounded `pi-subagents`
-dispatch, and the smoke test proves taskflow is absent from effective commands.
-ADR-0117 now admits the exact pinned `taskflow-core` through a repository-owned
-static-only adapter for zero-token verify, plan, and compile operations; it does
-not enable flow execution. Re-enable mutating Taskflow execution only after
-detached peer-resolution, long-process progress, process-tree cancellation,
-resume, and orphan-cleanup behavior are fixed and verified under issue #690. General cumulative
-budget and terminal-reconciliation improvements remain in #227.
+dispatch, the smoke test proves taskflow is absent from effective commands, and
+validation remains target-plan/Cargo/Just/Nix native. Re-enable taskflow only
+after detached peer-resolution, nested-progress, cancellation, and orphan-cleanup
+behavior is fixed and verified. General cumulative budget and terminal-
+reconciliation improvements remain in #227.
 
 ## Required operator flow
 

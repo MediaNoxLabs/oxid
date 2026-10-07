@@ -72,6 +72,7 @@ impl PassportVaultCallCompositionContextSource for PublicContext {
 }
 
 #[test]
+#[ignore = "requires the Nix-packaged Passport Vault composer; run `just passport-vault-conformance`"]
 fn packaged_composer_emits_a_rust_compatible_unproven_call_when_configured() {
     let Some(executable) = std::env::var_os("OXID_PASSPORT_VAULT_COMPOSER") else {
         return;

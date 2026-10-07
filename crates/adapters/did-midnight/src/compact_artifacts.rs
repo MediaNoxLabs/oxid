@@ -273,6 +273,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "midnight-did-conformance: requires Nix-packaged DID artifacts"]
     fn pinned_release_artifacts_authenticate_when_configured() {
         let Some(root) = std::env::var_os("OXID_MIDNIGHT_DID_ARTIFACTS_DIR") else {
             return;

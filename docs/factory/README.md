@@ -20,12 +20,9 @@ current-head review evidence are the delivery gates.
 | [retrospective-2026-09-03.md](retrospective-2026-09-03.md) | Evidence and next-phase decisions from the temporary `integration` stream. |
 | [audit/](audit/README.md) | The audit framework: charter, five audit types and their criteria, the severity/cost/blast-radius rubric, the report template, and both machine-readable contracts. |
 | [pi-runtime-audit.md](pi-runtime-audit.md) | Effective Pi/model/package budgets, measured disk state, package canaries, and operator setup. |
-| [pi-observability.md](pi-observability.md) | Opt-in metadata-only Pi.dev telemetry, bounded tags, local Grafana dashboard, and rollback. |
 | [worker-topology.md](worker-topology.md) | Multiple local sessions, cloud workers, independent engineer setup, and concurrency ownership. |
 | [application-targets.md](application-targets.md) | Build, exact-artifact receipt, deploy, and run commands for desktop, Android, and iOS Simulator. |
 | [demo-inventory.md](demo-inventory.md) | Validated use-case → scenario → product-demo inventory and safe preparation briefs. |
-| [milestone-0.2.0-ios-demo-evidence.md](milestone-0.2.0-ios-demo-evidence.md) | Exact-head iOS Maestro/native evidence and the milestone demo checklist. |
-| [standalone-headless-faucet.md](standalone-headless-faucet.md) | Fixed localhost NIGHT funding and two-wallet DUST-readiness runbook. |
 | [portal-macos-laptop.md](portal-macos-laptop.md) | Owner-invoked local Portal macOS prequalification. |
 | [portal-mobile-simulators.md](portal-mobile-simulators.md) | Owner-invoked packaged iOS Simulator and Android QEMU Portal evidence. |
 | [portal-android-tailnet-physical.md](portal-android-tailnet-physical.md) | Owner-invoked physical Android Tailnet Portal conformance evidence. |

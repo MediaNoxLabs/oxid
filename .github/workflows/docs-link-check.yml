@@ -19,11 +19,20 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     steps:
-      - name: Defer outbound link probes
-        run: echo "Documentation link probes run weekly or on demand."
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Check deterministic Markdown links
+        # Candidate mode remaps repository develop URLs locally and skips outbound probes.
+        run: nix develop .#docs --command node scripts/docs/check-links.mjs --candidate
 
   links:
-    name: Check documentation links
+    name: Probe outbound documentation links
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 20

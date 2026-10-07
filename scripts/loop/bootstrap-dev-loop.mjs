@@ -2,14 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseConventionalSubject, validateBranchName } from "../ci/contribution-policy.mjs";
-import { resolveCanonicalGithubRepository } from "../dev-loops.mjs";
 import { deliveryTargetFromIssueBody } from "../lib/delivery-target.mjs";
+import { assertFactoryIssueContract } from "../lib/factory-issue-contract.mjs";
 import { ensureRecordedDeliveryBase, resolveRepositoryWorktreePath, runEnsureWorktree } from "./ensure-worktree.mjs";
 
 const DEV_LOOP_COMMAND = /^\/dev-loop (prototype|production-ready) issue ([1-9]\d*)$/u;
@@ -62,46 +60,24 @@ function mainWorktree(commandRunner, repository) {
 
 function issueIdentity(commandRunner, repository, issue) {
   let record;
-  let identity;
   try {
-    identity = resolveCanonicalGithubRepository(repository, { run: commandRunner });
-    if (!identity) throw new Error("checkout origin is not an exact github.com repository");
-    record = JSON.parse(commandRunner("gh", ["issue", "view", String(issue), "--json", "title,body", "--repo", identity]));
+    record = JSON.parse(commandRunner("gh", ["issue", "view", String(issue), "--json", "title,body", "--repo", "medianoxlabs/oxid"]));
   } catch (error) {
     throw new Error(`could not resolve issue #${issue} delivery metadata: ${error.message}`);
   }
+  assertFactoryIssueContract(record);
   const subject = parseConventionalSubject(record?.title);
   if (!subject.ok || !subject.type) throw new Error(`issue #${issue} title is not a valid conventional subject: ${subject.errors.join("; ")}`);
   const target = deliveryTargetFromIssueBody(record?.body);
   const branch = `${subject.type}/issue-${issue}`;
   const branchResult = validateBranchName(branch, { expectedType: subject.type });
   if (!branchResult.ok) throw new Error(`issue #${issue} branch is invalid: ${branchResult.errors.join("; ")}`);
-  return { branch, target, repository: identity };
+  return { branch, target };
 }
 
 function assertCanonicalBranch(commandRunner, canonical, branch) {
   const actual = git(commandRunner, canonical, ["branch", "--show-current"]);
   if (actual !== branch) throw new Error(`canonical worktree branch mismatch: expected ${branch}, found ${actual || "detached HEAD"}`);
-}
-
-function isVerifiedCodexIssueWorktree(commandRunner, topology, branch, deliveryBase, {
-  codexWorktreesRoot = path.join(homedir(), ".codex", "worktrees"),
-} = {}) {
-  const current = topology.current;
-  if (!topology.worktrees.includes(current)) return false;
-  const relative = path.relative(path.resolve(codexWorktreesRoot), current);
-  if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) return false;
-  if (relative.split(path.sep).filter(Boolean).length !== 2) return false;
-  if (git(commandRunner, current, ["branch", "--show-current"]) !== branch) return false;
-  if (git(commandRunner, current, ["status", "--porcelain"]) !== "") return false;
-  let recordedBase;
-  try {
-    recordedBase = git(commandRunner, topology.main, ["config", "--get", `branch.${branch}.oxidDeliveryBase`]);
-    git(commandRunner, current, ["merge-base", "--is-ancestor", recordedBase, "HEAD"]);
-  } catch {
-    return false;
-  }
-  return recordedBase === deliveryBase;
 }
 
 /**
@@ -113,60 +89,34 @@ export async function resolveBootstrapDevLoopCwd(piArgs, {
   run = command,
   ensureWorktree = runEnsureWorktree,
   recordDeliveryBase = ensureRecordedDeliveryBase,
-  recordAdmission = () => {},
-  codexWorktreesRoot,
 } = {}) {
   if (!repoRoot) throw new Error("--repo-root is required");
   const invocation = parseBootstrapDevLoopInvocation(piArgs);
   if (!invocation) return path.resolve(repoRoot);
 
-  const calls = { commands: 0, ensureWorktree: 0, recordDeliveryBase: 0 };
-  const trackedRun = (...args) => { calls.commands += 1; return run(...args); };
-  const topology = mainWorktree(trackedRun, repoRoot);
-  const { branch, target, repository } = issueIdentity(trackedRun, topology.main, invocation.issue);
+  const topology = mainWorktree(run, repoRoot);
+  const { branch, target } = issueIdentity(run, topology.main, invocation.issue);
   const canonical = resolveRepositoryWorktreePath(topology.main, ["--issue", String(invocation.issue)]);
-  const finish = (worktree = canonical) => {
-    recordAdmission({
-      schema: "oxid-dev-loop-admission-v1", issue: invocation.issue, repository,
-      branch, deliveryBase: target.remoteRef, calls,
-    });
-    return worktree;
-  };
   if (topology.current === canonical) {
     if (!topology.worktrees.includes(canonical)) throw new Error(`canonical worktree is not registered: ${canonical}`);
-    assertCanonicalBranch(trackedRun, canonical, branch);
-    calls.recordDeliveryBase += 1;
+    assertCanonicalBranch(run, canonical, branch);
     recordDeliveryBase(topology.main, branch, target.remoteRef);
-    return finish();
+    return canonical;
   }
   if (topology.current !== topology.main) {
-    if (isVerifiedCodexIssueWorktree(trackedRun, topology, branch, target.remoteRef, { codexWorktreesRoot })) {
-      calls.recordDeliveryBase += 1;
-      recordDeliveryBase(topology.main, branch, target.remoteRef);
-      return finish(topology.current);
-    }
     throw new Error(`refusing /dev-loop dispatch from non-canonical linked worktree ${topology.current}`);
   }
 
-  calls.ensureWorktree += 1;
   const code = await ensureWorktree([
     "--silent", "--repo-root", topology.main, "--issue", String(invocation.issue),
     "--branch", branch, "--delivery-base", target.remoteRef,
   ], { cwd: topology.main });
   if (code !== 0) throw new Error(`could not ensure canonical issue worktree for #${invocation.issue}`);
-  const refreshed = mainWorktree(trackedRun, topology.main);
+  const refreshed = mainWorktree(run, topology.main);
   if (!refreshed.worktrees.includes(canonical)) throw new Error(`ensure-worktree did not register canonical worktree ${canonical}`);
-  assertCanonicalBranch(trackedRun, canonical, branch);
-  calls.recordDeliveryBase += 1;
+  assertCanonicalBranch(run, canonical, branch);
   recordDeliveryBase(topology.main, branch, target.remoteRef);
-  return finish();
-}
-
-function writeAdmissionReceipt(worktree, admission) {
-  const directory = path.join(worktree, "target", "tmp", "dev-loop");
-  mkdirSync(directory, { recursive: true });
-  writeFileSync(path.join(directory, `issue-${admission.issue}-admission.json`),
-    `${JSON.stringify({ ...admission, phase: "pre-pi-dispatch", implementationChildCalls: 0 })}\n`);
+  return canonical;
 }
 
 function parseCli(argv) {
@@ -179,12 +129,7 @@ function parseCli(argv) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const { repoRoot, piArgs } = parseCli(process.argv.slice(2));
-    let admission;
-    const worktree = await resolveBootstrapDevLoopCwd(piArgs, {
-      repoRoot, recordAdmission: (record) => { admission = record; },
-    });
-    if (admission) writeAdmissionReceipt(worktree, admission);
-    process.stdout.write(`${worktree}\n`);
+    process.stdout.write(`${await resolveBootstrapDevLoopCwd(piArgs, { repoRoot })}\n`);
   } catch (error) {
     process.stderr.write(`[bootstrap-dev-loop] ${error.message}\n`);
     process.exitCode = 1;

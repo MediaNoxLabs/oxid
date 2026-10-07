@@ -82,7 +82,6 @@ When NOT given an angle scope, behave exactly as the full-PR review agent descri
 - Read the relevant plan before deciding whether scope or acceptance criteria were met.
 - Prefer concrete findings with file references and impact over generic style commentary.
 - A routine production-ready review has one automatic round and a 70% quality target. Only concrete correctness, security, acceptance-criterion, regression, or evidence-integrity defects are merge-blocking. Classify remaining polish as follow-up; do not require a new head merely to satisfy advisory taste.
-- An explicitly requested external Claude review receives one ten-minute attempt. Report `completed`, `timed_out`, `failed`, or `unavailable` with duration and actionable-finding status; never retry a silent or timed-out reviewer automatically.
 - Emit exactly one disposition for every finding: `repair-now`, `follow-up`, or
   `reject`. A follow-up is real controlled debt and must be acceptance-backed;
   a nit or stylistic preference that does not change an operator-visible result

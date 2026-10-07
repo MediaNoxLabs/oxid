@@ -12,6 +12,7 @@ import {
   METRIC_KEYS,
   aggregateMetricRecords,
   auditMetricsDirectory,
+  estimateV2Costs,
   metricTemplate,
   projectPublicMetricRecord,
   renderPublicMetricComment,
@@ -25,6 +26,19 @@ import {
 import { HOSTED_TARGETS } from "../../scripts/ci/target-plan.mjs";
 
 const HEAD = "a".repeat(40);
+
+function v2Record(overrides = {}) {
+  return {
+    ...record(),
+    schemaVersion: 2,
+    orchestration: [
+      { runId: "implementation-1", parentRunId: null, phase: "implementation", durationMs: 600_000, outcome: "completed", reasonCode: null, sessions: 1, turns: 4, toolCalls: 6, provider: "openai", model: "gpt-5", rateCardId: "plan-v1", tokens: { input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0 } },
+      { runId: "review-1", parentRunId: "implementation-1", phase: "review", durationMs: 300_000, outcome: "completed", reasonCode: null, sessions: null, turns: null, toolCalls: null, provider: null, model: null, rateCardId: null, tokens: null },
+    ],
+    rateCards: [{ id: "plan-v1", version: "2026-09", inputCreditMicrosPerMillion: 1_000_000, outputCreditMicrosPerMillion: 2_000_000, cacheReadCreditMicrosPerMillion: 100_000, cacheWriteCreditMicrosPerMillion: 200_000, inputApiUsdMicrosPerMillion: 300_000, outputApiUsdMicrosPerMillion: 1_000_000, cacheReadApiUsdMicrosPerMillion: 30_000, cacheWriteApiUsdMicrosPerMillion: 60_000 }],
+    ...overrides,
+  };
+}
 
 function record(overrides = {}) {
   const candidate = metricTemplate({ issue: 167, pr: 170, headSha: HEAD, now: "2026-08-28T00:00:00.000Z", draft: false });
@@ -47,6 +61,34 @@ function record(overrides = {}) {
   candidate.worktree = { peakTargetBytes: 1024, peakWorktreeBytes: 2048 };
   return { ...candidate, ...overrides };
 }
+
+test("v2 records phase-level private telemetry and derives labeled estimates without public cost leakage", () => {
+  const candidate = v2Record();
+  assert.equal(validateMetricRecord(candidate).ok, true);
+  const estimate = estimateV2Costs(candidate, { monthlySubscriptionUsd: 20, monthlyObservedCredits: 4, purchasedCreditUsd: 3 });
+  assert.deepEqual(estimate, { planCredits: 1, apiEquivalentUsd: { value: 0.3, label: "imputed-api-equivalent-not-an-invoice" }, allocatedSubscriptionUsd: 5, purchasedCreditCostUsd: 3 });
+  const aggregate = aggregateMetricRecords([candidate]);
+  assert.deepEqual(aggregate.orchestration.phaseCoverage, { implementation: 1, review: 1, retry: 0, "no-op": 0 });
+  assert.deepEqual(aggregate.orchestration.totals.sessions, { value: 1, availableRuns: 1, unavailableRuns: 1 });
+  assert.equal(aggregate.privateCostEstimates.apiEquivalentUsd, 0.3);
+  assert.equal(aggregate.privateCostEstimates.label, "imputed-api-equivalent-not-an-invoice");
+  const publicRecord = projectPublicMetricRecord(candidate, { nowMs: Date.parse("2026-08-28T00:32:00.000Z") });
+  assert.equal(publicRecord.schemaVersion, 1);
+  assert.equal(JSON.stringify(publicRecord).includes("rateCard"), false);
+  assert.equal(JSON.stringify(publicRecord).includes("apiEquivalent"), false);
+  assert.equal(JSON.stringify(publicRecord).includes("openai"), false);
+  assert.equal(JSON.stringify(publicRecord).includes("gpt-5"), false);
+  const missingRateCard = v2Record();
+  missingRateCard.orchestration[0].rateCardId = "unknown";
+  assert.equal(validateMetricRecord(missingRateCard).ok, false);
+  const unknownPhase = v2Record();
+  unknownPhase.orchestration[0].phase = "billing";
+  assert.equal(validateMetricRecord(unknownPhase).ok, false);
+  const unsafeEstimate = v2Record();
+  unsafeEstimate.orchestration[0].tokens.input = Number.MAX_SAFE_INTEGER;
+  assert.equal(validateMetricRecord(unsafeEstimate).ok, false);
+  assert.match(validateMetricRecord(unsafeEstimate).errors.map(({ code }) => code).join("\n"), /precision/u);
+});
 
 test("v1 rejects unknown, ambiguous, negative, revision, chronology, and secret-bearing data", () => {
   assert.equal(validateMetricRecord(record()).ok, true);
@@ -572,7 +614,7 @@ test("every hosted target has one explicit budget matching the authoritative mat
     "headless-linux": 10 * 60_000,
     "ui-linux": 20 * 60_000,
     "ui-release-linux": 25 * 60_000,
-    "coverage-linux": 25 * 60_000,
+    "coverage-linux": 40 * 60_000,
     quality: 20 * 60_000,
     "nix-package": 45 * 60_000,
     "compact-artifacts": 30 * 60_000,

@@ -1,23 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { Readable, Writable } from "node:stream";
+import { Writable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { createDeliveryBranchRewriteSink } from "../../scripts/loop/pre-flight-gate.mjs";
 import { auditPi, auditWorktreeAdmission, lifecycleCapacityChecks } from "../../scripts/factory/audit-pi.mjs";
 import { applyUserPolicy, mergePolicy, policyMismatches } from "../../scripts/factory/pi-policy.mjs";
-import { verifyPiSubagentsPackage } from "../../scripts/factory/verify-pi-subagents-package.mjs";
-import {
-  PI_RPC_MAX_BYTES,
-  readBoundedPiRpcInput,
-  validatePiRpcCommandDiscovery,
-  validatePiModelCatalog,
-} from "../../scripts/factory/check-pi-rpc-commands.mjs";
 import {
   FACTORY_DEBT_LABELS,
   FACTORY_LABELS,
@@ -31,10 +24,15 @@ import {
   selectPreMutationExecution,
 } from "../../scripts/dev-loops.mjs";
 import {
+  DEV_LOOP_ADMISSION_BINDING,
   devLoopRoutingInstruction,
   inspectDevLoopDispatch,
   resolveSupervisorModelRoute,
 } from "../../scripts/lib/dev-loop-model-routing.mjs";
+import {
+  verifyPiSdkPeerPins,
+  verifyPiSubagentsPackage,
+} from "../../scripts/factory/verify-pi-subagents-package.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -60,7 +58,10 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
     "npm:@playwright/test@1.60.0",
     "npm:@axe-core/playwright@4.10.0",
     "npm:pi-subagents@0.70.0",
+    "npm:@earendil-works/pi-agent-core@0.85.1",
+    "npm:@earendil-works/pi-ai@0.85.1",
     "npm:@earendil-works/pi-coding-agent@0.85.1",
+    "npm:@earendil-works/pi-tui@0.85.1",
     "npm:typebox@1.3.9",
     {
       source: "npm:pi-taskflow@0.2.10",
@@ -68,6 +69,10 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
       skills: [],
       prompts: [],
       themes: [],
+    },
+    {
+      source: "npm:@stixxert/pi-docker-sandbox@1.1.6",
+      extensions: [],
     },
     "npm:@input-output-hk/agent-review-pi@0.6.0",
     {
@@ -83,58 +88,30 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
     agents: { "dev-loop": { allow: ["inherit"] } },
   });
   const smoke = await readFile(path.join(repoRoot, "scripts", "check-pi-devshell.sh"), "utf8");
-  const smokeHelper = await readFile(path.join(repoRoot, "scripts", "factory", "check-pi-devshell-config.mjs"), "utf8");
-  const smokeRpcHelper = await readFile(path.join(repoRoot, "scripts", "factory", "check-pi-rpc-commands.mjs"), "utf8");
-  const subagentVerifier = await readFile(path.join(repoRoot, "scripts", "factory", "verify-pi-subagents-package.mjs"), "utf8");
-  const smokeContract = `${smoke}\n${smokeHelper}\n${smokeRpcHelper}\n${subagentVerifier}`;
   const bootstrap = await readFile(path.join(repoRoot, "bootstrap.sh"), "utf8");
+  const dockerSandboxLauncher = await readFile(path.join(repoRoot, "scripts", "factory", "pi-docker-sandbox.sh"), "utf8");
   const devshell = await readFile(path.join(repoRoot, "nix", "devshells", "default.nix"), "utf8");
   assert.match(smoke, /pi --list-models/u);
-  assert.match(smoke, /timeout --kill-after=5s 30s pi --list-models/u);
-  assert.match(smoke, /timeout --kill-after=5s 30s pi --approve --offline --mode rpc --no-session/u);
-  assert.doesNotMatch(smoke, /timeout[^\n]*--foreground/u);
-  assert.doesNotMatch(smoke, /pi_rpc_output=/u);
   assert.match(smoke, /Pi 0\.85\.1 is required for native detached child dispatch/u);
-  assert.ok(settings.packages.includes("npm:@earendil-works/pi-coding-agent@0.85.1"),
-    "the isolated pi-subagents closure must carry the same exact runtime peer as the Nix entrypoint");
   assert.match(smoke, /PI_CODING_AGENT_SESSION_DIR/u);
   assert.match(smoke, /PI_SUBAGENTS_TEMP_ROOT/u);
   assert.match(smoke, /owner-private runtime state/u);
-  assert.match(smokeContract, /unexpected pi-subagents package/u);
-  assert.match(smokeContract, /attentionRunsForSession/u);
-  assert.match(smokeContract, /remembered detached foreground descendant/u);
-  assert.match(smokeContract, /reconcileDetachedWorkflowChildCompletion/u);
-  assert.match(smokeContract, /planWorkflowSettlement/u);
-  assert.match(smokeContract, /hasPendingSupervisorRequest/u);
-  assert.match(smokeContract, /skill:taskflow/u);
-  assert.match(smokeContract, /unsafe inherited taskflow resources are active/u);
+  assert.match(smoke, /verify-pi-subagents-package\.mjs[\s\\]+\n\s+"\$subagent_package_root" "\$repo_root\/\.pi\/settings\.json" "\$pi_version"/u);
+  assert.match(smoke, /skill:taskflow/u);
+  assert.match(smoke, /unsafe inherited taskflow resources are active/u);
   assert.match(smoke, /Pi startup modified tracked project agent shadows/u);
   assert.match(smoke, /Failed to load skill/u);
-  assert.match(smokeContract, /Pi did not expose the tracked scenario and use-case commands/u);
-  assert.doesNotMatch(smoke, /<<[-]?['"]?[A-Za-z0-9_]+['"]?/u);
-  assert.doesNotMatch(smoke, /<<</u);
+  assert.match(smoke, /Pi did not expose the tracked scenario and use-case commands/u);
+  assert.match(smoke, /timeout -k 5s 60s pi --approve --offline --mode rpc --no-session/u);
+  assert.match(smoke, /<"\$pi_rpc_input"/u);
+  assert.match(smoke, />"\$pi_rpc_output"/u);
+  assert.match(smoke, /jq -s -e[\s\S]+"\$pi_rpc_output" >\/dev\/null/u);
+  assert.doesNotMatch(smoke, /\|\s*pi --approve --offline --mode rpc/u);
+  assert.doesNotMatch(smoke, /<<<"\$pi_rpc_output"/u);
+  assert.match(smoke, /Pi offline RPC startup exceeded the 60-second smoke deadline/u);
+  assert.match(smoke, /smoke-pi-child\.mjs/u);
+  assert.match(smoke, /Pi read-only child startup exceeded the 60-second smoke deadline/u);
   assert.match(bootstrap, /bash scripts\/check-pi-devshell\.sh/u);
-  const ciDispatchGuard = bootstrap.indexOf('if [[ -n "${CI:-}" ]]');
-  const selectPiWorktree = bootstrap.indexOf('pi_cwd="$(node "$repo_root/scripts/loop/bootstrap-dev-loop.mjs"', ciDispatchGuard);
-  const validatePiWorktree = bootstrap.indexOf('if [[ "$pi_cwd" != /* || ! -d "$pi_cwd" ]]', selectPiWorktree);
-  const enterPiWorktree = bootstrap.indexOf('cd -- "$pi_cwd" || {', validatePiWorktree);
-  const auditPiConfig = bootstrap.indexOf("node scripts/factory/audit-pi.mjs --config-only --enforce-config", enterPiWorktree);
-  const changedWorktreeGuard = bootstrap.indexOf('if [[ "$pi_cwd" != "$repo_root" ]]', auditPiConfig);
-  const provisionPiPackages = bootstrap.indexOf("node scripts/factory/provision-pi-packages.mjs", changedWorktreeGuard);
-  const auditSelectedWorktree = bootstrap.indexOf("node scripts/factory/audit-pi.mjs --config-only --enforce-config", auditPiConfig + 1);
-  const smokePiRuntime = bootstrap.indexOf("bash scripts/check-pi-devshell.sh", auditSelectedWorktree);
-  const dispatchPi = bootstrap.indexOf('exec pi "$@"', smokePiRuntime);
-  assert.ok(ciDispatchGuard >= 0
-    && selectPiWorktree > ciDispatchGuard
-    && validatePiWorktree > selectPiWorktree
-    && enterPiWorktree > validatePiWorktree
-    && auditPiConfig > enterPiWorktree
-    && changedWorktreeGuard > auditPiConfig
-    && provisionPiPackages > changedWorktreeGuard
-    && auditSelectedWorktree > provisionPiPackages
-    && smokePiRuntime > auditSelectedWorktree
-    && dispatchPi > smokePiRuntime,
-  "Pi bootstrap must reject CI before mutation, pre-audit, attach a changed worktree closure, re-audit, smoke, then dispatch");
   assert.match(bootstrap, /node scripts\/git-hooks\/check-github-web-flow-key\.mjs/u);
   const discoverNix = bootstrap.indexOf('[[ -x "$nix_daemon_profile_bin/nix" ]]');
   const prependNix = bootstrap.indexOf('export PATH="$nix_daemon_profile_bin:$PATH"');
@@ -146,11 +123,33 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(devshell, /export PI_CODING_AGENT_SESSION_DIR/u);
   assert.match(devshell, /export PI_SUBAGENTS_TEMP_ROOT/u);
   assert.doesNotMatch(devshell, /export PI_CODING_AGENT_DIR/u);
+  assert.match(dockerSandboxLauncher, /@stixxert\/pi-docker-sandbox\/index\.ts/u);
+  assert.match(dockerSandboxLauncher, /DOCKER_SANDBOX_WORKSPACE_RO="1"/u);
+  assert.match(dockerSandboxLauncher, /DOCKER_SANDBOX_TEARDOWN="remove"/u);
+  assert.match(dockerSandboxLauncher, /unset DOCKER_SANDBOX_ALLOW_UNSANDBOXED/u);
+  assert.match(dockerSandboxLauncher, /unset DOCKER_SANDBOX_ENV_PASSTHROUGH/u);
+  assert.match(dockerSandboxLauncher, /unset DOCKER_SANDBOX/u);
+  assert.doesNotMatch(dockerSandboxLauncher, /\/sandbox(?:\/|")/u);
 });
 
-async function writePiSubagentsFixture(root, { version = "0.70.0", omit = null, removeCapability = null } = {}) {
+const piSdkPeers = {
+  "@earendil-works/pi-agent-core": "*",
+  "@earendil-works/pi-ai": ">=0.80.0",
+  "@earendil-works/pi-coding-agent": "*",
+  "@earendil-works/pi-tui": "*",
+};
+
+function piProjectSettings(overrides = {}) {
+  return {
+    packages: Object.keys({ ...piSdkPeers, ...overrides }).map((name) => `npm:${name}@${overrides[name] ?? "0.85.1"}`),
+  };
+}
+
+async function writePiSubagentsFixture(root, {
+  version = "0.70.0", omit = null, removeCapability = null, peers = piSdkPeers,
+} = {}) {
   const files = {
-    "package.json": JSON.stringify({ name: "pi-subagents", version }),
+    "package.json": JSON.stringify({ name: "pi-subagents", version, peerDependencies: peers }),
     "src/shared/types.d.ts": [
       "asyncByDefault?", "forceTopLevelAsync?", "maxSubagentDepth?",
       "maxSubagentSpawnsPerSession?", "maxSubagentSpawnsPerRun?",
@@ -163,6 +162,7 @@ async function writePiSubagentsFixture(root, { version = "0.70.0", omit = null, 
     "src/runs/background/subagent-wait.js": "attentionRunsForSession stopOnAttention",
     "src/runs/background/auto-drain.js": "hasPendingSupervisorRequest",
     "src/runs/foreground/workflow-detach-reconcile.js": "reconcileDetachedWorkflowChildCompletion planWorkflowSettlement",
+    "src/runs/shared/child-session.js": "createDefaultChildSessionFactory",
   };
   for (const [relativePath, original] of Object.entries(files)) {
     if (relativePath === omit) continue;
@@ -176,7 +176,35 @@ test("pi-subagents compiled capability verifier accepts the reviewed package sur
   const root = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-subagents-valid-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await writePiSubagentsFixture(root);
-  assert.deepEqual(await verifyPiSubagentsPackage(root), { name: "pi-subagents", version: "0.70.0" });
+  assert.deepEqual(await verifyPiSubagentsPackage(root, { projectSettings: piProjectSettings() }), {
+    name: "pi-subagents", version: "0.70.0",
+  });
+});
+
+test("pi-subagents peer metadata stays bound to exact project Pi SDK pins", () => {
+  assert.doesNotThrow(() => verifyPiSdkPeerPins({ peerDependencies: piSdkPeers }, piProjectSettings()));
+  assert.throws(
+    () => verifyPiSdkPeerPins({ peerDependencies: piSdkPeers }, {
+      packages: piProjectSettings().packages.filter((source) => !source.includes("pi-tui")),
+    }),
+    /missing @earendil-works\/pi-tui@0\.85\.1/u,
+  );
+  assert.throws(
+    () => verifyPiSdkPeerPins({
+      peerDependencies: { ...piSdkPeers, "@earendil-works/pi-new-peer": "*" },
+    }, piProjectSettings()),
+    /missing @earendil-works\/pi-new-peer@0\.85\.1/u,
+  );
+  assert.throws(
+    () => verifyPiSdkPeerPins({ peerDependencies: { ...piSdkPeers, "@earendil-works/pi-ai": ">=0.86.0" } }, piProjectSettings()),
+    /incompatible @earendil-works\/pi-ai peer range >=0\.86\.0 for 0\.85\.1/u,
+  );
+  assert.throws(
+    () => verifyPiSdkPeerPins({ peerDependencies: piSdkPeers }, piProjectSettings({
+      "@earendil-works/pi-ai": "^0.85.1",
+    })),
+    /non-exact @earendil-works\/pi-ai@\^0\.85\.1/u,
+  );
 });
 
 test("pi-subagents compiled capability verifier reports missing artifacts and capabilities", async (t) => {
@@ -188,73 +216,20 @@ test("pi-subagents compiled capability verifier reports missing artifacts and ca
   ]));
   await writePiSubagentsFixture(missingArtifact, { omit: "src/runs/background/auto-drain.js" });
   await assert.rejects(
-    verifyPiSubagentsPackage(missingArtifact),
+    verifyPiSubagentsPackage(missingArtifact, { projectSettings: piProjectSettings() }),
     /missing required compiled artifact src\/runs\/background\/auto-drain\.js/u,
   );
   await writePiSubagentsFixture(missingCapability, { removeCapability: "attentionRunsForSession" });
   await assert.rejects(
-    verifyPiSubagentsPackage(missingCapability),
+    verifyPiSubagentsPackage(missingCapability, { projectSettings: piProjectSettings() }),
     /subagent-wait\.js lacks required capability attentionRunsForSession/u,
   );
 });
 
-test("pi-subagents verifier reports a stale pin before missing compiled artifacts", async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-subagents-stale-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  await writePiSubagentsFixture(root, {
-    version: "0.67.0",
-    omit: "src/runs/background/auto-drain.js",
-  });
-  await assert.rejects(
-    verifyPiSubagentsPackage(root),
-    /unexpected pi-subagents package pi-subagents@0\.67\.0; expected pi-subagents@0\.70\.0/u,
-  );
-});
-
-test("pi-subagents verifier executes through its supported symlinked path", async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-subagents-symlink-"));
-  const link = path.join(root, "verify-pi-subagents-package.mjs");
-  const packageRoot = path.join(root, "package");
-  t.after(() => rm(root, { recursive: true, force: true }));
-  await writePiSubagentsFixture(packageRoot);
-  await symlink(path.join(repoRoot, "scripts", "factory", "verify-pi-subagents-package.mjs"), link);
-
-  const result = spawnSync(process.execPath, [link, packageRoot], { encoding: "utf8" });
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /verified pi-subagents@0\.70\.0 compiled capability surface/u);
-});
-
-test("Pi command discovery streams beyond pipe capacity and stays explicitly bounded", async () => {
-  const loaderPath = "/private/agent-review/SKILL.md";
-  const padding = Array.from({ length: 300 }, (_, index) => JSON.stringify({
-    type: "event",
-    index,
-    padding: "x".repeat(96),
-  }));
-  const commands = [
-    { name: "scenario" },
-    { name: "use-case" },
-    { name: "skill:agent-review", source: "skill", sourceInfo: { path: loaderPath } },
-  ];
-  const source = [...padding, JSON.stringify({ type: "response", command: "get_commands", data: { commands } })].join("\n");
-  assert.ok(Buffer.byteLength(source) > 16 * 1024);
-  assert.deepEqual(validatePiRpcCommandDiscovery(source, { loaderPath }), { commandCount: 3 });
-
-  const exact = await readBoundedPiRpcInput(Readable.from([Buffer.alloc(PI_RPC_MAX_BYTES)]));
-  assert.equal(Buffer.byteLength(exact), PI_RPC_MAX_BYTES);
-  await assert.rejects(
-    readBoundedPiRpcInput(Readable.from([Buffer.alloc(PI_RPC_MAX_BYTES), Buffer.from("x")])),
-    /exceeded the 1048576-byte limit/u,
-  );
-
-  const provider = "openai-codex";
-  const model = "gpt-fixture";
-  const catalog = `${"other model context ".repeat(1_024)}\n${provider} ${model} 200000`;
-  assert.ok(Buffer.byteLength(catalog) > 16 * 1024);
-  assert.deepEqual(validatePiModelCatalog(catalog, { provider, model }), { provider, model });
-});
-
 test("dev-loop routing binds the exact supervisor model and reasoning before dispatch", () => {
+  const implementationBinding = {
+    extensionBindings: { [DEV_LOOP_ADMISSION_BINDING]: { phase: "implementation" } },
+  };
   const trackedDefault = resolveSupervisorModelRoute(
     { provider: "openai-codex", id: "gpt-5.6-terra" },
     "medium",
@@ -267,22 +242,37 @@ test("dev-loop routing binds the exact supervisor model and reasoning before dis
   );
   assert.equal(highRisk.route.routedModel, "openai-codex/gpt-6-astra:high");
   assert.match(highRisk.text, /exact per-run model openai-codex\/gpt-6-astra:high/u);
+  assert.match(highRisk.text, /extensionBindings/u);
+  assert.match(highRisk.text, /oxid\.dev-loop-admission\/1/u);
 
   assert.equal(inspectDevLoopDispatch({
     toolName: "subagent",
-    input: { agent: "dev-loop", model: "openai-codex/gpt-6-astra:high" },
+    input: { agent: "dev-loop", model: "openai-codex/gpt-6-astra:high", ...implementationBinding },
     model: { provider: "openai-codex", id: "gpt-6-astra" },
     thinking: "high",
   }).block, false);
   for (const model of [undefined, "openai-codex/gpt-5.6-terra:medium", "openai-codex/gpt-6-astra:medium"]) {
     const decision = inspectDevLoopDispatch({
       toolName: "subagent",
-      input: { agent: "dev-loop", ...(model ? { model } : {}) },
+      input: { agent: "dev-loop", ...implementationBinding, ...(model ? { model } : {}) },
       model: { provider: "openai-codex", id: "gpt-6-astra" },
       thinking: "high",
     });
     assert.equal(decision.block, true);
     assert.match(decision.reason, /must use the active supervisor route/u);
+  }
+  for (const phase of [undefined, "draft_gate", "preApproval"]) {
+    const phaseBinding = phase
+      ? { extensionBindings: { [DEV_LOOP_ADMISSION_BINDING]: { phase } } }
+      : {};
+    const decision = inspectDevLoopDispatch({
+      toolName: "subagent",
+      input: { agent: "dev-loop", model: "openai-codex/gpt-6-astra:high", ...phaseBinding },
+      model: { provider: "openai-codex", id: "gpt-6-astra" },
+      thinking: "high",
+    });
+    assert.equal(decision.block, true);
+    assert.match(decision.reason, /supervisor-owned/u);
   }
   assert.throws(
     () => resolveSupervisorModelRoute({ provider: "openai-codex", id: "gpt-6-astra" }, "unbounded"),
@@ -535,6 +525,7 @@ test("unavailable lifecycle helper uses conservative fresh-checkout capacity", a
   assert.deepEqual(result.checks.map(({ id, status }) => ({ id, status })), [
     { id: "worktree-admission", status: "pass" },
     { id: "worktree-target-storage", status: "pass" },
+    { id: "resource-admission", status: "pass" },
   ]);
   assert.match(result.checks[0].summary, /conservative fallback/u);
 });
@@ -711,11 +702,11 @@ test("factory claim surface fails closed and exposes no raw GitHub mutations", a
   assert.doesNotMatch(source, /factory\/\$\{issue\}/u);
 });
 
-test("dev-loop grants only issue-bound push and review-ready-PR delivery writes", async () => {
+test("dev-loop grants only issue-bound push and draft-PR delivery writes", async () => {
   const source = await readFile(path.join(repoRoot, ".pi", "agents", "dev-loop.agent.md"), "utf8");
   assert.match(source, /issue-backed delivery authorization permits only a normal push/u);
   assert.match(source, /resolved issue, repository, delivery target, canonical branch, and current worktree/u);
-  assert.match(source, /No force-push, replacement, cross-issue write, later draft\/ready transition, merge, durable-branch mutation, release, credential, protection, or scope-expansion authority is granted/u);
+  assert.match(source, /No force-push, replacement, cross-issue write, ready-for-review, merge, durable-branch mutation, release, credential, protection, or scope-expansion authority is granted/u);
   assert.match(source, /fail closed before either delivery write/u);
 });
 

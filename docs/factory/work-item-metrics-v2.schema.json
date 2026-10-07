@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/MediaNoxLabs/oxid/develop/docs/factory/work-item-metrics-v2.schema.json",
+  "title": "Oxid private work-item metrics v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "repository", "issue", "pr", "headSha", "startedAt", "completedAt", "recordedAt", "phases", "validations", "review", "tokens", "attempts", "ci", "worktree", "routing", "orchestration", "rateCards"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "repository": { "const": "MediaNoxLabs/oxid" },
+    "issue": { "type": "integer", "minimum": 1 },
+    "pr": { "type": ["integer", "null"], "minimum": 1 },
+    "headSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "recordedAt": { "type": "string", "format": "date-time" },
+    "phases": { "type": "object" },
+    "validations": { "type": "array" },
+    "review": { "type": "object" },
+    "tokens": { "type": ["object", "null"] },
+    "attempts": { "type": "object" },
+    "ci": { "type": "object" },
+    "worktree": { "type": "object" },
+    "routing": { "type": "object" },
+    "orchestration": {
+      "type": "array", "maxItems": 64,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["runId", "parentRunId", "phase", "durationMs", "outcome", "reasonCode", "sessions", "turns", "toolCalls", "provider", "model", "rateCardId", "tokens"],
+        "properties": {
+          "runId": { "$ref": "#/$defs/id" }, "parentRunId": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+          "phase": { "enum": ["implementation", "review", "retry", "no-op"] }, "durationMs": { "$ref": "#/$defs/count" },
+          "outcome": { "enum": ["completed", "failed", "canceled", "skipped"] }, "reasonCode": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+          "sessions": { "$ref": "#/$defs/nullableCount" }, "turns": { "$ref": "#/$defs/nullableCount" }, "toolCalls": { "$ref": "#/$defs/nullableCount" },
+          "provider": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }, "model": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }, "rateCardId": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+          "tokens": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/tokens" }] }
+        }
+      }
+    },
+    "rateCards": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/rateCard" } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]{0,63}$" },
+    "count": { "type": "integer", "minimum": 0, "maximum": 1000000000000000 },
+    "nullableCount": { "anyOf": [{ "$ref": "#/$defs/count" }, { "type": "null" }] },
+    "tokens": { "type": "object", "additionalProperties": false, "required": ["input", "output", "cacheRead", "cacheWrite"], "properties": { "input": { "$ref": "#/$defs/count" }, "output": { "$ref": "#/$defs/count" }, "cacheRead": { "$ref": "#/$defs/count" }, "cacheWrite": { "$ref": "#/$defs/count" } } },
+    "rateCard": { "type": "object", "additionalProperties": false, "required": ["id", "version", "inputCreditMicrosPerMillion", "outputCreditMicrosPerMillion", "cacheReadCreditMicrosPerMillion", "cacheWriteCreditMicrosPerMillion", "inputApiUsdMicrosPerMillion", "outputApiUsdMicrosPerMillion", "cacheReadApiUsdMicrosPerMillion", "cacheWriteApiUsdMicrosPerMillion"], "properties": { "id": { "$ref": "#/$defs/id" }, "version": { "$ref": "#/$defs/id" }, "inputCreditMicrosPerMillion": { "$ref": "#/$defs/count" }, "outputCreditMicrosPerMillion": { "$ref": "#/$defs/count" }, "cacheReadCreditMicrosPerMillion": { "$ref": "#/$defs/count" }, "cacheWriteCreditMicrosPerMillion": { "$ref": "#/$defs/count" }, "inputApiUsdMicrosPerMillion": { "$ref": "#/$defs/count" }, "outputApiUsdMicrosPerMillion": { "$ref": "#/$defs/count" }, "cacheReadApiUsdMicrosPerMillion": { "$ref": "#/$defs/count" }, "cacheWriteApiUsdMicrosPerMillion": { "$ref": "#/$defs/count" } } }
+  }
+}

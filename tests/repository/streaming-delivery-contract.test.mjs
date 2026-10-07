@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   assertIssueTarget,
+  assertNormalizedDeliveryBase,
   deliveryTargetFromIssueBody,
   extractDeliveryTargetOption,
   parseDeliveryTarget,
@@ -17,7 +18,6 @@ import {
   validateMilestoneChecks,
   validateMilestonePr,
 } from "../../scripts/github/merge-milestone-pr.mjs";
-import { classifyOptionalSarifChecks, normalizePrFactsOptionalSarif } from "../../scripts/github/optional-sarif-policy.mjs";
 import {
   buildTriageReceipt,
   currentTriageReceipt,
@@ -33,7 +33,12 @@ import {
   initialReviewControl,
   parseReviewControlComment,
 } from "../../scripts/github/review-control.mjs";
-import { auditFollowUpDebt, followUpDebtRow } from "../../scripts/github/audit-follow-up-debt.mjs";
+import {
+  auditFollowUpDebt,
+  closingPullRequestEvidence,
+  followUpDebtRow,
+  resolveClosingPullRequestEvidence,
+} from "../../scripts/github/audit-follow-up-debt.mjs";
 import { buildCreateFollowUpArgs } from "../../scripts/github/create-follow-up.mjs";
 import { normalizeDevLoopsArgs } from "../../scripts/dev-loops.mjs";
 
@@ -70,6 +75,46 @@ test("CLI delivery target is singular, stripped, and issue-bound", () => {
   assert.throws(() => assertIssueTarget("## Delivery target\n\ndevelop", "milestone-0.4.0"), /does not match/);
 });
 
+test("bare issue targets and origin refs normalize only with exact repository proof", () => {
+  const oid = "a".repeat(40);
+  const proof = {
+    repository: "MediaNoxLabs/oxid",
+    remoteName: "origin",
+    originUrl: "git@github.com:MediaNoxLabs/oxid.git",
+    fetchRefspecs: ["+refs/heads/*:refs/remotes/origin/*"],
+    resolvedRef: "origin/milestone-0.4.0",
+    issueTargetOid: oid,
+    envelopeTargetOid: oid,
+  };
+  assert.equal(
+    assertNormalizedDeliveryBase("milestone-0.4.0", "origin/milestone-0.4.0", proof).branch,
+    "milestone-0.4.0",
+  );
+  assert.equal(assertNormalizedDeliveryBase("develop", "origin/develop", {
+    ...proof,
+    originUrl: "https://github.com/MediaNoxLabs/oxid.git",
+    resolvedRef: "origin/develop",
+  }).branch, "develop");
+
+  for (const invalid of [
+    { repository: "other/oxid" },
+    { originUrl: "https://github.com/other/oxid.git" },
+    { remoteName: "upstream" },
+    { fetchRefspecs: ["+refs/heads/main:refs/remotes/origin/main"] },
+    { resolvedRef: "origin/develop" },
+    { envelopeTargetOid: "b".repeat(40) },
+  ]) {
+    assert.throws(
+      () => assertNormalizedDeliveryBase("milestone-0.4.0", "origin/milestone-0.4.0", { ...proof, ...invalid }),
+      /delivery target|repository|origin fetch mapping|resolved delivery ref|OIDs/u,
+    );
+  }
+  assert.throws(
+    () => assertNormalizedDeliveryBase("develop", "origin/milestone-0.4.0", proof),
+    /does not match envelope target/u,
+  );
+});
+
 test("a stacked PR keeps its conventional parent while retaining its delivery target", () => {
   const args = normalizeDevLoopsArgs([
     "pr", "create", "--head", "feat/issue-280", "--base", "docs/issue-279", "--delivery-base", "develop",
@@ -90,6 +135,7 @@ function milestonePr(overrides = {}) {
     headRefOid: "b".repeat(40),
     isDraft: false,
     isCrossRepository: false,
+    autoMergeRequest: null,
     mergeable: "MERGEABLE",
     mergeStateStatus: "CLEAN",
     title: "feat(wallet): stream one increment",
@@ -131,30 +177,6 @@ test("milestone audit permits only pending known SARIF projections after scan pa
   assert.equal(validateMilestoneChecks([...passing, { ...pendingProjection, bucket: "cancel", state: "CANCELLED" }]).ok, false);
   assert.equal(validateMilestoneChecks([...passing.map((check) => check.name === "scan" ? { ...check, bucket: "fail" } : check), { ...pendingProjection, bucket: "cancel", state: "CANCELLED" }]).ok, false);
   assert.equal(validateMilestoneChecks([...passing, { name: "Unit tests (Linux host)", bucket: "skipping", state: "SKIPPED" }]).ok, true);
-});
-
-test("pre-approval facts share the fail-closed optional SARIF policy", () => {
-  const required = CRITICAL_CHECKS.map((name) => name === "scan"
-    ? { __typename: "CheckRun", name, status: "COMPLETED", conclusion: "SUCCESS", workflowName: "Scan" }
-    : { __typename: "StatusContext", context: name, state: "SUCCESS" });
-  const scan = required.find((check) => check.name === "scan");
-  const projection = { __typename: "CheckRun", name: "Trivy", status: "QUEUED", conclusion: "", workflowName: "" };
-  const normalized = normalizePrFactsOptionalSarif({ headRefOid: "a".repeat(40), statusCheckRollup: [...required, projection] });
-  assert.deepEqual(normalized.statusCheckRollup, required);
-  assert.equal(classifyOptionalSarifChecks([...required, { ...scan }, projection]).ignored.length, 1);
-  assert.equal(classifyOptionalSarifChecks([...required, { ...scan, conclusion: "FAILURE" }, projection]).ignored.length, 0);
-  for (const blocker of [
-    { ...projection, name: "unknown" },
-    { ...projection, workflowName: "Scan" },
-    { ...projection, status: "COMPLETED", conclusion: "FAILURE" },
-    { ...projection, status: "COMPLETED", conclusion: "CANCELLED" },
-  ]) {
-    assert.equal(classifyOptionalSarifChecks([...required, blocker]).ignored.length, 0);
-  }
-  assert.equal(classifyOptionalSarifChecks([...required.filter((check) => check !== scan), { ...scan, conclusion: "SKIPPED" }, projection]).ignored.length, 0);
-  assert.equal(classifyOptionalSarifChecks([...required.filter((check) => check !== scan), { ...scan, conclusion: "NEUTRAL" }, projection]).ignored.length, 0);
-  assert.equal(classifyOptionalSarifChecks([...required.filter((check) => check.context !== "Validate PR body"), projection]).ignored.length, 0);
-  assert.equal(classifyOptionalSarifChecks([projection]).ignored.length, 0);
 });
 
 test("review triage is exact-head and cannot defer a blocking finding", () => {
@@ -259,50 +281,141 @@ test("follow-up debt audit reports stale and invalid inventory without mutating 
   assert.equal(result.invalid, 0);
 });
 
-test("follow-up debt audit accepts closed items only with delivery evidence", () => {
+test("follow-up debt audit accepts only one issue-bound merged closing PR", () => {
   const body = `## Problem\nDelivered controlled debt.\n\n## Delivery target\n\ndevelop\n\n## Acceptance criteria\n- [x] Fixed.\n\n## Dependencies\n- Origin PR #603\n`;
+  const merged = closingPullRequestEvidence(604, [{
+    number: 700,
+    state: "MERGED",
+    mergedAt: "2026-10-06T00:00:00.000Z",
+    url: "https://github.com/MediaNoxLabs/oxid/pull/700",
+  }]);
   const delivered = followUpDebtRow({
     number: 604,
     state: "CLOSED",
     body,
     labels: [{ name: "factory:follow-up" }],
     createdAt: "2026-09-01T00:00:00Z",
-    closedByPullRequest: true,
+    deliveryEvidence: merged,
   });
-  const unproven = followUpDebtRow({
+  assert.equal(delivered.valid, true);
+  assert.equal(delivered.deliveryEvidence, "merged");
+
+  const issue = {
     number: 605,
     state: "CLOSED",
     body,
     labels: [{ name: "factory:follow-up" }],
     createdAt: "2026-09-01T00:00:00Z",
-  });
-  assert.equal(delivered.valid, true);
-  assert.equal(unproven.valid, false);
-  assert.match(unproven.problems.join("; "), /closed without linked delivery evidence/u);
+  };
+  const cases = [
+    ["none", closingPullRequestEvidence(605, [])],
+    ["unmerged", closingPullRequestEvidence(605, [{
+      number: 701, state: "OPEN", mergedAt: null,
+      url: "https://github.com/MediaNoxLabs/oxid/pull/701",
+    }])],
+    ["unavailable", closingPullRequestEvidence(605, null)],
+    ["ambiguous", closingPullRequestEvidence(605, [
+      { number: 701, state: "MERGED", mergedAt: "2026-10-06T00:00:00.000Z", url: "https://github.com/MediaNoxLabs/oxid/pull/701" },
+      { number: 702, state: "MERGED", mergedAt: "2026-10-06T00:01:00.000Z", url: "https://github.com/MediaNoxLabs/oxid/pull/702" },
+    ])],
+    ["wrong-issue", { ...merged, issueNumber: 999 }],
+    ["legacy-boolean", true],
+  ];
+  for (const [name, deliveryEvidence] of cases) {
+    const row = followUpDebtRow({ ...issue, deliveryEvidence });
+    assert.equal(row.valid, false, name);
+    assert.match(row.problems.join("; "), /closed without merged linked delivery evidence/u, name);
+  }
 });
 
-function milestoneAuditRun({ reReadHead = "b".repeat(40), issueTarget = "milestone-0.4.0" } = {}) {
-  const pr = milestonePr();
-  const checks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" }));
+test("closing PR evidence rejects unrelated and malformed pull request metadata", () => {
+  for (const reference of [
+    { number: 700, state: "MERGED", mergedAt: "2026-10-06T00:00:00.000Z", url: "https://github.com/other/oxid/pull/700" },
+    { number: 700, state: "MERGED", mergedAt: "2026-10-06T00:00:00.000Z", url: "https://github.com/MediaNoxLabs/oxid/pull/701" },
+    { number: 700, state: "MERGED", mergedAt: "yesterday", url: "https://github.com/MediaNoxLabs/oxid/pull/700" },
+  ]) {
+    assert.equal(closingPullRequestEvidence(604, [reference]).status, "unavailable");
+  }
+  assert.throws(() => closingPullRequestEvidence(0, []), /positive issue number/u);
+});
+
+test("closing PR evidence resolves bounded references before trusting merge state", () => {
+  const linked = [
+    { number: 700, url: "https://github.com/MediaNoxLabs/oxid/pull/700" },
+    { number: 701, url: "https://github.com/MediaNoxLabs/oxid/pull/701" },
+  ];
+  const loaded = [];
+  const ambiguous = resolveClosingPullRequestEvidence(604, linked, (number) => {
+    loaded.push(number);
+    return {
+      number,
+      state: "MERGED",
+      mergedAt: `2026-10-06T00:0${number - 700}:00.000Z`,
+      url: `https://github.com/MediaNoxLabs/oxid/pull/${number}`,
+    };
+  });
+  assert.equal(ambiguous.status, "ambiguous");
+  assert.deepEqual(loaded, [700, 701], "every bounded closing reference must be resolved");
+
+  const merged = resolveClosingPullRequestEvidence(604, linked.slice(0, 1), (number) => ({
+    number,
+    state: "MERGED",
+    mergedAt: "2026-10-05T13:49:56Z",
+    url: `https://github.com/MediaNoxLabs/oxid/pull/${number}`,
+  }));
+  assert.equal(merged.status, "merged");
+  assert.equal(merged.pullRequest.number, 700);
+  assert.equal(resolveClosingPullRequestEvidence(604, linked.slice(0, 1), () => {
+    throw new Error("API unavailable");
+  }).status, "unavailable");
+  assert.equal(resolveClosingPullRequestEvidence(604, linked.slice(0, 1), () => ({
+    number: 999,
+    state: "MERGED",
+    mergedAt: "2026-10-06T00:00:00.000Z",
+    url: "https://github.com/MediaNoxLabs/oxid/pull/999",
+  })).status, "unavailable");
+});
+
+function milestoneAuditRun({
+  reReadHead = "b".repeat(40),
+  reReadAutoMergeRequest = null,
+  issueTarget = "milestone-0.4.0",
+  localBase = "a".repeat(40),
+  reReadBase = localBase,
+  autoMergeRequest = null,
+  noRequiredChecksError = false,
+  requiredChecks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
+  selectedChecks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
+} = {}) {
+  const pr = milestonePr({ autoMergeRequest });
+  let baseReads = 0;
   const control = freezeReview(
     authorizeReview(initialReviewControl(pr.headRefOid), { headSha: pr.headRefOid }),
     { headSha: pr.headRefOid, disposition: "clean" },
   );
   return (command, args) => {
     if (command === "git" && args[0] === "rev-parse" && args[1] === "--show-toplevel") return "/repo\n";
-    if (command === "git" && args[0] === "rev-parse") return `${pr.baseRefOid}\n`;
+    if (command === "git" && args[0] === "rev-parse") return `${baseReads++ === 0 ? localBase : reReadBase}\n`;
     if (command === "git") return "";
     if (command === process.execPath) return "";
     if (command !== "gh") throw new Error(`unexpected command ${command}`);
     if (args[0] === "pr" && args[1] === "view" && args.at(-1).includes("state,")) return JSON.stringify(pr);
     if (args[0] === "pr" && args[1] === "view") return JSON.stringify({
-      baseRefName: pr.baseRefName, baseRefOid: pr.baseRefOid, headRefOid: reReadHead,
+      baseRefName: pr.baseRefName,
+      baseRefOid: pr.baseRefOid,
+      headRefOid: reReadHead,
+      autoMergeRequest: reReadAutoMergeRequest,
     });
     if (args[0] === "issue" && args[1] === "view") return JSON.stringify({
       state: "OPEN",
       body: `## Goal\nShip one bounded increment safely.\n\n## Delivery target\n\n${issueTarget}\n\n## Acceptance criteria\n\n1. It works.`,
     });
-    if (args[0] === "pr" && args[1] === "checks") return JSON.stringify(checks);
+    if (args[0] === "pr" && args[1] === "checks") {
+      if (args.includes("--required") && noRequiredChecksError) {
+        throw new Error("read effective required checks failed: no required checks reported on the branch");
+      }
+      return JSON.stringify(args.includes("--required") ? requiredChecks : selectedChecks);
+    }
     if (args[0] === "api") return JSON.stringify([[
       { body: buildTriageReceipt({ headSha: pr.headRefOid }) },
       { body: buildReviewControlComment(control), user: { login: "yshyn-iohk" } },
@@ -311,16 +424,60 @@ function milestoneAuditRun({ reReadHead = "b".repeat(40), issueTarget = "milesto
   };
 }
 
-test("milestone audit binds issue target, base, checks, triage, and final head", () => {
+test("milestone audit binds issue target, base, selected required checks, triage, and final head", () => {
   const options = { repo: "MediaNoxLabs/oxid", pr: 42, execute: false };
-  const normalizeChecks = (checks) => checks;
-  assert.equal(auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun(), normalizeChecks }).target, "milestone-0.4.0");
-  assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ issueTarget: "develop" }), normalizeChecks }), /does not match/);
-  assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ reReadHead: "c".repeat(40) }), normalizeChecks }), /changed during/);
+  assert.equal(auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun() }).target, "milestone-0.4.0");
+  assert.equal(auditMilestoneMerge(options, {
+    cwd: "/repo",
+    run: milestoneAuditRun({ localBase: "c".repeat(40), reReadBase: "c".repeat(40) }),
+  }).baseSha, "c".repeat(40));
+  assert.throws(() => auditMilestoneMerge(options, {
+    cwd: "/repo",
+    run: milestoneAuditRun({ localBase: "c".repeat(40), reReadBase: "d".repeat(40) }),
+  }), /base changed during the merge audit/);
+  assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ issueTarget: "develop" }) }), /does not match/);
+  assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ reReadHead: "c".repeat(40) }) }), /changed during/);
+  assert.equal(auditMilestoneMerge(options, {
+    cwd: "/repo",
+    run: milestoneAuditRun({ requiredChecks: [] }),
+  }).checks, 0);
+  assert.equal(auditMilestoneMerge(options, {
+    cwd: "/repo",
+    run: milestoneAuditRun({ noRequiredChecksError: true }),
+  }).checks, 0);
+  assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({
+    selectedChecks: [
+      ...CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
+      { name: "UI and application profiles (Linux host)", bucket: "fail", state: "FAILURE", workflow: "CI" },
+    ],
+  }) }), /pull request checks are not green/);
+});
+
+test("GitHub auto-merge availability cannot bypass the exact-head audit", () => {
+  const options = { repo: "MediaNoxLabs/oxid", pr: 42, execute: false };
+  const autoMergeRequest = {
+    enabledAt: "2026-10-07T00:00:00Z",
+    mergeMethod: "SQUASH",
+  };
+  assert.match(
+    validateMilestonePr(milestonePr({ autoMergeRequest })).failures.join("; "),
+    /GitHub auto-merge is active/u,
+  );
+  assert.throws(() => auditMilestoneMerge(options, {
+    cwd: "/repo",
+    run: milestoneAuditRun({ autoMergeRequest }),
+  }), /GitHub auto-merge is active/u);
+  assert.throws(() => auditMilestoneMerge(options, {
+    cwd: "/repo",
+    run: milestoneAuditRun({ reReadAutoMergeRequest: autoMergeRequest }),
+  }), /GitHub auto-merge became active during the merge audit/u);
 });
 
 test("milestone merge implementation pins squash execution to the audited head", async () => {
   const source = await readFile(new URL("../../scripts/github/merge-milestone-pr.mjs", import.meta.url), "utf8");
+  assert.match(source, /--required/);
+  assert.match(source, /no required checks reported/);
+  assert.doesNotMatch(source, /--watch/);
   assert.match(source, /--squash/);
   assert.match(source, /--match-head-commit/);
   assert.doesNotMatch(source, /--admin/);
@@ -330,4 +487,6 @@ test("milestone merge implementation pins squash execution to the audited head",
   assert.match(source, /assertIssueTarget/);
   assert.match(source, /closeout-pr/);
   assert.match(source, /result\.headSha/);
+  assert.match(source, /autoMergeRequest/);
+  assert.doesNotMatch(source, /["'`]--auto["'`]/u);
 });

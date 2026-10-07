@@ -211,10 +211,10 @@ fn simulated_call_replacement_preserves_the_standalone_activity_store() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+#[ignore = "requires the Nix-packaged Passport Vault composer; run `just passport-vault-conformance`"]
 fn standalone_managed_claim_composes_and_settles_through_the_native_stack() {
-    let Some(composer) = std::env::var_os("OXID_PASSPORT_VAULT_COMPOSER") else {
-        return;
-    };
+    let composer = std::env::var_os("OXID_PASSPORT_VAULT_COMPOSER")
+        .expect("OXID_PASSPORT_VAULT_COMPOSER is supplied by the Nix conformance lane");
     let composer = std::fs::canonicalize(composer).expect("packaged composer");
     let services = crate::compose_in_memory_with_development_did_approval();
     let profile = services

@@ -37,6 +37,11 @@ factory-smoke:
 follow-up-audit:
     node scripts/github/audit-follow-up-debt.mjs --repo MediaNoxLabs/oxid
 
+# Run the three ignored Passport Vault tests with their exact Nix-packaged
+# Compact artifacts and composer prerequisites.
+passport-vault-conformance:
+    nix develop --command ./scripts/test-passport-vault-conformance.sh
+
 run:
     cargo run -p oxid-app
 

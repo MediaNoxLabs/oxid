@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import os, { hostname } from "node:os";
 import path from "node:path";
@@ -14,27 +15,18 @@ import {
   checkAgentToolAllowlists,
   cleanupPiPackageClosures,
   devLoopPreflightCacheKey,
+  enforceExactPiPackageManifests,
   ensureSharedPiPackageStore,
   piPackageClosureIdentity,
   parseAgentFrontmatter,
   resolveDevLoopsPackageRoot,
+  verifyExactPiPackageManifests,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
-import { bindPackageGithubRepository } from "../../scripts/lib/dev-loop-package-script.mjs";
-import {
-  bindEnvelopeRepositoryIdentity,
-  githubRepositoryFromOrigin,
-  isOxidCheckout,
-  normalizeDevLoopsArgs,
-  resolveCanonicalGithubRepository,
-  resolveOxidCompatibilityRoute,
-  resolvePinnedCoreModulePath,
-  runDevLoops,
-} from "../../scripts/dev-loops.mjs";
+import { applyRepositoryAcceptance } from "../../scripts/lib/handoff-required-reads.mjs";
+import { normalizeDevLoopsArgs, resolveOxidCompatibilityRoute, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
 import { editPrBody, parseEditPrArgs } from "../../scripts/github/edit-pr.mjs";
-import { createReadyPr, parseCreateReadyPrArgs } from "../../scripts/github/create-ready-pr.mjs";
-import { normalizeSupersededPrChecks, normalizeSupersededPrStatusRollup, reconcileOptionalSarifProjectionWait, watchOxidPrCiStatus } from "../../scripts/github/watch-oxid-ci.mjs";
-import { CRITICAL_CHECKS } from "../../scripts/github/optional-sarif-policy.mjs";
+import { watchOxidPrCiStatus } from "../../scripts/github/watch-oxid-ci.mjs";
 import { runResolveTrackerLocalSpec } from "../../scripts/github/resolve-tracker-local-spec.mjs";
 import { assertNoPreflightBypass, inferSubagentAvailability, runPreFlightGate, runRepositoryPreflight } from "../../scripts/loop/pre-flight-gate.mjs";
 import { runBranchGuard } from "../../scripts/loop/pre-commit-branch-guard.mjs";
@@ -52,33 +44,58 @@ import {
 import { preflightGh } from "../../scripts/github/preflight-gh.mjs";
 import { GH_REST_MAX_BUFFER_BYTES, GITHUB_REST_HEADERS, runGhCommand } from "../../scripts/github/rest-client.mjs";
 import {
-  assertClaudeAuthHelpCapabilities,
   assertAttestedReviewEffort,
   assertClaudeEffortCapability,
-  assertClaudeHelpCapabilities,
-  assertMinimumClaudeVersion,
   assertClaudeReviewMaxBudgetUsd,
   CLAUDE_REVIEW_EFFORTS,
   DEFAULT_CLAUDE_REVIEW_EFFORT,
-  MAXIMUM_EXCLUSIVE_CLAUDE_VERSION,
   MAXIMUM_CLAUDE_REVIEW_BUDGET_USD,
   buildClaudeInvocation,
   claudeReviewCliFailure,
-  ClaudeReviewExecutionError,
   ClaudeReviewEvidenceVersionError,
   ClaudeReviewFindingsError,
   MAX_CLAUDE_REVIEW_TIMEOUT_MS,
   MAX_REVIEW_DIFF_BYTES,
   parseClaudeReviewResult,
-  parseClaudeVersion,
   probeClaudeCliCapabilities,
   runCli as runClaudeReviewCli,
   runClaudeCurrentHeadReview,
   verifyClaudeReviewEvidence,
 } from "../../scripts/review/claude-current-head.mjs";
 import registerDevLoopPreflight, { runDevLoopPreflight } from "../../scripts/lib/dev-loop-preflight-core.mjs";
+import { runPiChildSmoke } from "../../scripts/factory/smoke-pi-child.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
+function normalizePinnedAcceptance(template) {
+  const upstreamCriterion = template.criteria.find(({ id }) => id === "verify-green");
+  assert.ok(upstreamCriterion, "pinned core must retain the verify-green acceptance criterion");
+  assert.match(upstreamCriterion.must, /(?:npm|bun) run verify/u, "pinned core verification wording drifted");
+  return applyRepositoryAcceptance({
+    acceptance: { criteria: structuredClone(template.criteria) },
+  });
+}
+
+test("production acceptance normalization is bound to the installed pinned core wording", async (t) => {
+  let packageRoot;
+  try {
+    packageRoot = (await resolveDevLoopsPackageRoot({ cwd: repoRoot })).packageRoot;
+  } catch (error) {
+    t.skip(`exact local dev-loops package material unavailable: ${error.message}`);
+    return;
+  }
+  const corePath = await resolvePinnedCoreModulePath(packageRoot);
+  const core = await import(pathToFileURL(corePath).href);
+  const template = core.lookupAcceptanceTemplate("local_implementation", "default");
+  const normalized = normalizePinnedAcceptance(template);
+  const repositoryCriterion = normalized.acceptance.criteria.find(({ id }) => id === "verify-green");
+  assert.doesNotMatch(repositoryCriterion.must, /(?:npm|bun) run verify/u);
+  assert.match(repositoryCriterion.must, /Oxid target plan/u);
+
+  assert.throws(() => normalizePinnedAcceptance({
+    criteria: [{ ...template.criteria.find(({ id }) => id === "verify-green"), must: "Run every upstream validation suite." }],
+  }), /pinned core verification wording drifted/);
+});
 const read = (relativePath) => readFile(path.join(repoRoot, relativePath), "utf8");
 const legacyTools = new Set(["search", "execute", "agent", "todo"]);
 const supportedTools = [
@@ -108,42 +125,8 @@ const fixtureClaudeHelp = [
   '  --permission-mode <mode> (choices: "acceptEdits", "dontAsk", "plan")',
   "  --system-prompt <prompt>",
 ].join("\n");
-// Captured verbatim from the installed Claude Code 2.1.228 general help.
-const capturedClaudeEffortEntry = [
-  "  --effort <level>                      Effort level for the current session",
-  "                                        (low, medium, high, xhigh, max)",
-].join("\n");
 const fixtureClaudeAuthHelp = "Usage: claude auth status [options]\n  --json Output as JSON (default)\n";
 const fixtureClaudeCliEfforts = ["low", "medium", "high", "xhigh", "max"];
-
-test("CI watcher settles only same-head optional SARIF projections after scan", () => {
-  const headSha = "a".repeat(40);
-  const pending = { status: "pending", settled: false, ciStatus: "pending", headSha };
-  const required = CRITICAL_CHECKS.map((name) => name === "scan"
-    ? { __typename: "CheckRun", name, status: "COMPLETED", conclusion: "SUCCESS", workflowName: "Scan" }
-    : { __typename: "StatusContext", context: name, state: "SUCCESS" });
-  const scan = required.find((check) => check.name === "scan");
-  const projection = { __typename: "CheckRun", name: "Checkov", status: "QUEUED", conclusion: "", workflowName: "" };
-  const loadStatusRollup = () => ({ headRefOid: headSha, statusCheckRollup: [...required, projection] });
-  assert.equal(reconcileOptionalSarifProjectionWait(pending, { repo: "owner/repo", pr: 7 }, { loadStatusRollup }).status, "success");
-  assert.equal(reconcileOptionalSarifProjectionWait(pending, { repo: "owner/repo", pr: 7 }, {
-    loadStatusRollup: () => ({ headRefOid: "b".repeat(40), statusCheckRollup: [...required, projection] }),
-  }).status, "pending");
-  for (const blocker of [
-    { ...scan, conclusion: "FAILURE" },
-    { ...projection, name: "unknown" },
-    { ...projection, status: "COMPLETED", conclusion: "CANCELLED" },
-  ]) {
-    assert.equal(reconcileOptionalSarifProjectionWait(pending, { repo: "owner/repo", pr: 7 }, {
-      loadStatusRollup: () => ({ headRefOid: headSha, statusCheckRollup: blocker.name === "scan"
-        ? [...required.filter((check) => check !== scan), blocker, projection]
-        : [...required, blocker] }),
-    }).status, "pending");
-  }
-  assert.equal(reconcileOptionalSarifProjectionWait(pending, { repo: "owner/repo", pr: 7 }, {
-    loadStatusRollup: () => ({ headRefOid: headSha, statusCheckRollup: [...required.slice(1), projection] }),
-  }).status, "pending");
-});
 
 async function realMkdtemp(prefix) {
   return realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
@@ -187,6 +170,15 @@ async function makeFixture() {
   execFileSync("git", ["worktree", "add", "-b", "issue-150", worktree, "HEAD"], { cwd: root, stdio: "ignore" });
 
   await mkdir(path.join(root, ".pi", "npm", "node_modules", "dev-loops", "agents"), { recursive: true });
+  await writeFile(path.join(root, ".pi", "npm", "package.json"), JSON.stringify({
+    name: "oxid-pi-extensions", private: true, dependencies: { "dev-loops": "1.0.2" },
+  }));
+  await writeFile(path.join(root, ".pi", "npm", "package-lock.json"), JSON.stringify({
+    name: "oxid-pi-extensions", lockfileVersion: 3, requires: true, packages: {
+      "": { name: "oxid-pi-extensions", dependencies: { "dev-loops": "1.0.2" } },
+      "node_modules/dev-loops": { version: "1.0.2" },
+    },
+  }));
   const packageRoot = path.join(root, ".pi", "npm", "node_modules", "dev-loops");
   await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "1.0.2" }));
   await mkdir(path.join(packageRoot, "cli"));
@@ -248,6 +240,127 @@ test("Pi closure identities cover ordered exact package configuration", () => {
   ] }).identity, "object key order is not closure configuration order");
   assert.notEqual(piPackageClosureIdentity(base).identity, piPackageClosureIdentity(reordered).identity);
   assert.notEqual(piPackageClosureIdentity(base).identity, piPackageClosureIdentity(changedResourcePolicy).identity);
+});
+
+test("Pi closure manifests preserve exact direct pins and reject drift", async (t) => {
+  const store = await realMkdtemp("oxid-pi-exact-manifest-");
+  t.after(() => rm(store, { recursive: true, force: true }));
+  const pins = [
+    { name: "pi-subagents", version: "0.70.0" },
+    { name: "@earendil-works/pi-coding-agent", version: "0.85.1" },
+  ];
+  await writeFile(path.join(store, "package.json"), JSON.stringify({
+    name: "pi-extensions",
+    private: true,
+    dependencies: { "pi-subagents": "^0.70.0", "@earendil-works/pi-coding-agent": "^0.85.1", helper: "1.0.0" },
+  }));
+  await writeFile(path.join(store, "package-lock.json"), JSON.stringify({
+    name: "pi-extensions",
+    lockfileVersion: 3,
+    packages: {
+      "": { dependencies: { "pi-subagents": "^0.70.0", "@earendil-works/pi-coding-agent": "^0.85.1", helper: "1.0.0" } },
+      "node_modules/pi-subagents": { version: "0.70.0" },
+      "node_modules/@earendil-works/pi-coding-agent": { version: "0.85.1" },
+    },
+  }));
+  for (const { name, version } of pins) {
+    const packageRoot = path.join(store, "node_modules", ...name.split("/"));
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name, version }));
+  }
+
+  await assert.rejects(verifyExactPiPackageManifests({ store, pins }), /must pin .* exactly/u);
+  await enforceExactPiPackageManifests({ store, pins });
+  assert.deepEqual((await verifyExactPiPackageManifests({ store, pins })).dependencies, {
+    "@earendil-works/pi-coding-agent": "0.85.1",
+    "pi-subagents": "0.70.0",
+  });
+  const exactManifest = JSON.parse(await readFile(path.join(store, "package.json"), "utf8"));
+  assert.equal(exactManifest.dependencies.helper, "1.0.0", "untracked direct dependencies are preserved");
+  const exactLock = JSON.parse(await readFile(path.join(store, "package-lock.json"), "utf8"));
+  assert.equal(exactLock.packages[""].dependencies.helper, "1.0.0", "untracked direct dependencies are preserved");
+
+  await writeFile(
+    path.join(store, "node_modules", "pi-subagents", "package.json"),
+    JSON.stringify({ name: "pi-subagents", version: "0.71.0" }),
+  );
+  await assert.rejects(verifyExactPiPackageManifests({ store, pins }), /installed package must be pi-subagents@0\.70\.0/u);
+});
+
+test("Pi child smoke loads the tracked developer and dev-loop preflight without provider calls", async (t) => {
+  const root = await realMkdtemp("oxid-pi-child-smoke-");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, ".pi", "agents"), { recursive: true });
+  await mkdir(path.join(root, ".pi", "extensions"), { recursive: true });
+  await writeFile(path.join(root, ".pi", "agents", "developer.agent.md"), [
+    "---", "name: developer", "tools: read, edit", "---", "Developer fixture prompt.",
+  ].join("\n"));
+  await writeFile(path.join(root, ".pi", "extensions", "dev-loop-preflight.ts"), "export default () => {};\n");
+  const launches = [];
+  let factoryDisposed = 0;
+  const result = await runPiChildSmoke({
+    cwd: root,
+    resolve: async () => ({
+      gitRoot: root,
+      packageRoots: [{ name: "pi-subagents", version: "0.70.0", packageRoot: path.join(root, "subagents") }],
+    }),
+    loadChildModule: async () => ({
+      createDefaultChildSessionFactory: () => ({
+        create: async (launch) => {
+          launches.push(launch);
+          return { sessionId: `session-${launches.length}`, dispose: async () => {} };
+        },
+        dispose: async () => { factoryDisposed += 1; },
+      }),
+    }),
+  });
+  assert.deepEqual(result, { direct: "developer", devLoop: "developer", tools: ["read"] });
+  assert.equal(factoryDisposed, 1);
+  assert.equal(launches.length, 2);
+  assert.deepEqual(launches[0].tools, ["read"]);
+  assert.match(launches[0].systemPrompt, /Developer fixture prompt/u);
+  assert.deepEqual(launches[0].extensionPaths, []);
+  assert.deepEqual(launches[1].requiredExtensions, [{
+    id: "oxid-dev-loop-preflight",
+    path: path.join(root, ".pi", "extensions", "dev-loop-preflight.ts"),
+  }]);
+  assert.equal(launches[1].processEnv.PI_SUBAGENT_CHILD_AGENT, "dev-loop");
+});
+
+test("Pi child smoke interrupts in-flight work and disposes the factory once on signals", async (t) => {
+  const root = await realMkdtemp("oxid-pi-child-signal-");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, ".pi", "agents"), { recursive: true });
+  await mkdir(path.join(root, ".pi", "extensions"), { recursive: true });
+  await writeFile(path.join(root, ".pi", "agents", "developer.agent.md"), [
+    "---", "name: developer", "tools: read", "---", "Developer fixture prompt.",
+  ].join("\n"));
+  await writeFile(path.join(root, ".pi", "extensions", "dev-loop-preflight.ts"), "export default () => {};\n");
+  const processRef = new EventEmitter();
+  let factoryDisposed = 0;
+  const running = runPiChildSmoke({
+    cwd: root,
+    processRef,
+    resolve: async () => ({
+      gitRoot: root,
+      packageRoots: [{ name: "pi-subagents", version: "0.70.0", packageRoot: path.join(root, "subagents") }],
+    }),
+    loadChildModule: async () => ({
+      createDefaultChildSessionFactory: () => ({
+        create: async () => new Promise(() => {}),
+        dispose: async () => { factoryDisposed += 1; },
+      }),
+    }),
+  });
+  while (processRef.listenerCount("SIGTERM") === 0) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  processRef.emit("SIGTERM");
+  await assert.rejects(running, (error) => error.message.includes("SIGTERM") && error.exitCode === 143);
+  assert.equal(processRef.exitCode, 143);
+  assert.equal(factoryDisposed, 1);
+  assert.equal(processRef.listenerCount("SIGTERM"), 0);
+  assert.equal(processRef.listenerCount("SIGINT"), 0);
 });
 
 test("Pi closures isolate linked worktrees, publish once, and retain only referenced state", async (t) => {
@@ -458,42 +571,7 @@ test("registered linked worktrees use one fail-closed Pi package store", async (
   assert.match(recovered.quarantinedStore, /quarantine\/issue-150\.npm-123456-/u);
   assert.equal(await readFile(path.join(recovered.quarantinedStore, "owner-data"), "utf8"), "recover me\n");
   assert.equal((await stat(recovered.quarantinedStore)).mtimeMs, 123456, "quarantine starts a fresh recovery window");
-
   await rm(path.join(fixture.worktree, ".pi", "npm"));
-  await mkdir(path.join(fixture.worktree, ".pi", "npm"));
-  await writeFile(path.join(fixture.worktree, ".pi", "npm", "owner-data"), "recover me too\n");
-  const state = path.join(fixture.root, ".git", "oxid-factory", "pi-package-closures-v1");
-  const oldStore = new Date(1);
-  await utimes(path.join(fixture.worktree, ".pi", "npm"), oldStore, oldStore);
-  const recoveryTime = 987654;
-  let cleanupOverlappedPublication = false;
-  const raceSafe = await ensureSharedPiPackageStore({
-    cwd: fixture.worktree,
-    now: () => recoveryTime,
-    beforeQuarantinePublish: async () => {
-      cleanupOverlappedPublication = true;
-      const cleanup = await cleanupPiPackageClosures({ cwd: fixture.root, now: () => recoveryTime, olderThanMs: 1 });
-      assert.equal(cleanup.reclaimedQuarantine.some((name) => name.startsWith(`issue-150.npm-${recoveryTime}-`)), false, "cleanup cannot observe the store before its recovery timestamp");
-    },
-  });
-  assert.equal(await readFile(path.join(raceSafe.quarantinedStore, "owner-data"), "utf8"), "recover me too\n");
-  assert.equal(cleanupOverlappedPublication, true, "fixture overlapped cleanup with quarantine publication");
-  assert.ok(Math.abs((await stat(raceSafe.quarantinedStore)).mtimeMs - recoveryTime) < 1, "quarantine retains its recovery timestamp");
-  assert.equal((await readdir(path.join(state, "quarantine"))).includes(path.basename(raceSafe.quarantinedStore)), true);
-
-  await rm(path.join(fixture.worktree, ".pi", "npm"));
-  await mkdir(path.join(fixture.worktree, ".pi", "npm"));
-  await writeFile(path.join(fixture.worktree, ".pi", "npm", "owner-data"), "retain me\n");
-  await utimes(path.join(fixture.worktree, ".pi", "npm"), oldStore, oldStore);
-  await assert.rejects(ensureSharedPiPackageStore({
-    cwd: fixture.worktree,
-    now: () => recoveryTime + 1,
-    setTimes: async () => { throw new Error("simulated timestamp failure"); },
-  }), /simulated timestamp failure/);
-  assert.equal(await readFile(path.join(fixture.worktree, ".pi", "npm", "owner-data"), "utf8"), "retain me\n", "timestamp failure leaves owner data in place");
-  assert.equal((await stat(path.join(fixture.worktree, ".pi", "npm"))).mtimeMs, 1, "timestamp failure rolls back the timestamp mutation");
-
-  await rm(path.join(fixture.worktree, ".pi", "npm"), { recursive: true });
   await writeFile(path.join(fixture.worktree, ".pi", "npm"), "owner data\n");
   await assert.rejects(ensureSharedPiPackageStore({ cwd: fixture.worktree }), /must be absent, a real primary directory, or a managed closure symlink/);
   assert.equal(await readFile(path.join(fixture.worktree, ".pi", "npm"), "utf8"), "owner data\n");
@@ -524,6 +602,13 @@ test("Pi smoke resolution reuses every exact common-checkout package from a link
     await mkdir(packageRoot, { recursive: true });
     await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name, version }));
   }
+  await enforceExactPiPackageManifests({
+    store: path.join(fixture.root, ".pi", "npm"),
+    pins: [
+      { name: "dev-loops", version: "1.0.2" },
+      ...pins.map(([name, version]) => ({ name, version })),
+    ],
+  });
 
   await ensureSharedPiPackageStore({ cwd: fixture.root });
   const resolved = await resolveDevLoopsPackageRoot({
@@ -540,14 +625,13 @@ test("Pi smoke resolution reuses every exact common-checkout package from a link
 
 test("Pi devshell smoke delegates package authority to the bounded exact-pin resolver", async () => {
   const smoke = await read("scripts/check-pi-devshell.sh");
-  const helper = await read("scripts/factory/check-pi-devshell-config.mjs");
   const devshell = await read("nix/devshells/default.nix");
-  assert.match(helper, /resolveDevLoopsPackageRoot/);
-  assert.match(helper, /includeAllPinnedPackages:\s*true/);
+  assert.match(smoke, /resolveDevLoopsPackageRoot/);
+  assert.match(smoke, /includeAllPinnedPackages:\s*true/);
   assert.doesNotMatch(smoke, /review_package_root=["']\.pi\/npm/);
-  assert.doesNotMatch(`${smoke}\n${helper}`, /(?:HOME|global|node_modules\/\.\.\/)/);
-  assert.doesNotMatch(smoke, /<<[-]?['"]?[A-Za-z0-9_]+['"]?/u);
-  assert.doesNotMatch(smoke, /<<</u);
+  assert.doesNotMatch(smoke, /(?:HOME|global|node_modules\/\.\.\/)/);
+  assert.match(smoke, /timeout -k 5s 60s node scripts\/factory\/smoke-pi-child\.mjs/u);
+  assert.match(smoke, /direct developer or \/dev-loop local implementation child startup failed/u);
   assert.match(devshell, /provision-pi-packages\.mjs/);
   assert.match(devshell, /content-addressed closure/);
   assert.match(devshell, /GITHUB_TOKEN/);
@@ -575,6 +659,41 @@ test("package resolution rejects mismatched identities and symlink escapes", asy
   await writeFile(path.join(outside, "package.json"), JSON.stringify({ name: "dev-loops", version: "1.0.2" }));
   await symlink(outside, fixture.packageRoot, "dir");
   await assert.rejects(resolveDevLoopsPackageRoot({ cwd: fixture.root }), /escapes allowed project roots/);
+});
+
+test("fresh closure resolution rejects a semver-compatible but unreviewed dev-loops core", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const settings = {
+    packages: ["npm:dev-loops@1.0.2", "npm:@dev-loops/core@1.0.2"],
+    subagents: { projectRootResolution: "git-root" },
+  };
+  for (const settingsRoot of [fixture.root, fixture.worktree]) {
+    await writeFile(path.join(settingsRoot, ".pi", "settings.json"), JSON.stringify(settings));
+  }
+  const coreRoot = path.join(fixture.root, ".pi", "npm", "node_modules", "@dev-loops", "core");
+  await mkdir(coreRoot, { recursive: true });
+  await writeFile(path.join(coreRoot, "package.json"), JSON.stringify({
+    name: "@dev-loops/core",
+    version: "1.0.3",
+  }));
+
+  await assert.rejects(
+    resolveDevLoopsPackageRoot({ cwd: fixture.root, includeAllPinnedPackages: true }),
+    /expected @dev-loops\/core@1\.0\.2.*found @dev-loops\/core@1\.0\.3/su,
+  );
+  await writeFile(path.join(coreRoot, "package.json"), JSON.stringify({
+    name: "@dev-loops/core",
+    version: "1.0.2",
+  }));
+  const resolved = await resolveDevLoopsPackageRoot({
+    cwd: fixture.root,
+    includeAllPinnedPackages: true,
+  });
+  assert.deepEqual(resolved.packageRoots.map(({ name, version }) => [name, version]), [
+    ["dev-loops", "1.0.2"],
+    ["@dev-loops/core", "1.0.2"],
+  ]);
 });
 
 test("linked milestone checkout rejects a shared package pin from a newer branch before dispatch", async (t) => {
@@ -667,12 +786,12 @@ test("preflight scans all installed pinned package agents and content-invalidate
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
   const settingsPath = path.join(fixture.root, ".pi", "settings.json");
   const settings = JSON.parse(await readFile(settingsPath, "utf8"));
-  settings.packages.push("npm:pi-subagents@0.70.0", "npm:@input-output-hk/agent-review-pi@0.5.0");
+  settings.packages.push("npm:pi-subagents@0.67.0", "npm:@input-output-hk/agent-review-pi@0.5.0");
   await writeFile(settingsPath, JSON.stringify(settings));
   const piSubagents = path.join(fixture.root, ".pi", "npm", "node_modules", "pi-subagents");
   const reviewPackage = path.join(fixture.root, ".pi", "npm", "node_modules", "@input-output-hk", "agent-review-pi");
   for (const [root, name, version] of [
-    [piSubagents, "pi-subagents", "0.70.0"],
+    [piSubagents, "pi-subagents", "0.67.0"],
     [reviewPackage, "@input-output-hk/agent-review-pi", "0.5.0"],
   ]) {
     await mkdir(path.join(root, "agents"), { recursive: true });
@@ -870,7 +989,7 @@ test("Nix-pinned Pi lifecycle hooks remain advisory beside the repository gate",
   assert.deepEqual(runner.getActiveTools(), []);
 });
 
-test("tracked project agents shadow every incompatible packaged dev-loops manifest", async (t) => {
+test("tracked project agents shadow every incompatible packaged dev-loops manifest", async () => {
   const upstreamDigests = {
     "dev-loop": "aae5204eb80c772bf9771c8d61e8c7be2532fa1ef3f9f8e19fd0cf32a6b4f1e7",
     developer: "5da2b3c888df2971a64084f1d61ccf61a89abe2eb57a2a1e32fbc3c2e4e9912a",
@@ -910,10 +1029,6 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
     assert.match(source, new RegExp(`Derived from dev-loops@${upstreamPins[name].replaceAll(".", "\\.")} agents/${name}\\.agent\\.md`), `${name} binds its source pin`);
     assert.match(source, new RegExp(`Upstream-SHA256: ${upstreamDigests[name]}`), `${name} binds exact upstream source bytes`);
     assert.doesNotMatch(source, /\]\(\.\.\/npm\/node_modules\//, `${name} has no link into an untracked package tree`);
-    if (name !== "dev-loop") {
-      assert.doesNotMatch(source, /scripts\/dev-loops\.mjs github issue-view/u,
-        `${name} does not introduce the unsupported issue reader`);
-    }
     try {
       const upstream = await readFile(path.join(repoRoot, ".pi", "npm", "node_modules", "dev-loops", "agents", `${name}.agent.md`));
       assert.equal(createHash("sha256").update(upstream).digest("hex"), upstreamDigests[name], `${name} source digest matches installed pin`);
@@ -928,36 +1043,12 @@ test("tracked project agents shadow every incompatible packaged dev-loops manife
   assert.match(devLoop, /scripts\/dev-loops\.mjs/);
   assert.match(devLoop, /successful tracked `loop build-envelope` result is already validated/u);
   assert.match(devLoop, /Do not infer or invoke a second\s+`loop validate-envelope` route/u);
-  assert.match(devLoop, /scripts\/github\/view-issue\.mjs --issue <n>/u);
-  assert.match(devLoop, /scripts\/dev-loops\.mjs` wrapper has no `github` command family/u);
-  assert.match(devLoop, /never invent or\s+invoke `scripts\/dev-loops\.mjs github issue-view`/u);
-  assert.equal(devLoop.match(/scripts\/dev-loops\.mjs github issue-view/gu)?.length, 1,
-    "the unsupported route appears exactly once and only inside its prohibition");
-  assert.match(devLoop, /Stop before envelope construction if the issue reader exits nonzero or the\s+delivery target is missing, malformed, ambiguous, or disagrees/u);
-  assert.match(devLoop, /loop startup --issue <n> --json/u);
-  assert.match(devLoop, /target\/tmp\/dev-loop\/issue-<n>-startup\.json/u);
-  try {
-    const issueReaderHelp = execFileSync(process.execPath, [path.join(repoRoot, "scripts", "github", "view-issue.mjs"), "--help"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-    });
-    assert.match(issueReaderHelp, /--repo <owner\/name>/u);
-    assert.match(issueReaderHelp, /--issue <number>/u);
-  } catch (error) {
-    const output = `${error?.message ?? ""}\n${error?.stderr ?? ""}`;
-    if (/missing exact dev-loops@/u.test(output)) {
-      t.diagnostic("project-local Pi packages are intentionally absent from public CI; static issue-reader contract remains enforced");
-    } else {
-      throw error;
-    }
-  }
-  execFileSync("git", ["check-ignore", "--quiet", "target/tmp/dev-loop/issue-895-startup.json"], { cwd: repoRoot });
   assert.match(devLoop, /<git-root>` is always the exact output of `git rev-parse --show-toplevel`/u);
   assert.match(devLoop, /Never replace it with the primary\s+checkout derived from `--git-common-dir` or `git worktree list`/u);
   assert.match(devLoop, /common\s+checkout is a topology and shared-private-storage boundary only/u);
   assert.match(devLoop, /pre-flight-gate\.mjs --check-subagents.*before each later routed action/s);
   assert.match(devLoop, /MUST NOT call\n`subagent`, dispatch a reviewer, or create any nested workflow/u);
-  assert.match(devLoop, /exact-head local gate, push, and review-ready PR/u);
+  assert.match(devLoop, /exact-head local gate, push, and draft PR/u);
   assert.match(devLoop, /MUST NOT place it inside `taskflow`/u);
   assert.match(devLoop, /exact `provider\/model:thinking` per-run model value/u);
   assert.match(devLoop, /^worktree:\s*false$/mu, "the conductor reuses the canonical managed worktree");
@@ -1040,64 +1131,6 @@ test("pinned core resolution accepts bounded hoisted and nested package layouts"
 
   await writeFile(path.join(nestedRoot, "package.json"), JSON.stringify({ name: "@dev-loops/core", version: "0.9.1" }));
   await assert.rejects(resolvePinnedCoreModulePath(packageRoot), /expected @dev-loops\/core@1\.0\.2/);
-});
-
-test("handoff envelopes bind the checkout GitHub identity and reject disagreement", () => {
-  assert.equal(githubRepositoryFromOrigin("https://github.com/MediaNoxLabs/oxid.git"), "MediaNoxLabs/oxid");
-  assert.equal(githubRepositoryFromOrigin("git@github.com:MediaNoxLabs/oxid.git"), "MediaNoxLabs/oxid");
-  assert.equal(githubRepositoryFromOrigin("ssh://git@github.com:22/MediaNoxLabs/oxid.git"), "MediaNoxLabs/oxid");
-  assert.equal(githubRepositoryFromOrigin("https://x-access-token:secret@github.com/MediaNoxLabs/oxid.git"), "MediaNoxLabs/oxid");
-  assert.equal(githubRepositoryFromOrigin("https://example.invalid/MediaNoxLabs/oxid.git"), null);
-  assert.equal(resolveCanonicalGithubRepository("/fixture", {
-    run: () => "https://github.com/MediaNoxLabs/oxid.git\n",
-  }), "MediaNoxLabs/oxid");
-  assert.equal(resolveCanonicalGithubRepository("/fixture", {
-    run: (program) => program === "git"
-      ? "git@gh-work:MediaNoxLabs/oxid.git\n"
-      : "hostname github.com\nport 22\n",
-  }), "MediaNoxLabs/oxid");
-  assert.equal(resolveCanonicalGithubRepository("/fixture", {
-    run: (program) => program === "git"
-      ? "git@gh-work:MediaNoxLabs/oxid.git\n"
-      : "hostname example.invalid\nport 22\n",
-  }), null);
-  const bound = bindEnvelopeRepositoryIdentity({ target: { kind: "local_phase", repo: "medianoxlabs/oxid" } }, "MediaNoxLabs/oxid");
-  assert.equal(bound.repository, "MediaNoxLabs/oxid");
-  assert.equal(bound.target.repo, "medianoxlabs/oxid");
-  assert.throws(
-    () => bindEnvelopeRepositoryIdentity({ target: { repo: "input-output-hk/oxid" } }, "MediaNoxLabs/oxid"),
-    /disagrees with origin repository/,
-  );
-  assert.throws(
-    () => bindEnvelopeRepositoryIdentity({ repository: "input-output-hk/oxid", target: { repo: "MediaNoxLabs/oxid" } }, "MediaNoxLabs/oxid"),
-    /disagrees with origin repository/,
-  );
-});
-
-test("Oxid checkout identity is recognized from its tracked manifest", async () => {
-  assert.equal(await isOxidCheckout(repoRoot), true);
-});
-
-test("issue-read wrapper derives origin and refuses a stale repository before dispatch", () => {
-  const repository = "MediaNoxLabs/oxid";
-  assert.deepEqual(bindPackageGithubRepository(["--issue", "937"], repository),
-    ["--issue", "937", "--repo", repository]);
-  assert.deepEqual(bindPackageGithubRepository(["--repo", "medianoxlabs/oxid", "--issue", "937"], repository),
-    ["--repo", "medianoxlabs/oxid", "--issue", "937"]);
-  assert.throws(() => bindPackageGithubRepository(["--repo", "input-output-hk/oxid", "--issue", "937"], repository),
-    /disagrees with origin repository MediaNoxLabs\/oxid/u);
-  assert.deepEqual(bindPackageGithubRepository(["--repo", "example/foreign", "--issue", "1"], null),
-    ["--repo", "example/foreign", "--issue", "1"]);
-  assert.throws(() => bindPackageGithubRepository(["--issue", "1"], null), /needs an exact origin or explicit --repo/u);
-});
-
-test("sanctioned package GitHub commands bind to origin before dispatch", () => {
-  assert.deepEqual(bindPackageGithubRepository(["--pr", "956"], "MediaNoxLabs/oxid"),
-    ["--pr", "956", "--repo", "MediaNoxLabs/oxid"]);
-  assert.throws(() => bindPackageGithubRepository(["--repo", "input-output-hk/oxid", "--pr", "956"],
-    "MediaNoxLabs/oxid"), /disagrees with origin repository/u);
-  assert.deepEqual(bindPackageGithubRepository(["--repo", "foreign/repo", "--pr", "1"], null),
-    ["--repo", "foreign/repo", "--pr", "1"]);
 });
 
 test("repository wrappers force only the public PR-creation and managed-worktree routes", () => {
@@ -1376,24 +1409,14 @@ async function makeEnvelopeGitFixture(t) {
     pr153: path.join(namespace, "pr-153"),
     phase150: path.join(namespace, "phase-150-issue-150"),
     phase151: path.join(namespace, "phase-151-other"),
-    codex856: path.join(parent, ".codex", "worktrees", "issue-856-presentation", "oxid"),
   };
   for (const [branch, target] of Object.entries(worktrees)) {
-    const branchName = branch === "issue158"
-      ? "test/issue-158"
-      : branch === "codex856" ? "feat/issue-856" : `fixture-${branch}`;
+    const branchName = branch === "issue158" ? "test/issue-158" : `fixture-${branch}`;
     execFileSync("git", ["worktree", "add", "--quiet", "-b", branchName, target], { cwd: root });
   }
   execFileSync(
     "git",
     ["config", "branch.test/issue-158.oxidDeliveryBase", "origin/develop"],
-    { cwd: root },
-  );
-  const baseHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
-  execFileSync("git", ["update-ref", "refs/remotes/origin/milestone-0.2.0", baseHead], { cwd: root });
-  execFileSync(
-    "git",
-    ["config", "branch.feat/issue-856.oxidDeliveryBase", "origin/milestone-0.2.0"],
     { cwd: root },
   );
   return { parent, root: await realpath(root), namespace, worktrees };
@@ -1451,52 +1474,6 @@ test("handoff envelope cwd normalization uses owned canonical Git topology", asy
   assert.equal((await normalizeHandoffEnvelopeCwd(
     validEnvelope(phase, "ignored"), resolve(fixture.worktrees.phase150), handoffCore,
   )).cwd, fixture.worktrees.phase150);
-
-  const codexRoot = path.join(fixture.parent, ".codex", "worktrees");
-  assert.equal((await normalizeHandoffEnvelopeCwd(
-    validEnvelope({ ...issue, issue: 856 }, "ignored"),
-    resolve(fixture.worktrees.codex856),
-    handoffCore,
-    { codexWorktreesRoot: codexRoot },
-  )).cwd, fixture.worktrees.codex856);
-  assert.equal((await normalizeHandoffEnvelopeCwd(
-    validEnvelope({ ...phase, issue: 856, phase: "issue-856" }, "ignored"),
-    resolve(fixture.worktrees.codex856),
-    handoffCore,
-    { codexWorktreesRoot: codexRoot },
-  )).cwd, fixture.worktrees.codex856);
-
-  await writeFile(path.join(fixture.worktrees.codex856, "untracked"), "dirty\n");
-  await assert.rejects(
-    normalizeHandoffEnvelopeCwd(
-      validEnvelope({ ...issue, issue: 856 }, "ignored"),
-      resolve(fixture.worktrees.codex856),
-      handoffCore,
-      { codexWorktreesRoot: codexRoot },
-    ),
-    /disagrees with resolver target/,
-  );
-  await rm(path.join(fixture.worktrees.codex856, "untracked"));
-
-  await assert.rejects(
-    normalizeHandoffEnvelopeCwd(
-      validEnvelope({ ...issue, issue: 857 }, "ignored"),
-      resolve(fixture.worktrees.codex856),
-      handoffCore,
-      { codexWorktreesRoot: codexRoot },
-    ),
-    /disagrees with resolver target/,
-  );
-
-  await assert.rejects(
-    normalizeHandoffEnvelopeCwd(
-      validEnvelope({ ...issue, issue: 856 }, "ignored"),
-      resolve(fixture.worktrees.codex856),
-      handoffCore,
-      { codexWorktreesRoot: path.join(fixture.parent, "other-worktrees") },
-    ),
-    /disagrees with resolver target/,
-  );
 
   await assert.rejects(
     normalizeHandoffEnvelopeCwd(validEnvelope({ ...issue, issue: 151 }, "ignored"), resolve(fixture.worktrees.issue150), handoffCore),
@@ -1893,18 +1870,6 @@ test("tracked build-envelope route preserves pinned parser, config, and output c
   assert.deepEqual(envelope.overrides, { preferLocal: true });
   assert.equal(envelope.maxCopilotRounds, 2);
   assert.ok(envelope.sanctionedCommands);
-  assert.equal(
-    envelope.sanctionedCommands.reads["size-budget"],
-    "scripts/dev-loops.mjs gate size-budget",
-  );
-  assert.equal(
-    envelope.sanctionedCommands.lifecycle["pr-create"],
-    "scripts/dev-loops.mjs pr create",
-  );
-  assert.notEqual(
-    envelope.sanctionedCommands.lifecycle["pr-create"],
-    "scripts/github/create-pr.mjs",
-  );
 
   const fastPathResult = await run([
     "loop", "build-envelope", `--input=${input}`,
@@ -2228,7 +2193,7 @@ test("Oxid PR CI adapter reconciles only superseded same-head Actions failures",
     checkRuns: [
       {
         name: "Repository gate", app: { slug: "github-actions" },
-        details_url: "https://github.com/o/r/actions/runs/10/job/1", status: "completed", conclusion: "cancelled",
+        details_url: "https://github.com/o/r/actions/runs/10/job/1", status: "completed", conclusion: "failure",
       },
       ...(replacement.status === "completed" ? [{
         name: "Repository gate", app: { slug: "github-actions" },
@@ -2241,42 +2206,6 @@ test("Oxid PR CI adapter reconciles only superseded same-head Actions failures",
     ],
   });
   const watch = async () => failure;
-
-  await t.test("gate coordination removes only the superseded raw rollup entry", () => {
-    const facts = {
-      headRefOid: "head-a",
-      statusCheckRollup: [
-        { name: "Repository gate", status: "COMPLETED", conclusion: "CANCELLED", detailsUrl: "https://github.com/o/r/actions/runs/10/job/1" },
-        { name: "Repository gate", status: "COMPLETED", conclusion: "SUCCESS", detailsUrl: "https://github.com/o/r/actions/runs/11/job/2" },
-      ],
-    };
-    const successful = attemptData({ id: 11, workflow_id: 5, run_number: 9, status: "completed", conclusion: "success" });
-    assert.deepEqual(normalizeSupersededPrStatusRollup(facts, { repo: "owner/repo" }, {
-      loadWorkflowAttempts: () => successful,
-    }).statusCheckRollup, [facts.statusCheckRollup[1]]);
-    const failed = attemptData({ id: 11, workflow_id: 5, run_number: 9, status: "completed", conclusion: "failure" });
-    assert.equal(normalizeSupersededPrStatusRollup(facts, { repo: "owner/repo" }, {
-      loadWorkflowAttempts: () => failed,
-    }), facts);
-    assert.equal(normalizeSupersededPrStatusRollup(facts, { repo: "owner/repo" }, {
-      loadWorkflowAttempts: () => { throw new Error("fixture API failure"); },
-    }), facts);
-  });
-
-  await t.test("merge checks remove only a failed older Actions attempt", () => {
-    const checks = [
-      { name: "Repository gate", bucket: "cancel", state: "CANCELLED", link: "https://github.com/o/r/actions/runs/10/job/1" },
-      { name: "Repository gate", bucket: "pass", state: "SUCCESS", link: "https://github.com/o/r/actions/runs/11/job/2" },
-      { name: "scan", bucket: "pass", state: "SUCCESS", link: "https://github.com/o/r/runs/other" },
-    ];
-    const successful = attemptData({ id: 11, workflow_id: 5, run_number: 9, status: "completed", conclusion: "success" });
-    assert.deepEqual(normalizeSupersededPrChecks(checks, { repo: "owner/repo", headSha: "head-a" }, {
-      loadWorkflowAttempts: () => successful,
-    }), checks.slice(1));
-    assert.deepEqual(normalizeSupersededPrChecks(checks, { repo: "owner/repo", headSha: "head-a" }, {
-      loadWorkflowAttempts: () => { throw new Error("fixture API failure"); },
-    }), checks);
-  });
 
   await t.test("an active replacement holds the stale failure pending", async () => {
     const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
@@ -2296,44 +2225,6 @@ test("Oxid PR CI adapter reconciles only superseded same-head Actions failures",
     });
     assert.equal(result.status, "success");
     assert.deepEqual(result.failedChecks, []);
-  });
-
-  await t.test("a superseded cancellation also clears the upstream unsupported-completed none shape", async () => {
-    const unsupported = {
-      ok: true, status: "timeout", settled: false, ciStatus: "none", headSha: "head-a", attempts: 7,
-      failedChecks: [],
-    };
-    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
-      watchCiStatus: async () => unsupported,
-      loadWorkflowAttempts: () => attemptData({
-        id: 11, workflow_id: 5, run_number: 9, status: "completed", conclusion: "success",
-      }),
-    });
-    assert.deepEqual(result, {
-      ...unsupported, status: "success", settled: true, ciStatus: "success", failedChecks: [],
-      workflowAttemptSelection: {
-        examinedRuns: 2, supersededFailedRunIds: [10], selectedReplacementRunIds: [11],
-      },
-    });
-  });
-
-  await t.test("the none shape remains fail-closed for an unsupported current check", async () => {
-    const unsupported = {
-      ok: true, status: "timeout", settled: false, ciStatus: "none", headSha: "head-a", attempts: 7,
-      failedChecks: [],
-    };
-    const data = attemptData({
-      id: 11, workflow_id: 5, run_number: 9, status: "completed", conclusion: "success",
-    });
-    data.checkRuns.push({
-      name: "Current unknown", app: { slug: "external-ci" }, details_url: "https://ci.invalid/run/2",
-      status: "completed", conclusion: "unknown",
-    });
-    const result = await watchOxidPrCiStatus({ repo: "owner/repo", pr: 7, timeoutMs: 0 }, {
-      watchCiStatus: async () => unsupported,
-      loadWorkflowAttempts: () => data,
-    });
-    assert.equal(result, unsupported);
   });
 
   await t.test("a bounded watch waits for the active replacement instead of returning early", async () => {
@@ -2453,48 +2344,6 @@ test("PR body edits use the REST facade and fail closed outside its narrow contr
     runGh,
   }), 0);
   assert.match(output.join(""), /"edited":\["body"\]/);
-});
-
-test("production PR creation is ready from birth and rejects draft-shaped input", async (t) => {
-  const fixture = await makeFixture();
-  t.after(() => rm(fixture.root, { recursive: true, force: true }));
-  const bodyFile = path.join(fixture.root, "pr.md");
-  await writeFile(bodyFile, "Closes #811\n");
-  const argv = [
-    "--repo", "MediaNoxLabs/oxid",
-    "--head", "fix/issue-811",
-    "--base", "milestone-0.2.0",
-    "--title", "fix(ci): create ready pull requests",
-    "--body-file", bodyFile,
-    "--assignee", "yshyn",
-  ];
-  assert.deepEqual(parseCreateReadyPrArgs(argv), {
-    repository: "MediaNoxLabs/oxid",
-    head: "fix/issue-811",
-    base: "milestone-0.2.0",
-    title: "fix(ci): create ready pull requests",
-    bodyFile,
-    assignee: "yshyn",
-    silent: false,
-  });
-  const calls = [];
-  assert.equal(createReadyPr({ ...parseCreateReadyPrArgs(argv), runGh: (args) => {
-    calls.push(args);
-    return "https://github.com/MediaNoxLabs/oxid/pull/967\n";
-  } }).draft, false);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].includes("--draft"), false);
-  assert.throws(() => parseCreateReadyPrArgs([...argv, "--draft"]), /Unknown option/);
-  assert.throws(() => parseCreateReadyPrArgs(argv.map((value) => value === "MediaNoxLabs\/oxid" ? "owner/repo" : value)), /accepts only MediaNoxLabs\/oxid/);
-
-  const route = resolveOxidCompatibilityRoute(["pr", "create", ...argv]);
-  assert.equal(typeof route, "function");
-});
-
-test("gate coordination routes through the Oxid rollup adapter", () => {
-  assert.equal(typeof resolveOxidCompatibilityRoute([
-    "loop", "gate-coordination", "--repo", "MediaNoxLabs/oxid", "--pr", "786",
-  ]), "function");
 });
 
 test("checkpoint verdict upsert failures remain fail-closed", async (t) => {
@@ -2628,6 +2477,8 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.deepEqual(CLAUDE_REVIEW_EFFORTS, ["medium", "high", "xhigh", "max"]);
   assert.equal(assertAttestedReviewEffort("medium"), "medium");
   assert.throws(() => assertAttestedReviewEffort("low"), /must be one of: medium, high, xhigh, max/);
+  assert.equal(assertClaudeEffortCapability("medium", fixtureClaudeCliEfforts), "medium");
+  assert.throws(() => assertClaudeEffortCapability("max", ["low", "medium"]), /does not document the selected review effort: max/u);
   assert.throws(() => buildClaudeInvocation({ effort: "unbounded" }), /must be one of/);
   assert.throws(() => buildClaudeInvocation({ effort: "low" }), /must be one of/);
   assert.match(new ClaudeReviewEvidenceVersionError(4).message, /upgrade the review wrapper/);
@@ -2639,217 +2490,6 @@ test("Claude invocation requires documented empty-tool semantics and structured 
   assert.throws(() => assertClaudeReviewMaxBudgetUsd(Number.POSITIVE_INFINITY), /positive and no more than 10 USD/);
   const stringBudgetInvocation = buildClaudeInvocation({ maxBudgetUsd: "10" });
   assert.equal(stringBudgetInvocation.args[stringBudgetInvocation.args.indexOf("--max-budget-usd") + 1], "10");
-  assert.deepEqual(parseClaudeVersion("2.1.228 (Claude Code)"), [2, 1, 228]);
-  assert.deepEqual(assertMinimumClaudeVersion([2, 1, 228]), [2, 1, 228]);
-  assert.throws(() => assertMinimumClaudeVersion([2, 1, 227]), /unsupported; require >= 2\.1\.228 and < 2\.2\.0/);
-  assert.throws(() => assertMinimumClaudeVersion(MAXIMUM_EXCLUSIVE_CLAUDE_VERSION), /unsupported.*< 2\.2\.0/);
-  const capabilities = assertClaudeHelpCapabilities(fixtureClaudeHelp, [2, 1, 228]);
-  assert.equal(capabilities.emptyToolsDisabled, true);
-  assert.equal(capabilities.emptyToolsBasis, "captured-help-and-bounded-version-contract");
-  assert.equal(capabilities.permissionMode, "dontAsk");
-  assert.equal(assertClaudeAuthHelpCapabilities(fixtureClaudeAuthHelp).jsonOutput, true);
-  const wrappedToolsReference = fixtureClaudeHelp.replace(
-    "  --safe-mode",
-    "  --restricted                          Restricted mode\n                                        unless --tools names them.\n  --safe-mode",
-  );
-  assert.equal(
-    assertClaudeHelpCapabilities(wrappedToolsReference, [2, 1, 263]).emptyToolsDisabled,
-    true,
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(
-      fixtureClaudeHelp.replace(
-        '  --tools <tools...> Specify tools. Use "" to disable all tools.',
-        "                                        unless --tools names them.",
-      ),
-      [2, 1, 263],
-    ),
-    /required review flags: --tools/,
-  );
-  assert.throws(() => assertClaudeHelpCapabilities("  --safe-mode\n  --toolsfoo\n", [2, 1, 228]), /required review flags/);
-  assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace(/^\s*--effort.*\n/m, ""), [2, 1, 228]),
-    /required review flags: --effort/,
-  );
-  const duplicateEffortHelp = fixtureClaudeHelp.replace(
-    "  --effort <level> (low, medium, high, xhigh, max)",
-    "  --effort <level> (low, high)\n  --effort <level> (low, medium, high, xhigh, max)",
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(duplicateEffortHelp, [2, 1, 228]),
-    /multiple --effort option blocks/,
-  );
-  const splitAliasHelp = fixtureClaudeHelp.replace("  --effort", "  -E,\n  --effort");
-  assert.deepEqual(
-    assertClaudeHelpCapabilities(splitAliasHelp, [2, 1, 228]).effortLevels,
-    fixtureClaudeCliEfforts,
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("  --safe-mode", "  -s, --safe-mode"), [2, 1, 228]),
-    /required review flags: --safe-mode/,
-  );
-  const crlfIndentedHelp = fixtureClaudeHelp
-    .replace("  --safe-mode", "    --safe-mode")
-    .replaceAll("\n", "\r\n");
-  assert.equal(assertClaudeHelpCapabilities(crlfIndentedHelp, [2, 1, 228]).emptyToolsDisabled, true);
-  assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("--tools", "--TOOLS"), [2, 1, 228]),
-    /required review flags: --tools/,
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace('Use "" to disable all tools.', "Use defaults."), [2, 1, 228]),
-    /no-tools form/,
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace('"dontAsk", ', ""), [2, 1, 228]),
-    /dontAsk permission mode/,
-  );
-  const reducedEfforts = assertClaudeHelpCapabilities(fixtureClaudeHelp.replace(", max", ""), [2, 1, 228]);
-  assert.deepEqual(reducedEfforts.effortLevels, ["low", "medium", "high", "xhigh"]);
-  assert.equal(assertClaudeEffortCapability("medium", reducedEfforts.effortLevels), "medium");
-  assert.throws(
-    () => assertClaudeEffortCapability("max", reducedEfforts.effortLevels),
-    /does not document the selected review effort: max/,
-  );
-  const noDefaultEfforts = assertClaudeHelpCapabilities(
-    fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "(low, high)"),
-    [2, 1, 228],
-  );
-  assert.deepEqual(noDefaultEfforts.effortLevels, ["low", "high"]);
-  assert.equal(assertClaudeEffortCapability("high", noDefaultEfforts.effortLevels), "high");
-  assert.throws(
-    () => assertClaudeEffortCapability("medium", noDefaultEfforts.effortLevels),
-    /does not document the selected review effort: medium/,
-  );
-  const reorderedEfforts = assertClaudeHelpCapabilities(
-    fixtureClaudeHelp.replace(
-      "(low, medium, high, xhigh, max)",
-      '(default: medium) (choices: "max", "low", "xhigh", "medium", "high", "none")',
-    ),
-    [2, 1, 228],
-  );
-  assert.deepEqual(reorderedEfforts.effortLevels, ["max", "low", "xhigh", "medium", "high"]);
-  const futureEffortHelp = fixtureClaudeHelp.replace(
-    "(low, medium, high, xhigh, max)",
-    "(low, medium, high, xhigh, max, ultra)",
-  );
-  assert.deepEqual(
-    assertClaudeHelpCapabilities(futureEffortHelp, [2, 1, 228]).effortLevels,
-    fixtureClaudeCliEfforts,
-  );
-  const describedEffortHelp = fixtureClaudeHelp.replace(
-    "(low, medium, high, xhigh, max)",
-    "(low, medium, high, xhigh, max) Effort level for the session",
-  );
-  assert.deepEqual(
-    assertClaudeHelpCapabilities(describedEffortHelp, [2, 1, 228]).effortLevels,
-    fixtureClaudeCliEfforts,
-  );
-  const aliasedMixedHelp = fixtureClaudeHelp.replace(
-    "  --effort <level> (low, medium, high, xhigh, max)",
-    '  -E, --effort <level> (choices: "low", "medium", "high", "xhigh", "max", default: "medium")',
-  );
-  assert.deepEqual(
-    assertClaudeHelpCapabilities(aliasedMixedHelp, [2, 1, 228]).effortLevels,
-    fixtureClaudeCliEfforts,
-  );
-  const capturedEntryHelp = fixtureClaudeHelp.replace(
-    "  --effort <level> (low, medium, high, xhigh, max)",
-    capturedClaudeEffortEntry,
-  );
-  assert.deepEqual(
-    assertClaudeHelpCapabilities(capturedEntryHelp, [2, 1, 228]).effortLevels,
-    fixtureClaudeCliEfforts,
-  );
-  assert.equal(
-    assertClaudeHelpCapabilities(capturedEntryHelp, [2, 1, 228]).effortHelpEntry,
-    capturedClaudeEffortEntry,
-  );
-  const wrappedChoicesHelp = fixtureClaudeHelp.replace(
-    "  --effort <level> (low, medium, high, xhigh, max)",
-    '  --effort <level> (choices: "low", "medium",\n      "high", "xhigh", "max")',
-  );
-  assert.deepEqual(
-    assertClaudeHelpCapabilities(wrappedChoicesHelp, [2, 1, 228]).effortLevels,
-    fixtureClaudeCliEfforts,
-  );
-  const followingAliasHelp = fixtureClaudeHelp.replace(
-    "\n  --safe-mode",
-    "\n  -ef, --environment <id> (foreign, modes)\n  --safe-mode",
-  );
-  const followingAliasCapabilities = assertClaudeHelpCapabilities(followingAliasHelp, [2, 1, 228]);
-  assert.deepEqual(followingAliasCapabilities.effortLevels, fixtureClaudeCliEfforts);
-  assert.doesNotMatch(followingAliasCapabilities.effortHelpEntry, /--environment/);
-  const followingShortOnlyHelp = fixtureClaudeHelp
-    .replace("(low, medium, high, xhigh, max)", "levels follow")
-    .replace("\n  --safe-mode", "\n  -v <mode> (low, medium, high, xhigh, max)\n  --safe-mode");
-  assert.throws(
-    () => assertClaudeHelpCapabilities(followingShortOnlyHelp, [2, 1, 228]),
-    /recognizable review effort choice list/,
-  );
-  const unrelatedLatencyHelp = fixtureClaudeHelp.replace(
-    "(low, medium, high, xhigh, max)",
-    "Effort profile (low, high) latency",
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(unrelatedLatencyHelp, [2, 1, 228]),
-    /recognizable review effort choice list/,
-  );
-  const commaProseHelp = fixtureClaudeHelp.replace(
-    "(low, medium, high, xhigh, max)",
-    "(level for the session, see docs)",
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(commaProseHelp, [2, 1, 228]),
-    /recognizable review effort choice list/,
-  );
-  const enumerationBeforeDefault = fixtureClaudeHelp.replace(
-    "(low, medium, high, xhigh, max)",
-    '(low, medium, high, xhigh, max) (default: "medium")',
-  );
-  assert.deepEqual(
-    assertClaudeHelpCapabilities(enumerationBeforeDefault, [2, 1, 228]).effortLevels,
-    fixtureClaudeCliEfforts,
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("low", "Low"), [2, 1, 228]),
-    /unsupported casing/,
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "with a bounded level"), [2, 1, 228]),
-    /recognizable review effort choice list/,
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(fixtureClaudeHelp.replace("(low, medium, high, xhigh, max)", "(medium)"), [2, 1, 228]),
-    /recognizable review effort choice list/,
-  );
-  const effortLastHelp = [
-    ...fixtureClaudeHelp.split("\n").filter((line) => !line.includes("--effort")),
-    "  --effort <level> (default: medium)",
-    "",
-    "Examples: unrelated modes (low, medium, high, xhigh, max)",
-  ].join("\n");
-  assert.throws(
-    () => assertClaudeHelpCapabilities(effortLastHelp, [2, 1, 228]),
-    /recognizable review effort choice list/,
-  );
-  const conflictingEffortHelp = fixtureClaudeHelp.replace(
-    "(low, medium, high, xhigh, max)",
-    "(low, medium, high) (low, medium, xhigh, max)",
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(conflictingEffortHelp, [2, 1, 228]),
-    /multiple conflicting review effort choice lists/,
-  );
-  const explicitConflictHelp = fixtureClaudeHelp.replace(
-    "(low, medium, high, xhigh, max)",
-    '(choices: "low", "medium", "high", "xhigh", "max") (low, medium)',
-  );
-  assert.throws(
-    () => assertClaudeHelpCapabilities(explicitConflictHelp, [2, 1, 228]),
-    /multiple conflicting review effort choice lists/,
-  );
-  assert.throws(() => assertClaudeAuthHelpCapabilities("Usage: claude auth status\n"), /default JSON output/);
   const calls = [];
   const capabilityProbe = probeClaudeCliCapabilities({
     claudeCommand: "fixture-claude",
@@ -2878,7 +2518,7 @@ test("Claude review CLI rejects invalid resource arguments before model executio
   let help = "";
   await runClaudeReviewCli(["--help"], { stdout: { write(chunk) { help += chunk; } } });
   assert.match(help, /--timeout-ms INTEGER/);
-  assert.match(help, /--timeout-ms 600000 \(ten minutes\)/);
+  assert.match(help, /--timeout-ms 300000 \(five minutes\)/);
   assert.match(help, /Attested effort levels: medium, high, xhigh, max/);
   assert.match(help, /--max-budget-usd NUMBER/);
   assert.match(help, /--max-budget-usd 10/);
@@ -2901,8 +2541,8 @@ test("Claude review CLI rejects invalid resource arguments before model executio
     );
   }
   await assert.rejects(
-    runClaudeReviewCli(["--timeout-ms=600001"]),
-    /review timeout must be an integer between 1 and 600000 milliseconds/,
+    runClaudeReviewCli(["--timeout-ms=300001"]),
+    /review timeout must be an integer between 1 and 300000 milliseconds/,
   );
   await assert.rejects(
     runClaudeReviewCli(["--timeout-ms", "1"]),
@@ -3040,12 +2680,7 @@ if (process.argv.includes("--version")) {
   assert.deepEqual(result.evidence.claude.capabilities.effortLevels, fixtureClaudeCliEfforts);
   assert.equal(result.evidence.invocation.effort, "high");
   assert.equal(result.evidence.invocation.minimumEffort, "medium");
-  assert.equal(result.evidence.invocation.maximumTimeoutMs, 600_000);
-  assert.equal(result.evidence.invocation.outcome, "completed");
-  assert.equal(result.evidence.invocation.reviewer, "claude-code");
-  assert.equal(result.evidence.invocation.actionableFindings, false);
-  assert.ok(Number.isSafeInteger(result.evidence.invocation.durationMs));
-  assert.ok(result.evidence.invocation.durationMs >= 0);
+  assert.equal(result.evidence.invocation.maximumTimeoutMs, 300_000);
   assert.equal(result.evidence.invocation.maximumBudgetUsd, 10);
   assert.match(result.evidence.limitations.join(" "), /do not authenticate reviewer identity/);
   assert.match(result.evidence.limitations.join(" "), /cannot prove the provider honored/);
@@ -3088,25 +2723,25 @@ if (process.argv.includes("--version")) {
     const highEvidence = runFixtureCli({
       effort: "high",
       evidenceName: "cli-high-evidence",
-      timeoutMs: "600000",
+      timeoutMs: "300000",
     });
     assert.equal(highEvidence.invocation.effort, "high");
-    assert.equal(highEvidence.invocation.timeoutMs, 600_000);
+    assert.equal(highEvidence.invocation.timeoutMs, 300_000);
     assert.equal(highEvidence.verdict, "clean");
 
     await writeFakeClaude("cli-medium");
     const defaultEvidence = runFixtureCli({ evidenceName: "cli-default-evidence" });
     assert.equal(defaultEvidence.invocation.effort, "medium");
-    assert.equal(defaultEvidence.invocation.timeoutMs, 600_000);
+    assert.equal(defaultEvidence.invocation.timeoutMs, 300_000);
     assert.equal(defaultEvidence.verdict, "clean");
     await writeFakeClaude("clean");
   });
 
-  await t.test("default ten-minute timeout is classified without retry", async () => {
-    assert.equal(MAX_CLAUDE_REVIEW_TIMEOUT_MS, 600_000);
+  await t.test("default five-minute timeout remains a hard failure", async () => {
+    assert.equal(MAX_CLAUDE_REVIEW_TIMEOUT_MS, 300_000);
     await assert.rejects(
       runClaudeCurrentHeadReview({ issue: 150, timeoutMs: MAX_CLAUDE_REVIEW_TIMEOUT_MS + 1 }),
-      /review timeout must be an integer between 1 and 600000 milliseconds/,
+      /review timeout must be an integer between 1 and 300000 milliseconds/,
     );
     const defaultTimeouts = [];
     const timeoutRunner = (_command, args, options = {}) => {
@@ -3128,18 +2763,9 @@ if (process.argv.includes("--version")) {
         fetchBase: false,
         claudeRunner: timeoutRunner,
       }),
-      (error) => error instanceof ClaudeReviewExecutionError && error.outcome === "timed_out",
+      /timed out or was terminated after 300000ms/,
     );
-    assert.deepEqual(defaultTimeouts, [600_000]);
-    const failure = claudeReviewCliFailure(new ClaudeReviewExecutionError("timed_out", 600_001, "fixture timeout"));
-    assert.deepEqual(JSON.parse(failure.output), {
-      ok: false,
-      reviewer: "claude-code",
-      outcome: "timed_out",
-      durationMs: 600_001,
-      actionableFindings: false,
-      message: "fixture timeout",
-    });
+    assert.deepEqual(defaultTimeouts, [300_000]);
   });
 
   await t.test("run path rejects an effort omitted by captured CLI capabilities", async () => {
@@ -3513,9 +3139,7 @@ fi
     issueContract: JSON.stringify({ issue: 150, title: "Fixture", body: "Contract" }),
     fetchBase: false,
     timeoutMs: 500,
-  }), (error) => error instanceof ClaudeReviewExecutionError
-    && error.outcome === "timed_out"
-    && /timed out after 500ms/.test(error.message));
+  }), /timed out or was terminated after 500ms/);
   git("reset", "--hard", headSha);
 
   await writeFakeClaude("advance");
@@ -3651,5 +3275,6 @@ test("upstream-only gaps are linked and speculative local patches are forbidden"
 
 test("repository verification runs this stability contract", async () => {
   const run = await read("run.sh");
+  assert.match(run, /node --test tests\/repository\/claude-capability-grammar\.test\.mjs/);
   assert.match(run, /node --test tests\/repository\/dev-loop-stability-contract\.test\.mjs/);
 });
