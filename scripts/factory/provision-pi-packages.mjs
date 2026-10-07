@@ -18,10 +18,10 @@ async function installIntoStage({ root, store, configuration, pins }) {
       env: { ...process.env, PI_OFFLINE: "" },
       maxBuffer: 8 * 1024 * 1024,
     });
-    // `pi install` writes caret ranges. Restore every reviewed direct pin after
-    // each install so the next npm reconciliation cannot float an earlier one.
-    await enforceExactPiPackageManifests({ store, pins });
   }
+  // Do not describe packages that are not installed yet. The closure verifier
+  // checks the installed tree before this exact manifest is published.
+  await enforceExactPiPackageManifests({ store, pins });
 }
 
 try {

@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import os, { hostname } from "node:os";
 import path from "node:path";
@@ -148,6 +149,15 @@ async function makeFixture() {
   execFileSync("git", ["worktree", "add", "-b", "issue-150", worktree, "HEAD"], { cwd: root, stdio: "ignore" });
 
   await mkdir(path.join(root, ".pi", "npm", "node_modules", "dev-loops", "agents"), { recursive: true });
+  await writeFile(path.join(root, ".pi", "npm", "package.json"), JSON.stringify({
+    name: "oxid-pi-extensions", private: true, dependencies: { "dev-loops": "1.0.2" },
+  }));
+  await writeFile(path.join(root, ".pi", "npm", "package-lock.json"), JSON.stringify({
+    name: "oxid-pi-extensions", lockfileVersion: 3, requires: true, packages: {
+      "": { name: "oxid-pi-extensions", dependencies: { "dev-loops": "1.0.2" } },
+      "node_modules/dev-loops": { version: "1.0.2" },
+    },
+  }));
   const packageRoot = path.join(root, ".pi", "npm", "node_modules", "dev-loops");
   await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "1.0.2" }));
   await mkdir(path.join(packageRoot, "cli"));
@@ -294,6 +304,42 @@ test("Pi child smoke loads the tracked developer and dev-loop preflight without 
     path: path.join(root, ".pi", "extensions", "dev-loop-preflight.ts"),
   }]);
   assert.equal(launches[1].processEnv.PI_SUBAGENT_CHILD_AGENT, "dev-loop");
+});
+
+test("Pi child smoke interrupts in-flight work and disposes the factory once on signals", async (t) => {
+  const root = await realMkdtemp("oxid-pi-child-signal-");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, ".pi", "agents"), { recursive: true });
+  await mkdir(path.join(root, ".pi", "extensions"), { recursive: true });
+  await writeFile(path.join(root, ".pi", "agents", "developer.agent.md"), [
+    "---", "name: developer", "tools: read", "---", "Developer fixture prompt.",
+  ].join("\n"));
+  await writeFile(path.join(root, ".pi", "extensions", "dev-loop-preflight.ts"), "export default () => {};\n");
+  const processRef = new EventEmitter();
+  let factoryDisposed = 0;
+  const running = runPiChildSmoke({
+    cwd: root,
+    processRef,
+    resolve: async () => ({
+      gitRoot: root,
+      packageRoots: [{ name: "pi-subagents", version: "0.70.0", packageRoot: path.join(root, "subagents") }],
+    }),
+    loadChildModule: async () => ({
+      createDefaultChildSessionFactory: () => ({
+        create: async () => new Promise(() => {}),
+        dispose: async () => { factoryDisposed += 1; },
+      }),
+    }),
+  });
+  while (processRef.listenerCount("SIGTERM") === 0) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  processRef.emit("SIGTERM");
+  await assert.rejects(running, (error) => error.message.includes("SIGTERM") && error.exitCode === 143);
+  assert.equal(processRef.exitCode, 143);
+  assert.equal(factoryDisposed, 1);
+  assert.equal(processRef.listenerCount("SIGTERM"), 0);
+  assert.equal(processRef.listenerCount("SIGINT"), 0);
 });
 
 test("Pi closures isolate linked worktrees, publish once, and retain only referenced state", async (t) => {
@@ -535,6 +581,13 @@ test("Pi smoke resolution reuses every exact common-checkout package from a link
     await mkdir(packageRoot, { recursive: true });
     await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name, version }));
   }
+  await enforceExactPiPackageManifests({
+    store: path.join(fixture.root, ".pi", "npm"),
+    pins: [
+      { name: "dev-loops", version: "1.0.2" },
+      ...pins.map(([name, version]) => ({ name, version })),
+    ],
+  });
 
   await ensureSharedPiPackageStore({ cwd: fixture.root });
   const resolved = await resolveDevLoopsPackageRoot({

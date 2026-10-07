@@ -12,7 +12,7 @@ function agentBody(source) {
 }
 
 export async function runPiChildSmoke({
-  cwd = process.cwd(), resolve = resolveDevLoopsPackageRoot, loadChildModule,
+  cwd = process.cwd(), resolve = resolveDevLoopsPackageRoot, loadChildModule, processRef = process,
 } = {}) {
   const resolved = await resolve({ cwd, includeAllPinnedPackages: true });
   const subagents = resolved.packageRoots.find(({ name }) => name === "pi-subagents");
@@ -62,29 +62,45 @@ export async function runPiChildSmoke({
     await child.dispose();
   }
 
-  let stopping = false;
-  const stop = async (code) => {
-    if (stopping) return;
-    stopping = true;
-    await factory.dispose();
-    process.exitCode = code;
+  let disposePromise;
+  const disposeOnce = () => {
+    disposePromise ??= factory.dispose();
+    return disposePromise;
   };
-  const terminate = () => { void stop(143); };
-  const interrupt = () => { void stop(130); };
-  process.once("SIGTERM", terminate);
-  process.once("SIGINT", interrupt);
+  let stop;
+  let stopping = false;
+  const stopped = new Promise((_, reject) => {
+    stop = (signal, exitCode) => {
+      if (stopping) return;
+      stopping = true;
+      processRef.exitCode = exitCode;
+      void disposeOnce();
+      const error = new Error(`Pi child smoke interrupted by ${signal}`);
+      error.exitCode = exitCode;
+      reject(error);
+    };
+  });
+  const terminate = () => { stop("SIGTERM", 143); };
+  const interrupt = () => { stop("SIGINT", 130); };
+  processRef.once("SIGTERM", terminate);
+  processRef.once("SIGINT", interrupt);
   try {
-    await smoke({ label: "developer" });
-    await smoke({
-      label: "dev-loop",
-      extensionPaths: [devLoopExtension],
-      requiredExtensions: [{ id: "oxid-dev-loop-preflight", path: devLoopExtension }],
-    });
-    return { direct: "developer", devLoop: "developer", tools: ["read"] };
+    return await Promise.race([
+      (async () => {
+        await smoke({ label: "developer" });
+        await smoke({
+          label: "dev-loop",
+          extensionPaths: [devLoopExtension],
+          requiredExtensions: [{ id: "oxid-dev-loop-preflight", path: devLoopExtension }],
+        });
+        return { direct: "developer", devLoop: "developer", tools: ["read"] };
+      })(),
+      stopped,
+    ]);
   } finally {
-    process.removeListener("SIGTERM", terminate);
-    process.removeListener("SIGINT", interrupt);
-    await factory.dispose();
+    processRef.removeListener("SIGTERM", terminate);
+    processRef.removeListener("SIGINT", interrupt);
+    await disposeOnce();
   }
 }
 
@@ -94,6 +110,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.stdout.write("Pi child smoke passed: direct developer and dev-loop local implementation sessions started without provider calls.\n");
   } catch (error) {
     process.stderr.write(`[smoke-pi-child] ${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 1;
+    process.exitCode = error?.exitCode ?? 1;
   }
 }

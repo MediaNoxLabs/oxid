@@ -205,10 +205,17 @@ async function replaceWithClosureLink(localStore, closure) {
 
 async function copyLegacyStore(legacyStore, stageStore) {
   const legacyNodeModules = path.join(legacyStore, "node_modules");
+  const legacyManifest = path.join(legacyStore, "package.json");
+  const legacyLock = path.join(legacyStore, "package-lock.json");
   const info = await lstatIfPresent(legacyNodeModules);
-  if (!info?.isDirectory() || info.isSymbolicLink()) return false;
+  if (!info?.isDirectory() || info.isSymbolicLink()
+      || !(await exists(legacyManifest)) || !(await exists(legacyLock))) return false;
   await mkdir(stageStore, { recursive: true, mode: 0o700 });
-  await cp(legacyNodeModules, path.join(stageStore, "node_modules"), { recursive: true, verbatimSymlinks: true });
+  await Promise.all([
+    cp(legacyNodeModules, path.join(stageStore, "node_modules"), { recursive: true, verbatimSymlinks: true }),
+    cp(legacyManifest, path.join(stageStore, "package.json")),
+    cp(legacyLock, path.join(stageStore, "package-lock.json")),
+  ]);
   return true;
 }
 
@@ -261,7 +268,9 @@ export async function ensureSharedPiPackageStore({
           if (migrated) {
             try {
               await resolveInstalledPinnedPackages({ candidates: [{ root: stage, source: "legacy staging" }], pins });
-              await enforceExactPiPackageManifests({ store: stageStore, pins });
+              // A legacy store is reusable only when its complete npm state was
+              // already exact. Never synthesize a lock tree from node_modules.
+              await verifyExactPiPackageManifests({ store: stageStore, pins });
             } catch {
               // Legacy stores are only an optimization; an exact staged install is authoritative.
               await rm(stageStore, { recursive: true, force: true });

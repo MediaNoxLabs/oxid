@@ -107,6 +107,7 @@ process.stdout.write(subagents.packageRoot);
 
 node scripts/factory/verify-pi-subagents-package.mjs "$subagent_package_root"
 
+agent_hashes_before="$(git hash-object .pi/agents/*.agent.md)"
 if timeout -k 5s 60s node scripts/factory/smoke-pi-child.mjs; then
   :
 else
@@ -185,7 +186,6 @@ if (JSON.stringify(registered) !== JSON.stringify(expected)) {
 pi_rpc_stderr="$(mktemp "${TMPDIR:-/tmp}/oxid-pi-smoke.XXXXXX")"
 pi_rpc_input="$(mktemp "${TMPDIR:-/tmp}/oxid-pi-smoke-input.XXXXXX")"
 pi_rpc_output="$(mktemp "${TMPDIR:-/tmp}/oxid-pi-smoke-output.XXXXXX")"
-agent_hashes_before="$(git hash-object .pi/agents/*.agent.md)"
 trap 'rm -f "$pi_rpc_stderr" "$pi_rpc_input" "$pi_rpc_output"' EXIT
 printf '%s\n' '{"type":"get_commands"}' >"$pi_rpc_input"
 if timeout -k 5s 60s pi --approve --offline --mode rpc --no-session \
