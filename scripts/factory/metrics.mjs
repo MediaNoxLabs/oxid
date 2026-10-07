@@ -12,6 +12,7 @@ import { parseArgs } from "node:util";
 import { HOSTED_TARGETS, HostedTarget } from "../ci/target-plan.mjs";
 
 export const METRICS_SCHEMA_VERSION = 1;
+export const METRICS_V2_SCHEMA_VERSION = 2;
 export const METRICS_REPOSITORY = "MediaNoxLabs/oxid";
 const MAX_SAFE_COUNT = 1_000_000_000_000_000;
 const MAX_METRIC_ENTRIES = 64;
@@ -159,7 +160,7 @@ function safeStringList(value, pathName, errors, { nonEmpty = false } = {}) {
   });
 }
 
-export function validateMetricRecord(candidate, { nowMs = Date.now() } = {}) {
+function validateV1MetricRecord(candidate, { nowMs = Date.now() } = {}) {
   const errors = [];
   const record = objectAt(candidate, "$", METRIC_KEYS.top, errors);
   if (!record) return { ok: false, errors };
@@ -289,6 +290,107 @@ export function validateMetricRecord(candidate, { nowMs = Date.now() } = {}) {
   return { ok: errors.length === 0, errors, ...(errors.length === 0 ? { record } : {}) };
 }
 
+const V2_RUN_KEYS = Object.freeze(["runId", "parentRunId", "phase", "durationMs", "outcome", "reasonCode", "sessions", "turns", "toolCalls", "provider", "model", "rateCardId", "tokens"]);
+const V2_RATE_CARD_KEYS = Object.freeze(["id", "version", "inputCreditMicrosPerMillion", "outputCreditMicrosPerMillion", "cacheReadCreditMicrosPerMillion", "cacheWriteCreditMicrosPerMillion", "inputApiUsdMicrosPerMillion", "outputApiUsdMicrosPerMillion", "cacheReadApiUsdMicrosPerMillion", "cacheWriteApiUsdMicrosPerMillion"]);
+const V2_TOP_KEYS = Object.freeze([...METRIC_KEYS.top, "orchestration", "rateCards"]);
+
+function nullableSafeName(value, pathName, errors) {
+  if (value !== null && (typeof value !== "string" || !SAFE_NAME.test(value))) error(errors, pathName, "format", "must be a bounded metric identifier or null");
+}
+
+function validateV2MetricRecord(candidate, { nowMs = Date.now() } = {}) {
+  const errors = [];
+  const record = objectAt(candidate, "$", V2_TOP_KEYS, errors);
+  if (!record) return { ok: false, errors };
+  const { orchestration: _orchestration, rateCards: _rateCards, ...v1Candidate } = record;
+  const v1 = validateV1MetricRecord({ ...v1Candidate, schemaVersion: 1 }, { nowMs });
+  errors.push(...v1.errors.filter((problem) => problem.path !== "$.schemaVersion"));
+  if (record.schemaVersion !== METRICS_V2_SCHEMA_VERSION) error(errors, "$.schemaVersion", "version", `must equal ${METRICS_V2_SCHEMA_VERSION}`);
+  if (!Array.isArray(record.orchestration) || record.orchestration.length > MAX_METRIC_ENTRIES) {
+    error(errors, "$.orchestration", "type", "must be a bounded array");
+  } else {
+    const runIds = new Set();
+    const parents = new Map();
+    for (const [index, run] of record.orchestration.entries()) {
+      const pathName = `$.orchestration[${index}]`;
+      const entry = objectAt(run, pathName, V2_RUN_KEYS, errors);
+      if (!entry) continue;
+      if (typeof entry.runId !== "string" || !SAFE_NAME.test(entry.runId) || runIds.has(entry.runId)) error(errors, `${pathName}.runId`, "identity", "must be a unique bounded run identifier");
+      runIds.add(entry.runId);
+      if (entry.parentRunId !== null && (typeof entry.parentRunId !== "string" || !SAFE_NAME.test(entry.parentRunId) || entry.parentRunId === entry.runId)) error(errors, `${pathName}.parentRunId`, "identity", "must be a distinct bounded run identifier or null");
+      parents.set(entry.runId, entry.parentRunId);
+      if (!["implementation", "review", "retry", "no-op"].includes(entry.phase)) error(errors, `${pathName}.phase`, "enum", "must be implementation, review, retry, or no-op");
+      nonNegativeInteger(entry.durationMs, `${pathName}.durationMs`, errors);
+      if (!["completed", "failed", "canceled", "skipped"].includes(entry.outcome)) error(errors, `${pathName}.outcome`, "enum", "must be completed, failed, canceled, or skipped");
+      nullableSafeName(entry.reasonCode, `${pathName}.reasonCode`, errors);
+      for (const key of ["sessions", "turns", "toolCalls"]) nullableNonNegativeInteger(entry[key], `${pathName}.${key}`, errors);
+      for (const key of ["provider", "model", "rateCardId"]) nullableSafeName(entry[key], `${pathName}.${key}`, errors);
+      if (entry.tokens !== null) {
+        const tokens = objectAt(entry.tokens, `${pathName}.tokens`, METRIC_KEYS.tokens, errors);
+        if (tokens) for (const key of METRIC_KEYS.tokens) nonNegativeInteger(tokens[key], `${pathName}.tokens.${key}`, errors);
+      }
+    }
+    for (const [runId, parent] of parents) if (parent !== null && !runIds.has(parent)) error(errors, `$.orchestration.${runId}.parentRunId`, "reference", "must refer to a run in this record");
+  }
+  if (!Array.isArray(record.rateCards) || record.rateCards.length > MAX_METRIC_ENTRIES) {
+    error(errors, "$.rateCards", "type", "must be a bounded array");
+  } else {
+    const ids = new Set();
+    for (const [index, card] of record.rateCards.entries()) {
+      const pathName = `$.rateCards[${index}]`;
+      const entry = objectAt(card, pathName, V2_RATE_CARD_KEYS, errors);
+      if (!entry) continue;
+      if (typeof entry.id !== "string" || !SAFE_NAME.test(entry.id) || ids.has(entry.id)) error(errors, `${pathName}.id`, "identity", "must be a unique bounded rate-card identifier");
+      ids.add(entry.id);
+      if (typeof entry.version !== "string" || !SAFE_NAME.test(entry.version)) error(errors, `${pathName}.version`, "format", "must be a bounded version identifier");
+      for (const key of V2_RATE_CARD_KEYS.slice(2)) nonNegativeInteger(entry[key], `${pathName}.${key}`, errors);
+    }
+    for (const [index, run] of (record.orchestration ?? []).entries()) if (run?.rateCardId !== null && !ids.has(run.rateCardId)) error(errors, `$.orchestration[${index}].rateCardId`, "reference", "must refer to a declared rate card");
+    const cards = new Map(record.rateCards.map((card) => [card.id, card]));
+    for (const [index, run] of (record.orchestration ?? []).entries()) {
+      if (run?.tokens === null || run?.rateCardId === null || !cards.has(run?.rateCardId)) continue;
+      const card = cards.get(run.rateCardId);
+      for (const [key, tokenCount] of Object.entries(run.tokens)) {
+        for (const rate of [card[`${key}CreditMicrosPerMillion`], card[`${key}ApiUsdMicrosPerMillion`]]) {
+          if (!Number.isSafeInteger(tokenCount * rate)) {
+            error(errors, `$.orchestration[${index}].tokens.${key}`, "precision", "token/rate product must remain an exact safe integer");
+          }
+        }
+      }
+    }
+  }
+  inspectSecretValues(record, "$", errors);
+  return { ok: errors.length === 0, errors, ...(errors.length === 0 ? { record } : {}) };
+}
+
+export function validateMetricRecord(candidate, options = {}) {
+  if (candidate?.schemaVersion === METRICS_V2_SCHEMA_VERSION) return validateV2MetricRecord(candidate, options);
+  return validateV1MetricRecord(candidate, options);
+}
+
+/** Private-only deterministic pricing; values are estimates, never invoices or charges. */
+export function estimateV2Costs(record, { monthlySubscriptionUsd = null, purchasedCreditUsd = null, monthlyObservedCredits = null } = {}) {
+  const validation = validateV2MetricRecord(record);
+  if (!validation.ok) throw new Error(`v2 metric record rejected: ${validation.errors[0]?.path ?? "$"}`);
+  const cards = new Map(record.rateCards.map((card) => [card.id, card]));
+  let creditsMicros = 0;
+  let apiUsdMicros = 0;
+  for (const run of record.orchestration) {
+    if (run.tokens === null || run.rateCardId === null) continue;
+    const card = cards.get(run.rateCardId);
+    for (const [key, value] of Object.entries(run.tokens)) {
+      creditsMicros += value * card[`${key}CreditMicrosPerMillion`];
+      apiUsdMicros += value * card[`${key}ApiUsdMicrosPerMillion`];
+    }
+  }
+  const planCredits = creditsMicros / 1_000_000_000_000;
+  const apiEquivalentUsd = apiUsdMicros / 1_000_000_000_000;
+  const allocatedSubscriptionUsd = monthlySubscriptionUsd === null || monthlyObservedCredits === null || monthlyObservedCredits === 0
+    ? null : monthlySubscriptionUsd * planCredits / monthlyObservedCredits;
+  const purchasedCreditCostUsd = purchasedCreditUsd === null ? null : purchasedCreditUsd * planCredits;
+  return { planCredits, apiEquivalentUsd: { value: apiEquivalentUsd, label: "imputed-api-equivalent-not-an-invoice" }, allocatedSubscriptionUsd, purchasedCreditCostUsd };
+}
+
 function totalTokens(record) {
   if (record.tokens === null) return null;
   return Object.values(record.tokens).reduce((sum, value) => sum + value, 0);
@@ -316,6 +418,15 @@ function safeSum(values) {
   for (const value of values) {
     sum += value;
     if (!Number.isSafeInteger(sum)) return null;
+  }
+  return sum;
+}
+
+function safeDecimalSum(values) {
+  let sum = 0;
+  for (const value of values) {
+    sum += value;
+    if (!Number.isFinite(sum) || Math.abs(sum) > MAX_SAFE_COUNT) return null;
   }
   return sum;
 }
@@ -417,8 +528,29 @@ export function aggregateMetricRecords(records, invalidRecords = [], { nowMs = D
       if (problem.code === "missing") missingFields[problem.path] = (missingFields[problem.path] ?? 0) + 1;
     }
   }
+  const v2Records = records.filter((record) => record.schemaVersion === METRICS_V2_SCHEMA_VERSION);
+  const orchestrationRuns = v2Records.flatMap((record) => record.orchestration);
+  const phaseCoverage = Object.fromEntries(["implementation", "review", "retry", "no-op"].map((phase) => [phase, orchestrationRuns.filter((run) => run.phase === phase).length]));
+  const privateCostEstimates = v2Records.map((record) => estimateV2Costs(record));
+  const v2Summary = {
+    orchestration: {
+      records: v2Records.length,
+      runs: orchestrationRuns.length,
+      phaseCoverage,
+      totals: Object.fromEntries(["sessions", "turns", "toolCalls"].map((key) => {
+        const values = orchestrationRuns.map((run) => run[key]).filter((value) => value !== null);
+        return [key, { value: values.length === 0 ? null : safeSum(values), availableRuns: values.length, unavailableRuns: orchestrationRuns.length - values.length }];
+      })),
+    },
+    privateCostEstimates: {
+      planCredits: privateCostEstimates.length === 0 ? null : safeDecimalSum(privateCostEstimates.map((estimate) => estimate.planCredits)),
+      apiEquivalentUsd: privateCostEstimates.length === 0 ? null : safeDecimalSum(privateCostEstimates.map((estimate) => estimate.apiEquivalentUsd.value)),
+      label: "imputed-api-equivalent-not-an-invoice",
+    },
+  };
   return {
     schemaVersion: METRICS_SCHEMA_VERSION,
+    ...v2Summary,
     records: { discovered: records.length + invalidRecords.length, valid: records.length, invalid: invalidRecords.length },
     missingFields,
     coverage: {
@@ -600,7 +732,10 @@ export async function writeMetricRecord(record, { outputDir, currentHead, replac
 }
 
 function publicProjection(record) {
-  return Object.fromEntries(PUBLIC_METRIC_KEYS.map((key) => [key, structuredClone(record[key])]));
+  const payload = Object.fromEntries(PUBLIC_METRIC_KEYS.map((key) => [key, structuredClone(record[key])]));
+  // Public receipts retain the stable v1 allow-list; v2 orchestration and all pricing remain owner-private.
+  if (record.schemaVersion === METRICS_V2_SCHEMA_VERSION) payload.schemaVersion = METRICS_SCHEMA_VERSION;
+  return payload;
 }
 
 function assertPublicMetricShape(payload, { nowMs = Date.now(), maxAgeMs = MAX_PUBLIC_METRIC_AGE_MS } = {}) {

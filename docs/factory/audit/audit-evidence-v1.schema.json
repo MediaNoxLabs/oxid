@@ -5,7 +5,7 @@
   "description": "Closed contract for mechanically collected audit facts, emitted by scripts/audit/collect.mjs. Inclusion rule: anything two runs must agree on. Two consecutive runs at one anchor produce byte-identical output apart from collectedAt. Findings cite these anchor keys.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "collectedAt", "repository", "defaultBranch", "branches", "collectors"],
+  "required": ["schemaVersion", "collectedAt", "repository", "defaultBranch", "window", "branches", "collectors"],
   "properties": {
     "schemaVersion": { "const": 1 },
     "collectedAt": {
@@ -18,6 +18,16 @@
       "description": "Collected, never assumed. Closing-keyword behaviour depends on it and it has changed before.",
       "type": "string",
       "minLength": 1
+    },
+    "window": {
+      "description": "Effective hosted-fact bounds. Null records an intentionally unbounded side of the window.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["since", "until"],
+      "properties": {
+        "since": { "type": ["string", "null"], "format": "date-time" },
+        "until": { "type": ["string", "null"], "format": "date-time" }
+      }
     },
     "branches": {
       "type": "array",
@@ -306,18 +316,18 @@
             "facts": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["mergeBase", "pairs"],
+              "required": ["pairs"],
               "properties": {
-                "mergeBase": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
                 "pairs": {
                   "type": "array",
                   "items": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["left", "right", "changedFiles"],
+                    "required": ["left", "right", "mergeBase", "changedFiles"],
                     "properties": {
                       "left": { "type": "string", "minLength": 1 },
                       "right": { "type": "string", "minLength": 1 },
+                      "mergeBase": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
                       "changedFiles": { "type": "integer", "minimum": 0 },
                       "leftOnlyCommits": { "type": "integer", "minimum": 0 },
                       "rightOnlyCommits": { "type": "integer", "minimum": 0 },

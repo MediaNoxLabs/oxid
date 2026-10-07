@@ -18,7 +18,7 @@ routes through a coordination server.
 | `pi-coding-agent` | Nix-pinned | immutable nixpkgs input in `flake.lock`; executable supplied by `devShells.default` |
 | `dev-loops` | `1.0.2` | `.pi/settings.json` → project-local `.pi/npm` |
 | `@dev-loops/core` | `1.0.2` | exact reviewed runtime paired with `dev-loops`; pinned directly to prevent transitive range drift |
-| `pi-subagents` | `0.67.0` | same |
+| `pi-subagents` | `0.70.0` | same |
 | `pi-taskflow` | `0.2.10` | installed as an `agent-review-pi` peer; all runtime resources disabled |
 | `typebox` | `1.3.9` | exact `agent-review-pi` peer |
 | `@stixxert/pi-docker-sandbox` | `1.1.6` | exact optional deploy-target package; extension disabled by default |
@@ -94,7 +94,7 @@ default deploy-target mode—not its `sandbox/` execution backend. ADR-0112
 records the routing matrix and the evidence required before full tool execution
 may be enabled.
 
-`pi-subagents@0.67.0` no longer enforces the historical `turnBudget` field.
+`pi-subagents@0.70.0` no longer enforces the historical `turnBudget` field.
 Oxid therefore removes that inert key, uses a fail-closed `toolBudget`, and caps
 each parent session and run at one child. The token budget remains visible and
 prevents additional launches, while the tool and wall-clock limits bound the
@@ -102,6 +102,18 @@ active child itself. A top-level `/dev-loop` invocation uses that one launch
 for the implementation child, whose manifest omits nested delegation. The
 external supervisor—not another child—owns focused review, CI waiting, review
 triage, metrics, merge, cleanup, and any explicit retry.
+
+Releases through `0.70.0` also keep supervisor progress out of parent model
+turns while waking the parent for an actual child request, and they reconcile detached-child
+attention in headless/print-mode sessions. They additionally preserve detached
+workflow visibility and reconcile terminal usage when live events are
+incomplete.
+The tracked pre-dispatch smoke executes
+`scripts/factory/verify-pi-subagents-package.mjs` and requires those capabilities
+in the installed compiled package before Pi may dispatch a child. That
+structural check is distinct from the bounded behavioral print-mode smoke
+recorded for issue #863, where a detached child requested supervisor attention
+once, received one response, and completed normally.
 
 Validate shell entry, the exact private package, all native review-tool
 registrations, and runtime skill discovery without an LLM call or GitHub
@@ -258,6 +270,16 @@ may use a validated conventional issue branch as its temporary `--base`.
 The repository wrappers keep these forms separate and record the selected remote
 ref in `branch.<name>.oxidDeliveryBase` for pre-push verification.
 
+The bare issue target and normalized remote ref are equivalent only after a
+closed proof: the active repository and `origin` URL identify
+`MediaNoxLabs/oxid`, the configured fetch refspec maps that exact branch to
+`refs/remotes/origin/<target>`, and the issue-target and envelope-target refs
+resolve to the same 40-character commit OID. A conventional issue branch is a
+temporary stacked PR base, never a substitute delivery target. Any repository,
+remote, branch, refspec, or OID disagreement stops the worker before mutation;
+the agent must not request supervisor approval for the valid bare/origin spelling
+difference alone.
+
 ```bash
 node scripts/dev-loops.mjs doctor    # environment readiness
 node scripts/dev-loops.mjs gates     # resolve and print every configured angle
@@ -279,7 +301,7 @@ an upstream default expansion. Prefer it over a YAML lint.
 
 **`doctor` reports 3/4 and that is expected.** The warning is *"Subagent command
 available"*, because `doctor` looks for a standalone `subagent` executable while
-`pi-subagents@0.67.0` exposes the capability as a Pi extension. **Do not add a
+`pi-subagents@0.70.0` exposes the capability as a Pi extension. **Do not add a
 dummy binary to make the check pass** — it would make a real absence
 undetectable later. The check that matters is `gates` parsing.
 

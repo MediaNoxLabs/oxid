@@ -272,7 +272,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.coverage_linux == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 27
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -299,9 +299,21 @@ jobs:
             core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
             core.exportVariable('SCCACHE_GHA_RW_MODE', 'READ_ONLY');
       - name: Measure the non-UI workspace once
+        timeout-minutes: 25
         env:
           OXID_COVERAGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/develop' }}
         run: nix develop .#ci-coverage --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh coverage --strict
+      - name: Upload immutable coverage-policy evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-policy-evidence-${{ github.sha }}
+          path: |
+            target/coverage/${{ github.sha }}/reports/evaluation.json
+            target/coverage/${{ github.sha }}/reports/changed-lines.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 30
 
   repository_gate:
     name: Repository gate (fmt, architecture, lint, tests, coverage)

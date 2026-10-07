@@ -13,9 +13,10 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../
 const bootstrapSource = await readFile(path.join(repoRoot, "bootstrap.sh"), "utf8");
 const main = "/fixture/oxid";
 const canonical = `${main}/tmp/worktrees/dev-loops/issue-305`;
+const validIssueBody = (deliveryTarget = "develop") => `## Implementation surface\n\n- scripts/example.mjs\n\n## AC / DoD matrix\n\n| Acceptance criterion | Completion evidence |\n| --- | --- |\n| AC-1: canonical worktree is selected | contract test asserts the exact selected path |\n\n## Verification\n\n- node --test tests/repository/bootstrap-dev-loop-contract.test.mjs\n\n## Size\n\nS\n\n## Delivery target\n\n${deliveryTarget}\n\n## Non-goals\n\n- remote mutation\n`;
 const issue = JSON.stringify({
   title: "feat(wallet): enter the canonical worktree",
-  body: "## Delivery target\n\ndevelop\n",
+  body: validIssueBody(),
 });
 
 function gitFixture(current) {
@@ -118,6 +119,19 @@ printf '%s\\n' "$(cat .fixture-flake-pin)" >> "$NIX_PINS"
   assert.equal(await readFile(pins, "utf8"), "primary-current\n");
 });
 
+test("incomplete factory issue contracts stop before ensure-worktree", async () => {
+  let ensured = false;
+  await assert.rejects(resolveBootstrapDevLoopCwd(["--print", "/dev-loop production-ready issue 305"], {
+    repoRoot: main,
+    run: (program, args) => program === "gh"
+      ? JSON.stringify({ title: "fix(harness): incomplete", body: "## Delivery target\n\ndevelop\n" })
+      : gitFixture(main)(program, args),
+    ensureWorktree: async () => { ensured = true; return 0; },
+    recordDeliveryBase: () => { throw new Error("must not record delivery base"); },
+  }), /factory issue contract is incomplete/u);
+  assert.equal(ensured, false);
+});
+
 test("linked canonical /dev-loop print stays in that worktree", async () => {
   let ensured = false;
   const cwd = await resolveBootstrapDevLoopCwd(["--print=/dev-loop prototype issue 305"], {
@@ -148,7 +162,7 @@ test("ordinary Pi prompts are unchanged and malformed or ambiguous dev-loop comm
   await assert.rejects(resolveBootstrapDevLoopCwd(["--print", "/dev-loop production-ready issue 305"], {
     repoRoot: main,
     run: (program, args) => program === "gh"
-      ? JSON.stringify({ title: "feat(wallet): ambiguous target", body: "## Delivery target\n\ndevelop\nmilestone-1.2.3\n" })
+      ? JSON.stringify({ title: "feat(wallet): ambiguous target", body: validIssueBody("develop\nmilestone-1.2.3") })
       : gitFixture(main)(program, args),
     ensureWorktree: async () => { dispatched = true; return 0; },
     recordDeliveryBase: () => { dispatched = true; },

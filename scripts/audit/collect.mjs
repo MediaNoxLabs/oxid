@@ -157,11 +157,13 @@ export function collectBranchProtection({ repository, branches, run = runner, cw
       entry.allowsDeletion = parsed.allow_deletions?.enabled ?? false;
       entry.requiresSignatures = parsed.required_signatures?.enabled ?? false;
     }
-    if (rules.ok) {
+    if (!rules.ok) {
+      anyFailure = rules.error;
+    } else {
       try {
         entry.rulesetCount = JSON.parse(rules.out).length;
       } catch {
-        entry.rulesetCount = 0;
+        anyFailure = `unparseable ruleset payload for ${branch}`;
       }
     }
     if (deleteBranchOnMerge !== undefined) entry.deleteBranchOnMerge = deleteBranchOnMerge;
@@ -371,13 +373,18 @@ export function collectCoveragePolicyDrift({
     return unavailable(`${policyPath} is not valid JSON: ${error.message}`, source);
   }
 
-  const scopes = Object.entries(policy)
-    .filter(([key]) => /Floor(Percent)?$/u.test(key))
-    .map(([key, value]) => ({
-      scope: key.replace(/Floor(Percent)?$/u, ""),
-      hasFloor: typeof value === "number" && value > 0,
-      ...(typeof value === "number" ? { floorPercent: value } : {}),
-    }));
+  const floor = (scope, value) => ({
+    scope,
+    hasFloor: typeof value === "number" && value > 0,
+    ...(typeof value === "number" ? { floorPercent: value } : {}),
+  });
+  // Coverage policy intentionally nests package and changed-line floors. Read
+  // those actual locations rather than treating only top-level keys as policy.
+  const scopes = [
+    floor("workspace", policy.workspaceFloorPercent),
+    ...Object.entries(policy.packageFloorsPercent ?? {}).map(([name, value]) => floor(`package.${name}`, value)),
+    floor("changedLines", policy.changedLines?.floorPercent ?? policy.changedLinesFloor),
+  ].filter((scope) => scope.hasFloor || scope.floorPercent !== undefined);
 
   let enforcementPath;
   for (const candidate of enforcementCandidates) {
@@ -467,18 +474,24 @@ export function collectAdrCollisions({ branches, adrDir = "docs/adr", run = runn
   const pathForNumber = (number) => [...byNumber.get(number)?.keys() ?? []][0] ?? null;
 
   const statusBlindBacklinks = [];
+  const seenBacklinks = new Set();
   for (const [file, content] of [...seen].sort(([a], [b]) => a.localeCompare(b))) {
     const fromStatus = statusOf(content);
-    for (const match of content.matchAll(/Amended by:?\s*ADR-(\d{4})/giu)) {
-      const targetPath = pathForNumber(match[1]);
-      const targetStatus = targetPath ? statusOf(seen.get(targetPath)) : null;
-      if (fromStatus && targetStatus && /^accepted$/iu.test(fromStatus) && !/^accepted$/iu.test(targetStatus)) {
-        statusBlindBacklinks.push({
-          from: file,
-          fromStatus,
-          to: targetPath ?? `ADR-${match[1]}`,
-          toStatus: targetStatus,
-        });
+    for (const amendment of content.matchAll(/^\s*(?:[-*]\s*)?Amended by:?\s*(.*)$/gimu)) {
+      for (const target of amendment[1].matchAll(/ADR-(\d{4})/giu)) {
+        const targetPath = pathForNumber(target[1]);
+        const targetStatus = targetPath ? statusOf(seen.get(targetPath)) : null;
+        const backlink = `${file}\u0000${targetPath ?? `ADR-${target[1]}`}`;
+        if (seenBacklinks.has(backlink)) continue;
+        seenBacklinks.add(backlink);
+        if (fromStatus && targetStatus && /^accepted$/iu.test(fromStatus) && !/^accepted$/iu.test(targetStatus)) {
+          statusBlindBacklinks.push({
+            from: file,
+            fromStatus,
+            to: targetPath ?? `ADR-${target[1]}`,
+            toStatus: targetStatus,
+          });
+        }
       }
     }
   }
@@ -675,7 +688,6 @@ export function collectAdvisoryState({
 export function collectMainlineDivergence({ branches, run = runner, cwd }) {
   const source = [];
   const pairs = [];
-  let mergeBase = null;
   let failure = null;
 
   for (let index = 0; index < branches.length; index += 1) {
@@ -687,7 +699,6 @@ export function collectMainlineDivergence({ branches, run = runner, cwd }) {
         failure = `cannot resolve merge-base of ${left} and ${right}: ${base.error}`;
         continue;
       }
-      if (!mergeBase) mergeBase = base.out;
       source.push(`git merge-base ${left} ${right}`);
 
       const leftOnly = tryRun(run, "git", ["rev-list", "--count", `${base.out}..${left}`], { cwd });
@@ -695,14 +706,21 @@ export function collectMainlineDivergence({ branches, run = runner, cwd }) {
       const leftPaths = tryRun(run, "git", ["diff", "--name-only", `${base.out}..${left}`], { cwd });
       const rightPaths = tryRun(run, "git", ["diff", "--name-only", `${base.out}..${right}`], { cwd });
 
-      const leftSet = new Set(leftPaths.ok ? leftPaths.out.split("\n").filter(Boolean) : []);
-      const rightSet = new Set(rightPaths.ok ? rightPaths.out.split("\n").filter(Boolean) : []);
+      if (!leftPaths.ok || !rightPaths.ok) {
+        const failedSide = !leftPaths.ok ? left : right;
+        const error = !leftPaths.ok ? leftPaths.error : rightPaths.error;
+        return unavailable(`cannot list changed paths for ${failedSide} against ${base.out}: ${error}`, source);
+      }
+
+      const leftSet = new Set(leftPaths.out.split("\n").filter(Boolean));
+      const rightSet = new Set(rightPaths.out.split("\n").filter(Boolean));
       const bothSidesModified = [...leftSet].filter((file) => rightSet.has(file)).sort();
       const changedFiles = new Set([...leftSet, ...rightSet]).size;
 
       pairs.push({
         left,
         right,
+        mergeBase: base.out,
         changedFiles,
         ...(leftOnly.ok ? { leftOnlyCommits: Number(leftOnly.out) } : {}),
         ...(rightOnly.ok ? { rightOnlyCommits: Number(rightOnly.out) } : {}),
@@ -711,10 +729,10 @@ export function collectMainlineDivergence({ branches, run = runner, cwd }) {
     }
   }
 
-  if (pairs.length === 0 || !mergeBase) {
+  if (pairs.length === 0) {
     return unavailable(failure ?? "no branch pair could be compared", source);
   }
-  const facts = { mergeBase, pairs };
+  const facts = { pairs };
   return failure ? degraded(failure, facts, source) : ok(facts, source);
 }
 
@@ -738,6 +756,7 @@ export function collectPrCensus({ repository, since, until, run = runner, cwd })
   } catch (error) {
     return unavailable(`gh pr list output is not valid JSON: ${error.message}`, source);
   }
+  if (!Array.isArray(list)) return unavailable("gh pr list output is not an array", source);
 
   const lowerBound = since ? Date.parse(since) : Number.NEGATIVE_INFINITY;
   const upperBound = until ? Date.parse(until) : Number.POSITIVE_INFINITY;
@@ -806,6 +825,9 @@ export function collectIssueClosureGap({ repository, defaultBranch, defaultBranc
   } catch (error) {
     return unavailable(`gh pr list output is not valid JSON: ${error.message}`, source);
   }
+  if (!Array.isArray(list)) return unavailable("gh pr list output is not an array", source);
+  const truncation = [];
+  if (list.length >= 500) truncation.push("merged pull request listing hit the 500-item limit");
 
   const lowerBound = since ? Date.parse(since) : Number.NEGATIVE_INFINITY;
   const upperBound = until ? Date.parse(until) : Number.POSITIVE_INFINITY;
@@ -834,12 +856,15 @@ export function collectIssueClosureGap({ repository, defaultBranch, defaultBranc
   if (!openQuery.ok) return degraded(`open issue listing failed: ${openQuery.error}`, [], source);
   source.push(`gh issue list --repo ${repository} --state open`);
 
-  let openIssues;
+  let openList;
   try {
-    openIssues = new Set(JSON.parse(openQuery.out).map((entry) => entry.number));
+    openList = JSON.parse(openQuery.out);
   } catch (error) {
     return degraded(`open issue listing is not valid JSON: ${error.message}`, [], source);
   }
+  if (!Array.isArray(openList)) return degraded("open issue listing is not an array", [], source);
+  if (openList.length >= 800) truncation.push("open issue listing hit the 800-item limit");
+  const openIssues = new Set(openList.map((entry) => entry.number));
 
   const facts = [...candidates.values()]
     .filter((candidate) => openIssues.has(candidate.issue))
@@ -850,7 +875,7 @@ export function collectIssueClosureGap({ repository, defaultBranch, defaultBranc
       keywordWouldFire: candidate.mergedInto === defaultBranch,
     }));
 
-  return ok(facts, source);
+  return truncation.length > 0 ? degraded(`${truncation.join("; ")}; closure evidence may be incomplete`, facts, source) : ok(facts, source);
 }
 
 // --- orchestration -----------------------------------------------------------
@@ -864,6 +889,16 @@ export function resolveBranches({ repository, branches, run = runner, cwd }) {
     if (sha.ok && /^[0-9a-f]{40}$/u.test(sha.out)) resolved.push({ name: branch, sha: sha.out });
   }
   return { defaultBranch, resolved, defaultResolved: defaultQuery.ok };
+}
+
+function requirePrimaryCheckout({ primarySha, run, cwd }) {
+  const status = tryRun(run, "git", ["status", "--porcelain"], { cwd });
+  if (!status.ok) throw new Error("could not verify checkout cleanliness before collecting file-backed evidence");
+  if (status.out) throw new Error("refusing file-backed evidence from a dirty checkout");
+  const head = tryRun(run, "git", ["rev-parse", "HEAD"], { cwd });
+  if (!head.ok || head.out !== primarySha) {
+    throw new Error("refusing file-backed evidence because checkout HEAD does not match the recorded primary commit");
+  }
 }
 
 export function collect({
@@ -887,6 +922,13 @@ export function collect({
   if (!defaultResolved || !defaultBranch) {
     throw new Error("could not collect the repository default branch; refusing to emit schema-invalid audit evidence");
   }
+  if (resolved.length !== branchNames.length) {
+    const available = new Set(resolved.map((entry) => entry.name));
+    const missing = branchNames.filter((name) => !available.has(name));
+    throw new Error(`could not resolve requested branch ref(s) ${missing.join(", ")}; refusing to emit incomplete audit evidence`);
+  }
+  const primarySha = resolved.find((entry) => entry.name === primary)?.sha;
+  requirePrimaryCheckout({ primarySha, run, cwd: root });
   const refs = branchNames.map((name) => `refs/remotes/origin/${name}`);
 
   // A collector that throws unexpectedly degrades to `unavailable` rather than
@@ -929,6 +971,7 @@ export function collect({
     collectedAt: now(),
     repository,
     defaultBranch,
+    window: { since, until },
     branches: resolved.map((entry) => ({
       ...entry,
       role: entry.name === primary ? "primary" : entry.name === defaultBranch ? "comparison" : "baseline",

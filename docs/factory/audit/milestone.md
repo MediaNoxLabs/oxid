@@ -57,9 +57,10 @@ different fixes, and an audit that merges them reports neither clearly.
 
 ## Roles
 
-Six roles, sized to the subagent policy: three passes of two concurrent
-children, within the four-spawn session cap. Each receives the evidence
-artifact and its angle only.
+Six roles, split into bounded passes sized from the live
+`.pi/subagent-policy.json` limits. The supervisor must stay within the current
+per-session, per-run, and global-concurrency caps. Each child receives the
+evidence artifact and its angle only.
 
 | Role | Angle | Primary criteria |
 | --- | --- | --- |

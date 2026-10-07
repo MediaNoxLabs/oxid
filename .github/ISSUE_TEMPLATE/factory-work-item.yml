@@ -12,13 +12,25 @@ body:
     validations:
       required: true
   - type: textarea
-    id: acceptance
+    id: ac_dod_matrix
     attributes:
-      label: Acceptance criteria
-      description: Enumerated, each objectively checkable by a reviewer who did not write the code.
+      label: AC / DoD matrix
+      description: Map every stable criterion and its concrete outcome to completion evidence. The first cell must include both the ID and criterion, not only `AC-1`.
       placeholder: |
-        1. ...
-        2. ...
+        | Acceptance criterion | Completion evidence |
+        | --- | --- |
+        | AC-1: incomplete issues stop before worktree creation | focused negative contract test proves no worktree call |
+        | AC-2: complete issues enter the selected worktree | positive bootstrap fixture and exact path assertion |
+    validations:
+      required: true
+  - type: textarea
+    id: implementation_surface
+    attributes:
+      label: Implementation surface
+      description: Exact files or modules expected to change; this is the admission boundary.
+      placeholder: |
+        - scripts/lib/example.mjs
+        - tests/repository/example.test.mjs
     validations:
       required: true
   - type: textarea

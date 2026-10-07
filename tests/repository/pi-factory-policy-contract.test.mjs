@@ -24,10 +24,12 @@ import {
   selectPreMutationExecution,
 } from "../../scripts/dev-loops.mjs";
 import {
+  DEV_LOOP_ADMISSION_BINDING,
   devLoopRoutingInstruction,
   inspectDevLoopDispatch,
   resolveSupervisorModelRoute,
 } from "../../scripts/lib/dev-loop-model-routing.mjs";
+import { verifyPiSubagentsPackage } from "../../scripts/factory/verify-pi-subagents-package.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -52,7 +54,7 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
     "npm:@dev-loops/core@1.0.2",
     "npm:@playwright/test@1.60.0",
     "npm:@axe-core/playwright@4.10.0",
-    "npm:pi-subagents@0.67.0",
+    "npm:pi-subagents@0.70.0",
     "npm:typebox@1.3.9",
     {
       source: "npm:pi-taskflow@0.2.10",
@@ -83,11 +85,7 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.match(smoke, /PI_CODING_AGENT_SESSION_DIR/u);
   assert.match(smoke, /PI_SUBAGENTS_TEMP_ROOT/u);
   assert.match(smoke, /owner-private runtime state/u);
-  assert.match(smoke, /unexpected pi-subagents package/u);
-  assert.match(smoke, /attentionRunsForSession/u);
-  assert.match(smoke, /remembered detached foreground descendant/u);
-  assert.match(smoke, /reconcileDetachedWorkflowChildCompletion/u);
-  assert.match(smoke, /planWorkflowSettlement/u);
+  assert.match(smoke, /node scripts\/factory\/verify-pi-subagents-package\.mjs "\$subagent_package_root"/u);
   assert.match(smoke, /skill:taskflow/u);
   assert.match(smoke, /unsafe inherited taskflow resources are active/u);
   assert.match(smoke, /Pi startup modified tracked project agent shadows/u);
@@ -121,7 +119,60 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.doesNotMatch(dockerSandboxLauncher, /\/sandbox(?:\/|")/u);
 });
 
+async function writePiSubagentsFixture(root, { version = "0.70.0", omit = null, removeCapability = null } = {}) {
+  const files = {
+    "package.json": JSON.stringify({ name: "pi-subagents", version }),
+    "src/shared/types.d.ts": [
+      "asyncByDefault?", "forceTopLevelAsync?", "maxSubagentDepth?",
+      "maxSubagentSpawnsPerSession?", "maxSubagentSpawnsPerRun?",
+      "globalConcurrencyLimit?", "toolBudget?", "usageBudget?", "parallel?",
+      "chain?", "dynamicFanout?", "maxItems?", "artifactDir?",
+    ].join("\n"),
+    "src/agents/agents.js": "frontmatter.timeoutMs frontmatter.toolBudget frontmatter.maxSubagentDepth",
+    "src/runs/shared/tool-budget.js": "soft hard block",
+    "src/runs/background/wait-tool.js": "remembered detached foreground descendant",
+    "src/runs/background/subagent-wait.js": "attentionRunsForSession stopOnAttention",
+    "src/runs/background/auto-drain.js": "hasPendingSupervisorRequest",
+    "src/runs/foreground/workflow-detach-reconcile.js": "reconcileDetachedWorkflowChildCompletion planWorkflowSettlement",
+  };
+  for (const [relativePath, original] of Object.entries(files)) {
+    if (relativePath === omit) continue;
+    const source = removeCapability ? original.replace(removeCapability, "") : original;
+    await mkdir(path.dirname(path.join(root, relativePath)), { recursive: true });
+    await writeFile(path.join(root, relativePath), source);
+  }
+}
+
+test("pi-subagents compiled capability verifier accepts the reviewed package surface", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-subagents-valid-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writePiSubagentsFixture(root);
+  assert.deepEqual(await verifyPiSubagentsPackage(root), { name: "pi-subagents", version: "0.70.0" });
+});
+
+test("pi-subagents compiled capability verifier reports missing artifacts and capabilities", async (t) => {
+  const missingArtifact = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-subagents-missing-"));
+  const missingCapability = await mkdtemp(path.join(os.tmpdir(), "oxid-pi-subagents-capability-"));
+  t.after(() => Promise.all([
+    rm(missingArtifact, { recursive: true, force: true }),
+    rm(missingCapability, { recursive: true, force: true }),
+  ]));
+  await writePiSubagentsFixture(missingArtifact, { omit: "src/runs/background/auto-drain.js" });
+  await assert.rejects(
+    verifyPiSubagentsPackage(missingArtifact),
+    /missing required compiled artifact src\/runs\/background\/auto-drain\.js/u,
+  );
+  await writePiSubagentsFixture(missingCapability, { removeCapability: "attentionRunsForSession" });
+  await assert.rejects(
+    verifyPiSubagentsPackage(missingCapability),
+    /subagent-wait\.js lacks required capability attentionRunsForSession/u,
+  );
+});
+
 test("dev-loop routing binds the exact supervisor model and reasoning before dispatch", () => {
+  const implementationBinding = {
+    extensionBindings: { [DEV_LOOP_ADMISSION_BINDING]: { phase: "implementation" } },
+  };
   const trackedDefault = resolveSupervisorModelRoute(
     { provider: "openai-codex", id: "gpt-5.6-terra" },
     "medium",
@@ -134,22 +185,37 @@ test("dev-loop routing binds the exact supervisor model and reasoning before dis
   );
   assert.equal(highRisk.route.routedModel, "openai-codex/gpt-6-astra:high");
   assert.match(highRisk.text, /exact per-run model openai-codex\/gpt-6-astra:high/u);
+  assert.match(highRisk.text, /extensionBindings/u);
+  assert.match(highRisk.text, /oxid\.dev-loop-admission\/1/u);
 
   assert.equal(inspectDevLoopDispatch({
     toolName: "subagent",
-    input: { agent: "dev-loop", model: "openai-codex/gpt-6-astra:high" },
+    input: { agent: "dev-loop", model: "openai-codex/gpt-6-astra:high", ...implementationBinding },
     model: { provider: "openai-codex", id: "gpt-6-astra" },
     thinking: "high",
   }).block, false);
   for (const model of [undefined, "openai-codex/gpt-5.6-terra:medium", "openai-codex/gpt-6-astra:medium"]) {
     const decision = inspectDevLoopDispatch({
       toolName: "subagent",
-      input: { agent: "dev-loop", ...(model ? { model } : {}) },
+      input: { agent: "dev-loop", ...implementationBinding, ...(model ? { model } : {}) },
       model: { provider: "openai-codex", id: "gpt-6-astra" },
       thinking: "high",
     });
     assert.equal(decision.block, true);
     assert.match(decision.reason, /must use the active supervisor route/u);
+  }
+  for (const phase of [undefined, "draft_gate", "preApproval"]) {
+    const phaseBinding = phase
+      ? { extensionBindings: { [DEV_LOOP_ADMISSION_BINDING]: { phase } } }
+      : {};
+    const decision = inspectDevLoopDispatch({
+      toolName: "subagent",
+      input: { agent: "dev-loop", model: "openai-codex/gpt-6-astra:high", ...phaseBinding },
+      model: { provider: "openai-codex", id: "gpt-6-astra" },
+      thinking: "high",
+    });
+    assert.equal(decision.block, true);
+    assert.match(decision.reason, /supervisor-owned/u);
   }
   assert.throws(
     () => resolveSupervisorModelRoute({ provider: "openai-codex", id: "gpt-6-astra" }, "unbounded"),

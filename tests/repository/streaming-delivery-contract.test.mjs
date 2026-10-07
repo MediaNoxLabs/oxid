@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   assertIssueTarget,
+  assertNormalizedDeliveryBase,
   deliveryTargetFromIssueBody,
   extractDeliveryTargetOption,
   parseDeliveryTarget,
@@ -67,6 +68,46 @@ test("CLI delivery target is singular, stripped, and issue-bound", () => {
   assert.throws(() => extractDeliveryTargetOption(["--delivery-base", "develop", "--delivery-base", "milestone-0.4.0"]), /only once/);
   assert.equal(assertIssueTarget("## Delivery target\n\nmilestone-0.4.0", "origin/milestone-0.4.0").kind, "milestone");
   assert.throws(() => assertIssueTarget("## Delivery target\n\ndevelop", "milestone-0.4.0"), /does not match/);
+});
+
+test("bare issue targets and origin refs normalize only with exact repository proof", () => {
+  const oid = "a".repeat(40);
+  const proof = {
+    repository: "MediaNoxLabs/oxid",
+    remoteName: "origin",
+    originUrl: "git@github.com:MediaNoxLabs/oxid.git",
+    fetchRefspecs: ["+refs/heads/*:refs/remotes/origin/*"],
+    resolvedRef: "origin/milestone-0.4.0",
+    issueTargetOid: oid,
+    envelopeTargetOid: oid,
+  };
+  assert.equal(
+    assertNormalizedDeliveryBase("milestone-0.4.0", "origin/milestone-0.4.0", proof).branch,
+    "milestone-0.4.0",
+  );
+  assert.equal(assertNormalizedDeliveryBase("develop", "origin/develop", {
+    ...proof,
+    originUrl: "https://github.com/MediaNoxLabs/oxid.git",
+    resolvedRef: "origin/develop",
+  }).branch, "develop");
+
+  for (const invalid of [
+    { repository: "other/oxid" },
+    { originUrl: "https://github.com/other/oxid.git" },
+    { remoteName: "upstream" },
+    { fetchRefspecs: ["+refs/heads/main:refs/remotes/origin/main"] },
+    { resolvedRef: "origin/develop" },
+    { envelopeTargetOid: "b".repeat(40) },
+  ]) {
+    assert.throws(
+      () => assertNormalizedDeliveryBase("milestone-0.4.0", "origin/milestone-0.4.0", { ...proof, ...invalid }),
+      /delivery target|repository|origin fetch mapping|resolved delivery ref|OIDs/u,
+    );
+  }
+  assert.throws(
+    () => assertNormalizedDeliveryBase("develop", "origin/milestone-0.4.0", proof),
+    /does not match envelope target/u,
+  );
 });
 
 test("a stacked PR keeps its conventional parent while retaining its delivery target", () => {
@@ -259,17 +300,20 @@ test("follow-up debt audit accepts closed items only with delivery evidence", ()
 function milestoneAuditRun({
   reReadHead = "b".repeat(40),
   issueTarget = "milestone-0.4.0",
+  localBase = "a".repeat(40),
+  reReadBase = localBase,
   requiredChecks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
   selectedChecks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
 } = {}) {
   const pr = milestonePr();
+  let baseReads = 0;
   const control = freezeReview(
     authorizeReview(initialReviewControl(pr.headRefOid), { headSha: pr.headRefOid }),
     { headSha: pr.headRefOid, disposition: "clean" },
   );
   return (command, args) => {
     if (command === "git" && args[0] === "rev-parse" && args[1] === "--show-toplevel") return "/repo\n";
-    if (command === "git" && args[0] === "rev-parse") return `${pr.baseRefOid}\n`;
+    if (command === "git" && args[0] === "rev-parse") return `${baseReads++ === 0 ? localBase : reReadBase}\n`;
     if (command === "git") return "";
     if (command === process.execPath) return "";
     if (command !== "gh") throw new Error(`unexpected command ${command}`);
@@ -295,6 +339,14 @@ function milestoneAuditRun({
 test("milestone audit binds issue target, base, selected required checks, triage, and final head", () => {
   const options = { repo: "MediaNoxLabs/oxid", pr: 42, execute: false };
   assert.equal(auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun() }).target, "milestone-0.4.0");
+  assert.equal(auditMilestoneMerge(options, {
+    cwd: "/repo",
+    run: milestoneAuditRun({ localBase: "c".repeat(40), reReadBase: "c".repeat(40) }),
+  }).baseSha, "c".repeat(40));
+  assert.throws(() => auditMilestoneMerge(options, {
+    cwd: "/repo",
+    run: milestoneAuditRun({ localBase: "c".repeat(40), reReadBase: "d".repeat(40) }),
+  }), /base changed during the merge audit/);
   assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ issueTarget: "develop" }) }), /does not match/);
   assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ reReadHead: "c".repeat(40) }) }), /changed during/);
   assert.throws(() => auditMilestoneMerge(options, { cwd: "/repo", run: milestoneAuditRun({ requiredChecks: [] }) }), /no effective required checks/);
