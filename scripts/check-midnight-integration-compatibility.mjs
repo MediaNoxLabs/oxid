@@ -45,7 +45,7 @@ export function auditCompatibility({ portalSource, environment = process.env } =
 
   const cargo = readFileSync(path.join(root, "Cargo.toml"), "utf8");
   const ledgerDependencies = cargo.split("\n")
-    .filter((line) => line.includes('git = "https://github.com/midnightntwrk/midnight-ledger.git"'));
+    .filter((line) => line.includes('git = "https://github.com/MediaNoxLabs/midnight-ledger.git"'));
   if (ledgerDependencies.length === 0) fail("Midnight Ledger dependency set is empty");
   for (const line of ledgerDependencies) {
     const revision = /\brev = "([0-9a-f]{40})"/u.exec(line)?.[1];

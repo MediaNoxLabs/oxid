@@ -2,7 +2,7 @@
   "schema": "oxid-midnight-integration-compatibility-v1",
   "contractRelease": "0.4.0",
   "wallet": {
-    "ledgerRevision": "d9414884db9da9e9b1f6f3a7f742d79a5732f817",
+    "ledgerRevision": "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65",
     "ledgerVersion": "8.2.0-rc.1",
     "didToolchainRevision": "05b237a5e51f9c22853b424e7d4236dfa9384c24",
     "didToolchainPackageVersion": "0.4.0"

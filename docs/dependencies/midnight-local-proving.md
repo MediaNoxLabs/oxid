@@ -1,22 +1,23 @@
 # Midnight local proving dependency review
 
-- Reviewed: 2026-08-12
+- Reviewed: 2026-10-07
 - ADR: [ADR-0028](../adr/0028-keep-midnight-proof-witnesses-local.md)
 - Scope: native private DUST proof generation and interoperability measurement
 
 ## Selected source and versions
 
-`midnight-zkir 2.1.0` is a direct, native-only dependency from
-`https://github.com/midnightntwrk/midnight-ledger.git` at the full immutable
-revision `d9414884db9da9e9b1f6f3a7f742d79a5732f817`. Default features are
+`midnight-zkir 2.1.1` is a direct, native-only dependency from
+`https://github.com/MediaNoxLabs/midnight-ledger.git` at the full immutable
+revision `b85f5d8e503fd1d7a1b128bbc1d7156baf823a65`. Default features are
 disabled. It supplies `IrSource` and `LocalProvingProvider` compatible with the
 same ledger transaction types used by the submission adapter.
 
-The resolved graph uses the published `midnight-proofs 0.7.3`,
+The resolved graph uses `midnight-proofs 0.7.3` from the exact immutable patch
+declared by the selected ledger workspace, plus the published
 `midnight-circuits 6.3.0`, and `midnight-zk-stdlib 1.3.0` releases already
 selected transitively by the pinned ledger proving graph. No unpublished crate
 is referenced by a registry version or local path. No mutable branch, tag, or
-patch source is used.
+local patch source is used.
 
 ## License, maintenance, and security
 

@@ -130,7 +130,7 @@ pub(crate) const ZSWAP_ROLE: u32 = 3;
 pub(crate) const ZSWAP_INDEX: u32 = 0;
 
 // Canonical ledger-8 atomic-unit semantics reviewed at
-// midnight-ledger d9414884db9da9e9b1f6f3a7f742d79a5732f817,
+// midnight-ledger b85f5d8e503fd1d7a1b128bbc1d7156baf823a65,
 // ledger/src/structure.rs. Keeping these adapter-local avoids importing the
 // ledger's transaction/proof graph into a read-model-only capability.
 pub(crate) const STARS_PER_NIGHT: u128 = 1_000_000;

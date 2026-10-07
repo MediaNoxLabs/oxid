@@ -6,7 +6,7 @@
 - Date: 2026-08-14
 - Blueprint: §§3–8, 12–13, 16–18, 21
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/dioxus-wallet/web/src/entry.ts`
-- Consensus source: `midnight-ledger` commit `d9414884db9da9e9b1f6f3a7f742d79a5732f817`, ledger transaction structures, verifier, and on-chain runtime
+- Consensus source: `midnight-ledger` commit `b85f5d8e503fd1d7a1b128bbc1d7156baf823a65`, ledger transaction structures, verifier, and on-chain runtime
 - Node source: `midnight-node` commit `06858f9a7fe40866c2c074ff07eecc39d7d35ef7`, `pallets/midnight/src/lib.rs`
 - Related: ADR-0003, ADR-0004, ADR-0006, ADR-0013, ADR-0015, ADR-0018, ADR-0020, ADR-0027, ADR-0035, ADR-0051, ADR-0052, ADR-0054, and issue #31
 - Supersedes: ADR-0054's open choice between deterministic replay and a reviewed storage proof for Passport Vault state authentication

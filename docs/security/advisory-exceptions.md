@@ -63,7 +63,7 @@ its owning upstream graph drops the crate.
 
 - `RUSTSEC-2025-0141` classifies `bincode 2.0.1` as unmaintained and reports no
   vulnerability or patched version. The immutable Midnight ledger revision
-  `d9414884db9da9e9b1f6f3a7f742d79a5732f817` pulls it through
+  `b85f5d8e503fd1d7a1b128bbc1d7156baf823a65` pulls it through
   `midnight-zk-stdlib -> midnight-transient-crypto`.
 - Oxid does not call `bincode` directly. Replacing a serialization dependency
   inside the consensus/proof dependency graph locally would create a larger

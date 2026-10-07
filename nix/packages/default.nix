@@ -30,7 +30,8 @@
         cargoLock = {
           lockFile = ../../Cargo.lock;
           outputHashes = {
-            "midnight-base-crypto-1.0.0" = "sha256-Sfl7vc9NpfdIZvXXYBQdg3VY5c35zMYwzHZcujxu8zY=";
+            "midnight-base-crypto-1.0.1" = "sha256-TBu1ysOc6kKNA9g+cnlaBqd/SO9ii/Je2uUsQWXYBiw=";
+            "midnight-proofs-0.7.3" = "sha256-f/wg3d3fjOcAphwK4QB9zlpLCM2VXOO40/I91ZmUxlQ=";
           };
         };
         cargoBuildFlags = [
@@ -65,7 +66,8 @@
         cargoLock = {
           lockFile = ../../Cargo.lock;
           outputHashes = {
-            "midnight-base-crypto-1.0.0" = "sha256-Sfl7vc9NpfdIZvXXYBQdg3VY5c35zMYwzHZcujxu8zY=";
+            "midnight-base-crypto-1.0.1" = "sha256-TBu1ysOc6kKNA9g+cnlaBqd/SO9ii/Je2uUsQWXYBiw=";
+            "midnight-proofs-0.7.3" = "sha256-f/wg3d3fjOcAphwK4QB9zlpLCM2VXOO40/I91ZmUxlQ=";
           };
         };
         cargoBuildFlags = [
@@ -126,7 +128,8 @@
           cargoLock = {
             lockFile = ../../Cargo.lock;
             outputHashes = {
-              "midnight-base-crypto-1.0.0" = "sha256-Sfl7vc9NpfdIZvXXYBQdg3VY5c35zMYwzHZcujxu8zY=";
+              "midnight-base-crypto-1.0.1" = "sha256-TBu1ysOc6kKNA9g+cnlaBqd/SO9ii/Je2uUsQWXYBiw=";
+              "midnight-proofs-0.7.3" = "sha256-f/wg3d3fjOcAphwK4QB9zlpLCM2VXOO40/I91ZmUxlQ=";
             };
           };
           cargoBuildFlags = [

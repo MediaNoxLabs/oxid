@@ -7,7 +7,7 @@
 - Prototype source: `midnight-ledger` commit
   `074b1a4bccbfee1740ee188374b606a022ecef42`
 - Ledger source: `midnight-ledger` commit
-  `d9414884db9da9e9b1f6f3a7f742d79a5732f817`
+  `b85f5d8e503fd1d7a1b128bbc1d7156baf823a65`
 - Implementation state: Repository, headless, Dioxus, guarded public PreProd
   funding manifest and read-only observer, build-reviewed test-only signed
   profile, and ignored live acceptance harness are complete; funded write

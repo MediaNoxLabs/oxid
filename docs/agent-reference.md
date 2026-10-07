@@ -1460,7 +1460,7 @@ transport loss remains `Submitting` because its external outcome is unknown;
 never make that state retryable without chain reconciliation.
 
 The accepted ledger compatibility revision is
-`d9414884db9da9e9b1f6f3a7f742d79a5732f817`. The native Midnight transaction
+`b85f5d8e503fd1d7a1b128bbc1d7156baf823a65`. The native Midnight transaction
 adapter consumes its ledger/base-crypto/coin/serialize/storage/transient
 packages from the official HTTPS Git URL at that full `rev`, with ledger default
 features disabled and its `proving` feature enabled. It also consumes the
