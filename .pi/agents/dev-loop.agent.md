@@ -167,6 +167,14 @@ focused checks use only the handoff envelope's sanctioned Cargo, Just, Nix, or
 focused platform commands. Never substitute `npm run verify` or another
 ecosystem-generic command that is absent from the repository.
 
+When the pinned gate procedure asks for its shared validation artifact, do not
+invoke the package's npm/Bun-only `run-gate-validation.mjs`. Route the gate
+through `node <git-root>/scripts/loop/gate-validation.mjs --repo <owner/name>
+--pr <n> --gate <gate> --head-sha <exact-head> --delivery-base <target>`.
+This repository adapter verifies the existing Cargo-native production-ready
+receipt and emits the package-compatible validation artifact; it never reruns
+the gate or invents a JavaScript package manifest.
+
 A shell parser diagnostic emitted before the named helper starts (for example,
 an unmatched quote or unexpected EOF in an agent-generated `bash -c` command)
 is an invocation-construction error, not evidence that the tracked helper or

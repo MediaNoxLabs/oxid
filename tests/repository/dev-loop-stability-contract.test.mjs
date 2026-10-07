@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import os, { hostname } from "node:os";
 import path from "node:path";
@@ -14,10 +15,12 @@ import {
   checkAgentToolAllowlists,
   cleanupPiPackageClosures,
   devLoopPreflightCacheKey,
+  enforceExactPiPackageManifests,
   ensureSharedPiPackageStore,
   piPackageClosureIdentity,
   parseAgentFrontmatter,
   resolveDevLoopsPackageRoot,
+  verifyExactPiPackageManifests,
 } from "../../scripts/lib/dev-loop-runtime.mjs";
 import { normalizeHandoffEnvelopeCwd } from "../../scripts/lib/handoff-envelope-cwd.mjs";
 import { normalizeDevLoopsArgs, resolveOxidCompatibilityRoute, resolvePinnedCoreModulePath, runDevLoops } from "../../scripts/dev-loops.mjs";
@@ -59,6 +62,7 @@ import {
   verifyClaudeReviewEvidence,
 } from "../../scripts/review/claude-current-head.mjs";
 import registerDevLoopPreflight, { runDevLoopPreflight } from "../../scripts/lib/dev-loop-preflight-core.mjs";
+import { runPiChildSmoke } from "../../scripts/factory/smoke-pi-child.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (relativePath) => readFile(path.join(repoRoot, relativePath), "utf8");
@@ -135,6 +139,15 @@ async function makeFixture() {
   execFileSync("git", ["worktree", "add", "-b", "issue-150", worktree, "HEAD"], { cwd: root, stdio: "ignore" });
 
   await mkdir(path.join(root, ".pi", "npm", "node_modules", "dev-loops", "agents"), { recursive: true });
+  await writeFile(path.join(root, ".pi", "npm", "package.json"), JSON.stringify({
+    name: "oxid-pi-extensions", private: true, dependencies: { "dev-loops": "1.0.2" },
+  }));
+  await writeFile(path.join(root, ".pi", "npm", "package-lock.json"), JSON.stringify({
+    name: "oxid-pi-extensions", lockfileVersion: 3, requires: true, packages: {
+      "": { name: "oxid-pi-extensions", dependencies: { "dev-loops": "1.0.2" } },
+      "node_modules/dev-loops": { version: "1.0.2" },
+    },
+  }));
   const packageRoot = path.join(root, ".pi", "npm", "node_modules", "dev-loops");
   await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "dev-loops", version: "1.0.2" }));
   await mkdir(path.join(packageRoot, "cli"));
@@ -196,6 +209,127 @@ test("Pi closure identities cover ordered exact package configuration", () => {
   ] }).identity, "object key order is not closure configuration order");
   assert.notEqual(piPackageClosureIdentity(base).identity, piPackageClosureIdentity(reordered).identity);
   assert.notEqual(piPackageClosureIdentity(base).identity, piPackageClosureIdentity(changedResourcePolicy).identity);
+});
+
+test("Pi closure manifests preserve exact direct pins and reject drift", async (t) => {
+  const store = await realMkdtemp("oxid-pi-exact-manifest-");
+  t.after(() => rm(store, { recursive: true, force: true }));
+  const pins = [
+    { name: "pi-subagents", version: "0.70.0" },
+    { name: "@earendil-works/pi-coding-agent", version: "0.85.1" },
+  ];
+  await writeFile(path.join(store, "package.json"), JSON.stringify({
+    name: "pi-extensions",
+    private: true,
+    dependencies: { "pi-subagents": "^0.70.0", "@earendil-works/pi-coding-agent": "^0.85.1", helper: "1.0.0" },
+  }));
+  await writeFile(path.join(store, "package-lock.json"), JSON.stringify({
+    name: "pi-extensions",
+    lockfileVersion: 3,
+    packages: {
+      "": { dependencies: { "pi-subagents": "^0.70.0", "@earendil-works/pi-coding-agent": "^0.85.1", helper: "1.0.0" } },
+      "node_modules/pi-subagents": { version: "0.70.0" },
+      "node_modules/@earendil-works/pi-coding-agent": { version: "0.85.1" },
+    },
+  }));
+  for (const { name, version } of pins) {
+    const packageRoot = path.join(store, "node_modules", ...name.split("/"));
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name, version }));
+  }
+
+  await assert.rejects(verifyExactPiPackageManifests({ store, pins }), /must pin .* exactly/u);
+  await enforceExactPiPackageManifests({ store, pins });
+  assert.deepEqual((await verifyExactPiPackageManifests({ store, pins })).dependencies, {
+    "@earendil-works/pi-coding-agent": "0.85.1",
+    "pi-subagents": "0.70.0",
+  });
+  const exactManifest = JSON.parse(await readFile(path.join(store, "package.json"), "utf8"));
+  assert.equal(exactManifest.dependencies.helper, "1.0.0", "untracked direct dependencies are preserved");
+  const exactLock = JSON.parse(await readFile(path.join(store, "package-lock.json"), "utf8"));
+  assert.equal(exactLock.packages[""].dependencies.helper, "1.0.0", "untracked direct dependencies are preserved");
+
+  await writeFile(
+    path.join(store, "node_modules", "pi-subagents", "package.json"),
+    JSON.stringify({ name: "pi-subagents", version: "0.71.0" }),
+  );
+  await assert.rejects(verifyExactPiPackageManifests({ store, pins }), /installed package must be pi-subagents@0\.70\.0/u);
+});
+
+test("Pi child smoke loads the tracked developer and dev-loop preflight without provider calls", async (t) => {
+  const root = await realMkdtemp("oxid-pi-child-smoke-");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, ".pi", "agents"), { recursive: true });
+  await mkdir(path.join(root, ".pi", "extensions"), { recursive: true });
+  await writeFile(path.join(root, ".pi", "agents", "developer.agent.md"), [
+    "---", "name: developer", "tools: read, edit", "---", "Developer fixture prompt.",
+  ].join("\n"));
+  await writeFile(path.join(root, ".pi", "extensions", "dev-loop-preflight.ts"), "export default () => {};\n");
+  const launches = [];
+  let factoryDisposed = 0;
+  const result = await runPiChildSmoke({
+    cwd: root,
+    resolve: async () => ({
+      gitRoot: root,
+      packageRoots: [{ name: "pi-subagents", version: "0.70.0", packageRoot: path.join(root, "subagents") }],
+    }),
+    loadChildModule: async () => ({
+      createDefaultChildSessionFactory: () => ({
+        create: async (launch) => {
+          launches.push(launch);
+          return { sessionId: `session-${launches.length}`, dispose: async () => {} };
+        },
+        dispose: async () => { factoryDisposed += 1; },
+      }),
+    }),
+  });
+  assert.deepEqual(result, { direct: "developer", devLoop: "developer", tools: ["read"] });
+  assert.equal(factoryDisposed, 1);
+  assert.equal(launches.length, 2);
+  assert.deepEqual(launches[0].tools, ["read"]);
+  assert.match(launches[0].systemPrompt, /Developer fixture prompt/u);
+  assert.deepEqual(launches[0].extensionPaths, []);
+  assert.deepEqual(launches[1].requiredExtensions, [{
+    id: "oxid-dev-loop-preflight",
+    path: path.join(root, ".pi", "extensions", "dev-loop-preflight.ts"),
+  }]);
+  assert.equal(launches[1].processEnv.PI_SUBAGENT_CHILD_AGENT, "dev-loop");
+});
+
+test("Pi child smoke interrupts in-flight work and disposes the factory once on signals", async (t) => {
+  const root = await realMkdtemp("oxid-pi-child-signal-");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, ".pi", "agents"), { recursive: true });
+  await mkdir(path.join(root, ".pi", "extensions"), { recursive: true });
+  await writeFile(path.join(root, ".pi", "agents", "developer.agent.md"), [
+    "---", "name: developer", "tools: read", "---", "Developer fixture prompt.",
+  ].join("\n"));
+  await writeFile(path.join(root, ".pi", "extensions", "dev-loop-preflight.ts"), "export default () => {};\n");
+  const processRef = new EventEmitter();
+  let factoryDisposed = 0;
+  const running = runPiChildSmoke({
+    cwd: root,
+    processRef,
+    resolve: async () => ({
+      gitRoot: root,
+      packageRoots: [{ name: "pi-subagents", version: "0.70.0", packageRoot: path.join(root, "subagents") }],
+    }),
+    loadChildModule: async () => ({
+      createDefaultChildSessionFactory: () => ({
+        create: async () => new Promise(() => {}),
+        dispose: async () => { factoryDisposed += 1; },
+      }),
+    }),
+  });
+  while (processRef.listenerCount("SIGTERM") === 0) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  processRef.emit("SIGTERM");
+  await assert.rejects(running, (error) => error.message.includes("SIGTERM") && error.exitCode === 143);
+  assert.equal(processRef.exitCode, 143);
+  assert.equal(factoryDisposed, 1);
+  assert.equal(processRef.listenerCount("SIGTERM"), 0);
+  assert.equal(processRef.listenerCount("SIGINT"), 0);
 });
 
 test("Pi closures isolate linked worktrees, publish once, and retain only referenced state", async (t) => {
@@ -437,6 +571,13 @@ test("Pi smoke resolution reuses every exact common-checkout package from a link
     await mkdir(packageRoot, { recursive: true });
     await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name, version }));
   }
+  await enforceExactPiPackageManifests({
+    store: path.join(fixture.root, ".pi", "npm"),
+    pins: [
+      { name: "dev-loops", version: "1.0.2" },
+      ...pins.map(([name, version]) => ({ name, version })),
+    ],
+  });
 
   await ensureSharedPiPackageStore({ cwd: fixture.root });
   const resolved = await resolveDevLoopsPackageRoot({
@@ -458,6 +599,8 @@ test("Pi devshell smoke delegates package authority to the bounded exact-pin res
   assert.match(smoke, /includeAllPinnedPackages:\s*true/);
   assert.doesNotMatch(smoke, /review_package_root=["']\.pi\/npm/);
   assert.doesNotMatch(smoke, /(?:HOME|global|node_modules\/\.\.\/)/);
+  assert.match(smoke, /timeout -k 5s 60s node scripts\/factory\/smoke-pi-child\.mjs/u);
+  assert.match(smoke, /direct developer or \/dev-loop local implementation child startup failed/u);
   assert.match(devshell, /provision-pi-packages\.mjs/);
   assert.match(devshell, /content-addressed closure/);
   assert.match(devshell, /GITHUB_TOKEN/);

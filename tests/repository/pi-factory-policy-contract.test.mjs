@@ -55,6 +55,10 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
     "npm:@playwright/test@1.60.0",
     "npm:@axe-core/playwright@4.10.0",
     "npm:pi-subagents@0.70.0",
+    "npm:@earendil-works/pi-agent-core@0.85.1",
+    "npm:@earendil-works/pi-ai@0.85.1",
+    "npm:@earendil-works/pi-coding-agent@0.85.1",
+    "npm:@earendil-works/pi-tui@0.85.1",
     "npm:typebox@1.3.9",
     {
       source: "npm:pi-taskflow@0.2.10",
@@ -98,6 +102,8 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
   assert.doesNotMatch(smoke, /\|\s*pi --approve --offline --mode rpc/u);
   assert.doesNotMatch(smoke, /<<<"\$pi_rpc_output"/u);
   assert.match(smoke, /Pi offline RPC startup exceeded the 60-second smoke deadline/u);
+  assert.match(smoke, /smoke-pi-child\.mjs/u);
+  assert.match(smoke, /Pi read-only child startup exceeded the 60-second smoke deadline/u);
   assert.match(bootstrap, /bash scripts\/check-pi-devshell\.sh/u);
   assert.match(bootstrap, /node scripts\/git-hooks\/check-github-web-flow-key\.mjs/u);
   const discoverNix = bootstrap.indexOf('[[ -x "$nix_daemon_profile_bin/nix" ]]');
@@ -134,6 +140,7 @@ async function writePiSubagentsFixture(root, { version = "0.70.0", omit = null, 
     "src/runs/background/subagent-wait.js": "attentionRunsForSession stopOnAttention",
     "src/runs/background/auto-drain.js": "hasPendingSupervisorRequest",
     "src/runs/foreground/workflow-detach-reconcile.js": "reconcileDetachedWorkflowChildCompletion planWorkflowSettlement",
+    "src/runs/shared/child-session.js": "createDefaultChildSessionFactory",
   };
   for (const [relativePath, original] of Object.entries(files)) {
     if (relativePath === omit) continue;

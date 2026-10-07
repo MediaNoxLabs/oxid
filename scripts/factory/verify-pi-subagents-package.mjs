@@ -14,6 +14,7 @@ const REQUIRED_SOURCES = Object.freeze({
   waitRuntime: "src/runs/background/subagent-wait.js",
   autoDrain: "src/runs/background/auto-drain.js",
   foregroundSettlement: "src/runs/foreground/workflow-detach-reconcile.js",
+  childSession: "src/runs/shared/child-session.js",
 });
 
 async function readRequiredSource(root, relativePath) {
@@ -70,6 +71,7 @@ export async function verifyPiSubagentsPackage(root, { expectedVersion = "0.70.0
   for (const field of ["soft", "hard", "block"]) {
     requireCapability(sources.toolBudget, field, REQUIRED_SOURCES.toolBudget);
   }
+  requireCapability(sources.childSession, "createDefaultChildSessionFactory", REQUIRED_SOURCES.childSession);
 
   return { name: manifest.name, version: manifest.version };
 }
