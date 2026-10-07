@@ -179,6 +179,15 @@ mandatory angles, artifact hashing, and lifecycle coordination remain pinned-
 tooling responsibilities; comment-only repair is unsupported and must not be
 described as an upgraded gate.
 
+The pinned package's generic validation producer accepts only root
+`package.json` scripts and runs them with Bun. Oxid deliberately has no such
+manifest. Draft and pre-approval review therefore use
+`scripts/loop/gate-validation.mjs`: the adapter verifies the existing
+repository-owned Cargo receipt at the requested head and delivery base, then
+writes the package-compatible shared validation artifact. It does not rerun
+the gate, install JavaScript tooling, or translate a focused check into release
+evidence.
+
 ## Local wrapper performance
 
 No portable speed or improvement claim is made. The previous timing table was
