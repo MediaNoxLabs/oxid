@@ -79,6 +79,11 @@ The owner-aware reconciliation of remaining dirty/unmerged state is tracked by
 | `typebox` | `1.3.9` | `1.3.34` | minimum compatible exact peer; retain |
 | `@stixxert/pi-docker-sandbox` | `1.1.6` | `1.1.6` at adoption | opt-in private Docker deploy target; extension disabled in ordinary sessions by ADR-0112 |
 
+Every reviewed `dev-loops` / `@dev-loops/core` upgrade must run the repository
+acceptance-compatibility contract. It reads the installed exact core pin and
+fails if the upstream `verify-green` wording no longer maps to Oxid's selected
+target plan; a synthetic repository-only fixture is not sufficient evidence.
+
 The `dev-loops@1.0.2` Pi extension is deliberately filtered while its exact
 CLI, skills, and agent sources remain installed. Its `session_start` handler
 overwrites an existing consumer `.pi/agents/` directory with generic packaged
@@ -110,7 +115,11 @@ the expiring Nix `TMPDIR`. The smoke rejects missing or misdirected runtime
 state and an incompatible Pi version with actionable diagnostics before native
 dispatch. Its package check is structural: the independently tested
 `scripts/factory/verify-pi-subagents-package.mjs` checks the exact manifest,
-compiled artifacts, schema fields, and headless-attention symbols. The separate
+compiled artifacts, schema fields, and headless-attention symbols. Before child
+launch it also derives every `@earendil-works/pi-*` peer from that installed
+manifest and requires the corresponding project setting to retain the exact
+Nix-pinned Pi version; a missing, added, floating, or incompatible peer fails
+closed. The separate
 bounded issue-#863 print-mode run supplies behavioral evidence; the structural
 smoke does not claim to simulate a live supervisor exchange.
 

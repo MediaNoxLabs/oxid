@@ -5,11 +5,11 @@ import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
-import { ensureSharedPiPackageStore } from "../lib/dev-loop-runtime.mjs";
+import { enforceExactPiPackageManifests, ensureSharedPiPackageStore } from "../lib/dev-loop-runtime.mjs";
 
 const execFileAsync = promisify(execFile);
 
-async function installIntoStage({ root, configuration, pins }) {
+async function installIntoStage({ root, store, configuration, pins }) {
   await mkdir(`${root}/.pi`, { recursive: true, mode: 0o700 });
   await writeFile(`${root}/.pi/settings.json`, `${JSON.stringify({ packages: configuration })}\n`, { mode: 0o600 });
   for (const pin of pins) {
@@ -19,6 +19,9 @@ async function installIntoStage({ root, configuration, pins }) {
       maxBuffer: 8 * 1024 * 1024,
     });
   }
+  // Do not describe packages that are not installed yet. The closure verifier
+  // checks the installed tree before this exact manifest is published.
+  await enforceExactPiPackageManifests({ store, pins });
 }
 
 try {
