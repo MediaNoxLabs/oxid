@@ -146,6 +146,7 @@ async function validClosure(closure, identity, pins) {
   if (marker?.schemaVersion !== PI_CLOSURE_SCHEMA_VERSION || marker.identity !== identity) return false;
   try {
     await resolveInstalledPinnedPackages({ candidates: [{ root: closure, source: "closure" }], pins });
+    await verifyExactPiPackageManifests({ store: path.join(closure, ".pi", "npm"), pins });
     return true;
   } catch {
     return false;
@@ -204,10 +205,17 @@ async function replaceWithClosureLink(localStore, closure) {
 
 async function copyLegacyStore(legacyStore, stageStore) {
   const legacyNodeModules = path.join(legacyStore, "node_modules");
+  const legacyManifest = path.join(legacyStore, "package.json");
+  const legacyLock = path.join(legacyStore, "package-lock.json");
   const info = await lstatIfPresent(legacyNodeModules);
-  if (!info?.isDirectory() || info.isSymbolicLink()) return false;
+  if (!info?.isDirectory() || info.isSymbolicLink()
+      || !(await exists(legacyManifest)) || !(await exists(legacyLock))) return false;
   await mkdir(stageStore, { recursive: true, mode: 0o700 });
-  await cp(legacyNodeModules, path.join(stageStore, "node_modules"), { recursive: true, verbatimSymlinks: true });
+  await Promise.all([
+    cp(legacyNodeModules, path.join(stageStore, "node_modules"), { recursive: true, verbatimSymlinks: true }),
+    cp(legacyManifest, path.join(stageStore, "package.json")),
+    cp(legacyLock, path.join(stageStore, "package-lock.json")),
+  ]);
   return true;
 }
 
@@ -260,6 +268,9 @@ export async function ensureSharedPiPackageStore({
           if (migrated) {
             try {
               await resolveInstalledPinnedPackages({ candidates: [{ root: stage, source: "legacy staging" }], pins });
+              // A legacy store is reusable only when its complete npm state was
+              // already exact. Never synthesize a lock tree from node_modules.
+              await verifyExactPiPackageManifests({ store: stageStore, pins });
             } catch {
               // Legacy stores are only an optimization; an exact staged install is authoritative.
               await rm(stageStore, { recursive: true, force: true });
@@ -272,6 +283,8 @@ export async function ensureSharedPiPackageStore({
             await install({ root: stage, store: stageStore, nodeModules: path.join(stageStore, "node_modules"), pins, configuration });
           }
           await resolveInstalledPinnedPackages({ candidates: [{ root: stage, source: "staging" }], pins });
+          await enforceExactPiPackageManifests({ store: stageStore, pins });
+          await verifyExactPiPackageManifests({ store: stageStore, pins });
           await writeFile(path.join(stage, "closure.json"), `${JSON.stringify({ schemaVersion: PI_CLOSURE_SCHEMA_VERSION, identity, configuration })}\n`, { mode: 0o600 });
           if (await lstatIfPresent(paths.closure)) {
             const quarantine = `${paths.closure}.corrupt-${Date.now()}-${process.pid}`;
@@ -463,6 +476,67 @@ async function readJson(file, description) {
   } catch (error) {
     throw new Error(`invalid JSON in ${description} at ${file}: ${error.message}`, { cause: error });
   }
+}
+
+function exactDependencyMap(pins) {
+  return Object.fromEntries([...pins]
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map(({ name, version }) => [name, version]));
+}
+
+/**
+ * Rewrite only the closure's generated root dependency specifications. Pi's
+ * installer intentionally emits npm-compatible ranges, but a shared factory
+ * closure must remain replayable at the repository's exact reviewed pins.
+ */
+export async function enforceExactPiPackageManifests({ store, pins }) {
+  const dependencies = exactDependencyMap(pins);
+  const packagePath = path.join(store, "package.json");
+  const lockPath = path.join(store, "package-lock.json");
+  const manifest = await exists(packagePath)
+    ? await readJson(packagePath, "Pi closure package manifest")
+    : { name: "oxid-pi-extensions", private: true };
+  const lock = await exists(lockPath)
+    ? await readJson(lockPath, "Pi closure package lock")
+    : { name: manifest.name ?? "oxid-pi-extensions", lockfileVersion: 3, requires: true, packages: {} };
+  manifest.dependencies = { ...(manifest.dependencies ?? {}), ...dependencies };
+  lock.packages ??= {};
+  lock.packages[""] ??= { name: manifest.name ?? "oxid-pi-extensions" };
+  lock.packages[""].dependencies = { ...(lock.packages[""].dependencies ?? {}), ...dependencies };
+  for (const { name, version } of pins) {
+    const lockKey = `node_modules/${name}`;
+    lock.packages[lockKey] = { ...(lock.packages[lockKey] ?? {}), version };
+  }
+  await Promise.all([
+    writeFile(packagePath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 }),
+    writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`, { mode: 0o600 }),
+  ]);
+}
+
+export async function verifyExactPiPackageManifests({ store, pins }) {
+  const expected = exactDependencyMap(pins);
+  const manifest = await readJson(path.join(store, "package.json"), "Pi closure package manifest");
+  const lock = await readJson(path.join(store, "package-lock.json"), "Pi closure package lock");
+  for (const [name, version] of Object.entries(expected)) {
+    if (manifest.dependencies?.[name] !== version) {
+      throw new Error(`Pi closure manifest must pin ${name} exactly at ${version}`);
+    }
+    if (lock.packages?.[""]?.dependencies?.[name] !== version) {
+      throw new Error(`Pi closure lock root must pin ${name} exactly at ${version}`);
+    }
+    const installed = await readJson(
+      path.join(store, "node_modules", ...name.split("/"), "package.json"),
+      `${name} installed package manifest`,
+    );
+    if (installed.name !== name || installed.version !== version) {
+      throw new Error(`Pi closure installed package must be ${name}@${version}`);
+    }
+    const locked = lock.packages?.[`node_modules/${name}`];
+    if (locked?.version !== version) {
+      throw new Error(`Pi closure lock tree must record ${name}@${version}`);
+    }
+  }
+  return { dependencies: expected };
 }
 
 async function resolveInstalledPinnedPackages({ candidates, pins }) {
