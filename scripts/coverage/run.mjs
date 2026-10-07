@@ -52,6 +52,8 @@ const EXCEPTION_KEYS = Object.freeze([
   "expiry", "removalCondition",
 ]);
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
+const MAX_FAILURE_SUMMARY_ENTRIES = 20;
+const MAX_FAILURE_SUMMARY_RANGES = 20;
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -545,6 +547,80 @@ function sumLines(files) {
   }), { count: 0, covered: 0 });
 }
 
+function compactLineRanges(lines) {
+  const ranges = [];
+  for (const line of lines) {
+    const previous = ranges.at(-1);
+    if (previous && line === previous.end + 1) previous.end = line;
+    else ranges.push({ start: line, end: line });
+  }
+  return ranges;
+}
+
+function boundedNames(names, limit = 10) {
+  const unique = [...new Set(names.filter((name) => typeof name === "string" && name.length > 0))].sort();
+  const shown = unique.slice(0, limit);
+  return `${shown.join(",") || "none"}${unique.length > limit ? `,+${unique.length - limit}-more` : ""}`;
+}
+
+function summaryText(value, limit = 240) {
+  const normalized = String(value ?? "unknown").replace(/[\u0000-\u001f\u007f]/gu, "?");
+  return normalized.length <= limit ? normalized : `${normalized.slice(0, limit)}...`;
+}
+
+function formattedRanges(ranges) {
+  const shown = (ranges ?? []).slice(0, MAX_FAILURE_SUMMARY_RANGES)
+    .map(({ start, end }) => start === end ? `${start}` : `${start}-${end}`);
+  const omitted = Math.max(0, (ranges?.length ?? 0) - shown.length);
+  return `${shown.join(",") || "none"}${omitted > 0 ? `,+${omitted}-more` : ""}`;
+}
+
+function measuredLines(lines) {
+  return `${lines?.covered ?? "unknown"}/${lines?.count ?? "unknown"}`;
+}
+
+function requiredLines(lines) {
+  return `${lines?.requiredCovered ?? "unknown"}/${lines?.count ?? "unknown"}`;
+}
+
+export function formatCoverageFailureSummary(evaluation, changedLines) {
+  const absoluteFailures = [];
+  const regressionFailures = [];
+  const changedLineFailures = [];
+  for (const entry of evaluation.packages?.filter(({ status }) => status === "fail") ?? []) {
+    absoluteFailures.push(`failure kind=absolute-package-floor affected=${summaryText(entry.name)} measured=${measuredLines(entry.lines)} required=${entry.requiredCovered}/${entry.lines.count} floor=${entry.floorPercent}% exception=not-eligible`);
+  }
+  if (evaluation.aggregate?.status === "fail") {
+    absoluteFailures.push(`failure kind=absolute-package-floor affected=workspace measured=${measuredLines(evaluation.aggregate.lines)} required=${Math.ceil((evaluation.aggregate.lines.count * evaluation.aggregate.floorPercent) / 100)}/${evaluation.aggregate.lines.count} floor=${evaluation.aggregate.floorPercent}% exception=not-eligible`);
+  }
+  for (const entry of evaluation.baselines?.filter(({ status }) => status === "fail") ?? []) {
+    const affected = boundedNames(entry.packages ?? [entry.scope]);
+    regressionFailures.push(`failure kind=regression affected=${summaryText(affected)} measured=${measuredLines(entry.lines)} required=${requiredLines(entry.lines)} exception=eligible-reviewed-expiring-regression`);
+  }
+  if (changedLines?.status === "fail") {
+    const failingFiles = changedLines.files?.filter(({ status }) => status === "fail") ?? [];
+    const affected = boundedNames(failingFiles.map(({ package: packageName }) => packageName));
+    changedLineFailures.push(`failure kind=changed-lines affected=${summaryText(affected)} measured=${measuredLines(changedLines.lines)} required=${requiredLines(changedLines.lines)} floor=${changedLines.floorPercent}% exception=eligible-reviewed-expiring-changed-lines`);
+    for (const file of failingFiles) {
+      changedLineFailures.push(`failure kind=changed-lines affected=${summaryText(file.package)} file=${summaryText(file.path)} changed-ranges=${formattedRanges(file.changedRanges)} uncovered-ranges=${formattedRanges(file.uncoveredRanges)} measured=${measuredLines(file.lines)} required=${requiredLines(file.lines)} exception=eligible-reviewed-expiring-changed-lines`);
+    }
+  }
+  const groups = [absoluteFailures, regressionFailures, changedLineFailures].filter(({ length }) => length > 0);
+  const failures = groups.flat();
+  const shown = groups.map(([first]) => first);
+  for (const group of groups) {
+    for (const detail of group.slice(1)) {
+      if (shown.length === MAX_FAILURE_SUMMARY_ENTRIES) break;
+      shown.push(detail);
+    }
+  }
+  const prefixed = shown.map((line) => `[coverage] ${line}`);
+  if (failures.length > shown.length) {
+    prefixed.push(`[coverage] failure summary omitted=${failures.length - shown.length} max=${MAX_FAILURE_SUMMARY_ENTRIES}`);
+  }
+  return prefixed.join("\n");
+}
+
 export function evaluateCoverage(policy, reports, {
   packageInventory,
   changedLines = null,
@@ -693,6 +769,7 @@ export function scoreChangedLines(diff, reports, {
       continue;
     }
     const addedLines = [...changed.addedLines].sort((left, right) => left - right);
+    const changedRanges = compactLineRanges(addedLines);
     if (addedLines.length === 0) {
       files.push({
         path: changed.path,
@@ -700,6 +777,9 @@ export function scoreChangedLines(diff, reports, {
         change: changed.change,
         status: "not-applicable",
         lines: { count: 0, covered: 0, requiredCovered: null },
+        changedRanges,
+        executableRanges: [],
+        uncoveredRanges: [],
       });
       continue;
     }
@@ -739,6 +819,9 @@ export function scoreChangedLines(diff, reports, {
       change: changed.change,
       status: count === 0 ? "not-applicable" : covered * 100 >= count * policy.changedLines.floorPercent ? "pass" : "fail",
       lines: { count, covered, requiredCovered },
+      changedRanges,
+      executableRanges: compactLineRanges(intersected),
+      uncoveredRanges: compactLineRanges(intersected.filter((line) => !executable.get(line))),
     });
   }
   if (missingMappings.length > 0) {
@@ -1068,7 +1151,8 @@ export async function runCoverage({
     await writePrivateFile(path.join(reportRoot, "checksums.json"), privateJson(checksums));
     completed = true;
     if (enforce && evaluation.status !== "pass") {
-      throw new Error(`coverage policy enforcement failed; evidence retained at ${normalizedRelativePath(reportRoot, repoRoot)}`);
+      const failureSummary = formatCoverageFailureSummary(evaluation, changedLines);
+      throw new Error(`coverage policy enforcement failed; evidence retained at ${normalizedRelativePath(reportRoot, repoRoot)}${failureSummary ? `\n${failureSummary}` : ""}`);
     }
     return {
       sourceHead: source.sourceHead,

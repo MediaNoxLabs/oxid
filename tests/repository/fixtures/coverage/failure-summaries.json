@@ -1,0 +1,82 @@
+{
+  "absolute-package-floor": {
+    "evaluation": {
+      "aggregate": {
+        "status": "pass",
+        "floorPercent": 70,
+        "lines": { "count": 1000, "covered": 900 }
+      },
+      "packages": [
+        {
+          "name": "oxid-foundation",
+          "status": "fail",
+          "floorPercent": 70,
+          "requiredCovered": 70,
+          "lines": { "count": 100, "covered": 69 }
+        }
+      ],
+      "baselines": []
+    },
+    "changedLines": { "status": "pass" },
+    "expected": [
+      "kind=absolute-package-floor",
+      "affected=oxid-foundation",
+      "measured=69/100",
+      "required=70/100",
+      "exception=not-eligible"
+    ]
+  },
+  "regression": {
+    "evaluation": {
+      "aggregate": { "status": "pass" },
+      "packages": [],
+      "baselines": [
+        {
+          "scope": "headless-host",
+          "status": "fail",
+          "lines": { "count": 100, "covered": 67, "requiredCovered": 70 }
+        }
+      ]
+    },
+    "changedLines": { "status": "pass" },
+    "expected": [
+      "kind=regression",
+      "affected=headless-host",
+      "measured=67/100",
+      "required=70/100",
+      "exception=eligible-reviewed-expiring-regression"
+    ]
+  },
+  "changed-lines": {
+    "evaluation": {
+      "aggregate": { "status": "pass" },
+      "packages": [],
+      "baselines": []
+    },
+    "changedLines": {
+      "status": "fail",
+      "floorPercent": 70,
+      "lines": { "count": 10, "covered": 6, "requiredCovered": 7 },
+      "files": [
+        {
+          "path": "crates/foundation/src/lib.rs",
+          "package": "oxid-foundation",
+          "status": "fail",
+          "lines": { "count": 10, "covered": 6, "requiredCovered": 7 },
+          "changedRanges": [{ "start": 10, "end": 15 }, { "start": 20, "end": 23 }],
+          "uncoveredRanges": [{ "start": 12, "end": 13 }, { "start": 21, "end": 22 }]
+        }
+      ]
+    },
+    "expected": [
+      "kind=changed-lines",
+      "affected=oxid-foundation",
+      "file=crates/foundation/src/lib.rs",
+      "changed-ranges=10-15,20-23",
+      "uncovered-ranges=12-13,21-22",
+      "measured=6/10",
+      "required=7/10",
+      "exception=eligible-reviewed-expiring-changed-lines"
+    ]
+  }
+}
