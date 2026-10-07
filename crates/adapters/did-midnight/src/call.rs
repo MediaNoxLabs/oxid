@@ -23,7 +23,7 @@ use midnight_storage::DefaultDB;
 use midnight_transient_crypto::{commitment::PedersenRandomness, curve::EmbeddedGroupAffine};
 use oxid_identity_application::DidLifecyclePortError;
 use oxid_wallet_application::{
-    GenerateProtectedKeyRequest, WalletDerivedSecretUsePort, WalletHdPath, WalletHdPathComponent,
+    GenerateProtectedKeyRequest, WalletDerivedSecretUsePort, WalletHdPathComponent,
     WalletKeyOperationPort, WalletSecurityPortError,
 };
 use oxid_wallet_domain::{
@@ -34,9 +34,8 @@ use serde::{Deserialize, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, Zeroizing};
 
-const BIP44_PURPOSE: u32 = 44;
-const MIDNIGHT_COIN_TYPE: u32 = 2_400;
-const DID_CONTROLLER_ROLE: u32 = 3;
+use crate::custody::controller_path;
+
 const MAX_CONTRACT_STATE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ZSWAP_STATE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_LEDGER_PARAMETERS_BYTES: usize = 512 * 1024;
@@ -516,24 +515,6 @@ impl MidnightDidCallCompositionPort for NativeMidnightDidCallComposer {
     }
 }
 
-fn controller_path(
-    account_index: u32,
-    controller_index: u32,
-) -> Result<WalletHdPath, DidLifecyclePortError> {
-    let component = |value, hardened| {
-        WalletHdPathComponent::new(value, hardened)
-            .map_err(|_| DidLifecyclePortError::InvalidOperation)
-    };
-    WalletHdPath::new(vec![
-        component(BIP44_PURPOSE, true)?,
-        component(MIDNIGHT_COIN_TYPE, true)?,
-        component(account_index, true)?,
-        component(DID_CONTROLLER_ROLE, false)?,
-        component(controller_index, false)?,
-    ])
-    .map_err(|_| DidLifecyclePortError::InvalidOperation)
-}
-
 fn jubjub_coordinates(
     descriptor: &WalletKeyDescriptor,
 ) -> Result<([u8; 32], [u8; 32]), DidLifecyclePortError> {
@@ -858,6 +839,8 @@ const fn map_security_error(error: WalletSecurityPortError) -> DidLifecyclePortE
 
 #[cfg(test)]
 mod tests {
+    use oxid_wallet_application::WalletHdPath;
+
     use super::*;
 
     struct UnreachableCustody;

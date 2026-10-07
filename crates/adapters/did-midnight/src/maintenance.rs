@@ -22,21 +22,23 @@ use midnight_storage::{DefaultDB, storage::HashMap as LedgerHashMap};
 use midnight_transient_crypto::{commitment::PedersenRandomness, proofs::VerifierKey};
 use oxid_identity_application::DidLifecyclePortError;
 use oxid_wallet_application::{
-    WalletDerivedSecretUsePort, WalletHdPath, WalletHdPathComponent, WalletSecurityPortError,
+    WalletDerivedSecretUsePort, WalletHdPathComponent, WalletSecurityPortError,
 };
 use oxid_wallet_domain::WalletProfileId;
-use rand::{SeedableRng, rngs::StdRng};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
-const BIP44_PURPOSE: u32 = 44;
-const MIDNIGHT_COIN_TYPE: u32 = 2_400;
-const NIGHT_EXTERNAL_ROLE: u32 = 0;
-const DEFAULT_KEY_INDEX: u32 = 0;
+use crate::{
+    custody::{maintenance_path, replay_randomness_path},
+    protected_randomness::{ProtectedDeterministicRng, derive_seed},
+};
+
 const MAINTENANCE_SEGMENT: u16 = 1;
 const MAX_ENTRY_POINT_BYTES: usize = 256;
 const MAX_VERIFIER_KEY_BYTES: usize = 16 * 1024 * 1024;
 const MAX_TRANSACTION_BYTES: usize = 32 * 1024 * 1024;
+const MAINTENANCE_SIGNATURE_DOMAIN: &[u8] = b"oxid:did-maintenance:schnorr-rng:v1";
+const MAINTENANCE_INTENT_DOMAIN: &[u8] = b"oxid:did-maintenance:intent-rng:v1";
 
 type LedgerTransaction = Transaction<
     midnight_base_crypto::schnorr::Signature,
@@ -55,7 +57,7 @@ pub struct NativeMidnightDidMaintenanceRequest {
     verifier_key: Zeroizing<Vec<u8>>,
     maintenance_counter: u32,
     expires_at_millis: u64,
-    composition_seed: [u8; 32],
+    replay_recipe: [u8; 32],
 }
 
 impl fmt::Debug for NativeMidnightDidMaintenanceRequest {
@@ -70,7 +72,7 @@ impl fmt::Debug for NativeMidnightDidMaintenanceRequest {
             .field("verifier_key_bytes", &self.verifier_key.len())
             .field("maintenance_counter", &self.maintenance_counter)
             .field("expires_at_millis", &self.expires_at_millis)
-            .field("composition_seed", &"[PUBLIC RANDOM INPUT]")
+            .field("replay_recipe", &"[PUBLIC REPLAY RECIPE]")
             .finish()
     }
 }
@@ -86,7 +88,7 @@ impl NativeMidnightDidMaintenanceRequest {
         verifier_key: Zeroizing<Vec<u8>>,
         maintenance_counter: u32,
         expires_at_millis: u64,
-        composition_seed: [u8; 32],
+        replay_recipe: [u8; 32],
     ) -> Result<Self, DidLifecyclePortError> {
         let network_id = network_id.into();
         let entry_point = entry_point.into();
@@ -112,7 +114,7 @@ impl NativeMidnightDidMaintenanceRequest {
             verifier_key,
             maintenance_counter,
             expires_at_millis,
-            composition_seed,
+            replay_recipe,
         })
     }
 }
@@ -200,25 +202,36 @@ impl NativeMidnightDidMaintenanceComposer {
             MaintenanceUpdate::new(address, vec![single], request.maintenance_counter);
         let payload = update.data_to_sign();
         let path = maintenance_path(request.account_index)?;
+        let replay_path = replay_randomness_path(request.account_index)?;
+        let mut protected_seeds = None;
+        self.custody
+            .use_derived_secret(&request.profile_id, &replay_path, &mut |secret| {
+                protected_seeds = Some((
+                    derive_seed(secret, MAINTENANCE_SIGNATURE_DOMAIN, &request.replay_recipe)?,
+                    derive_seed(secret, MAINTENANCE_INTENT_DOMAIN, &request.replay_recipe)?,
+                ));
+                Ok(())
+            })
+            .map_err(map_security_error)?;
+        let (signing_seed, intent_seed) =
+            protected_seeds.ok_or(DidLifecyclePortError::ProtectionUnavailable)?;
         let mut signed = None;
-        let mut signing_seed = request.composition_seed;
-        signing_seed[0] ^= 0x5a;
+        let mut signing_rng = ProtectedDeterministicRng::new(signing_seed);
         self.custody
             .use_derived_secret(&request.profile_id, &path, &mut |secret| {
                 let signing_key = SigningKey::from_bytes(secret)
                     .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
-                let mut rng = StdRng::from_seed(signing_seed);
                 signed = Some(
                     update
                         .clone()
-                        .add_signature(0, signing_key.sign(&mut rng, &payload)),
+                        .add_signature(0, signing_key.sign(&mut signing_rng, &payload)),
                 );
                 Ok(())
             })
             .map_err(map_security_error)?;
         let signed = signed.ok_or(DidLifecyclePortError::ProtectionUnavailable)?;
 
-        let mut intent_rng = StdRng::from_seed(request.composition_seed);
+        let mut intent_rng = ProtectedDeterministicRng::new(intent_seed);
         let intent = Intent::empty(
             &mut intent_rng,
             Timestamp::from_secs(request.expires_at_millis / 1_000),
@@ -249,21 +262,6 @@ impl NativeMidnightDidMaintenanceComposer {
     }
 }
 
-fn maintenance_path(account_index: u32) -> Result<WalletHdPath, DidLifecyclePortError> {
-    let component = |value, hardened| {
-        WalletHdPathComponent::new(value, hardened)
-            .map_err(|_| DidLifecyclePortError::InvalidOperation)
-    };
-    WalletHdPath::new(vec![
-        component(BIP44_PURPOSE, true)?,
-        component(MIDNIGHT_COIN_TYPE, true)?,
-        component(account_index, true)?,
-        component(NIGHT_EXTERNAL_ROLE, false)?,
-        component(DEFAULT_KEY_INDEX, false)?,
-    ])
-    .map_err(|_| DidLifecyclePortError::InvalidOperation)
-}
-
 const fn map_security_error(error: WalletSecurityPortError) -> DidLifecyclePortError {
     match error {
         WalletSecurityPortError::Locked => DidLifecyclePortError::Locked,
@@ -283,6 +281,8 @@ const fn map_security_error(error: WalletSecurityPortError) -> DidLifecyclePortE
 
 #[cfg(test)]
 mod tests {
+    use oxid_wallet_application::WalletHdPath;
+
     use super::*;
 
     fn request(
@@ -337,5 +337,23 @@ mod tests {
             [1; 32],
         );
         assert_eq!(invalid, Err(DidLifecyclePortError::InvalidOperation));
+    }
+
+    #[test]
+    fn schnorr_and_intent_randomness_are_domain_separated_and_secret_bound() {
+        let public_recipe = [0x42; 32];
+        let signing =
+            derive_seed(&[7; 32], MAINTENANCE_SIGNATURE_DOMAIN, &public_recipe).expect("signing");
+        let signing_replay =
+            derive_seed(&[7; 32], MAINTENANCE_SIGNATURE_DOMAIN, &public_recipe).expect("replay");
+        let intent =
+            derive_seed(&[7; 32], MAINTENANCE_INTENT_DOMAIN, &public_recipe).expect("intent");
+        let other_custody = derive_seed(&[8; 32], MAINTENANCE_SIGNATURE_DOMAIN, &public_recipe)
+            .expect("other custody");
+
+        assert_eq!(*signing, *signing_replay);
+        assert_ne!(*signing, *intent);
+        assert_ne!(*signing, *other_custody);
+        assert_ne!(*signing, public_recipe);
     }
 }

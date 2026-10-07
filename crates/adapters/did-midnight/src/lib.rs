@@ -13,11 +13,15 @@ mod call;
 #[cfg(not(target_arch = "wasm32"))]
 mod compact_artifacts;
 #[cfg(not(target_arch = "wasm32"))]
+mod custody;
+#[cfg(not(target_arch = "wasm32"))]
 mod deployment;
 mod lifecycle;
 #[cfg(not(target_arch = "wasm32"))]
 mod maintenance;
 mod offchain;
+#[cfg(not(target_arch = "wasm32"))]
+mod protected_randomness;
 
 #[cfg(all(
     feature = "tailnet-test-did-publication",

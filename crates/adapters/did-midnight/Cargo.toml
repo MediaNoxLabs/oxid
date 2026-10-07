@@ -19,6 +19,7 @@ base64.workspace = true
 blake2.workspace = true
 futures.workspace = true
 hex.workspace = true
+hmac.workspace = true
 midnight-base-crypto.workspace = true
 midnight-coin-structure.workspace = true
 midnight-ledger.workspace = true

@@ -32,20 +32,21 @@ use midnight_transient_crypto::{commitment::PedersenRandomness, fab::ValueReprAl
 use oxid_identity_application::DidLifecyclePortError;
 use oxid_identity_domain::{MidnightDid, MidnightNetwork};
 use oxid_wallet_application::{
-    WalletDerivedSecretUsePort, WalletHdPath, WalletHdPathComponent, WalletSecurityPortError,
+    WalletDerivedSecretUsePort, WalletHdPathComponent, WalletSecurityPortError,
 };
 use oxid_wallet_domain::WalletProfileId;
-use rand::{SeedableRng, rngs::StdRng};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
-const BIP44_PURPOSE: u32 = 44;
-const MIDNIGHT_COIN_TYPE: u32 = 2_400;
-const NIGHT_EXTERNAL_ROLE: u32 = 0;
-const DID_CONTROLLER_ROLE: u32 = 3;
-const DEFAULT_KEY_INDEX: u32 = 0;
+use crate::{
+    custody::{controller_path, maintenance_path, replay_randomness_path},
+    protected_randomness::{ProtectedDeterministicRng, derive_seed},
+};
+
 const DEPLOY_SEGMENT: u16 = 1;
 const MAX_TRANSACTION_BYTES: usize = 16 * 1024 * 1024;
+const DEPLOY_NONCE_DOMAIN: &[u8] = b"oxid:did-deploy:contract-nonce:v1";
+const DEPLOY_INTENT_DOMAIN: &[u8] = b"oxid:did-deploy:intent-rng:v1";
 
 type LedgerTransaction = Transaction<
     midnight_base_crypto::schnorr::Signature,
@@ -56,9 +57,9 @@ type LedgerTransaction = Transaction<
 
 /// Stable inputs that must be journaled before a deployment is submitted.
 ///
-/// The nonce and composition seed are random public composition inputs, not
-/// controller material. Reusing them after a crash reproduces the same DID and
-/// exact unproven transaction without exposing a protected secret.
+/// The recipes are public journal inputs, not randomness. Custody combines
+/// them with the dedicated protected replay role so a crash reproduces the
+/// exact transaction without making its nonce or intent randomness public.
 #[derive(Clone, PartialEq, Eq)]
 pub struct NativeMidnightDidDeploymentRequest {
     profile_id: WalletProfileId,
@@ -68,8 +69,8 @@ pub struct NativeMidnightDidDeploymentRequest {
     controller_index: u32,
     created_at_millis: u64,
     expires_at_millis: u64,
-    nonce: [u8; 32],
-    composition_seed: [u8; 32],
+    nonce_recipe: [u8; 32],
+    intent_recipe: [u8; 32],
 }
 
 impl fmt::Debug for NativeMidnightDidDeploymentRequest {
@@ -83,8 +84,8 @@ impl fmt::Debug for NativeMidnightDidDeploymentRequest {
             .field("controller_index", &self.controller_index)
             .field("created_at_millis", &self.created_at_millis)
             .field("expires_at_millis", &self.expires_at_millis)
-            .field("nonce", &"[PUBLIC RANDOM INPUT]")
-            .field("composition_seed", &"[PUBLIC RANDOM INPUT]")
+            .field("nonce_recipe", &"[PUBLIC REPLAY RECIPE]")
+            .field("intent_recipe", &"[PUBLIC REPLAY RECIPE]")
             .finish()
     }
 }
@@ -99,8 +100,8 @@ impl NativeMidnightDidDeploymentRequest {
         controller_index: u32,
         created_at_millis: u64,
         expires_at_millis: u64,
-        nonce: [u8; 32],
-        composition_seed: [u8; 32],
+        nonce_recipe: [u8; 32],
+        intent_recipe: [u8; 32],
     ) -> Result<Self, DidLifecyclePortError> {
         let network_id = network_id.into();
         if matches!(network, MidnightNetwork::Offchain)
@@ -122,8 +123,8 @@ impl NativeMidnightDidDeploymentRequest {
             controller_index,
             created_at_millis,
             expires_at_millis,
-            nonce,
-            composition_seed,
+            nonce_recipe,
+            intent_recipe,
         })
     }
 }
@@ -202,8 +203,9 @@ impl NativeMidnightDidDeploymentComposer {
         &self,
         request: &NativeMidnightDidDeploymentRequest,
     ) -> Result<NativeMidnightDidDeploymentPlan, DidLifecyclePortError> {
-        let controller_path = did_controller_path(request.account_index, request.controller_index)?;
+        let controller_path = controller_path(request.account_index, request.controller_index)?;
         let maintenance_path = maintenance_path(request.account_index)?;
+        let replay_path = replay_randomness_path(request.account_index)?;
 
         let mut controller_public_key = None;
         self.custody
@@ -227,48 +229,83 @@ impl NativeMidnightDidDeploymentComposer {
         let maintenance_key =
             maintenance_key.ok_or(DidLifecyclePortError::ProtectionUnavailable)?;
 
-        let deploy = compose_deploy(
-            controller_public_key,
-            request.created_at_millis,
-            request.nonce,
-            vec![maintenance_key],
-        );
-        let address = deploy.address().0.0;
-        let did = MidnightDid::parse(format!(
-            "did:midnight:{}:{}",
-            request.network.as_str(),
-            hex::encode(address)
-        ))
-        .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
-
-        let mut rng = StdRng::from_seed(request.composition_seed);
-        let ttl = Timestamp::from_secs(request.expires_at_millis / 1_000);
-        let intent = Intent::empty(&mut rng, ttl).add_deploy(deploy);
-        let mut intents = LedgerHashMap::new();
-        intents = intents.insert(DEPLOY_SEGMENT, intent);
-        let transaction = LedgerTransaction::Standard(StandardTransaction::new(
-            &request.network_id,
-            intents,
-            None,
-            LedgerHashMap::new(),
-        ));
-        let mut encoded = Zeroizing::new(Vec::new());
-        midnight_serialize::tagged_serialize(&transaction, &mut *encoded)
-            .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
-        if encoded.is_empty() || encoded.len() > MAX_TRANSACTION_BYTES {
-            return Err(DidLifecyclePortError::InvalidOperation);
+        let mut result = None;
+        let mut composition_error = None;
+        self.custody
+            .use_derived_secret(&request.profile_id, &replay_path, &mut |secret| {
+                match compose_with_protected_randomness(
+                    request,
+                    controller_public_key,
+                    maintenance_key.clone(),
+                    secret,
+                ) {
+                    Ok(plan) => result = Some(plan),
+                    Err(error) => {
+                        composition_error = Some(error);
+                        return Err(WalletSecurityPortError::InvalidOperation);
+                    }
+                }
+                Ok(())
+            })
+            .map_err(map_security_error)?;
+        if let Some(error) = composition_error {
+            return Err(error);
         }
-        let planning_fingerprint = Sha256::digest(encoded.as_slice()).into();
-
-        Ok(NativeMidnightDidDeploymentPlan {
-            profile_id: request.profile_id.as_str().to_owned(),
-            network_id: request.network_id.clone(),
-            did,
-            expires_at_seconds: request.expires_at_millis / 1_000,
-            planning_fingerprint,
-            transaction: encoded,
-        })
+        result.ok_or(DidLifecyclePortError::ProtectionUnavailable)
     }
+}
+
+fn compose_with_protected_randomness(
+    request: &NativeMidnightDidDeploymentRequest,
+    controller_public_key: [u8; 32],
+    maintenance_key: VerifyingKey,
+    replay_secret: &[u8; 32],
+) -> Result<NativeMidnightDidDeploymentPlan, DidLifecyclePortError> {
+    let nonce = derive_seed(replay_secret, DEPLOY_NONCE_DOMAIN, &request.nonce_recipe)
+        .map_err(map_security_error)?;
+    let intent_seed = derive_seed(replay_secret, DEPLOY_INTENT_DOMAIN, &request.intent_recipe)
+        .map_err(map_security_error)?;
+    let deploy = compose_deploy(
+        controller_public_key,
+        request.created_at_millis,
+        *nonce,
+        vec![maintenance_key],
+    );
+    let address = deploy.address().0.0;
+    let did = MidnightDid::parse(format!(
+        "did:midnight:{}:{}",
+        request.network.as_str(),
+        hex::encode(address)
+    ))
+    .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+
+    let mut rng = ProtectedDeterministicRng::new(intent_seed);
+    let ttl = Timestamp::from_secs(request.expires_at_millis / 1_000);
+    let intent = Intent::empty(&mut rng, ttl).add_deploy(deploy);
+    let mut intents = LedgerHashMap::new();
+    intents = intents.insert(DEPLOY_SEGMENT, intent);
+    let transaction = LedgerTransaction::Standard(StandardTransaction::new(
+        &request.network_id,
+        intents,
+        None,
+        LedgerHashMap::new(),
+    ));
+    let mut encoded = Zeroizing::new(Vec::new());
+    midnight_serialize::tagged_serialize(&transaction, &mut *encoded)
+        .map_err(|_| DidLifecyclePortError::InvalidOperation)?;
+    if encoded.is_empty() || encoded.len() > MAX_TRANSACTION_BYTES {
+        return Err(DidLifecyclePortError::InvalidOperation);
+    }
+    let planning_fingerprint = Sha256::digest(encoded.as_slice()).into();
+
+    Ok(NativeMidnightDidDeploymentPlan {
+        profile_id: request.profile_id.as_str().to_owned(),
+        network_id: request.network_id.clone(),
+        did,
+        expires_at_seconds: request.expires_at_millis / 1_000,
+        planning_fingerprint,
+        transaction: encoded,
+    })
 }
 
 fn controller_public_key_for(secret: &[u8; 32]) -> [u8; 32] {
@@ -282,36 +319,6 @@ fn controller_public_key_for(secret: &[u8; 32]) -> [u8; 32] {
     let mut writer = PersistentHashWriter::default();
     ValueReprAlignedValue(input).binary_repr(&mut writer);
     writer.finalize().0
-}
-
-fn did_controller_path(
-    account_index: u32,
-    controller_index: u32,
-) -> Result<WalletHdPath, DidLifecyclePortError> {
-    hd_path(account_index, DID_CONTROLLER_ROLE, controller_index)
-}
-
-fn maintenance_path(account_index: u32) -> Result<WalletHdPath, DidLifecyclePortError> {
-    hd_path(account_index, NIGHT_EXTERNAL_ROLE, DEFAULT_KEY_INDEX)
-}
-
-fn hd_path(
-    account_index: u32,
-    role: u32,
-    index: u32,
-) -> Result<WalletHdPath, DidLifecyclePortError> {
-    let component = |value, hardened| {
-        WalletHdPathComponent::new(value, hardened)
-            .map_err(|_| DidLifecyclePortError::InvalidOperation)
-    };
-    WalletHdPath::new(vec![
-        component(BIP44_PURPOSE, true)?,
-        component(MIDNIGHT_COIN_TYPE, true)?,
-        component(account_index, true)?,
-        component(role, false)?,
-        component(index, false)?,
-    ])
-    .map_err(|_| DidLifecyclePortError::InvalidOperation)
 }
 
 fn compose_deploy(
@@ -405,18 +412,27 @@ const fn map_security_error(error: WalletSecurityPortError) -> DidLifecyclePortE
 mod tests {
     use std::sync::Mutex;
 
-    use oxid_wallet_application::WalletDerivedSecretUsePort;
+    use oxid_wallet_application::{WalletDerivedSecretUsePort, WalletHdPath};
 
     use super::*;
 
     struct RecordingCustody {
         paths: Mutex<Vec<WalletHdPath>>,
+        replay_secret: [u8; 32],
     }
 
     impl RecordingCustody {
         fn new() -> Self {
             Self {
                 paths: Mutex::new(Vec::new()),
+                replay_secret: [11; 32],
+            }
+        }
+
+        fn with_replay_secret(replay_secret: [u8; 32]) -> Self {
+            Self {
+                paths: Mutex::new(Vec::new()),
+                replay_secret,
             }
         }
     }
@@ -430,8 +446,14 @@ mod tests {
         ) -> Result<(), WalletSecurityPortError> {
             self.paths.lock().expect("paths").push(path.clone());
             let role = path.components()[3].index();
-            let secret = if role == DID_CONTROLLER_ROLE {
+            let controller_role =
+                controller_path(0, 0).expect("controller path").components()[3].index();
+            let replay_role =
+                replay_randomness_path(0).expect("replay path").components()[3].index();
+            let secret = if role == controller_role {
                 [7_u8; 32]
+            } else if role == replay_role {
+                self.replay_secret
             } else {
                 [9_u8; 32]
             };
@@ -471,7 +493,7 @@ mod tests {
             second.into_transaction().as_slice(),
             first_transaction.as_slice()
         );
-        assert_eq!(custody.paths.lock().expect("paths").len(), 4);
+        assert_eq!(custody.paths.lock().expect("paths").len(), 6);
     }
 
     #[test]
@@ -483,9 +505,26 @@ mod tests {
 
         let _ = composer.compose(&request).expect("plan");
         let paths = custody.paths.lock().expect("paths");
-        assert_eq!(paths[0].components()[3].index(), DID_CONTROLLER_ROLE);
-        assert_eq!(paths[0].components()[4].index(), 8);
-        assert_eq!(paths[1].components()[3].index(), NIGHT_EXTERNAL_ROLE);
+        assert_eq!(paths[0], controller_path(2, 8).expect("controller path"));
+        assert_eq!(paths[1], maintenance_path(2).expect("maintenance path"));
+        assert_eq!(paths[2], replay_randomness_path(2).expect("replay path"));
+    }
+
+    #[test]
+    fn public_replay_recipe_requires_the_same_protected_randomness_secret() {
+        let first = NativeMidnightDidDeploymentComposer::new(Arc::new(
+            RecordingCustody::with_replay_secret([11; 32]),
+        ))
+        .compose(&request())
+        .expect("first");
+        let second = NativeMidnightDidDeploymentComposer::new(Arc::new(
+            RecordingCustody::with_replay_secret([12; 32]),
+        ))
+        .compose(&request())
+        .expect("second");
+
+        assert_ne!(first.did(), second.did());
+        assert_ne!(first.planning_fingerprint(), second.planning_fingerprint());
     }
 
     #[test]
