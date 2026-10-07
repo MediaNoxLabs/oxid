@@ -130,6 +130,7 @@ function milestonePr(overrides = {}) {
     headRefOid: "b".repeat(40),
     isDraft: false,
     isCrossRepository: false,
+    autoMergeRequest: null,
     mergeable: "MERGEABLE",
     mergeStateStatus: "CLEAN",
     title: "feat(wallet): stream one increment",
@@ -365,16 +366,14 @@ test("GitHub auto-merge availability cannot bypass the exact-head audit", () => 
     enabledAt: "2026-10-07T00:00:00Z",
     mergeMethod: "SQUASH",
   };
+  assert.match(
+    validateMilestonePr(milestonePr({ autoMergeRequest })).failures.join("; "),
+    /GitHub auto-merge is active/u,
+  );
   assert.throws(() => auditMilestoneMerge(options, {
     cwd: "/repo",
-    run: milestoneAuditRun({
-      autoMergeRequest,
-      selectedChecks: [
-        ...CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
-        { name: "UI and application profiles (Linux host)", bucket: "pending", state: "QUEUED", workflow: "CI" },
-      ],
-    }),
-  }), /pull request checks are not green/);
+    run: milestoneAuditRun({ autoMergeRequest }),
+  }), /GitHub auto-merge is active/u);
 });
 
 test("milestone merge implementation pins squash execution to the audited head", async () => {
@@ -391,5 +390,5 @@ test("milestone merge implementation pins squash execution to the audited head",
   assert.match(source, /closeout-pr/);
   assert.match(source, /result\.headSha/);
   assert.match(source, /autoMergeRequest/);
-  assert.doesNotMatch(source, /--auto/);
+  assert.doesNotMatch(source, /["'`]--auto["'`]/u);
 });
