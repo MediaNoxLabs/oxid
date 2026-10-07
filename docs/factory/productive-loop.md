@@ -9,14 +9,14 @@ not.
 
 ## Service levels and hard bounds
 
-- A direction-review result should take at most 10 minutes.
+- A draft-direction result should take at most 10 minutes.
 - A routine PR should be merge-ready in 35–60 minutes of elapsed time.
 - One review agent is the routine default and one automatic review/fix round is
   the limit. A second opinion requires high risk, a disputed finding, or an
   explicit owner request.
 - Only one PR candidate is auto-driven remotely by each parent session. One
   top-level `/dev-loop` invocation dispatches exactly one tracked implementation
-  child and stops after its pushed review-ready-PR checkpoint. It never auto-resumes
+  child and stops after its pushed draft-PR checkpoint. It never auto-resumes
   or launches review, pre-approval, or CI-only children.
 - Keep at most two active managed delivery worktrees per Git common checkout
   on a host. An experiment may use a temporary third worktree only when its
@@ -135,8 +135,11 @@ ledger and PR comment without blocking a clean verdict.
 
 ## One candidate, two checkpoints
 
-1. Record the reversibility-first complexity class, then resolve exactly one
-   delivery base. Product work uses its criteria-backed
+1. Record the reversibility-first complexity class. Before worktree creation or
+   model dispatch, factory admission requires an implementation surface, stable
+   semantic AC / DoD matrix rows (each containing the stable identifier,
+   concrete criterion, and completion evidence), verification commands, size,
+   one delivery target, and non-goals. Product work uses its criteria-backed
    `origin/milestone-<x.y.z>`; factory work may use `origin/develop`. Start
    from that fetched ref in a dedicated worktree. Run
    `node scripts/worktree-lifecycle.mjs audit` before creating another.
@@ -146,9 +149,13 @@ ledger and PR comment without blocking a clean verdict.
    records a justified no-demo impact. The inventory CLI is read-only; an
    explicit `/scenario prepare` request delegates bounded preparation to the
    active agent under the existing authority and resource-ownership rules.
-3. Keep direction review outside the implementation invocation. The persistent
-   supervisor owns focused review and any resulting explicit retry; no Pi child
-   chains into a reviewer.
+3. Keep draft review outside the implementation invocation. The persistent
+   supervisor owns focused review, canonical fan-in, and any resulting explicit
+   retry; no Pi child chains into a reviewer. Implementation-child dispatches
+   carry an explicit `oxid.dev-loop-admission/1` extension binding whose phase
+   is `implementation`; `draft_gate` and `preApproval` are rejected at admission
+   rather than classified from prompts. The binding uses the supported bounded
+   `pi-subagents` `extensionBindings` channel, not a new top-level tool field.
 4. Run the target planner locally against the intended base and head:
 
    ```bash
@@ -170,9 +177,7 @@ ledger and PR comment without blocking a clean verdict.
    or focused commands are rejected. Do not run a pre-commit full gate plus a
    second full receipt. An unchanged-head review/checkpoint verifies the same
    gate ID without a command. Hosted CI owns wider affected unit, headless, UI,
-   coverage, and Nix fan-out. Push one coherent candidate and open the PR ready
-   for review. Do not create a draft and later mark the unchanged head ready;
-   the transition admits a second competing hosted CI run.
+   coverage, and Nix fan-out. Push one coherent candidate and open the draft PR.
    Do not push after each finding; every push cancels CI and stales exact-head
    evidence.
 6. The implementation child stops. The persistent supervisor runs one focused
@@ -243,20 +248,6 @@ current directory and runs tracked preflight, routing, and validation scripts
 from that active worktree. `--git-common-dir` is used only for topology and
 shared private storage; a stale primary checkout must never replace the active
 worktree's tracked policy.
-
-The repository-owned `tmp/worktrees/dev-loops/issue-<n>` checkout remains the
-default Pi delivery location. A `/dev-loop` started from a Codex Desktop
-worktree may reuse that checkout instead of creating a duplicate only when the
-invocation checkout itself is registered in the repository's Git worktree
-topology, is exactly one `<desktop-id>/<repository>` below
-`~/.codex/worktrees`, is clean, has the exact conventional `type/issue-<n>`
-branch for the requested issue, and records an allowed `origin/develop` or
-`origin/milestone-x.y.z` delivery base that is an ancestor of `HEAD`. A main
-checkout cannot nominate an arbitrary Desktop path, and a dirty, stale,
-misnamed, unregistered, nested, or delivery-base-mismatched checkout fails
-closed before Pi dispatch. Codex Desktop remains the lifecycle owner for these
-external worktrees; archive them through the app after their exact PR is
-merged rather than teaching repository cleanup to delete app-managed paths.
 
 Rust targets stay worktree-local. Compilation is reused through one bounded 10 GiB
 `sccache`, so an old target can be deleted without paying the entire historical

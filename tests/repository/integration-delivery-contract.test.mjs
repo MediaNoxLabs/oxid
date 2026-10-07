@@ -6,11 +6,18 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  auditDevelopMerge,
   closingIssueNumber,
   parseMergeDevelopArgs,
   validatePrForDevelopMerge,
   validateRequiredChecks,
 } from "../../scripts/github/merge-develop-pr.mjs";
+import {
+  authorizeReview,
+  buildReviewControlComment,
+  freezeReview,
+  initialReviewControl,
+} from "../../scripts/github/review-control.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (relativePath) => readFile(path.join(repoRoot, relativePath), "utf8");
@@ -82,6 +89,41 @@ test("required checks include a passing signature and DCO gate", () => {
   assert.equal(validateRequiredChecks([]).ok, false);
   assert.equal(validateRequiredChecks(passing.map((check) => ({ ...check, bucket: "pending" }))).ok, false);
   assert.equal(validateRequiredChecks([{ name: "Repository gate", bucket: "pass", state: "SUCCESS" }]).ok, false);
+});
+
+function developAuditRun({
+  localBase = "c".repeat(40),
+  reReadBase = localBase,
+} = {}) {
+  const pr = eligibleDevelopPr();
+  const control = {
+    body: buildReviewControlComment(freezeReview(
+      authorizeReview(initialReviewControl(pr.headRefOid), { headSha: pr.headRefOid }),
+      { headSha: pr.headRefOid, disposition: "clean" },
+    )),
+    user: { login: "yshyn-iohk" },
+  };
+  let baseReads = 0;
+  return (command, args) => {
+    if (command === "git" && args[0] === "rev-parse" && args[1] === "--show-toplevel") return "/repo\n";
+    if (command === "git" && args[0] === "rev-parse") return `${baseReads++ === 0 ? localBase : reReadBase}\n`;
+    if (command === "git" || command === process.execPath) return "";
+    if (args[0] === "pr" && args[1] === "view" && args.at(-1).includes("state,")) return JSON.stringify(pr);
+    if (args[0] === "pr" && args[1] === "view") return JSON.stringify({ baseRefName: "develop", headRefOid: pr.headRefOid });
+    if (args[0] === "issue") return JSON.stringify({ state: "OPEN", body: "A sufficiently detailed backing issue problem statement." });
+    if (args[0] === "pr" && args[1] === "checks") return JSON.stringify([{ name: "Verify commit sign-offs", bucket: "pass", state: "SUCCESS" }]);
+    if (args[0] === "api") return JSON.stringify([[control]]);
+    throw new Error(`unexpected command ${command} ${args.join(" ")}`);
+  };
+}
+
+test("develop audit accepts an advanced current base and rejects final base drift", () => {
+  const options = { repo: "MediaNoxLabs/oxid", pr: 168, execute: false };
+  assert.equal(auditDevelopMerge(options, { cwd: "/repo", run: developAuditRun() }).baseSha, "c".repeat(40));
+  assert.throws(() => auditDevelopMerge(options, {
+    cwd: "/repo",
+    run: developAuditRun({ reReadBase: "d".repeat(40) }),
+  }), /base changed during the merge audit/);
 });
 
 test("legacy develop wrapper retains exact-head audit but cannot execute a merge", async () => {
@@ -160,9 +202,10 @@ test("documentation links preserve the PR context while probing only weekly or o
   assert.match(links, /^  workflow_dispatch: \{\}$/m);
   assert.match(links, /^  schedule:\n    - cron: "30 4 \* \* 0"$/m);
   assert.match(links, /name: Check documentation links\n    if: github\.event_name == 'pull_request'/);
-  assert.match(links, /name: Check documentation links\n    if: github\.event_name != 'pull_request'/);
-  assert.match(links, /nix develop \.#docs --command node scripts\/docs\/check-links\.mjs/);
-  assert.doesNotMatch(links, /--candidate/);
+  assert.match(links, /nix develop \.#docs --command node scripts\/docs\/check-links\.mjs --candidate/);
+  assert.doesNotMatch(links, /Defer outbound link probes|echo "Documentation link probes/);
+  assert.match(links, /name: Probe outbound documentation links\n    if: github\.event_name != 'pull_request'/);
+  assert.match(links, /nix develop \.#docs --command node scripts\/docs\/check-links\.mjs\n/);
 });
 
 test("Pages builds and publishes only from main", async () => {
@@ -352,13 +395,6 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(ci, /^  repository_gate:$/m);
   assert.match(ci, /^  locked_nix_gate:$/m);
   assert.match(ci, /name: Basic gate \(policy, lint, compile\)[\s\S]*?timeout-minutes: 5/);
-  const basicJob = ci.slice(ci.indexOf("\n  basic:\n    name:"), ci.indexOf("\n  unit_linux:\n    name:"));
-  assert.match(basicJob, /name: Install repository gate tools[\s\S]*apt-get install --no-install-recommends --yes ripgrep/);
-  assert.ok(
-    basicJob.indexOf("name: Install repository gate tools") <
-      basicJob.indexOf("name: Run policy and harness contracts"),
-    "the repository-only Basic gate must provide rg before running strict contracts",
-  );
   assert.match(ci, /name: Unit tests \(Linux host\)[\s\S]*?timeout-minutes: 18/);
   assert.match(ci, /name: Headless integration tests \(Linux host\)[\s\S]*?timeout-minutes: 10/);
   assert.match(ci, /name: UI and application profiles \(Linux host\)[\s\S]*?timeout-minutes: 25/);
@@ -380,12 +416,6 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(unitJob, /trustedTrainPush[\s\S]*refs\/heads\/milestone-[\s\S]*SCCACHE_GHA_RW_MODE[\s\S]*READ_WRITE[\s\S]*READ_ONLY/);
   assert.match(ciShells, /export CARGO_INCREMENTAL="''\$\{CARGO_INCREMENTAL:-0\}"/);
   assert.match(ciShells, /devShells\.ci-quality = pkgs\.mkShell/);
-  const coverageShell = ciShells.slice(
-    ciShells.indexOf("devShells.ci-coverage = pkgs.mkShell"),
-    ciShells.indexOf("devShells.ci-quality = pkgs.mkShell"),
-  );
-  assert.match(coverageShell, /OXID_MIDNIGHT_DID_ARTIFACTS_DIR=\$\{self'\.packages\.midnight-did-compact-artifacts\}/);
-  assert.match(coverageShell, /OXID_MIDNIGHT_DID_CALL_COMPOSER=\$\{self'\.packages\.midnight-did-call-composer\}\/bin\/oxid-midnight-did-call-composer/);
   assert.match(sccacheRunner, /"\$@" \|\| command_status=\$\?/);
   assert.match(sccacheRunner, /sccache --show-stats \|\| true/);
   assert.match(sccacheRunner, /write-error counters are expected for rejected local puts/);

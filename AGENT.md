@@ -30,9 +30,7 @@ index points to it; it is not a required read for unrelated work.
 - Name issue-backed branches `<type>/issue-<number>`, where `type` is the
   Conventional Commit type that will lead the pull-request title. Do not add a
   descriptive suffix.
-- Target the PR at its recorded delivery base. After the exact-head local gate,
-  open it ready for review; do not create a draft and then trigger a second CI
-  run by marking the unchanged head ready. Stacked children
+- Target the PR at its recorded delivery base. Start as draft. Stacked children
   may temporarily target their parent branch but retain the same final target.
 - Automation may merge an issue-backed PR only to a matching
   `milestone-<x.y.z>` branch, through the guarded milestone wrapper, after its
@@ -91,13 +89,13 @@ Follow [the productive loop](docs/factory/productive-loop.md):
   hypothesis: basic plus explicitly relevant focused checks, at most one
   reviewer, no push/PR/hosted-CI wait, and no merge-readiness claim.
 - `/dev-loop production-ready issue <n>` selects the affected-target
-  implementation through a pushed review-ready PR and exact-head local-gate receipt.
+  implementation through a pushed draft PR and exact-head local-gate receipt.
   It is the default when no profile is named; external supervision owns later
   review, CI, and pre-approval.
 - One top-level `/dev-loop` invocation dispatches the tracked `dev-loop` agent
   as its only implementation child. That child edits, runs focused validation,
   creates the signed commit, runs or reuses one exact-head local gate, pushes,
-  opens the review-ready PR, and stops. It cannot dispatch nested children. The
+  opens the draft PR, and stops. It cannot dispatch nested children. The
   supervisor must explicitly approve any write outside the active repository;
   issue-backed Oxid delivery authority does not extend to external repositories.
 - Never wrap `/dev-loop` in `taskflow`, automatically resume it, or launch a
@@ -131,8 +129,8 @@ Follow [the productive loop](docs/factory/productive-loop.md):
    managed delivery worktrees per Git common checkout on a host. Parallel
    parents own different issue worktrees.
 2. Run the narrowest meaningful check while editing.
-3. The implementation child does not launch direction review. The supervisor may
-   run bounded focused review after the review-ready PR exists and owns any explicit fix
+3. The implementation child does not launch draft review. The supervisor may
+   run bounded focused review after the draft exists and owns any explicit fix
    retry.
 4. Run the target plan locally, create the signed commit, then run or reuse the
    exact-head local gate before pushing one coherent current-head candidate.

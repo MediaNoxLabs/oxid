@@ -10,9 +10,24 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolvePinnedCoreModulePath } from "../dev-loops.mjs";
 import { auditPiPackageClosures, resolveDevLoopsPackageRoot } from "../lib/dev-loop-runtime.mjs";
 import { checkUserPolicy } from "./pi-policy.mjs";
-import { EXPECTED_PI_PACKAGES } from "./pi-package-policy.mjs";
+import { collectMacOSSample, defaultResourceAdmissionDirectory, evaluateResourceAdmission, writeResourceAdmissionReceipt } from "./resource-admission.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const EXPECTED_PACKAGES = new Map([
+  ["dev-loops", "1.0.2"],
+  ["@dev-loops/core", "1.0.2"],
+  ["pi-subagents", "0.70.0"],
+  ["@earendil-works/pi-agent-core", "0.85.1"],
+  ["@earendil-works/pi-ai", "0.85.1"],
+  ["@earendil-works/pi-coding-agent", "0.85.1"],
+  ["@earendil-works/pi-tui", "0.85.1"],
+  ["@playwright/test", "1.60.0"],
+  ["@axe-core/playwright", "4.10.0"],
+  ["typebox", "1.3.9"],
+  ["pi-taskflow", "0.2.10"],
+  ["@stixxert/pi-docker-sandbox", "1.1.6"],
+  ["@input-output-hk/agent-review-pi", "0.6.0"],
+]);
 const DEV_LOOPS_RESOURCE_POLICY = Object.freeze({
   source: "npm:dev-loops@1.0.2",
   extensions: [],
@@ -24,8 +39,8 @@ const TASKFLOW_SUPPRESSION = Object.freeze({
   prompts: [],
   themes: [],
 });
-const OBSERVABILITY_RESOURCE_POLICY = Object.freeze({
-  source: "npm:@grafana/agento11y-pi@0.25.0",
+const DOCKER_SANDBOX_SUPPRESSION = Object.freeze({
+  source: "npm:@stixxert/pi-docker-sandbox@1.1.6",
   extensions: [],
 });
 const EXPECTED_PROJECT_VALUES = Object.freeze({
@@ -205,7 +220,7 @@ async function inspectInstalledPackages(repoRoot) {
   const problems = [];
   try {
     const resolved = await resolveDevLoopsPackageRoot({ cwd: repoRoot, includeAllPinnedPackages: true });
-    for (const [name, expected] of EXPECTED_PI_PACKAGES) {
+    for (const [name, expected] of EXPECTED_PACKAGES) {
       const packageRoot = resolved.packageRoots.find((entry) => entry.name === name)?.packageRoot;
       if (!packageRoot) {
         problems.push(`${name}: exact package is not installed in this worktree's matching closure`);
@@ -279,6 +294,23 @@ function inspectOperationalState(repoRoot) {
         undefined, "operational")];
     }
   }
+}
+
+async function inspectResourceAdmission(repoRoot, activeHeavyLanes = 0) {
+  if (!existsSync(path.join(repoRoot, "scripts", "factory", "resource-admission.mjs"))) {
+    return check("resource-admission", "pass", "resource admission is unavailable outside an Oxid checkout", undefined, "operational");
+  }
+  if (process.platform !== "darwin") {
+    return check("resource-admission", "pass", "macOS resource admission is not applicable on this host", undefined, "operational");
+  }
+  const result = evaluateResourceAdmission(collectMacOSSample({ activeHeavyLanes }));
+  try {
+    await writeResourceAdmissionReceipt(result, { outputDir: await defaultResourceAdmissionDirectory(repoRoot) });
+  } catch (error) {
+    return check("resource-admission", "fail", `Resource admission receipt could not be persisted: ${error.message}`, undefined, "operational");
+  }
+  return check("resource-admission", result.decision === "block" ? "fail" : "pass",
+    `macOS resource admission ${result.decision}: ${result.reasonCode}`, result.summary, "operational");
 }
 
 export function lifecycleCapacityChecks(lifecycle) {
@@ -410,10 +442,9 @@ async function inspectDeliveryProfiles(repoRoot) {
       problems.push("delivery target must be explicit, session-local, and never inferred");
     }
 
-    const [devLoopAgent, rootAgent, devLoopsWrapper] = await Promise.all([
+    const [devLoopAgent, rootAgent] = await Promise.all([
       readFile(path.join(repoRoot, ".pi", "agents", "dev-loop.agent.md"), "utf8"),
       readFile(path.join(repoRoot, "AGENT.md"), "utf8"),
-      readFile(path.join(repoRoot, "scripts", "dev-loops.mjs"), "utf8"),
     ]);
     for (const [file, source] of [[".pi/agents/dev-loop.agent.md", devLoopAgent], ["AGENT.md", rootAgent]]) {
       if (!source.includes("/dev-loop prototype issue <n>")) problems.push(`${file} is missing the prototype entrypoint`);
@@ -427,13 +458,6 @@ async function inspectDeliveryProfiles(repoRoot) {
     }
     if (!devLoopAgent.includes("--pre-mutation-assessment")) {
       problems.push(".pi/agents/dev-loop.agent.md does not bind the deterministic fast-path assessment into the handoff envelope");
-    }
-    if (!devLoopAgent.includes("Consume the resulting map only from the validated envelope")
-      || devLoopAgent.includes("single source of truth is `scripts/loop/sanctioned-commands.mjs`")) {
-      problems.push(".pi/agents/dev-loop.agent.md must consume sanctioned commands from the validated envelope without naming a checkout-relative package path");
-    }
-    if (!devLoopsWrapper.includes("applyOxidSanctionedCommandOverrides(envelope)")) {
-      problems.push("scripts/dev-loops.mjs must apply repository sanctioned-command overrides before emitting the handoff envelope");
     }
     const tools = devLoopAgent.match(/^tools:\s*(.+)$/mu)?.[1]?.split(",").map((tool) => tool.trim()) ?? [];
     if (tools.includes("subagent") || !tools.includes("edit") || !tools.includes("write")) {
@@ -465,6 +489,8 @@ async function inspectDeliveryProfiles(repoRoot) {
  */
 export async function auditWorktreeAdmission({ repoRoot = DEFAULT_REPO_ROOT } = {}) {
   const checks = inspectOperationalState(repoRoot);
+  const activeHeavyLanes = checks.find((item) => item.id === "worktree-admission")?.details?.active ?? 0;
+  checks.push(await inspectResourceAdmission(repoRoot, activeHeavyLanes));
   const capacityEvidenceAvailable = !checks.some((item) => item.id === "worktree-admission" && item.status === "warn");
   return {
     schemaVersion: 1,
@@ -527,7 +553,7 @@ export async function auditPi({
     const match = String(source).match(/^npm:(@[^/]+\/[^@]+|[^@]+)@(.+)$/u);
     return match ? [match[1], { version: match[2], entry }] : [String(source), { version: null, entry }];
   }));
-  for (const [name, expected] of EXPECTED_PI_PACKAGES) {
+  for (const [name, expected] of EXPECTED_PACKAGES) {
     if (configuredPackages.get(name)?.version !== expected) packageProblems.push(`${name}: expected exact pin ${expected}`);
   }
   const devLoopsEntry = configuredPackages.get("dev-loops")?.entry;
@@ -536,11 +562,11 @@ export async function auditPi({
   }
   const taskflowEntry = configuredPackages.get("pi-taskflow")?.entry;
   if (JSON.stringify(taskflowEntry) !== JSON.stringify(TASKFLOW_SUPPRESSION)) {
-    packageProblems.push("pi-taskflow: mutating extension and skills must remain suppressed until the ADR-0117 / issue #690 long-process conformance canary passes");
+    packageProblems.push("pi-taskflow: inherited extension and skills must be fully suppressed until #301 and #196 pass");
   }
-  const observabilityEntry = configuredPackages.get("@grafana/agento11y-pi")?.entry;
-  if (JSON.stringify(observabilityEntry) !== JSON.stringify(OBSERVABILITY_RESOURCE_POLICY)) {
-    packageProblems.push("agento11y-pi: extension must remain disabled by default and load only through the explicit observed launcher");
+  const dockerSandboxEntry = configuredPackages.get("@stixxert/pi-docker-sandbox")?.entry;
+  if (JSON.stringify(dockerSandboxEntry) !== JSON.stringify(DOCKER_SANDBOX_SUPPRESSION)) {
+    packageProblems.push("@stixxert/pi-docker-sandbox: extension must remain opt-in through the bounded project launcher");
   }
   checks.push(check("package-pins", packageProblems.length ? "fail" : "pass",
     packageProblems.length ? "Package pins are incomplete or floating" : "All Pi packages use exact tracked pins",
@@ -636,7 +662,10 @@ export async function auditPi({
   checks.push(await inspectDeliveryProfiles(repoRoot));
 
   if (includeOperational) {
-    checks.push(...inspectOperationalState(repoRoot));
+    const operationalChecks = inspectOperationalState(repoRoot);
+    checks.push(...operationalChecks);
+    const activeHeavyLanes = operationalChecks.find((item) => item.id === "worktree-admission")?.details?.active ?? 0;
+    checks.push(await inspectResourceAdmission(repoRoot, activeHeavyLanes));
     checks.push(await inspectPackageClosureState(repoRoot));
     checks.push(await inspectMetrics(repoRoot));
   }

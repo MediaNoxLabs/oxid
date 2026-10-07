@@ -7,7 +7,6 @@ import test from "node:test";
 
 import {
   acquireCoverageLock,
-  assertCoverageFixtureEnvironment,
   discoverWorkspacePackages,
   formatCoverageFailureSummary,
   normalizeLlvmReport,
@@ -15,7 +14,6 @@ import {
   runCoverage,
   validatePolicy,
 } from "../../scripts/coverage/run.mjs";
-import { verifyEnforcedManifest } from "../../scripts/coverage/verify-manifest.mjs";
 
 const repoRoot = path.resolve(new URL("../..", import.meta.url).pathname);
 const policyPath = path.join(repoRoot, "scripts/coverage/policy.json");
@@ -130,7 +128,6 @@ async function runSynthetic(t, overrides = {}) {
       policy: await loadPolicy(),
       git,
       executeScope,
-      enforce: overrides.enforce ?? false,
       env: overrides.env ?? {},
       now: () => new Date("2026-09-01T00:00:00.000Z"),
     });
@@ -178,24 +175,6 @@ test("an atomic lock refuses both active and stale ownership", async (t) => with
     acquireCoverageLock(lockPath, { pid: process.pid, sourceHead: HEAD }),
     /coverage lock already exists/u,
   );
-}));
-
-test("real coverage requires the pinned native DID fixtures", async (t) => withTemp(t, async (directory) => {
-  await assert.rejects(
-    assertCoverageFixtureEnvironment({}),
-    /OXID_MIDNIGHT_DID_ARTIFACTS_DIR must be an absolute path/u,
-  );
-
-  const artifacts = path.join(directory, "did-artifacts");
-  const composer = path.join(directory, "did-call-composer");
-  await mkdir(artifacts);
-  await writeFile(path.join(artifacts, "manifest.json"), "{}\n", { mode: 0o600 });
-  await writeFile(composer, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
-
-  await assert.doesNotReject(assertCoverageFixtureEnvironment({
-    OXID_MIDNIGHT_DID_ARTIFACTS_DIR: artifacts,
-    OXID_MIDNIGHT_DID_CALL_COMPOSER: composer,
-  }));
 }));
 
 test("dirty source and unavailable or non-ancestor bases fail closed", async (t) => {
@@ -473,78 +452,17 @@ test("run.sh wires the repository contract once and delegates coverage to the ha
   assert.equal(runScript.match(/node --test tests\/repository\/coverage-contract\.test\.mjs/gu)?.length, 1);
   const coverageBlock = runScript.slice(runScript.indexOf("run_coverage()"), runScript.indexOf("require_command()"));
   assert.match(coverageBlock, /node scripts\/coverage\/run\.mjs/u);
-  assert.match(coverageBlock, /if \$strict; then args\+=\(--enforce\); fi/u);
   assert.doesNotMatch(coverageBlock, /cargo llvm-cov/u);
 });
 
-test("strict coverage makes policy enforcement explicit", async (t) => {
-  const result = await runSynthetic(t, { enforce: true });
-  assert.equal(result.manifest.evaluationMode, "enforce");
-  assert.equal(result.evaluation.status, "pass");
-  assert.doesNotThrow(() => verifyEnforcedManifest({ ...result.manifest, mode: "coverage" }, HEAD));
-  assert.throws(() => verifyEnforcedManifest(result.manifest, HEAD), /not a real coverage run/u);
-  assert.throws(() => verifyEnforcedManifest({ ...result.manifest, mode: "coverage", evaluationMode: "measurement" }, HEAD), /not enforced/u);
-  assert.throws(() => verifyEnforcedManifest({ ...result.manifest, mode: "coverage" }, BASE), /source HEAD/u);
-});
-
-test("strict coverage rejects a package-floor violation and retains its computed verdict", async (t) => withTemp(t, async (stateRoot) => {
-  await assert.rejects(runCoverage({
-    repoRoot, stateRoot, base: "origin/develop", policy: await loadPolicy(),
-    git: fakeGit(), enforce: true,
-    executeScope: async ({ rawReportPath, scope, policy, packageInventory }) => {
-      const raw = llvmScopeReport(scope.id, policy, packageInventory);
-      if (scope.id === "workspace-aggregate") {
-        const foundation = raw.data[0].files.find((file) => file.filename.endsWith("/crates/foundation/src/lib.rs"));
-        foundation.summary.lines.covered = 60;
-        foundation.summary.lines.percent = 60;
-        raw.data[0].totals.lines.covered -= 40;
-      }
-      await writeFile(rawReportPath, `${JSON.stringify(raw)}\n`);
-    },
-  }), /coverage policy enforcement failed/u);
-  const manifest = JSON.parse(await readFile(path.join(stateRoot, "coverage", HEAD, "reports/manifest.json"), "utf8"));
-  assert.equal(manifest.evaluationMode, "enforce");
-  assert.equal(manifest.evaluation.status, "fail");
-}));
-
-test("strict coverage rejects an uncovered changed line and retains its computed verdict", async (t) => withTemp(t, async (stateRoot) => {
-  const git = fakeGit({ diff: () => "diff --git a/crates/foundation/src/lib.rs b/crates/foundation/src/lib.rs\n@@ -9,0 +10,1 @@\n+uncovered\n" });
-  await assert.rejects(runCoverage({
-    repoRoot, stateRoot, base: "origin/develop", policy: await loadPolicy(), git, enforce: true,
-    executeScope: async ({ rawReportPath, scope, policy, packageInventory }) => {
-      const raw = llvmScopeReport(scope.id, policy, packageInventory);
-      if (scope.id === "workspace-aggregate") {
-        const foundation = raw.data[0].files.find((file) => file.filename.endsWith("/crates/foundation/src/lib.rs"));
-        foundation.segments = [[10, 1, 0, true, true, false], [11, 1, 0, false, false, false]];
-      }
-      await writeFile(rawReportPath, `${JSON.stringify(raw)}\n`);
-    },
-  }), /coverage policy enforcement failed/u);
-  const manifest = JSON.parse(await readFile(path.join(stateRoot, "coverage", HEAD, "reports/manifest.json"), "utf8"));
-  assert.equal(manifest.evaluationMode, "enforce");
-  assert.equal(manifest.changedLines.status, "fail");
-  assert.equal(manifest.evaluation.status, "fail");
-}));
-
-test("hosted coverage uses the same fetched comparison base as target planning", async () => {
+test("hosted coverage supplies a fetched, non-empty source comparison base", async () => {
   const workflow = await readFile(path.join(repoRoot, ".github/workflows/ci.yml"), "utf8");
-  const planStart = workflow.indexOf("\n  plan:\n");
-  const basicStart = workflow.indexOf("\n  basic:\n");
-  const coverageStart = workflow.indexOf("\n  coverage_linux:\n");
-  const gateStart = workflow.indexOf("\n  repository_gate:");
-  assert.ok(planStart >= 0 && basicStart > planStart);
-  assert.ok(coverageStart >= 0 && gateStart > coverageStart);
-  const planJob = workflow.slice(planStart, basicStart);
-  const coverageJob = workflow.slice(coverageStart, gateStart);
-  const comparisonBase = "${{ github.event.pull_request.base.sha || inputs.comparison_base || github.event.before || 'origin/develop' }}";
-  assert.match(workflow, /comparison_base:\n        description: Ancestor commit for an on-demand branch comparison/u);
-  assert.match(planJob, /COMPARISON_BASE_INPUT: \$\{\{ inputs\.comparison_base \|\| '' \}\}/u);
-  assert.match(planJob, /\^\[0-9a-f\]\{40\}\$/u);
-  assert.match(planJob, /comparison_base must be a 40-character commit SHA' >&2\n\s+exit 1/u);
-  assert.ok(planJob.includes(`BASE_SHA: ${comparisonBase}`));
+  const coverageJob = workflow.slice(workflow.indexOf("\n  coverage_linux:\n"), workflow.indexOf("\n  repository_gate:"));
   assert.match(coverageJob, /fetch-depth: 0/u);
-  assert.match(coverageJob, /needs: plan/u);
-  assert.ok(coverageJob.includes(`OXID_COVERAGE_BASE: ${comparisonBase}`));
+  assert.match(
+    coverageJob,
+    /OXID_COVERAGE_BASE: \$\{\{ github\.event\.pull_request\.base\.sha \|\| inputs\.comparison_base \|\| github\.event\.before \|\| 'origin\/develop' \}\}/u,
+  );
   assert.match(coverageJob, /\.\/run\.sh coverage --strict/u);
   assert.match(coverageJob, /node scripts\/coverage\/verify-manifest\.mjs/u);
   assert.match(coverageJob, /timeout-minutes: 27/u);

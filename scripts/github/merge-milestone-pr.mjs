@@ -10,14 +10,28 @@ import { validatePullRequest } from "../ci/contribution-policy.mjs";
 import { assertIssueTarget, parseDeliveryTarget } from "../lib/delivery-target.mjs";
 import { currentTriageReceipt, validateFollowUpIssue } from "./review-triage.mjs";
 import { assertReviewActionAllowed, currentReviewControl } from "./review-control.mjs";
-import { classifyOptionalSarifChecks, CRITICAL_CHECKS, OPTIONAL_SARIF_PROJECTIONS } from "./optional-sarif-policy.mjs";
-import { normalizeSupersededPrChecks } from "./watch-oxid-ci.mjs";
 
 const REPOSITORY = "MediaNoxLabs/oxid";
 const BLOCKING_TITLE_MARKERS = /(?:\[?\bWIP\b\]?|\bDRAFT\b|DO NOT MERGE|🚧)/iu;
 const CLOSING_ISSUE = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#([1-9]\d*)\b/iu;
 const ELIGIBLE_MERGE_STATES = new Set(["CLEAN", "UNSTABLE"]);
-export { CRITICAL_CHECKS, OPTIONAL_SARIF_PROJECTIONS };
+export const CRITICAL_CHECKS = Object.freeze([
+  "Validate PR title",
+  "Validate PR body",
+  "Verify commit sign-offs",
+  "Repository gate (fmt, architecture, lint, tests, coverage)",
+  "Locked Nix package and Compact artifacts",
+  "Audit, Licenses, Sources, and Documentation",
+  "scan",
+]);
+export const OPTIONAL_SARIF_PROJECTIONS = Object.freeze([
+  "Checkov",
+  "Opengrep OSS",
+  "Trivy",
+  "gitleaks",
+  "zizmor",
+]);
+const OPTIONAL_SARIF_PROJECTION_SET = new Set(OPTIONAL_SARIF_PROJECTIONS);
 
 function parseJson(source, label) {
   try {
@@ -62,6 +76,9 @@ export function validateMilestonePr(pr) {
   if (pr?.state !== "OPEN") failures.push("pull request is not open");
   if (pr?.isDraft !== false) failures.push("pull request is still a draft");
   if (pr?.isCrossRepository === true) failures.push("cross-repository heads are not eligible for automated merge");
+  if (pr?.autoMergeRequest != null) {
+    failures.push("GitHub auto-merge is active; disable it and use the repository exact-head merge facade");
+  }
   if (BLOCKING_TITLE_MARKERS.test(pr?.title ?? "")) failures.push("title contains a merge-blocking marker");
   if (pr?.mergeable !== "MERGEABLE") failures.push(`mergeable is ${pr?.mergeable ?? "unknown"}`);
   if (!ELIGIBLE_MERGE_STATES.has(pr?.mergeStateStatus)) {
@@ -89,23 +106,36 @@ export function validateCriticalChecks(checks) {
   return { ok: failures.length === 0, failures };
 }
 
+export function validateRequiredMilestoneChecks(checks) {
+  const failures = [];
+  if (!Array.isArray(checks) || checks.length === 0) failures.push("no effective required checks were returned");
+  for (const check of Array.isArray(checks) ? checks : []) {
+    if (check?.bucket !== "pass") failures.push(`${check?.name ?? "unnamed check"}: ${check?.state ?? check?.bucket ?? "unknown"}`);
+  }
+  return { ok: failures.length === 0, failures };
+}
+
 export function validateMilestoneChecks(checks) {
   const critical = validateCriticalChecks(checks);
   const failures = [...critical.failures];
   if (!Array.isArray(checks)) return { ok: false, failures };
-  const policy = classifyOptionalSarifChecks(checks);
-  for (const check of policy.retained) {
+  const authoritativeScanGreen = checks.some((check) => check?.name === "scan" && check?.bucket === "pass");
+  for (const check of checks) {
     if (CRITICAL_CHECKS.includes(check?.name)
       || check?.bucket === "pass"
       || check?.bucket === "skipping") continue;
+    if (OPTIONAL_SARIF_PROJECTION_SET.has(check?.name)
+      && check?.workflow === ""
+      && check?.bucket === "pending"
+      && authoritativeScanGreen) continue;
     failures.push(`${check?.name ?? "unnamed check"}: ${check?.state ?? check?.bucket ?? "unknown"}`);
   }
   return { ok: failures.length === 0, failures };
 }
 
-function defaultRun(command, args, { cwd, label = command } = {}) {
+function defaultRun(command, args, { cwd, label = command, timeout = 1_800_000 } = {}) {
   try {
-    return execFileSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return execFileSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout });
   } catch (error) {
     const detail = error?.stderr?.trim() || error?.message || "unknown failure";
     throw new Error(`${label} failed: ${detail}`, { cause: error });
@@ -116,13 +146,12 @@ function ghJson(run, args, cwd, label) {
   return parseJson(run("gh", args, { cwd, label }), label);
 }
 
-export function auditMilestoneMerge(options, {
-  cwd = process.cwd(),
-  run = defaultRun,
-  normalizeChecks = normalizeSupersededPrChecks,
-} = {}) {
+export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaultRun } = {}) {
   const root = run("git", ["rev-parse", "--show-toplevel"], { cwd, label: "resolve repository root" }).trim();
-  const fields = "state,baseRefName,baseRefOid,headRefName,headRefOid,isDraft,isCrossRepository,mergeable,mergeStateStatus,title,body";
+  // An active GitHub auto-merge request is a competing mutation path whose
+  // branch-protection decision can race this repository-owned audit. Read it
+  // explicitly so eligibility can fail closed before any checks are awaited.
+  const fields = "state,baseRefName,baseRefOid,headRefName,headRefOid,isDraft,isCrossRepository,mergeable,mergeStateStatus,autoMergeRequest,title,body";
   const pr = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", fields], root, "read pull request facts");
   const eligibility = validateMilestonePr(pr);
   if (!eligibility.ok) throw new Error(`automated milestone merge denied: ${eligibility.failures.join("; ")}`);
@@ -135,12 +164,20 @@ export function auditMilestoneMerge(options, {
 
   run("git", ["fetch", "--no-tags", "origin", eligibility.target.branch, pr.headRefOid], { cwd: root, label: "refresh milestone and PR head" });
   const localBase = run("git", ["rev-parse", `refs/remotes/origin/${eligibility.target.branch}`], { cwd: root, label: "resolve fetched milestone" }).trim();
-  if (localBase !== pr.baseRefOid) throw new Error(`base changed during audit: GitHub ${pr.baseRefOid}, fetched ${localBase}`);
   run("git", ["merge-base", "--is-ancestor", localBase, pr.headRefOid], { cwd: root, label: "verify current-head freshness" });
   run("git", ["merge-tree", "--write-tree", localBase, pr.headRefOid], { cwd: root, label: "verify conflict-free merge tree" });
 
-  const rawChecks = ghJson(run, ["pr", "checks", String(options.pr), "--repo", options.repo, "--json", "bucket,link,name,state,workflow"], root, "read current checks");
-  const checks = normalizeChecks(rawChecks, { repo: options.repo, headSha: pr.headRefOid });
+  const requiredChecks = ghJson(run, [
+    "pr", "checks", String(options.pr), "--repo", options.repo, "--required", "--watch", "--interval", "10",
+    "--json", "bucket,name,state,workflow",
+  ], root, "wait for effective required checks");
+  const requiredResult = validateRequiredMilestoneChecks(requiredChecks);
+  if (!requiredResult.ok) throw new Error(`required checks are not green: ${requiredResult.failures.join("; ")}`);
+
+  const checks = ghJson(run, [
+    "pr", "checks", String(options.pr), "--repo", options.repo, "--watch", "--interval", "10",
+    "--json", "bucket,name,state,workflow",
+  ], root, "wait for selected checks");
   const checkResult = validateMilestoneChecks(checks);
   if (!checkResult.ok) throw new Error(`pull request checks are not green: ${checkResult.failures.join("; ")}`);
 
@@ -160,8 +197,13 @@ export function auditMilestoneMerge(options, {
   }
 
   run(process.execPath, [path.join(root, "scripts", "dev-loops.mjs"), "gates"], { cwd: root, label: "validate repository dev-loop policy" });
-  const current = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", "baseRefName,baseRefOid,headRefOid"], root, "re-read pull request head");
-  if (current?.baseRefName !== eligibility.target.branch || current?.baseRefOid !== localBase || current?.headRefOid !== pr.headRefOid) {
+  run("git", ["fetch", "--no-tags", "origin", eligibility.target.branch, pr.headRefOid], { cwd: root, label: "re-read milestone and PR head" });
+  const currentBase = run("git", ["rev-parse", `refs/remotes/origin/${eligibility.target.branch}`], { cwd: root, label: "re-read fetched milestone" }).trim();
+  const current = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", "baseRefName,headRefOid,autoMergeRequest"], root, "re-read pull request head");
+  if (current?.autoMergeRequest != null) {
+    throw new Error("GitHub auto-merge became active during the merge audit");
+  }
+  if (currentBase !== localBase || current?.baseRefName !== eligibility.target.branch || current?.headRefOid !== pr.headRefOid) {
     throw new Error("pull request head or milestone base changed during the merge audit");
   }
   return {
@@ -173,7 +215,7 @@ export function auditMilestoneMerge(options, {
     headSha: pr.headRefOid,
     baseSha: localBase,
     worktree: root,
-    checks: CRITICAL_CHECKS.length,
+    checks: requiredChecks.length,
     observedChecks: checks.length,
     followUps: triage.followUpIssues,
   };

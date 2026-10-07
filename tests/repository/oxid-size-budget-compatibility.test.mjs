@@ -13,6 +13,8 @@ const pinnedPackageAvailable = existsSync(new URL("../../.pi/npm/node_modules/de
 test("native paths and tier patterns translate without loading Pi packages", () => {
   assert.equal(translateNativePath("crates/core/src/lib.rs"), "crates/core/src/lib.rs.js");
   assert.equal(translateNativePath("crates/core/tests/login.rs"), "crates/core/tests/login.rs.test.js");
+  assert.equal(translateNativePath("scripts/check.sh"), "scripts/check.sh.js");
+  assert.equal(translateNativePath("fixtures/size-budget/check.sh"), "fixtures/size-budget/check.sh.test.js");
   assert.equal(translateNativePath("src/unknown.go"), "src/unknown.go");
   assert.equal(classifyOxidSizePath("docs/guide.rs"), "excluded");
   assert.deepEqual(
@@ -24,18 +26,23 @@ test("native paths and tier patterns translate without loading Pi packages", () 
 test("Oxid native source languages receive deterministic logic LOC", { skip: !pinnedPackageAvailable }, async () => {
   assert.equal((await result([[8, 2, "crates/core/src/lib.rs"]])).wholeLogicLoc, 10);
   assert.equal((await result([[4, 0, "apps/android/Main.kt"], [6, 0, "apps/ios/App.swift"]])).wholeLogicLoc, 10);
-  assert.equal((await result([[7, 3, "bootstrap.sh"]])).wholeLogicLoc, 10);
 });
 
 test("recognized embedded and path native tests retain the configured discount", { skip: !pinnedPackageAvailable }, async () => {
   assert.equal((await result([[8, 0, "crates/core/tests/login.rs"]])).wholeLogicLoc, 2);
   assert.equal((await result([[8, 0, "apps/android/src/test/AuthTest.kt"]])).wholeLogicLoc, 2);
   assert.equal((await result([[8, 0, "apps/ios/WalletTests.swift"]])).wholeLogicLoc, 2);
-  assert.equal((await result([[8, 0, "tests/repository/bootstrap-contract.sh"]])).wholeLogicLoc, 2);
+});
+
+test("tracked shell source and shell fixtures receive deterministic logic LOC", { skip: !pinnedPackageAvailable }, async () => {
+  assert.equal(classifyOxidSizePath("scripts/check.sh"), "code");
+  assert.equal(classifyOxidSizePath("fixtures/size-budget/check.sh"), "test");
+  assert.equal((await result([[8, 2, "scripts/check.sh"]])).wholeLogicLoc, 10);
+  assert.equal((await result([[8, 0, "fixtures/size-budget/check.sh"]])).wholeLogicLoc, 2);
 });
 
 test("docs, config, CI, generated paths, and lockfiles are excluded", { skip: !pinnedPackageAvailable }, async () => {
-  for (const file of ["docs/guide.rs", ".github/workflows/check.swift", ".pi/settings.json", "generated/api.kt", "Cargo.lock", "Cargo.toml", "flake.lock"]) assert.equal(classifyOxidSizePath(file), "excluded");
+  for (const file of ["docs/guide.rs", "config/tool.conf", ".github/workflows/check.swift", ".pi/settings.json", "generated/api.kt", "Cargo.lock", "Cargo.toml", "flake.lock"]) assert.equal(classifyOxidSizePath(file), "excluded");
   const outcome = await result([[100, 0, "docs/guide.rs"], [100, 0, "Cargo.lock"], [100, 0, "Cargo.toml"], [100, 0, ".pi/settings.json"]]);
   assert.equal(outcome.outcome, "pass");
   assert.equal(outcome.wholeLogicLoc, 0);

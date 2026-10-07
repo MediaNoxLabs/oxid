@@ -47,12 +47,15 @@ run_repository() {
   node --test tests/repository/contribution-policy-contract.test.mjs
   node --test tests/repository/local-git-hooks-contract.test.mjs
   node --test tests/repository/factory-metrics-contract.test.mjs
+  node --test tests/repository/factory-issue-contract.test.mjs
   node --test tests/repository/pi-factory-policy-contract.test.mjs
+  node --test tests/repository/resource-admission-contract.test.mjs
   node --test tests/repository/integration-delivery-contract.test.mjs
   node --test tests/repository/release-qualification-contract.test.mjs
   node --test tests/repository/sccache-diagnostics-contract.test.mjs
   node --test tests/repository/streaming-delivery-contract.test.mjs
   node --test tests/repository/bootstrap-dev-loop-contract.test.mjs
+  node --test tests/repository/claude-capability-grammar.test.mjs
   node --test tests/repository/dev-loop-stability-contract.test.mjs
   node --test tests/repository/desktop-test-profile-contract.test.mjs
   node --test tests/repository/desktop-live-profile-contract.test.mjs
@@ -62,6 +65,7 @@ run_repository() {
   node --test tests/repository/sanctioned-command-wrappers-contract.test.mjs
   node --test tests/repository/maestro-mobile-pilot-contract.test.mjs
   node --test tests/repository/ios-maestro-focused-contract.test.mjs
+  node --test tests/repository/passport-vault-conformance-contract.test.mjs
   node --test scripts/app-artifact-receipt.test.mjs
   node --test scripts/e2e/android-emulator-owner-receipt.test.mjs
   node --test scripts/android-verify-16k.test.mjs

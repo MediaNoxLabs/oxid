@@ -24,9 +24,8 @@ node scripts/loop/ensure-worktree.mjs \
   --branch feat/issue-<number> \
   --delivery-base origin/milestone-<x.y.z>
 
-# Repository-owned PR creation (`create-draft` is the deprecated alias) pins
-# that same target and calls `gh pr create` without `--draft`. Factory-policy
-# work uses origin/develop instead.
+# Public dev-loops PR creation (`create-draft` is the deprecated alias) pins
+# that same target. Factory-policy work uses origin/develop instead.
 node scripts/dev-loops.mjs pr create \
   --repo MediaNoxLabs/oxid --head <branch> \
   --delivery-base origin/milestone-<x.y.z> \
@@ -159,12 +158,12 @@ output-option semantics.
 concurrent reviewers, and stops low-signal refinement. The implementation child
 does not run those reviewers; the persistent supervisor owns focused review.
 Independent external review is an explicit high-risk or owner-requested action.
-Contradictory aggregate loop-info is a pinned upstream residual. Production
-delivery opens the PR ready only after its exact-head local gate, so hosted CI
-has one authoritative admission for that head. Existing or manually created
-drafts remain non-deliverable until a supervisor obtains a consistent state;
-never rerun an older workflow while a newer authoritative same-head run is
-active.
+Contradictory aggregate loop-info is a
+pinned upstream residual. For a draft PR, the pinned gate coordinator remains
+the authority: when it explicitly permits `run_draft_gate` under
+`requireCi: false`, continue bounded review and keep the PR draft. Stop and
+obtain a consistent authoritative state for every other contradiction rather
+than overriding the pinned coordinator locally.
 
 There is no gate-evidence repair command. The sanctioned response to incomplete
 inline evidence is stop and preserve findings. After focused pre-commit checks
@@ -179,6 +178,15 @@ findings ledger, reviewer identity,
 mandatory angles, artifact hashing, and lifecycle coordination remain pinned-
 tooling responsibilities; comment-only repair is unsupported and must not be
 described as an upgraded gate.
+
+The pinned package's generic validation producer accepts only root
+`package.json` scripts and runs them with Bun. Oxid deliberately has no such
+manifest. Draft and pre-approval review therefore use
+`scripts/loop/gate-validation.mjs`: the adapter verifies the existing
+repository-owned Cargo receipt at the requested head and delivery base, then
+writes the package-compatible shared validation artifact. It does not rerun
+the gate, install JavaScript tooling, or translate a focused check into release
+evidence.
 
 ## Local wrapper performance
 
@@ -217,7 +225,7 @@ node scripts/review/claude-current-head.mjs \
   --delivery-base origin/milestone-<x.y.z> \
   --expected-head "$(git rev-parse HEAD)" \
   --effort medium \
-  --timeout-ms 600000 \
+  --timeout-ms 300000 \
   --issue-contract-file <tracker-export.json>
 
 node scripts/review/claude-current-head.mjs \
@@ -249,7 +257,7 @@ a push or integration advance makes it stale.
 
 The wrapper passes `--effort medium` by default and records that choice in the
 attestation. Medium effort bounds reasoning cost while retaining a substantive
-review inside the ten-minute default deadline; the example above states that
+review inside the five-minute default deadline; the example above states that
 deadline explicitly so copied commands retain the SLA if defaults later change.
 The installed CLI capability vocabulary is closed (`low`, `medium`, `high`,
 `xhigh`, or `max`), while the wrapper accepts only `medium`, `high`, `xhigh`,
@@ -262,7 +270,7 @@ marker; an optional trailing `default:` or `recommended:` token is ignored.
 At least two known levels must remain after filtering. Any other layout is a
 capability-probe failure that requires a parser/test update. The wrapper and
 verifier reject deadlines above
-600,000 ms, so increasing effort cannot extend the SLA; a timeout never counts
+300,000 ms, so increasing effort cannot extend the SLA; a timeout never counts
 as a review pass. The recorded budget must be positive and no more than USD 10;
 the verifier binds that ceiling, which remains a cost limit rather than a spend
 target. The recorded `medium` effort floor and USD 10 budget ceiling are exact
@@ -278,14 +286,12 @@ the pull request that changes this contract records the one-time consumer audit.
 The CLI reports this migration as JSON on stderr with exit status 3; successful
 verification JSON remains on stdout.
 
-For a large diff that cannot finish inside ten minutes, split the issue and PR
+For a large diff that cannot finish inside five minutes, split the issue and PR
 at a coherent architecture boundary; do not lower the attested review beneath
 `medium`, lengthen the deadline, or reinterpret a timeout as approval. `high`,
 `xhigh`, and `max` are useful only for small,
 reasoning-dense diffs that can still finish within the same cap; do not escalate
-effort to retry a timed-out large diff. The supervisor records one `timed_out`
-result and continues when required exact-head repository gates are green; it
-does not automatically retry the reviewer. Split that diff instead.
+effort to retry a timed-out large diff. Split that diff instead.
 
 The effort capability record is derived from the captured `--help` artifact,
 not from the CLI installed during later verification. Generation requires one

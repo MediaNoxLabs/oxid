@@ -117,7 +117,6 @@ export function auditDevelopMerge(options, { cwd = process.cwd(), run = defaultR
 
   run("git", ["fetch", "--no-tags", "origin", DEVELOP_BASE, pr.headRefOid], { cwd: root, label: "refresh develop and PR head" });
   const localBase = run("git", ["rev-parse", `refs/remotes/origin/${DEVELOP_BASE}`], { cwd: root, label: "resolve fetched develop" }).trim();
-  if (localBase !== pr.baseRefOid) throw new Error(`base changed during audit: GitHub ${pr.baseRefOid}, fetched ${localBase}`);
   run("git", ["merge-base", "--is-ancestor", localBase, pr.headRefOid], { cwd: root, label: "verify current-head freshness" });
   run("git", ["merge-tree", "--write-tree", localBase, pr.headRefOid], { cwd: root, label: "verify conflict-free merge tree" });
 
@@ -141,8 +140,10 @@ export function auditDevelopMerge(options, { cwd = process.cwd(), run = defaultR
   if (!control.frozen) throw new Error("review control has not frozen the exact head");
   assertReviewActionAllowed(control, { headSha: pr.headRefOid, action: "merge" });
 
-  const current = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", "baseRefName,baseRefOid,headRefOid"], root, "re-read pull request head");
-  if (current?.baseRefName !== DEVELOP_BASE || current?.baseRefOid !== localBase || current?.headRefOid !== pr.headRefOid) {
+  run("git", ["fetch", "--no-tags", "origin", DEVELOP_BASE, pr.headRefOid], { cwd: root, label: "re-read develop and PR head" });
+  const currentBase = run("git", ["rev-parse", `refs/remotes/origin/${DEVELOP_BASE}`], { cwd: root, label: "re-read fetched develop" }).trim();
+  const current = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", "baseRefName,headRefOid"], root, "re-read pull request head");
+  if (currentBase !== localBase || current?.baseRefName !== DEVELOP_BASE || current?.headRefOid !== pr.headRefOid) {
     throw new Error("pull request head or develop base changed during the merge audit");
   }
 

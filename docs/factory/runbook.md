@@ -7,7 +7,7 @@ How to actually run the factory on this repository. The charter says *why*
 ([fsm.md](fsm.md)); this says *what to type* and *what will refuse to work*.
 
 Phase 1 is deliberately narrow: **bounded review, impact-routed validation, and
-a guarded delivery.** Routine changes use two direction-review lenses and two final
+a guarded delivery.** Routine changes use two draft lenses and two final
 lenses; independent current-head review is reserved for high-risk work. Nothing
 routes through a coordination server.
 
@@ -17,12 +17,12 @@ routes through a coordination server.
 | --- | --- | --- |
 | `pi-coding-agent` | Nix-pinned | immutable nixpkgs input in `flake.lock`; executable supplied by `devShells.default` |
 | `dev-loops` | `1.0.2` | `.pi/settings.json` → project-local `.pi/npm` |
-| `@dev-loops/core` | `1.0.2` | exact runtime companion for the `dev-loops` wrapper; pinned separately because the package declares a floating compatible range |
+| `@dev-loops/core` | `1.0.2` | exact reviewed runtime paired with `dev-loops`; pinned directly to prevent transitive range drift |
 | `pi-subagents` | `0.70.0` | same |
 | `pi-taskflow` | `0.2.10` | installed as an `agent-review-pi` peer; all runtime resources disabled |
 | `typebox` | `1.3.9` | exact `agent-review-pi` peer |
+| `@stixxert/pi-docker-sandbox` | `1.1.6` | exact optional deploy-target package; extension disabled by default |
 | `@input-output-hk/agent-review-pi` | `0.6.0` | same, **GitHub Packages — needs a token** |
-| `@grafana/agento11y-pi` | `0.25.0` | installed locally but extension-disabled by default; loaded only by the explicit observed launcher |
 
 Oxid loads the exact `dev-loops` CLI, skills, and packaged agent sources but
 filters out its optional Pi extension. In `1.0.2` that extension refreshes an
@@ -37,9 +37,10 @@ The devshell's `shellHook` reads `.pi/settings.json`, derives a stable identity
 from the complete ordered package configuration, and resolves this checkout to
 the matching content-addressed closure beneath Git-common private state. A
 missing closure is assembled in a unique staging directory, validated against
-every exact pin—including the separately pinned `@dev-loops/core` runtime—and
-atomically published. Linked worktrees can therefore use
+every exact pin, and atomically published. Linked worktrees can therefore use
 different tracked package versions without rewriting each other's dependencies.
+A direct `@dev-loops/core` pin keeps the packaged runtime at the same reviewed
+version as `dev-loops`, even when the latter's transitive semver range advances.
 A pre-existing primary-checkout package tree is migrated only after validation;
 a real package tree in a linked worktree or a foreign symlink fails closed for
 manual inspection. CI skips Pi tooling entirely.
@@ -71,6 +72,28 @@ taskflow package is installed only to satisfy that peer contract; project
 filters disable all of its runtime resources because detached orchestration is
 not safe for Oxid's dev-loop topology.
 
+The Docker Sandbox package is also installed with its extension suppressed.
+Ordinary Pi sessions therefore receive no Docker tools and pay no sandbox
+startup cost. For a simulator-free issue whose target plan needs a disposable
+Docker or Compose environment, install and authenticate the host `sbx` CLI,
+then start the opt-in deploy-target lane:
+
+```bash
+brew install docker/tap/sbx
+sbx login
+scripts/factory/pi-docker-sandbox.sh --check
+scripts/factory/pi-docker-sandbox.sh
+```
+
+The launcher retains Pi, edits, credentials, Git, and signing on the host while
+giving the session a unique private Docker daemon. It mounts the worktree
+read-only, refuses the unsandboxed host fallback and broad environment
+passthrough, and removes the session sandbox on shutdown. Do not set a
+persistent `DOCKER_SANDBOX` name or forward credentials. This is the package's
+default deploy-target mode—not its `sandbox/` execution backend. ADR-0112
+records the routing matrix and the evidence required before full tool execution
+may be enabled.
+
 `pi-subagents@0.70.0` no longer enforces the historical `turnBudget` field.
 Oxid therefore removes that inert key, uses a fail-closed `toolBudget`, and caps
 each parent session and run at one child. The token budget remains visible and
@@ -80,11 +103,17 @@ for the implementation child, whose manifest omits nested delegation. The
 external supervisor—not another child—owns focused review, CI waiting, review
 triage, metrics, merge, cleanup, and any explicit retry.
 
-Local Pi observability is optional and never changes the normal startup path.
-Use `node scripts/factory/pi-observability.mjs on ...` to launch via
-`agento11y pi` with the bounded Oxid tag vocabulary, or `off --` for a verified
-plain-Pi session. See [pi-observability.md](pi-observability.md) for privacy,
-Grafana provisioning, compatibility, and rollback.
+Releases through `0.70.0` also keep supervisor progress out of parent model
+turns while waking the parent for an actual child request, and they reconcile detached-child
+attention in headless/print-mode sessions. They additionally preserve detached
+workflow visibility and reconcile terminal usage when live events are
+incomplete.
+The tracked pre-dispatch smoke executes
+`scripts/factory/verify-pi-subagents-package.mjs` and requires those capabilities
+in the installed compiled package before Pi may dispatch a child. That
+structural check is distinct from the bounded behavioral print-mode smoke
+recorded for issue #863, where a detached child requested supervisor attention
+once, received one response, and completed normally.
 
 Validate shell entry, the exact private package, all native review-tool
 registrations, and runtime skill discovery without an LLM call or GitHub
@@ -128,11 +157,26 @@ account and failing before the child starts. Omitting the override safely uses
 the tracked default.
 
 For unattended supervised delivery, invoke Pi with one cohesive `/dev-loop
-production-ready issue N` prompt from the absolute managed worktree. Pi
-launches the tracked `dev-loop` implementation child exactly once. That child
-must not dispatch subagents/taskflow and stops after focused checks, signed push,
-review-ready PR, and the exact-head local-gate receipt. Review, hosted CI, merge,
-metrics, and cleanup belong to the external supervisor.
+production-ready issue N` prompt. From a primary checkout, use the supported
+public entrypoint below; it resolves the canonical worktree before entering Nix
+or auditing Pi, then re-executes that worktree's bootstrap without recursion:
+
+```bash
+./bootstrap.sh --pi --print '/dev-loop production-ready issue N'
+```
+
+Starting the same command from the canonical managed worktree stays there.
+Ordinary non-`/dev-loop` Pi launches remain in the current checkout. Pi launches
+the tracked `dev-loop` implementation child exactly once. That child must not
+dispatch subagents/taskflow and stops after focused checks, signed push, draft
+PR, and the exact-head local-gate receipt. Review, hosted CI, merge, metrics,
+and cleanup belong to the external supervisor.
+
+The cross-worktree resolver runs before Nix so it cannot accidentally evaluate
+a stale primary flake. Its narrow bootstrap boundary therefore requires host
+`node`, `git`, and authenticated `gh`; the canonical pinned shell owns every
+subsequent audit and Pi process. Ordinary Pi prompts do not cross that boundary
+and continue to require only Nix.
 
 The prompt must also retain writes within `MediaNoxLabs/oxid`: before an issue,
 PR, comment, label, release, package publication, or other repository write
@@ -155,7 +199,7 @@ This is the part most likely to be misread, because all three look like
 
 | | What fans out | Configured in | Who decides |
 | --- | --- | --- | --- |
-| **Gate review** | One routine review angle per checkpoint — direction `correctness`, final `security`; extra angles only on explicit high-risk/dispute paths | `.devloops` → `refinement.fanOut: 1`, `roles` | dev-loops, automatically at a gate |
+| **Gate review** | One routine review angle per checkpoint — draft `correctness`, final `security`; extra angles only on explicit high-risk/dispute paths | `.devloops` → `refinement.fanOut: 1`, `roles` | dev-loops, automatically at a gate |
 | **Sub-agent delegation** | Child **pi sessions** with their own jobs | `.pi/subagent-policy.json`, installed to the package's user-level config | the agent, when asked |
 | **Panel review** | Multiple **requested reviewers** on a PR | GitHub review requests + the `ai-review` label | a human, by requesting review |
 
@@ -226,6 +270,16 @@ may use a validated conventional issue branch as its temporary `--base`.
 The repository wrappers keep these forms separate and record the selected remote
 ref in `branch.<name>.oxidDeliveryBase` for pre-push verification.
 
+The bare issue target and normalized remote ref are equivalent only after a
+closed proof: the active repository and `origin` URL identify
+`MediaNoxLabs/oxid`, the configured fetch refspec maps that exact branch to
+`refs/remotes/origin/<target>`, and the issue-target and envelope-target refs
+resolve to the same 40-character commit OID. A conventional issue branch is a
+temporary stacked PR base, never a substitute delivery target. Any repository,
+remote, branch, refspec, or OID disagreement stops the worker before mutation;
+the agent must not request supervisor approval for the valid bare/origin spelling
+difference alone.
+
 ```bash
 node scripts/dev-loops.mjs doctor    # environment readiness
 node scripts/dev-loops.mjs gates     # resolve and print every configured angle
@@ -242,7 +296,7 @@ upstream-only gap table.
 `gates` is the authoritative dev-loop config validator — it exercises the real loader,
 so a `.devloops` that `gates` parses is a `.devloops` that will run. The
 repository layer disables every inherited angle by name except mandatory
-`correctness` at direction review and mandatory `security` at pre-approval; this prevents
+`correctness` at draft and mandatory `security` at pre-approval; this prevents
 an upstream default expansion. Prefer it over a YAML lint.
 
 **`doctor` reports 3/4 and that is expected.** The warning is *"Subagent command
@@ -260,6 +314,10 @@ undetectable later. The check that matters is `gates` parsing.
   the merge tree is conflict-free, all critical required checks (including
   GPG/DCO) pass, and every review finding is either repaired or mapped to an
   open follow-up issue. It cannot merge to `develop` or `main`.
+  Scheduling or watching hosted CI does not authorize a merge. Never request
+  GitHub auto-merge directly, including with `gh pr merge --auto`; GitHub can
+  consider that request ready before the repository-selected exact-head checks
+  have settled. Audit first and execute only through the guarded wrapper below.
 
   ```bash
   node scripts/github/review-control.mjs authorize-review \
@@ -299,12 +357,11 @@ undetectable later. The check that matters is `gates` parsing.
   an unavailable panel cannot deadlock an issue-backed, exact-head green PR.
 - **Foreign angles are rejected.** `gates.rejectForeignAngles: true`, so an
   angle name not in the configured set cannot smuggle itself into evidence.
-- **One hosted admission per exact head.** `workflow.requireDraftFirst: false`;
-  the direction gate uses `requireCi: false`, while hosted CI is required once at
-  pre-approval. Production delivery opens the PR ready after the exact-head
-  local gate. If an older manually created draft exists, do not rerun its older
-  workflow while a newer authoritative same-head run is active. Commit
-  authenticity remains required before
+- **Draft first, without a CI stall.** `workflow.requireDraftFirst: true`, but
+  the draft gate uses `requireCi: false`; hosted CI is required once at
+  pre-approval. When aggregate CI is red on a draft, use gate coordination as
+  the authority for progression: if it permits `run_draft_gate`, continue the
+  draft loop and keep the PR draft. Commit authenticity remains required before
   pre-approval or merge; metadata and classification findings are advisory.
   Routine work requires deterministic final-head metrics, finding triage, and
   a closeout comment, not a separate model-driven retrospective.
@@ -314,29 +371,9 @@ undetectable later. The check that matters is `gates` parsing.
   `scripts/review/claude-current-head.mjs` once on the final head as
   documented in `docs/dev-loop-stability.md`. The wrapper selects and records
   the branch's recorded delivery base (or requires `--delivery-base`) and
-  bounded `medium` effort by default. The single attempt has a ten-minute
-  ceiling and emits `completed`, `timed_out`, `failed`, or `unavailable` with
-  reviewer, duration, and actionable-finding metrics; it is never retried
-  automatically. A timeout remains inconclusive rather than review approval,
-  but does not block delivery when required exact-head repository gates pass.
-  Concrete blocking findings stop delivery;
+  bounded `medium` effort by default; a timeout remains a failed review rather
+  than permission to merge. Concrete blocking findings stop delivery;
   recommendations are retained on the PR and tracked as follow-up issues.
-
-## Release-candidate qualification
-
-Before a human starts a `milestone-<x.y.z>` to `develop` promotion, deliberately dispatch the existing **Nightly** workflow from the frozen milestone branch (`gh workflow run nightly.yml --ref milestone-0.2.0`). This workflow is available for dispatch because it already exists on the repository default branch. A milestone dispatch runs the full hermetic `nix flake check` and a checksum-pinned Scorecard CLI scan of the event's immutable `github.sha`. The Scorecard JSON is retained as a SHA-named artifact; the existing default-branch Scorecard action continues publishing its separate routine results. Scheduled default-branch Nightly runs keep their Nix check and skip the release Scorecard job. Routine feature PRs do not inherit this expensive lane.
-
-After both jobs are green, verify the retained GitHub receipt before promotion:
-
-```bash
-MILESTONE_HEAD_SHA="$(gh api repos/MediaNoxLabs/oxid/git/ref/heads/milestone-0.2.0 --jq .object.sha)"
-node scripts/github/verify-release-qualification.mjs \
-  --repo MediaNoxLabs/oxid \
-  --branch milestone-0.2.0 \
-  --sha "$MILESTONE_HEAD_SHA"
-```
-
-The verifier first reads the current remote milestone tip, then accepts a successful `workflow_dispatch` run whose branch, immutable head SHA, both required job conclusions, and retained Scorecard artifact match. It checks the branch tip again before returning. The read-only develop-merge audit invokes this verifier for a milestone promotion PR. A later milestone update therefore invalidates the earlier receipt even if an old SHA is supplied; missing, failed, expired, scheduled, or default-branch evidence blocks promotion.
 
 ## Review budget and controlled debt
 
@@ -426,17 +463,27 @@ in a diff.
   Batch accepted findings locally and push a coherent candidate instead of
   invalidating CI and exact-head evidence after every small edit.
 - **Dispatch one implementation child per top-level `/dev-loop` invocation.**
-  Return after its pushed review-ready-PR and exact-head local-gate checkpoint; the
+  Return after its pushed draft-PR and exact-head local-gate checkpoint; the
   child cannot dispatch another child. Hosted-CI watch, focused review, triage,
   merge, metrics, closeout, and every explicit retry belong to the external
   supervisor.
 - **Recover after the one-hour conductor bound.** A Pi timeout does not delete
-  the issue branch, managed worktree, review-ready PR, or private metrics. Re-run the
+  the issue branch, managed worktree, draft PR, or private metrics. Re-run the
   startup resolver for the same issue, reuse its canonical worktree, verify the
   exact head and working-tree status, and continue from the last durable commit.
   Record the interrupted duration in closeout metrics; changing the ceiling is
   a tracked factory-policy change, not a per-session escape hatch.
-- **Audit before creating another worktree.** `node scripts/worktree-lifecycle.mjs
+- **Audit before creating another worktree.** On macOS, worktree admission also
+  runs `node scripts/factory/resource-admission.mjs`'s pressure-aware decision
+  and writes a private mode-0600 receipt beside (but separate from) `metrics-v1`.
+  `allow` admits healthy telemetry; stable historical swap above 20 GiB is
+  `degraded` and permits only one explicit `headless`/factory lane; missing or
+  contradictory telemetry, unresolved alerts, low memory/disk, or material
+  swap growth block. Never terminate unowned workloads to recover admission;
+  wait or clean only a receipt-owned resource. To restore the earlier posture,
+  treat every swap value above 20 GiB as `block`.
+
+  `node scripts/worktree-lifecycle.mjs
   audit` lists target size, cleanliness, merge state/proof, and age. Direct
   ancestry is preferred; squash-merged heads require one exact merged GitHub PR
   with its recorded delivery base and a merge commit present on that remotely

@@ -6,7 +6,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-for required_command in pi node jq realpath timeout; do
+for required_command in pi node jq realpath awk timeout; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     echo "missing Pi devshell command: $required_command" >&2
     exit 1
@@ -52,14 +52,83 @@ for variable in PI_CODING_AGENT_SESSION_DIR PI_SUBAGENTS_TEMP_ROOT; do
   fi
 done
 
-pi_contract="$(node scripts/factory/check-pi-devshell-config.mjs)"
-expected_provider="$(printf '%s\n' "$pi_contract" | jq -er '.expectedProvider')"
-expected_model="$(printf '%s\n' "$pi_contract" | jq -er '.expectedModel')"
-review_package_root="$(printf '%s\n' "$pi_contract" | jq -er '.reviewPackageRoot')"
-if ! timeout --kill-after=5s 30s pi --list-models "$expected_provider/$expected_model" \
-  | node scripts/factory/check-pi-rpc-commands.mjs \
-    --provider "$expected_provider" --model "$expected_model"; then
+model_policy="$(node --input-type=module -e '
+import { readFile } from "node:fs/promises";
+
+const settings = JSON.parse(await readFile(".pi/settings.json", "utf8"));
+if (!/^[a-z0-9-]+$/u.test(settings.defaultProvider ?? "") || !/^[a-z0-9.-]+$/u.test(settings.defaultModel ?? "")) {
+  throw new Error("tracked defaultProvider/defaultModel is malformed");
+}
+if (settings.subagents?.defaultModel !== `${settings.defaultProvider}/${settings.defaultModel}`) {
+  throw new Error("parent and subagent default models are not aligned");
+}
+const scope = settings.subagents?.modelScope;
+if (scope?.enforce !== true || scope?.strict !== true
+  || JSON.stringify(scope?.agents?.["dev-loop"]?.allow) !== JSON.stringify(["inherit"])) {
+  throw new Error("dev-loop must be strictly restricted to the active supervisor model");
+}
+process.stdout.write(`${settings.defaultProvider}\t${settings.defaultModel}`);
+')"
+IFS=$'\t' read -r expected_provider expected_model <<< "$model_policy"
+if ! model_catalog="$(pi --list-models "$expected_provider/$expected_model")"; then
+  echo "Pi model catalog query failed for $expected_provider/$expected_model" >&2
+  exit 1
+fi
+if ! awk -v provider="$expected_provider" -v model="$expected_model" \
+  'NR > 1 && $1 == provider && $2 == model { found = 1 } END { exit !found }' <<< "$model_catalog"; then
   echo "tracked Pi model is absent from the Nix-pinned catalog: $expected_provider/$expected_model" >&2
+  exit 1
+fi
+
+review_package_root="$(node --input-type=module -e '
+import { resolveDevLoopsPackageRoot } from "./scripts/lib/dev-loop-runtime.mjs";
+
+const expectedName = "@input-output-hk/agent-review-pi";
+const resolved = await resolveDevLoopsPackageRoot({
+  cwd: process.cwd(),
+  includeAllPinnedPackages: true,
+});
+const reviewPackage = resolved.packageRoots.find(({ name }) => name === expectedName);
+if (!reviewPackage) {
+  throw new Error(`project Pi settings do not pin ${expectedName}`);
+}
+process.stdout.write(reviewPackage.packageRoot);
+')"
+
+subagent_package_root="$(node --input-type=module -e '
+import { resolveDevLoopsPackageRoot } from "./scripts/lib/dev-loop-runtime.mjs";
+
+const expectedName = "pi-subagents";
+const resolved = await resolveDevLoopsPackageRoot({ cwd: process.cwd(), includeAllPinnedPackages: true });
+const subagents = resolved.packageRoots.find(({ name }) => name === expectedName);
+if (!subagents) throw new Error(`project Pi settings do not pin ${expectedName}`);
+process.stdout.write(subagents.packageRoot);
+')"
+
+node scripts/factory/verify-pi-subagents-package.mjs \
+  "$subagent_package_root" "$repo_root/.pi/settings.json" "$pi_version"
+
+agent_hashes_before="$(git hash-object .pi/agents/*.agent.md)"
+if timeout -k 5s 60s node scripts/factory/smoke-pi-child.mjs; then
+  :
+else
+  child_smoke_status=$?
+  if [[ "$child_smoke_status" -eq 124 || "$child_smoke_status" -eq 137 ]]; then
+    echo "Pi read-only child startup exceeded the 60-second smoke deadline." >&2
+  fi
+  echo "Pi direct developer or /dev-loop local implementation child startup failed." >&2
+  exit 1
+fi
+
+agent_hashes_before="$(git hash-object .pi/agents/*.agent.md)"
+if timeout -k 5s 60s node scripts/factory/smoke-pi-child.mjs; then
+  :
+else
+  child_smoke_status=$?
+  if [[ "$child_smoke_status" -eq 124 || "$child_smoke_status" -eq 137 ]]; then
+    echo "Pi read-only child startup exceeded the 60-second smoke deadline." >&2
+  fi
+  echo "Pi direct developer or /dev-loop local implementation child startup failed." >&2
   exit 1
 fi
 
@@ -70,14 +139,78 @@ if [[ ! -f "$review_package_json" ]]; then
   exit 1
 fi
 
+node -e '
+const fs = require("node:fs");
+
+const packagePath = process.argv[1];
+const manifest = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+const expected = {
+  name: "@input-output-hk/agent-review-pi",
+  version: "0.6.0",
+  extension: "./dist/extension.js",
+  skill: "./skills",
+};
+
+if (manifest.name !== expected.name || manifest.version !== expected.version) {
+  throw new Error(`unexpected review package ${manifest.name}@${manifest.version}`);
+}
+if (!manifest.pi?.extensions?.includes(expected.extension)) {
+  throw new Error(`review package does not declare ${expected.extension}`);
+}
+if (!manifest.pi?.skills?.includes(expected.skill)) {
+  throw new Error(`review package does not declare ${expected.skill}`);
+}
+' "$review_package_json"
+
+node --input-type=module -e '
+import { pathToFileURL } from "node:url";
+
+const extensionPath = process.argv[1];
+const extension = await import(pathToFileURL(extensionPath).href);
+const registered = [];
+extension.registerTools({
+  registerTool(tool) {
+    registered.push(tool.name);
+  },
+});
+
+const expected = [
+  "labels_bootstrap",
+  "pr_approve_dep_upgrade",
+  "pr_create_followup",
+  "pr_expedite",
+  "pr_request_review",
+  "pr_self_review",
+  "pr_stabilize",
+  "pr_watch",
+  "review_claim",
+  "review_complete",
+  "review_create",
+  "review_enrich",
+  "review_list",
+].sort();
+registered.sort();
+
+if (JSON.stringify(registered) !== JSON.stringify(expected)) {
+  throw new Error(`unexpected review tools: ${registered.join(",")}`);
+}
+' "$review_package_root/dist/extension.js"
+
 pi_rpc_stderr="$(mktemp "${TMPDIR:-/tmp}/oxid-pi-smoke.XXXXXX")"
-agent_hashes_before="$(git hash-object .pi/agents/*.agent.md)"
-trap 'rm -f "$pi_rpc_stderr"' EXIT
-loader_path="$repo_root/.pi/npm/node_modules/@input-output-hk/agent-review-pi/skills/agent-review/SKILL.md"
-if ! {
-  printf '%s\n' '{"type":"get_commands"}'
-} | timeout --kill-after=5s 30s pi --approve --offline --mode rpc --no-session 2>"$pi_rpc_stderr" \
-  | node scripts/factory/check-pi-rpc-commands.mjs --loader-path "$loader_path"; then
+pi_rpc_input="$(mktemp "${TMPDIR:-/tmp}/oxid-pi-smoke-input.XXXXXX")"
+pi_rpc_output="$(mktemp "${TMPDIR:-/tmp}/oxid-pi-smoke-output.XXXXXX")"
+trap 'rm -f "$pi_rpc_stderr" "$pi_rpc_input" "$pi_rpc_output"' EXIT
+printf '%s\n' '{"type":"get_commands"}' >"$pi_rpc_input"
+if timeout -k 5s 60s pi --approve --offline --mode rpc --no-session \
+  <"$pi_rpc_input" >"$pi_rpc_output" 2>"$pi_rpc_stderr"; then
+  pi_rpc_status=0
+else
+  pi_rpc_status=$?
+fi
+if [[ "$pi_rpc_status" -ne 0 ]]; then
+  if [[ "$pi_rpc_status" -eq 124 || "$pi_rpc_status" -eq 137 ]]; then
+    echo "Pi offline RPC startup exceeded the 60-second smoke deadline." >&2
+  fi
   echo "Pi offline RPC startup failed:" >&2
   sed -n '1,20p' "$pi_rpc_stderr" >&2
   exit 1
@@ -93,6 +226,39 @@ if [[ "$agent_hashes_after" != "$agent_hashes_before" ]]; then
   echo "Pi startup modified tracked project agent shadows:" >&2
   git diff --name-only -- .pi/agents >&2
   echo "suppress package extensions that rewrite consumer-owned policy before starting Pi" >&2
+  exit 1
+fi
+
+if jq -s -e '
+  map(select(.type == "response" and .command == "get_commands"))[0]
+  | .data.commands
+  | any(.name == "tf" or .name == "skill:taskflow")
+' "$pi_rpc_output" >/dev/null; then
+  echo "unsafe inherited taskflow resources are active; project suppression did not take effect" >&2
+  echo "do not start Pi: detached peer resolution, nested progress, and descendant cancellation are unverified" >&2
+  exit 1
+fi
+
+if ! jq -s -e '
+  map(select(.type == "response" and .command == "get_commands"))[0]
+  | .data.commands
+  | (any(.name == "scenario")) and (any(.name == "use-case"))
+' "$pi_rpc_output" >/dev/null; then
+  echo "Pi did not expose the tracked scenario and use-case commands" >&2
+  exit 1
+fi
+
+loader_path="$repo_root/.pi/npm/node_modules/@input-output-hk/agent-review-pi/skills/agent-review/SKILL.md"
+if ! jq -s -e --arg loader_path "$loader_path" '
+  map(select(.type == "response" and .command == "get_commands"))[0]
+  | .data.commands
+  | any(
+      .name == "skill:agent-review"
+      and .source == "skill"
+      and .sourceInfo.path == $loader_path
+    )
+' "$pi_rpc_output" >/dev/null; then
+  echo "Pi did not expose the bundled agent-review 0.6.0 skill" >&2
   exit 1
 fi
 
