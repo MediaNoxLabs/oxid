@@ -33,7 +33,12 @@ import {
   initialReviewControl,
   parseReviewControlComment,
 } from "../../scripts/github/review-control.mjs";
-import { auditFollowUpDebt, followUpDebtRow } from "../../scripts/github/audit-follow-up-debt.mjs";
+import {
+  auditFollowUpDebt,
+  closingPullRequestEvidence,
+  followUpDebtRow,
+  resolveClosingPullRequestEvidence,
+} from "../../scripts/github/audit-follow-up-debt.mjs";
 import { buildCreateFollowUpArgs } from "../../scripts/github/create-follow-up.mjs";
 import { normalizeDevLoopsArgs } from "../../scripts/dev-loops.mjs";
 
@@ -130,6 +135,7 @@ function milestonePr(overrides = {}) {
     headRefOid: "b".repeat(40),
     isDraft: false,
     isCrossRepository: false,
+    autoMergeRequest: null,
     mergeable: "MERGEABLE",
     mergeStateStatus: "CLEAN",
     title: "feat(wallet): stream one increment",
@@ -275,37 +281,112 @@ test("follow-up debt audit reports stale and invalid inventory without mutating 
   assert.equal(result.invalid, 0);
 });
 
-test("follow-up debt audit accepts closed items only with delivery evidence", () => {
+test("follow-up debt audit accepts only one issue-bound merged closing PR", () => {
   const body = `## Problem\nDelivered controlled debt.\n\n## Delivery target\n\ndevelop\n\n## Acceptance criteria\n- [x] Fixed.\n\n## Dependencies\n- Origin PR #603\n`;
+  const merged = closingPullRequestEvidence(604, [{
+    number: 700,
+    state: "MERGED",
+    mergedAt: "2026-10-06T00:00:00.000Z",
+    url: "https://github.com/MediaNoxLabs/oxid/pull/700",
+  }]);
   const delivered = followUpDebtRow({
     number: 604,
     state: "CLOSED",
     body,
     labels: [{ name: "factory:follow-up" }],
     createdAt: "2026-09-01T00:00:00Z",
-    closedByPullRequest: true,
+    deliveryEvidence: merged,
   });
-  const unproven = followUpDebtRow({
+  assert.equal(delivered.valid, true);
+  assert.equal(delivered.deliveryEvidence, "merged");
+
+  const issue = {
     number: 605,
     state: "CLOSED",
     body,
     labels: [{ name: "factory:follow-up" }],
     createdAt: "2026-09-01T00:00:00Z",
+  };
+  const cases = [
+    ["none", closingPullRequestEvidence(605, [])],
+    ["unmerged", closingPullRequestEvidence(605, [{
+      number: 701, state: "OPEN", mergedAt: null,
+      url: "https://github.com/MediaNoxLabs/oxid/pull/701",
+    }])],
+    ["unavailable", closingPullRequestEvidence(605, null)],
+    ["ambiguous", closingPullRequestEvidence(605, [
+      { number: 701, state: "MERGED", mergedAt: "2026-10-06T00:00:00.000Z", url: "https://github.com/MediaNoxLabs/oxid/pull/701" },
+      { number: 702, state: "MERGED", mergedAt: "2026-10-06T00:01:00.000Z", url: "https://github.com/MediaNoxLabs/oxid/pull/702" },
+    ])],
+    ["wrong-issue", { ...merged, issueNumber: 999 }],
+    ["legacy-boolean", true],
+  ];
+  for (const [name, deliveryEvidence] of cases) {
+    const row = followUpDebtRow({ ...issue, deliveryEvidence });
+    assert.equal(row.valid, false, name);
+    assert.match(row.problems.join("; "), /closed without merged linked delivery evidence/u, name);
+  }
+});
+
+test("closing PR evidence rejects unrelated and malformed pull request metadata", () => {
+  for (const reference of [
+    { number: 700, state: "MERGED", mergedAt: "2026-10-06T00:00:00.000Z", url: "https://github.com/other/oxid/pull/700" },
+    { number: 700, state: "MERGED", mergedAt: "2026-10-06T00:00:00.000Z", url: "https://github.com/MediaNoxLabs/oxid/pull/701" },
+    { number: 700, state: "MERGED", mergedAt: "yesterday", url: "https://github.com/MediaNoxLabs/oxid/pull/700" },
+  ]) {
+    assert.equal(closingPullRequestEvidence(604, [reference]).status, "unavailable");
+  }
+  assert.throws(() => closingPullRequestEvidence(0, []), /positive issue number/u);
+});
+
+test("closing PR evidence resolves bounded references before trusting merge state", () => {
+  const linked = [
+    { number: 700, url: "https://github.com/MediaNoxLabs/oxid/pull/700" },
+    { number: 701, url: "https://github.com/MediaNoxLabs/oxid/pull/701" },
+  ];
+  const loaded = [];
+  const ambiguous = resolveClosingPullRequestEvidence(604, linked, (number) => {
+    loaded.push(number);
+    return {
+      number,
+      state: "MERGED",
+      mergedAt: `2026-10-06T00:0${number - 700}:00.000Z`,
+      url: `https://github.com/MediaNoxLabs/oxid/pull/${number}`,
+    };
   });
-  assert.equal(delivered.valid, true);
-  assert.equal(unproven.valid, false);
-  assert.match(unproven.problems.join("; "), /closed without linked delivery evidence/u);
+  assert.equal(ambiguous.status, "ambiguous");
+  assert.deepEqual(loaded, [700, 701], "every bounded closing reference must be resolved");
+
+  const merged = resolveClosingPullRequestEvidence(604, linked.slice(0, 1), (number) => ({
+    number,
+    state: "MERGED",
+    mergedAt: "2026-10-05T13:49:56Z",
+    url: `https://github.com/MediaNoxLabs/oxid/pull/${number}`,
+  }));
+  assert.equal(merged.status, "merged");
+  assert.equal(merged.pullRequest.number, 700);
+  assert.equal(resolveClosingPullRequestEvidence(604, linked.slice(0, 1), () => {
+    throw new Error("API unavailable");
+  }).status, "unavailable");
+  assert.equal(resolveClosingPullRequestEvidence(604, linked.slice(0, 1), () => ({
+    number: 999,
+    state: "MERGED",
+    mergedAt: "2026-10-06T00:00:00.000Z",
+    url: "https://github.com/MediaNoxLabs/oxid/pull/999",
+  })).status, "unavailable");
 });
 
 function milestoneAuditRun({
   reReadHead = "b".repeat(40),
+  reReadAutoMergeRequest = null,
   issueTarget = "milestone-0.4.0",
   localBase = "a".repeat(40),
   reReadBase = localBase,
+  autoMergeRequest = null,
   requiredChecks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
   selectedChecks = CRITICAL_CHECKS.map((name) => ({ name, bucket: "pass", state: "SUCCESS", workflow: "fixture" })),
 } = {}) {
-  const pr = milestonePr();
+  const pr = milestonePr({ autoMergeRequest });
   let baseReads = 0;
   const control = freezeReview(
     authorizeReview(initialReviewControl(pr.headRefOid), { headSha: pr.headRefOid }),
@@ -319,7 +400,10 @@ function milestoneAuditRun({
     if (command !== "gh") throw new Error(`unexpected command ${command}`);
     if (args[0] === "pr" && args[1] === "view" && args.at(-1).includes("state,")) return JSON.stringify(pr);
     if (args[0] === "pr" && args[1] === "view") return JSON.stringify({
-      baseRefName: pr.baseRefName, baseRefOid: pr.baseRefOid, headRefOid: reReadHead,
+      baseRefName: pr.baseRefName,
+      baseRefOid: pr.baseRefOid,
+      headRefOid: reReadHead,
+      autoMergeRequest: reReadAutoMergeRequest,
     });
     if (args[0] === "issue" && args[1] === "view") return JSON.stringify({
       state: "OPEN",
@@ -358,6 +442,26 @@ test("milestone audit binds issue target, base, selected required checks, triage
   }) }), /pull request checks are not green/);
 });
 
+test("GitHub auto-merge availability cannot bypass the exact-head audit", () => {
+  const options = { repo: "MediaNoxLabs/oxid", pr: 42, execute: false };
+  const autoMergeRequest = {
+    enabledAt: "2026-10-07T00:00:00Z",
+    mergeMethod: "SQUASH",
+  };
+  assert.match(
+    validateMilestonePr(milestonePr({ autoMergeRequest })).failures.join("; "),
+    /GitHub auto-merge is active/u,
+  );
+  assert.throws(() => auditMilestoneMerge(options, {
+    cwd: "/repo",
+    run: milestoneAuditRun({ autoMergeRequest }),
+  }), /GitHub auto-merge is active/u);
+  assert.throws(() => auditMilestoneMerge(options, {
+    cwd: "/repo",
+    run: milestoneAuditRun({ reReadAutoMergeRequest: autoMergeRequest }),
+  }), /GitHub auto-merge became active during the merge audit/u);
+});
+
 test("milestone merge implementation pins squash execution to the audited head", async () => {
   const source = await readFile(new URL("../../scripts/github/merge-milestone-pr.mjs", import.meta.url), "utf8");
   assert.match(source, /--required/);
@@ -371,4 +475,6 @@ test("milestone merge implementation pins squash execution to the audited head",
   assert.match(source, /assertIssueTarget/);
   assert.match(source, /closeout-pr/);
   assert.match(source, /result\.headSha/);
+  assert.match(source, /autoMergeRequest/);
+  assert.doesNotMatch(source, /["'`]--auto["'`]/u);
 });

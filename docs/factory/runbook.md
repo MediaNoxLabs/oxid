@@ -314,6 +314,10 @@ undetectable later. The check that matters is `gates` parsing.
   the merge tree is conflict-free, all critical required checks (including
   GPG/DCO) pass, and every review finding is either repaired or mapped to an
   open follow-up issue. It cannot merge to `develop` or `main`.
+  Scheduling or watching hosted CI does not authorize a merge. Never request
+  GitHub auto-merge directly, including with `gh pr merge --auto`; GitHub can
+  consider that request ready before the repository-selected exact-head checks
+  have settled. Audit first and execute only through the guarded wrapper below.
 
   ```bash
   node scripts/github/review-control.mjs authorize-review \

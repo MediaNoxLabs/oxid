@@ -76,6 +76,9 @@ export function validateMilestonePr(pr) {
   if (pr?.state !== "OPEN") failures.push("pull request is not open");
   if (pr?.isDraft !== false) failures.push("pull request is still a draft");
   if (pr?.isCrossRepository === true) failures.push("cross-repository heads are not eligible for automated merge");
+  if (pr?.autoMergeRequest != null) {
+    failures.push("GitHub auto-merge is active; disable it and use the repository exact-head merge facade");
+  }
   if (BLOCKING_TITLE_MARKERS.test(pr?.title ?? "")) failures.push("title contains a merge-blocking marker");
   if (pr?.mergeable !== "MERGEABLE") failures.push(`mergeable is ${pr?.mergeable ?? "unknown"}`);
   if (!ELIGIBLE_MERGE_STATES.has(pr?.mergeStateStatus)) {
@@ -145,7 +148,10 @@ function ghJson(run, args, cwd, label) {
 
 export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaultRun } = {}) {
   const root = run("git", ["rev-parse", "--show-toplevel"], { cwd, label: "resolve repository root" }).trim();
-  const fields = "state,baseRefName,baseRefOid,headRefName,headRefOid,isDraft,isCrossRepository,mergeable,mergeStateStatus,title,body";
+  // An active GitHub auto-merge request is a competing mutation path whose
+  // branch-protection decision can race this repository-owned audit. Read it
+  // explicitly so eligibility can fail closed before any checks are awaited.
+  const fields = "state,baseRefName,baseRefOid,headRefName,headRefOid,isDraft,isCrossRepository,mergeable,mergeStateStatus,autoMergeRequest,title,body";
   const pr = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", fields], root, "read pull request facts");
   const eligibility = validateMilestonePr(pr);
   if (!eligibility.ok) throw new Error(`automated milestone merge denied: ${eligibility.failures.join("; ")}`);
@@ -193,7 +199,10 @@ export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaul
   run(process.execPath, [path.join(root, "scripts", "dev-loops.mjs"), "gates"], { cwd: root, label: "validate repository dev-loop policy" });
   run("git", ["fetch", "--no-tags", "origin", eligibility.target.branch, pr.headRefOid], { cwd: root, label: "re-read milestone and PR head" });
   const currentBase = run("git", ["rev-parse", `refs/remotes/origin/${eligibility.target.branch}`], { cwd: root, label: "re-read fetched milestone" }).trim();
-  const current = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", "baseRefName,headRefOid"], root, "re-read pull request head");
+  const current = ghJson(run, ["pr", "view", String(options.pr), "--repo", options.repo, "--json", "baseRefName,headRefOid,autoMergeRequest"], root, "re-read pull request head");
+  if (current?.autoMergeRequest != null) {
+    throw new Error("GitHub auto-merge became active during the merge audit");
+  }
   if (currentBase !== localBase || current?.baseRefName !== eligibility.target.branch || current?.headRefOid !== pr.headRefOid) {
     throw new Error("pull request head or milestone base changed during the merge audit");
   }
