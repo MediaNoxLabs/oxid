@@ -700,6 +700,12 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
             .text("mode", "development_only")
             .texts("networks", &["undeployed"])
             .texts("initialMethods", &["ed25519", "p256", "jubjub"]),
+        CapabilityView::new("did.deploy", "composition_dependent")
+            .text("mode", "native_ledger")
+            .text("scope", "active_profile")
+            .boolean("durable", true)
+            .boolean("secretsExposed", false)
+            .boolean("indexedReceiptBarrier", true),
         CapabilityView::new("did.resolve", "ready")
             .text("mode", "standalone")
             .texts("sources", &["standalone", "live"]),

@@ -16,5 +16,8 @@ oxid-identity-domain.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+oxid-foundation.workspace = true
+
 [lints]
 workspace = true

@@ -350,6 +350,47 @@ fn creates_and_resolves_an_offchain_demo_identity_without_network_configuration(
 }
 
 #[test]
+fn ledger_deployment_is_secret_free_and_fails_closed_when_not_composed() {
+    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let created = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"deploy-profile","method":"wallet.profile.create","params":{"displayName":"Deployment flow"}}"#,
+    );
+    let profile = created[0]["result"]["profile"]["id"]
+        .as_str()
+        .expect("profile id");
+    let setup = execute_with_wallet(
+        &wallet,
+        &format!(
+            "{}\n{}",
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "deploy-select",
+                "method": "wallet.profile.select",
+                "params": { "profileId": profile },
+            }),
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "deploy-did",
+                "method": "did.deploy",
+                "params": { "network": "undeployed", "accountIndex": 0 },
+            }),
+        ),
+    );
+
+    assert_eq!(setup[0]["ok"], true);
+    assert_eq!(setup[1]["error"]["code"], "capability_unavailable");
+    assert!(!setup[1].to_string().contains("seed"));
+    assert!(!setup[1].to_string().contains("mnemonic"));
+
+    let invalid = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"deploy-offchain","method":"did.deploy","params":{"network":"offchain"}}"#,
+    );
+    assert_eq!(invalid[0]["error"]["code"], "invalid_params");
+}
+
+#[test]
 fn default_headless_did_commands_report_approval_unavailable_and_reject_json_authority() {
     let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
     let created = execute_with_wallet(

@@ -12,13 +12,19 @@ publish = false
 default = []
 # Explicit Android Tailnet-demo egress for one public holder DID document.
 # Normal resolver and lifecycle builds do not contain this capability.
-tailnet-test-did-publication = ["dep:zeroize"]
+tailnet-test-did-publication = []
 
 [dependencies]
 base64.workspace = true
 blake2.workspace = true
 futures.workspace = true
+hex.workspace = true
+midnight-base-crypto.workspace = true
+midnight-coin-structure.workspace = true
+midnight-ledger.workspace = true
+midnight-onchain-state.workspace = true
 midnight-serialize.workspace = true
+midnight-storage.workspace = true
 midnight-transient-crypto.workspace = true
 oxid-identity-application.workspace = true
 oxid-identity-domain.workspace = true
@@ -26,12 +32,13 @@ oxid-adapter-platform-system.workspace = true
 oxid-wallet-application.workspace = true
 oxid-wallet-domain.workspace = true
 p256.workspace = true
+rand.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tokio.workspace = true
-zeroize = { workspace = true, optional = true }
+zeroize.workspace = true
 
 [lints]
 workspace = true

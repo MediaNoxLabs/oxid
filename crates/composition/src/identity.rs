@@ -38,7 +38,9 @@ use oxid_adapter_openid4vci::PortalOid4vciClientFactory;
 use super::environment::MIDNIGHT_DID_RESOLVER_URL_ENV;
 use super::environment::{CREDENTIAL_KEY_PATH_ENV, CREDENTIAL_STORE_PATH_ENV, DID_STORE_PATH_ENV};
 use oxid_adapter_storage_credential_json::EncryptedJsonCredentialRepository;
-use oxid_adapter_storage_identity_json::JsonDidRecordRepository;
+use oxid_adapter_storage_identity_json::{
+    JsonDidDeploymentOperationRepository, JsonDidRecordRepository,
+};
 use oxid_adapter_storage_json::JsonWalletProfileRepository;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_vc_midnight::NativeCompactPresentationRuntime;
@@ -47,8 +49,9 @@ use oxid_credential_application::{
     CredentialVerificationPort, UnavailableCredentialRepository,
 };
 use oxid_identity_application::{
-    DidJubjubChallengeSigningPort, DidLifecyclePort, DidPublicationPort, DidRecordRepository,
-    DidResolutionPort, UnavailableDidRecordRepository,
+    DidDeploymentOperationRepository, DidJubjubChallengeSigningPort, DidLifecyclePort,
+    DidPublicationPort, DidRecordRepository, DidResolutionPort,
+    UnavailableDidDeploymentOperationRepository, UnavailableDidRecordRepository,
 };
 use oxid_platform_ports::IdentityLinkIngressPort;
 
@@ -181,6 +184,32 @@ pub(super) fn headless_did_repository() -> Arc<dyn DidRecordRepository> {
     path.map_or_else(
         || Arc::new(UnavailableDidRecordRepository) as Arc<dyn DidRecordRepository>,
         |path| Arc::new(JsonDidRecordRepository::new(path)) as Arc<dyn DidRecordRepository>,
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn headless_did_deployment_repository() -> Arc<dyn DidDeploymentOperationRepository> {
+    let path = std::env::var_os(DID_STORE_PATH_ENV)
+        .map(std::path::PathBuf::from)
+        .and_then(|path| {
+            path.parent()
+                .map(|parent| parent.join("did-deployments.json"))
+        })
+        .or_else(|| {
+            JsonWalletProfileRepository::at_default_location()
+                .configured_path()
+                .and_then(std::path::Path::parent)
+                .map(|directory| directory.join("private/did-deployments.json"))
+        });
+    path.map_or_else(
+        || {
+            Arc::new(UnavailableDidDeploymentOperationRepository)
+                as Arc<dyn DidDeploymentOperationRepository>
+        },
+        |path| {
+            Arc::new(JsonDidDeploymentOperationRepository::new(path))
+                as Arc<dyn DidDeploymentOperationRepository>
+        },
     )
 }
 

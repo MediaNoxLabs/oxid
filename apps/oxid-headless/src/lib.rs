@@ -3,11 +3,9 @@
 #![forbid(unsafe_code)]
 #![recursion_limit = "256"]
 
-//! Versioned incoming adapter organized according to
-//! [ADR-0104](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0104-regrow-incoming-adapters-behind-capability-facades.md).
-//! `protocol` owns the envelope and stream errors; `parameters`, `projections`,
-//! and `errors` own wire translation; capability modules own application-port
-//! invocation; this root owns transport, stable re-exports, and dispatch.
+//! Versioned incoming adapter organized according to ADR-0104.
+//! `protocol` owns the envelope and stream errors; translation and capability
+//! modules own their ports; this root owns transport, re-exports, and dispatch.
 
 mod accounts;
 mod dids;
@@ -289,6 +287,7 @@ impl HeadlessWallet {
             "vault.claim" => self.claim_from_vault_lock(request),
             "vault.withdraw" => self.withdraw_from_vault_lock(request),
             "did.create" => self.create_did(request),
+            "did.deploy" => self.deploy_did(request),
             "did.resolve" => self.resolve_did(request),
             "did.list" => self.list_dids(request),
             "did.get" => self.get_did(request),

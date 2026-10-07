@@ -7,7 +7,9 @@ import test from "node:test";
 
 import {
   acquireCoverageLock,
+  assertCoverageFixtureEnvironment,
   discoverWorkspacePackages,
+  formatCoverageFailureSummary,
   normalizeLlvmReport,
   parseArguments,
   runCoverage,
@@ -178,6 +180,24 @@ test("an atomic lock refuses both active and stale ownership", async (t) => with
   );
 }));
 
+test("real coverage requires the pinned native DID fixtures", async (t) => withTemp(t, async (directory) => {
+  await assert.rejects(
+    assertCoverageFixtureEnvironment({}),
+    /OXID_MIDNIGHT_DID_ARTIFACTS_DIR must be an absolute path/u,
+  );
+
+  const artifacts = path.join(directory, "did-artifacts");
+  const composer = path.join(directory, "did-call-composer");
+  await mkdir(artifacts);
+  await writeFile(path.join(artifacts, "manifest.json"), "{}\n", { mode: 0o600 });
+  await writeFile(composer, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+
+  await assert.doesNotReject(assertCoverageFixtureEnvironment({
+    OXID_MIDNIGHT_DID_ARTIFACTS_DIR: artifacts,
+    OXID_MIDNIGHT_DID_CALL_COMPOSER: composer,
+  }));
+}));
+
 test("dirty source and unavailable or non-ancestor bases fail closed", async (t) => {
   await withTemp(t, async (stateRoot) => {
     const dirty = fakeGit();
@@ -301,6 +321,65 @@ test("published evidence is private, checksummed, normalized, and path-redacted"
   await assert.rejects(stat(path.join(result.headRoot, "tmp")), { code: "ENOENT" });
   await assert.rejects(stat(path.join(result.headRoot, "build")), { code: "ENOENT" });
 });
+
+test("failure summaries are fixture-driven, actionable, and bounded for every policy class", async () => {
+  const fixtures = JSON.parse(await readFile(
+    path.join(repoRoot, "tests/repository/fixtures/coverage/failure-summaries.json"),
+    "utf8",
+  ));
+  for (const [kind, fixture] of Object.entries(fixtures)) {
+    const summary = formatCoverageFailureSummary(fixture.evaluation, fixture.changedLines);
+    for (const expected of fixture.expected) assert.match(summary, new RegExp(expected, "u"), `${kind}: ${expected}`);
+    assert.ok(summary.split("\n").every((line) => line.startsWith("[coverage] failure")), kind);
+  }
+
+  const changed = structuredClone(fixtures["changed-lines"]);
+  changed.changedLines.files = Array.from({ length: 25 }, (_, index) => ({
+    ...changed.changedLines.files[0],
+    path: `crates/foundation/src/file-${index}.rs`,
+  }));
+  const bounded = formatCoverageFailureSummary(changed.evaluation, changed.changedLines);
+  assert.equal(bounded.split("\n").length, 21);
+  assert.match(bounded, /failure summary omitted=6 max=20/u);
+  assert.doesNotMatch(bounded, /file-20\.rs/u);
+});
+
+test("enforcement failure retains immutable evaluation and changed-lines evidence", async (t) => withTemp(
+  t,
+  async (stateRoot) => {
+    const executeScope = async ({ scope, policy, packageInventory, rawReportPath }) => {
+      const raw = llvmScopeReport(scope.id, policy, packageInventory);
+      if (scope.id === "workspace-aggregate") {
+        const foundation = raw.data[0].files.find(({ filename }) => filename.endsWith("/crates/foundation/src/lib.rs"));
+        foundation.summary.lines.covered = 0;
+        foundation.summary.lines.percent = 0;
+        raw.data[0].totals.lines.covered -= 100;
+        raw.data[0].totals.lines.percent = (raw.data[0].totals.lines.covered * 100)
+          / raw.data[0].totals.lines.count;
+      }
+      await writeFile(rawReportPath, `${JSON.stringify(raw)}\n`, { mode: 0o600 });
+    };
+    await assert.rejects(runCoverage({
+      repoRoot,
+      stateRoot,
+      base: "origin/develop",
+      policy: await loadPolicy(),
+      git: fakeGit(),
+      executeScope,
+      enforce: true,
+      now: () => new Date("2026-09-01T00:00:00.000Z"),
+    }), /kind=absolute-package-floor affected=oxid-foundation.*measured=0\/100.*required=70\/100/u);
+
+    const reportRoot = path.join(stateRoot, "coverage", HEAD, "reports");
+    for (const name of ["evaluation.json", "changed-lines.json"]) {
+      assert.equal((await stat(path.join(reportRoot, name))).mode & 0o777, 0o600);
+    }
+    await assert.rejects(
+      writeFile(path.join(reportRoot, "evaluation.json"), "replacement", { flag: "wx" }),
+      { code: "EEXIST" },
+    );
+  },
+));
 
 test("dependency sources are omitted while untrusted source paths fail closed", () => {
   const filesystemRoot = path.parse(repoRoot).root;
@@ -468,4 +547,13 @@ test("hosted coverage uses the same fetched comparison base as target planning",
   assert.ok(coverageJob.includes(`OXID_COVERAGE_BASE: ${comparisonBase}`));
   assert.match(coverageJob, /\.\/run\.sh coverage --strict/u);
   assert.match(coverageJob, /node scripts\/coverage\/verify-manifest\.mjs/u);
+  assert.match(coverageJob, /timeout-minutes: 27/u);
+  assert.match(coverageJob, /name: Measure the non-UI workspace once\n        timeout-minutes: 25/u);
+  assert.match(coverageJob, /name: Upload immutable coverage-policy evidence\n        if: always\(\)/u);
+  assert.match(coverageJob, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/u);
+  assert.match(coverageJob, /name: coverage-policy-evidence-\$\{\{ github\.sha \}\}/u);
+  assert.match(coverageJob, /target\/coverage\/\$\{\{ github\.sha \}\}\/reports\/evaluation\.json/u);
+  assert.match(coverageJob, /target\/coverage\/\$\{\{ github\.sha \}\}\/reports\/changed-lines\.json/u);
+  assert.match(coverageJob, /if-no-files-found: error/u);
+  assert.match(coverageJob, /overwrite: false/u);
 });

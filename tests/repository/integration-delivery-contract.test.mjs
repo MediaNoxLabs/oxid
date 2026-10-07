@@ -380,6 +380,12 @@ test("guidance, required contexts, and review configuration agree", async () => 
   assert.match(unitJob, /trustedTrainPush[\s\S]*refs\/heads\/milestone-[\s\S]*SCCACHE_GHA_RW_MODE[\s\S]*READ_WRITE[\s\S]*READ_ONLY/);
   assert.match(ciShells, /export CARGO_INCREMENTAL="''\$\{CARGO_INCREMENTAL:-0\}"/);
   assert.match(ciShells, /devShells\.ci-quality = pkgs\.mkShell/);
+  const coverageShell = ciShells.slice(
+    ciShells.indexOf("devShells.ci-coverage = pkgs.mkShell"),
+    ciShells.indexOf("devShells.ci-quality = pkgs.mkShell"),
+  );
+  assert.match(coverageShell, /OXID_MIDNIGHT_DID_ARTIFACTS_DIR=\$\{self'\.packages\.midnight-did-compact-artifacts\}/);
+  assert.match(coverageShell, /OXID_MIDNIGHT_DID_CALL_COMPOSER=\$\{self'\.packages\.midnight-did-call-composer\}\/bin\/oxid-midnight-did-call-composer/);
   assert.match(sccacheRunner, /"\$@" \|\| command_status=\$\?/);
   assert.match(sccacheRunner, /sccache --show-stats \|\| true/);
   assert.match(sccacheRunner, /write-error counters are expected for rejected local puts/);

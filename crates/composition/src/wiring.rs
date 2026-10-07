@@ -86,13 +86,15 @@ use oxid_diagnostics_application::{
     ClearDiagnosticsUseCase, DiagnosticEventSinkPort, DiagnosticsService,
     GetDiagnosticSnapshotUseCase,
 };
+use oxid_identity_application::UnavailableDidDeployment;
 use oxid_identity_application::{
     CreateDidUseCase, CredentialIssuanceFlowService, CredentialPresentationFlowService,
-    DeactivateDidUseCase, DidJubjubChallengeSigningPort, DidLifecyclePort, DidPublicationService,
-    DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase, ListDidRecordsUseCase,
-    PublishDidUseCase, ResolveDidUseCase, SelfIssuedAuthenticationFlowService,
-    SignCredentialIssuancePayloadUseCase, SignCredentialPresentationBundleUseCase,
-    SignDidPayloadUseCase, SignSelfIssuedAuthenticationPayloadUseCase, UpdateDidUseCase,
+    DeactivateDidUseCase, DeployDidUseCase, DidJubjubChallengeSigningPort, DidLifecyclePort,
+    DidPublicationService, DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase,
+    ListDidRecordsUseCase, PublishDidUseCase, ResolveDidUseCase,
+    SelfIssuedAuthenticationFlowService, SignCredentialIssuancePayloadUseCase,
+    SignCredentialPresentationBundleUseCase, SignDidPayloadUseCase,
+    SignSelfIssuedAuthenticationPayloadUseCase, UpdateDidUseCase,
 };
 use oxid_passport_vault_application::{
     AuthorizePassportVaultCallUseCase, CancelPassportVaultCallSubmissionUseCase,
@@ -249,15 +251,16 @@ use oxid_wallet_application::{
     SubmitWalletTransferUseCase, SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase,
     UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
     WalletAccountReadPort, WalletAccountService, WalletBackupReceiptRepository,
-    WalletBackupReceiptService, WalletDustRegistrationRecoveryStoreProvider,
-    WalletDustRegistrationService, WalletDustSyncPort, WalletDustSyncService,
-    WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
-    WalletNetworkSelectionObserver, WalletNetworkService, WalletOnboardingService,
-    WalletPortableBackupPort, WalletPortableBackupService, WalletProfileAssociationRepository,
-    WalletProfileRepository, WalletProtectionPort, WalletProtectionService, WalletRealmFacetState,
-    WalletRealmLifecycleService, WalletRealmReconciliationState, WalletRootRecoveryPort,
-    WalletRootRecoveryService, WalletShieldedSyncPort, WalletShieldedSyncService,
-    WalletTransactionPort, WalletTransactionService,
+    WalletBackupReceiptService, WalletDerivedSecretUsePort,
+    WalletDustRegistrationRecoveryStoreProvider, WalletDustRegistrationService, WalletDustSyncPort,
+    WalletDustSyncService, WalletJubjubChallengeSigningPort, WalletKeyOperationPort,
+    WalletKeyService, WalletNetworkPort, WalletNetworkSelectionObserver, WalletNetworkService,
+    WalletOnboardingService, WalletPortableBackupPort, WalletPortableBackupService,
+    WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
+    WalletProtectionService, WalletRealmFacetState, WalletRealmLifecycleService,
+    WalletRealmReconciliationState, WalletRootRecoveryPort, WalletRootRecoveryService,
+    WalletShieldedSyncPort, WalletShieldedSyncService, WalletTransactionPort,
+    WalletTransactionService,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -413,6 +416,7 @@ where
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -446,6 +450,7 @@ where
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -487,6 +492,7 @@ where
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -529,6 +535,7 @@ where
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -574,6 +581,7 @@ where
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -622,6 +630,7 @@ where
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -729,6 +738,7 @@ where
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -777,6 +787,7 @@ where
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -938,6 +949,7 @@ where
     #[cfg(not(target_arch = "wasm32"))]
     let midnight_contract_call_submission: Arc<dyn MidnightContractCallSubmissionPort> =
         midnight.clone();
+    let deploy_did: Arc<dyn DeployDidUseCase> = Arc::new(UnavailableDidDeployment);
     let selected_realm_runtime = Arc::new(Mutex::new(SelectedWalletRealmRuntime::default()));
     let selected_realm_selection_gate = Arc::new(Mutex::new(()));
     let selected_realm_sync = Arc::new(
@@ -989,7 +1001,7 @@ where
     let credential_presentation_authority = did_approvals
         .as_ref()
         .map(|_| Arc::new(CredentialPresentationFlowService::new(clock.clone())));
-    let identity = DidService::from_ports(did_repository, did_resolver, did_lifecycle);
+    let identity = DidService::from_ports(did_repository, Arc::clone(&did_resolver), did_lifecycle);
     let identity = match did_approvals {
         Some(approvals) => identity.with_approvals(
             approvals,
@@ -1549,6 +1561,8 @@ where
         cancel_wallet_transfer_submission,
         list_wallet_transfer_submissions,
         reconcile_wallet_transfer_submission,
+        deploy_did,
+        did_resolution_port: Arc::clone(&did_resolver),
         create_did,
         resolve_did,
         list_did_records,

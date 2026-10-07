@@ -12,11 +12,14 @@ use oxid_adapter_midnight::{
     protected_simulated_midnight_wallet_with_submission_journal,
     protected_standalone_midnight_wallet,
     protected_standalone_midnight_wallet_with_all_checkpoints,
-    protected_standalone_midnight_wallet_with_checkpoint_options,
+    protected_standalone_midnight_wallet_with_checkpoint_options_and_proving_material,
     protected_standalone_midnight_wallet_with_checkpoints,
     protected_standalone_midnight_wallet_with_dust_checkpoints,
 };
 
+use super::did_deployment::native_did_proving_material;
+#[cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "android")))]
+use super::did_deployment::with_native_did_deployment;
 #[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
 use super::environment::HeadlessCompositionError;
 use super::identity::{CredentialPresentationComposition, HeadlessCredentialProfile};
@@ -267,27 +270,33 @@ pub(super) fn compose_headless_standalone_with_checkpoint_options_and_presentati
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
     let clock = Arc::new(SystemClock);
     let (security, profiles) = development_security_and_profiles(&clock);
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let did_config = config.clone();
     let midnight = Arc::new(
-        protected_standalone_midnight_wallet_with_checkpoint_options(
+        protected_standalone_midnight_wallet_with_checkpoint_options_and_proving_material(
             config,
             account_checkpoints,
             dust_checkpoints,
             shielded_checkpoints,
             submission_journal,
+            native_did_proving_material(),
             Arc::clone(&clock),
             Arc::clone(&security),
         )
         .with_profile_association_repository(profiles.clone()),
     );
-    with_passport_vault_state_source(
+    let services = with_passport_vault_state_source(
         compose_with_adapters_and_presentation(
             profiles,
-            security,
-            midnight,
+            Arc::clone(&security),
+            Arc::clone(&midnight),
             credential_presentation,
         ),
         passport_vault_state_source,
-    )
+    );
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let services = with_native_did_deployment(services, &did_config, security, midnight);
+    services
 }
 
 /// Wires the live standalone adapters to an explicit trusted approval service.
@@ -438,6 +447,8 @@ where
 {
     let network_id = config.indexer().network_id().as_str().to_owned();
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let did_config = config.clone();
     let midnight = Arc::new(
         protected_standalone_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))
             .with_profile_association_repository(profiles.clone()),
@@ -448,10 +459,19 @@ where
         Arc::clone(&midnight),
         protection_for_security,
     );
-    with_passport_vault_state_source(
-        with_wallet_onboarding(services, profiles, security, midnight, network_id),
+    let services = with_passport_vault_state_source(
+        with_wallet_onboarding(
+            services,
+            profiles,
+            Arc::clone(&security),
+            Arc::clone(&midnight),
+            network_id,
+        ),
         passport_vault_state_source,
-    )
+    );
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let services = with_native_did_deployment(services, &did_config, security, midnight);
+    services
 }
 
 /// Wires the explicit compile-time mobile development profile to the public

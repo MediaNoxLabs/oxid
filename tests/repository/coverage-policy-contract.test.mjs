@@ -212,10 +212,14 @@ test("changed-line scorer handles changes, new files, renames, comments, tests, 
   const score = scoreChangedLines(diff, changedReport(inventory), { policy, packageInventory: inventory });
   assert.deepEqual(score.lines, { count: 5, covered: 3, requiredCovered: 4 });
   assert.equal(score.status, "fail");
+  const foundation = score.files.find(({ path: name }) => name === "crates/foundation/src/lib.rs");
+  assert.deepEqual(foundation.changedRanges, [{ start: 10, end: 12 }]);
+  assert.deepEqual(foundation.executableRanges, [{ start: 10, end: 10 }, { start: 12, end: 12 }]);
+  assert.deepEqual(foundation.uncoveredRanges, [{ start: 12, end: 12 }]);
   assert.deepEqual(score.files.filter(({ status }) => status === "excluded").map(({ reason }) => reason).toSorted(), [
     "generated", "sibling-test", "test-directory",
   ]);
-  assert.equal(score.files.find(({ path: name }) => name.endsWith("lib.rs")).lines.count, 2);
+  assert.equal(foundation.lines.count, 2);
   assert.equal(score.files.find(({ path: name }) => name.endsWith("new.rs")).change, "added");
   assert.equal(score.files.find(({ path: name }) => name.endsWith("renamed.rs")).change, "renamed");
 });

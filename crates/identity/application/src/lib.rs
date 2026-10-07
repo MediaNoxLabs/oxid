@@ -5,20 +5,23 @@
 use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 
 use oxid_foundation::OpaqueIdError;
-use oxid_identity_domain::{
-    DidDocument, DidPublicationState, DidRecord, DidResolution, IdentityProfileId, MidnightDid,
-    MidnightDidError,
+pub use oxid_identity_domain::{
+    DidDocument, DidPublicationState, DidRecord, DidResolution, DidResolutionSource,
+    IdentityProfileId, JwkCurve, MidnightDid, MidnightDidError, MidnightNetwork,
+    VerificationRelationship,
 };
 
 mod approval;
 mod credential_issuance;
 mod credential_presentation;
+mod deployment;
 mod lifecycle;
 mod self_issued_authentication;
 
 pub use approval::*;
 pub use credential_issuance::*;
 pub use credential_presentation::*;
+pub use deployment::*;
 pub use lifecycle::*;
 pub use self_issued_authentication::*;
 

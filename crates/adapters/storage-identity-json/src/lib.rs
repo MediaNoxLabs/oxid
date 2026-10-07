@@ -18,6 +18,10 @@ use oxid_identity_domain::{
 };
 use serde::{Deserialize, Serialize};
 
+mod deployment;
+
+pub use deployment::JsonDidDeploymentOperationRepository;
+
 const SCHEMA_VERSION: u32 = 1;
 const MAX_RECORDS: usize = 128;
 const MAX_STORE_BYTES: u64 = 2 * 1_024 * 1_024;
