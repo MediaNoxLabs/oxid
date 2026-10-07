@@ -81,6 +81,7 @@
     "vault.claim",
     "vault.withdraw",
     "did.create",
+    "did.deploy",
     "did.resolve",
     "did.list",
     "did.get",
@@ -140,6 +141,7 @@
     "wallet.bootstrap": "queued",
     "diagnostics.snapshot": "superseded",
     "vault.contract_state.read": "composition_dependent",
+    "did.deploy": "composition_dependent",
     "credential.presentation.accept": "blocked"
   },
   "manifestAliases": {
