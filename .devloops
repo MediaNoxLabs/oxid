@@ -136,6 +136,8 @@ gates:
   rejectForeignAngles: true
 
 # Automated merge is available only through scripts/github/merge-milestone-pr.mjs.
+# Never request GitHub auto-merge directly (including `gh pr merge --auto`):
+# branch-protection availability is not repository exact-head authorization.
 # Develop, main, milestone lifecycle, releases, settings, tags, and ADR
 # acceptance remain human actions; the generic harness never owns them.
 autonomy:

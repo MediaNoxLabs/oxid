@@ -10,6 +10,69 @@ import { deliveryTargetFromIssueBody } from "../lib/delivery-target.mjs";
 import { markdownSection, originPullRequest, validateFollowUpIssue } from "./review-triage.mjs";
 
 const ISSUE_REFERENCE = /#([1-9]\d*)/gu;
+const PULL_REQUEST_URL = /^https:\/\/github\.com\/MediaNoxLabs\/oxid\/pull\/([1-9]\d*)$/u;
+const MAX_CLOSING_PULL_REQUESTS = 8;
+
+function canonicalTimestamp(value) {
+  const githubUtcTimestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u;
+  const milliseconds = Date.parse(value);
+  return typeof value === "string"
+    && githubUtcTimestamp.test(value)
+    && Number.isFinite(milliseconds)
+    && new Date(milliseconds).toISOString().replace(".000Z", "Z") === value.replace(".000Z", "Z");
+}
+
+export function closingPullRequestEvidence(issueNumber, references) {
+  if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) {
+    throw new Error("closing PR evidence requires a positive issue number");
+  }
+  if (!Array.isArray(references)) {
+    return { issueNumber, status: "unavailable", pullRequest: null };
+  }
+  if (references.length === 0) return { issueNumber, status: "none", pullRequest: null };
+  if (references.length !== 1) return { issueNumber, status: "ambiguous", pullRequest: null };
+
+  const [reference] = references;
+  const number = reference?.number;
+  const urlMatch = typeof reference?.url === "string" ? reference.url.match(PULL_REQUEST_URL) : null;
+  if (!Number.isSafeInteger(number) || number < 1 || !urlMatch || Number(urlMatch[1]) !== number) {
+    return { issueNumber, status: "unavailable", pullRequest: null };
+  }
+  const pullRequest = { number, url: reference.url, mergedAt: reference.mergedAt ?? null };
+  if (reference.state === "MERGED" && canonicalTimestamp(reference.mergedAt)) {
+    return { issueNumber, status: "merged", pullRequest };
+  }
+  if ((reference.state === "OPEN" || reference.state === "CLOSED") && reference.mergedAt == null) {
+    return { issueNumber, status: "unmerged", pullRequest };
+  }
+  return { issueNumber, status: "unavailable", pullRequest: null };
+}
+
+export function resolveClosingPullRequestEvidence(issueNumber, references, loadPullRequest) {
+  if (!Array.isArray(references)) return closingPullRequestEvidence(issueNumber, null);
+  if (references.length === 0) return closingPullRequestEvidence(issueNumber, []);
+  if (references.length > MAX_CLOSING_PULL_REQUESTS || typeof loadPullRequest !== "function") {
+    return closingPullRequestEvidence(issueNumber, null);
+  }
+  const resolved = [];
+  try {
+    for (const reference of references) {
+      const number = reference?.number;
+      const urlMatch = typeof reference?.url === "string" ? reference.url.match(PULL_REQUEST_URL) : null;
+      if (!Number.isSafeInteger(number) || number < 1 || !urlMatch || Number(urlMatch[1]) !== number) {
+        return closingPullRequestEvidence(issueNumber, null);
+      }
+      const pullRequest = loadPullRequest(number);
+      if (pullRequest?.number !== number || pullRequest?.url !== reference.url) {
+        return closingPullRequestEvidence(issueNumber, null);
+      }
+      resolved.push(pullRequest);
+    }
+  } catch {
+    return closingPullRequestEvidence(issueNumber, null);
+  }
+  return closingPullRequestEvidence(issueNumber, resolved);
+}
 
 export function followUpDebtRow(issue, { now = Date.now(), staleDays = 30, dependencyStates = new Map() } = {}) {
   const validation = validateFollowUpIssue(issue, { requireOpen: false });
@@ -28,14 +91,18 @@ export function followUpDebtRow(issue, { now = Date.now(), staleDays = 30, depen
   try { deliveryTarget = deliveryTargetFromIssueBody(body).branch; } catch { /* reported by validation */ }
   const missingDependencies = uniqueDependencies.filter((number) => !dependencyStates.has(number));
   const stale = issue?.state === "OPEN" && ageDays !== null && ageDays >= staleDays;
-  const closedWithoutEvidence = issue?.state === "CLOSED"
-    && !issue?.closedByPullRequest
-    && issue?.deliveryEvidence !== true;
+  const deliveryEvidence = issue?.deliveryEvidence;
+  const hasMergedEvidence = deliveryEvidence?.issueNumber === issue?.number
+    && deliveryEvidence?.status === "merged"
+    && Number.isSafeInteger(deliveryEvidence?.pullRequest?.number);
+  const closedWithoutEvidence = issue?.state === "CLOSED" && !hasMergedEvidence;
   const problems = [
     ...validation.failures,
     ...(originPr === null ? ["must identify an origin PR"] : []),
     ...(missingDependencies.length > 0 ? [`unknown dependencies: ${missingDependencies.map((number) => `#${number}`).join(", ")}`] : []),
-    ...(closedWithoutEvidence ? ["closed without linked delivery evidence"] : []),
+    ...(closedWithoutEvidence
+      ? [`closed without merged linked delivery evidence (${deliveryEvidence?.status ?? "unavailable"})`]
+      : []),
   ];
   return {
     number: issue?.number,
@@ -46,6 +113,7 @@ export function followUpDebtRow(issue, { now = Date.now(), staleDays = 30, depen
     originPr,
     dependencies: uniqueDependencies.map((number) => ({ number, state: dependencyStates.get(number) ?? "UNKNOWN" })),
     technicalDebt: labels.includes("technical-debt"),
+    deliveryEvidence: deliveryEvidence?.status ?? null,
     valid: problems.length === 0,
     problems,
   };
@@ -112,11 +180,22 @@ export function cli(argv = process.argv.slice(2)) {
     } catch { /* surfaced as UNKNOWN */ }
   }
   for (const issue of issues.filter((candidate) => candidate.state === "CLOSED")) {
-    const evidence = JSON.parse(run([
-      "issue", "view", String(issue.number), "--repo", options.repo,
-      "--json", "closedByPullRequestsReferences",
-    ]));
-    issue.closedByPullRequest = evidence.closedByPullRequestsReferences?.length > 0;
+    try {
+      const evidence = JSON.parse(run([
+        "issue", "view", String(issue.number), "--repo", options.repo,
+        "--json", "closedByPullRequestsReferences",
+      ]));
+      issue.deliveryEvidence = resolveClosingPullRequestEvidence(
+        issue.number,
+        evidence.closedByPullRequestsReferences,
+        (number) => JSON.parse(run([
+          "pr", "view", String(number), "--repo", options.repo,
+          "--json", "number,state,mergedAt,url",
+        ])),
+      );
+    } catch {
+      issue.deliveryEvidence = closingPullRequestEvidence(issue.number, null);
+    }
   }
   const result = auditFollowUpDebt(issues, { staleDays: options.staleDays, dependencyStates });
   if (options.json) process.stdout.write(`${JSON.stringify(result)}\n`);
