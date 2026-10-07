@@ -959,6 +959,30 @@ mod tests {
     }
 
     #[test]
+    fn target_neutral_composition_port_preserves_fail_closed_validation() {
+        let executable = std::env::current_exe().expect("current executable");
+        let composer = NativeMidnightDidCallComposer::new(
+            executable,
+            Arc::new(UnreachableCustody),
+            Arc::new(UnreachableCustody),
+        )
+        .expect("composer configuration");
+
+        let result =
+            futures::executor::block_on(MidnightDidCallCompositionPort::compose_bootstrap_call(
+                &composer,
+                WalletProfileId::parse("profile-1".to_owned()).expect("profile"),
+                0,
+                0,
+                String::new(),
+                context(),
+                MidnightDidBootstrapCall::AddAuthenticationMethod,
+            ));
+
+        assert_eq!(result.err(), Some(DidLifecyclePortError::InvalidOperation));
+    }
+
+    #[test]
     fn serializes_public_keys_and_controller_secret_to_the_closed_schema() {
         let request = NativeMidnightDidCallRequest {
             profile_id: WalletProfileId::parse("profile-1".to_owned()).expect("profile"),
