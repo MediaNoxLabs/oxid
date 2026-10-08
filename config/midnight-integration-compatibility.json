@@ -2,13 +2,13 @@
   "schema": "oxid-midnight-integration-compatibility-v1",
   "contractRelease": "0.4.0",
   "wallet": {
-    "ledgerRevision": "2cce0f8f26e8ab1398af1c9ed61b087c28611a3f",
+    "ledgerRevision": "8655615e7c4cbf3a1187b3203bf72e69dc09b8dc",
     "ledgerVersion": "8.2.0-rc.1",
     "didToolchainRevision": "05b237a5e51f9c22853b424e7d4236dfa9384c24",
     "didToolchainPackageVersion": "0.4.0",
     "nativeDidRuntime": {
       "repository": "https://github.com/MediaNoxLabs/midnight-identity.git",
-      "revision": "bc7d22a60df4e3008be5aefd33669d9a7647f4a8",
+      "revision": "127d4c48541ba0d28a4f34bfb5ffb4af65df7c42",
       "packageVersion": "0.5.0",
       "artifactRelease": "0.5.0",
       "artifactGitSha": "a14267cec3c1ab7e00bb0f058a54267d913a321b"
