@@ -113,6 +113,7 @@ test("policy pins the current-phase 70 percent floors, baseline placeholders, pa
   assert.deepEqual(policy.pathRules.excludedDirectories, ["tests", "examples", "benches"]);
   assert.deepEqual(policy.pathRules.nonExecutableSources, ["crates/composition/src/lib.rs"]);
   assert.deepEqual(policy.pathRules.testOnlySources, [
+    "crates/composition/src/development_movement_approval_fixture.rs",
     "crates/ui-dioxus/src/desktop_developer_pager_driver.rs",
     "crates/ui-dioxus/src/desktop_test_driver.rs",
   ]);
@@ -272,6 +273,21 @@ test("reviewed runtime test drivers are excluded from production changed lines",
   const inventory = await discoverWorkspacePackageInventory(repoRoot);
   const sourcePath = "crates/ui-dioxus/src/desktop_test_driver.rs";
   const diff = `diff --git a/${sourcePath} b/${sourcePath}\n--- /dev/null\n+++ b/${sourcePath}\n@@ -0,0 +1 @@\n+fn drive_test() {}\n`;
+  const score = scoreChangedLines(diff, [], { policy, packageInventory: inventory });
+  assert.deepEqual(score.files, [{
+    path: sourcePath,
+    change: "modified",
+    status: "excluded",
+    reason: "test-only-source",
+  }]);
+  assert.equal(score.status, "not-applicable");
+});
+
+test("the reviewed development movement fixture is excluded from production changed lines", async () => {
+  const policy = await loadPolicy();
+  const inventory = await discoverWorkspacePackageInventory(repoRoot);
+  const sourcePath = "crates/composition/src/development_movement_approval_fixture.rs";
+  const diff = `diff --git a/${sourcePath} b/${sourcePath}\n--- /dev/null\n+++ b/${sourcePath}\n@@ -0,0 +1 @@\n+fn development_fixture() {}\n`;
   const score = scoreChangedLines(diff, [], { policy, packageInventory: inventory });
   assert.deepEqual(score.files, [{
     path: sourcePath,

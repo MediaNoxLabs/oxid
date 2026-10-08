@@ -265,6 +265,7 @@ export function validatePolicy(policy, workspacePackages, { now = new Date() } =
       || JSON.stringify(policy.pathRules.generated) !== JSON.stringify(["**/generated/**"])
       || JSON.stringify(policy.pathRules.nonExecutableSources) !== JSON.stringify(["crates/composition/src/lib.rs"])
       || JSON.stringify(policy.pathRules.testOnlySources) !== JSON.stringify([
+        "crates/composition/src/development_movement_approval_fixture.rs",
         "crates/ui-dioxus/src/desktop_developer_pager_driver.rs", "crates/ui-dioxus/src/desktop_test_driver.rs",
       ])
       || policy.pathRules.testModuleFilename !== "tests.rs"
