@@ -8,13 +8,13 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-readonly ledger_revision="30fd606e5652d9146e8c7d453c5c01ea03962a89"
+readonly ledger_revision="2cce0f8f26e8ab1398af1c9ed61b087c28611a3f"
 readonly ledger_source="git+https://github.com/MediaNoxLabs/midnight-ledger.git?rev=${ledger_revision}"
 readonly proofs_revision="532629b044a88473a7175f4a96c2511c91156136"
 readonly proofs_source="git+https://github.com/MediaNoxLabs/midnight-zk?rev=${proofs_revision}"
-readonly compact_revision="3172c8588bfbf77b39fffd1ef71769962951b572"
+readonly compact_revision="e17b2a42227efa84281c6ce41868b66eb909e236"
 readonly compact_source="git+https://github.com/MediaNoxLabs/compact.git?rev=${compact_revision}"
-readonly identity_revision="b0bda1f179c5eed35f840f939f451ccee108e1d0"
+readonly identity_revision="bc7d22a60df4e3008be5aefd33669d9a7647f4a8"
 readonly identity_source="git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=${identity_revision}"
 
 metadata_file="$(mktemp)"
