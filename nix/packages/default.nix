@@ -6,9 +6,11 @@
     let
       midnightDidPackages = inputs.midnight-did-toolchain.packages.${pkgs.stdenv.hostPlatform.system};
       midnightDidCompactArtifacts = pkgs.callPackage ./midnight-did-compact-artifacts.nix { };
-      midnightDidCallComposer = pkgs.callPackage ./midnight-did-call-composer.nix {
-        inherit midnightDidCompactArtifacts;
-        midnightDidNpmArtifacts = midnightDidPackages.npm-artifacts;
+      cargoOutputHashes = {
+        "midnight-base-crypto-1.0.1" = "sha256-UbbZBDDNfWmnSw52QCb9EwxkpFoLByEK2wz1G8eMj8E=";
+        "midnight-compact-runtime-0.16.102" = "sha256-yQcsQtfXETJfNH1oZspwC8FJmzOWpJnZDs2sKxFCIm8=";
+        "midnight-did-domain-0.5.0" = "sha256-G2v2JcViKJRs/q0Z8UJIC2jkNV5HggfTG/2104S4BgM=";
+        "midnight-proofs-0.7.3" = "sha256-FWFXBZAoYmJJYuAry70jAKXPGhn6qSA18luxg3XalO4=";
       };
       presentationCompactArtifacts = pkgs.callPackage ./presentation-compact-artifacts.nix {
         compactMidnight = midnightDidPackages.compact-midnight;
@@ -34,10 +36,7 @@
 
         cargoLock = {
           lockFile = ../../Cargo.lock;
-          outputHashes = {
-            "midnight-base-crypto-1.0.1" = "sha256-TBu1ysOc6kKNA9g+cnlaBqd/SO9ii/Je2uUsQWXYBiw=";
-            "midnight-proofs-0.7.3" = "sha256-f/wg3d3fjOcAphwK4QB9zlpLCM2VXOO40/I91ZmUxlQ=";
-          };
+          outputHashes = cargoOutputHashes;
         };
         cargoBuildFlags = [
           "-p"
@@ -46,7 +45,6 @@
         cargoTestFlags = [ "--workspace" ];
         OXID_PASSPORT_VAULT_ARTIFACTS_DIR = passportVaultCompactArtifacts;
         OXID_PASSPORT_VAULT_COMPOSER = "${passportVaultCallComposer}/bin/oxid-passport-vault-call-composer";
-        OXID_MIDNIGHT_DID_CALL_COMPOSER = "${midnightDidCallComposer}/bin/oxid-midnight-did-call-composer";
 
         nativeBuildInputs = [ pkgs.pkg-config ] ++ linuxNativeBuildInputs;
         buildInputs = [ pkgs.openssl ] ++ linuxBuildInputs;
@@ -71,10 +69,7 @@
 
         cargoLock = {
           lockFile = ../../Cargo.lock;
-          outputHashes = {
-            "midnight-base-crypto-1.0.1" = "sha256-TBu1ysOc6kKNA9g+cnlaBqd/SO9ii/Je2uUsQWXYBiw=";
-            "midnight-proofs-0.7.3" = "sha256-f/wg3d3fjOcAphwK4QB9zlpLCM2VXOO40/I91ZmUxlQ=";
-          };
+          outputHashes = cargoOutputHashes;
         };
         cargoBuildFlags = [
           "-p"
@@ -133,10 +128,7 @@
 
           cargoLock = {
             lockFile = ../../Cargo.lock;
-            outputHashes = {
-              "midnight-base-crypto-1.0.1" = "sha256-TBu1ysOc6kKNA9g+cnlaBqd/SO9ii/Je2uUsQWXYBiw=";
-              "midnight-proofs-0.7.3" = "sha256-f/wg3d3fjOcAphwK4QB9zlpLCM2VXOO40/I91ZmUxlQ=";
-            };
+            outputHashes = cargoOutputHashes;
           };
           cargoBuildFlags = [
             "-p"
@@ -163,8 +155,6 @@
 
         midnight-did-compact-artifacts = midnightDidCompactArtifacts;
 
-        midnight-did-call-composer = midnightDidCallComposer;
-
         passport-vault-compact-artifacts = passportVaultCompactArtifacts;
 
         passport-vault-call-composer = passportVaultCallComposer;
@@ -190,7 +180,6 @@
         });
         presentation-compact-artifacts = presentationCompactArtifacts;
         midnight-did-compact-artifacts = midnightDidCompactArtifacts;
-        midnight-did-call-composer = midnightDidCallComposer;
         passport-vault-compact-artifacts = passportVaultCompactArtifacts;
         passport-vault-call-composer = passportVaultCallComposer;
         brand-packs =

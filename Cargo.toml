@@ -130,16 +130,20 @@ jni = { version = "=0.21.1" }
 jni-022 = { package = "jni", version = "=0.22.4" }
 manganis = { version = "=0.7.10" }
 k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "std"] }
-midnight-base-crypto = { version = "=1.0.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-base-crypto" }
-midnight-coin-structure = { version = "=2.0.2", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-coin-structure" }
-midnight-ledger = { version = "=8.2.0-rc.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", default-features = false }
-midnight-onchain-state = { version = "=3.0.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-onchain-state", features = ["public-internal-structure"] }
-midnight-onchain-runtime = { version = "=3.1.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-onchain-runtime" }
-midnight-serialize = { version = "=1.1.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-serialize" }
-midnight-storage = { version = "=2.0.3", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-storage" }
-midnight-transient-crypto = { version = "=2.1.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-transient-crypto" }
-midnight-zkir = { version = "=2.1.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-zkir", default-features = false }
-midnight-zswap = { version = "=8.2.0-rc.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-zswap", default-features = false }
+midnight-base-crypto = { version = "=1.0.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "30fd606e5652d9146e8c7d453c5c01ea03962a89", package = "midnight-base-crypto" }
+midnight-coin-structure = { version = "=2.0.2", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "30fd606e5652d9146e8c7d453c5c01ea03962a89", package = "midnight-coin-structure" }
+midnight-compact-runtime = { git = "https://github.com/MediaNoxLabs/compact.git", rev = "3172c8588bfbf77b39fffd1ef71769962951b572", package = "midnight-compact-runtime" }
+midnight-did-domain = { version = "=0.5.0", git = "https://github.com/MediaNoxLabs/midnight-identity.git", rev = "66a16882e549ca4d63cc0a7bd7edfebda47b441f" }
+midnight-did-jubjub-schnorr = { version = "=0.5.0", git = "https://github.com/MediaNoxLabs/midnight-identity.git", rev = "66a16882e549ca4d63cc0a7bd7edfebda47b441f" }
+midnight-did-runtime = { version = "=0.5.0", git = "https://github.com/MediaNoxLabs/midnight-identity.git", rev = "66a16882e549ca4d63cc0a7bd7edfebda47b441f", default-features = false }
+midnight-ledger = { version = "=8.2.0-rc.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "30fd606e5652d9146e8c7d453c5c01ea03962a89", default-features = false }
+midnight-onchain-state = { version = "=3.0.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "30fd606e5652d9146e8c7d453c5c01ea03962a89", package = "midnight-onchain-state", features = ["public-internal-structure"] }
+midnight-onchain-runtime = { version = "=3.1.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "30fd606e5652d9146e8c7d453c5c01ea03962a89", package = "midnight-onchain-runtime" }
+midnight-serialize = { version = "=1.1.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "30fd606e5652d9146e8c7d453c5c01ea03962a89", package = "midnight-serialize" }
+midnight-storage = { version = "=2.0.3", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "30fd606e5652d9146e8c7d453c5c01ea03962a89", package = "midnight-storage" }
+midnight-transient-crypto = { version = "=2.1.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "30fd606e5652d9146e8c7d453c5c01ea03962a89", package = "midnight-transient-crypto" }
+midnight-zkir = { version = "=2.1.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "30fd606e5652d9146e8c7d453c5c01ea03962a89", package = "midnight-zkir", default-features = false }
+midnight-zswap = { version = "=8.2.0-rc.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "30fd606e5652d9146e8c7d453c5c01ea03962a89", package = "midnight-zswap", default-features = false }
 ndk-context = { version = "=0.1.1" }
 p256 = { version = "=0.14.0", default-features = false, features = ["ecdsa"] }
 proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
@@ -210,11 +214,11 @@ oxid-wallet-domain = { version = "=0.2.0", path = "crates/wallet/domain" }
 
 [patch.crates-io]
 # This is the exact patch declared by the selected Ledger8 workspace at
-# b85f5d8e503fd1d7a1b128bbc1d7156baf823a65. Cargo does not propagate a Git
+# 30fd606e5652d9146e8c7d453c5c01ea03962a89. Cargo does not propagate a Git
 # dependency's root patch table to consumers, so repeat that immutable source
 # here to preserve the upstream graph and its required native `disk-spill`
 # feature without a local path or mutable source override.
-midnight-proofs = { git = "https://github.com/MediaNoxLabs/midnight-zk", rev = "083c82824dc5979fd7d509229e6f6b362d5b1ebf" }
+midnight-proofs = { git = "https://github.com/MediaNoxLabs/midnight-zk", rev = "532629b044a88473a7175f4a96c2511c91156136" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

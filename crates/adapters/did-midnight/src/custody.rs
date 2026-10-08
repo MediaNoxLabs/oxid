@@ -10,6 +10,7 @@ const MIDNIGHT_COIN_TYPE: u32 = 2_400;
 const DID_CONTROLLER_ROLE: u32 = 3;
 const DID_MAINTENANCE_ROLE: u32 = 4;
 const DID_REPLAY_RANDOMNESS_ROLE: u32 = 5;
+const DID_RECOVERY_ROLE: u32 = 6;
 const DEFAULT_KEY_INDEX: u32 = 0;
 
 pub(super) fn controller_path(
@@ -47,6 +48,16 @@ pub(super) fn replay_randomness_path(
     )
 }
 
+pub(super) fn recovery_path(account_index: u32) -> Result<WalletHdPath, DidLifecyclePortError> {
+    hd_path(
+        account_index,
+        DID_RECOVERY_ROLE,
+        true,
+        DEFAULT_KEY_INDEX,
+        true,
+    )
+}
+
 fn hd_path(
     account_index: u32,
     role: u32,
@@ -73,15 +84,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn maintenance_and_replay_roles_are_hardened_and_distinct_from_night_external() {
+    fn protected_roles_are_hardened_and_distinct_from_night_external() {
         let maintenance = maintenance_path(2).expect("maintenance path");
         let replay = replay_randomness_path(2).expect("replay path");
+        let recovery = recovery_path(2).expect("recovery path");
         let night_external = hd_path(2, 0, false, 0, false).expect("NIGHT external path");
 
         assert_ne!(maintenance, replay);
+        assert_ne!(maintenance, recovery);
+        assert_ne!(replay, recovery);
         assert_ne!(maintenance, night_external);
         assert_ne!(replay, night_external);
-        for path in [&maintenance, &replay] {
+        assert_ne!(recovery, night_external);
+        for path in [&maintenance, &replay, &recovery] {
             assert!(path.components()[3].hardened());
             assert!(path.components()[4].hardened());
         }

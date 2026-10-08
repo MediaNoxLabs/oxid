@@ -260,6 +260,13 @@ if [ "$preprod_observation" = "1" ] && [ "$portal_profile" != "unavailable" ]; t
   exit 1
 fi
 
+did_artifacts_dir=""
+if [ "$portal_profile" != "unavailable" ] && [ "$operation" != "deploy" ]; then
+  did_artifacts_dir="$(
+    nix build .#midnight-did-compact-artifacts --no-link --print-out-paths
+  )"
+fi
+
 android_jni_recovery_test="${OXID_ANDROID_JNI_RECOVERY_TEST:-0}"
 case "$android_jni_recovery_test" in
   0)
@@ -661,6 +668,7 @@ elif [ "$operation" != "deploy" ]; then
   OXID_BUILD_PORTAL_PROFILE_AUTHORITY_PATH="$portal_profile_authority_path" \
   OXID_BUILD_PORTAL_PROFILE_AUTHORITY_SHA256="$portal_profile_authority_sha256" \
   OXID_BUILD_PORTAL_PUBLIC_ORIGIN="$portal_public_origin" \
+  OXID_MIDNIGHT_DID_ARTIFACTS_DIR="$did_artifacts_dir" \
   OXID_PRESENTATION_ARTIFACTS_DIR="$presentation_artifacts_dir" \
   RUSTFLAGS="$android_rustflags" \
   GRADLE_OPTS="-Dorg.gradle.daemon=false" \
