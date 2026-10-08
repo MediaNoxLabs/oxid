@@ -7,9 +7,9 @@
       midnightDidPackages = inputs.midnight-did-toolchain.packages.${pkgs.stdenv.hostPlatform.system};
       midnightDidCompactArtifacts = pkgs.callPackage ./midnight-did-compact-artifacts.nix { };
       cargoOutputHashes = {
-        "midnight-base-crypto-1.0.1" = "sha256-UbbZBDDNfWmnSw52QCb9EwxkpFoLByEK2wz1G8eMj8E=";
-        "midnight-compact-runtime-0.16.102" = "sha256-yQcsQtfXETJfNH1oZspwC8FJmzOWpJnZDs2sKxFCIm8=";
-        "midnight-did-domain-0.5.0" = "sha256-G2v2JcViKJRs/q0Z8UJIC2jkNV5HggfTG/2104S4BgM=";
+        "midnight-base-crypto-1.0.1" = "sha256-XOpKUXmcytV1SRTvU37LJw+MKPkfGiNu73DFAGTZfxk=";
+        "midnight-compact-runtime-0.16.102" = "sha256-zPxvgH0YE6z2K/hWZtowuCGwXIj8BKzLEoyRL4fu6ew=";
+        "midnight-did-domain-0.5.0" = "sha256-Uwlq8Z+ZpAEjkuVgSHSNJM0ER+MY3DPZw2Y8bp9qpls=";
         "midnight-proofs-0.7.3" = "sha256-FWFXBZAoYmJJYuAry70jAKXPGhn6qSA18luxg3XalO4=";
       };
       presentationCompactArtifacts = pkgs.callPackage ./presentation-compact-artifacts.nix {

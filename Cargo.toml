@@ -132,7 +132,7 @@ manganis = { version = "=0.7.10" }
 k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "std"] }
 midnight-base-crypto = { version = "=1.0.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "2cce0f8f26e8ab1398af1c9ed61b087c28611a3f", package = "midnight-base-crypto" }
 midnight-coin-structure = { version = "=2.0.2", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "2cce0f8f26e8ab1398af1c9ed61b087c28611a3f", package = "midnight-coin-structure" }
-midnight-compact-runtime = { git = "https://github.com/MediaNoxLabs/compact.git", rev = "e17b2a42227efa84281c6ce41868b66eb909e236", package = "midnight-compact-runtime" }
+midnight-compact-runtime = { version = "=0.16.102", git = "https://github.com/MediaNoxLabs/compact.git", rev = "e17b2a42227efa84281c6ce41868b66eb909e236", package = "midnight-compact-runtime" }
 midnight-did-domain = { version = "=0.5.0", git = "https://github.com/MediaNoxLabs/midnight-identity.git", rev = "bc7d22a60df4e3008be5aefd33669d9a7647f4a8" }
 midnight-did-jubjub-schnorr = { version = "=0.5.0", git = "https://github.com/MediaNoxLabs/midnight-identity.git", rev = "bc7d22a60df4e3008be5aefd33669d9a7647f4a8" }
 midnight-did-runtime = { version = "=0.5.0", git = "https://github.com/MediaNoxLabs/midnight-identity.git", rev = "bc7d22a60df4e3008be5aefd33669d9a7647f4a8", default-features = false }

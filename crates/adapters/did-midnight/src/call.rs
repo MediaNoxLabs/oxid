@@ -792,6 +792,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "midnight-did-conformance: requires Nix-packaged DID artifacts"]
     fn composes_a_generated_bootstrap_call_without_an_external_process() {
         let Some(root) = std::env::var_os("OXID_MIDNIGHT_DID_ARTIFACTS_DIR") else {
             return;
