@@ -69,7 +69,10 @@ pub struct MidnightDidCompactArtifacts {
 #[derive(Clone, Debug)]
 enum ArtifactSource {
     Directory(PathBuf),
-    #[cfg(feature = "mobile-compact-artifacts")]
+    #[cfg(all(
+        feature = "mobile-compact-artifacts",
+        any(target_os = "ios", target_os = "android")
+    ))]
     Embedded,
 }
 
@@ -102,7 +105,10 @@ impl MidnightDidCompactArtifacts {
     /// explicit mobile Portal build. No mutable path or runtime extraction is
     /// involved; each byte slice is still authenticated against the release
     /// manifest before the adapter becomes available.
-    #[cfg(feature = "mobile-compact-artifacts")]
+    #[cfg(all(
+        feature = "mobile-compact-artifacts",
+        any(target_os = "ios", target_os = "android")
+    ))]
     pub fn load_embedded_mobile() -> Result<Self, MidnightDidCompactArtifactError> {
         const MANIFEST: &[u8] = include_bytes!(concat!(
             env!("OXID_MIDNIGHT_DID_ARTIFACTS_DIR"),
@@ -201,7 +207,10 @@ impl MidnightDidCompactArtifacts {
                 fs::read(canonical)
                     .map_err(|_| MidnightDidCompactArtifactError::ArtifactUnavailable)?
             }
-            #[cfg(feature = "mobile-compact-artifacts")]
+            #[cfg(all(
+                feature = "mobile-compact-artifacts",
+                any(target_os = "ios", target_os = "android")
+            ))]
             ArtifactSource::Embedded => self.authenticated_bytes(_circuit, _kind)?.to_vec(),
         };
         if bytes.is_empty()
@@ -215,7 +224,10 @@ impl MidnightDidCompactArtifacts {
         Ok(bytes)
     }
 
-    #[cfg(feature = "mobile-compact-artifacts")]
+    #[cfg(all(
+        feature = "mobile-compact-artifacts",
+        any(target_os = "ios", target_os = "android")
+    ))]
     fn authenticated_bytes(
         &self,
         circuit: MidnightDidBootstrapCircuit,
@@ -292,7 +304,10 @@ fn parse_manifest(bytes: &[u8]) -> Result<ArtifactManifest, MidnightDidCompactAr
     Ok(manifest)
 }
 
-#[cfg(feature = "mobile-compact-artifacts")]
+#[cfg(all(
+    feature = "mobile-compact-artifacts",
+    any(target_os = "ios", target_os = "android")
+))]
 fn embedded_bytes(circuit: MidnightDidBootstrapCircuit, kind: ArtifactKind) -> &'static [u8] {
     macro_rules! artifact {
         ($path:literal) => {
@@ -445,7 +460,10 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "mobile-compact-artifacts")]
+    #[cfg(all(
+        feature = "mobile-compact-artifacts",
+        any(target_os = "ios", target_os = "android")
+    ))]
     #[test]
     fn embedded_mobile_bootstrap_closure_authenticates() {
         let artifacts =

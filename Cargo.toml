@@ -133,9 +133,9 @@ k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "
 midnight-base-crypto = { version = "=1.0.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "8655615e7c4cbf3a1187b3203bf72e69dc09b8dc", package = "midnight-base-crypto" }
 midnight-coin-structure = { version = "=2.0.2", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "8655615e7c4cbf3a1187b3203bf72e69dc09b8dc", package = "midnight-coin-structure" }
 midnight-compact-runtime = { version = "=0.16.102", git = "https://github.com/MediaNoxLabs/compact.git", rev = "32e314770da10cc62dab30dcfeb340ec4c6bcb64", package = "midnight-compact-runtime" }
-midnight-did-domain = { version = "=0.5.0", git = "https://github.com/MediaNoxLabs/midnight-identity.git", rev = "26abf0baca1421112236048bc2d6dcaac02091ef" }
-midnight-did-jubjub-schnorr = { version = "=0.5.0", git = "https://github.com/MediaNoxLabs/midnight-identity.git", rev = "26abf0baca1421112236048bc2d6dcaac02091ef" }
-midnight-did-runtime = { version = "=0.5.0", git = "https://github.com/MediaNoxLabs/midnight-identity.git", rev = "26abf0baca1421112236048bc2d6dcaac02091ef", default-features = false }
+midnight-did-domain = { version = "=0.5.0", git = "https://github.com/MediaNoxLabs/midnight-identity.git", rev = "fcf3c51cb9368a3e7574f06f82434f92386d0a2b" }
+midnight-did-jubjub-schnorr = { version = "=0.5.0", git = "https://github.com/MediaNoxLabs/midnight-identity.git", rev = "fcf3c51cb9368a3e7574f06f82434f92386d0a2b" }
+midnight-did-runtime = { version = "=0.5.0", git = "https://github.com/MediaNoxLabs/midnight-identity.git", rev = "fcf3c51cb9368a3e7574f06f82434f92386d0a2b", default-features = false }
 midnight-ledger = { version = "=8.2.0-rc.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "8655615e7c4cbf3a1187b3203bf72e69dc09b8dc", default-features = false }
 midnight-onchain-state = { version = "=3.0.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "8655615e7c4cbf3a1187b3203bf72e69dc09b8dc", package = "midnight-onchain-state", features = ["public-internal-structure"] }
 midnight-onchain-runtime = { version = "=3.1.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "8655615e7c4cbf3a1187b3203bf72e69dc09b8dc", package = "midnight-onchain-runtime" }
