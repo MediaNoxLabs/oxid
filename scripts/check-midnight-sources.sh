@@ -14,7 +14,7 @@ readonly proofs_revision="532629b044a88473a7175f4a96c2511c91156136"
 readonly proofs_source="git+https://github.com/MediaNoxLabs/midnight-zk?rev=${proofs_revision}"
 readonly compact_revision="32e314770da10cc62dab30dcfeb340ec4c6bcb64"
 readonly compact_source="git+https://github.com/MediaNoxLabs/compact.git?rev=${compact_revision}"
-readonly identity_revision="127d4c48541ba0d28a4f34bfb5ffb4af65df7c42"
+readonly identity_revision="26abf0baca1421112236048bc2d6dcaac02091ef"
 readonly identity_source="git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=${identity_revision}"
 
 metadata_file="$(mktemp)"

@@ -4834,7 +4834,7 @@ dependencies = [
 [[package]]
 name = "midnight-did-domain"
 version = "0.5.0"
-source = "git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=127d4c48541ba0d28a4f34bfb5ffb4af65df7c42#127d4c48541ba0d28a4f34bfb5ffb4af65df7c42"
+source = "git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=26abf0baca1421112236048bc2d6dcaac02091ef#26abf0baca1421112236048bc2d6dcaac02091ef"
 dependencies = [
  "base64 0.22.1",
  "blake2",
@@ -4848,7 +4848,7 @@ dependencies = [
 [[package]]
 name = "midnight-did-jubjub-schnorr"
 version = "0.5.0"
-source = "git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=127d4c48541ba0d28a4f34bfb5ffb4af65df7c42#127d4c48541ba0d28a4f34bfb5ffb4af65df7c42"
+source = "git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=26abf0baca1421112236048bc2d6dcaac02091ef#26abf0baca1421112236048bc2d6dcaac02091ef"
 dependencies = [
  "hex",
  "midnight-transient-crypto",
@@ -4860,7 +4860,7 @@ dependencies = [
 [[package]]
 name = "midnight-did-method"
 version = "0.5.0"
-source = "git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=127d4c48541ba0d28a4f34bfb5ffb4af65df7c42#127d4c48541ba0d28a4f34bfb5ffb4af65df7c42"
+source = "git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=26abf0baca1421112236048bc2d6dcaac02091ef#26abf0baca1421112236048bc2d6dcaac02091ef"
 dependencies = [
  "blake2",
  "hex",
@@ -4874,7 +4874,7 @@ dependencies = [
 [[package]]
 name = "midnight-did-runtime"
 version = "0.5.0"
-source = "git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=127d4c48541ba0d28a4f34bfb5ffb4af65df7c42#127d4c48541ba0d28a4f34bfb5ffb4af65df7c42"
+source = "git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=26abf0baca1421112236048bc2d6dcaac02091ef#26abf0baca1421112236048bc2d6dcaac02091ef"
 dependencies = [
  "async-trait",
  "blake2",

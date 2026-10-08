@@ -9,7 +9,7 @@
       cargoOutputHashes = {
         "midnight-base-crypto-1.0.1" = "sha256-KVp5T/m9NzzUwn4dnlp5IVy9DoticxIquio7ms6g+1Q=";
         "midnight-compact-runtime-0.16.102" = "sha256-e+2iLWOlwQGpbrsJvNN5ryAxm2jzBlE6g+eQC8x3l6I=";
-        "midnight-did-domain-0.5.0" = "sha256-5Cut8UTp8QOIoG/zGWDFP4s4b53GPgsQYUhkdflGYOs=";
+        "midnight-did-domain-0.5.0" = "sha256-0twrg/fc6KmDI/1KZB8rqCQV+X2wS3/ykuU4UT4Oedo=";
         "midnight-proofs-0.7.3" = "sha256-FWFXBZAoYmJJYuAry70jAKXPGhn6qSA18luxg3XalO4=";
       };
       presentationCompactArtifacts = pkgs.callPackage ./presentation-compact-artifacts.nix {
